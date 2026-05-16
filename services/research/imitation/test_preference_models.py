@@ -127,6 +127,20 @@ class TestPreferenceCorrectionSchemas(unittest.TestCase):
         self.assertEqual(trace.to_dict(), payload)
         validate_correction_trace_payload(trace.to_dict())
 
+    def test_behavior_policy_target_is_supported(self) -> None:
+        target = {
+            **_TARGET,
+            "registry_id": "reg-alpha-imitation-0.1.0",
+            "artifact_type": "behavior_policy",
+            "artifact_version": "0.1.0",
+        }
+
+        example = PreferenceExample.from_dict(_preference_payload(target=target))
+        trace = CorrectionTrace.from_dict(_trace_payload(target=target))
+
+        self.assertEqual(example.target.artifact_type, "behavior_policy")
+        self.assertEqual(trace.target.artifact_type, "behavior_policy")
+
     def test_approve_example_requires_chosen_artifact(self) -> None:
         payload = _preference_payload(
             action="approve",

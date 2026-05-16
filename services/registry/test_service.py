@@ -15,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from .models import (
+    ArtifactType,
     ArtifactState,
     DeploymentStage,
     DeploymentSummary,
@@ -42,9 +43,10 @@ def _make_create_payload(
     strategy_id: str = "test-alpha",
     version: str = "1.0.0",
     artifact_state: ArtifactState = ArtifactState.DRAFT,
+    artifact_type: ArtifactType | str = ArtifactType.MODEL_ARTIFACT,
 ) -> RegistryEntryCreate:
     return RegistryEntryCreate(
-        artifact_type="model_artifact",
+        artifact_type=artifact_type,
         strategy_id=strategy_id,
         version=version,
         artifact_state=artifact_state,
@@ -332,6 +334,50 @@ class TestFastAPIEndpoints:
         assert data["entry"]["artifact_state"] == "draft"
         assert data["deployment_stage"] == "none"
         assert data["entry"]["strategy_id"] == "api-test"
+
+    def test_register_behavior_policy_artifact_type(self):
+        payload = {
+            "artifact_type": "behavior_policy",
+            "strategy_id": "imitation-alpha",
+            "version": "0.1.0",
+            "storage_ref": {
+                "backend": "object_store",
+                "path": "learning/imitation/imitation-alpha/0.1.0/artifact_bundle.json",
+            },
+            "checksum": "sha256:behavior-policy",
+            "lineage": {
+                "source_run_ids": ["imit-run-001"],
+                "source_dataset_refs": ["dataset://imitation/imitation-alpha/0.1.0"],
+            },
+            "metadata": {
+                "model_family": "imitation_policy",
+                "algorithm": "behavior_cloning",
+                "direct_live_influence": False,
+            },
+        }
+
+        create_resp = self.client.post("/api/registry/entries", json=payload)
+
+        assert create_resp.status_code == 200, create_resp.text
+        registry_id = create_resp.json()["entry"]["registry_id"]
+        assert create_resp.json()["entry"]["artifact_type"] == "behavior_policy"
+        assert create_resp.json()["entry"]["artifact_state"] == "draft"
+        assert create_resp.json()["deployment_stage"] == "none"
+
+        candidate_resp = self.client.post(
+            f"/api/registry/entries/{registry_id}/advance",
+            json={"target_state": "candidate"},
+        )
+        assert candidate_resp.status_code == 200, candidate_resp.text
+
+        approved_resp = self.client.post(
+            f"/api/registry/entries/{registry_id}/advance",
+            json={"target_state": "approved", "approver": "offline-eval-gate"},
+        )
+        assert approved_resp.status_code == 200, approved_resp.text
+        assert approved_resp.json()["entry"]["artifact_type"] == "behavior_policy"
+        assert approved_resp.json()["entry"]["artifact_state"] == "approved"
+        assert approved_resp.json()["deployment_stage"] == "none"
 
     def test_register_strategy_spec_from_source_seed_inline_payload(self):
         payload = {

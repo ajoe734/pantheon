@@ -58,9 +58,9 @@ The adapter emits:
    - `algorithm=behavior_cloning`
    - dataset summary, governance filters, policy payload, and evaluation summary
 2. `registry_entry`
-   - `artifact_type=model_artifact`
+   - `artifact_type=behavior_policy`
    - `metadata.model_family=imitation_policy`
-   - lifecycle starts at `draft`
+   - artifact state starts at `draft`
    - lineage points back to the source dataset refs and source strategy spec
 
 ## 4. Runtime and Packaging Notes

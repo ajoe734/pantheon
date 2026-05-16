@@ -142,6 +142,7 @@
           "enum": [
             "strategy_spec",
             "model_artifact",
+            "behavior_policy",
             "feature_set",
             "prompt_bundle",
             "signal_snapshot",

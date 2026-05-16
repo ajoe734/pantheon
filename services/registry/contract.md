@@ -41,6 +41,7 @@ The registry must support more than one artifact class.
 |---|---|
 | `strategy_spec` | normalized StrategySpec from research ingestion |
 | `model_artifact` | trained model weights or bundle |
+| `behavior_policy` | behavior-cloned trader policy candidate from governed imitation datasets |
 | `feature_set` | versioned feature definitions |
 | `prompt_bundle` | persona optimization output such as DSPy program |
 | `signal_snapshot` | versioned signal or allocation snapshot |
@@ -53,6 +54,7 @@ Not every artifact is executable, but every artifact uses the same governance vo
 Not every artifact traverses every deployment stage.
 
 - executable artifacts may be deployed to `paper`, `canary`, or `live` only after they are `approved`
+- `behavior_policy` artifacts are governed learned policies; they must remain non-live until normal evaluation, approval, deployment planning, and runtime binding gates complete
 - reference artifacts such as `evaluation_result`, `critique_result`, and `optimizer_result` are governed but non-executable, and in v1 normally remain `candidate` or `approved` until superseded or explicitly `retired`
 
 ---
