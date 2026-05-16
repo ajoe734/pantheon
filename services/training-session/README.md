@@ -30,6 +30,30 @@ The event model rejects timestamp alias drift and duplicate event ids in a
 session. It does not launch rapid eval, mutate live persona state, or publish
 registry artifacts; those remain downstream TRN/IMT responsibilities.
 
+## BFF Trainer Session Surface
+
+The BFF exposes the operator-facing trainer session API at
+`/api/v1/trainer/sessions`:
+
+- `POST /api/v1/trainer/sessions` creates an active persona-scoped trainer
+  session after persona resolution.
+- `GET /api/v1/trainer/sessions?persona_id=...` lists trainer sessions with
+  pagination metadata and read-surface health.
+- `GET /api/v1/trainer/sessions/{session_id}` returns the projected session,
+  event history, allowed actions, and workbench links.
+- `POST /api/v1/trainer/sessions/{session_id}/message` appends an operator
+  teaching message only while the session is active.
+- `GET /api/v1/trainer/sessions/{session_id}/controls` and
+  `POST /api/v1/trainer/sessions/{session_id}/patch` read and update trainer
+  control state, with lifecycle and control validation.
+- `GET /api/v1/trainer/sessions/{session_id}/preview` and
+  `POST /api/v1/trainer/sessions/{session_id}/preview` expose before/after
+  preview state. The POST route accepts the service-native `{ "mode":
+  "refresh" }` body and the legacy BFF `{ "refresh_mode": "manual" }` body.
+
+Replay commit/discard and rapid-eval routes are intentionally separate follow-on
+contracts.
+
 ## Replay Decisions
 
 The replay decision routes own the durable commit/discard record for a completed

@@ -6219,15 +6219,34 @@ def _tw01_trainer_dialog_surface_state(
 
 def _tw03_validate_refresh_mode(payload: Dict[str, Any]) -> str:
     refresh_mode = str(payload.get("refresh_mode") or "").strip().lower()
-    if refresh_mode != "manual":
+    mode = str(payload.get("mode") or "").strip().lower()
+    if refresh_mode and refresh_mode != "manual":
         raise _bff_error(
             422,
             ErrorCode.INVALID_PARAMS,
             "Invalid trainer preview refresh mode",
-            "refresh_mode must equal 'manual' for TW-03",
+            "refresh_mode must equal 'manual' or mode must equal 'refresh'",
             precondition_failed="refresh_mode",
         )
-    return refresh_mode
+    if mode and mode != "refresh":
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid trainer preview refresh mode",
+            "refresh_mode must equal 'manual' or mode must equal 'refresh'",
+            precondition_failed="mode",
+        )
+    if refresh_mode == "manual":
+        return refresh_mode
+    if mode == "refresh":
+        return mode
+    raise _bff_error(
+        422,
+        ErrorCode.INVALID_PARAMS,
+        "Invalid trainer preview refresh mode",
+        "refresh_mode must equal 'manual' or mode must equal 'refresh'",
+        precondition_failed="refresh_mode",
+    )
 
 
 def _tw02_validate_patch_payload(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -8585,6 +8604,14 @@ async def refresh_trainer_preview(
         session_status=session.get("status"),
         snapshot_at=utc_now(),
     )
+    if session.get("status") not in {"active", "paused"}:
+        raise _bff_error(
+            409,
+            ErrorCode.INVALID_STATE,
+            "Trainer session cannot refresh preview",
+            "POST /preview is only allowed while the trainer session status is active or paused",
+            precondition_failed="status",
+        )
     if preview.get("status") == "pending":
         return preview
     if not preview.get("allowedActions", {}).get("canRefreshPreview"):
@@ -8594,14 +8621,6 @@ async def refresh_trainer_preview(
             "Trainer preview refresh unavailable",
             "allowedActions.canRefreshPreview is false for this trainer preview",
             precondition_failed="allowedActions.canRefreshPreview",
-        )
-    if session.get("status") not in {"active", "paused"}:
-        raise _bff_error(
-            409,
-            ErrorCode.INVALID_STATE,
-            "Trainer session cannot refresh preview",
-            "POST /preview is only allowed while the trainer session status is active or paused",
-            precondition_failed="status",
         )
 
     refreshed = read_store.refresh_trainer_preview(
