@@ -2,7 +2,7 @@
 
 Task: `/bff/v5/loop-runs endpoint (rebaseline)`
 Owner: Claude2
-Reviewer: Codex2
+Reviewer: Codex (reassigned from Codex2 by chair; Codex2 was quota-terminal)
 Phase: Sprint 6 / EPIC-EVOLUTION
 
 ## Scope
