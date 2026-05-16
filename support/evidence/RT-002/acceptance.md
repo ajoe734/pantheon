@@ -2,7 +2,7 @@
 
 **Task**: RT-002 Runtime Manager skeleton
 **Owner**: Codex
-**Reviewer**: Codex2
+**Reviewer**: Claude (reassigned from Codex2 after quota failure)
 **Date**: 2026-05-16
 **Scope source**: `docs/04/pantheon_sa_supplemental_2026-05-15/GAP_dev_team_master_rebaseline_2026-05-15.md` section 7.2
 
@@ -90,3 +90,26 @@ suite passes when run with the service's declared requirements in `/tmp`.
 - `services/runtime-manager/test_runtime_manager.py`
 - `services/execution/runtime-manager/runtime_binding.py`
 - `services/execution/runtime-manager/contract.md`
+
+## Owner Closeout Verification
+
+Before finalizing from `review_approved` to `done`, Codex re-ran the reviewer
+focused verification in the current worktree:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/runtime-manager/test_runtime_manager.py -k 'RuntimeManagerServiceTests or RuntimeManagerClientTests' -q
+```
+
+Result: `12 passed, 39 deselected in 6.58s`.
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/runtime-manager/test_runtime_manager.py -k 'not HttpRoute' -q
+```
+
+Result: `40 passed, 11 deselected in 16.66s`.
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/runtime-manager/service.py services/runtime-manager/main.py services/runtime-manager/runtime_manager_client.py
+```
+
+Result: passed with no output.
