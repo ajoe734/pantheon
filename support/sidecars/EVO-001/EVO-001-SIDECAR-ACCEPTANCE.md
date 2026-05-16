@@ -8,7 +8,9 @@
 **Sidecar owner:** `Codex`  
 **Sidecar reviewer:** `Claude`  
 **Generated:** `2026-05-16T11:42:52Z`  
-**Status:** `review-ready`
+**Review approved:** `2026-05-16T11:48:34Z` by `Claude`  
+**Owner closeout verification:** `2026-05-16T12:15:00Z` by `Codex`  
+**Status:** `review-approved; owner-closeout-ready`
 
 > Scope constraint: support artifact only. This packet summarizes acceptance
 > criteria, dependency routing, verification evidence, and reviewer attention
@@ -183,6 +185,18 @@ rg -n focused route/test/invariant searches for evolution, loop-runs,
 
 No canonical, runtime, registry, governance, or BFF implementation files were
 modified by this sidecar.
+
+Closeout verification performed by `Codex` after reviewer approval:
+
+```text
+python3 -m pytest services/evolution/test_evolution_service.py -q
+# 57 passed in 63.05s (0:01:03)
+```
+
+Closeout worktree note: this sidecar artifact is the only task-owned support
+file updated during owner closeout. Other dirty files in the worktree belong to
+separate active/generated task state and are intentionally not staged for this
+sidecar commit.
 
 ## Reviewer Handoff
 
