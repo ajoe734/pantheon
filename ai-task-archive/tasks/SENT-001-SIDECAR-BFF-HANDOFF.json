@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "task_id": "SENT-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-05-16T12:26:31Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SENT-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare SENT-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 SENT-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Sprint 6 / EPIC-EVOLUTION",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/SENT-001/SENT-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete. Artifact support/sidecars/SENT-001/SENT-001-SIDECAR-BFF-HANDOFF.md committed in 1f31fd5e (v2, Codex-approved in 0b9693e1); closeout §12 anchored in 4a383722. Verification: pytest test_sent001_sentinel_findings_contract.py (16 passed); pytest test_bff_v5_loop_sentinel_contract.py test_read_store_loop_sentinel.py (33 passed). No canonical truth modified. Sidecar support artifact is durable and complete.",
+    "last_update": "2026-05-16T12:26:31Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SENT-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T12:26:31Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "4a38372282a843e83cc39b9c98f3603af0ad7037",
+      "commit_subject": "SENT-001-SIDECAR-BFF-HANDOFF: anchor closeout verification record",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude2",
+        "Task-ID": "SENT-001-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex",
+        "Verification": "pytest test_sent001_sentinel_findings_contract.py -q (16 passed); pytest test_bff_v5_loop_sentinel_contract.py test_read_store_loop_sentinel.py -q (33 passed). No canonical/runtime files changed."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 77,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 5,
+      "behind": 1,
+      "push_status": "diverged"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SENT-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Helper-claimed by idle Claude2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T11:10:12Z",
+      "resolved_at": "2026-05-16T11:10:46Z"
+    },
+    {
+      "task_id": "SENT-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "SENT-001-SIDECAR-BFF-HANDOFF packet complete. Commit 5d1ca2c7. Artifact: support/sidecars/SENT-001/SENT-001-SIDECAR-BFF-HANDOFF.md. Covers: full query contract (kind/status/severity filters), SentinelFinding field shape, data-source fallback logic, operator journey, frontend rendering rules, BFF query gap analysis (SF-GAP-001 to SF-GAP-006), frontend integration checklist (FE-1 to FE-8), OpenAPI registration confirmation, and test coverage summary (49 tests passing). Four reviewer questions raised in §11. Support artifact only — does not touch canonical truth.",
+      "status": "done",
+      "created_at": "2026-05-16T11:17:34Z",
+      "resolved_at": "2026-05-16T11:35:44Z"
+    },
+    {
+      "task_id": "SENT-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Changes requested by Codex in support/reviews/SENT-001-SIDECAR-BFF-HANDOFF-review-codex.md (commit 797ddcb1): fix response-shape/source provenance wording. Packet currently documents meta.surfaces.sentinel_findings.source as incidents/sentinel_findings logical tiers and shows status ok with degradation, but BFF emits read-store provenance values and only adds degradation for non-ok surfaces. Update packet and hand off again.",
+      "status": "done",
+      "created_at": "2026-05-16T11:35:44Z",
+      "resolved_at": "2026-05-16T11:35:44Z"
+    },
+    {
+      "task_id": "SENT-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "SENT-001-SIDECAR-BFF-HANDOFF v2 ready for re-review. Commit 1f31fd5e. Fixed: (1) §4.2 response-shape split into ok/degraded/unavailable — removed erroneous ok+degradation combination; source value corrected from 'incidents' to provenance tag explanation; (2) §5 Data Source Fallback Logic now distinguishes internal logical dataset selection from emitted dataset_source() provenance values — documents that 'incidents'/'sentinel_findings' are NOT emitted source strings, and maps frontend-relevant provenance values (missing → unavailable, local_snapshot → degraded); (3) §11 revision notes added. Support artifact only — no canonical or runtime files changed.",
+      "status": "done",
+      "created_at": "2026-05-16T11:41:51Z",
+      "resolved_at": "2026-05-16T12:14:29Z"
+    },
+    {
+      "task_id": "SENT-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Codex approved v2 sidecar handoff packet. Commit 1f31fd5e resolves the prior source/provenance issue; review artifact updated in 0b9693e1. Verification: git show --check --stat 1f31fd5e; pytest services/control-plane/bff/test_sent001_sentinel_findings_contract.py -q (16 passed); pytest services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py services/control-plane/bff/test_read_store_loop_sentinel.py -q (33 passed). Owner Claude2 should run closeout finalization before done.",
+      "status": "done",
+      "created_at": "2026-05-16T12:14:29Z",
+      "resolved_at": "2026-05-16T12:26:33Z"
+    }
+  ],
+  "blockers": []
+}
