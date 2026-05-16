@@ -90,6 +90,10 @@ GET /bff/v5/sentinel/findings?kind=hiq_sentinel&severity=high
 
 ### 4.2 Response Shape
 
+The response shape varies by data availability. Three representative states:
+
+**Normal (ok) — data served from a backend read store:**
+
 ```json
 {
   "data": [...],
@@ -103,10 +107,38 @@ GET /bff/v5/sentinel/findings?kind=hiq_sentinel&severity=high
     "surfaces": {
       "sentinel_findings": {
         "status": "ok",
-        "source": "incidents"
+        "source": "<read-store-provenance>"
       }
     },
-    "total": 3,
+    "total": 3
+  }
+}
+```
+
+**Degraded — data served from local BFF snapshot fallback:**
+
+```json
+{
+  "data": [...],
+  "items": [...],
+  "page_info": {
+    "next_page_token": null,
+    "total": 2
+  },
+  "meta": {
+    "snapshot_at": "2026-05-16T11:00:00Z",
+    "surfaces": {
+      "sentinel_findings": {
+        "status": "degraded",
+        "source": "local_snapshot",
+        "note": "Served from local BFF snapshot fallback instead of a backend-owned read store.",
+        "staleness": {
+          "served_from": "local_snapshot",
+          "last_known_at": "2026-05-16T11:00:00Z"
+        }
+      }
+    },
+    "total": 2,
     "degradation": {
       "reason": "sentinel findings is degraded and may be stale."
     }
@@ -114,11 +146,42 @@ GET /bff/v5/sentinel/findings?kind=hiq_sentinel&severity=high
 }
 ```
 
+**Unavailable — no data in any tier:**
+
+```json
+{
+  "data": [],
+  "items": [],
+  "page_info": {
+    "next_page_token": null,
+    "total": 0
+  },
+  "meta": {
+    "snapshot_at": "2026-05-16T11:00:00Z",
+    "surfaces": {
+      "sentinel_findings": {
+        "status": "unavailable",
+        "source": "missing"
+      }
+    },
+    "total": 0,
+    "degradation": {
+      "reason": "sentinel findings is currently unavailable."
+    }
+  }
+}
+```
+
 Notes:
 - `data` and `items` are identical arrays (both present for client compatibility).
-- `meta.surfaces.sentinel_findings.source` is `"missing"` when no data is available;
-  `data` / `items` arrays will be empty.
-- `meta.degradation` is **only present** when `status` is `degraded` or `unavailable`.
+- `meta.surfaces.sentinel_findings.source` is a **read-store provenance tag** emitted
+  by `read_store.dataset_source()`. It reflects *how* the data reached the BFF, not
+  which logical dataset was queried internally. Common provenance values include
+  `"local_snapshot"` (BFF local fallback), `"consultation_service_client"`,
+  `"consultation_service_store"`, and `"missing"` (no data). The logical dataset names
+  `"incidents"` and `"sentinel_findings"` are **not** emitted as `source` values.
+- `meta.degradation` is **only present** when `status` is `"degraded"` or
+  `"unavailable"`. It is absent from ok responses.
 - `page_info.next_page_token` is always `null` (no cursor pagination on this surface).
 
 ### 4.3 SentinelFinding Record Shape
@@ -168,10 +231,23 @@ The `list_sentinel_findings` implementation uses a two-tier dataset resolution:
 2. **Fallback — `sentinel_findings` dataset**: Used only when the `incidents` dataset
    is unavailable. Records are used as-is without derivation.
 
-`meta.surfaces.sentinel_findings.source` reflects which tier was used:
-- `"incidents"` — primary tier active
-- `"sentinel_findings"` — fallback tier active
-- `"missing"` — neither tier has data
+**Important:** this two-tier selection is an **internal BFF implementation detail**.
+The logical dataset keys `"incidents"` and `"sentinel_findings"` are **not** exposed
+as `meta.surfaces.sentinel_findings.source` in the response. The emitted `source`
+value comes from `read_store.dataset_source()` which returns a storage-layer
+provenance tag for the chosen dataset (e.g. `"local_snapshot"`,
+`"consultation_service_client"`, `"consultation_service_store"`).
+
+The sentinel findings route (`main.py:24415-24417`) sets:
+- `source = "missing"` explicitly when no data is available (neither tier has records).
+- `source = None` when data is available, delegating provenance resolution to
+  `_dataset_surface_status → dataset_source()` at response-build time.
+
+Frontend-relevant mapping:
+- `source == "missing"` → `status` is `"unavailable"`; no data rendered.
+- `source == "local_snapshot"` → `status` is `"degraded"`; stale data, show badge.
+- Any other provenance value → `status` is `"ok"` unless the surface state itself
+  is degraded; render normally.
 
 ---
 
@@ -295,8 +371,19 @@ All 49 tests pass as of the closeout verification (2026-05-16).
 
 ## 11. Reviewer Notes
 
-This packet is ready for Codex review. The following questions are offered to guide
-the review:
+**Revision v2 (2026-05-16):** Addresses Codex review findings from
+`support/reviews/SENT-001-SIDECAR-BFF-HANDOFF-review-codex.md` (commit `797ddcb1`):
+
+- §4.2 response-shape example split into three states (ok / degraded / unavailable).
+  The erroneous combined `status: "ok"` + `meta.degradation` example is removed.
+  The `source: "incidents"` example value is replaced with `"<read-store-provenance>"`
+  and a note explaining that `source` is a provenance tag, not a logical dataset name.
+- §5 Data Source Fallback Logic clarified: the two-tier dataset selection is internal
+  BFF logic; the emitted `source` field comes from `dataset_source()` provenance, not
+  the dataset key strings `"incidents"` / `"sentinel_findings"`. Frontend-relevant
+  source values (`"missing"`, `"local_snapshot"`, others) are documented.
+
+Original reviewer questions (still open for post-SENT-001 backlog):
 
 1. **Gap completeness**: Are there BFF query gaps not captured in §7 that Codex
    considers blocking for the EPIC-EVOLUTION frontend milestone?
