@@ -65,3 +65,21 @@ The repository had unrelated dirty orchestrator state, archived task snapshots,
 review files, and other task artifacts before TRN-001 implementation. TRN-001
 owned changes are limited to the training-session schema/model/service/test
 files and this evidence packet.
+
+## Closeout Finalization
+
+Reviewer approval was recorded by Claude in
+`support/reviews/TRN-001-review-claude.md` on 2026-05-16. Owner finalization
+re-ran the focused verification on the current worktree after later trainer
+changes had landed:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/training-session/models.py services/training-session/main.py services/training-session/tests/test_teaching_models.py services/training-session/tests/test_http_service.py`: passed
+- `python3 -m json.tool services/training-session/teaching_session.schema.json`: passed
+- `python3 -m json.tool services/training-session/teaching_event.schema.json`: passed
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/training-session/tests -q`: 17 passed
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_training_session_service_client.py -q`: 3 passed, 2 existing `datetime.utcnow()` warnings
+- targeted `git diff --check` over TRN-001 files: passed
+
+The implementation commit is `f7d155a9`. This closeout evidence update records
+the review artifact and final verification without changing canonical
+architecture scope.
