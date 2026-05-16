@@ -7563,6 +7563,9 @@ class ReadSurfaceStore:
             "createdAt": timestamp,
             "updatedAt": timestamp,
         }
+        for _committee_field in ("quorumState", "consensusState", "participantRoster", "linkedRequestId"):
+            if payload.get(_committee_field) is not None:
+                session[_committee_field] = json.loads(json.dumps(payload[_committee_field]))
         self._ensure_local_overlay_records("agora_sessions")[session_id] = json.loads(json.dumps(session))
         self._save()
         return json.loads(json.dumps(session))
@@ -7625,6 +7628,48 @@ class ReadSurfaceStore:
         session["updatedAt"] = timestamp
         if outcome is not None:
             session["outcome"] = outcome
+        self._ensure_local_overlay_records("agora_sessions")[session_id] = session
+        self._save()
+        return json.loads(json.dumps(session))
+
+    def open_committee_session(
+        self,
+        session_id: str,
+        *,
+        opened_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        session = self.get_agora_session(session_id)
+        if session is None:
+            return None
+        timestamp = opened_at or _utc_now_rfc3339()
+        session = json.loads(json.dumps(session))
+        session["status"] = "open"
+        session["openedAt"] = timestamp
+        session["updatedAt"] = timestamp
+        self._ensure_local_overlay_records("agora_sessions")[session_id] = session
+        self._save()
+        return json.loads(json.dumps(session))
+
+    def close_committee_session(
+        self,
+        session_id: str,
+        *,
+        closed_at: Optional[str] = None,
+        outcome: Optional[str] = None,
+        memo_ids: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        session = self.get_agora_session(session_id)
+        if session is None:
+            return None
+        timestamp = closed_at or _utc_now_rfc3339()
+        session = json.loads(json.dumps(session))
+        session["status"] = "closed"
+        session["closedAt"] = timestamp
+        session["updatedAt"] = timestamp
+        if outcome is not None:
+            session["outcome"] = outcome
+        if memo_ids is not None:
+            session["memoIds"] = memo_ids
         self._ensure_local_overlay_records("agora_sessions")[session_id] = session
         self._save()
         return json.loads(json.dumps(session))

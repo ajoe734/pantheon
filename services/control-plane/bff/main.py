@@ -19632,7 +19632,7 @@ SSE_ASK_EVENT_TYPES = {
 
 _SSE_RESYNC_ROUTES: Dict[str, tuple[str, ...]] = {
     "approval": ("/bff/approvals", "/bff/v5/interventions"),
-    "ask": ("/bff/agora/ask/sessions/{id}",),
+    "ask": ("/bff/agora/ask/sessions/{id}", "/bff/agora/committee/sessions/{id}"),
 }
 
 
@@ -24395,7 +24395,7 @@ async def sem_agora_ask_sessions(authorization: Optional[str] = Header(default=N
     return _sem_list_payload("agora_sessions", "agora_ask_sessions", filter_mode="quick_ask")
 
 
-_ASK_SESSIONS_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
+_ASK_SESSIONS_IDEMPOTENCY = _AGORA_CORE_BFF_IDEMPOTENCY
 
 
 @app.post("/bff/agora/ask/sessions", status_code=201)
@@ -24435,7 +24435,7 @@ async def sem_agora_ask_create_session(
             "surfaces": {"agora_ask_session_detail": {"status": "ok", "source": "bff_local"}},
         },
     }
-    _ASK_SESSIONS_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
     return result
 
 
@@ -24511,7 +24511,195 @@ async def sem_agora_ask_close_session(
             "surfaces": {"agora_ask_session_detail": {"status": "ok", "source": "bff_local"}},
         },
     }
-    _ASK_SESSIONS_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+# ---- ASK-003: committee session lifecycle ----
+
+
+@app.get("/bff/agora/committee/sessions")
+async def sem_agora_committee_sessions(authorization: Optional[str] = Header(default=None)):
+    """ASK-003: list committee sessions (mode=committee)."""
+    _require_read_role(_extract_identity(authorization))
+    return _sem_list_payload("agora_sessions", "agora_committee_sessions", filter_mode="committee")
+
+
+@app.post("/bff/agora/committee/sessions", status_code=201)
+async def sem_agora_committee_create_session(
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """ASK-003: create a committee session."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({"route": "POST /bff/agora/committee/sessions", "payload": payload})
+    cached = _agora_core_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    now = utc_now()
+    session_id = str(
+        payload.get("sessionId") or payload.get("session_id") or f"committee-{uuid.uuid4().hex[:10]}"
+    )
+    title = str(payload.get("title") or "Committee session").strip()
+    session = read_store.create_agora_session(
+        session_id=session_id,
+        title=title,
+        actor_id=identity.operator_id,
+        payload={
+            **dict(payload),
+            "mode": "committee",
+            "status": "pending",
+            "participants": payload.get("participants") or [],
+            "quorumState": payload.get("quorumState") or "pending",
+            "consensusState": payload.get("consensusState") or "open",
+            "participantRoster": payload.get("participantRoster") or [],
+            "linkedRequestId": payload.get("linkedRequestId") or payload.get("linked_request_id"),
+        },
+        created_at=now,
+    )
+    result = {
+        "data": session,
+        "meta": {
+            "snapshot_at": now,
+            "surfaces": {"agora_committee_session_detail": {"status": "ok", "source": "bff_local"}},
+        },
+    }
+    _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+@app.get("/bff/agora/committee/sessions/{sessionId}")
+async def sem_agora_committee_session_detail(
+    sessionId: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """ASK-003: committee session detail — also serves as SSE resync route for ask channel."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    session = read_store.get_agora_session(sessionId)
+    if session is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Committee session not found",
+            f"Committee session {sessionId} does not exist",
+            precondition_failed="session_id",
+        )
+    return {
+        "data": session,
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": {"agora_committee_session_detail": {"status": "ok", "source": "bff_local"}},
+        },
+    }
+
+
+@app.post("/bff/agora/committee/sessions/{sessionId}/open", status_code=200)
+async def sem_agora_committee_open_session(
+    sessionId: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """ASK-003: open a pending committee session."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({
+        "route": f"POST /bff/agora/committee/sessions/{sessionId}/open",
+        "sessionId": sessionId,
+        "payload": payload,
+    })
+    cached = _agora_core_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    now = utc_now()
+    session = read_store.open_committee_session(sessionId, opened_at=now)
+    if session is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Committee session not found",
+            f"Committee session {sessionId} does not exist",
+            precondition_failed="session_id",
+        )
+    _publish_event(
+        _sse_buffers["ask"],
+        _sse_subscribers["ask"],
+        "ask.session.started",
+        {"sessionId": sessionId, "mode": "committee"},
+    )
+    result = {
+        "data": session,
+        "meta": {
+            "snapshot_at": now,
+            "surfaces": {"agora_committee_session_detail": {"status": "ok", "source": "bff_local"}},
+        },
+    }
+    _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+@app.post("/bff/agora/committee/sessions/{sessionId}/close", status_code=200)
+async def sem_agora_committee_close_session(
+    sessionId: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """ASK-003: close a committee session."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({
+        "route": f"POST /bff/agora/committee/sessions/{sessionId}/close",
+        "sessionId": sessionId,
+        "payload": payload,
+    })
+    cached = _agora_core_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    now = utc_now()
+    outcome = str(payload.get("outcome") or "").strip() or None
+    memo_ids = payload.get("memoIds") or payload.get("memo_ids") or None
+    session = read_store.close_committee_session(
+        sessionId,
+        closed_at=now,
+        outcome=outcome,
+        memo_ids=memo_ids,
+    )
+    if session is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Committee session not found",
+            f"Committee session {sessionId} does not exist",
+            precondition_failed="session_id",
+        )
+    _publish_event(
+        _sse_buffers["ask"],
+        _sse_subscribers["ask"],
+        "ask.session.completed",
+        {"sessionId": sessionId, "mode": "committee", "outcome": outcome},
+    )
+    result = {
+        "data": session,
+        "meta": {
+            "snapshot_at": now,
+            "surfaces": {"agora_committee_session_detail": {"status": "ok", "source": "bff_local"}},
+        },
+    }
+    _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
     return result
 
 

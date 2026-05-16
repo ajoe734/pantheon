@@ -172,6 +172,52 @@ def test_ask_001_create_idempotent() -> None:
         assert first.json()["data"]["sessionId"] == second.json()["data"]["sessionId"]
 
 
+def test_ask_001_create_generated_session_id_replays_cached_result() -> None:
+    with _client() as client:
+        key = _idem()
+        payload = {"title": "Generated id replay"}
+        first = client.post(
+            "/bff/agora/ask/sessions",
+            json=payload,
+            headers={**AUTH, "Idempotency-Key": key},
+        )
+        second = client.post(
+            "/bff/agora/ask/sessions",
+            json=payload,
+            headers={**AUTH, "Idempotency-Key": key},
+        )
+        assert first.status_code == 201, first.text
+        assert second.status_code == 201, second.text
+        first_session_id = first.json()["data"]["sessionId"]
+        second_session_id = second.json()["data"]["sessionId"]
+        assert first_session_id == second_session_id
+
+        listed = client.get("/bff/agora/ask/sessions", headers=AUTH)
+        assert listed.status_code == 200, listed.text
+        listed_ids = [item.get("sessionId") or item.get("id") for item in listed.json()["items"]]
+        assert listed_ids.count(first_session_id) == 1
+
+
+def test_ask_001_create_idempotency_conflict_rejected() -> None:
+    with _client() as client:
+        key = _idem()
+        first = client.post(
+            "/bff/agora/ask/sessions",
+            json={"title": "Original ask"},
+            headers={**AUTH, "Idempotency-Key": key},
+        )
+        second = client.post(
+            "/bff/agora/ask/sessions",
+            json={"title": "Different ask"},
+            headers={**AUTH, "Idempotency-Key": key},
+        )
+        assert first.status_code == 201, first.text
+        assert second.status_code == 409, second.text
+        detail = second.json()["detail"]
+        assert detail["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+        assert detail["error"]["details"]["precondition_failed"] == "idempotency_conflict"
+
+
 def test_ask_001_create_requires_auth() -> None:
     with _client() as client:
         resp = client.post(
@@ -286,6 +332,26 @@ def test_ask_001_close_idempotent() -> None:
         assert first.status_code == 200, first.text
         assert second.status_code == 200, second.text
         assert first.json()["data"]["status"] == second.json()["data"]["status"]
+
+
+def test_ask_001_close_idempotency_conflict_rejected() -> None:
+    with _client(seeded=True) as client:
+        key = _idem()
+        first = client.post(
+            "/bff/agora/ask/sessions/ask-seeded-001/close",
+            json={"outcome": "resolved"},
+            headers={**AUTH, "Idempotency-Key": key},
+        )
+        second = client.post(
+            "/bff/agora/ask/sessions/ask-seeded-001/close",
+            json={"outcome": "different"},
+            headers={**AUTH, "Idempotency-Key": key},
+        )
+        assert first.status_code == 200, first.text
+        assert second.status_code == 409, second.text
+        detail = second.json()["detail"]
+        assert detail["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+        assert detail["error"]["details"]["precondition_failed"] == "idempotency_conflict"
 
 
 def test_ask_001_close_requires_auth() -> None:
