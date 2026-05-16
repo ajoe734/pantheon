@@ -515,6 +515,16 @@
       ],
       "require_owner_higher_priority_load": true
     },
+    "worker_self_claim": {
+      "enabled": true,
+      "claim_command": "AI_NAME=$AI_NAME python3 .orchestrator/supervisor.py --claim-agent \"$AI_NAME\" --release-task \"$TASK_ID\" --quiet",
+      "release_task_statuses": [
+        "review",
+        "review_approved",
+        "done",
+        "blocked"
+      ]
+    },
     "max_tasks_per_agent": 1,
     "max_dispatches_per_tick": 4
   }

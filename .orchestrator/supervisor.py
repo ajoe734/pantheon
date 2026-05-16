@@ -234,6 +234,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--poll-interval", type=float, default=None)
     parser.add_argument("--quiet", action="store_true", help="Suppress terminal heartbeat output.")
     parser.add_argument("--verbose", action="store_true", help="Print active worker and queue details each tick.")
+    parser.add_argument("--claim-agent", default=None, help="Let one idle agent claim and start one ready task.")
+    parser.add_argument("--release-task", default=None, help="Release this agent's completed worker slot before claiming more work.")
     return parser.parse_args()
 
 
@@ -4742,6 +4744,63 @@ def helper_claim_settings(config: dict[str, Any]) -> dict[str, Any]:
     return settings
 
 
+def worker_self_claim_settings(config: dict[str, Any]) -> dict[str, Any]:
+    settings = dict(ready_dispatch_settings(config).get("worker_self_claim", {}) or {})
+    settings.setdefault("enabled", False)
+    settings.setdefault("release_task_statuses", ["review", "review_approved", "done", "blocked"])
+    return settings
+
+
+def release_completed_worker_for_claim(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    agent_name: str,
+    task_id: str | None,
+) -> bool:
+    if not task_id:
+        return False
+    settings = worker_self_claim_settings(config)
+    allowed_statuses = {str(value).lower() for value in settings.get("release_task_statuses", [])}
+    if not allowed_statuses:
+        return False
+    status = load_status(config)
+    task = task_index_from_status(config, status).get(task_id)
+    if not task or str(task.get("status") or "").lower() not in allowed_statuses:
+        return False
+
+    normalized_agent = normalize_agent_id(agent_name)
+    display_agent = display_name_for(config, normalized_agent)
+    active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
+    now = utc_now()
+    changed = False
+    for worker in state.get("workers", {}).values():
+        worker_agent = str(worker.get("logical_agent_id") or worker.get("agent_id") or "").strip()
+        if worker.get("task_id") != task_id:
+            continue
+        if display_name_for(config, normalize_agent_id(worker_agent)) != display_agent:
+            continue
+        if worker.get("status") not in active_statuses:
+            continue
+        worker["status"] = "completed"
+        worker["completed_at"] = now
+        worker["last_event_at"] = now
+        worker["last_error"] = None
+        finalize_queue_event_record(config, state, worker, "completed")
+        changed = True
+        write_activity_log(
+            config,
+            {
+                "type": "worker_self_claim_released",
+                "task_id": task_id,
+                "message": f"{display_agent} released completed worker slot before self-claim.",
+                "worker_run_id": worker.get("run_id"),
+                "queue_event_id": worker.get("queue_event_id"),
+            },
+        )
+    return changed
+
+
 def underutilization_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings = dict(config.get("underutilization_dispatch", {}) or {})
     settings.setdefault("enabled", True)
@@ -6008,6 +6067,8 @@ def dispatch_ready_tasks(
     config: dict[str, Any],
     state: dict[str, Any],
     provider_report: dict[str, Any] | None = None,
+    agent_ids_override: list[str] | None = None,
+    max_dispatches_override: int | None = None,
 ) -> bool:
     settings = ready_dispatch_settings(config)
     if not settings.get("enabled", True):
@@ -6027,7 +6088,7 @@ def dispatch_ready_tasks(
     owned_statuses = [str(value).lower() for value in settings.get("owned_statuses", ["in_progress", "todo"])]
     dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
     active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
-    max_dispatches_per_tick = max(1, int(settings.get("max_dispatches_per_tick", 4)))
+    max_dispatches_per_tick = max(1, int(max_dispatches_override or settings.get("max_dispatches_per_tick", 4)))
 
     _active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
     pending_agents, pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
@@ -6058,8 +6119,12 @@ def dispatch_ready_tasks(
         task_map = {task.get(task_id_field): task for task in tasks}
 
     dispatches = 0
-    weighted_dispatch_enabled = bool(dispatch_weight_mapping(settings))
-    agent_sequence = weighted_dispatch_agent_ids(config, settings)
+    weighted_dispatch_enabled = bool(dispatch_weight_mapping(settings)) and not agent_ids_override
+    agent_sequence = (
+        [normalize_agent_id(agent_id) for agent_id in agent_ids_override if normalize_agent_id(agent_id)]
+        if agent_ids_override
+        else weighted_dispatch_agent_ids(config, settings)
+    )
     dispatch_state = state.setdefault("ready_dispatcher", {})
     try:
         dispatch_cursor = int(dispatch_state.get("weighted_cursor", 0))
@@ -6296,7 +6361,7 @@ def dispatch_ready_tasks(
                 if dispatches >= max_dispatches_per_tick:
                     break
 
-    if agent_sequence and considered_agents:
+    if agent_sequence and considered_agents and not agent_ids_override:
         dispatch_state["weighted_cursor"] = (dispatch_cursor + considered_agents) % len(agent_sequence)
     return changed
 
@@ -6753,11 +6818,66 @@ def run_supervisor_cycle(
         return False
 
 
+def claim_next_task_for_agent(
+    config: dict[str, Any],
+    *,
+    agent_name: str,
+    release_task_id: str | None = None,
+    quiet: bool = False,
+) -> bool:
+    settings = worker_self_claim_settings(config)
+    if not settings.get("enabled", False):
+        console_log("worker self-claim disabled", quiet=quiet)
+        return False
+    agent_id = normalize_agent_id(agent_name)
+    if not agent_id or agent_id not in config.get("agents", {}):
+        console_log(f"worker self-claim skipped: unknown agent {agent_name}", quiet=quiet)
+        return False
+
+    state = load_runtime_state(config)
+    planning_state = load_discussion_planning_state()
+    changed = release_completed_worker_for_claim(
+        config,
+        state,
+        agent_name=display_name_for(config, agent_id),
+        task_id=release_task_id,
+    )
+    provider_report = load_provider_report(config)
+    changed = expire_provider_dispatch_pauses(config, state) or changed
+    changed = reconcile_queue_records(config, state) or changed
+    changed = prune_event_queue(config, state) or changed
+    if not discussion_planning_is_active(planning_state):
+        changed = dispatch_ready_tasks(
+            config,
+            state,
+            provider_report=provider_report,
+            agent_ids_override=[agent_id],
+            max_dispatches_override=1,
+        ) or changed
+        changed = process_queue(config, state, provider_report) or changed
+    supervisor_state = state.setdefault("supervisor", {})
+    occupancy = compute_mode_occupancy(config, state)
+    supervisor_state["mode_occupancy"] = occupancy
+    focus_mode = str(supervisor_state.get("focus_mode") or "execution")
+    supervisor_state["mode_status"] = "active" if mode_has_activity(occupancy.get(focus_mode)) else "idle"
+    save_runtime_state(config, state)
+    refresh_dashboard_runtime_artifacts(config)
+    return changed
+
+
 def main() -> int:
     global SUPERVISOR_LOG_QUIET
     args = parse_args()
     SUPERVISOR_LOG_QUIET = args.quiet
     config = load_config(args.config)
+    if args.claim_agent:
+        claim_next_task_for_agent(
+            config,
+            agent_name=args.claim_agent,
+            release_task_id=args.release_task,
+            quiet=args.quiet,
+        )
+        return 0
     terminate_older_supervisors(config)
     atexit.register(clear_supervisor_pid, config)
     write_supervisor_pid(config)
