@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-16 14:13:42
+Last updated: 2026-05-16 15:02:12
 
 ## Objective
 
@@ -37,12 +37,12 @@ Last updated: 2026-05-16 14:13:42
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run.
+- `Claude`: execution, control-plane, governance-review; next: Codex review in progress: checking EX-002-RB artifact metadata migration diff, evidence, and focused verification.
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: Supervisor auto-started DEP-002-RB after successful dispatch.
+- `Codex`: integration, status-system, schema, acceptance; next: Implementing StrategySpec schema/model with focused contract tests; keeping changes scoped to services/research/strategy_spec and schema docs.
 - `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
-- `Claude2`: execution, control-plane, governance-review; next: Assignment created
+- `Claude2`: execution, control-plane, governance-review; next: EXP-002 implementation complete. Contract test file: services/control-plane/bff/test_exp002_bff_research_experiments_contract.py (17 tests, all pass). Commit: 7960c3c5. Covers: GET /bff/research-experiments list envelope+surface+seeded-data+field invariants+auth; GET /bff/research-experiments/{id} detail envelope+surface+completed/running/failed status+analysis_links+404+auth; POST /api/v1/experiments/launch → BFF round-trip. Please review and approve.
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check.
 
 ## Delivery Layers
@@ -52,24 +52,18 @@ Last updated: 2026-05-16 14:13:42
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | Gemini2 | blocked | - | - |
-| `RT-003` | Sprint 3 / EPIC-RUNTIME | /bff/runtimes list/detail | Codex | review_approved | - | - |
-| `DEP-001-RB` | Sprint 2 / EPIC-GOV-DEPLOY | DeploymentPlan contract + service (rebaseline) | Codex | review_approved | - | - |
-| `DEP-002-RB` | Sprint 2 / EPIC-GOV-DEPLOY | DeploymentPlan stage planner (rebaseline) | Codex | in_progress | - | - |
-| `CAP-002-RB` | Sprint 2 / EPIC-GOV-DEPLOY | Pool/runtime compatibility checks (rebaseline) | Codex | review | - | - |
-| `EX-002-RB` | Sprint 3 / EPIC-RUNTIME | Loader metadata migration promotion_state -> artifact_state + deployment_stage (rebaseline) | Codex | todo | - | - |
-| `TEL-001-RB` | Sprint 4 / EPIC-TELEMETRY | TelemetryEvent canonical schema (rebaseline) | Codex | review | - | - |
-| `TEL-002-RB` | Sprint 4 / EPIC-TELEMETRY | RuntimeHeartbeat ingest endpoint (rebaseline) | Codex | todo | - | - |
-| `INC-001-RB` | Sprint 4 / EPIC-TELEMETRY | /bff/incidents (IncidentCase) (rebaseline) | Claude2 | todo | - | - |
-| `SRC-001` | Sprint 5 / EPIC-RESEARCH | SourceRecord schema + ingest API | Claude2 | todo | - | - |
-| `SRC-002` | Sprint 5 / EPIC-RESEARCH | paper ingest adapter skeleton | Claude | todo | - | - |
-| `SRC-003` | Sprint 5 / EPIC-RESEARCH | repo allowlist ingest skeleton | Claude | todo | - | - |
-| `SRC-004` | Sprint 5 / EPIC-RESEARCH | StrategySpecSeed builder | Claude | todo | - | - |
-| `STRAT-001` | Sprint 5 / EPIC-RESEARCH | StrategySpec schema / model | Claude | todo | - | - |
-| `STRAT-002` | Sprint 5 / EPIC-RESEARCH | StrategySpec registry endpoints | Claude | todo | - | - |
+| `EX-002-RB` | Sprint 3 / EPIC-RUNTIME | Loader metadata migration promotion_state -> artifact_state + deployment_stage (rebaseline) | Claude | review | - | - |
+| `TEL-002-RB` | Sprint 4 / EPIC-TELEMETRY | RuntimeHeartbeat ingest endpoint (rebaseline) | Codex | review_approved | - | - |
+| `SRC-001` | Sprint 5 / EPIC-RESEARCH | SourceRecord schema + ingest API | Claude | todo | - | - |
+| `SRC-002` | Sprint 5 / EPIC-RESEARCH | paper ingest adapter skeleton | Codex | review | - | - |
+| `SRC-003` | Sprint 5 / EPIC-RESEARCH | repo allowlist ingest skeleton | Codex | review | - | - |
+| `SRC-004` | Sprint 5 / EPIC-RESEARCH | StrategySpecSeed builder | Codex | in_progress | - | - |
+| `STRAT-001` | Sprint 5 / EPIC-RESEARCH | StrategySpec schema / model | Codex | in_progress | - | - |
+| `STRAT-002` | Sprint 5 / EPIC-RESEARCH | StrategySpec registry endpoints | Codex | in_progress | - | - |
 | `STRAT-003` | Sprint 5 / EPIC-RESEARCH | Source -> StrategySpec conversion service | Claude | todo | - | - |
 | `STRAT-004` | Sprint 5 / EPIC-RESEARCH | evidence / code refs lineage | Claude | todo | - | - |
 | `EXP-001` | Sprint 5 / EPIC-RESEARCH | ExperimentTask / ExperimentRun schema | Claude | todo | - | - |
-| `EXP-002` | Sprint 5 / EPIC-RESEARCH | /bff/research-experiments list/detail | Claude2 | todo | - | - |
+| `EXP-002` | Sprint 5 / EPIC-RESEARCH | /bff/research-experiments list/detail | Claude2 | review | - | - |
 | `EXP-005` | Sprint 5 / EPIC-RESEARCH | ExperimentRun -> Artifact registry writeback | Claude | todo | - | - |
 | `PER-002` | Sprint 5 / EPIC-RESEARCH | skills/tools/capabilities read API | Claude2 | todo | - | - |
 | `TRN-001` | Sprint 5 / EPIC-RESEARCH | TeachingSession / TeachingEvent schema | Claude | todo | - | - |
@@ -97,11 +91,17 @@ Last updated: 2026-05-16 14:13:42
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-16 14:13:28
-- Terminal tasks archived: `1123` total, `1105` completed, `18` superseded
+- Archive updated: 2026-05-16 14:51:26
+- Terminal tasks archived: `1129` total, `1111` completed, `18` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `INC-001-RB` | Sprint 4 / EPIC-TELEMETRY | Claude2 reclaiming as original task owner for review_approved closeout; Codex implementation reviewed and approved. | Claude2 | completed | 2026-05-16 14:51:26 | `ai-task-archive/tasks/INC-001-RB.json` |
+| `DEP-002-RB` | Sprint 2 / EPIC-GOV-DEPLOY | DeploymentPlan stage planner (rebaseline) | Codex | completed | 2026-05-16 14:38:02 | `ai-task-archive/tasks/DEP-002-RB.json` |
+| `TEL-001-RB` | Sprint 4 / EPIC-TELEMETRY | TelemetryEvent canonical schema (rebaseline) | Codex | completed | 2026-05-16 14:37:31 | `ai-task-archive/tasks/TEL-001-RB.json` |
+| `CAP-002-RB` | Sprint 2 / EPIC-GOV-DEPLOY | Pool/runtime compatibility checks (rebaseline) | Codex | completed | 2026-05-16 14:30:13 | `ai-task-archive/tasks/CAP-002-RB.json` |
+| `DEP-001-RB` | Sprint 2 / EPIC-GOV-DEPLOY | DeploymentPlan contract + service (rebaseline) | Codex | completed | 2026-05-16 14:27:01 | `ai-task-archive/tasks/DEP-001-RB.json` |
+| `RT-003` | Sprint 3 / EPIC-RUNTIME | /bff/runtimes list/detail | Codex | completed | 2026-05-16 14:19:33 | `ai-task-archive/tasks/RT-003.json` |
 | `QLIB-001` | Sprint 5 / EPIC-RESEARCH | Qlib adapter skeleton | Claude2 | completed | 2026-05-16 14:13:28 | `ai-task-archive/tasks/QLIB-001.json` |
 | `DEP-003` | Sprint 2 / EPIC-GOV-DEPLOY | deployment projection read model | Claude2 | completed | 2026-05-16 14:03:32 | `ai-task-archive/tasks/DEP-003.json` |
 | `ALT-001` | Sprint 4 / EPIC-TELEMETRY | /bff/alerts endpoint | Codex | completed | 2026-05-16 14:02:57 | `ai-task-archive/tasks/ALT-001.json` |
@@ -116,36 +116,24 @@ Last updated: 2026-05-16 14:13:42
 | `REC-001` | Sprint 4 / EPIC-TELEMETRY | Basic reconciliation record | Codex | completed | 2026-05-16 13:17:28 | `ai-task-archive/tasks/REC-001.json` |
 | `RT-001` | Sprint 3 / EPIC-RUNTIME | RuntimeBinding schema | Claude | completed | 2026-05-16 09:53:42 | `ai-task-archive/tasks/RT-001.json` |
 | `P0-APP-001` | Sprint 1 / EPIC-BFF-P0 | approval decide endpoint /bff/approvals/{id}/decide | Claude | completed | 2026-05-16 09:30:31 | `ai-task-archive/tasks/P0-APP-001.json` |
-| `VBT-001` | Sprint 5 / EPIC-RESEARCH | vectorbt rapid eval adapter | Gemini2 | completed | 2026-05-16 09:29:41 | `ai-task-archive/tasks/VBT-001.json` |
-| `P0-CAP-001` | Sprint 1 / EPIC-BFF-P0 | /bff/capital-pools list/detail | Claude | completed | 2026-05-16 08:38:13 | `ai-task-archive/tasks/P0-CAP-001.json` |
-| `P0-BFF-003` | Sprint 1 / EPIC-BFF-P0 | POST /bff/logout | Claude | completed | 2026-05-16 08:33:02 | `ai-task-archive/tasks/P0-BFF-003.json` |
-| `SRC-005` | Sprint 5 / EPIC-RESEARCH | OpenClaw cron / ingest job trigger | Gemini2 | completed | 2026-05-16 08:31:14 | `ai-task-archive/tasks/SRC-005.json` |
-| `P0-BFF-002` | Sprint 1 / EPIC-BFF-P0 | POST /bff/auth/refresh | Claude2 | completed | 2026-05-16 08:27:00 | `ai-task-archive/tasks/P0-BFF-002.json` |
-| `EX-003` | Sprint 3 / EPIC-RUNTIME | LEAN algorithm-level smoke test | Gemini2 | completed | 2026-05-16 08:25:37 | `ai-task-archive/tasks/EX-003.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | - | Gemini2 | Gemini | blocked | - | 2026-05-15 23:15:06 | Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check. |
-| `RT-003` | Sprint 3 / EPIC-RUNTIME | /bff/runtimes list/detail | - | Codex | Claude | review_approved | - | 2026-05-16 14:09:47 | Supervisor resumed RT-003 for finalize after successful dispatch. |
-| `DEP-001-RB` | Sprint 2 / EPIC-GOV-DEPLOY | DeploymentPlan contract + service (rebaseline) | - | Codex | Claude | review_approved | - | 2026-05-16 14:13:42 | Review approved: DeploymentPlan rebaseline verified. All 4 stage transitions correct, both guard tests correct. 6 DEP-001-RB tests pass, 26 governance unittest pass. Returning to Codex for finalization. |
-| `DEP-002-RB` | Sprint 2 / EPIC-GOV-DEPLOY | DeploymentPlan stage planner (rebaseline) | - | Codex | Claude2 | in_progress | - | 2026-05-16 14:10:35 | Supervisor auto-started DEP-002-RB after successful dispatch. |
-| `CAP-002-RB` | Sprint 2 / EPIC-GOV-DEPLOY | Pool/runtime compatibility checks (rebaseline) | - | Codex | Claude | review | - | 2026-05-16 14:10:33 | Implemented pool/runtime compatibility preflight: POST /api/deployment/plans/compatibility-check, read-only PoolRuntimeCompatibilityService, response models, docs, tests, and support/evidence/CAP-002-RB/verification.md. Verification: python3 -m py_compile services/deployment/models.py services/deployment/service.py services/deployment/test_service.py; python3 -m pytest -q services/deployment/test_service.py (21 passed). |
-| `EX-002-RB` | Sprint 3 / EPIC-RUNTIME | Loader metadata migration promotion_state -> artifact_state + deployment_stage (rebaseline) | - | Codex | Claude | todo | - | 2026-05-16 14:03:50 | Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Codex starts a fresh run. |
-| `TEL-001-RB` | Sprint 4 / EPIC-TELEMETRY | TelemetryEvent canonical schema (rebaseline) | - | Codex | Claude | review | - | 2026-05-16 14:08:15 | TEL-001-RB ready for review. Added services/telemetry/test_tel001_rebaseline_schema.py covering draft-07 schema validity, required RuntimeBinding evidence fields, required runtime/action/event surface, and every declared event_type through TelemetryIngestService with authoritative binding evidence. Evidence note: support/evidence/TEL-001-RB/README.md. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services.telemetry.test_tel001_rebaseline_schema; PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services.telemetry.test_paper_runtime_ingest_contract services.telemetry.test_paper_telemetry_packet; cd services/telemetry && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest test_capture -v; cd services/telemetry && PYTHONDONTWRITEBYTECODE=1 python3 smoke_test.py. |
-| `TEL-002-RB` | Sprint 4 / EPIC-TELEMETRY | RuntimeHeartbeat ingest endpoint (rebaseline) | - | Codex | Claude | todo | - | 2026-05-16 14:04:09 | Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Codex starts a fresh run. |
-| `INC-001-RB` | Sprint 4 / EPIC-TELEMETRY | /bff/incidents (IncidentCase) (rebaseline) | - | Claude2 | Codex | todo | - | 2026-05-16 07:25:02 | Assignment created |
-| `SRC-001` | Sprint 5 / EPIC-RESEARCH | SourceRecord schema + ingest API | - | Claude2 | Claude | todo | - | 2026-05-16 09:29:18 | Auto-reassigned ownership from Codex2 to Claude2 after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude2 starts a fresh run. |
-| `SRC-002` | Sprint 5 / EPIC-RESEARCH | paper ingest adapter skeleton | - | Claude | Claude2 | todo | - | 2026-05-16 09:11:12 | Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
-| `SRC-003` | Sprint 5 / EPIC-RESEARCH | repo allowlist ingest skeleton | - | Claude | Claude2 | todo | - | 2026-05-16 09:11:26 | Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
-| `SRC-004` | Sprint 5 / EPIC-RESEARCH | StrategySpecSeed builder | - | Claude | Claude2 | todo | - | 2026-05-16 09:11:30 | Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
-| `STRAT-001` | Sprint 5 / EPIC-RESEARCH | StrategySpec schema / model | - | Claude | Claude2 | todo | - | 2026-05-16 08:36:30 | Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
-| `STRAT-002` | Sprint 5 / EPIC-RESEARCH | StrategySpec registry endpoints | - | Claude | Claude2 | todo | - | 2026-05-16 08:00:04 | Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
+| `EX-002-RB` | Sprint 3 / EPIC-RUNTIME | Loader metadata migration promotion_state -> artifact_state + deployment_stage (rebaseline) | - | Claude | Codex | review | - | 2026-05-16 14:59:27 | Codex review in progress: checking EX-002-RB artifact metadata migration diff, evidence, and focused verification. |
+| `TEL-002-RB` | Sprint 4 / EPIC-TELEMETRY | RuntimeHeartbeat ingest endpoint (rebaseline) | - | Codex | Claude | review_approved | - | 2026-05-16 15:01:02 | Review approved: all 24 telemetry tests pass; heartbeat adapter, binding guard, projection fields, and staleness handling are correct. Returning to Codex for finalization. |
+| `SRC-001` | Sprint 5 / EPIC-RESEARCH | SourceRecord schema + ingest API | - | Claude | Codex | todo | - | 2026-05-16 14:51:28 | Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
+| `SRC-002` | Sprint 5 / EPIC-RESEARCH | paper ingest adapter skeleton | - | Codex | Claude | review | - | 2026-05-16 14:55:59 | SRC-002 ready for review. Implemented OpenAlex paper ingest adapter skeleton: bounded connector/fetch policy, pure OpenAlex work-to-SourceRecord normalization preserving DOI/authors/publication/event/available time/license/access/governance metadata, execution-route denial, provider catalog export, and source connector doc note. Evidence: support/evidence/SRC-002/README.md. Verification: py_compile paper/examples/__init__; pytest test_paper_ingest_adapter.py 3 passed; pytest connector_framework + registry provider example 4 passed; pytest services/source_ingestion 68 passed. Note: __init__.py/examples.py also contain adjacent SRC-003 repo allowlist hunks already present; SRC-002-owned hunks are OpenAlexPaperIngestAdapter export/catalog swap. |
+| `SRC-003` | Sprint 5 / EPIC-RESEARCH | repo allowlist ingest skeleton | - | Codex | Claude | review | - | 2026-05-16 14:50:37 | Repo allowlist ingest skeleton ready for review. Added RepoAllowlistProvider/Entry, exposed provider catalog example, and covered allowlist/static-record fetch behavior plus URL/path/duplicate rejection. Verification: python3 -m py_compile services/source_ingestion/connectors/repo_allowlist.py services/source_ingestion/connectors/examples.py services/source_ingestion/connectors/__init__.py; python3 -m pytest services/source_ingestion/tests/test_repo_allowlist.py -q; python3 -m pytest services/source_ingestion/tests -q. |
+| `SRC-004` | Sprint 5 / EPIC-RESEARCH | StrategySpecSeed builder | - | Codex | Claude | in_progress | - | 2026-05-16 14:59:18 | Picked up SRC-004 StrategySpecSeed builder implementation in the background worker. |
+| `STRAT-001` | Sprint 5 / EPIC-RESEARCH | StrategySpec schema / model | - | Codex | Claude | in_progress | - | 2026-05-16 15:01:04 | Implementing StrategySpec schema/model with focused contract tests; keeping changes scoped to services/research/strategy_spec and schema docs. |
+| `STRAT-002` | Sprint 5 / EPIC-RESEARCH | StrategySpec registry endpoints | - | Codex | Claude | in_progress | - | 2026-05-16 15:00:00 | Supervisor auto-started STRAT-002 after successful dispatch. |
 | `STRAT-003` | Sprint 5 / EPIC-RESEARCH | Source -> StrategySpec conversion service | - | Claude | Claude2 | todo | - | 2026-05-16 09:29:33 | Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
 | `STRAT-004` | Sprint 5 / EPIC-RESEARCH | evidence / code refs lineage | - | Claude | Copilot | todo | - | 2026-05-16 08:53:41 | Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
 | `EXP-001` | Sprint 5 / EPIC-RESEARCH | ExperimentTask / ExperimentRun schema | - | Claude | Claude2 | todo | - | 2026-05-16 08:53:53 | Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
-| `EXP-002` | Sprint 5 / EPIC-RESEARCH | /bff/research-experiments list/detail | - | Claude2 | Codex2 | todo | - | 2026-05-16 07:29:06 | Assignment created |
+| `EXP-002` | Sprint 5 / EPIC-RESEARCH | /bff/research-experiments list/detail | - | Claude2 | Codex2 | review | - | 2026-05-16 15:01:46 | EXP-002 implementation complete. Contract test file: services/control-plane/bff/test_exp002_bff_research_experiments_contract.py (17 tests, all pass). Commit: 7960c3c5. Covers: GET /bff/research-experiments list envelope+surface+seeded-data+field invariants+auth; GET /bff/research-experiments/{id} detail envelope+surface+completed/running/failed status+analysis_links+404+auth; POST /api/v1/experiments/launch → BFF round-trip. Please review and approve. |
 | `EXP-005` | Sprint 5 / EPIC-RESEARCH | ExperimentRun -> Artifact registry writeback | - | Claude | Claude2 | todo | - | 2026-05-16 08:18:44 | Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
 | `PER-002` | Sprint 5 / EPIC-RESEARCH | skills/tools/capabilities read API | - | Claude2 | Codex | todo | - | 2026-05-16 07:30:18 | Assignment created |
 | `TRN-001` | Sprint 5 / EPIC-RESEARCH | TeachingSession / TeachingEvent schema | - | Claude | Claude2 | todo | - | 2026-05-16 08:54:05 | Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
@@ -170,10 +158,11 @@ Last updated: 2026-05-16 14:13:42
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
 | `EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE` | Gemini | Codex2 | Acceptance packet and dependency map for EP5-BROKER-TW-002 prepared at support/sidecars/EP5-BROKER-TW-002/EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE.md. Ready for review and incorporation into parent closeout. | pending | 2026-05-12 22:50:00 |
-| `RT-003` | Claude | Codex | Review approved: /bff/runtimes list/detail canonical read surface verified. Dual ID lookup, filter semantics, surface metadata, and 503 unavailable behavior all correct. 6 tests pass. Returning to Codex for finalization. | pending | 2026-05-16 14:05:17 |
-| `TEL-001-RB` | Codex | Claude | TEL-001-RB ready for review. Added services/telemetry/test_tel001_rebaseline_schema.py covering draft-07 schema validity, required RuntimeBinding evidence fields, required runtime/action/event surface, and every declared event_type through TelemetryIngestService with authoritative binding evidence. Evidence note: support/evidence/TEL-001-RB/README.md. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services.telemetry.test_tel001_rebaseline_schema; PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services.telemetry.test_paper_runtime_ingest_contract services.telemetry.test_paper_telemetry_packet; cd services/telemetry && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest test_capture -v; cd services/telemetry && PYTHONDONTWRITEBYTECODE=1 python3 smoke_test.py. | pending | 2026-05-16 14:08:15 |
-| `CAP-002-RB` | Codex | Claude | Implemented pool/runtime compatibility preflight: POST /api/deployment/plans/compatibility-check, read-only PoolRuntimeCompatibilityService, response models, docs, tests, and support/evidence/CAP-002-RB/verification.md. Verification: python3 -m py_compile services/deployment/models.py services/deployment/service.py services/deployment/test_service.py; python3 -m pytest -q services/deployment/test_service.py (21 passed). | pending | 2026-05-16 14:10:33 |
-| `DEP-001-RB` | Claude | Codex | Review approved: DeploymentPlan rebaseline verified. All 4 stage transitions correct, both guard tests correct. 6 DEP-001-RB tests pass, 26 governance unittest pass. Returning to Codex for finalization. | pending | 2026-05-16 14:13:42 |
+| `EX-002-RB` | Claude | Codex | EX-002-RB ready for review. Migration: PromotionGate.build_execution_projection() now emits artifact_state+deployment_stage (with promotion_state retained during transition). ArtifactLoader._validate_metadata() reads deployment_stage first (fallback promotion_state). Schema: artifact_state+deployment_stage added as optional properties; allOf condition migrated to deployment_stage==live. 6 new migration tests + original 9 pass (15 total). 65 registry tests pass. Evidence: support/evidence/EX-002-RB/README.md. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/execution/test_artifact_loader.py -v; PYTHONDONTWRITEBYTECODE=1 python3 services/execution/smoke_test_artifact_loader.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/registry/ -v | pending | 2026-05-16 14:46:03 |
+| `SRC-003` | Codex | Claude | Repo allowlist ingest skeleton ready for review. Added RepoAllowlistProvider/Entry, exposed provider catalog example, and covered allowlist/static-record fetch behavior plus URL/path/duplicate rejection. Verification: python3 -m py_compile services/source_ingestion/connectors/repo_allowlist.py services/source_ingestion/connectors/examples.py services/source_ingestion/connectors/__init__.py; python3 -m pytest services/source_ingestion/tests/test_repo_allowlist.py -q; python3 -m pytest services/source_ingestion/tests -q. | pending | 2026-05-16 14:50:37 |
+| `SRC-002` | Codex | Claude | SRC-002 ready for review. Implemented OpenAlex paper ingest adapter skeleton: bounded connector/fetch policy, pure OpenAlex work-to-SourceRecord normalization preserving DOI/authors/publication/event/available time/license/access/governance metadata, execution-route denial, provider catalog export, and source connector doc note. Evidence: support/evidence/SRC-002/README.md. Verification: py_compile paper/examples/__init__; pytest test_paper_ingest_adapter.py 3 passed; pytest connector_framework + registry provider example 4 passed; pytest services/source_ingestion 68 passed. Note: __init__.py/examples.py also contain adjacent SRC-003 repo allowlist hunks already present; SRC-002-owned hunks are OpenAlexPaperIngestAdapter export/catalog swap. | pending | 2026-05-16 14:55:59 |
+| `TEL-002-RB` | Claude | Codex | Review approved: all 24 telemetry tests pass; heartbeat adapter, binding guard, projection fields, and staleness handling are correct. Returning to Codex for finalization. | pending | 2026-05-16 15:01:02 |
+| `EXP-002` | Claude2 | Codex2 | EXP-002 implementation complete. Contract test file: services/control-plane/bff/test_exp002_bff_research_experiments_contract.py (17 tests, all pass). Commit: 7960c3c5. Covers: GET /bff/research-experiments list envelope+surface+seeded-data+field invariants+auth; GET /bff/research-experiments/{id} detail envelope+surface+completed/running/failed status+analysis_links+404+auth; POST /api/v1/experiments/launch → BFF round-trip. Please review and approve. | pending | 2026-05-16 15:01:46 |
 
 ## Blockers
 
@@ -185,8 +174,7 @@ Last updated: 2026-05-16 14:13:42
 
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
-| `RT-003` | Claude | 審查通過：GET /bff/runtimes list 正確過濾 status/deployment_stage 並輸出 surface metadata；GET /bff/runtimes/{runtime_id} detail 正確雙路徑查找（runtime_id→binding_id fallback）並在 store unavailable 時返回 503 DOWNSTREAM_UNAVAILABLE；_project_canonical_runtime_binding 欄位映射正確，純讀取無寫入操作；6 個測試全部通過（runtimes contract 3個 + governance runtime envelope 1個 + consol-016 smoke 2個)<br>跨任務附註：execute-plans/governance 套件中 incident fixture ordering 和 capital-pool missing-store 的既有失敗為本任務前既存問題，不影響本次審查通過 | support/reviews/RT-003-review-claude.md |
-| `DEP-001-RB` | Claude | 審查通過：DeploymentPlan 四個階段轉換（none→paper activate / paper→canary promote / canary→live promote / live→frozen freeze）均正確驗證 runtime_action、transition_type 及 scale 欄位；兩個 guard 測試（artifact_state=candidate → 422、approval_decision.decision_state=under_review → 422）行為正確；evidence 說明清楚且範圍限縮於新增測試檔與證據包；governance 26 個單元測試全過<br>跨任務附註：test_service.py 的測試數目從 evidence 的 24 combined 增加到 reviewer 環境的 27 combined，原因是 DEP-003 worktree 已預先在 test_service.py 加入 3 個 projection 測試；evidence 已明確說明此 worktree 污染情況，不影響本次審查 | support/reviews/DEP-001-RB-review-claude.md |
+| `TEL-002-RB` | Claude | 審查通過。heartbeat adapter 正確轉換 SD-09 RuntimeHeartbeat → TelemetryEvent；binding fail-closed；projection 保留 connectivity/broker/lag/health 欄位；24 個測試全通過。 | support/evidence/TEL-002-RB/review-claude.md |
 
 ## Lovable Coordination
 
@@ -257,23 +245,23 @@ Last updated: 2026-05-16 14:13:42
 
 ## Latest Checkpoints
 
-- 2026-05-16 14:12:52 Orchestrator: PostToolUse: Bash
-- 2026-05-16 14:12:56 Orchestrator: PreToolUse: Edit
-- 2026-05-16 14:12:58 Orchestrator: PostToolUse: Edit
-- 2026-05-16 14:12:59 Orchestrator: PreToolUse: Edit
-- 2026-05-16 14:13:00 Orchestrator: PostToolUse: Edit
-- 2026-05-16 14:13:02 Orchestrator: PreToolUse: Bash
-- 2026-05-16 14:13:03 Orchestrator: PostToolUse: Bash
-- 2026-05-16 14:13:04 Orchestrator: PreToolUse: Edit
-- 2026-05-16 14:13:05 Orchestrator: PostToolUse: Edit
-- 2026-05-16 14:13:10 Orchestrator: PreToolUse: Bash
-- 2026-05-16 14:13:11 Orchestrator: PostToolUse: Bash
-- 2026-05-16 14:13:19 Orchestrator: PreToolUse: Bash
-- 2026-05-16 14:13:22 Orchestrator: PostToolUse: Bash
-- 2026-05-16 14:13:28 Orchestrator: PreToolUse: Bash
-- 2026-05-16 14:13:28 Claude2: `QLIB-001` Closeout complete: 33 unit tests pass, smoke assertions OK, docs corrected (stale Copilot reviewer replaced with Claude, test count updated to 33). Task-scoped commit 6f2f2d4f staged to bff-luv-fe-006-dev-deploy.
-- 2026-05-16 14:13:31 Orchestrator: PreToolUse: Write
-- 2026-05-16 14:13:31 Orchestrator: PostToolUse: Write
-- 2026-05-16 14:13:40 Orchestrator: PostToolUse: Bash
-- 2026-05-16 14:13:41 Orchestrator: PreToolUse: Bash
-- 2026-05-16 14:13:42 Claude: `DEP-001-RB` Review approved: DeploymentPlan rebaseline verified. All 4 stage transitions correct, both guard tests correct. 6 DEP-001-RB tests pass, 26 governance unittest pass. Returning to Codex for finalization.
+- 2026-05-16 15:00:53 Orchestrator: PostToolUse: Bash
+- 2026-05-16 15:00:53 Orchestrator: PreToolUse: Write
+- 2026-05-16 15:00:53 Orchestrator: PostToolUse: Write
+- 2026-05-16 15:00:58 Orchestrator: PreToolUse: Bash
+- 2026-05-16 15:01:00 Orchestrator: PreToolUse: Bash
+- 2026-05-16 15:01:01 Orchestrator: PostToolUse: Bash
+- 2026-05-16 15:01:02 Claude: `TEL-002-RB` Review approved: all 24 telemetry tests pass; heartbeat adapter, binding guard, projection fields, and staleness handling are correct. Returning to Codex for finalization.
+- 2026-05-16 15:01:04 Codex: `STRAT-001` Implementing StrategySpec schema/model with focused contract tests; keeping changes scoped to services/research/strategy_spec and schema docs.
+- 2026-05-16 15:01:15 Orchestrator: PreToolUse: Bash
+- 2026-05-16 15:01:17 Claude2: `EXP-002` All 17 EXP-002 contract tests pass: list shape, detail shape, surface status, seeded-data presence, field invariants, 404, auth gate, launch round-trip. Contract test committed at 7960c3c5. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_exp002_bff_research_experiments_contract.py -v → 17 passed.
+- 2026-05-16 15:01:28 Orchestrator: PostToolUse: Bash
+- 2026-05-16 15:01:34 Orchestrator: PreToolUse: Bash
+- 2026-05-16 15:01:36 Orchestrator: PostToolUse: Bash
+- 2026-05-16 15:01:40 Orchestrator: PostToolUse: Bash
+- 2026-05-16 15:01:41 Orchestrator: Stop: Stop
+- 2026-05-16 15:01:42 Orchestrator: SessionEnd: SessionEnd
+- 2026-05-16 15:01:45 Orchestrator: PreToolUse: Bash
+- 2026-05-16 15:01:46 Claude2: `EXP-002` Handoff to Codex2: EXP-002 implementation complete. Contract test file: services/control-plane/bff/test_exp002_bff_research_experiments_contract.py (17 tests, all pass). Commit: 7960c3c5. Covers: GET /bff/research-experiments list envelope+surface+seeded-data+field invariants+auth; GET /bff/research-experiments/{id} detail envelope+surface+completed/running/failed status+analysis_links+404+auth; POST /api/v1/experiments/launch → BFF round-trip. Please review and approve.
+- 2026-05-16 15:02:08 Orchestrator: PostToolUse: Bash
+- 2026-05-16 15:02:12 Orchestrator: PreToolUse: Bash
