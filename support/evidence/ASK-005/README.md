@@ -28,15 +28,16 @@ Implement SSE event publishing for the approval and ask channels when BFF mutati
 
 ### services/control-plane/bff/test_ask005_sse_event_publishing_contract.py
 
-9 contract tests covering:
+10 contract tests covering:
 - `test_create_ask_session_publishes_ask_session_started`
 - `test_create_ask_session_idempotency_replay_does_not_double_publish`
 - `test_bff_approvals_decide_approve_publishes_approval_decided`
 - `test_bff_approvals_decide_reject_publishes_approval_decided_rejected`
 - `test_bff_approvals_decide_request_revision_publishes_stage_changed`
-- `test_bff_approvals_decide_escalate_publishes_stage_changed` *(new — Codex review fix)*
-- `test_bff_approvals_decide_freeze_publishes_stage_changed` *(new — Codex review fix)*
-- `test_bff_approvals_decide_replay_does_not_double_publish` *(new — Codex review fix)*
+- `test_bff_approvals_decide_escalate_publishes_stage_changed` *(new — Codex R1 fix)*
+- `test_bff_approvals_decide_freeze_publishes_stage_changed` *(new — Codex R1 fix)*
+- `test_bff_approvals_decide_replay_does_not_double_publish` *(new — Codex R1 fix)*
+- `test_bff_approvals_decide_body_idempotency_key_rejected_does_not_publish` *(new — Codex R2 fix)*
 - `test_bff_approvals_decide_role_gate_failure_does_not_publish`
 
 ## Codex Review Fixes (commit after afaca235)
@@ -47,11 +48,15 @@ Two blocking findings addressed:
 
 2. **Approval idempotency replay de-duplication**: SSE publish is now guarded by an in-memory idempotency pre-check. The same hash computed by `_sem_command_response` is checked against `_FINAL_CONTRACT_IDEMPOTENCY` before any publish; replay calls are skipped.
 
+## Codex R2 Fix
+
+1. **Body idempotency key rejected before SSE publish**: `_reject_body_idempotency_key(payload)` is now called in `bff_approvals_decide` before the idempotency pre-check and SSE publish block. A request with a valid `Idempotency-Key` header but a forbidden body `idempotencyKey` now returns 400 without ever writing to the approval SSE buffer.
+
 ## Verification
 
 ```
 pytest services/control-plane/bff/test_ask005_sse_event_publishing_contract.py -v
-# 9 passed in 28.24s
+# 10 passed in 12.44s
 
 pytest services/control-plane/bff/test_pkt005_sse_substrate_contract.py -q
 # 14 passed
@@ -63,4 +68,4 @@ pytest services/control-plane/bff/test_bff_approvals_decide_contract.py \
 # 113 passed
 ```
 
-Total: 122 tests passing, 0 failures.
+Total: 123 tests passing, 0 failures.

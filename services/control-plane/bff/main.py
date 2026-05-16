@@ -25893,6 +25893,9 @@ async def bff_approvals_decide(
             precondition_failed="approval_id",
         )
 
+    # Reject body idempotency keys before any side effects (must mirror _sem_command_response order).
+    _reject_body_idempotency_key(payload)
+
     # Idempotency pre-check: skip SSE publish on command replay to avoid duplicate events.
     # Replicates the hash key _sem_command_response uses so the check is consistent.
     _idem_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)

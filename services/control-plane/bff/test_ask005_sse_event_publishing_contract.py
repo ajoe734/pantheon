@@ -233,6 +233,28 @@ def test_bff_approvals_decide_replay_does_not_double_publish() -> None:
 
 
 # ---------------------------------------------------------------------------
+# No approval event on body idempotency key rejection
+# ---------------------------------------------------------------------------
+
+def test_bff_approvals_decide_body_idempotency_key_rejected_does_not_publish() -> None:
+    """Body idempotencyKey must be rejected before any SSE publish (400, no event)."""
+    client = TestClient(bff_main.app)
+
+    resp = client.post(
+        f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
+        json={"decision": "approve", "idempotencyKey": "some-forbidden-key"},
+        headers={**APPROVER_HEADERS, "Idempotency-Key": _idem()},
+    )
+    assert resp.status_code == 400, resp.text
+    body = resp.json()
+    err = body.get("detail", body).get("error", {})
+    assert err.get("details", {}).get("precondition_failed") == "body_idempotency_key"
+    assert len(bff_main._sse_buffers["approval"]) == 0, (
+        "approval SSE must not be published when the request is rejected for body_idempotency_key"
+    )
+
+
+# ---------------------------------------------------------------------------
 # No approval event on role gate failure
 # ---------------------------------------------------------------------------
 
