@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "task_id": "EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-05-16T15:21:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE",
+    "title": "Review EP5-BROKER-TW-002 sidecar acceptance packet",
+    "summary_zh": "Review redirected EP5-BROKER-TW-002 sidecar acceptance packet and record whether it can be incorporated into parent closeout.",
+    "phase": "Sidecar / EP5 broker TW acceptance review",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/EP5-BROKER-TW-002/EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE.md",
+      "support/sidecars/EP5-BROKER-TW-002/EP5-BROKER-TW-002-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Broker smoke evidence mapping checked against archived artifacts",
+      "current readiness script behavior verified",
+      "review disposition recorded without changing canonical truth"
+    ],
+    "next": "Closeout finalized. Artifact committed in fdc9dbce; focused verification rerun: broker pytest 48 passed, readiness pytest 12 passed, readiness replay returned expected incomplete with broker_sandbox_smoke_consumed pass and missing shioaji_sandbox_evidence_packet/canary gate refs. Parent closeout may cite mock replay evidence only; no canonical docs changed.",
+    "last_update": "2026-05-16T15:21:18Z",
+    "task_class": "sidecar_review",
+    "helper_parent": "EP5-BROKER-TW-002",
+    "helper_kind": "acceptance_review",
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：sidecar review packet 完整且準確",
+      "mock replay smoke 證據已驗證通過（smoke status: passed, reconciliation: passed, live gate: rejected, real_capital_used: false）",
+      "follow-up-required 裁定正確：readiness script 缺 shioaji_sandbox_evidence_packet 及 canary activation gate refs，在這些補齊前不得聲稱 human-gate packet 完成",
+      "parent closeout 可引用 mock replay 證據但不得聲稱 readiness 已完整",
+      "本 sidecar 無任何 canonical 文件異動"
+    ],
+    "review_file": "support/sidecars/EP5-BROKER-TW-002/EP5-BROKER-TW-002-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T15:21:18Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "fdc9dbced6994b3fe26141a67c712ee87d05ff3f",
+      "commit_subject": "EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE: record sidecar review",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude",
+        "Verification": "python3 -m pytest services/broker/shioaji/test_adapter.py services/broker/shioaji/test_sandbox_smoke.py -q (48 passed); python3 -m pytest scripts/test_run_ep5_canary_readiness.py -q (12 passed); readiness replay returned expected status incomplete with broker_sandbox_smoke_consumed pass, shioaji_sandbox_evidence_packet_consumed fail, and canary_activation_gate_refs_present fail."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 2,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Acceptance packet and dependency map for EP5-BROKER-TW-002 prepared at support/sidecars/EP5-BROKER-TW-002/EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE.md. Ready for review and incorporation into parent closeout. Redirected from Codex2 to Codex at 2026-05-16T15:06:02Z because Codex2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-12T14:50:00Z",
+      "redirected_from": "Codex2",
+      "redirected_at": "2026-05-16T15:06:02Z",
+      "resolved_at": "2026-05-16T15:11:07Z"
+    },
+    {
+      "task_id": "EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Sidecar review packet recorded follow-up-required verdict at support/sidecars/EP5-BROKER-TW-002/EP5-BROKER-TW-002-SIDECAR-REVIEW.md. Broker smoke evidence passes as mock replay, but current readiness replay is incomplete pending shioaji_sandbox_evidence_packet and current promotion-gate refs.",
+      "status": "done",
+      "created_at": "2026-05-16T15:12:44Z",
+      "resolved_at": "2026-05-16T15:15:08Z"
+    },
+    {
+      "task_id": "EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar review packet is accurate and complete. Mock replay smoke evidence verified passing. follow-up-required verdict is correct: readiness script fails on missing shioaji_sandbox_evidence_packet and canary gate refs. Parent closeout may cite mock replay evidence but must not claim human-gate packet is complete until missing fields are supplied. No canonical document changes.",
+      "status": "done",
+      "created_at": "2026-05-16T15:15:08Z",
+      "resolved_at": "2026-05-16T15:21:18Z"
+    }
+  ],
+  "blockers": []
+}

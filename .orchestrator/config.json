@@ -814,6 +814,16 @@
       "claim_idle_work": true,
       "claim_sidecars_when_idle": true
     },
+    "worker_self_claim": {
+      "enabled": true,
+      "claim_command": "AI_NAME=$AI_NAME python3 .orchestrator/supervisor.py --claim-agent \"$AI_NAME\" --release-task \"$TASK_ID\" --quiet",
+      "release_task_statuses": [
+        "review",
+        "review_approved",
+        "done",
+        "blocked"
+      ]
+    },
     "target_workload": {
       "Claude": 10,
       "Claude2": 10,
