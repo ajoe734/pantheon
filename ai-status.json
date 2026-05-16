@@ -3,7 +3,7 @@
   "sprint": "2026-05-16-pantheon-bff-p0-foundation",
   "sprint_started_at": "2026-05-16T00:00:00Z",
   "objective": "跨進開發團隊 GAP master rebaseline (docs/04/pantheon_sa_supplemental_2026-05-15/GAP_dev_team_master_rebaseline_2026-05-15.md)，以 pantheon@master + execute-plans@main 為基準。並行 6 條 EPIC，按 P0→P3 階梯推進：(I) EPIC-BFF-P0 (P0 10 task / Sprint 1) — session trio (/bff/me, auth/refresh, logout) + /openapi.json + canonical action endpoint + approval decide + registry reads (strategies/personas/capital-pools/audit)，讓 execute-plans@main 在 VITE_BFF_FALLBACK=strict 下可 bootstrap 核心 Management flow 不再 fallback mock；(II) EPIC-GOV-DEPLOY (P1 5 task / Sprint 2) — ApprovalDecision first-class + DeploymentPlan contract/service + stage planner + deployment projection + pool/runtime compatibility 檢查；(III) EPIC-RUNTIME (P1 6 task / Sprint 3) — RuntimeBinding schema + Runtime Manager skeleton + /bff/runtimes + deploy/pause/replace/rollback actions + loader metadata migration (promotion_state → artifact_state + deployment_stage) + LEAN algorithm-level smoke；(IV) EPIC-TELEMETRY (P2 7 task / Sprint 4) — TelemetryEvent canonical schema + RuntimeHeartbeat ingest + AuditAction backend + /bff/alerts + /bff/incidents + reconciliation record + Postmortem schema/endpoint；(V) EPIC-RESEARCH (P3 28 task / Sprint 5) — Source Ingest (SRC) + StrategySpec (STRAT) + Experiment orchestrator (EXP) + Qlib/vectorbt adapters + Persona/Trainer (PER/TRN) + Imitation dataset (IMT) + Consult/Committee (ASK)；(VI) EPIC-EVOLUTION (P3 3 task / Sprint 6) — EvolutionDecision service + /bff/v5/loop-runs + /bff/v5/sentinel/findings。GAP § 10 最大阻塞：BFF live endpoints 不足 → EPIC-BFF-P0 必須最先收斂；Registry/Promotion canonical 已 implemented，DeploymentPlan/RuntimeBinding 是 governance→execution 缺口；Artifact Loader 仍寫 legacy promotion_state，EX-002 metadata migration 是 execution-side 技術債。fail-closed 鐵律延續：broker production live、capital binding live 仍禁止；canary 需 risk-owner + operator 雙閘；evidence 走 support/evidence/<epic>-<task>/。Track E 收尾備註：46 個 MGMT-* task 中 45 個 done+archive，僅 MGMT-BROKER-002 仍 blocked 等 Shioaji credentials (commit 22e5ca3b 已備 sidecar acceptance packet)；M7 canary readiness 因此未閉合；Track E objective 不在本 sprint 推進範圍，僅 carry-over 記錄。",
-  "updated_at": "2026-05-16T01:15:05Z",
+  "updated_at": "2026-05-16T01:53:42Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -94,13 +94,42 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "reviewing",
+      "status": "ready",
       "current_task_ids": [
-        "P0-APP-001"
+        "RT-003",
+        "AUD-002",
+        "ALT-001",
+        "REC-001",
+        "POST-001",
+        "GOV-001-RB",
+        "DEP-001-RB",
+        "CAP-002-RB",
+        "EX-002-RB",
+        "TEL-001-RB",
+        "TEL-002-RB",
+        "SRC-002",
+        "SRC-003",
+        "SRC-004",
+        "STRAT-001",
+        "STRAT-002",
+        "STRAT-003",
+        "STRAT-004",
+        "EXP-001",
+        "EXP-005",
+        "TRN-001",
+        "TRN-002",
+        "TRN-004",
+        "IMT-001",
+        "IMT-002",
+        "IMT-004",
+        "ASK-002",
+        "ASK-004",
+        "ASK-005",
+        "EVO-001"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 terminal: Codex usage limit reached",
-      "last_update": "2026-05-16T01:11:06Z"
+      "next": "Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run.",
+      "last_update": "2026-05-16T01:46:54Z"
     },
     {
       "name": "Gemini",
@@ -110,12 +139,10 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "finalize",
-      "current_task_ids": [
-        "QLIB-001"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/gemini-research-runtime",
-      "next": "Supervisor resumed QLIB-001 for finalize after successful dispatch.",
+      "next": "",
       "last_update": "2026-05-16T01:10:44Z"
     },
     {
@@ -130,7 +157,7 @@
       "current_task_ids": [],
       "branch": "feat/codex-collab-system",
       "next": "",
-      "last_update": "2026-05-16T01:10:22Z"
+      "last_update": "2026-05-16T01:46:20Z"
     },
     {
       "name": "Codex2",
@@ -142,11 +169,11 @@
       ],
       "status": "ready",
       "current_task_ids": [
-        "SRC-001"
+        "RT-002"
       ],
       "branch": "bff-luv-fe-006-dev-deploy",
       "next": "Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Codex2 starts a fresh run.",
-      "last_update": "2026-05-16T01:10:57Z"
+      "last_update": "2026-05-16T01:46:37Z"
     },
     {
       "name": "Copilot",
@@ -156,14 +183,11 @@
         "spec-review",
         "critique"
       ],
-      "status": "ready",
-      "current_task_ids": [
-        "STRAT-003",
-        "IMT-003"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/grok-research-critique",
-      "next": "Assignment created",
-      "last_update": "2026-05-15T23:27:52Z"
+      "next": "",
+      "last_update": "2026-05-15T23:34:00Z"
     },
     {
       "name": "Claude2",
@@ -177,11 +201,12 @@
         "P0-REG-001",
         "P0-PER-001",
         "P0-AUD-001",
-        "DEP-003"
+        "DEP-003",
+        "QLIB-001"
       ],
       "branch": "feat/claude2-execution-control",
-      "next": "Supervisor resumed P0-REG-001 for finalize after successful dispatch.",
-      "last_update": "2026-05-16T00:29:50Z"
+      "next": "Supervisor paused finalize on P0-REG-001 to free Claude2 for higher-priority review work; task remains review_approved.",
+      "last_update": "2026-05-16T01:45:20Z"
     },
     {
       "name": "Gemini2",
@@ -193,12 +218,11 @@
       ],
       "status": "blocked",
       "current_task_ids": [
-        "MGMT-BROKER-002",
-        "VBT-001"
+        "MGMT-BROKER-002"
       ],
       "branch": "bff-luv-fe-006-dev-deploy",
-      "next": "Re-review round 2: required changes still unaddressed + new worker.py regression (BacktestConfig kwargs mismatch). Must fix: worker.py short_window/long_window to strategy_params, _get_ohlcv_data() 2-bar regression (HTTP 500), metric_delta shape. Should fix: import placement, preview_quality label. All 33 adapter tests pass; training-session preview test still fails (500 != 201). Returning to Gemini2 for fix.",
-      "last_update": "2026-05-16T01:15:05Z"
+      "next": "Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check.",
+      "last_update": "2026-05-15T15:15:06Z"
     }
   ],
   "tasks": [
@@ -218,20 +242,6 @@
       "waiting_for": "Gemini"
     },
     {
-      "id": "P0-APP-001",
-      "title": "approval decide endpoint /bff/approvals/{id}/decide",
-      "summary_zh": null,
-      "phase": "Sprint 1 / EPIC-BFF-P0",
-      "owner": "Claude",
-      "reviewer": "Claude2",
-      "status": "review",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 terminal: Codex usage limit reached",
-      "last_update": "2026-05-16T01:11:06Z"
-    },
-    {
       "id": "P0-REG-001",
       "title": "/bff/strategies list/detail",
       "summary_zh": null,
@@ -242,8 +252,8 @@
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Supervisor resumed P0-REG-001 for finalize after successful dispatch.",
-      "last_update": "2026-05-16T00:29:50Z",
+      "next": "Supervisor paused finalize on P0-REG-001 to free Claude2 for higher-priority review work; task remains review_approved.",
+      "last_update": "2026-05-16T01:45:20Z",
       "review_notes_zh": [
         "審查通過：GET /bff/strategies 回傳正確 data/items/page_info/meta 信封；_project_strategy_dto DTO 欄位完整（id/name/state/risk/alpha/capitalPoolId/personaIds 等）；OBJECT_NOT_FOUND 404 行為確認；overlay merge 正確；16 個合約測試全過；execute-plans live wiring 策略相關測試全過",
         "跨任務附註：test_execute_plans_final_stub_auth_smoke_avoids_server_errors 1 項失敗係 P0-CAP-001 fail-closed 503 的副作用（/bff/capital-pools/pool_001），非 P0-REG-001 範圍，不影響本次審查通過；後續由 P0-CAP-001 owner 修正該測試"
@@ -308,32 +318,18 @@
       "review_file": "support/reviews/DEP-003-review-claude.md"
     },
     {
-      "id": "RT-001",
-      "title": "RuntimeBinding schema",
-      "summary_zh": null,
-      "phase": "Sprint 3 / EPIC-RUNTIME",
-      "owner": "Claude2",
-      "reviewer": "Claude",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Auto-reassigned ownership from Codex to Claude2 after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude2 starts a fresh run.",
-      "last_update": "2026-05-16T00:53:36Z"
-    },
-    {
       "id": "RT-002",
       "title": "Runtime Manager skeleton",
       "summary_zh": null,
       "phase": "Sprint 3 / EPIC-RUNTIME",
-      "owner": "Claude",
+      "owner": "Codex2",
       "reviewer": "Claude2",
       "status": "todo",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run.",
-      "last_update": "2026-05-16T00:53:47Z"
+      "next": "Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Codex2 starts a fresh run.",
+      "last_update": "2026-05-16T01:46:37Z"
     },
     {
       "id": "RT-003",
@@ -347,27 +343,13 @@
       "artifacts": [],
       "acceptance": [],
       "next": "Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run.",
-      "last_update": "2026-05-16T00:53:59Z"
+      "last_update": "2026-05-16T01:46:54Z"
     },
     {
       "id": "RT-004",
       "title": "Runtime deploy/pause/replace/rollback actions",
       "summary_zh": null,
       "phase": "Sprint 3 / EPIC-RUNTIME",
-      "owner": "Claude",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T23:12:00Z"
-    },
-    {
-      "id": "AUD-002",
-      "title": "AuditAction backend (write engine)",
-      "summary_zh": null,
-      "phase": "Sprint 4 / EPIC-TELEMETRY",
       "owner": "Claude2",
       "reviewer": "Claude",
       "status": "todo",
@@ -375,21 +357,35 @@
       "artifacts": [],
       "acceptance": [],
       "next": "Auto-reassigned ownership from Codex2 to Claude2 after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude2 starts a fresh run.",
-      "last_update": "2026-05-15T23:59:20Z"
+      "last_update": "2026-05-16T01:47:01Z"
+    },
+    {
+      "id": "AUD-002",
+      "title": "AuditAction backend (write engine)",
+      "summary_zh": null,
+      "phase": "Sprint 4 / EPIC-TELEMETRY",
+      "owner": "Claude",
+      "reviewer": "Claude2",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [],
+      "acceptance": [],
+      "next": "Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run.",
+      "last_update": "2026-05-16T01:47:10Z"
     },
     {
       "id": "ALT-001",
       "title": "/bff/alerts endpoint",
       "summary_zh": null,
       "phase": "Sprint 4 / EPIC-TELEMETRY",
-      "owner": "Claude2",
-      "reviewer": "Codex2",
+      "owner": "Claude",
+      "reviewer": "Claude2",
       "status": "todo",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T23:14:36Z"
+      "next": "Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run.",
+      "last_update": "2026-05-16T01:47:17Z"
     },
     {
       "id": "REC-001",
@@ -536,14 +532,14 @@
       "title": "SourceRecord schema + ingest API",
       "summary_zh": null,
       "phase": "Sprint 5 / EPIC-RESEARCH",
-      "owner": "Codex2",
+      "owner": "Claude2",
       "reviewer": "Claude",
       "status": "todo",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Codex2 starts a fresh run.",
-      "last_update": "2026-05-16T01:10:57Z"
+      "next": "Auto-reassigned ownership from Codex2 to Claude2 after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude2 starts a fresh run.",
+      "last_update": "2026-05-16T01:29:18Z"
     },
     {
       "id": "SRC-002",
@@ -620,14 +616,14 @@
       "title": "Source -> StrategySpec conversion service",
       "summary_zh": null,
       "phase": "Sprint 5 / EPIC-RESEARCH",
-      "owner": "Copilot",
-      "reviewer": "Codex",
+      "owner": "Claude",
+      "reviewer": "Claude2",
       "status": "todo",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T23:27:52Z"
+      "next": "Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run.",
+      "last_update": "2026-05-16T01:29:33Z"
     },
     {
       "id": "STRAT-004",
@@ -690,33 +686,19 @@
       "title": "Qlib adapter skeleton",
       "summary_zh": null,
       "phase": "Sprint 5 / EPIC-RESEARCH",
-      "owner": "Gemini",
+      "owner": "Claude2",
       "reviewer": "Claude",
       "status": "review_approved",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Supervisor resumed QLIB-001 for finalize after successful dispatch.",
-      "last_update": "2026-05-16T01:10:44Z",
+      "next": "Auto-reassigned ownership from Gemini to Claude2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "last_update": "2026-05-16T01:22:13Z",
       "review_notes_zh": [
         "審查通過：GovernedQlibDataAdapter 正確執行 OHLCV + source_dataset_refs 治理邊界；33 個單元測試在 Reviewer 環境全過；smoke test assertions OK；artifact_state=draft、deployment_stage=none、registry_write_authority=registry_service_only 語義全正確；ActivationReadyGate 環境變數門控正確（worker exitcode=2 已驗）；preflight 模組無探針時 fail-closed",
         "跨任務附註：integrations/qlib/integration.md 仍顯示 Reviewer: Copilot 為 reassignment 前遺留，不影響本次審查通過"
       ],
       "review_file": "support/reviews/QLIB-001-review-claude.md"
-    },
-    {
-      "id": "VBT-001",
-      "title": "vectorbt rapid eval adapter",
-      "summary_zh": null,
-      "phase": "Sprint 5 / EPIC-RESEARCH",
-      "owner": "Gemini2",
-      "reviewer": "Claude",
-      "status": "in_progress",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Re-review round 2: required changes still unaddressed + new worker.py regression (BacktestConfig kwargs mismatch). Must fix: worker.py short_window/long_window to strategy_params, _get_ohlcv_data() 2-bar regression (HTTP 500), metric_delta shape. Should fix: import placement, preview_quality label. All 33 adapter tests pass; training-session preview test still fails (500 != 201). Returning to Gemini2 for fix.",
-      "last_update": "2026-05-16T01:15:05Z"
     },
     {
       "id": "PER-002",
@@ -821,14 +803,14 @@
       "title": "imitation dataset builder skeleton",
       "summary_zh": null,
       "phase": "Sprint 5 / EPIC-RESEARCH",
-      "owner": "Copilot",
-      "reviewer": "Codex2",
+      "owner": "Claude2",
+      "reviewer": "Claude",
       "status": "todo",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T23:34:00Z"
+      "next": "Auto-reassigned ownership from Codex2 to Claude2 after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude2 starts a fresh run.",
+      "last_update": "2026-05-16T01:46:44Z"
     },
     {
       "id": "IMT-004",
@@ -1012,15 +994,6 @@
       "resolved_at": "2026-05-16T00:14:07Z"
     },
     {
-      "task_id": "VBT-001",
-      "from": "Gemini2",
-      "to": "Copilot",
-      "message": "Implementation complete. Vectorbt rapid eval adapter generalized and integrated into training session preview.",
-      "status": "done",
-      "created_at": "2026-05-15T23:54:29Z",
-      "resolved_at": "2026-05-16T00:35:12Z"
-    },
-    {
       "task_id": "P0-REG-001",
       "from": "Claude",
       "to": "Codex2",
@@ -1108,24 +1081,6 @@
       "created_at": "2026-05-16T00:18:51Z"
     },
     {
-      "task_id": "VBT-001",
-      "from": "Copilot",
-      "to": "Codex",
-      "message": "Auto-reassigned review from Copilot to Codex after repeated Copilot quota terminal: 402 You have no quota",
-      "status": "done",
-      "created_at": "2026-05-16T00:35:12Z",
-      "resolved_at": "2026-05-16T00:36:04Z"
-    },
-    {
-      "task_id": "VBT-001",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Auto-reassigned review from Codex to Codex2 after repeated Codex terminal: Codex usage limit reached",
-      "status": "done",
-      "created_at": "2026-05-16T00:36:04Z",
-      "resolved_at": "2026-05-16T00:53:30Z"
-    },
-    {
       "task_id": "P0-AUD-001",
       "from": "Codex2",
       "to": "Claude",
@@ -1141,15 +1096,6 @@
       "message": "Review approved: /bff/audit dedicated handler correct. Filters, pagination, envelope, meta, RBAC all verified. 11 contract tests + 3 live wiring pass. Returning to Claude2 for finalization.",
       "status": "pending",
       "created_at": "2026-05-16T00:44:50Z"
-    },
-    {
-      "task_id": "RT-001",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T00:52:08Z",
-      "resolved_at": "2026-05-16T00:52:29Z"
     },
     {
       "task_id": "RT-002",
@@ -1170,24 +1116,6 @@
       "resolved_at": "2026-05-16T00:53:02Z"
     },
     {
-      "task_id": "VBT-001",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached",
-      "status": "done",
-      "created_at": "2026-05-16T00:53:30Z",
-      "resolved_at": "2026-05-16T01:03:10Z"
-    },
-    {
-      "task_id": "P0-APP-001",
-      "from": "Claude",
-      "to": "Codex2",
-      "message": "Ready for review: POST /bff/approvals/{id}/decide dedicated handler. Approver/admin role gate, decision->CommandType routing (approve/reject/request_revision/escalate/freeze), rejection_reason+revision_notes validation, 404 for unknown ids, Idempotency-Key required. Evidence: support/evidence/P0-APP-001/acceptance.md. Verification: 15 contract tests passed; live wiring 7/8 (1 pre-existing P0-CAP-001 fail-closed 503). Commit: e8d18e92.",
-      "status": "done",
-      "created_at": "2026-05-16T00:54:37Z",
-      "resolved_at": "2026-05-16T01:11:06Z"
-    },
-    {
       "task_id": "QLIB-001",
       "from": "Gemini",
       "to": "Copilot",
@@ -1195,15 +1123,6 @@
       "status": "done",
       "created_at": "2026-05-16T00:57:21Z",
       "resolved_at": "2026-05-16T01:04:24Z"
-    },
-    {
-      "task_id": "VBT-001",
-      "from": "Claude",
-      "to": "Gemini2",
-      "message": "Gemini2",
-      "status": "done",
-      "created_at": "2026-05-16T01:03:10Z",
-      "resolved_at": "2026-05-16T01:03:10Z"
     },
     {
       "task_id": "QLIB-001",
@@ -1219,17 +1138,9 @@
       "from": "Claude",
       "to": "Gemini",
       "message": "Review approved: Qlib adapter skeleton correct. 33 unit tests pass in reviewer env. Smoke test OK. Governance semantics verified: draft state, none stage, registry_write_authority=registry_service_only, fail-closed worker gate. Returning to Gemini for finalization.",
-      "status": "pending",
-      "created_at": "2026-05-16T01:06:54Z"
-    },
-    {
-      "task_id": "VBT-001",
-      "from": "Gemini2",
-      "to": "Claude",
-      "message": "Implementation of vectorbt rapid eval adapter complete, tests passed. Requesting review.",
       "status": "done",
-      "created_at": "2026-05-16T01:07:29Z",
-      "resolved_at": "2026-05-16T01:15:05Z"
+      "created_at": "2026-05-16T01:06:54Z",
+      "resolved_at": "2026-05-16T01:22:13Z"
     },
     {
       "task_id": "SRC-001",
@@ -1268,21 +1179,84 @@
       "resolved_at": "2026-05-16T01:10:30Z"
     },
     {
-      "task_id": "P0-APP-001",
-      "from": "Codex2",
+      "task_id": "QLIB-001",
+      "from": "Claude",
       "to": "Claude2",
-      "message": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 terminal: Codex usage limit reached",
+      "message": "Auto-reassigned ownership from Gemini to Claude2 after repeated Gemini capacity/429: Capacity / rate limit failure",
       "status": "pending",
-      "created_at": "2026-05-16T01:11:06Z"
+      "created_at": "2026-05-16T01:22:13Z"
     },
     {
-      "task_id": "VBT-001",
-      "from": "Claude",
-      "to": "Gemini2",
-      "message": "Re-review round 2: required changes still unaddressed + new worker.py regression (BacktestConfig kwargs mismatch). Must fix: worker.py short_window/long_window to strategy_params, _get_ohlcv_data() 2-bar regression (HTTP 500), metric_delta shape. Should fix: import placement, preview_quality label. All 33 adapter tests pass; training-session preview test still fails (500 != 201). Returning to Gemini2 for fix.",
+      "task_id": "IMT-003",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Copilot is dispatch-paused.",
       "status": "done",
-      "created_at": "2026-05-16T01:15:05Z",
-      "resolved_at": "2026-05-16T01:15:05Z"
+      "created_at": "2026-05-16T01:27:42Z",
+      "resolved_at": "2026-05-16T01:28:00Z"
+    },
+    {
+      "task_id": "RT-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T01:27:52Z",
+      "resolved_at": "2026-05-16T01:28:41Z"
+    },
+    {
+      "task_id": "RT-003",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T01:27:55Z",
+      "resolved_at": "2026-05-16T01:28:49Z"
+    },
+    {
+      "task_id": "RT-002",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T01:45:23Z",
+      "resolved_at": "2026-05-16T01:45:48Z"
+    },
+    {
+      "task_id": "RT-003",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T01:45:28Z",
+      "resolved_at": "2026-05-16T01:46:03Z"
+    },
+    {
+      "task_id": "RT-004",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T01:45:33Z",
+      "resolved_at": "2026-05-16T01:46:10Z"
+    },
+    {
+      "task_id": "AUD-002",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T01:45:37Z",
+      "resolved_at": "2026-05-16T01:46:20Z"
+    },
+    {
+      "task_id": "ALT-001",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T01:45:41Z",
+      "resolved_at": "2026-05-16T01:46:29Z"
     }
   ],
   "blockers": [
@@ -1307,39 +1281,39 @@
   "workload_summary": {
     "Claude": {
       "total": 30,
-      "active": 1,
-      "blocked": 0,
-      "done": 0,
-      "review": 1,
-      "review_approved": 0,
-      "todo": 29
-    },
-    "Claude2": {
-      "total": 16,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
-      "review_approved": 4,
+      "review_approved": 0,
+      "todo": 30
+    },
+    "Claude2": {
+      "total": 17,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 5,
       "todo": 12
     },
     "Gemini": {
-      "total": 1,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
-      "review_approved": 1,
+      "review_approved": 0,
       "todo": 0
     },
     "Gemini2": {
-      "total": 2,
-      "active": 2,
+      "total": 1,
+      "active": 1,
       "blocked": 1,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Codex": {
       "total": 0,
@@ -1360,13 +1334,13 @@
       "todo": 1
     },
     "Copilot": {
-      "total": 2,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 2
+      "todo": 0
     }
   }
 }
