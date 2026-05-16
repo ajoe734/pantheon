@@ -3,7 +3,7 @@
   "sprint": "2026-05-16-pantheon-bff-p0-foundation",
   "sprint_started_at": "2026-05-16T00:00:00Z",
   "objective": "跨進開發團隊 GAP master rebaseline (docs/04/pantheon_sa_supplemental_2026-05-15/GAP_dev_team_master_rebaseline_2026-05-15.md)，以 pantheon@master + execute-plans@main 為基準。並行 6 條 EPIC，按 P0→P3 階梯推進：(I) EPIC-BFF-P0 (P0 10 task / Sprint 1) — session trio (/bff/me, auth/refresh, logout) + /openapi.json + canonical action endpoint + approval decide + registry reads (strategies/personas/capital-pools/audit)，讓 execute-plans@main 在 VITE_BFF_FALLBACK=strict 下可 bootstrap 核心 Management flow 不再 fallback mock；(II) EPIC-GOV-DEPLOY (P1 5 task / Sprint 2) — ApprovalDecision first-class + DeploymentPlan contract/service + stage planner + deployment projection + pool/runtime compatibility 檢查；(III) EPIC-RUNTIME (P1 6 task / Sprint 3) — RuntimeBinding schema + Runtime Manager skeleton + /bff/runtimes + deploy/pause/replace/rollback actions + loader metadata migration (promotion_state → artifact_state + deployment_stage) + LEAN algorithm-level smoke；(IV) EPIC-TELEMETRY (P2 7 task / Sprint 4) — TelemetryEvent canonical schema + RuntimeHeartbeat ingest + AuditAction backend + /bff/alerts + /bff/incidents + reconciliation record + Postmortem schema/endpoint；(V) EPIC-RESEARCH (P3 28 task / Sprint 5) — Source Ingest (SRC) + StrategySpec (STRAT) + Experiment orchestrator (EXP) + Qlib/vectorbt adapters + Persona/Trainer (PER/TRN) + Imitation dataset (IMT) + Consult/Committee (ASK)；(VI) EPIC-EVOLUTION (P3 3 task / Sprint 6) — EvolutionDecision service + /bff/v5/loop-runs + /bff/v5/sentinel/findings。GAP § 10 最大阻塞：BFF live endpoints 不足 → EPIC-BFF-P0 必須最先收斂；Registry/Promotion canonical 已 implemented，DeploymentPlan/RuntimeBinding 是 governance→execution 缺口；Artifact Loader 仍寫 legacy promotion_state，EX-002 metadata migration 是 execution-side 技術債。fail-closed 鐵律延續：broker production live、capital binding live 仍禁止；canary 需 risk-owner + operator 雙閘；evidence 走 support/evidence/<epic>-<task>/。Track E 收尾備註：46 個 MGMT-* task 中 45 個 done+archive，僅 MGMT-BROKER-002 仍 blocked 等 Shioaji credentials (commit 22e5ca3b 已備 sidecar acceptance packet)；M7 canary readiness 因此未閉合；Track E objective 不在本 sprint 推進範圍，僅 carry-over 記錄。",
-  "updated_at": "2026-05-16T07:19:30Z",
+  "updated_at": "2026-05-16T07:36:52Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -137,15 +137,14 @@
       ],
       "status": "working",
       "current_task_ids": [
-        "SRC-001",
-        "SRC-004",
+        "EX-002-RB",
         "STRAT-001",
         "STRAT-002",
-        "STRAT-004"
+        "STRAT-003"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "SRC-001 ready for review: SourceRecord schema, schema endpoint, inline SourceRecord ingest endpoint, readback contract test, and evidence note are in place. Verification: py_compile; pytest services/source_ingestion/test_src001_source_record_contract.py -q; pytest services/source_ingestion/test_service.py::test_trigger_success_persists_run_and_watermark_for_replay -q; json.tool schema.",
-      "last_update": "2026-05-16T07:19:15Z"
+      "next": "Picked up STRAT-003 after reassignment; reading phase6 planning context and locating SourceRecord/StrategySpec integration points.",
+      "last_update": "2026-05-16T07:33:08Z"
     },
     {
       "name": "Codex2",
@@ -182,14 +181,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "reviewing",
+      "status": "finalize",
       "current_task_ids": [
-        "EXP-002",
         "PER-002"
       ],
       "branch": "feat/claude2-execution-control",
-      "next": "Auto-reassigned review from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached",
-      "last_update": "2026-05-16T07:16:40Z"
+      "next": "Approved by Codex. Review artifact: support/reviews/PER-002-review-codex.md. Verification: PER-002 contract 18 passed; persona regressions 17 passed; incident adjacent contracts 7 passed. Owner Claude2 to finalize review_approved -> done.",
+      "last_update": "2026-05-16T07:27:25Z"
     },
     {
       "name": "Gemini2",
@@ -231,44 +229,12 @@
       "phase": "Sprint 3 / EPIC-RUNTIME",
       "owner": "Codex",
       "reviewer": "Claude",
-      "status": "todo",
+      "status": "in_progress",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Codex starts a fresh run.",
-      "last_update": "2026-05-16T07:17:10Z"
-    },
-    {
-      "id": "SRC-001",
-      "title": "SourceRecord schema + ingest API",
-      "summary_zh": null,
-      "phase": "Sprint 5 / EPIC-RESEARCH",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "review",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "SRC-001 ready for review: SourceRecord schema, schema endpoint, inline SourceRecord ingest endpoint, readback contract test, and evidence note are in place. Verification: py_compile; pytest services/source_ingestion/test_src001_source_record_contract.py -q; pytest services/source_ingestion/test_service.py::test_trigger_success_persists_run_and_watermark_for_replay -q; json.tool schema.",
-      "last_update": "2026-05-16T07:19:15Z"
-    },
-    {
-      "id": "SRC-003",
-      "title": "repo allowlist ingest skeleton",
-      "summary_zh": null,
-      "phase": "Sprint 5 / EPIC-RESEARCH",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "review_approved",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Review approved: repo allowlist ingest skeleton is correctly bounded to static_records mode, execution-route denial is complete, all validation guards pass, and 46 source_ingestion tests pass. Returning to Codex for finalization.",
-      "last_update": "2026-05-16T07:17:54Z",
-      "review_notes_zh": [
-        "審查通過。RepoAllowlistEntry/Provider 邊界驗證正確：URL 格式拒絕、路徑 traversal/絕對路徑/萬用字元/重複項目全部拒絕；fetch_config 以 static_records 模式輸出、no watermark；governance 欄位 direct_execution_allowed=false、lean/broker consumption 均設 research_only；provider catalog 正確暴露 example-github-repo-allowlist；46 個 source_ingestion tests 全通過。"
-      ],
-      "review_file": "support/evidence/SRC-003/review-claude.md"
+      "next": "Picked up EX-002-RB after reassignment; locating loader metadata promotion_state usage before implementation.",
+      "last_update": "2026-05-16T07:32:37Z"
     },
     {
       "id": "SRC-004",
@@ -277,12 +243,16 @@
       "phase": "Sprint 5 / EPIC-RESEARCH",
       "owner": "Codex",
       "reviewer": "Claude",
-      "status": "review",
+      "status": "review_approved",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "SRC-004 ready for review. Implemented research-only StrategySpecSeed builder from EvidenceBundle with lineage/citation preservation, explicit schema, deterministic hint extraction, rejected-source guard, and promotion lineage edge without registry writes or execution routes. Commit: 5a872693. Evidence: support/evidence/SRC-004/README.md. Verification: py_compile builder/test; pytest test_strategy_seed_builder.py 5 passed; pytest services/source_ingestion/tests 46 passed; pytest services/knowledge/evidence/tests/test_bundle.py 4 passed; pytest services/source_ingestion 73 passed; git diff --check targeted files passed.",
-      "last_update": "2026-05-16T07:11:54Z"
+      "next": "Review approved: research-only StrategySpecSeed builder is correctly bounded. lineage/citation preservation complete, rejected-source guard operational, promotion lineage edge carries no registry write authority. 73 source_ingestion + 5 seed-specific tests all pass. Returning to Codex for finalization.",
+      "last_update": "2026-05-16T07:36:37Z",
+      "review_notes_zh": [
+        "審查通過。StrategySpecSeed builder 研究邊界正確閉合：lineage.registry_write_performed=false 及 execution_route=none 均由 schema 強制；rejection guard 在 REJECTED source record 時立即拋出錯誤；lineage 保存 evidence_bundle_id/source_ids/citation_refs/trace_refs/promotion_requires 完整；seed_id 由 SHA-256 deterministic hash 生成；schema Draft-7 additionalProperties:false 正確。73 個 source_ingestion tests 全通過；5 個 SRC-004 專屬 tests 全通過。無 registry write、無 execution route。"
+      ],
+      "review_file": "support/evidence/SRC-004/review-claude.md"
     },
     {
       "id": "STRAT-001",
@@ -319,12 +289,12 @@
       "phase": "Sprint 5 / EPIC-RESEARCH",
       "owner": "Codex",
       "reviewer": "Claude",
-      "status": "todo",
+      "status": "in_progress",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Codex starts a fresh run.",
-      "last_update": "2026-05-16T07:17:38Z"
+      "next": "Picked up STRAT-003 after reassignment; reading phase6 planning context and locating SourceRecord/StrategySpec integration points.",
+      "last_update": "2026-05-16T07:33:08Z"
     },
     {
       "id": "STRAT-004",
@@ -333,12 +303,12 @@
       "phase": "Sprint 5 / EPIC-RESEARCH",
       "owner": "Codex",
       "reviewer": "Claude",
-      "status": "in_progress",
+      "status": "todo",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Supervisor auto-started STRAT-004 after successful dispatch.",
-      "last_update": "2026-05-16T07:16:08Z"
+      "next": "Supervisor preempted STRAT-004 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
+      "last_update": "2026-05-16T07:29:28Z"
     },
     {
       "id": "EXP-001",
@@ -353,20 +323,6 @@
       "acceptance": [],
       "next": "Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run.",
       "last_update": "2026-05-16T00:53:53Z"
-    },
-    {
-      "id": "EXP-002",
-      "title": "/bff/research-experiments list/detail",
-      "summary_zh": null,
-      "phase": "Sprint 5 / EPIC-RESEARCH",
-      "owner": "Claude2",
-      "reviewer": "Codex",
-      "status": "review",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Auto-reassigned review from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached",
-      "last_update": "2026-05-16T07:16:40Z"
     },
     {
       "id": "EXP-005",
@@ -389,12 +345,16 @@
       "phase": "Sprint 5 / EPIC-RESEARCH",
       "owner": "Claude2",
       "reviewer": "Codex",
-      "status": "review",
+      "status": "review_approved",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "PER-002 implementation complete. Added GET /bff/personas/{persona_id}/skills, /bff/personas/{persona_id}/tools, and /bff/personas/{persona_id}/capabilities read endpoints. All three derive data from the capability snapshot, require read-role auth, and return 404 for unknown personas. Contract test: test_per002_bff_persona_skills_tools_capabilities_contract.py (18 tests, all pass). Verification: 18 passed (contract tests) + 17 passed (regression: test_persona_management, test_bff_strategy_persona_contract). Commit: 0b1fca5f. Evidence: support/evidence/PER-002/README.md.",
-      "last_update": "2026-05-16T07:13:55Z"
+      "next": "Approved by Codex. Review artifact: support/reviews/PER-002-review-codex.md. Verification: PER-002 contract 18 passed; persona regressions 17 passed; incident adjacent contracts 7 passed. Owner Claude2 to finalize review_approved -> done.",
+      "last_update": "2026-05-16T07:27:25Z",
+      "review_notes_zh": [
+        "PER-002 reviewer approval: no blocking findings. Verified persona skills/tools/capabilities contract (18 passed), persona regressions (17 passed), and incident adjacent-contract coverage (7 passed). Owner Claude2 should perform review_approved closeout per task-closeout-finalization."
+      ],
+      "review_file": "support/reviews/PER-002-review-codex.md"
     },
     {
       "id": "TRN-001",
@@ -435,8 +395,8 @@
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T23:31:56Z"
+      "next": "Supervisor preempted TRN-003 to free Claude2 for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
+      "last_update": "2026-05-16T07:29:53Z"
     },
     {
       "id": "TRN-004",
@@ -640,24 +600,6 @@
       "resolved_at": "2026-04-17T12:39:53Z"
     },
     {
-      "task_id": "SRC-001",
-      "from": "Copilot",
-      "to": "Codex",
-      "message": "Helper-claimed by Codex while Copilot is dispatch-paused.",
-      "status": "done",
-      "created_at": "2026-05-16T01:09:39Z",
-      "resolved_at": "2026-05-16T01:09:56Z"
-    },
-    {
-      "task_id": "SRC-003",
-      "from": "Copilot",
-      "to": "Codex",
-      "message": "Helper-claimed by Codex while Copilot is dispatch-paused.",
-      "status": "done",
-      "created_at": "2026-05-16T01:09:47Z",
-      "resolved_at": "2026-05-16T01:10:22Z"
-    },
-    {
       "task_id": "SRC-004",
       "from": "Copilot",
       "to": "Codex2",
@@ -694,24 +636,6 @@
       "resolved_at": "2026-05-16T06:24:10Z"
     },
     {
-      "task_id": "SRC-001",
-      "from": "Claude2",
-      "to": "Codex2",
-      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T06:23:43Z",
-      "resolved_at": "2026-05-16T06:25:47Z"
-    },
-    {
-      "task_id": "SRC-003",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T06:40:43Z",
-      "resolved_at": "2026-05-16T06:42:01Z"
-    },
-    {
       "task_id": "EX-002-RB",
       "from": "Claude",
       "to": "Codex",
@@ -719,15 +643,6 @@
       "status": "done",
       "created_at": "2026-05-16T06:46:03Z",
       "resolved_at": "2026-05-16T07:03:49Z"
-    },
-    {
-      "task_id": "SRC-001",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T06:48:15Z",
-      "resolved_at": "2026-05-16T06:49:46Z"
     },
     {
       "task_id": "SRC-004",
@@ -755,24 +670,6 @@
       "status": "done",
       "created_at": "2026-05-16T06:49:21Z",
       "resolved_at": "2026-05-16T06:51:07Z"
-    },
-    {
-      "task_id": "SRC-003",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Repo allowlist ingest skeleton ready for review. Added RepoAllowlistProvider/Entry, exposed provider catalog example, and covered allowlist/static-record fetch behavior plus URL/path/duplicate rejection. Verification: python3 -m py_compile services/source_ingestion/connectors/repo_allowlist.py services/source_ingestion/connectors/examples.py services/source_ingestion/connectors/__init__.py; python3 -m pytest services/source_ingestion/tests/test_repo_allowlist.py -q; python3 -m pytest services/source_ingestion/tests -q.",
-      "status": "done",
-      "created_at": "2026-05-16T06:50:37Z",
-      "resolved_at": "2026-05-16T07:17:54Z"
-    },
-    {
-      "task_id": "EXP-002",
-      "from": "Claude2",
-      "to": "Codex2",
-      "message": "EXP-002 implementation complete. Contract test file: services/control-plane/bff/test_exp002_bff_research_experiments_contract.py (17 tests, all pass). Commit: 7960c3c5. Covers: GET /bff/research-experiments list envelope+surface+seeded-data+field invariants+auth; GET /bff/research-experiments/{id} detail envelope+surface+completed/running/failed status+analysis_links+404+auth; POST /api/v1/experiments/launch → BFF round-trip. Please review and approve.",
-      "status": "done",
-      "created_at": "2026-05-16T07:01:46Z",
-      "resolved_at": "2026-05-16T07:16:40Z"
     },
     {
       "task_id": "EX-002-RB",
@@ -804,8 +701,9 @@
       "from": "Codex",
       "to": "Claude",
       "message": "SRC-004 ready for review. Implemented research-only StrategySpecSeed builder from EvidenceBundle with lineage/citation preservation, explicit schema, deterministic hint extraction, rejected-source guard, and promotion lineage edge without registry writes or execution routes. Commit: 5a872693. Evidence: support/evidence/SRC-004/README.md. Verification: py_compile builder/test; pytest test_strategy_seed_builder.py 5 passed; pytest services/source_ingestion/tests 46 passed; pytest services/knowledge/evidence/tests/test_bundle.py 4 passed; pytest services/source_ingestion 73 passed; git diff --check targeted files passed.",
-      "status": "pending",
-      "created_at": "2026-05-16T07:11:54Z"
+      "status": "done",
+      "created_at": "2026-05-16T07:11:54Z",
+      "resolved_at": "2026-05-16T07:36:37Z"
     },
     {
       "task_id": "EX-002-RB",
@@ -815,15 +713,6 @@
       "status": "done",
       "created_at": "2026-05-16T07:12:02Z",
       "resolved_at": "2026-05-16T07:12:02Z"
-    },
-    {
-      "task_id": "SRC-001",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T07:12:24Z",
-      "resolved_at": "2026-05-16T07:14:54Z"
     },
     {
       "task_id": "STRAT-003",
@@ -848,32 +737,25 @@
       "from": "Claude2",
       "to": "Codex",
       "message": "PER-002 implementation complete. Added GET /bff/personas/{persona_id}/skills, /bff/personas/{persona_id}/tools, and /bff/personas/{persona_id}/capabilities read endpoints. All three derive data from the capability snapshot, require read-role auth, and return 404 for unknown personas. Contract test: test_per002_bff_persona_skills_tools_capabilities_contract.py (18 tests, all pass). Verification: 18 passed (contract tests) + 17 passed (regression: test_persona_management, test_bff_strategy_persona_contract). Commit: 0b1fca5f. Evidence: support/evidence/PER-002/README.md.",
-      "status": "pending",
-      "created_at": "2026-05-16T07:13:55Z"
+      "status": "done",
+      "created_at": "2026-05-16T07:13:55Z",
+      "resolved_at": "2026-05-16T07:27:25Z"
     },
     {
-      "task_id": "EXP-002",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Auto-reassigned review from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached",
+      "task_id": "PER-002",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Approved by Codex. Review artifact: support/reviews/PER-002-review-codex.md. Verification: PER-002 contract 18 passed; persona regressions 17 passed; incident adjacent contracts 7 passed. Owner Claude2 to finalize review_approved -> done.",
       "status": "pending",
-      "created_at": "2026-05-16T07:16:40Z"
+      "created_at": "2026-05-16T07:27:25Z"
     },
     {
-      "task_id": "SRC-003",
+      "task_id": "SRC-004",
       "from": "Claude",
       "to": "Codex",
-      "message": "Review approved: repo allowlist ingest skeleton is correctly bounded to static_records mode, execution-route denial is complete, all validation guards pass, and 46 source_ingestion tests pass. Returning to Codex for finalization.",
+      "message": "Review approved: research-only StrategySpecSeed builder is correctly bounded. lineage/citation preservation complete, rejected-source guard operational, promotion lineage edge carries no registry write authority. 73 source_ingestion + 5 seed-specific tests all pass. Returning to Codex for finalization.",
       "status": "pending",
-      "created_at": "2026-05-16T07:17:54Z"
-    },
-    {
-      "task_id": "SRC-001",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "SRC-001 ready for review: SourceRecord schema, schema endpoint, inline SourceRecord ingest endpoint, readback contract test, and evidence note are in place. Verification: py_compile; pytest services/source_ingestion/test_src001_source_record_contract.py -q; pytest services/source_ingestion/test_service.py::test_trigger_success_persists_run_and_watermark_for_replay -q; json.tool schema.",
-      "status": "pending",
-      "created_at": "2026-05-16T07:19:15Z"
+      "created_at": "2026-05-16T07:36:37Z"
     }
   ],
   "blockers": [
@@ -906,12 +788,12 @@
       "todo": 12
     },
     "Claude2": {
-      "total": 8,
-      "active": 2,
+      "total": 7,
+      "active": 0,
       "blocked": 0,
       "done": 0,
-      "review": 2,
-      "review_approved": 0,
+      "review": 0,
+      "review_approved": 1,
       "todo": 6
     },
     "Gemini": {
@@ -933,11 +815,11 @@
       "todo": 0
     },
     "Codex": {
-      "total": 8,
-      "active": 5,
+      "total": 6,
+      "active": 4,
       "blocked": 0,
       "done": 0,
-      "review": 4,
+      "review": 2,
       "review_approved": 1,
       "todo": 3
     },

@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-16 15:19:30
+Last updated: 2026-05-16 15:36:52
 
 ## Objective
 
@@ -39,10 +39,10 @@ Last updated: 2026-05-16 15:19:30
 
 - `Claude`: execution, control-plane, governance-review; next: Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run.
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: SRC-001 ready for review: SourceRecord schema, schema endpoint, inline SourceRecord ingest endpoint, readback contract test, and evidence note are in place. Verification: py_compile; pytest services/source_ingestion/test_src001_source_record_contract.py -q; pytest services/source_ingestion/test_service.py::test_trigger_success_persists_run_and_watermark_for_replay -q; json.tool schema.
+- `Codex`: integration, status-system, schema, acceptance; next: Picked up STRAT-003 after reassignment; reading phase6 planning context and locating SourceRecord/StrategySpec integration points.
 - `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
-- `Claude2`: execution, control-plane, governance-review; next: Auto-reassigned review from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached
+- `Claude2`: execution, control-plane, governance-review; next: Approved by Codex. Review artifact: support/reviews/PER-002-review-codex.md. Verification: PER-002 contract 18 passed; persona regressions 17 passed; incident adjacent contracts 7 passed. Owner Claude2 to finalize review_approved -> done.
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check.
 
 ## Delivery Layers
@@ -52,18 +52,15 @@ Last updated: 2026-05-16 15:19:30
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | Gemini2 | blocked | - | - |
-| `EX-002-RB` | Sprint 3 / EPIC-RUNTIME | Loader metadata migration promotion_state -> artifact_state + deployment_stage (rebaseline) | Codex | todo | - | - |
-| `SRC-001` | Sprint 5 / EPIC-RESEARCH | SourceRecord schema + ingest API | Codex | review | - | - |
-| `SRC-003` | Sprint 5 / EPIC-RESEARCH | repo allowlist ingest skeleton | Codex | review_approved | - | - |
-| `SRC-004` | Sprint 5 / EPIC-RESEARCH | StrategySpecSeed builder | Codex | review | - | - |
+| `EX-002-RB` | Sprint 3 / EPIC-RUNTIME | Loader metadata migration promotion_state -> artifact_state + deployment_stage (rebaseline) | Codex | in_progress | - | - |
+| `SRC-004` | Sprint 5 / EPIC-RESEARCH | StrategySpecSeed builder | Codex | review_approved | - | - |
 | `STRAT-001` | Sprint 5 / EPIC-RESEARCH | StrategySpec schema / model | Codex | review | - | - |
 | `STRAT-002` | Sprint 5 / EPIC-RESEARCH | StrategySpec registry endpoints | Codex | review | - | - |
-| `STRAT-003` | Sprint 5 / EPIC-RESEARCH | Source -> StrategySpec conversion service | Codex | todo | - | - |
-| `STRAT-004` | Sprint 5 / EPIC-RESEARCH | evidence / code refs lineage | Codex | in_progress | - | - |
+| `STRAT-003` | Sprint 5 / EPIC-RESEARCH | Source -> StrategySpec conversion service | Codex | in_progress | - | - |
+| `STRAT-004` | Sprint 5 / EPIC-RESEARCH | evidence / code refs lineage | Codex | todo | - | - |
 | `EXP-001` | Sprint 5 / EPIC-RESEARCH | ExperimentTask / ExperimentRun schema | Claude | todo | - | - |
-| `EXP-002` | Sprint 5 / EPIC-RESEARCH | /bff/research-experiments list/detail | Claude2 | review | - | - |
 | `EXP-005` | Sprint 5 / EPIC-RESEARCH | ExperimentRun -> Artifact registry writeback | Claude | todo | - | - |
-| `PER-002` | Sprint 5 / EPIC-RESEARCH | skills/tools/capabilities read API | Claude2 | review | - | - |
+| `PER-002` | Sprint 5 / EPIC-RESEARCH | skills/tools/capabilities read API | Claude2 | review_approved | - | - |
 | `TRN-001` | Sprint 5 / EPIC-RESEARCH | TeachingSession / TeachingEvent schema | Claude | todo | - | - |
 | `TRN-002` | Sprint 5 / EPIC-RESEARCH | trainer session endpoints | Claude | todo | - | - |
 | `TRN-003` | Sprint 5 / EPIC-RESEARCH | rapid-eval request / response | Claude2 | todo | - | - |
@@ -89,11 +86,14 @@ Last updated: 2026-05-16 15:19:30
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-16 15:19:29
-- Terminal tasks archived: `1131` total, `1113` completed, `18` superseded
+- Archive updated: 2026-05-16 15:36:50
+- Terminal tasks archived: `1134` total, `1116` completed, `18` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `SRC-003` | Sprint 5 / EPIC-RESEARCH | repo allowlist ingest skeleton | Codex | completed | 2026-05-16 15:36:50 | `ai-task-archive/tasks/SRC-003.json` |
+| `EXP-002` | Sprint 5 / EPIC-RESEARCH | /bff/research-experiments list/detail | Claude2 | completed | 2026-05-16 15:35:28 | `ai-task-archive/tasks/EXP-002.json` |
+| `SRC-001` | Sprint 5 / EPIC-RESEARCH | SourceRecord schema + ingest API | Codex | completed | 2026-05-16 15:34:32 | `ai-task-archive/tasks/SRC-001.json` |
 | `SRC-002` | Sprint 5 / EPIC-RESEARCH | paper ingest adapter skeleton | Codex | completed | 2026-05-16 15:19:29 | `ai-task-archive/tasks/SRC-002.json` |
 | `TEL-002-RB` | Sprint 4 / EPIC-TELEMETRY | RuntimeHeartbeat ingest endpoint (rebaseline) | Codex | completed | 2026-05-16 15:15:11 | `ai-task-archive/tasks/TEL-002-RB.json` |
 | `INC-001-RB` | Sprint 4 / EPIC-TELEMETRY | Claude2 reclaiming as original task owner for review_approved closeout; Codex implementation reviewed and approved. | Claude2 | completed | 2026-05-16 14:51:26 | `ai-task-archive/tasks/INC-001-RB.json` |
@@ -111,30 +111,24 @@ Last updated: 2026-05-16 15:19:30
 | `RT-004` | Sprint 3 / EPIC-RUNTIME | Runtime deploy/pause/replace/rollback actions | Codex | completed | 2026-05-16 13:44:24 | `ai-task-archive/tasks/RT-004.json` |
 | `RT-002` | Sprint 3 / EPIC-RUNTIME | Runtime Manager skeleton | Codex | completed | 2026-05-16 13:43:58 | `ai-task-archive/tasks/RT-002.json` |
 | `P0-PER-001` | Sprint 1 / EPIC-BFF-P0 | /bff/personas list/detail | Claude2 | completed | 2026-05-16 13:43:09 | `ai-task-archive/tasks/P0-PER-001.json` |
-| `P0-REG-001` | Sprint 1 / EPIC-BFF-P0 | /bff/strategies list/detail | Claude2 | completed | 2026-05-16 13:38:43 | `ai-task-archive/tasks/P0-REG-001.json` |
-| `GOV-001-RB` | Sprint 2 / EPIC-GOV-DEPLOY | ApprovalDecision schema + write authority (rebaseline) | Codex | completed | 2026-05-16 13:34:27 | `ai-task-archive/tasks/GOV-001-RB.json` |
-| `REC-001` | Sprint 4 / EPIC-TELEMETRY | Basic reconciliation record | Codex | completed | 2026-05-16 13:17:28 | `ai-task-archive/tasks/REC-001.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | - | Gemini2 | Gemini | blocked | - | 2026-05-15 23:15:06 | Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check. |
-| `EX-002-RB` | Sprint 3 / EPIC-RUNTIME | Loader metadata migration promotion_state -> artifact_state + deployment_stage (rebaseline) | - | Codex | Claude | todo | - | 2026-05-16 15:17:10 | Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Codex starts a fresh run. |
-| `SRC-001` | Sprint 5 / EPIC-RESEARCH | SourceRecord schema + ingest API | - | Codex | Claude | review | - | 2026-05-16 15:19:15 | SRC-001 ready for review: SourceRecord schema, schema endpoint, inline SourceRecord ingest endpoint, readback contract test, and evidence note are in place. Verification: py_compile; pytest services/source_ingestion/test_src001_source_record_contract.py -q; pytest services/source_ingestion/test_service.py::test_trigger_success_persists_run_and_watermark_for_replay -q; json.tool schema. |
-| `SRC-003` | Sprint 5 / EPIC-RESEARCH | repo allowlist ingest skeleton | - | Codex | Claude | review_approved | - | 2026-05-16 15:17:54 | Review approved: repo allowlist ingest skeleton is correctly bounded to static_records mode, execution-route denial is complete, all validation guards pass, and 46 source_ingestion tests pass. Returning to Codex for finalization. |
-| `SRC-004` | Sprint 5 / EPIC-RESEARCH | StrategySpecSeed builder | - | Codex | Claude | review | - | 2026-05-16 15:11:54 | SRC-004 ready for review. Implemented research-only StrategySpecSeed builder from EvidenceBundle with lineage/citation preservation, explicit schema, deterministic hint extraction, rejected-source guard, and promotion lineage edge without registry writes or execution routes. Commit: 5a872693. Evidence: support/evidence/SRC-004/README.md. Verification: py_compile builder/test; pytest test_strategy_seed_builder.py 5 passed; pytest services/source_ingestion/tests 46 passed; pytest services/knowledge/evidence/tests/test_bundle.py 4 passed; pytest services/source_ingestion 73 passed; git diff --check targeted files passed. |
+| `EX-002-RB` | Sprint 3 / EPIC-RUNTIME | Loader metadata migration promotion_state -> artifact_state + deployment_stage (rebaseline) | - | Codex | Claude | in_progress | - | 2026-05-16 15:32:37 | Picked up EX-002-RB after reassignment; locating loader metadata promotion_state usage before implementation. |
+| `SRC-004` | Sprint 5 / EPIC-RESEARCH | StrategySpecSeed builder | - | Codex | Claude | review_approved | - | 2026-05-16 15:36:37 | Review approved: research-only StrategySpecSeed builder is correctly bounded. lineage/citation preservation complete, rejected-source guard operational, promotion lineage edge carries no registry write authority. 73 source_ingestion + 5 seed-specific tests all pass. Returning to Codex for finalization. |
 | `STRAT-001` | Sprint 5 / EPIC-RESEARCH | StrategySpec schema / model | - | Codex | Claude | review | - | 2026-05-16 15:07:20 | STRAT-001 ready for review. Added schema-backed StrategySpec domain model, strengthened canonical strategy_spec.schema.json with lifecycle/source_record/canary/non-empty constraints, exported model helpers, and kept RS-002 normalizer output compatible via shared schema validation helper. Evidence: support/evidence/STRAT-001/README.md. Verification: py_compile strategy_spec model/normalizer/__init__; pytest services/research/strategy_spec -q (10 passed); git diff --check targeted STRAT-001 files. |
 | `STRAT-002` | Sprint 5 / EPIC-RESEARCH | StrategySpec registry endpoints | - | Codex | Claude | review | - | 2026-05-16 15:09:00 | STRAT-002 ready for review. Added StrategySpec-specific registry facade: POST/GET /api/registry/strategy-specs, GET /api/registry/strategies/{strategy_id}/strategy-specs, and POST /api/registry/strategy-specs/{registry_id}/advance. The facade forces artifact_type=strategy_spec, requires lineage, preserves storage_ref/checksum, derives inline checksum/storage when strategy_spec payload is provided, and delegates draft->candidate to the existing artifact-state machine. Commit: 6a1ee000. Evidence: support/evidence/STRAT-002/README.md. Verification: py_compile registry service/main/test; pytest services/registry/test_service.py -q (44 passed); pytest services/registry -q (69 passed); git diff --check targeted files. |
-| `STRAT-003` | Sprint 5 / EPIC-RESEARCH | Source -> StrategySpec conversion service | - | Codex | Claude | todo | - | 2026-05-16 15:17:38 | Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Codex starts a fresh run. |
-| `STRAT-004` | Sprint 5 / EPIC-RESEARCH | evidence / code refs lineage | - | Codex | Claude | in_progress | - | 2026-05-16 15:16:08 | Supervisor auto-started STRAT-004 after successful dispatch. |
+| `STRAT-003` | Sprint 5 / EPIC-RESEARCH | Source -> StrategySpec conversion service | - | Codex | Claude | in_progress | - | 2026-05-16 15:33:08 | Picked up STRAT-003 after reassignment; reading phase6 planning context and locating SourceRecord/StrategySpec integration points. |
+| `STRAT-004` | Sprint 5 / EPIC-RESEARCH | evidence / code refs lineage | - | Codex | Claude | todo | - | 2026-05-16 15:29:28 | Supervisor preempted STRAT-004 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it. |
 | `EXP-001` | Sprint 5 / EPIC-RESEARCH | ExperimentTask / ExperimentRun schema | - | Claude | Claude2 | todo | - | 2026-05-16 08:53:53 | Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
-| `EXP-002` | Sprint 5 / EPIC-RESEARCH | /bff/research-experiments list/detail | - | Claude2 | Codex | review | - | 2026-05-16 15:16:40 | Auto-reassigned review from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached |
 | `EXP-005` | Sprint 5 / EPIC-RESEARCH | ExperimentRun -> Artifact registry writeback | - | Claude | Claude2 | todo | - | 2026-05-16 08:18:44 | Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
-| `PER-002` | Sprint 5 / EPIC-RESEARCH | skills/tools/capabilities read API | - | Claude2 | Codex | review | - | 2026-05-16 15:13:55 | PER-002 implementation complete. Added GET /bff/personas/{persona_id}/skills, /bff/personas/{persona_id}/tools, and /bff/personas/{persona_id}/capabilities read endpoints. All three derive data from the capability snapshot, require read-role auth, and return 404 for unknown personas. Contract test: test_per002_bff_persona_skills_tools_capabilities_contract.py (18 tests, all pass). Verification: 18 passed (contract tests) + 17 passed (regression: test_persona_management, test_bff_strategy_persona_contract). Commit: 0b1fca5f. Evidence: support/evidence/PER-002/README.md. |
+| `PER-002` | Sprint 5 / EPIC-RESEARCH | skills/tools/capabilities read API | - | Claude2 | Codex | review_approved | - | 2026-05-16 15:27:25 | Approved by Codex. Review artifact: support/reviews/PER-002-review-codex.md. Verification: PER-002 contract 18 passed; persona regressions 17 passed; incident adjacent contracts 7 passed. Owner Claude2 to finalize review_approved -> done. |
 | `TRN-001` | Sprint 5 / EPIC-RESEARCH | TeachingSession / TeachingEvent schema | - | Claude | Claude2 | todo | - | 2026-05-16 08:54:05 | Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
 | `TRN-002` | Sprint 5 / EPIC-RESEARCH | trainer session endpoints | - | Claude | Codex2 | todo | - | 2026-05-16 07:31:25 | Assignment created |
-| `TRN-003` | Sprint 5 / EPIC-RESEARCH | rapid-eval request / response | - | Claude2 | Copilot | todo | - | 2026-05-16 07:31:56 | Assignment created |
+| `TRN-003` | Sprint 5 / EPIC-RESEARCH | rapid-eval request / response | - | Claude2 | Copilot | todo | - | 2026-05-16 15:29:53 | Supervisor preempted TRN-003 to free Claude2 for higher-priority review/finalize work; task returned to todo until a fresh run restarts it. |
 | `TRN-004` | Sprint 5 / EPIC-RESEARCH | trainer commit / discard / replay | - | Claude | Codex2 | todo | - | 2026-05-16 07:32:26 | Assignment created |
 | `IMT-001` | Sprint 5 / EPIC-RESEARCH | TraderTrajectory schema | - | Claude | Claude2 | todo | - | 2026-05-16 08:36:13 | Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
 | `IMT-002` | Sprint 5 / EPIC-RESEARCH | PreferenceExample / CorrectionTrace schema | - | Claude | Claude2 | todo | - | 2026-05-16 09:11:18 | Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
@@ -156,11 +150,8 @@ Last updated: 2026-05-16 15:19:30
 | `EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE` | Gemini | Codex2 | Acceptance packet and dependency map for EP5-BROKER-TW-002 prepared at support/sidecars/EP5-BROKER-TW-002/EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE.md. Ready for review and incorporation into parent closeout. | pending | 2026-05-12 22:50:00 |
 | `STRAT-001` | Codex | Claude | STRAT-001 ready for review. Added schema-backed StrategySpec domain model, strengthened canonical strategy_spec.schema.json with lifecycle/source_record/canary/non-empty constraints, exported model helpers, and kept RS-002 normalizer output compatible via shared schema validation helper. Evidence: support/evidence/STRAT-001/README.md. Verification: py_compile strategy_spec model/normalizer/__init__; pytest services/research/strategy_spec -q (10 passed); git diff --check targeted STRAT-001 files. | pending | 2026-05-16 15:07:20 |
 | `STRAT-002` | Codex | Claude | STRAT-002 ready for review. Added StrategySpec-specific registry facade: POST/GET /api/registry/strategy-specs, GET /api/registry/strategies/{strategy_id}/strategy-specs, and POST /api/registry/strategy-specs/{registry_id}/advance. The facade forces artifact_type=strategy_spec, requires lineage, preserves storage_ref/checksum, derives inline checksum/storage when strategy_spec payload is provided, and delegates draft->candidate to the existing artifact-state machine. Commit: 6a1ee000. Evidence: support/evidence/STRAT-002/README.md. Verification: py_compile registry service/main/test; pytest services/registry/test_service.py -q (44 passed); pytest services/registry -q (69 passed); git diff --check targeted files. | pending | 2026-05-16 15:09:00 |
-| `SRC-004` | Codex | Claude | SRC-004 ready for review. Implemented research-only StrategySpecSeed builder from EvidenceBundle with lineage/citation preservation, explicit schema, deterministic hint extraction, rejected-source guard, and promotion lineage edge without registry writes or execution routes. Commit: 5a872693. Evidence: support/evidence/SRC-004/README.md. Verification: py_compile builder/test; pytest test_strategy_seed_builder.py 5 passed; pytest services/source_ingestion/tests 46 passed; pytest services/knowledge/evidence/tests/test_bundle.py 4 passed; pytest services/source_ingestion 73 passed; git diff --check targeted files passed. | pending | 2026-05-16 15:11:54 |
-| `PER-002` | Claude2 | Codex | PER-002 implementation complete. Added GET /bff/personas/{persona_id}/skills, /bff/personas/{persona_id}/tools, and /bff/personas/{persona_id}/capabilities read endpoints. All three derive data from the capability snapshot, require read-role auth, and return 404 for unknown personas. Contract test: test_per002_bff_persona_skills_tools_capabilities_contract.py (18 tests, all pass). Verification: 18 passed (contract tests) + 17 passed (regression: test_persona_management, test_bff_strategy_persona_contract). Commit: 0b1fca5f. Evidence: support/evidence/PER-002/README.md. | pending | 2026-05-16 15:13:55 |
-| `EXP-002` | Codex2 | Codex | Auto-reassigned review from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached | pending | 2026-05-16 15:16:40 |
-| `SRC-003` | Claude | Codex | Review approved: repo allowlist ingest skeleton is correctly bounded to static_records mode, execution-route denial is complete, all validation guards pass, and 46 source_ingestion tests pass. Returning to Codex for finalization. | pending | 2026-05-16 15:17:54 |
-| `SRC-001` | Codex | Claude | SRC-001 ready for review: SourceRecord schema, schema endpoint, inline SourceRecord ingest endpoint, readback contract test, and evidence note are in place. Verification: py_compile; pytest services/source_ingestion/test_src001_source_record_contract.py -q; pytest services/source_ingestion/test_service.py::test_trigger_success_persists_run_and_watermark_for_replay -q; json.tool schema. | pending | 2026-05-16 15:19:15 |
+| `PER-002` | Codex | Claude2 | Approved by Codex. Review artifact: support/reviews/PER-002-review-codex.md. Verification: PER-002 contract 18 passed; persona regressions 17 passed; incident adjacent contracts 7 passed. Owner Claude2 to finalize review_approved -> done. | pending | 2026-05-16 15:27:25 |
+| `SRC-004` | Claude | Codex | Review approved: research-only StrategySpecSeed builder is correctly bounded. lineage/citation preservation complete, rejected-source guard operational, promotion lineage edge carries no registry write authority. 73 source_ingestion + 5 seed-specific tests all pass. Returning to Codex for finalization. | pending | 2026-05-16 15:36:37 |
 
 ## Blockers
 
@@ -172,7 +163,8 @@ Last updated: 2026-05-16 15:19:30
 
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
-| `SRC-003` | Claude | 審查通過。RepoAllowlistEntry/Provider 邊界驗證正確：URL 格式拒絕、路徑 traversal/絕對路徑/萬用字元/重複項目全部拒絕；fetch_config 以 static_records 模式輸出、no watermark；governance 欄位 direct_execution_allowed=false、lean/broker consumption 均設 research_only；provider catalog 正確暴露 example-github-repo-allowlist；46 個 source_ingestion tests 全通過。 | support/evidence/SRC-003/review-claude.md |
+| `SRC-004` | Claude | 審查通過。StrategySpecSeed builder 研究邊界正確閉合：lineage.registry_write_performed=false 及 execution_route=none 均由 schema 強制；rejection guard 在 REJECTED source record 時立即拋出錯誤；lineage 保存 evidence_bundle_id/source_ids/citation_refs/trace_refs/promotion_requires 完整；seed_id 由 SHA-256 deterministic hash 生成；schema Draft-7 additionalProperties:false 正確。73 個 source_ingestion tests 全通過；5 個 SRC-004 專屬 tests 全通過。無 registry write、無 execution route。 | support/evidence/SRC-004/review-claude.md |
+| `PER-002` | Codex | PER-002 reviewer approval: no blocking findings. Verified persona skills/tools/capabilities contract (18 passed), persona regressions (17 passed), and incident adjacent-contract coverage (7 passed). Owner Claude2 should perform review_approved closeout per task-closeout-finalization. | support/reviews/PER-002-review-codex.md |
 
 ## Lovable Coordination
 
@@ -243,23 +235,23 @@ Last updated: 2026-05-16 15:19:30
 
 ## Latest Checkpoints
 
-- 2026-05-16 15:17:06 Orchestrator: PostToolUse: Read
-- 2026-05-16 15:17:07 Orchestrator: PostToolUse: Glob
-- 2026-05-16 15:17:10 Orchestrator: `EXP-002` Auto-reassigned review from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached
-- 2026-05-16 15:17:10 Orchestrator: `EX-002-RB` Paused new dispatches for codex2 until 2026-05-16 15:32:10 after terminal quota failure: Codex usage limit reached
-- 2026-05-16 15:17:17 Orchestrator: PreToolUse: Bash
-- 2026-05-16 15:17:18 Orchestrator: PostToolUse: Bash
-- 2026-05-16 15:17:38 Orchestrator: `EX-002-RB` Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Codex starts a fresh run.
-- 2026-05-16 15:17:38 Orchestrator: `STRAT-003` Paused new dispatches for codex2 until 2026-05-16 15:32:38 after terminal quota failure: Codex usage limit reached
-- 2026-05-16 15:17:41 Orchestrator: PreToolUse: Write
-- 2026-05-16 15:17:42 Orchestrator: PostToolUse: Write
-- 2026-05-16 15:17:53 Orchestrator: PreToolUse: Bash
-- 2026-05-16 15:17:54 Claude: `SRC-003` Review approved: repo allowlist ingest skeleton is correctly bounded to static_records mode, execution-route denial is complete, all validation guards pass, and 46 source_ingestion tests pass. Returning to Codex for finalization.
-- 2026-05-16 15:18:00 Orchestrator: `STRAT-003` Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Codex starts a fresh run.
-- 2026-05-16 15:18:21 Orchestrator: PostToolUse: Bash
-- 2026-05-16 15:18:27 Orchestrator: PreToolUse: Bash
-- 2026-05-16 15:18:28 Orchestrator: PostToolUse: Bash
-- 2026-05-16 15:18:33 Orchestrator: Stop: Stop
-- 2026-05-16 15:18:33 Orchestrator: SessionEnd: SessionEnd
-- 2026-05-16 15:19:15 Codex: `SRC-001` Handoff to Claude: SRC-001 ready for review: SourceRecord schema, schema endpoint, inline SourceRecord ingest endpoint, readback contract test, and evidence note are in place. Verification: py_compile; pytest services/source_ingestion/test_src001_source_record_contract.py -q; pytest services/source_ingestion/test_service.py::test_trigger_success_persists_run_and_watermark_for_replay -q; json.tool schema.
-- 2026-05-16 15:19:29 Codex: `SRC-002` Finalized SRC-002 after Claude review approval. Task commit d59a6ecd adds OpenAlexPaperIngestAdapter, tests, docs, and evidence. Verification: py_compile connector files passed; paper adapter pytest 3 passed; connector/provider regression 4 passed; services/source_ingestion 73 passed.
+- 2026-05-16 15:35:58 Orchestrator: PostToolUse: Bash
+- 2026-05-16 15:36:02 Orchestrator: PreToolUse: Bash
+- 2026-05-16 15:36:02 Orchestrator: PostToolUse: Bash
+- 2026-05-16 15:36:05 Orchestrator: PreToolUse: Bash
+- 2026-05-16 15:36:06 Orchestrator: PostToolUse: Bash
+- 2026-05-16 15:36:11 Orchestrator: PreToolUse: Bash
+- 2026-05-16 15:36:12 Orchestrator: PostToolUse: Bash
+- 2026-05-16 15:36:17 Orchestrator: PreToolUse: Bash
+- 2026-05-16 15:36:19 Orchestrator: PostToolUse: Bash
+- 2026-05-16 15:36:24 Orchestrator: PreToolUse: Bash
+- 2026-05-16 15:36:24 Orchestrator: PostToolUse: Bash
+- 2026-05-16 15:36:26 Orchestrator: PreToolUse: Write
+- 2026-05-16 15:36:27 Orchestrator: PostToolUse: Write
+- 2026-05-16 15:36:36 Orchestrator: PreToolUse: Bash
+- 2026-05-16 15:36:37 Claude: `SRC-004` Review approved: research-only StrategySpecSeed builder is correctly bounded. lineage/citation preservation complete, rejected-source guard operational, promotion lineage edge carries no registry write authority. 73 source_ingestion + 5 seed-specific tests all pass. Returning to Codex for finalization.
+- 2026-05-16 15:36:41 Orchestrator: PreToolUse: Bash
+- 2026-05-16 15:36:44 Orchestrator: PostToolUse: Bash
+- 2026-05-16 15:36:48 Orchestrator: PreToolUse: Bash
+- 2026-05-16 15:36:49 Orchestrator: PostToolUse: Bash
+- 2026-05-16 15:36:50 Codex: `SRC-003` SRC-003 finalized. Repo allowlist ingest skeleton reviewed and durable in HEAD; SRC-003 closeout evidence commit e651e60a records verification and commit-isolation exception after concurrent closeout batched implementation files in 19d306c4. Verification: py_compile provider/catalog exports passed; pytest test_repo_allowlist.py 3 passed; pytest services/source_ingestion/tests 46 passed.
