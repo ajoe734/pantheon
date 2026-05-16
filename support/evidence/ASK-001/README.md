@@ -3,8 +3,9 @@
 **Task:** ASK-001
 **Owner:** Codex (follow-up fix; initial implementation by Claude2)
 **Reviewer:** Claude2
-**Commit:** 4f3bc011 initial implementation; follow-up fix pending review
+**Implementation commits:** 4f3bc011 initial implementation; a24a9b49 follow-up idempotency fix
 **Branch:** bff-luv-fe-006-dev-deploy
+**Review:** Approved by Claude2 on 2026-05-16 (`support/reviews/ASK-001-review-claude2.md`)
 
 ## Scope
 
@@ -43,7 +44,7 @@ pytest services/control-plane/bff/test_pkt005_sse_substrate_contract.py -> 8 pas
 
 ## Follow-up Fix: 2026-05-16
 
-Reviewer-requested idempotency fix:
+Reviewer-requested idempotency fix, now approved:
 
 - `POST /bff/agora/ask/sessions` now writes replay records to `_AGORA_CORE_BFF_IDEMPOTENCY`, the cache read by `_agora_core_idempotency_check()`.
 - `POST /bff/agora/ask/sessions/{sessionId}/close` now writes replay records to the same shared cache.
@@ -60,6 +61,16 @@ pytest services/control-plane/bff/test_bff_agora_extended_contract.py services/c
 ```
 
 The combined Agora extended + SSE substrate run fails only in `test_approval_and_ask_stream_routes_publish_replay_metadata_headers`: the dirty worktree has an unrelated ASK-003 change that adds `/bff/agora/committee/sessions/{id}` to the ask channel `X-SSE-Resync-Routes` header while the SSE test still expects only `/bff/agora/ask/sessions/{id}`.
+
+Closeout verification:
+
+```
+python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/read_store.py services/control-plane/bff/test_ask_001_sessions_contract.py -> OK
+pytest services/control-plane/bff/test_ask_001_sessions_contract.py -q -> 22 passed
+pytest services/control-plane/bff/test_bff_agora_extended_contract.py -q -> 8 passed
+```
+
+Closeout note: the implementation fix landed in a mixed ASK-003/ASK-001 commit because the same BFF file had interleaved ASK-003 hunks during non-interactive review. The ASK-001 review and evidence artifacts are task-scoped here for final publication.
 
 ## Invariants
 
