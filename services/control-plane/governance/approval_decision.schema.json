@@ -34,8 +34,8 @@
     },
     "target_version": {
       "type": "string",
-      "pattern": "^\\d+\\.\\d+\\.\\d+$",
-      "description": "The version of the target object at the time of this decision."
+      "minLength": 1,
+      "description": "The version or immutable snapshot key of the target object at the time of this decision."
     },
     "decision": {
       "type": "string",
