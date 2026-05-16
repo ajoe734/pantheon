@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "task_id": "STRAT-003",
+  "archived_at": "2026-05-16T08:33:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "STRAT-003",
+    "title": "Source -> StrategySpec conversion service",
+    "summary_zh": null,
+    "phase": "Sprint 5 / EPIC-RESEARCH",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Finalized STRAT-003 with task commit 6b1932139a8532f9a62f02b0bd0b08afff6efe7e: Source/Evidence to StrategySpec conversion service, required lineage helper dependency, conversion tests, evidence, and Claude review artifact are committed. Verification: py_compile conversion/test_conversion/lineage/__init__ passed; pytest test_conversion.py -q 4 passed; pytest services/research/strategy_spec -q 21 passed; pytest test_strategy_seed_builder.py -q 5 passed; pytest services/registry/test_service.py -q 44 passed; git diff --cached --check passed before commit. Unrelated concurrent dirty worktree entries remain unstaged.",
+    "last_update": "2026-05-16T08:33:49Z",
+    "review_notes_zh": [
+      "審查通過。conversion service 正確實作 side-effect-free Source/Evidence -> StrategySpec 轉換；safety metadata triple 強制覆蓋、無法被 caller 繞過；lineage 透過既有 StrategySpecLineageRefs helpers 保留；registry payload 符合 STRAT-002 facade 合約；4+19+5+44 tests 全通過。無 blocking findings。"
+    ],
+    "review_file": "support/reviews/STRAT-003-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T08:33:49Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "6b1932139a8532f9a62f02b0bd0b08afff6efe7e",
+      "commit_subject": "STRAT-003 add source strategy conversion service",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "STRAT-003",
+        "Reviewer": "Claude",
+        "Verification": "PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/research/strategy_spec/conversion.py services/research/strategy_spec/test_conversion.py services/research/strategy_spec/lineage.py services/research/strategy_spec/__init__.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/research/strategy_spec/test_conversion.py -q (4 passed); PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/research/strategy_spec -q (21 passed); PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/source_ingestion/tests/test_strategy_seed_builder.py -q (5 passed); PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/registry/test_service.py -q (44 passed); git diff --cached --check passed.",
+        "Note": "lineage.py is included because conversion.py imports the reviewed StrategySpecLineageRefs helper; STRAT-004 docs, exports, tests, and evidence remain unstaged."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 71,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 7,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "STRAT-003",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T07:12:48Z",
+      "resolved_at": "2026-05-16T07:15:28Z"
+    },
+    {
+      "task_id": "STRAT-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "STRAT-003 ready for review. Added side-effect-free Source/Evidence -> StrategySpec conversion service that builds StrategySpecSeed, converts it into schema-backed draft StrategySpec, emits registry facade payload with source_seed_id lineage, inline storage_ref, checksum, and candidate advance request, and preserves evidence/code lineage without registry writes or execution routes. Evidence: support/evidence/STRAT-003/README.md. Verification: py_compile conversion/test; pytest services/research/strategy_spec/test_conversion.py -q (4 passed); pytest services/research/strategy_spec -q (19 passed); pytest services/source_ingestion/tests/test_strategy_seed_builder.py -q (5 passed); pytest services/registry/test_service.py -q (44 passed); git diff --check targeted STRAT-003 files.",
+      "status": "done",
+      "created_at": "2026-05-16T07:46:19Z",
+      "resolved_at": "2026-05-16T08:19:02Z"
+    },
+    {
+      "task_id": "STRAT-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: side-effect-free conversion confirmed, safety metadata triple enforced and cannot be overridden, lineage preserved through existing helpers, registry payload matches STRAT-002 facade contract, 4+19+5+44 tests all pass. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-16T08:19:02Z",
+      "resolved_at": "2026-05-16T08:33:50Z"
+    }
+  ],
+  "blockers": []
+}
