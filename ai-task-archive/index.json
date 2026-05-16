@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-05-16T10:33:35Z",
+  "updated_at": "2026-05-16T10:40:26Z",
   "counts": {
-    "total": 1145,
-    "completed": 1127,
+    "total": 1146,
+    "completed": 1128,
     "superseded": 18
   },
   "recent_terminal_ids": [
+    "IMT-001",
     "TRN-002",
     "ASK-003",
     "IMT-002",
@@ -25,7 +26,6 @@
     "TEL-002-RB",
     "INC-001-RB",
     "DEP-002-RB",
-    "TEL-001-RB",
-    "CAP-002-RB"
+    "TEL-001-RB"
   ]
 }
