@@ -7608,6 +7608,27 @@ class ReadSurfaceStore:
         self._save()
         return json.loads(json.dumps(message))
 
+    def close_agora_session(
+        self,
+        session_id: str,
+        *,
+        closed_at: Optional[str] = None,
+        outcome: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        session = self.get_agora_session(session_id)
+        if session is None:
+            return None
+        timestamp = closed_at or _utc_now_rfc3339()
+        session = json.loads(json.dumps(session))
+        session["status"] = "closed"
+        session["closedAt"] = timestamp
+        session["updatedAt"] = timestamp
+        if outcome is not None:
+            session["outcome"] = outcome
+        self._ensure_local_overlay_records("agora_sessions")[session_id] = session
+        self._save()
+        return json.loads(json.dumps(session))
+
     def get_agora_message(self, message_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not message_id:
             return None
