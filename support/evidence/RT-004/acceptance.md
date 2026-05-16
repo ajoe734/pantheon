@@ -71,3 +71,34 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/runtime-manager/service
 ```
 
 Result: passed with no output.
+
+## Finalization Rerun
+
+Owner closeout on 2026-05-16 re-read the reviewer approval, confirmed the
+approved RT-004 files had no uncommitted drift, and verified task commit
+`42d7b6c1` remains in branch history with the required Task-ID, LLM-Agent, and
+Reviewer metadata.
+
+Focused runtime action suite:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 /tmp/pantheon-rt004-venv/bin/python -m pytest services/runtime-manager/test_runtime_manager.py -k 'RuntimeManagerServiceTests or RuntimeManagerClientTests or RuntimeManagerHttpRouteTests' -q
+```
+
+Result: `16 passed, 35 deselected in 9.72s`.
+
+Deployable internal command surface:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 /tmp/pantheon-rt004-venv/bin/python -m pytest services/runtime-manager/test_internal_api_routes.py -q
+```
+
+Result: `6 passed in 8.94s`.
+
+Syntax check:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/runtime-manager/service.py services/runtime-manager/main.py services/runtime-manager/runtime_manager_client.py services/runtime-manager/test_runtime_manager.py services/runtime-manager/test_internal_api_routes.py
+```
+
+Result: passed with no output.
