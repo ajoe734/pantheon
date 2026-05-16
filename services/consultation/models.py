@@ -1,13 +1,81 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Mapping, Optional, Union
+
+from jsonschema import Draft7Validator
 from pydantic import BaseModel, Field
 
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+class ConsultValidationError(ValueError):
+    """Raised when a consultation contract payload violates the schema."""
+
+
+def _schema_dir() -> Path:
+    return Path(__file__).resolve().parent
+
+
+def consult_request_schema_path() -> Path:
+    return _schema_dir() / "consult_request.schema.json"
+
+
+def consult_memo_schema_path() -> Path:
+    return _schema_dir() / "consult_memo.schema.json"
+
+
+def load_consult_request_schema(schema_path: Path | None = None) -> Dict[str, Any]:
+    return json.loads((schema_path or consult_request_schema_path()).read_text(encoding="utf-8"))
+
+
+def load_consult_memo_schema(schema_path: Path | None = None) -> Dict[str, Any]:
+    return json.loads((schema_path or consult_memo_schema_path()).read_text(encoding="utf-8"))
+
+
+def _location(error: Any) -> str:
+    return ".".join(str(part) for part in error.path) or "<root>"
+
+
+def _validate_payload(payload: Mapping[str, Any], schema: Mapping[str, Any], label: str) -> None:
+    if not isinstance(payload, Mapping):
+        raise ConsultValidationError(f"{label} payload must be a JSON object")
+    validator = Draft7Validator(dict(schema))
+    errors = sorted(validator.iter_errors(dict(payload)), key=lambda item: list(item.path))
+    if errors:
+        first = errors[0]
+        raise ConsultValidationError(f"{label} schema validation failed at {_location(first)}: {first.message}")
+
+
+def validate_consult_request_payload(payload: Mapping[str, Any], schema_path: Path | None = None) -> None:
+    _validate_payload(payload, load_consult_request_schema(schema_path), "ConsultRequest")
+
+
+def validate_consult_memo_payload(payload: Mapping[str, Any], schema_path: Path | None = None) -> None:
+    _validate_payload(payload, load_consult_memo_schema(schema_path), "ConsultMemo")
+
+
+def _enum_value(value: Any) -> str:
+    return str(value.value if hasattr(value, "value") else value)
+
+
+def validate_consult_memo_against_request(memo: "ConsultMemo", request: "ConsultRequest") -> List[str]:
+    """Return cross-object lineage errors between a memo and its parent request."""
+    errors: List[str] = []
+    if memo.request_id != request.request_id:
+        errors.append("memo.request_id must match request.request_id")
+    if memo.target_type != request.target_type:
+        errors.append("memo.target_type must match request.target_type")
+    if memo.target_id != request.target_id:
+        errors.append("memo.target_id must match request.target_id")
+    if _enum_value(memo.status) == MemoStatus.PUBLISHED.value and not memo.published_at:
+        errors.append("published memo requires published_at")
+    return errors
 
 
 # --- Enums from SD-05 ---
@@ -114,51 +182,56 @@ class GateHandoffStatus(str, Enum):
 # --- Shared Objects ---
 
 class EvidenceRef(BaseModel):
-    id: str
-    evidence_type: str
+    id: str = Field(min_length=1)
+    evidence_type: str = Field(min_length=1)
     artifact_ref: Optional[str] = None
     description: Optional[str] = None
-    link: str
+    link: str = Field(min_length=1)
 
 
 class ActorRef(BaseModel):
-    actor_type: str
-    actor_id: str
+    actor_type: str = Field(min_length=1)
+    actor_id: str = Field(min_length=1)
+
+
+class ContextRef(BaseModel):
+    type: str = Field(min_length=1)
+    id: str = Field(min_length=1)
 
 
 # --- Core Models ---
 
 class ConsultFinding(BaseModel):
     severity: FindingSeverity
-    category: str
-    claim: str
+    category: str = Field(min_length=1)
+    claim: str = Field(min_length=1)
     evidence_refs: List[str] = Field(default_factory=list)
-    recommendation: str
+    recommendation: str = Field(min_length=1)
 
 
 class ConsultMemo(BaseModel):
-    memo_id: str
-    request_id: str
+    memo_id: str = Field(min_length=1)
+    request_id: str = Field(min_length=1)
     memo_type: MemoType
     author_type: AuthorType
-    author_ref: str
-    target_type: str
-    target_id: str
-    summary: str
+    author_ref: str = Field(min_length=1)
+    target_type: str = Field(min_length=1)
+    target_id: str = Field(min_length=1)
+    summary: str = Field(min_length=1)
     findings: List[ConsultFinding] = Field(default_factory=list)
     recommendation: Recommendation
-    confidence: float = 1.0
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     status: MemoStatus = MemoStatus.DRAFT
-    trace_id: str
+    trace_id: str = Field(min_length=1)
     created_at: str = Field(default_factory=utc_now)
     published_at: Optional[str] = None
 
 
 class TranscriptEvent(BaseModel):
-    event_id: str
-    session_id: str  # maps to request_id or session_id
-    sequence_no: int
-    event_type: str
+    event_id: str = Field(min_length=1)
+    session_id: str = Field(min_length=1)  # maps to request_id or session_id
+    sequence_no: int = Field(ge=1)
+    event_type: str = Field(min_length=1)
     event_time: str = Field(default_factory=utc_now)
     actor: ActorRef
     content: Dict[str, Any]
@@ -166,46 +239,46 @@ class TranscriptEvent(BaseModel):
 
 
 class ConsultTranscript(BaseModel):
-    transcript_id: str
-    session_id: str
-    request_id: str
+    transcript_id: str = Field(min_length=1)
+    session_id: str = Field(min_length=1)
+    request_id: str = Field(min_length=1)
     events: List[TranscriptEvent] = Field(default_factory=list)
     created_at: str = Field(default_factory=utc_now)
 
 
 class ConsultAuditEvent(BaseModel):
-    audit_id: str
-    request_id: str
+    audit_id: str = Field(min_length=1)
+    request_id: str = Field(min_length=1)
     actor_ref: ActorRef
     service_actor_ref: Optional[ActorRef] = None
-    action: str
+    action: str = Field(min_length=1)
     before_state: Optional[str] = None
     after_state: Optional[str] = None
     payload_hash: Optional[str] = None
     timestamp: str = Field(default_factory=utc_now)
-    trace_id: str
+    trace_id: str = Field(min_length=1)
 
 
 class ConsultParticipant(BaseModel):
-    participant_id: str
-    request_id: str
+    participant_id: str = Field(min_length=1)
+    request_id: str = Field(min_length=1)
     participant_type: ParticipantType
-    participant_ref: str
+    participant_ref: str = Field(min_length=1)
     role: ParticipantRole
     status: ParticipantStatus = ParticipantStatus.PENDING
     assigned_at: str = Field(default_factory=utc_now)
 
 
 class ConsultRequest(BaseModel):
-    request_id: str
+    request_id: str = Field(min_length=1)
     request_type: ConsultRequestType
     requested_by: ActorRef
     from_persona_id: Optional[str] = None
-    target_type: str
-    target_id: str
+    target_type: str = Field(min_length=1)
+    target_id: str = Field(min_length=1)
     task: Optional[str] = None
     consultation_type: Optional[str] = None
-    context_refs: List[str] = Field(default_factory=list)
+    context_refs: List[Union[ContextRef, str]] = Field(default_factory=list)
     evidence_refs: List[str] = Field(default_factory=list)
     priority: ConsultPriority = ConsultPriority.NORMAL
     status: ConsultRequestStatus = ConsultRequestStatus.DRAFT
@@ -216,29 +289,29 @@ class ConsultRequest(BaseModel):
     canceled_at: Optional[str] = None
     session_handoff_note: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
-    trace_id: str
+    trace_id: str = Field(min_length=1)
     created_at: str = Field(default_factory=utc_now)
 
 
 class ConsultGateHandoff(BaseModel):
-    handoff_id: str
-    request_id: str
-    target_gate: str
+    handoff_id: str = Field(min_length=1)
+    request_id: str = Field(min_length=1)
+    target_gate: str = Field(min_length=1)
     memo_ids: List[str] = Field(default_factory=list)
     evidence_refs: List[str] = Field(default_factory=list)
     audit_refs: List[str] = Field(default_factory=list)
-    trace_id: str
+    trace_id: str = Field(min_length=1)
     status: GateHandoffStatus = GateHandoffStatus.PENDING
     created_at: str = Field(default_factory=utc_now)
     sent_at: Optional[str] = None
 
 
 class ConsultEvidenceAttachment(BaseModel):
-    attachment_id: str
-    request_id: str
+    attachment_id: str = Field(min_length=1)
+    request_id: str = Field(min_length=1)
     evidence_ref: EvidenceRef
     attached_by: ActorRef
-    trace_id: str
+    trace_id: str = Field(min_length=1)
     created_at: str = Field(default_factory=utc_now)
 
 
@@ -248,11 +321,11 @@ class CreateConsultRequest(BaseModel):
     request_type: ConsultRequestType
     requested_by: ActorRef
     from_persona_id: Optional[str] = None
-    target_type: str
-    target_id: str
+    target_type: str = Field(min_length=1)
+    target_id: str = Field(min_length=1)
     task: Optional[str] = None
     consultation_type: Optional[str] = None
-    context_refs: List[str] = Field(default_factory=list)
+    context_refs: List[Union[ContextRef, str]] = Field(default_factory=list)
     evidence_refs: List[str] = Field(default_factory=list)
     priority: ConsultPriority = ConsultPriority.NORMAL
     policy_id: Optional[str] = None
@@ -262,15 +335,15 @@ class CreateConsultRequest(BaseModel):
     canceled_at: Optional[str] = None
     session_handoff_note: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
-    trace_id: str
+    trace_id: str = Field(min_length=1)
 
 
 class CreateGateHandoffRequest(BaseModel):
-    request_id: str
-    target_gate: str
+    request_id: str = Field(min_length=1)
+    target_gate: str = Field(min_length=1)
     memo_ids: List[str] = Field(default_factory=list)
     evidence_refs: List[str] = Field(default_factory=list)
-    trace_id: str
+    trace_id: str = Field(min_length=1)
     initiated_by: Optional[ActorRef] = None
 
 
@@ -281,9 +354,9 @@ class CancelConsultRequestRequest(BaseModel):
 
 
 class RecordSponsorDecisionRequest(BaseModel):
-    sponsor_decision: str
-    rationale_ref: str
-    actor_id: str
+    sponsor_decision: str = Field(min_length=1)
+    rationale_ref: str = Field(min_length=1)
+    actor_id: str = Field(min_length=1)
     recorded_at: Optional[str] = None
 
 
@@ -295,27 +368,27 @@ class AttachEvidenceRequest(BaseModel):
 
 class AssignParticipantRequest(BaseModel):
     participant_type: ParticipantType
-    participant_ref: str
+    participant_ref: str = Field(min_length=1)
     role: ParticipantRole
-    trace_id: str
+    trace_id: str = Field(min_length=1)
     initiated_by: Optional[ActorRef] = None
 
 
 class SubmitMemoRequest(BaseModel):
-    request_id: str
+    request_id: str = Field(min_length=1)
     memo_type: MemoType
     author_type: AuthorType
-    author_ref: str
-    summary: str
+    author_ref: str = Field(min_length=1)
+    summary: str = Field(min_length=1)
     findings: List[ConsultFinding] = Field(default_factory=list)
     recommendation: Recommendation
-    confidence: float = 1.0
-    trace_id: str
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    trace_id: str = Field(min_length=1)
 
 
 class PostTranscriptEventRequest(BaseModel):
-    request_id: str
-    event_type: str
+    request_id: str = Field(min_length=1)
+    event_type: str = Field(min_length=1)
     actor: ActorRef
     content: Dict[str, Any]
     evidence_refs: List[str] = Field(default_factory=list)
