@@ -1,0 +1,139 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/training-session/teaching-event/v1",
+  "title": "TeachingEvent",
+  "description": "Append-only event contract for a Pantheon trainer teaching session. Events preserve replay ordering and carry the canonical actor/timestamp/payload fields needed for later rapid-eval, replay, and lineage stages.",
+  "type": "object",
+  "required": [
+    "event_id",
+    "session_id",
+    "event_type",
+    "actor_type",
+    "payload",
+    "timestamp",
+    "correlation_id",
+    "sequence_number"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "message",
+        "correction",
+        "patch_proposed",
+        "preview_requested",
+        "preview_result",
+        "commit",
+        "discard",
+        "control_patch",
+        "preview_trigger"
+      ]
+    },
+    "actor_type": {
+      "type": "string",
+      "enum": [
+        "user",
+        "persona",
+        "service"
+      ]
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "minLength": 1
+    },
+    "correlation_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sequence_number": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "actor": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "actor_label": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "message_body": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "summary": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "emitted_at": {
+      "type": "string",
+      "format": "date-time",
+      "minLength": 1
+    },
+    "outcome_signal": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "evidence_ref": {
+      "$ref": "#/definitions/nullableObject"
+    },
+    "patch_delta": {
+      "$ref": "#/definitions/nullableArray"
+    },
+    "eval_ref": {
+      "$ref": "#/definitions/nullableObject"
+    },
+    "artifact_refs": {
+      "$ref": "#/definitions/nullableObject"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "nullableString": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "nullableObject": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": true
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "nullableArray": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {},
+          "additionalItems": true
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  }
+}

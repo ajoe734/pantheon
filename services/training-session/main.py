@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
+from models import TeachingEvent, TeachingSession
 from store import TrainingSessionStore, build_training_session_store
 
 
@@ -67,16 +68,136 @@ def _control_patch_error(control: Dict[str, Any], value: Any) -> Optional[Dict[s
     return None
 
 
+def _actor_type_from_actor(actor: Optional[str]) -> str:
+    normalized = str(actor or "").strip().lower()
+    if normalized in {"persona", "assistant"}:
+        return "persona"
+    if normalized in {"system", "service", "training-session", "training-session-svc"}:
+        return "service"
+    return "user"
+
+
+def _teaching_event_payload(
+    *,
+    message_body: Optional[str] = None,
+    summary: Optional[str] = None,
+    outcome_signal: Optional[str] = None,
+    evidence_ref: Optional[Dict[str, Any]] = None,
+    patch_delta: Optional[List[Dict[str, Any]]] = None,
+    eval_ref: Optional[Dict[str, Any]] = None,
+    artifact_refs: Optional[Dict[str, Any]] = None,
+    payload: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    normalized = dict(payload or {})
+    for key, value in (
+        ("message_body", message_body),
+        ("summary", summary),
+        ("outcome_signal", outcome_signal),
+        ("evidence_ref", evidence_ref),
+        ("patch_delta", patch_delta),
+        ("eval_ref", eval_ref),
+        ("artifact_refs", artifact_refs),
+    ):
+        if value is not None:
+            normalized[key] = value
+    return normalized
+
+
+def _build_teaching_event(
+    *,
+    session_id: str,
+    event_id: str,
+    event_type: str,
+    actor: str,
+    timestamp: str,
+    sequence_number: int,
+    actor_type: Optional[str] = None,
+    actor_label: Optional[str] = None,
+    message_body: Optional[str] = None,
+    summary: Optional[str] = None,
+    outcome_signal: Optional[str] = None,
+    evidence_ref: Optional[Dict[str, Any]] = None,
+    patch_delta: Optional[List[Dict[str, Any]]] = None,
+    eval_ref: Optional[Dict[str, Any]] = None,
+    artifact_refs: Optional[Dict[str, Any]] = None,
+    payload: Optional[Dict[str, Any]] = None,
+    correlation_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    event_payload = _teaching_event_payload(
+        message_body=message_body,
+        summary=summary,
+        outcome_signal=outcome_signal,
+        evidence_ref=evidence_ref,
+        patch_delta=patch_delta,
+        eval_ref=eval_ref,
+        artifact_refs=artifact_refs,
+        payload=payload,
+    )
+    return TeachingEvent.from_dict(
+        {
+            "event_id": event_id,
+            "session_id": session_id,
+            "actor": actor,
+            "actor_type": actor_type or _actor_type_from_actor(actor),
+            "actor_label": actor_label,
+            "event_type": event_type,
+            "payload": event_payload,
+            "message_body": message_body,
+            "summary": summary,
+            "timestamp": timestamp,
+            "emitted_at": timestamp,
+            "correlation_id": correlation_id or f"{session_id}:{event_id}",
+            "sequence_number": sequence_number,
+            "outcome_signal": outcome_signal,
+            "evidence_ref": evidence_ref,
+            "patch_delta": patch_delta,
+            "eval_ref": eval_ref,
+            "artifact_refs": artifact_refs,
+        }
+    ).to_dict()
+
+
+def _teaching_session_contract(session: Dict[str, Any]) -> Dict[str, Any]:
+    session_id = str(session.get("session_id") or session.get("id") or "").strip()
+    contract = {
+        "id": session.get("id") or session_id,
+        "session_id": session_id,
+        "persona_id": session.get("persona_id"),
+        "opened_by": session.get("opened_by") or session.get("operator_id") or "system",
+        "mode": session.get("mode") or "coaching",
+        "session_type": session.get("session_type") or "trainer",
+        "objective": session.get("objective") or session.get("topic"),
+        "topic": session.get("topic") or session.get("objective"),
+        "status": session.get("status") or "active",
+        "started_at": session.get("started_at") or session.get("created_at"),
+        "ended_at": session.get("ended_at") or session.get("completed_at"),
+        "current_control_state_ref": session.get("current_control_state_ref"),
+        "trace_id": session.get("trace_id") or f"trace-{session_id or uuid.uuid4().hex[:12]}",
+        "context_refs": session.get("context_refs") if isinstance(session.get("context_refs"), list) else [],
+        "actor_context": session.get("actor_context") if isinstance(session.get("actor_context"), dict) else {},
+        "events": session.get("events") if isinstance(session.get("events"), list) else [],
+        "outcomes": session.get("outcomes") if isinstance(session.get("outcomes"), list) else [],
+    }
+    for key in ("replay_resolution", "artifacts", "metadata"):
+        if isinstance(session.get(key), dict):
+            contract[key] = session[key]
+    return TeachingSession.from_dict(contract).to_dict()
+
+
 class CreateSessionBody(BaseModel):
     persona_id: str
     objective: str
+    mode: str = "coaching"
     context_refs: List[Dict[str, Any]] = Field(default_factory=list)
     actor_id: str = "operator"
+    current_control_state_ref: Optional[str] = None
+    trace_id: Optional[str] = None
     created_at: Optional[str] = None
 
 
 class AppendEventBody(BaseModel):
     actor: str = "operator"
+    actor_type: Optional[str] = None
     actor_label: Optional[str] = None
     event_type: str = "message"
     message_body: Optional[str] = None
@@ -86,6 +207,8 @@ class AppendEventBody(BaseModel):
     patch_delta: Optional[List[Dict[str, Any]]] = None
     eval_ref: Optional[Dict[str, Any]] = None
     artifact_refs: Optional[Dict[str, Any]] = None
+    payload: Optional[Dict[str, Any]] = None
+    correlation_id: Optional[str] = None
     emitted_at: Optional[str] = None
 
 
@@ -152,21 +275,25 @@ def create_session(body: CreateSessionBody) -> Dict[str, Any]:
     timestamp = body.created_at or utc_now()
     existing_ids = {str(session.get("session_id") or "") for session in store.list_sessions()}
     session_id = _session_id(timestamp, existing_ids)
-    session = {
+    session = _teaching_session_contract({
         "id": session_id,
         "session_id": session_id,
         "persona_id": body.persona_id,
         "session_type": "trainer",
+        "mode": body.mode,
         "objective": body.objective,
         "topic": body.objective,
         "status": "active",
         "started_at": timestamp,
         "ended_at": None,
         "opened_by": body.actor_id,
+        "current_control_state_ref": body.current_control_state_ref,
+        "trace_id": body.trace_id or f"trace-{uuid.uuid4().hex[:12]}",
         "context_refs": body.context_refs,
+        "actor_context": {},
         "events": [],
         "outcomes": [],
-    }
+    })
     store.put_session(session)
     store.put_controls(session_id, {"session_id": session_id, "controls": []})
     store.put_preview_bundle(
@@ -207,22 +334,25 @@ def append_event(session_id: str, body: AppendEventBody) -> Dict[str, Any]:
     events = session.setdefault("events", [])
     event_id = _next_event_id(timestamp, events)
     sequence_number = max((int(event.get("sequence_number") or 0) for event in events), default=0) + 1
-    event = {
-        "event_id": event_id,
-        "session_id": session_id,
-        "actor": body.actor,
-        "actor_label": body.actor_label,
-        "event_type": body.event_type,
-        "message_body": body.message_body,
-        "summary": body.summary,
-        "emitted_at": timestamp,
-        "sequence_number": sequence_number,
-        "outcome_signal": body.outcome_signal,
-        "evidence_ref": body.evidence_ref,
-        "patch_delta": body.patch_delta,
-        "eval_ref": body.eval_ref,
-        "artifact_refs": body.artifact_refs,
-    }
+    event = _build_teaching_event(
+        session_id=session_id,
+        event_id=event_id,
+        event_type=body.event_type,
+        actor=body.actor,
+        actor_type=body.actor_type,
+        actor_label=body.actor_label,
+        message_body=body.message_body,
+        summary=body.summary,
+        timestamp=timestamp,
+        sequence_number=sequence_number,
+        outcome_signal=body.outcome_signal,
+        evidence_ref=body.evidence_ref,
+        patch_delta=body.patch_delta,
+        eval_ref=body.eval_ref,
+        artifact_refs=body.artifact_refs,
+        payload=body.payload,
+        correlation_id=body.correlation_id,
+    )
     events.append(event)
     if body.outcome_signal:
         outcomes = session.setdefault("outcomes", [])
@@ -478,6 +608,7 @@ def complete_session(session_id: str) -> Dict[str, Any]:
     timestamp = utc_now()
     session["status"] = "completed"
     session["ended_at"] = timestamp
+    session = _teaching_session_contract(session)
     store.put_session(session)
     preview = (store.get_preview_bundle(session_id) or {}).get("preview") or {}
     candidate_snapshot_at = preview.get("candidate_snapshot_at") or timestamp
@@ -488,27 +619,27 @@ def complete_session(session_id: str) -> Dict[str, Any]:
         "candidate_artifact_ref": f"{session_id}-candidate-artifact",
         "after_artifact_ref": None,
     }
-    replay_event = {
-        "event_id": _next_event_id(timestamp, replay.get("events") or []),
-        "session_id": session_id,
-        "actor": "system",
-        "actor_label": "Training Session Service",
-        "event_type": "preview_trigger",
-        "summary": "Replay candidate materialized from preview.",
-        "message_body": None,
-        "emitted_at": timestamp,
-        "sequence_number": max(
+    replay_eval_ref = {
+        "eval_id": preview.get("eval_id"),
+        "baseline_snapshot_at": preview.get("baseline_snapshot_at"),
+        "candidate_snapshot_at": candidate_snapshot_at,
+    }
+    replay_event = _build_teaching_event(
+        session_id=session_id,
+        event_id=_next_event_id(timestamp, replay.get("events") or []),
+        actor="system",
+        actor_label="Training Session Service",
+        event_type="preview_trigger",
+        summary="Replay candidate materialized from preview.",
+        timestamp=timestamp,
+        sequence_number=max(
             (int(event.get("sequence_number") or 0) for event in replay.get("events", [])),
             default=0,
         )
         + 1,
-        "outcome_signal": "teaching-complete",
-        "eval_ref": {
-            "eval_id": preview.get("eval_id"),
-            "baseline_snapshot_at": preview.get("baseline_snapshot_at"),
-            "candidate_snapshot_at": candidate_snapshot_at,
-        },
-    }
+        outcome_signal="teaching-complete",
+        eval_ref=replay_eval_ref,
+    )
     replay.setdefault("events", []).append(replay_event)
     store.append_event(replay_event)
     store.put_replay(session_id, replay)
@@ -531,30 +662,27 @@ def _decide_replay(session_id: str, body: ReplayDecisionBody, state: str) -> Dic
     artifacts = replay.setdefault("artifacts", {})
     if state == "committed":
         artifacts["after_artifact_ref"] = f"{session_id}-committed-artifact"
-    decision_event = {
-        "event_id": _next_event_id(timestamp, replay.get("events") or []),
-        "session_id": session_id,
-        "actor": "system",
-        "actor_label": "Training Session Service",
-        "event_type": "commit" if state == "committed" else "discard",
-        "summary": f"Replay candidate {state} by {body.actor_id}.",
-        "message_body": None,
-        "emitted_at": timestamp,
-        "sequence_number": max(
+    decision_artifact_refs = {
+        "before_artifact_ref": artifacts.get("before_artifact_ref"),
+        "candidate_artifact_ref": artifacts.get("candidate_artifact_ref"),
+        "after_artifact_ref": artifacts.get("after_artifact_ref"),
+    }
+    decision_event = _build_teaching_event(
+        session_id=session_id,
+        event_id=_next_event_id(timestamp, replay.get("events") or []),
+        actor="system",
+        actor_label="Training Session Service",
+        event_type="commit" if state == "committed" else "discard",
+        summary=f"Replay candidate {state} by {body.actor_id}.",
+        timestamp=timestamp,
+        sequence_number=max(
             (int(event.get("sequence_number") or 0) for event in replay.get("events", [])),
             default=0,
         )
         + 1,
-        "outcome_signal": None,
-        "evidence_ref": None,
-        "patch_delta": None,
-        "eval_ref": {"candidate_snapshot_at": candidate_snapshot_at},
-        "artifact_refs": {
-            "before_artifact_ref": artifacts.get("before_artifact_ref"),
-            "candidate_artifact_ref": artifacts.get("candidate_artifact_ref"),
-            "after_artifact_ref": artifacts.get("after_artifact_ref"),
-        },
-    }
+        eval_ref={"candidate_snapshot_at": candidate_snapshot_at},
+        artifact_refs=decision_artifact_refs,
+    )
     replay.setdefault("events", []).append(decision_event)
     store.append_event(decision_event)
     store.put_replay(session_id, replay)

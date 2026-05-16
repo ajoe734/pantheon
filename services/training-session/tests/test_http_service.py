@@ -38,7 +38,11 @@ def test_training_session_lifecycle_event_preview_and_replay_contract() -> None:
         },
     )
     assert created.status_code == 201
-    session_id = created.json()["session_id"]
+    created_payload = created.json()
+    module.TeachingSession.from_dict(created_payload)
+    assert created_payload["mode"] == "coaching"
+    assert created_payload["trace_id"]
+    session_id = created_payload["session_id"]
 
     first = client.post(
         f"/api/training/sessions/{session_id}/events",
@@ -50,6 +54,11 @@ def test_training_session_lifecycle_event_preview_and_replay_contract() -> None:
     )
     assert first.status_code == 201
     assert second.status_code == 201
+    module.TeachingEvent.from_dict(first.json()["event"])
+    module.TeachingEvent.from_dict(second.json()["event"])
+    assert first.json()["event"]["actor_type"] == "user"
+    assert first.json()["event"]["timestamp"] == "2026-04-28T18:01:00Z"
+    assert first.json()["event"]["payload"]["message_body"] == "Decrease aggressiveness."
     assert first.json()["event"]["sequence_number"] == 1
     assert second.json()["event"]["sequence_number"] == 2
 
@@ -70,6 +79,8 @@ def test_training_session_lifecycle_event_preview_and_replay_contract() -> None:
 
     completed = client.post(f"/api/training/sessions/{session_id}/complete")
     assert completed.status_code == 201
+    module.TeachingSession.from_dict(completed.json())
+    module.TeachingEvent.from_dict(completed.json()["events"][-1])
     assert completed.json()["replay_resolution"]["state"] == "pending_decision"
 
     replay = client.get(f"/api/training/replays/{session_id}")
@@ -98,6 +109,7 @@ def test_training_session_lifecycle_event_preview_and_replay_contract() -> None:
         },
     )
     assert committed.status_code == 200
+    module.TeachingEvent.from_dict(committed.json()["events"][-1])
     assert committed.json()["replay_resolution"]["state"] == "committed"
     assert committed.json()["events"][-1]["event_type"] == "commit"
     assert reloaded_store.list_event_log(session_id)[-1]["event_type"] == "commit"
@@ -141,3 +153,44 @@ def test_control_patch_rejects_unknown_key_and_accepts_known_key() -> None:
     assert accepted.status_code == 200
     assert accepted.json()["status"] == "accepted"
     assert accepted.json()["controls"][0]["current_value"] == 0.1
+
+
+def test_complete_upgrades_legacy_session_to_schema_contract() -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+    module.store.put_session(
+        {
+            "id": "trn-legacy-001",
+            "session_id": "trn-legacy-001",
+            "persona_id": "persona-alpha",
+            "session_type": "trainer",
+            "objective": "Legacy trainer session",
+            "status": "active",
+            "started_at": "2026-04-28T18:00:00Z",
+            "ended_at": None,
+            "opened_by": "operator-1",
+            "context_refs": [],
+            "events": [],
+            "outcomes": [],
+        }
+    )
+    module.store.put_preview_bundle(
+        "trn-legacy-001",
+        {
+            "session_id": "trn-legacy-001",
+            "preview": {
+                "eval_id": "teval-legacy-001",
+                "baseline_snapshot_at": "2026-04-28T18:00:00Z",
+                "candidate_snapshot_at": "2026-04-28T18:03:00Z",
+            },
+        },
+    )
+
+    completed = client.post("/api/training/sessions/trn-legacy-001/complete")
+
+    assert completed.status_code == 201
+    payload = completed.json()
+    module.TeachingSession.from_dict(payload)
+    module.TeachingEvent.from_dict(payload["events"][-1])
+    assert payload["mode"] == "coaching"
+    assert payload["trace_id"] == "trace-trn-legacy-001"
