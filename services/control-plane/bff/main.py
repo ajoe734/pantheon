@@ -21912,9 +21912,11 @@ async def bff_list_runtimes(
         bindings = []
         next_page_token = None
     else:
+        total = len(bindings)
         bindings, next_page_token = _page_slice(bindings, page_token, page_size)
 
     meta = _snapshot_meta(snapshot_at)
+    meta["total"] = 0 if surface.get("status") == "unavailable" else total
     meta["surfaces"] = {"runtimes": surface}
     staleness = _meta_staleness()
     if staleness is not None:
@@ -21936,12 +21938,15 @@ async def bff_get_runtime(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
+    snapshot_at = utc_now()
+    surface = _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at)
     clean_id = runtime_id.strip()
     binding = read_store.get_runtime_binding_by_runtime_id(clean_id)
     if not binding:
         # fall back to binding_id lookup
         binding = read_store.get_runtime_binding(clean_id)
     if not binding:
+        _raise_if_read_surface_unavailable(surface, label="Runtime")
         raise _bff_error(
             404,
             ErrorCode.OBJECT_NOT_FOUND,
@@ -21949,10 +21954,11 @@ async def bff_get_runtime(
             f"Runtime {runtime_id} does not exist",
         )
 
-    snapshot_at = utc_now()
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {"runtime": surface}
     return {
         "data": binding,
-        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
+        "meta": meta,
     }
 
 

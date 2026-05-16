@@ -8052,16 +8052,27 @@ class ReadSurfaceStore:
     @staticmethod
     def _project_canonical_runtime_binding(raw: Dict[str, Any]) -> Dict[str, Any]:
         binding_id = raw.get("binding_id") or raw.get("id")
+        deployment_stage = raw.get("deployment_stage") or raw.get("deployment_mode")
+        deployment_mode = raw.get("deployment_mode") or deployment_stage
+        metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
         return {
             "id": binding_id,
+            "binding_id": binding_id,
+            "runtime_binding_id": raw.get("runtime_binding_id") or binding_id,
             "runtime_id": raw.get("runtime_id") or binding_id,
-            "deployment_stage": raw.get("deployment_mode") or raw.get("deployment_stage"),
+            "deployment_stage": deployment_stage,
+            "deployment_mode": deployment_mode,
             "status": raw.get("status"),
             "plan_id": raw.get("plan_id"),
             "capital_pool_id": raw.get("capital_pool_id"),
             "artifact_id": raw.get("artifact_id"),
             "artifact_version": raw.get("artifact_version"),
             "persona_capital_binding_id": raw.get("persona_capital_binding_id"),
+            "effective_at": raw.get("effective_at"),
+            "retired_at": raw.get("retired_at"),
+            "rollback_parent": raw.get("rollback_parent"),
+            "rollback_action_type": raw.get("rollback_action_type"),
+            "metadata": json.loads(json.dumps(metadata)),
         }
 
     @staticmethod
