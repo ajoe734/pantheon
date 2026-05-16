@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-16 13:44:24
+Last updated: 2026-05-16 14:03:51
 
 ## Objective
 
@@ -37,12 +37,12 @@ Last updated: 2026-05-16 13:44:24
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run.
+- `Claude`: execution, control-plane, governance-review; next: Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run.
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: Supervisor resumed AUD-002 for finalize after successful dispatch.
-- `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
+- `Codex`: integration, status-system, schema, acceptance; next: Implementing pool/runtime compatibility checks in deployment service: service layer, POST /api/deployment/plans/compatibility-check, focused tests, and docs.
+- `Codex2`: integration, status-system, schema, acceptance; next: Supervisor auto-started TEL-002-RB after successful dispatch.
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
-- `Claude2`: execution, control-plane, governance-review; next: Review approved: /bff/audit dedicated handler correct. Filters, pagination, envelope, meta, RBAC all verified. 11 contract tests + 3 live wiring pass. Returning to Claude2 for finalization.
+- `Claude2`: execution, control-plane, governance-review; next: Auto-reassigned ownership from Gemini to Claude2 after repeated Gemini capacity/429: Capacity / rate limit failure
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check.
 
 ## Delivery Layers
@@ -52,18 +52,13 @@ Last updated: 2026-05-16 13:44:24
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | Gemini2 | blocked | - | - |
-| `P0-AUD-001` | Sprint 1 / EPIC-BFF-P0 | /bff/audit read endpoint | Claude2 | review_approved | - | - |
-| `DEP-003` | Sprint 2 / EPIC-GOV-DEPLOY | deployment projection read model | Claude2 | review_approved | - | - |
-| `RT-003` | Sprint 3 / EPIC-RUNTIME | /bff/runtimes list/detail | Claude | todo | - | - |
-| `AUD-002` | Sprint 4 / EPIC-TELEMETRY | AuditAction backend (write engine) | Codex | review_approved | - | - |
-| `ALT-001` | Sprint 4 / EPIC-TELEMETRY | /bff/alerts endpoint | Codex | todo | - | - |
-| `POST-001` | Sprint 4 / EPIC-TELEMETRY | Postmortem schema + endpoint | Codex | review_approved | - | - |
-| `DEP-001-RB` | Sprint 2 / EPIC-GOV-DEPLOY | DeploymentPlan contract + service (rebaseline) | Codex | todo | - | - |
-| `DEP-002-RB` | Sprint 2 / EPIC-GOV-DEPLOY | DeploymentPlan stage planner (rebaseline) | Claude2 | todo | - | - |
-| `CAP-002-RB` | Sprint 2 / EPIC-GOV-DEPLOY | Pool/runtime compatibility checks (rebaseline) | Claude | todo | - | - |
-| `EX-002-RB` | Sprint 3 / EPIC-RUNTIME | Loader metadata migration promotion_state -> artifact_state + deployment_stage (rebaseline) | Claude | todo | - | - |
-| `TEL-001-RB` | Sprint 4 / EPIC-TELEMETRY | TelemetryEvent canonical schema (rebaseline) | Claude | todo | - | - |
-| `TEL-002-RB` | Sprint 4 / EPIC-TELEMETRY | RuntimeHeartbeat ingest endpoint (rebaseline) | Claude | todo | - | - |
+| `RT-003` | Sprint 3 / EPIC-RUNTIME | /bff/runtimes list/detail | Codex | review | - | - |
+| `DEP-001-RB` | Sprint 2 / EPIC-GOV-DEPLOY | DeploymentPlan contract + service (rebaseline) | Codex | review | - | - |
+| `DEP-002-RB` | Sprint 2 / EPIC-GOV-DEPLOY | DeploymentPlan stage planner (rebaseline) | Codex | todo | - | - |
+| `CAP-002-RB` | Sprint 2 / EPIC-GOV-DEPLOY | Pool/runtime compatibility checks (rebaseline) | Codex | in_progress | - | - |
+| `EX-002-RB` | Sprint 3 / EPIC-RUNTIME | Loader metadata migration promotion_state -> artifact_state + deployment_stage (rebaseline) | Codex | todo | - | - |
+| `TEL-001-RB` | Sprint 4 / EPIC-TELEMETRY | TelemetryEvent canonical schema (rebaseline) | Codex | in_progress | - | - |
+| `TEL-002-RB` | Sprint 4 / EPIC-TELEMETRY | RuntimeHeartbeat ingest endpoint (rebaseline) | Codex2 | in_progress | - | - |
 | `INC-001-RB` | Sprint 4 / EPIC-TELEMETRY | /bff/incidents (IncidentCase) (rebaseline) | Claude2 | todo | - | - |
 | `SRC-001` | Sprint 5 / EPIC-RESEARCH | SourceRecord schema + ingest API | Claude2 | todo | - | - |
 | `SRC-002` | Sprint 5 / EPIC-RESEARCH | paper ingest adapter skeleton | Claude | todo | - | - |
@@ -103,11 +98,16 @@ Last updated: 2026-05-16 13:44:24
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-16 13:44:24
-- Terminal tasks archived: `1117` total, `1099` completed, `18` superseded
+- Archive updated: 2026-05-16 14:03:32
+- Terminal tasks archived: `1122` total, `1104` completed, `18` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `DEP-003` | Sprint 2 / EPIC-GOV-DEPLOY | deployment projection read model | Claude2 | completed | 2026-05-16 14:03:32 | `ai-task-archive/tasks/DEP-003.json` |
+| `ALT-001` | Sprint 4 / EPIC-TELEMETRY | /bff/alerts endpoint | Codex | completed | 2026-05-16 14:02:57 | `ai-task-archive/tasks/ALT-001.json` |
+| `P0-AUD-001` | Sprint 1 / EPIC-BFF-P0 | /bff/audit read endpoint | Claude2 | completed | 2026-05-16 13:53:57 | `ai-task-archive/tasks/P0-AUD-001.json` |
+| `POST-001` | Sprint 4 / EPIC-TELEMETRY | Postmortem schema + endpoint | Codex | completed | 2026-05-16 13:51:19 | `ai-task-archive/tasks/POST-001.json` |
+| `AUD-002` | Sprint 4 / EPIC-TELEMETRY | AuditAction backend (write engine) | Codex | completed | 2026-05-16 13:47:22 | `ai-task-archive/tasks/AUD-002.json` |
 | `RT-004` | Sprint 3 / EPIC-RUNTIME | Runtime deploy/pause/replace/rollback actions | Codex | completed | 2026-05-16 13:44:24 | `ai-task-archive/tasks/RT-004.json` |
 | `RT-002` | Sprint 3 / EPIC-RUNTIME | Runtime Manager skeleton | Codex | completed | 2026-05-16 13:43:58 | `ai-task-archive/tasks/RT-002.json` |
 | `P0-PER-001` | Sprint 1 / EPIC-BFF-P0 | /bff/personas list/detail | Claude2 | completed | 2026-05-16 13:43:09 | `ai-task-archive/tasks/P0-PER-001.json` |
@@ -123,29 +123,19 @@ Last updated: 2026-05-16 13:44:24
 | `P0-BFF-002` | Sprint 1 / EPIC-BFF-P0 | POST /bff/auth/refresh | Claude2 | completed | 2026-05-16 08:27:00 | `ai-task-archive/tasks/P0-BFF-002.json` |
 | `EX-003` | Sprint 3 / EPIC-RUNTIME | LEAN algorithm-level smoke test | Gemini2 | completed | 2026-05-16 08:25:37 | `ai-task-archive/tasks/EX-003.json` |
 | `P0-ACT-001` | Sprint 1 / EPIC-BFF-P0 | canonical action endpoint /bff/actions/{type}/{id}/{action} | Claude2 | completed | 2026-05-16 08:14:30 | `ai-task-archive/tasks/P0-ACT-001.json` |
-| `P0-BFF-004` | Sprint 1 / EPIC-BFF-P0 | Fix /openapi.json 500 | Claude2 | completed | 2026-05-16 08:07:37 | `ai-task-archive/tasks/P0-BFF-004.json` |
-| `P0-BFF-001` | Sprint 1 / EPIC-BFF-P0 | GET /bff/me session bootstrap | Claude2 | completed | 2026-05-16 07:44:35 | `ai-task-archive/tasks/P0-BFF-001.json` |
-| `MGMT-BROKER-002-SIDECAR-ACCEPTANCE` | Track E / EPIC-05 Shioaji Sandbox | Prepare MGMT-BROKER-002 acceptance packet and dependency map | Claude | completed | 2026-05-16 03:00:06 | `ai-task-archive/tasks/MGMT-BROKER-002-SIDECAR-ACCEPTANCE.json` |
-| `MGMT-EVO-003-SIDECAR-REVIEW` | Track E / EPIC-06 Evolution Follow-Through | Prepare MGMT-EVO-003 review packet and evidence summary | Codex2 | completed | 2026-05-16 02:56:04 | `ai-task-archive/tasks/MGMT-EVO-003-SIDECAR-REVIEW.json` |
-| `MGMT-SAFE-005` | Track E / EPIC-07 Safety / Fail-Closed Regression | no live side effects assertion | Codex | completed | 2026-05-16 02:55:30 | `ai-task-archive/tasks/MGMT-SAFE-005.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | - | Gemini2 | Gemini | blocked | - | 2026-05-15 23:15:06 | Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check. |
-| `P0-AUD-001` | Sprint 1 / EPIC-BFF-P0 | /bff/audit read endpoint | - | Claude2 | Claude | review_approved | - | 2026-05-16 08:44:50 | Review approved: /bff/audit dedicated handler correct. Filters, pagination, envelope, meta, RBAC all verified. 11 contract tests + 3 live wiring pass. Returning to Claude2 for finalization. |
-| `DEP-003` | Sprint 2 / EPIC-GOV-DEPLOY | deployment projection read model | - | Claude2 | Claude | review_approved | - | 2026-05-16 08:18:36 | Auto-reassigned ownership from Codex to Claude2 after repeated Codex terminal: Codex usage limit reached |
-| `RT-003` | Sprint 3 / EPIC-RUNTIME | /bff/runtimes list/detail | - | Claude | Codex | todo | - | 2026-05-16 13:41:50 | Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
-| `AUD-002` | Sprint 4 / EPIC-TELEMETRY | AuditAction backend (write engine) | - | Codex | Claude | review_approved | - | 2026-05-16 13:41:20 | Supervisor resumed AUD-002 for finalize after successful dispatch. |
-| `ALT-001` | Sprint 4 / EPIC-TELEMETRY | /bff/alerts endpoint | - | Codex | Claude2 | todo | - | 2026-05-16 13:42:06 | Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Codex starts a fresh run. |
-| `POST-001` | Sprint 4 / EPIC-TELEMETRY | Postmortem schema + endpoint | - | Codex | Claude | review_approved | - | 2026-05-16 13:43:37 | Review approved: Postmortem schema complete with full lineage evidence fields; domain layer enforces referential integrity at write time; BFF operator endpoints correctly route with capability gating. 98+4 tests pass independently verified. Returning to Codex for finalization. |
-| `DEP-001-RB` | Sprint 2 / EPIC-GOV-DEPLOY | DeploymentPlan contract + service (rebaseline) | - | Codex | Claude | todo | - | 2026-05-16 13:42:21 | Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Codex starts a fresh run. |
-| `DEP-002-RB` | Sprint 2 / EPIC-GOV-DEPLOY | DeploymentPlan stage planner (rebaseline) | - | Claude2 | Codex | todo | - | 2026-05-16 07:19:08 | Assignment created |
-| `CAP-002-RB` | Sprint 2 / EPIC-GOV-DEPLOY | Pool/runtime compatibility checks (rebaseline) | - | Claude | Codex2 | todo | - | 2026-05-16 07:20:18 | Assignment created |
-| `EX-002-RB` | Sprint 3 / EPIC-RUNTIME | Loader metadata migration promotion_state -> artifact_state + deployment_stage (rebaseline) | - | Claude | Claude2 | todo | - | 2026-05-16 07:59:51 | Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
-| `TEL-001-RB` | Sprint 4 / EPIC-TELEMETRY | TelemetryEvent canonical schema (rebaseline) | - | Claude | Claude2 | todo | - | 2026-05-16 08:36:20 | Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
-| `TEL-002-RB` | Sprint 4 / EPIC-TELEMETRY | RuntimeHeartbeat ingest endpoint (rebaseline) | - | Claude | Claude2 | todo | - | 2026-05-16 08:24:30 | Auto-reassigned ownership from Gemini to Claude after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Claude starts a fresh run. |
+| `RT-003` | Sprint 3 / EPIC-RUNTIME | /bff/runtimes list/detail | - | Codex | Claude | review | - | 2026-05-16 13:54:37 | Implemented /bff/runtimes list/detail canonical RuntimeBinding read surface: list filters status/deployment_stage with unavailable surface metadata; detail resolves runtime_id or binding_id and returns 503 when the runtime store is missing. Evidence: pytest -q services/control-plane/bff/test_bff_runtimes_contract.py; pytest -q services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py::test_bff_deployment_runtime_and_risk_action_routes_return_final_envelopes; pytest -q services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py -q. Broader execute-plans/governance run still has unrelated failures in incident fixture ordering and capital-pool missing-store behavior. |
+| `DEP-001-RB` | Sprint 2 / EPIC-GOV-DEPLOY | DeploymentPlan contract + service (rebaseline) | - | Codex | Claude | review | - | 2026-05-16 13:54:38 | DEP-001-RB ready for review. Added isolated service coverage in services/deployment/test_dep001_rebaseline_service.py and evidence in support/evidence/DEP-001-RB/deployment-plan-rebaseline.md. Verification: DEP-001-RB pytest 6 passed; deployment service pytest 24 passed; governance DeploymentPlan unittest 26 passed. |
+| `DEP-002-RB` | Sprint 2 / EPIC-GOV-DEPLOY | DeploymentPlan stage planner (rebaseline) | - | Codex | Claude2 | todo | - | 2026-05-16 14:03:23 | Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Codex starts a fresh run. |
+| `CAP-002-RB` | Sprint 2 / EPIC-GOV-DEPLOY | Pool/runtime compatibility checks (rebaseline) | - | Codex | Claude | in_progress | - | 2026-05-16 14:03:32 | Implementing pool/runtime compatibility checks in deployment service: service layer, POST /api/deployment/plans/compatibility-check, focused tests, and docs. |
+| `EX-002-RB` | Sprint 3 / EPIC-RUNTIME | Loader metadata migration promotion_state -> artifact_state + deployment_stage (rebaseline) | - | Codex | Claude | todo | - | 2026-05-16 14:03:50 | Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Codex starts a fresh run. |
+| `TEL-001-RB` | Sprint 4 / EPIC-TELEMETRY | TelemetryEvent canonical schema (rebaseline) | - | Codex | Claude | in_progress | - | 2026-05-16 14:02:20 | Supervisor auto-started TEL-001-RB after successful dispatch. |
+| `TEL-002-RB` | Sprint 4 / EPIC-TELEMETRY | RuntimeHeartbeat ingest endpoint (rebaseline) | - | Codex2 | Claude | in_progress | - | 2026-05-16 14:02:42 | Supervisor auto-started TEL-002-RB after successful dispatch. |
 | `INC-001-RB` | Sprint 4 / EPIC-TELEMETRY | /bff/incidents (IncidentCase) (rebaseline) | - | Claude2 | Codex | todo | - | 2026-05-16 07:25:02 | Assignment created |
 | `SRC-001` | Sprint 5 / EPIC-RESEARCH | SourceRecord schema + ingest API | - | Claude2 | Claude | todo | - | 2026-05-16 09:29:18 | Auto-reassigned ownership from Codex2 to Claude2 after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude2 starts a fresh run. |
 | `SRC-002` | Sprint 5 / EPIC-RESEARCH | paper ingest adapter skeleton | - | Claude | Claude2 | todo | - | 2026-05-16 09:11:12 | Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
@@ -182,11 +172,9 @@ Last updated: 2026-05-16 13:44:24
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
 | `EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE` | Gemini | Codex2 | Acceptance packet and dependency map for EP5-BROKER-TW-002 prepared at support/sidecars/EP5-BROKER-TW-002/EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE.md. Ready for review and incorporation into parent closeout. | pending | 2026-05-12 22:50:00 |
-| `DEP-003` | Claude | Claude2 | Auto-reassigned ownership from Codex to Claude2 after repeated Codex terminal: Codex usage limit reached | pending | 2026-05-16 08:18:36 |
-| `P0-AUD-001` | Claude | Claude2 | Review approved: /bff/audit dedicated handler correct. Filters, pagination, envelope, meta, RBAC all verified. 11 contract tests + 3 live wiring pass. Returning to Claude2 for finalization. | pending | 2026-05-16 08:44:50 |
 | `QLIB-001` | Claude | Claude2 | Auto-reassigned ownership from Gemini to Claude2 after repeated Gemini capacity/429: Capacity / rate limit failure | pending | 2026-05-16 09:22:13 |
-| `AUD-002` | Claude | Codex | Review approved: AuditAction write engine correctly projects command-store records into audit readers. All test suites pass (35+80+21). Known unrelated incident fixture failure is pre-existing. Returning to Codex for finalization. | pending | 2026-05-16 13:37:50 |
-| `POST-001` | Claude | Codex | Review approved: Postmortem schema complete with full lineage evidence fields; domain layer enforces referential integrity at write time; BFF operator endpoints correctly route with capability gating. 98+4 tests pass independently verified. Returning to Codex for finalization. | pending | 2026-05-16 13:43:37 |
+| `RT-003` | Codex | Claude | Implemented /bff/runtimes list/detail canonical RuntimeBinding read surface: list filters status/deployment_stage with unavailable surface metadata; detail resolves runtime_id or binding_id and returns 503 when the runtime store is missing. Evidence: pytest -q services/control-plane/bff/test_bff_runtimes_contract.py; pytest -q services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py::test_bff_deployment_runtime_and_risk_action_routes_return_final_envelopes; pytest -q services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py -q. Broader execute-plans/governance run still has unrelated failures in incident fixture ordering and capital-pool missing-store behavior. | pending | 2026-05-16 13:54:37 |
+| `DEP-001-RB` | Codex | Claude | DEP-001-RB ready for review. Added isolated service coverage in services/deployment/test_dep001_rebaseline_service.py and evidence in support/evidence/DEP-001-RB/deployment-plan-rebaseline.md. Verification: DEP-001-RB pytest 6 passed; deployment service pytest 24 passed; governance DeploymentPlan unittest 26 passed. | pending | 2026-05-16 13:54:38 |
 
 ## Blockers
 
@@ -198,10 +186,6 @@ Last updated: 2026-05-16 13:44:24
 
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
-| `P0-AUD-001` | Claude | 審查通過：GET /bff/audit 專用 handler 正確實作；actor/action_type/target_type/from/to 五維過濾器與 _page_slice 分頁正確；回傳標準 BFF 信封 {data, items, page_info, meta}；_read_surface_meta 與 governance_audit_events surface 正確關聯；11 個合約測試全過；live wiring 3 pass<br>跨任務附註：main.py audit hunk 位於併行 dirty worktree（與 sibling task 共存），test+evidence 已於 commit 83f6c138 獨立提交，不影響本次審查通過 | support/reviews/P0-AUD-001-review-claude.md |
-| `DEP-003` | Claude | 審查通過：GET /api/deployment/projections、/projections/{plan_id}、/plans/{plan_id}/projection 三條路由正確實作；DeploymentProjectionReadModelService 為純衍生讀取，無任何寫入操作；source_status、lifecycle_state、actual_stage/projected_stage 語義全部正確；RuntimeBinding 多路徑查找與 graceful missing 正確；18 個測試全過；contract.md 與 README.md 已更新<br>跨任務附註：evidence 檔案仍標示 Reviewer: Codex2 為原始分配前的痕跡，不影響本次審查通過 | support/reviews/DEP-003-review-claude.md |
-| `AUD-002` | Claude | 審查通過：AuditAction 寫入引擎正確投影命令存儲記錄至審計讀取器，35+80+21 測試全部通過，已知非相關失敗為既有問題 | services/control-plane/bff/review_aud_002_claude.md |
-| `POST-001` | Claude | 審查通過：Postmortem schema 完整覆蓋所有血緣字段，域層強制引用完整性，BFF operator 端點正確路由且有 capability 閘控，98+4 測試全部通過，已知非相關 IN-05 失敗為既有問題 | services/postmortems/review_post_001_claude.md |
 | `QLIB-001` | Claude | 審查通過：GovernedQlibDataAdapter 正確執行 OHLCV + source_dataset_refs 治理邊界；33 個單元測試在 Reviewer 環境全過；smoke test assertions OK；artifact_state=draft、deployment_stage=none、registry_write_authority=registry_service_only 語義全正確；ActivationReadyGate 環境變數門控正確（worker exitcode=2 已驗）；preflight 模組無探針時 fail-closed<br>跨任務附註：integrations/qlib/integration.md 仍顯示 Reviewer: Copilot 為 reassignment 前遺留，不影響本次審查通過 | support/reviews/QLIB-001-review-claude.md |
 
 ## Lovable Coordination
@@ -273,23 +257,23 @@ Last updated: 2026-05-16 13:44:24
 
 ## Latest Checkpoints
 
-- 2026-05-16 13:43:37 Claude: `POST-001` Review approved: Postmortem schema complete with full lineage evidence fields; domain layer enforces referential integrity at write time; BFF operator endpoints correctly route with capability gating. 98+4 tests pass independently verified. Returning to Codex for finalization.
-- 2026-05-16 13:43:37 Orchestrator: PreToolUse: Bash
-- 2026-05-16 13:43:38 Orchestrator: PostToolUse: Bash
-- 2026-05-16 13:43:41 Orchestrator: PreToolUse: Bash
-- 2026-05-16 13:43:43 Orchestrator: PostToolUse: Bash
-- 2026-05-16 13:43:49 Orchestrator: PreToolUse: Bash
-- 2026-05-16 13:43:51 Orchestrator: PostToolUse: Bash
-- 2026-05-16 13:43:52 Orchestrator: PostToolUse: Bash
-- 2026-05-16 13:43:56 Orchestrator: PreToolUse: Bash
-- 2026-05-16 13:43:58 Orchestrator: PostToolUse: Bash
-- 2026-05-16 13:43:58 Codex: `RT-002` Closeout complete after Claude review approval. Evidence commit cc057229 records owner verification; implementation/evidence already durable in 42486208 and review in b999a7e3. Verification rerun: runtime-manager service/client slice 12 passed, non-HTTP slice 40 passed, py_compile service/main/client passed. Existing worktree contains unrelated dirty changes from other tasks, so RT-002 closeout used explicit task artifact staging only.
-- 2026-05-16 13:44:00 Orchestrator: PreToolUse: Bash
-- 2026-05-16 13:44:01 Orchestrator: PostToolUse: Bash
-- 2026-05-16 13:44:02 Orchestrator: PreToolUse: Bash
-- 2026-05-16 13:44:03 Orchestrator: PostToolUse: Bash
-- 2026-05-16 13:44:07 Orchestrator: PreToolUse: Bash
-- 2026-05-16 13:44:09 Orchestrator: PostToolUse: Bash
-- 2026-05-16 13:44:11 Orchestrator: Stop: Stop
-- 2026-05-16 13:44:12 Orchestrator: SessionEnd: SessionEnd
-- 2026-05-16 13:44:24 Codex: `RT-004` Finalized RT-004. Closeout commit 9745648c records owner rerun evidence; implementation proof commit 42d7b6c1 remains in branch history. Verification rerun: runtime-manager focused pytest 16 passed/35 deselected; internal API route pytest 6 passed; py_compile service/main/client/tests passed. Pre-existing unrelated dirty worktree prevents an isolated generated-state closeout commit in this worker.
+- 2026-05-16 14:02:57 Orchestrator: PostToolUse: Bash
+- 2026-05-16 14:02:57 Codex: `ALT-001` ALT-001 closeout complete: /bff/alerts list/detail approved by Claude2; implementation/doc/test evidence durable in 45868e45 and review artifact committed in 6aff492b. Verification rerun: pytest -q services/control-plane/bff/test_pkt012_alerts_rail_contract.py => 3 passed; pytest -q services/control-plane/bff/test_pkt012_alerts_rail_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_live_probe_catalog_no_longer_404s_anonymously services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_seeded_detail_paths_use_read_model_dtos => 5 passed, 1 warning (existing read_store.py datetime.utcnow deprecation).
+- 2026-05-16 14:03:06 Orchestrator: PreToolUse: Bash
+- 2026-05-16 14:03:10 Orchestrator: PostToolUse: Bash
+- 2026-05-16 14:03:19 Orchestrator: PreToolUse: Bash
+- 2026-05-16 14:03:23 Orchestrator: `TEL-002-RB` Supervisor auto-started TEL-002-RB after successful dispatch.
+- 2026-05-16 14:03:23 Orchestrator: PostToolUse: Bash
+- 2026-05-16 14:03:23 Orchestrator: `ALT-001` Worker superseded after task responsibility moved to another agent.
+- 2026-05-16 14:03:23 Orchestrator: `DEP-002-RB` Paused new dispatches for codex2 until 2026-05-16 14:18:23 after terminal quota failure: Codex usage limit reached
+- 2026-05-16 14:03:26 Orchestrator: PostToolUse: Bash
+- 2026-05-16 14:03:26 Orchestrator: PreToolUse: Glob
+- 2026-05-16 14:03:28 Orchestrator: PostToolUse: Glob
+- 2026-05-16 14:03:30 Orchestrator: PreToolUse: Bash
+- 2026-05-16 14:03:32 Codex: `CAP-002-RB` Implementing pool/runtime compatibility checks in deployment service: service layer, POST /api/deployment/plans/compatibility-check, focused tests, and docs.
+- 2026-05-16 14:03:32 Claude2: `DEP-003` DEP-003 closeout: derived-only projection read model verified. Three projection routes correct, no write authority in service, source_status/lifecycle_state/actual_stage semantics confirmed, RuntimeBinding multi-path lookup correct. 18/18 tests pass (commit 4ddad480).
+- 2026-05-16 14:03:34 Orchestrator: PreToolUse: Bash
+- 2026-05-16 14:03:37 Orchestrator: PostToolUse: Bash
+- 2026-05-16 14:03:38 Orchestrator: PreToolUse: Bash
+- 2026-05-16 14:03:50 Orchestrator: `DEP-002-RB` Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Codex starts a fresh run.
+- 2026-05-16 14:03:50 Orchestrator: `EX-002-RB` Paused new dispatches for codex2 until 2026-05-16 14:18:50 after terminal quota failure: Codex usage limit reached

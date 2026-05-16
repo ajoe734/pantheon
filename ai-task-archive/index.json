@@ -1,12 +1,22 @@
 {
   "version": 1,
-  "updated_at": "2026-05-16T05:17:28Z",
+  "updated_at": "2026-05-16T06:03:32Z",
   "counts": {
-    "total": 1112,
-    "completed": 1094,
+    "total": 1122,
+    "completed": 1104,
     "superseded": 18
   },
   "recent_terminal_ids": [
+    "DEP-003",
+    "ALT-001",
+    "P0-AUD-001",
+    "POST-001",
+    "AUD-002",
+    "RT-004",
+    "RT-002",
+    "P0-PER-001",
+    "P0-REG-001",
+    "GOV-001-RB",
     "REC-001",
     "RT-001",
     "P0-APP-001",
@@ -16,16 +26,6 @@
     "SRC-005",
     "P0-BFF-002",
     "EX-003",
-    "P0-ACT-001",
-    "P0-BFF-004",
-    "P0-BFF-001",
-    "MGMT-BROKER-002-SIDECAR-ACCEPTANCE",
-    "MGMT-EVO-003-SIDECAR-REVIEW",
-    "MGMT-SAFE-005",
-    "MGMT-SAFE-003-SIDECAR-REVIEW",
-    "MGMT-SAFE-005-SIDECAR-REVIEW",
-    "MGMT-SAFE-003",
-    "MGMT-EVO-003",
-    "MGMT-OODA-006"
+    "P0-ACT-001"
   ]
 }
