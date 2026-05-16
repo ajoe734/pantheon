@@ -24506,6 +24506,12 @@ async def sem_agora_ask_create_session(
         },
         created_at=now,
     )
+    _publish_event(
+        _sse_buffers["ask"],
+        _sse_subscribers["ask"],
+        "ask.session.started",
+        {"session_id": session_id, "mode": "quick_ask"},
+    )
     result = {
         "data": session,
         "meta": {
@@ -25881,6 +25887,27 @@ async def bff_approvals_decide(
             "Approval decision not found",
             f"approval_id={clean_id!r} does not exist",
             precondition_failed="approval_id",
+        )
+
+    if command_type in (CommandType.APPROVE_DECISION, CommandType.REJECT_DECISION):
+        _outcome = "approved" if command_type == CommandType.APPROVE_DECISION else "rejected"
+        _publish_event(
+            _sse_buffers["approval"],
+            _sse_subscribers["approval"],
+            "approval.decided",
+            {"approval_id": clean_id, "outcome": _outcome, "decided_by": identity.operator_id},
+        )
+    else:
+        _publish_event(
+            _sse_buffers["approval"],
+            _sse_subscribers["approval"],
+            "approval.stage.changed",
+            {
+                "approval_id": clean_id,
+                "previous_stage": "under_review",
+                "current_stage": raw_decision,
+                "actor_id": identity.operator_id,
+            },
         )
 
     return _sem_command_response(
