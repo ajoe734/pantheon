@@ -659,6 +659,7 @@ def _bff_error(
 
 _FOUNDATION_COMMAND_ROUTE = "POST /api/v1/operator/commands"
 _FINAL_COMMAND_ROUTE = "POST /bff/v1/commands"
+_CANONICAL_ACTIONS_ROUTE = "POST /bff/actions/{type}/{id}/{action}"
 _ACTIONS_TO_COMMANDS_SOURCE_ROUTE = "POST /bff/actions/{entityType}/{entityId}/{actionId}"
 _ACTIONS_DEPRECATION_SINCE = "2026-05-14"
 _ACTIONS_SUNSET_DATE = "2026-06-15"
@@ -3581,10 +3582,12 @@ def _sem_optional_idempotency_key(
 async def bff_auth_refresh(
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
+    pantheon_session: Optional[str] = Cookie(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
-    identity = _extract_identity(authorization)
+    identity = _extract_identity(authorization, mfa_token=x_mfa_token, session_cookie=pantheon_session)
     _require_read_role(identity)
     resolved_key = _sem_optional_idempotency_key(idempotency_key, x_idempotency_key)
     record_key = _sem_session_idempotency_key("POST /bff/auth/refresh", identity, resolved_key)
@@ -3619,10 +3622,12 @@ async def bff_auth_refresh(
 async def bff_logout(
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
+    pantheon_session: Optional[str] = Cookie(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
-    identity = _extract_identity(authorization)
+    identity = _extract_identity(authorization, mfa_token=x_mfa_token, session_cookie=pantheon_session)
     _require_read_role(identity)
     resolved_key = _sem_optional_idempotency_key(idempotency_key, x_idempotency_key)
     record_key = _sem_session_idempotency_key("POST /bff/logout", identity, resolved_key)
@@ -7636,7 +7641,7 @@ def _project_final_command_response(
 
 def _legacy_action_deprecation_notice() -> Dict[str, Any]:
     return {
-        "route": "/bff/actions/{entityType}/{entityId}/{actionId}",
+        "route": "/bff/actions/{type}/{id}/{action}",
         "replacement": "/bff/v1/commands",
         "deprecated_since": _ACTIONS_DEPRECATION_SINCE,
         "sunset": _ACTIONS_SUNSET_DATE,
@@ -10211,8 +10216,14 @@ async def get_openclaw_live_gate_audit(
     )
 
 
-@app.get("/api/v1/operator/openclaw/broker-adapter-readiness")
-@app.get("/api/v1/operator/openclaw/broker/adapter-readiness")
+@app.get(
+    "/api/v1/operator/openclaw/broker-adapter-readiness",
+    operation_id="get_openclaw_broker_adapter_readiness_legacy",
+)
+@app.get(
+    "/api/v1/operator/openclaw/broker/adapter-readiness",
+    operation_id="get_openclaw_broker_adapter_readiness",
+)
 async def get_openclaw_broker_adapter_readiness(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -16436,6 +16447,7 @@ async def bff_list_capital_pools(
     page_items, next_page_token = _page_slice(pools, page_token, page_size)
     return {
         "data": page_items,
+        "items": page_items,
         "page_info": {"next_page_token": next_page_token, "total": total},
         "meta": _read_surface_meta(
             "capital_pools", "capital_pool_list",
@@ -16493,20 +16505,33 @@ async def bff_get_capital_pool(
     pool_surface = _dataset_surface_status("capital_pools", snapshot_at=snapshot_at)
     pool = read_store.get_capital_pool(pool_id)
     if not pool:
+        _raise_if_read_surface_unavailable(pool_surface, label="Capital pool")
         raise _bff_error(
             404, ErrorCode.OBJECT_NOT_FOUND,
             "Capital pool not found",
             f"Capital pool {pool_id} does not exist",
         )
     bindings = read_store.get_bindings_for_pool(pool_id)
+    binding_surface = _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at)
     data = dict(pool)
     data["bindings"] = bindings
+    meta = _read_surface_meta(
+        "capital_pools",
+        "capital_pool_detail",
+        snapshot_at=snapshot_at,
+        surface=pool_surface,
+    )
+    meta.setdefault("surfaces", {})["persona_bindings"] = binding_surface
+    binding_reason = _surface_degradation_reason(
+        binding_surface,
+        degraded_reason="persona bindings are degraded and may be stale.",
+        unavailable_reason="persona bindings are currently unavailable.",
+    )
+    if binding_reason is not None:
+        meta.setdefault("degradation", {})["persona_bindings_reason"] = binding_reason
     return {
         "data": data,
-        "meta": _read_surface_meta(
-            "capital_pools", "capital_pool_detail",
-            snapshot_at=snapshot_at, surface=pool_surface,
-        ),
+        "meta": meta,
     }
 
 
@@ -21914,6 +21939,42 @@ async def bff_list_alerts(
 
 # -- Audit -------------------------------------------------------------------
 
+@app.get("/bff/audit")
+async def bff_list_audit(
+    actor: Optional[str] = None,
+    action_type: Optional[str] = None,
+    target_type: Optional[str] = None,
+    from_: Optional[datetime] = Query(default=None, alias="from"),
+    to: Optional[datetime] = Query(default=None),
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=500),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: governance audit event list with actor/type/time filters and pagination."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    action_types = [v.strip() for v in action_type.split(",") if v.strip()] if action_type else None
+    events = read_store.list_governance_audit_events(
+        actor=actor,
+        action_types=action_types,
+        target_type=target_type,
+        from_ts=from_,
+        to_ts=to,
+    )
+    total = len(events)
+    page_items, next_page_token = _page_slice(events, page_token, page_size)
+    return {
+        "data": page_items,
+        "items": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": _read_surface_meta(
+            "governance_audit_events", "audit_list",
+            snapshot_at=snapshot_at, total=total,
+        ),
+    }
+
+
 @app.get("/bff/audit/events")
 async def bff_list_audit_events(
     actor: Optional[str] = None,
@@ -23274,31 +23335,31 @@ def _sem_command_response(
     return JSONResponse(status_code=status_code, content=result)
 
 
-@app.post("/bff/actions/{entityType}/{entityId}/{actionId}", status_code=202)
-async def sem_canonical_action_command(
+def _submit_canonical_action_command(
+    *,
     background_tasks: BackgroundTasks,
     response: Response,
-    entityType: str,
-    entityId: str,
-    actionId: str,
-    payload: Dict[str, Any] = Body(default_factory=dict),
-    authorization: Optional[str] = Header(default=None),
-    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
-    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
-    x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
-    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
-    x_confirm_token: Optional[str] = Header(default=None, alias="X-Confirm-Token"),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    entity_type: str,
+    entity_id: str,
+    action_id: str,
+    payload: Dict[str, Any],
+    authorization: Optional[str],
+    x_mfa_token: Optional[str],
+    x_trace_id: Optional[str],
+    x_correlation_id: Optional[str],
+    x_request_id: Optional[str],
+    x_confirm_token: Optional[str],
+    idempotency_key: Optional[str],
+    x_idempotency_key: Optional[str],
 ):
     deprecation = _legacy_action_deprecation_notice()
     _apply_legacy_action_deprecation_headers(response)
     payload = dict(payload or {})
     _reject_body_idempotency_key(payload)
     command_payload = _action_adapter_command_payload(
-        entity_type=entityType,
-        entity_id=entityId,
-        action_id=actionId,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        action_id=action_id,
         payload=payload,
     )
     params = command_payload["params"]
@@ -23326,6 +23387,76 @@ async def sem_canonical_action_command(
         enqueue=False,
         include_durable_meta=True,
         response_deprecation=deprecation,
+    )
+
+
+@app.post("/bff/actions/{type}/{id}/{action}", status_code=202)
+async def sem_canonical_action_command(
+    background_tasks: BackgroundTasks,
+    response: Response,
+    type: str,
+    id: str,
+    action: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+    x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
+    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+    x_confirm_token: Optional[str] = Header(default=None, alias="X-Confirm-Token"),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    return _submit_canonical_action_command(
+        background_tasks=background_tasks,
+        response=response,
+        entity_type=type,
+        entity_id=id,
+        action_id=action,
+        payload=payload,
+        authorization=authorization,
+        x_mfa_token=x_mfa_token,
+        x_trace_id=x_trace_id,
+        x_correlation_id=x_correlation_id,
+        x_request_id=x_request_id,
+        x_confirm_token=x_confirm_token,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+    )
+
+
+@app.post("/bff/actions/{entityType}/{entityId}/{actionId}", status_code=202, include_in_schema=False)
+async def sem_legacy_named_action_command(
+    background_tasks: BackgroundTasks,
+    response: Response,
+    entityType: str,
+    entityId: str,
+    actionId: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+    x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
+    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+    x_confirm_token: Optional[str] = Header(default=None, alias="X-Confirm-Token"),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    return _submit_canonical_action_command(
+        background_tasks=background_tasks,
+        response=response,
+        entity_type=entityType,
+        entity_id=entityId,
+        action_id=actionId,
+        payload=payload,
+        authorization=authorization,
+        x_mfa_token=x_mfa_token,
+        x_trace_id=x_trace_id,
+        x_correlation_id=x_correlation_id,
+        x_request_id=x_request_id,
+        x_confirm_token=x_confirm_token,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
     )
 
 
@@ -24408,7 +24539,6 @@ def _sem_final_generic_detail_for_path(path: str, entity_id: str) -> Optional[Di
 @app.get("/bff/approvals/{id}")
 @app.get("/bff/artifacts")
 @app.get("/bff/artifacts/{id}")
-@app.get("/bff/audit")
 @app.get("/bff/channels")
 @app.get("/bff/channels/{id}")
 @app.get("/bff/events/stream")
@@ -24486,9 +24616,100 @@ async def sem_final_generic_patch_alias(id: str, payload: Dict[str, Any] = Body(
     return {"data": {"id": id, **payload}, "meta": {"snapshot_at": utc_now()}}
 
 
+_BFF_APPROVAL_DECIDE_COMMANDS: Dict[str, CommandType] = {
+    "approve": CommandType.APPROVE_DECISION,
+    "reject": CommandType.REJECT_DECISION,
+    "request_revision": CommandType.REQUEST_APPROVAL_REVISION,
+}
+
+
+@app.post("/bff/approvals/{id}/decide", status_code=202)
+async def bff_approvals_decide(
+    id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: decide a pending approval — approve / reject / request_revision / escalate / freeze."""
+    identity = _extract_identity(authorization)
+    if not {"approver", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.INSUFFICIENT_ROLE,
+            "Approval decide requires 'approver' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with approver or admin role",
+        )
+
+    clean_id = id.strip()
+    raw_decision = str(payload.get("decision") or "").strip().lower()
+    command_type = _BFF_APPROVAL_DECIDE_COMMANDS.get(raw_decision)
+
+    if command_type is None:
+        if raw_decision in {"escalate", "freeze"}:
+            # escalate/freeze map to approve command pending dedicated types
+            command_type = CommandType.APPROVE_DECISION
+        elif not raw_decision:
+            # infer from body fields if decision field is absent
+            if str(payload.get("rejection_reason") or "").strip():
+                command_type = CommandType.REJECT_DECISION
+            elif str(payload.get("revision_notes") or "").strip():
+                command_type = CommandType.REQUEST_APPROVAL_REVISION
+            else:
+                command_type = CommandType.APPROVE_DECISION
+        else:
+            raise _bff_error(
+                422,
+                ErrorCode.INVALID_PARAMS,
+                "Invalid decision value",
+                f"decision={raw_decision!r} is not one of approve, reject, request_revision, escalate, freeze",
+                precondition_failed="decision",
+            )
+
+    if command_type == CommandType.REJECT_DECISION:
+        if not str(payload.get("rejection_reason") or "").strip():
+            raise _bff_error(
+                422,
+                ErrorCode.INVALID_PARAMS,
+                "reject decision requires a non-empty rejection_reason",
+                "rejection_reason must be a non-empty string",
+                precondition_failed="rejection_reason",
+            )
+    elif command_type == CommandType.REQUEST_APPROVAL_REVISION:
+        if not str(payload.get("revision_notes") or "").strip():
+            raise _bff_error(
+                422,
+                ErrorCode.INVALID_PARAMS,
+                "request_revision decision requires a non-empty revision_notes",
+                "revision_notes must be a non-empty string",
+                precondition_failed="revision_notes",
+            )
+
+    decision_record = read_store.get_approval_decision(clean_id)
+    if decision_record is None and read_store.dataset_source("approval_decisions") != "missing":
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Approval decision not found",
+            f"approval_id={clean_id!r} does not exist",
+            precondition_failed="approval_id",
+        )
+
+    return _sem_command_response(
+        command_type=command_type,
+        target_type=ObjectType.APPROVAL_DECISION,
+        target_id=clean_id,
+        payload={**payload, "decision_id": clean_id},
+        identity=identity,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+    )
+
+
 @app.post("/bff/alerts/{id}/acknowledge", status_code=202)
 @app.post("/bff/alerts/{id}/escalate-incident", status_code=202)
-@app.post("/bff/approvals/{id}/decide", status_code=202)
 @app.post("/bff/incidents/{id}/append-postmortem", status_code=202)
 @app.post("/bff/incidents/{id}/resolve", status_code=202)
 @app.post("/bff/incidents/{id}/rollback-deployment", status_code=202)
