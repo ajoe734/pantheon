@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-05-16T00:33:02Z",
+  "updated_at": "2026-05-16T00:38:13Z",
   "counts": {
-    "total": 1107,
-    "completed": 1089,
+    "total": 1108,
+    "completed": 1090,
     "superseded": 18
   },
   "recent_terminal_ids": [
+    "P0-CAP-001",
     "P0-BFF-003",
     "SRC-005",
     "P0-BFF-002",
@@ -25,7 +26,6 @@
     "MGMT-EVO-005",
     "MGMT-SAFE-006",
     "MGMT-EVO-007",
-    "MGMT-EVO-002",
-    "MGMT-BROKER-006"
+    "MGMT-EVO-002"
   ]
 }
