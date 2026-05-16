@@ -1,9 +1,9 @@
 # Runtime-Manager Contract
 
-**Task:** RUN-001
+**Task:** RT-001
 **Owner:** Claude
-**Reviewer:** Codex
-**Status:** Review-ready — RuntimeBinding object, schema, and authority boundary locked for reviewer validation
+**Reviewer:** Claude2
+**Status:** Review-ready — RuntimeBinding object, schema, authority boundary, and pytest suite (45 tests) locked for reviewer validation
 **Tier:** L1 Execution Plane Contract
 **Conflict rule:** This document defines the authoritative write boundary for the Execution Plane. It supplements `BINDING_AND_DEPLOYMENT_SEMANTICS.md` with operational detail for the Runtime Manager service.
 
