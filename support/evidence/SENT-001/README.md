@@ -68,3 +68,24 @@ pytest services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py \
        services/control-plane/bff/test_read_store_loop_sentinel.py -q
 # 33 passed (no regression)
 ```
+
+## Closeout Verification (2026-05-16)
+
+Final owner verification before done transition:
+
+```
+pytest services/control-plane/bff/test_sent001_sentinel_findings_contract.py -q
+# 16 passed in 17.82s
+
+pytest services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py \
+       services/control-plane/bff/test_read_store_loop_sentinel.py -q
+# 33 passed in 27.80s
+
+python3 -c "import sys; sys.path.insert(0, 'services/control-plane/bff'); import main; \
+  spec=main.app.openapi(); op=spec['paths']['/bff/v5/sentinel/findings']['get']; \
+  print(op.get('operationId')); print([p.get('name') for p in op.get('parameters', [])])"
+# bff_v5_sentinel_findings_list_bff_v5_sentinel_findings_get
+# ['kind', 'status', 'severity', 'authorization']
+```
+
+Status: approved scope confirmed durable; no regression.
