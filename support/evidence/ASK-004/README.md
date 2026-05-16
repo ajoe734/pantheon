@@ -50,3 +50,20 @@ The implementation files were captured in upstream commit `77ce6b8d` while an AS
 - Draft submission rejects explicit duplicate `memoId` values unless the client is replaying the same request with the same idempotency key.
 - The memo projection includes `session_to_memo_mapping.source_session_id`, `memo_id`, `memo_type`, `created_by`, evidence ref ids, and `mapping_status`.
 - This patch is intentionally BFF/local-registry scoped. Downstream governance approval routing remains a separate ASK-005/SSE and governance workflow concern.
+
+## Closeout
+
+Reviewer approval is recorded in `support/reviews/ASK-004-review-claude2.md`.
+
+Closeout verification on 2026-05-16:
+
+```bash
+python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/read_store.py services/control-plane/bff/test_ask_004_memo_publish_contract.py
+# OK
+
+python3 -m pytest services/control-plane/bff/test_ask_004_memo_publish_contract.py -q
+# 31 passed in 24.41s
+
+python3 -m pytest services/control-plane/bff/test_ask_003_committee_lifecycle.py services/control-plane/bff/test_cw04_redteam_memo_contract.py services/control-plane/bff/test_pkt015_consultation_workbench_contract.py -q
+# 38 passed in 35.68s
+```
