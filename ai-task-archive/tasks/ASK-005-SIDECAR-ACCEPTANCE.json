@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "ASK-005-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-05-16T12:17:48Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASK-005-SIDECAR-ACCEPTANCE",
+    "title": "Prepare ASK-005 acceptance packet and dependency map",
+    "summary_zh": "平行支援 ASK-005，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Sprint 5 / EPIC-RESEARCH",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/ASK-005/ASK-005-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: support packet committed in f71dfe0f; parent attention items repaired in ASK-005 line; verification: python3 -m pytest services/control-plane/bff/test_ask005_sse_event_publishing_contract.py -q (11 passed in 28.49s). Existing unrelated dirty state/archive files remain outside the task commit.",
+    "last_update": "2026-05-16T12:17:48Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "ASK-005",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過。ASK-005 接受清單準確；兩個 attention 點（escalate/freeze 事件類型與 approval replay de-dup）在後續 parent commit 73304fe0 中已修正。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T12:17:48Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "f71dfe0fa59b189825fb42e3e800dbbed575e5aa",
+      "commit_subject": "ASK-005-SIDECAR-ACCEPTANCE: record acceptance packet closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "ASK-005-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude",
+        "Verification": "python3 -m pytest services/control-plane/bff/test_ask005_sse_event_publishing_contract.py -q (11 passed in 28.49s); git diff --cached --check."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 74,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 3,
+      "behind": 1,
+      "push_status": "diverged"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASK-005-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only acceptance packet prepared at support/sidecars/ASK-005/ASK-005-SIDECAR-ACCEPTANCE.md. Direct ASK-005 pytest passed (6 tests). Packet flags reviewer attention on escalate/freeze event semantics and approval replay de-dup coverage.",
+      "status": "done",
+      "created_at": "2026-05-16T11:15:41Z",
+      "resolved_at": "2026-05-16T11:47:10Z"
+    },
+    {
+      "task_id": "ASK-005-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar acceptance packet is accurate and useful. The two reviewer attention items (escalate/freeze event type and approval replay de-dup) were valid and have been addressed in parent commit 73304fe0. Approved and returned to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-05-16T11:47:10Z",
+      "resolved_at": "2026-05-16T12:17:48Z"
+    }
+  ],
+  "blockers": []
+}

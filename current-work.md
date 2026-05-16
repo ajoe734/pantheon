@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-16 22:22:36
+Last updated: 2026-05-16 22:25:27
 
 ## Objective
 
@@ -37,7 +37,7 @@ Last updated: 2026-05-16 22:22:36
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Supervisor resumed ASK-005 for finalize after successful dispatch.
+- `Claude`: execution, control-plane, governance-review; next: No active assignment
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 - `Codex`: integration, status-system, schema, acceptance; next: No active assignment
 - `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
@@ -52,7 +52,6 @@ Last updated: 2026-05-16 22:22:36
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | Gemini2 | blocked | - | - |
-| `ASK-005` | Sprint 5 / EPIC-RESEARCH | approval / ask SSE event publishing | Claude | review_approved | - | - |
 
 ### External / Upstream Integration Work
 
@@ -62,11 +61,12 @@ Last updated: 2026-05-16 22:22:36
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-16 22:13:36
-- Terminal tasks archived: `1156` total, `1136` completed, `20` superseded
+- Archive updated: 2026-05-16 22:25:26
+- Terminal tasks archived: `1157` total, `1137` completed, `20` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `ASK-005` | Sprint 5 / EPIC-RESEARCH | approval / ask SSE event publishing | Claude | completed | 2026-05-16 22:25:26 | `ai-task-archive/tasks/ASK-005.json` |
 | `ASK-005-SIDECAR-REVIEW` | Sprint 5 / EPIC-RESEARCH | Prepare ASK-005 review packet and evidence summary | Codex | completed | 2026-05-16 22:13:36 | `ai-task-archive/tasks/ASK-005-SIDECAR-REVIEW.json` |
 | `EVO-001` | Sprint 6 / EPIC-EVOLUTION | EvolutionDecision service | Claude | completed | 2026-05-16 20:05:30 | `ai-task-archive/tasks/EVO-001.json` |
 | `EVO-001-SIDECAR-REVIEW` | Sprint 6 / EPIC-EVOLUTION | Prepare EVO-001 review packet and evidence summary | Codex | superseded | 2026-05-16 20:00:55 | `ai-task-archive/tasks/EVO-001-SIDECAR-REVIEW.json` |
@@ -86,21 +86,18 @@ Last updated: 2026-05-16 22:22:36
 | `EXP-001` | Sprint 5 / EPIC-RESEARCH | ExperimentTask / ExperimentRun schema | Codex | completed | 2026-05-16 17:53:55 | `ai-task-archive/tasks/EXP-001.json` |
 | `IMT-003` | Sprint 5 / EPIC-RESEARCH | imitation dataset builder skeleton | Claude2 | completed | 2026-05-16 17:40:02 | `ai-task-archive/tasks/IMT-003.json` |
 | `STRAT-004` | Sprint 5 / EPIC-RESEARCH | evidence / code refs lineage | Codex | completed | 2026-05-16 17:29:19 | `ai-task-archive/tasks/STRAT-004.json` |
-| `TRN-003` | Sprint 5 / EPIC-RESEARCH | rapid-eval request / response | Claude2 | completed | 2026-05-16 17:28:15 | `ai-task-archive/tasks/TRN-003.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | - | Gemini2 | Gemini | blocked | - | 2026-05-15 23:15:06 | Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check. |
-| `ASK-005` | Sprint 5 / EPIC-RESEARCH | approval / ask SSE event publishing | - | Claude | Codex | review_approved | - | 2026-05-16 22:22:36 | Supervisor resumed ASK-005 for finalize after successful dispatch. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
 | `EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE` | Gemini | Codex2 | Acceptance packet and dependency map for EP5-BROKER-TW-002 prepared at support/sidecars/EP5-BROKER-TW-002/EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE.md. Ready for review and incorporation into parent closeout. | pending | 2026-05-12 22:50:00 |
-| `ASK-005` | Codex | Claude | Codex review approved: R4 idempotency-conflict no-double-publish fix verified; 12 ASK-005 tests, 66 adjacent approval/ask/SSE tests, and 33 governance/idempotency tests passed. Owner Claude should finalize closeout. | pending | 2026-05-16 22:21:49 |
 
 ## Blockers
 
@@ -112,7 +109,7 @@ Last updated: 2026-05-16 22:22:36
 
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
-| `ASK-005` | Codex | 未發現 blocking findings；R4 修正讓 approval decide 在 _FINAL_CONTRACT_IDEMPOTENCY 或 durable command_store 偵測到同 key 不同 hash 時，於 _sem_command_response 回傳 409 前跳過 SSE publish。<br>已重跑 focused verification：ASK-005 contract 12 passed；approval/ask/SSE adjacent 66 passed；final contract/governance/idempotency 33 passed。<br>狀態已由 reviewer approve；owner Claude 需依 closeout checklist 建立 task-scoped closeout 並執行 done。 | - |
+| _(none)_ | - | - | - |
 
 ## Lovable Coordination
 
@@ -183,23 +180,23 @@ Last updated: 2026-05-16 22:22:36
 
 ## Latest Checkpoints
 
-- 2026-05-16 22:15:02 Orchestrator: PostToolUse: Bash
-- 2026-05-16 22:15:12 Orchestrator: Stop: Stop
-- 2026-05-16 22:15:12 Orchestrator: SessionEnd: SessionEnd
-- 2026-05-16 22:17:21 Orchestrator: Worker suspended for approval apr-20260516T135935Z-52fe67f5
-- 2026-05-16 22:17:21 Orchestrator: `ASK-005-SIDECAR-ACCEPTANCE` Worker superseded after task responsibility moved to another agent.
-- 2026-05-16 22:17:21 Orchestrator: `ASK-005-SIDECAR-REVIEW` Worker superseded after task responsibility moved to another agent.
-- 2026-05-16 22:17:21 Orchestrator: `SENT-001-SIDECAR-BFF-HANDOFF` Worker superseded after task responsibility moved to another agent.
-- 2026-05-16 22:17:21 Orchestrator: `ASK-005` Wake-up queued for supervisor: review_ready_dispatch
-- 2026-05-16 22:17:21 Orchestrator: `ASK-005` Worker started via codex: review_ready_dispatch
-- 2026-05-16 22:17:22 Orchestrator: Worker suspended for approval apr-20260516T135935Z-52fe67f5
-- 2026-05-16 22:18:07 Codex: `ASK-005` Reviewer pickup: validating commit 106b0cca idempotency conflict no-double-publish behavior and focused tests before approval decision.
-- 2026-05-16 22:21:49 Codex: `ASK-005` Codex review approved: R4 idempotency-conflict no-double-publish fix verified; 12 ASK-005 tests, 66 adjacent approval/ask/SSE tests, and 33 governance/idempotency tests passed. Owner Claude should finalize closeout.
-- 2026-05-16 22:22:35 Orchestrator: Worker suspended for approval apr-20260516T135935Z-52fe67f5
-- 2026-05-16 22:22:35 Orchestrator: `ASK-005` Worker superseded after task responsibility moved to another agent.
-- 2026-05-16 22:22:35 Orchestrator: `ASK-005` Wake-up queued for supervisor: owned_finalize_dispatch
-- 2026-05-16 22:22:35 Orchestrator: `ASK-005-SIDECAR-REVIEW` Failed to create sidecar for ASK-005: Task ASK-005-SIDECAR-REVIEW is archived. Create a new follow-up task instead of reusing the archived task id.
-- 2026-05-16 22:22:35 Orchestrator: `MGMT-BROKER-002-SIDECAR-ACCEPTANCE` Failed to create sidecar for MGMT-BROKER-002: Task MGMT-BROKER-002-SIDECAR-ACCEPTANCE is archived. Create a new follow-up task instead of reusing the archived task id.
-- 2026-05-16 22:22:35 Orchestrator: underutilized but no sidecar candidate could be assigned safely
-- 2026-05-16 22:22:35 Orchestrator: `ASK-005` Worker started via claude_cli: owned_finalize_dispatch
-- 2026-05-16 22:22:36 Claude: `ASK-005` Supervisor resumed ASK-005 for finalize after successful dispatch.
+- 2026-05-16 22:23:38 Orchestrator: PreToolUse: Bash
+- 2026-05-16 22:23:48 Orchestrator: PostToolUse: Bash
+- 2026-05-16 22:23:48 Orchestrator: PreToolUse: Read
+- 2026-05-16 22:23:49 Orchestrator: PostToolUse: Read
+- 2026-05-16 22:23:55 Orchestrator: PreToolUse: Bash
+- 2026-05-16 22:23:56 Orchestrator: PreToolUse: Bash
+- 2026-05-16 22:23:56 Orchestrator: PostToolUse: Bash
+- 2026-05-16 22:23:57 Orchestrator: PostToolUse: Bash
+- 2026-05-16 22:24:00 Orchestrator: PreToolUse: Bash
+- 2026-05-16 22:24:01 Orchestrator: PostToolUse: Bash
+- 2026-05-16 22:24:46 Orchestrator: PreToolUse: Bash
+- 2026-05-16 22:24:54 Orchestrator: PreToolUse: Bash
+- 2026-05-16 22:24:57 Orchestrator: PostToolUse: Bash
+- 2026-05-16 22:25:03 Orchestrator: PreToolUse: Bash
+- 2026-05-16 22:25:11 Orchestrator: PreToolUse: Bash
+- 2026-05-16 22:25:12 Orchestrator: PostToolUse: Bash
+- 2026-05-16 22:25:17 Orchestrator: PreToolUse: Bash
+- 2026-05-16 22:25:18 Orchestrator: PostToolUse: Bash
+- 2026-05-16 22:25:25 Orchestrator: PreToolUse: Bash
+- 2026-05-16 22:25:26 Claude: `ASK-005` ASK-005 closeout: approval/ask SSE event publishing fully implemented and reviewed. Commits: 6c7484c1 initial SSE implementation; 73304fe0 escalate/freeze semantics + replay de-dup; f5400502 body idempotency before publish; 632d72a8 durable command_store replay; 106b0cca idempotency-conflict no-double-publish (R4). Final verification: 12 ASK-005 contract tests, 66 adjacent approval/ask/SSE tests, 33 governance/idempotency tests — all passed (0 regressions). Reviewer Codex approved R4 fix.
