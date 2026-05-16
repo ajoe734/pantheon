@@ -39,3 +39,12 @@ python3 -m pytest services/control-plane/bff/test_persona_management.py services
 - `test_persona_skills_401_no_auth` — 401 without Authorization header
 - `test_persona_skills_meta_surface` — meta.snapshot_at present
 - _(mirror tests for tools and capabilities)_
+
+## Closeout note
+
+Reviewer: Codex — approved 2026-05-16, no blocking findings.
+Review artifact: support/reviews/PER-002-review-codex.md
+
+Final verification at closeout (2026-05-16):
+- `python3 -m pytest services/control-plane/bff/test_per002_bff_persona_skills_tools_capabilities_contract.py -q` → 18 passed
+- `python3 -m pytest services/control-plane/bff/test_persona_management.py services/control-plane/bff/test_bff_strategy_persona_contract.py -q` → 17 passed
