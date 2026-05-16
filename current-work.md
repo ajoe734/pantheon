@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-16 17:28:30
+Last updated: 2026-05-16 18:19:54
 
 ## Objective
 
@@ -37,12 +37,12 @@ Last updated: 2026-05-16 17:28:30
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Assignment created
+- `Claude`: execution, control-plane, governance-review; next: Supervisor preempted ASK-004 to free Claude for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: EXP-001 implementation is already committed as 1dc686c6 and remains valid. Verified py_compile, pytest services/research/experiments/test_models.py -q (12 passed), and git diff --check for task paths. Review artifact is present at support/reviews/EXP-001-review-claude.md; please publish approval through the canonical approve flow.
+- `Codex`: integration, status-system, schema, acceptance; next: Implementing behavior_policy registry artifact type across registry contract/schema/models and imitation BC output, with focused tests and evidence.
 - `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
-- `Claude2`: execution, control-plane, governance-review; next: Review approved. Governance constants consistent with learning adapter, all 24 tests pass, smoke test passes. Returned to Claude2 for finalization.
+- `Claude2`: execution, control-plane, governance-review; next: LOOP-001-RB implementation complete. Routes GET /bff/v5/loop-runs, /loop-runs/{id}, /sentinel/findings, /sentinel/findings/{id}, /control-room, /execution/persona-health, /execution/strategy-health all verified in main.py. Fixed regression in ReadSurfaceStore._backfill_local_contract_defaults: explicitly-provided empty incidents snapshot was being overwritten by fixture_pack_c incidents; fix guards the merge when 'incidents' key already exists in self._data. Commit: 43a51a2f. Evidence: support/evidence/LOOP-001-RB/README.md. Verification: pytest test_bff_v5_loop_sentinel_contract.py -q (19 passed); pytest test_read_store_loop_sentinel.py -q (14 passed); combined 33 passed.
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check.
 
 ## Delivery Layers
@@ -52,22 +52,15 @@ Last updated: 2026-05-16 17:28:30
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | Gemini2 | blocked | - | - |
-| `STRAT-004` | Sprint 5 / EPIC-RESEARCH | evidence / code refs lineage | Codex | review_approved | - | - |
-| `EXP-001` | Sprint 5 / EPIC-RESEARCH | ExperimentTask / ExperimentRun schema | Codex | review | - | - |
-| `TRN-001` | Sprint 5 / EPIC-RESEARCH | TeachingSession / TeachingEvent schema | Codex | in_progress | - | - |
-| `TRN-002` | Sprint 5 / EPIC-RESEARCH | trainer session endpoints | Codex | todo | - | - |
-| `TRN-004` | Sprint 5 / EPIC-RESEARCH | trainer commit / discard / replay | Claude | todo | - | - |
-| `IMT-001` | Sprint 5 / EPIC-RESEARCH | TraderTrajectory schema | Claude | todo | - | - |
-| `IMT-002` | Sprint 5 / EPIC-RESEARCH | PreferenceExample / CorrectionTrace schema | Claude | todo | - | - |
-| `IMT-003` | Sprint 5 / EPIC-RESEARCH | imitation dataset builder skeleton | Claude2 | review_approved | - | - |
-| `IMT-004` | Sprint 5 / EPIC-RESEARCH | behavior policy artifact type registration | Claude | todo | - | - |
-| `ASK-001` | Sprint 5 / EPIC-RESEARCH | /bff/agora/ask/sessions | Codex | todo | - | - |
-| `ASK-002` | Sprint 5 / EPIC-RESEARCH | ConsultRequest / ConsultMemo schema | Claude | todo | - | - |
-| `ASK-003` | Sprint 5 / EPIC-RESEARCH | ask / committee session lifecycle | Claude2 | todo | - | - |
+| `TRN-002` | Sprint 5 / EPIC-RESEARCH | trainer session endpoints | Codex | review | - | - |
+| `TRN-004` | Sprint 5 / EPIC-RESEARCH | trainer commit / discard / replay | Codex | review | - | - |
+| `IMT-001` | Sprint 5 / EPIC-RESEARCH | TraderTrajectory schema | Codex | in_progress | - | - |
+| `IMT-004` | Sprint 5 / EPIC-RESEARCH | behavior policy artifact type registration | Codex | in_progress | - | - |
+| `ASK-002` | Sprint 5 / EPIC-RESEARCH | ConsultRequest / ConsultMemo schema | Codex | in_progress | - | - |
 | `ASK-004` | Sprint 5 / EPIC-RESEARCH | memo publish to registry / review | Claude | todo | - | - |
 | `ASK-005` | Sprint 5 / EPIC-RESEARCH | approval / ask SSE event publishing | Claude | todo | - | - |
 | `EVO-001` | Sprint 6 / EPIC-EVOLUTION | EvolutionDecision service | Claude | todo | - | - |
-| `LOOP-001-RB` | Sprint 6 / EPIC-EVOLUTION | /bff/v5/loop-runs endpoint (rebaseline) | Claude2 | todo | - | - |
+| `LOOP-001-RB` | Sprint 6 / EPIC-EVOLUTION | /bff/v5/loop-runs endpoint (rebaseline) | Claude2 | review | - | - |
 | `SENT-001` | Sprint 6 / EPIC-EVOLUTION | /bff/v5/sentinel/findings endpoint | Claude2 | todo | - | - |
 
 ### External / Upstream Integration Work
@@ -78,11 +71,18 @@ Last updated: 2026-05-16 17:28:30
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-16 17:28:15
-- Terminal tasks archived: `1137` total, `1119` completed, `18` superseded
+- Archive updated: 2026-05-16 18:19:53
+- Terminal tasks archived: `1144` total, `1126` completed, `18` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `ASK-003` | Sprint 5 / EPIC-RESEARCH | ask / committee session lifecycle | Claude2 | completed | 2026-05-16 18:19:53 | `ai-task-archive/tasks/ASK-003.json` |
+| `IMT-002` | Sprint 5 / EPIC-RESEARCH | PreferenceExample / CorrectionTrace schema | Codex | completed | 2026-05-16 18:07:48 | `ai-task-archive/tasks/IMT-002.json` |
+| `ASK-001` | Sprint 5 / EPIC-RESEARCH | /bff/agora/ask/sessions | Codex | completed | 2026-05-16 18:03:43 | `ai-task-archive/tasks/ASK-001.json` |
+| `TRN-001` | Sprint 5 / EPIC-RESEARCH | TeachingSession / TeachingEvent schema | Codex | completed | 2026-05-16 17:57:42 | `ai-task-archive/tasks/TRN-001.json` |
+| `EXP-001` | Sprint 5 / EPIC-RESEARCH | ExperimentTask / ExperimentRun schema | Codex | completed | 2026-05-16 17:53:55 | `ai-task-archive/tasks/EXP-001.json` |
+| `IMT-003` | Sprint 5 / EPIC-RESEARCH | imitation dataset builder skeleton | Claude2 | completed | 2026-05-16 17:40:02 | `ai-task-archive/tasks/IMT-003.json` |
+| `STRAT-004` | Sprint 5 / EPIC-RESEARCH | evidence / code refs lineage | Codex | completed | 2026-05-16 17:29:19 | `ai-task-archive/tasks/STRAT-004.json` |
 | `TRN-003` | Sprint 5 / EPIC-RESEARCH | rapid-eval request / response | Claude2 | completed | 2026-05-16 17:28:15 | `ai-task-archive/tasks/TRN-003.json` |
 | `EXP-005` | Sprint 5 / EPIC-RESEARCH | ExperimentRun -> Artifact registry writeback | Codex | completed | 2026-05-16 17:16:41 | `ai-task-archive/tasks/EXP-005.json` |
 | `PER-002` | Sprint 5 / EPIC-RESEARCH | skills/tools/capabilities read API | Claude2 | completed | 2026-05-16 15:46:09 | `ai-task-archive/tasks/PER-002.json` |
@@ -96,45 +96,31 @@ Last updated: 2026-05-16 17:28:30
 | `TEL-001-RB` | Sprint 4 / EPIC-TELEMETRY | TelemetryEvent canonical schema (rebaseline) | Codex | completed | 2026-05-16 14:37:31 | `ai-task-archive/tasks/TEL-001-RB.json` |
 | `CAP-002-RB` | Sprint 2 / EPIC-GOV-DEPLOY | Pool/runtime compatibility checks (rebaseline) | Codex | completed | 2026-05-16 14:30:13 | `ai-task-archive/tasks/CAP-002-RB.json` |
 | `DEP-001-RB` | Sprint 2 / EPIC-GOV-DEPLOY | DeploymentPlan contract + service (rebaseline) | Codex | completed | 2026-05-16 14:27:01 | `ai-task-archive/tasks/DEP-001-RB.json` |
-| `RT-003` | Sprint 3 / EPIC-RUNTIME | /bff/runtimes list/detail | Codex | completed | 2026-05-16 14:19:33 | `ai-task-archive/tasks/RT-003.json` |
-| `QLIB-001` | Sprint 5 / EPIC-RESEARCH | Qlib adapter skeleton | Claude2 | completed | 2026-05-16 14:13:28 | `ai-task-archive/tasks/QLIB-001.json` |
-| `DEP-003` | Sprint 2 / EPIC-GOV-DEPLOY | deployment projection read model | Claude2 | completed | 2026-05-16 14:03:32 | `ai-task-archive/tasks/DEP-003.json` |
-| `ALT-001` | Sprint 4 / EPIC-TELEMETRY | /bff/alerts endpoint | Codex | completed | 2026-05-16 14:02:57 | `ai-task-archive/tasks/ALT-001.json` |
-| `P0-AUD-001` | Sprint 1 / EPIC-BFF-P0 | /bff/audit read endpoint | Claude2 | completed | 2026-05-16 13:53:57 | `ai-task-archive/tasks/P0-AUD-001.json` |
-| `POST-001` | Sprint 4 / EPIC-TELEMETRY | Postmortem schema + endpoint | Codex | completed | 2026-05-16 13:51:19 | `ai-task-archive/tasks/POST-001.json` |
-| `AUD-002` | Sprint 4 / EPIC-TELEMETRY | AuditAction backend (write engine) | Codex | completed | 2026-05-16 13:47:22 | `ai-task-archive/tasks/AUD-002.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | - | Gemini2 | Gemini | blocked | - | 2026-05-15 23:15:06 | Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check. |
-| `STRAT-004` | Sprint 5 / EPIC-RESEARCH | evidence / code refs lineage | - | Codex | Claude | review_approved | - | 2026-05-16 17:24:42 | Supervisor resumed STRAT-004 for finalize after successful dispatch. |
-| `EXP-001` | Sprint 5 / EPIC-RESEARCH | ExperimentTask / ExperimentRun schema | - | Codex | Claude | review | - | 2026-05-16 17:28:30 | EXP-001 implementation is already committed as 1dc686c6 and remains valid. Verified py_compile, pytest services/research/experiments/test_models.py -q (12 passed), and git diff --check for task paths. Review artifact is present at support/reviews/EXP-001-review-claude.md; please publish approval through the canonical approve flow. |
-| `TRN-001` | Sprint 5 / EPIC-RESEARCH | TeachingSession / TeachingEvent schema | - | Codex | Claude | in_progress | - | 2026-05-16 17:24:59 | Implemented TeachingSession/TeachingEvent schema-backed models and wired training-session service events to emit canonical actor_type payload timestamp correlation fields; focused schema and HTTP lifecycle tests pass. |
-| `TRN-002` | Sprint 5 / EPIC-RESEARCH | trainer session endpoints | - | Codex | Claude | todo | - | 2026-05-16 17:17:54 | Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Codex starts a fresh run. |
-| `TRN-004` | Sprint 5 / EPIC-RESEARCH | trainer commit / discard / replay | - | Claude | Codex2 | todo | - | 2026-05-16 07:32:26 | Assignment created |
-| `IMT-001` | Sprint 5 / EPIC-RESEARCH | TraderTrajectory schema | - | Claude | Claude2 | todo | - | 2026-05-16 08:36:13 | Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
-| `IMT-002` | Sprint 5 / EPIC-RESEARCH | PreferenceExample / CorrectionTrace schema | - | Claude | Claude2 | todo | - | 2026-05-16 09:11:18 | Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
-| `IMT-003` | Sprint 5 / EPIC-RESEARCH | imitation dataset builder skeleton | - | Claude2 | Claude | review_approved | - | 2026-05-16 17:27:20 | Review approved. Governance constants consistent with learning adapter, all 24 tests pass, smoke test passes. Returned to Claude2 for finalization. |
-| `IMT-004` | Sprint 5 / EPIC-RESEARCH | behavior policy artifact type registration | - | Claude | Claude2 | todo | - | 2026-05-16 08:36:24 | Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
-| `ASK-001` | Sprint 5 / EPIC-RESEARCH | /bff/agora/ask/sessions | - | Codex | Claude2 | todo | - | 2026-05-16 17:16:33 | Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Codex starts a fresh run. |
-| `ASK-002` | Sprint 5 / EPIC-RESEARCH | ConsultRequest / ConsultMemo schema | - | Claude | Claude2 | todo | - | 2026-05-16 08:36:34 | Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
-| `ASK-003` | Sprint 5 / EPIC-RESEARCH | ask / committee session lifecycle | - | Claude2 | Codex | todo | - | 2026-05-16 17:24:12 | Supervisor preempted ASK-003 to free Claude2 for higher-priority review/finalize work; task returned to todo until a fresh run restarts it. |
-| `ASK-004` | Sprint 5 / EPIC-RESEARCH | memo publish to registry / review | - | Claude | Codex2 | todo | - | 2026-05-16 07:36:31 | Assignment created |
+| `TRN-002` | Sprint 5 / EPIC-RESEARCH | trainer session endpoints | - | Codex | Claude | review | - | 2026-05-16 18:13:36 | TRN-002 ready for review. Added services/control-plane/bff/test_trn002_trainer_session_contract.py covering trainer session create/list/detail/message/controls/patch/preview read/refresh; updated BFF preview refresh to accept service-native mode=refresh while preserving refresh_mode=manual and to fail completed sessions with precondition_failed=status; documented surface in services/training-session/README.md; evidence in support/evidence/TRN-002/README.md. Verification: pytest services/control-plane/bff/test_trn002_trainer_session_contract.py -q (25 passed); pytest services/control-plane/bff/test_tw01_teaching_dialog_contract.py services/control-plane/bff/test_tw02_parameter_controls_contract.py services/control-plane/bff/test_tw03_before_after_compare_contract.py -q (14 passed); pytest services/control-plane/bff/test_training_session_service_client.py -q (3 passed, 2 existing datetime.utcnow warnings); pytest services/training-session/tests/test_http_service.py -q (7 passed); py_compile main/read_store/training-session main passed. No task-scoped commit at review handoff because the worktree/index already contains unrelated staged/concurrent ASK changes in services/control-plane/bff/main.py; TRN-002-owned main.py hunks are documented in the evidence packet. |
+| `TRN-004` | Sprint 5 / EPIC-RESEARCH | trainer commit / discard / replay | - | Codex | Codex2 | review | - | 2026-05-16 17:59:00 | TRN-004 implementation ready for review. Commit 92784e26 hardens training-session replay decisions with optional Idempotency-Key/X-Idempotency-Key replay protection, conflict on same-key changed payloads, commit/discard decision lineage artifact refs, README contract notes, and evidence packet support/evidence/TRN-004/README.md. Verification: py_compile training-session main/test; pytest services/training-session/tests/test_http_service.py -q (7 passed); pytest services/training-session/tests -q (17 passed); pytest services/control-plane/bff/test_training_session_service_client.py -q (3 passed, 2 existing datetime.utcnow warnings); pytest services/control-plane/bff/test_tw04_teaching_replay_contract.py -q (34 passed, 8 existing datetime.utcnow warnings); git diff --cached --check. |
+| `IMT-001` | Sprint 5 / EPIC-RESEARCH | TraderTrajectory schema | - | Codex | Claude | in_progress | - | 2026-05-16 18:16:21 | Supervisor auto-started IMT-001 after successful dispatch. |
+| `IMT-004` | Sprint 5 / EPIC-RESEARCH | behavior policy artifact type registration | - | Codex | Claude | in_progress | - | 2026-05-16 18:19:31 | Implementing behavior_policy registry artifact type across registry contract/schema/models and imitation BC output, with focused tests and evidence. |
+| `ASK-002` | Sprint 5 / EPIC-RESEARCH | ConsultRequest / ConsultMemo schema | - | Codex | Claude | in_progress | - | 2026-05-16 18:19:11 | ASK-002 implementation started: deriving ConsultRequest/ConsultMemo contract from consultation-svc models and Research sprint GAP scope; will add schema-backed models/tests without changing deploy authority. |
+| `ASK-004` | Sprint 5 / EPIC-RESEARCH | memo publish to registry / review | - | Claude | Codex2 | todo | - | 2026-05-16 18:15:46 | Supervisor preempted ASK-004 to free Claude for higher-priority review/finalize work; task returned to todo until a fresh run restarts it. |
 | `ASK-005` | Sprint 5 / EPIC-RESEARCH | approval / ask SSE event publishing | - | Claude | Codex2 | todo | - | 2026-05-16 08:53:22 | Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
 | `EVO-001` | Sprint 6 / EPIC-EVOLUTION | EvolutionDecision service | - | Claude | Codex | todo | - | 2026-05-16 07:37:02 | Assignment created |
-| `LOOP-001-RB` | Sprint 6 / EPIC-EVOLUTION | /bff/v5/loop-runs endpoint (rebaseline) | - | Claude2 | Codex2 | todo | - | 2026-05-16 07:37:18 | Assignment created |
-| `SENT-001` | Sprint 6 / EPIC-EVOLUTION | /bff/v5/sentinel/findings endpoint | - | Claude2 | Codex | todo | - | 2026-05-16 07:37:33 | Assignment created |
+| `LOOP-001-RB` | Sprint 6 / EPIC-EVOLUTION | /bff/v5/loop-runs endpoint (rebaseline) | - | Claude2 | Codex2 | review | - | 2026-05-16 18:09:07 | LOOP-001-RB implementation complete. Routes GET /bff/v5/loop-runs, /loop-runs/{id}, /sentinel/findings, /sentinel/findings/{id}, /control-room, /execution/persona-health, /execution/strategy-health all verified in main.py. Fixed regression in ReadSurfaceStore._backfill_local_contract_defaults: explicitly-provided empty incidents snapshot was being overwritten by fixture_pack_c incidents; fix guards the merge when 'incidents' key already exists in self._data. Commit: 43a51a2f. Evidence: support/evidence/LOOP-001-RB/README.md. Verification: pytest test_bff_v5_loop_sentinel_contract.py -q (19 passed); pytest test_read_store_loop_sentinel.py -q (14 passed); combined 33 passed. |
+| `SENT-001` | Sprint 6 / EPIC-EVOLUTION | /bff/v5/sentinel/findings endpoint | - | Claude2 | Codex | todo | - | 2026-05-16 18:15:58 | Supervisor preempted SENT-001 to free Claude2 for higher-priority review/finalize work; task returned to todo until a fresh run restarts it. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
 | `EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE` | Gemini | Codex2 | Acceptance packet and dependency map for EP5-BROKER-TW-002 prepared at support/sidecars/EP5-BROKER-TW-002/EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE.md. Ready for review and incorporation into parent closeout. | pending | 2026-05-12 22:50:00 |
-| `STRAT-004` | Claude | Codex | STRAT-004 review approved. Lineage surface correct, execution boundary respected, all 22 tests pass. Returned to Codex for finalization. | pending | 2026-05-16 17:15:10 |
-| `IMT-003` | Claude | Claude2 | Review approved. Governance constants consistent with learning adapter, all 24 tests pass, smoke test passes. Returned to Claude2 for finalization. | pending | 2026-05-16 17:27:20 |
-| `EXP-001` | Codex | Claude | EXP-001 implementation is already committed as 1dc686c6 and remains valid. Verified py_compile, pytest services/research/experiments/test_models.py -q (12 passed), and git diff --check for task paths. Review artifact is present at support/reviews/EXP-001-review-claude.md; please publish approval through the canonical approve flow. | pending | 2026-05-16 17:28:30 |
+| `TRN-004` | Codex | Codex2 | TRN-004 implementation ready for review. Commit 92784e26 hardens training-session replay decisions with optional Idempotency-Key/X-Idempotency-Key replay protection, conflict on same-key changed payloads, commit/discard decision lineage artifact refs, README contract notes, and evidence packet support/evidence/TRN-004/README.md. Verification: py_compile training-session main/test; pytest services/training-session/tests/test_http_service.py -q (7 passed); pytest services/training-session/tests -q (17 passed); pytest services/control-plane/bff/test_training_session_service_client.py -q (3 passed, 2 existing datetime.utcnow warnings); pytest services/control-plane/bff/test_tw04_teaching_replay_contract.py -q (34 passed, 8 existing datetime.utcnow warnings); git diff --cached --check. | pending | 2026-05-16 17:59:00 |
+| `LOOP-001-RB` | Claude2 | Codex2 | LOOP-001-RB implementation complete. Routes GET /bff/v5/loop-runs, /loop-runs/{id}, /sentinel/findings, /sentinel/findings/{id}, /control-room, /execution/persona-health, /execution/strategy-health all verified in main.py. Fixed regression in ReadSurfaceStore._backfill_local_contract_defaults: explicitly-provided empty incidents snapshot was being overwritten by fixture_pack_c incidents; fix guards the merge when 'incidents' key already exists in self._data. Commit: 43a51a2f. Evidence: support/evidence/LOOP-001-RB/README.md. Verification: pytest test_bff_v5_loop_sentinel_contract.py -q (19 passed); pytest test_read_store_loop_sentinel.py -q (14 passed); combined 33 passed. | pending | 2026-05-16 18:09:07 |
+| `TRN-002` | Codex | Claude | TRN-002 ready for review. Added services/control-plane/bff/test_trn002_trainer_session_contract.py covering trainer session create/list/detail/message/controls/patch/preview read/refresh; updated BFF preview refresh to accept service-native mode=refresh while preserving refresh_mode=manual and to fail completed sessions with precondition_failed=status; documented surface in services/training-session/README.md; evidence in support/evidence/TRN-002/README.md. Verification: pytest services/control-plane/bff/test_trn002_trainer_session_contract.py -q (25 passed); pytest services/control-plane/bff/test_tw01_teaching_dialog_contract.py services/control-plane/bff/test_tw02_parameter_controls_contract.py services/control-plane/bff/test_tw03_before_after_compare_contract.py -q (14 passed); pytest services/control-plane/bff/test_training_session_service_client.py -q (3 passed, 2 existing datetime.utcnow warnings); pytest services/training-session/tests/test_http_service.py -q (7 passed); py_compile main/read_store/training-session main passed. No task-scoped commit at review handoff because the worktree/index already contains unrelated staged/concurrent ASK changes in services/control-plane/bff/main.py; TRN-002-owned main.py hunks are documented in the evidence packet. | pending | 2026-05-16 18:13:36 |
 
 ## Blockers
 
@@ -146,8 +132,7 @@ Last updated: 2026-05-16 17:28:30
 
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
-| `STRAT-004` | Claude | 審查通過。build_strategy_spec_lineage_refs 正確組裝 evidence_bundle + evidence_item refs 及 allowlisted code_refs；_validate_seed_inputs 拒絕 seed lineage 外的 SourceRecord/EvidenceItem；attach_lineage_refs_to_strategy_spec_payload 保留 provenance.source_refs；lineage edge to_lineage_edge 欄位完整；__init__.py 四項 export 正確；contract.md 2.4 明確標示 lineage-only 無執行授權。14 targeted tests + 22 strategy_spec tests 全過。兩項非阻塞觀察：trace_id 空值時 fallback 為空字串（可接受）；seed 中重複 evidence_item_id 不被 _validate_seed_inputs 攔截但 dedup 後產生單一 ref（可接受）。 | support/evidence/STRAT-004/review-claude.md |
-| `IMT-003` | Claude | 審查通過。governance 常數與 services/learning/imitation/adapter.py 一致（ALLOWED_ACTOR_ROLES/ALLOWED_PROMOTION_STATES/ELIGIBLE_DECISIONS 完全相同）；_filter_reason 四軸過濾順序正確；decision alias approved/edited 正常；__init__.py 8 項 export 完整；24 unit tests + smoke test 全過。兩項非阻塞觀察：_DECISION_ALIASES 中 rejected→reject 無害（仍被 ELIGIBLE_DECISIONS 過濾）；require_strategy_id_match=True 預設安全。Review artifact: support/reviews/IMT-003-review-claude.md。 | support/reviews/IMT-003-review-claude.md |
+| _(none)_ | - | - | - |
 
 ## Lovable Coordination
 
@@ -218,23 +203,23 @@ Last updated: 2026-05-16 17:28:30
 
 ## Latest Checkpoints
 
-- 2026-05-16 17:27:13 Orchestrator: `EXP-001` Supervisor auto-started EXP-001 after successful dispatch.
-- 2026-05-16 17:27:13 Orchestrator: `ASK-003` Worker exited before the task reached a terminal status.
-- 2026-05-16 17:27:15 Orchestrator: PreToolUse: Bash
-- 2026-05-16 17:27:19 Orchestrator: PreToolUse: Bash
-- 2026-05-16 17:27:20 Claude: `IMT-003` Review approved. Governance constants consistent with learning adapter, all 24 tests pass, smoke test passes. Returned to Claude2 for finalization.
-- 2026-05-16 17:27:44 Orchestrator: PostToolUse: Bash
-- 2026-05-16 17:27:48 Orchestrator: PreToolUse: Edit
-- 2026-05-16 17:27:50 Orchestrator: PostToolUse: Edit
-- 2026-05-16 17:27:55 Orchestrator: PreToolUse: Bash
-- 2026-05-16 17:27:56 Orchestrator: PostToolUse: Bash
-- 2026-05-16 17:28:02 Orchestrator: PreToolUse: Bash
-- 2026-05-16 17:28:05 Orchestrator: PostToolUse: Bash
-- 2026-05-16 17:28:12 Orchestrator: PostToolUse: Bash
-- 2026-05-16 17:28:12 Orchestrator: PreToolUse: Bash
-- 2026-05-16 17:28:17 Orchestrator: PreToolUse: Bash
-- 2026-05-16 17:28:15 Claude2: `TRN-003` Owner finalization complete. TRN-003 rapid-eval request/response: implementation 7afc034b, Codex review 0cdc16a4, closeout 2062b3cf. All 13 contract tests pass. Evidence updated to reflect auto-reassigned reviewer (Codex). No blocking findings from review.
-- 2026-05-16 17:28:18 Orchestrator: PostToolUse: Bash
-- 2026-05-16 17:28:24 Orchestrator: Stop: Stop
-- 2026-05-16 17:28:25 Orchestrator: SessionEnd: SessionEnd
-- 2026-05-16 17:28:30 Codex: `EXP-001` Handoff to Claude: EXP-001 implementation is already committed as 1dc686c6 and remains valid. Verified py_compile, pytest services/research/experiments/test_models.py -q (12 passed), and git diff --check for task paths. Review artifact is present at support/reviews/EXP-001-review-claude.md; please publish approval through the canonical approve flow.
+- 2026-05-16 18:18:05 Orchestrator: PostToolUse: Bash
+- 2026-05-16 18:18:05 Orchestrator: PreToolUse: Bash
+- 2026-05-16 18:18:31 Orchestrator: PostToolUse: Bash
+- 2026-05-16 18:18:34 Orchestrator: PostToolUse: Bash
+- 2026-05-16 18:18:36 Orchestrator: PreToolUse: Bash
+- 2026-05-16 18:18:37 Orchestrator: PreToolUse: Bash
+- 2026-05-16 18:19:11 Codex: `ASK-002` ASK-002 implementation started: deriving ConsultRequest/ConsultMemo contract from consultation-svc models and Research sprint GAP scope; will add schema-backed models/tests without changing deploy authority.
+- 2026-05-16 18:19:13 Orchestrator: PostToolUse: Bash
+- 2026-05-16 18:19:18 Orchestrator: PostToolUse: Bash
+- 2026-05-16 18:19:21 Orchestrator: PreToolUse: Bash
+- 2026-05-16 18:19:28 Orchestrator: PreToolUse: Edit
+- 2026-05-16 18:19:29 Orchestrator: PostToolUse: Edit
+- 2026-05-16 18:19:31 Codex: `IMT-004` Implementing behavior_policy registry artifact type across registry contract/schema/models and imitation BC output, with focused tests and evidence.
+- 2026-05-16 18:19:35 Orchestrator: PostToolUse: Bash
+- 2026-05-16 18:19:35 Orchestrator: PreToolUse: Bash
+- 2026-05-16 18:19:37 Orchestrator: PostToolUse: Bash
+- 2026-05-16 18:19:45 Orchestrator: PreToolUse: Bash
+- 2026-05-16 18:19:46 Orchestrator: PostToolUse: Bash
+- 2026-05-16 18:19:53 Orchestrator: PreToolUse: Bash
+- 2026-05-16 18:19:53 Claude2: `ASK-003` Closeout complete. Reviewer patch (163f041f) fixed SSE resync contract drift and cross-mode session isolation. Verified: py_compile OK; 29 ASK-003 tests passed; 24 ASK-001 regression tests passed; 22 SSE+Agora extended tests passed. Evidence updated at support/evidence/ASK-003/README.md. Closeout commit: efdeed96.

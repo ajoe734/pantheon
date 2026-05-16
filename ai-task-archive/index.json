@@ -1,12 +1,18 @@
 {
   "version": 1,
-  "updated_at": "2026-05-16T09:29:19Z",
+  "updated_at": "2026-05-16T10:19:53Z",
   "counts": {
-    "total": 1138,
-    "completed": 1120,
+    "total": 1144,
+    "completed": 1126,
     "superseded": 18
   },
   "recent_terminal_ids": [
+    "ASK-003",
+    "IMT-002",
+    "ASK-001",
+    "TRN-001",
+    "EXP-001",
+    "IMT-003",
     "STRAT-004",
     "TRN-003",
     "EXP-005",
@@ -20,12 +26,6 @@
     "DEP-002-RB",
     "TEL-001-RB",
     "CAP-002-RB",
-    "DEP-001-RB",
-    "RT-003",
-    "QLIB-001",
-    "DEP-003",
-    "ALT-001",
-    "P0-AUD-001",
-    "POST-001"
+    "DEP-001-RB"
   ]
 }
