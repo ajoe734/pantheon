@@ -25,12 +25,26 @@ All mutating routes use `_AGORA_CORE_BFF_IDEMPOTENCY` (shared agora idempotency 
 
 Also bundled: ASK-001 idempotency fix — `_ASK_SESSIONS_IDEMPOTENCY` aliased to `_AGORA_CORE_BFF_IDEMPOTENCY` so create/close results are visible to the checker; updated `test_ask_001_sessions_contract.py` and `support/evidence/ASK-001/README.md`.
 
-## Verification
+## Reviewer Patch (commit 163f041f — Codex)
+
+Two issues were caught and fixed during review:
+
+1. **SSE resync contract drift** — `BFF_API_CONTRACT.md` §11.4 and `test_pkt005_sse_substrate_contract.py` updated to advertise both ask-channel resync routes (`/bff/agora/ask/sessions/{id}` and `/bff/agora/committee/sessions/{id}`).
+
+2. **Cross-mode session isolation** — Committee routes (`GET detail`, `open`, `close`) now return 404 for non-committee session IDs; ASK routes now return 404 for committee session IDs on detail/close. `open_committee_session()` and `close_committee_session()` return `None` for non-committee sessions.
+
+## Verification (post reviewer patch)
 
 ```
-python3 -m pytest services/control-plane/bff/test_ask_003_committee_lifecycle.py -v
-# 26 passed
+python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/read_store.py
+# OK
+
+python3 -m pytest services/control-plane/bff/test_ask_003_committee_lifecycle.py -q
+# 29 passed
 
 python3 -m pytest services/control-plane/bff/test_ask_001_sessions_contract.py -q
-# 22 passed (regression clean)
+# 24 passed (regression clean)
+
+python3 -m pytest services/control-plane/bff/test_pkt005_sse_substrate_contract.py services/control-plane/bff/test_bff_agora_extended_contract.py -q
+# 22 passed
 ```
