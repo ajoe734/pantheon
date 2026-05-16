@@ -7,7 +7,6 @@
     "strategy_id",
     "version",
     "artifact_type",
-    "promotion_state",
     "checksum",
     "lineage",
     "created_at"
@@ -32,6 +31,25 @@
         "prompt_bundle",
         "signal_snapshot",
         "execution_bundle"
+      ]
+    },
+    "artifact_state": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "candidate",
+        "approved",
+        "retired"
+      ]
+    },
+    "deployment_stage": {
+      "type": "string",
+      "enum": [
+        "none",
+        "paper",
+        "canary",
+        "live",
+        "frozen"
       ]
     },
     "promotion_state": {
@@ -149,12 +167,12 @@
     {
       "if": {
         "properties": {
-          "promotion_state": {
+          "deployment_stage": {
             "const": "live"
           }
         },
         "required": [
-          "promotion_state"
+          "deployment_stage"
         ]
       },
       "then": {
