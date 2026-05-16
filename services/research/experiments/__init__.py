@@ -19,8 +19,15 @@ from .models import (
     validate_experiment_task,
     validate_experiment_task_payload,
 )
+from .registry_writeback import (
+    ExperimentRegistryWritebackError,
+    build_registry_entry_from_experiment_run,
+    registry_entry_view_to_dict,
+    write_experiment_run_artifact_to_registry,
+)
 
 __all__ = [
+    "ExperimentRegistryWritebackError",
     "ExperimentRun",
     "ExperimentRunStatus",
     "ExperimentRuntimeEnv",
@@ -38,4 +45,7 @@ __all__ = [
     "validate_experiment_run_payload",
     "validate_experiment_task",
     "validate_experiment_task_payload",
+    "build_registry_entry_from_experiment_run",
+    "registry_entry_view_to_dict",
+    "write_experiment_run_artifact_to_registry",
 ]
