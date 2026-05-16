@@ -88,6 +88,21 @@ Recommended review decision for this sidecar:
 - Confirm no L1 canonical truth, core contract truth, runtime implementation, registry behavior, or governance implementation was changed by the sidecar.
 - If accepted, approve the sidecar so Codex can perform normal closeout for `ASK-004-SIDECAR-REVIEW`.
 
+## Sidecar Review Result
+
+Claude approved this packet at `2026-05-16T11:46:36Z`.
+
+Approval summary: the packet accurately summarizes ASK-004 done state, evidence map, and reviewer decision. Support-only scope was confirmed, and no canonical truth, runtime behavior, registry implementation, or governance implementation changed.
+
+Closeout checks before finalization:
+
+```bash
+AI_NAME=Codex ./scripts/ai-status.sh show ASK-004-SIDECAR-REVIEW
+AI_NAME=Codex ./scripts/ai-status.sh show ASK-004
+git diff -- support/sidecars/ASK-004/ASK-004-SIDECAR-REVIEW.md
+git status --short
+```
+
 ## Non-Goals
 
 - Do not reopen ASK-004 implementation.
