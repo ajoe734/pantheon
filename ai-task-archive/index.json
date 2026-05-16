@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-05-16T07:46:09Z",
+  "updated_at": "2026-05-16T09:16:41Z",
   "counts": {
-    "total": 1135,
-    "completed": 1117,
+    "total": 1136,
+    "completed": 1118,
     "superseded": 18
   },
   "recent_terminal_ids": [
+    "EXP-005",
     "PER-002",
     "SRC-003",
     "EXP-002",
@@ -25,7 +26,6 @@
     "P0-AUD-001",
     "POST-001",
     "AUD-002",
-    "RT-004",
-    "RT-002"
+    "RT-004"
   ]
 }
