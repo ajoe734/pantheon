@@ -3,13 +3,14 @@
 **Task:** VBT-001 vectorbt rapid eval adapter  
 **Owner:** Gemini2  
 **Reviewer:** Claude  
-**Outcome:** reopen — required changes before approve
+**Review round:** 2 (re-review after first reopen)  
+**Outcome:** reopen — required changes still unaddressed + new worker.py regression found
 
 ---
 
 ## Summary
 
-The adapter refactoring portion (`BacktestConfig.strategy_params` generalization) is correct and well-tested — all 33 existing unit tests pass.  The training-session integration introduces a critical regression that breaks the existing test suite and makes the `POST /api/training/sessions/{session_id}/preview` endpoint always return 500.
+The core `vectorbt_adapter.py` refactor (BacktestConfig.strategy_params generalization) is correct and all 33 unit tests pass. However the same four required changes from the first review round are still unresolved, and a new regression in `worker.py` was found: the worker entry point crashes at startup because it passes non-existent keyword arguments to `BacktestConfig`.
 
 ---
 
@@ -17,56 +18,90 @@ The adapter refactoring portion (`BacktestConfig.strategy_params` generalization
 
 ```
 PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/research/vectorbt/test_adapter.py -q
-# 33 passed, 5 subtests passed
+# 33 passed, 5 subtests passed  ✓
 
-PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/training-session/tests/test_http_service.py -q
+python3 services/research/vectorbt/smoke_test.py
+# assertions: OK  ✓
+
+python3 -c "from services.research.vectorbt.adapter import BacktestConfig; BacktestConfig(short_window=5, long_window=20)"
+# TypeError: BacktestConfig.__init__() got an unexpected keyword argument 'short_window'  ✗  (worker.py bug)
+
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/training-session/tests/test_http_service.py -q -k preview
 # FAILED test_training_session_lifecycle_event_preview_and_replay_contract
-# assert 500 == 201  <-- regression introduced by this commit
-
-python3 -c "from services.research.vectorbt.adapter.vectorbt_adapter import run_vectorbt_workflow, BacktestConfig; ..."
-# ERROR: instrument STUB1 has 2 bars; minimum is 30
+# assert 500 == 201  ✗  (same regression as first review)
 ```
 
 ---
 
-## Required Changes
+## Required Changes (must fix before approve)
 
-### 1. Fix `_get_ohlcv_data()` — critical regression (must fix)
+### 1. Fix `worker.py` — new critical regression
 
-`services/training-session/main.py:333–341` — `_get_ohlcv_data()` returns only 2 bars per instrument. The adapter enforces `MIN_BARS = 30`. Every call to `POST /api/training/sessions/{session_id}/preview` raises `VectorbtWorkflowError` "instrument STUB1 has 2 bars; minimum is 30", becoming HTTP 500. The existing test now fails.
+`services/research/vectorbt/worker.py:29-30` — the VBT-001 commit refactored `BacktestConfig` to use `strategy_params: dict` instead of top-level `short_window`/`long_window` fields, but `worker.py` was not updated. It still passes:
 
-**Required:** Provide at least 30 bars per instrument in the stub, or wrap the call to `run_vectorbt_workflow()` with a try/except that catches `VectorbtWorkflowError` and falls back to the original hardcoded `{"return_delta": 0.0, "drawdown_delta": 0.0}` stub when governed data is not yet available — then restore the test to green.
+```python
+BacktestConfig(
+    ...
+    short_window=int(os.environ.get("VECTORBT_SHORT_WINDOW", "5")),  # invalid kwarg
+    long_window=int(os.environ.get("VECTORBT_LONG_WINDOW", "20")),  # invalid kwarg
+    ...
+)
+```
 
-### 2. Fix `metric_delta` shape mismatch — must fix
+This raises `TypeError: BacktestConfig.__init__() got an unexpected keyword argument 'short_window'` at runtime, crashing the worker before any backtest runs.
 
-`services/training-session/main.py:383` — `metric_delta` is now set to `backtest_result.backtest_result.aggregate_metrics`, whose keys are `num_instruments`, `mean_total_return`, `mean_sharpe_ratio`, `mean_max_drawdown`, `total_trades`. The previous contract used `{"return_delta": 0.0, "drawdown_delta": 0.0}`.
+**Required:** Replace with:
 
-**Required:** Either (a) map the aggregate metrics to the expected shape before assigning to `metric_delta`, or (b) explicitly update the preview envelope contract, update the test assertion, and document the new field names.
+```python
+BacktestConfig(
+    version=os.environ.get("VECTORBT_ARTIFACT_VERSION", "1.0.0"),
+    requested_by=os.environ.get("VECTORBT_REQUESTED_BY", "worker"),
+    strategy_params={
+        "short_window": int(os.environ.get("VECTORBT_SHORT_WINDOW", "5")),
+        "long_window": int(os.environ.get("VECTORBT_LONG_WINDOW", "20")),
+    },
+    init_cash=float(os.environ.get("VECTORBT_INIT_CASH", "100000.0")),
+    fees=float(os.environ.get("VECTORBT_FEES", "0.001")),
+)
+```
 
-### 3. Move import to module top — should fix
+### 2. Fix `_get_ohlcv_data()` — critical regression (carried from round 1)
 
-`services/training-session/main.py:328` — import is placed after function definitions, mid-file, with a placeholder comment `# ... (rest of imports)`. This is non-idiomatic and pollutes the module structure.
+`services/training-session/main.py:333–341` — `_get_ohlcv_data()` returns 2 bars per instrument. `GovernedVectorbtInputAdapter` enforces `MIN_BARS = 30`. Every call to `POST /api/training/sessions/{session_id}/preview` raises `VectorbtWorkflowError("instrument STUB1 has 2 bars; minimum is 30")` which the except block converts to HTTP 500. Test still fails: `assert 500 == 201`.
 
-**Required:** Move `from services.research.vectorbt.adapter.vectorbt_adapter import run_vectorbt_workflow, BacktestConfig` to the top-level import block and remove the dead comment.
+**Required:** Either (a) extend the stub to return ≥30 bars per instrument, or (b) wrap the `run_vectorbt_workflow()` call so that a `VectorbtWorkflowError` from insufficient data falls back to `{"return_delta": 0.0, "drawdown_delta": 0.0}` and lets the endpoint return 201. Option (a) is preferred.
 
-### 4. Fix `preview_quality` label — should fix
+### 3. Fix `metric_delta` shape mismatch — must fix (carried from round 1)
 
-`services/training-session/main.py:395` — `preview_quality` is hardcoded to `"real_vectorbt"` but the workflow uses the stub backend by default (real backend requires `PANTHEON_VECTORBT_BACKEND=real`). The label is misleading.
+`services/training-session/main.py:373` — `metric_delta = backtest_result.backtest_result.aggregate_metrics` contains keys `num_instruments`, `mean_total_return`, `mean_sharpe_ratio`, `mean_max_drawdown`, `total_trades`. The previous envelope contract used `{"return_delta": 0.0, "drawdown_delta": 0.0}`. The test assertion still expects 201 and a valid preview shape.
 
-**Required:** Use `"stub_vectorbt"` when the stub backend is active, or derive the label from the returned `backtest_result.backend` field (`result.backtest_result.backend`).
+**Required:** Either map the aggregate to the expected shape, or explicitly update the test assertion and document the new contract in `integration.md`.
+
+### 4. Move import to module top (carried from round 1)
+
+`services/training-session/main.py:328` — import placed after function definitions with a dead placeholder comment `# ... (rest of imports)`.
+
+**Required:** Move the import to the standard module-top import block and delete the dead comment.
+
+### 5. Fix `preview_quality` label — should fix (carried from round 1)
+
+`services/training-session/main.py:398` — `"preview_quality": "real_vectorbt"` is hardcoded but the default path uses `StubVectorbtBackend`.
+
+**Required:** Derive from `backtest_result.backtest_result.backend` (`"stub_backtest"` or `"vectorbt_portfolio"`), or use `"stub_vectorbt"` when the real backend is not active.
 
 ---
 
 ## What Passes
 
-- `BacktestConfig.strategy_params` refactor: correct, no behavior regression.
-- `_compute_instrument_metrics(bars, config, short_window, long_window)` signature change: correct.
+- `BacktestConfig.strategy_params` refactor in `vectorbt_adapter.py`: correct.
 - `StubVectorbtBackend` and `VectorbtBackend` using `config.strategy_params.get(...)`: correct.
 - `test_stub_backend_uses_dynamic_params` new test: correct.
 - All 33 adapter unit tests pass.
+- smoke_test.py assertions all pass.
+- Governance semantics: `artifact_state=draft`, `deployment_stage=none`, `direct_live_influence=False`, `lean_consumption=scoring_only_not_direct_action` — all correct.
 
 ---
 
 ## Return Instruction
 
-Fix items 1–2 (must fix) and 3–4 (should fix), re-run both test suites to green, then handoff back to Claude for re-review.
+Fix items 1–3 (must fix), 4–5 (should fix), re-run both test suites to green, then handoff back to Claude for re-review.

@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-16 09:03:10
+Last updated: 2026-05-16 09:15:05
 
 ## Objective
 
@@ -37,13 +37,13 @@ Last updated: 2026-05-16 09:03:10
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Ready for review: POST /bff/approvals/{id}/decide dedicated handler. Approver/admin role gate, decision->CommandType routing (approve/reject/request_revision/escalate/freeze), rejection_reason+revision_notes validation, 404 for unknown ids, Idempotency-Key required. Evidence: support/evidence/P0-APP-001/acceptance.md. Verification: 15 contract tests passed; live wiring 7/8 (1 pre-existing P0-CAP-001 fail-closed 503). Commit: e8d18e92.
-- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: Verification report completed at support/evidence/QLIB-001/verification.md. Task is in review.
+- `Claude`: execution, control-plane, governance-review; next: Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 terminal: Codex usage limit reached
+- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: Supervisor resumed QLIB-001 for finalize after successful dispatch.
 - `Codex`: integration, status-system, schema, acceptance; next: No active assignment
-- `Codex2`: integration, status-system, schema, acceptance; next: Assignment created
+- `Codex2`: integration, status-system, schema, acceptance; next: Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Codex2 starts a fresh run.
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: Assignment created
 - `Claude2`: execution, control-plane, governance-review; next: Supervisor resumed P0-REG-001 for finalize after successful dispatch.
-- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Gemini2
+- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Re-review round 2: required changes still unaddressed + new worker.py regression (BacktestConfig kwargs mismatch). Must fix: worker.py short_window/long_window to strategy_params, _get_ohlcv_data() 2-bar regression (HTTP 500), metric_delta shape. Should fix: import placement, preview_quality label. All 33 adapter tests pass; training-session preview test still fails (500 != 201). Returning to Gemini2 for fix.
 
 ## Delivery Layers
 
@@ -73,10 +73,10 @@ Last updated: 2026-05-16 09:03:10
 | `TEL-001-RB` | Sprint 4 / EPIC-TELEMETRY | TelemetryEvent canonical schema (rebaseline) | Claude | todo | - | - |
 | `TEL-002-RB` | Sprint 4 / EPIC-TELEMETRY | RuntimeHeartbeat ingest endpoint (rebaseline) | Claude | todo | - | - |
 | `INC-001-RB` | Sprint 4 / EPIC-TELEMETRY | /bff/incidents (IncidentCase) (rebaseline) | Claude2 | todo | - | - |
-| `SRC-001` | Sprint 5 / EPIC-RESEARCH | SourceRecord schema + ingest API | Copilot | todo | - | - |
-| `SRC-002` | Sprint 5 / EPIC-RESEARCH | paper ingest adapter skeleton | Copilot | todo | - | - |
-| `SRC-003` | Sprint 5 / EPIC-RESEARCH | repo allowlist ingest skeleton | Copilot | todo | - | - |
-| `SRC-004` | Sprint 5 / EPIC-RESEARCH | StrategySpecSeed builder | Copilot | todo | - | - |
+| `SRC-001` | Sprint 5 / EPIC-RESEARCH | SourceRecord schema + ingest API | Codex2 | todo | - | - |
+| `SRC-002` | Sprint 5 / EPIC-RESEARCH | paper ingest adapter skeleton | Claude | todo | - | - |
+| `SRC-003` | Sprint 5 / EPIC-RESEARCH | repo allowlist ingest skeleton | Claude | todo | - | - |
+| `SRC-004` | Sprint 5 / EPIC-RESEARCH | StrategySpecSeed builder | Claude | todo | - | - |
 | `STRAT-001` | Sprint 5 / EPIC-RESEARCH | StrategySpec schema / model | Claude | todo | - | - |
 | `STRAT-002` | Sprint 5 / EPIC-RESEARCH | StrategySpec registry endpoints | Claude | todo | - | - |
 | `STRAT-003` | Sprint 5 / EPIC-RESEARCH | Source -> StrategySpec conversion service | Copilot | todo | - | - |
@@ -84,7 +84,7 @@ Last updated: 2026-05-16 09:03:10
 | `EXP-001` | Sprint 5 / EPIC-RESEARCH | ExperimentTask / ExperimentRun schema | Claude | todo | - | - |
 | `EXP-002` | Sprint 5 / EPIC-RESEARCH | /bff/research-experiments list/detail | Claude2 | todo | - | - |
 | `EXP-005` | Sprint 5 / EPIC-RESEARCH | ExperimentRun -> Artifact registry writeback | Claude | todo | - | - |
-| `QLIB-001` | Sprint 5 / EPIC-RESEARCH | Qlib adapter skeleton | Gemini | review | - | - |
+| `QLIB-001` | Sprint 5 / EPIC-RESEARCH | Qlib adapter skeleton | Gemini | review_approved | - | - |
 | `VBT-001` | Sprint 5 / EPIC-RESEARCH | vectorbt rapid eval adapter | Gemini2 | in_progress | - | - |
 | `PER-002` | Sprint 5 / EPIC-RESEARCH | skills/tools/capabilities read API | Claude2 | todo | - | - |
 | `TRN-001` | Sprint 5 / EPIC-RESEARCH | TeachingSession / TeachingEvent schema | Claude | todo | - | - |
@@ -92,7 +92,7 @@ Last updated: 2026-05-16 09:03:10
 | `TRN-003` | Sprint 5 / EPIC-RESEARCH | rapid-eval request / response | Claude2 | todo | - | - |
 | `TRN-004` | Sprint 5 / EPIC-RESEARCH | trainer commit / discard / replay | Claude | todo | - | - |
 | `IMT-001` | Sprint 5 / EPIC-RESEARCH | TraderTrajectory schema | Claude | todo | - | - |
-| `IMT-002` | Sprint 5 / EPIC-RESEARCH | PreferenceExample / CorrectionTrace schema | Codex2 | todo | - | - |
+| `IMT-002` | Sprint 5 / EPIC-RESEARCH | PreferenceExample / CorrectionTrace schema | Claude | todo | - | - |
 | `IMT-003` | Sprint 5 / EPIC-RESEARCH | imitation dataset builder skeleton | Copilot | todo | - | - |
 | `IMT-004` | Sprint 5 / EPIC-RESEARCH | behavior policy artifact type registration | Claude | todo | - | - |
 | `ASK-001` | Sprint 5 / EPIC-RESEARCH | /bff/agora/ask/sessions | Claude2 | todo | - | - |
@@ -143,7 +143,7 @@ Last updated: 2026-05-16 09:03:10
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | - | Gemini2 | Gemini | blocked | - | 2026-05-15 23:15:06 | Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check. |
-| `P0-APP-001` | Sprint 1 / EPIC-BFF-P0 | approval decide endpoint /bff/approvals/{id}/decide | - | Claude | Codex2 | review | - | 2026-05-16 08:54:37 | Ready for review: POST /bff/approvals/{id}/decide dedicated handler. Approver/admin role gate, decision->CommandType routing (approve/reject/request_revision/escalate/freeze), rejection_reason+revision_notes validation, 404 for unknown ids, Idempotency-Key required. Evidence: support/evidence/P0-APP-001/acceptance.md. Verification: 15 contract tests passed; live wiring 7/8 (1 pre-existing P0-CAP-001 fail-closed 503). Commit: e8d18e92. |
+| `P0-APP-001` | Sprint 1 / EPIC-BFF-P0 | approval decide endpoint /bff/approvals/{id}/decide | - | Claude | Claude2 | review | - | 2026-05-16 09:11:06 | Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 terminal: Codex usage limit reached |
 | `P0-REG-001` | Sprint 1 / EPIC-BFF-P0 | /bff/strategies list/detail | - | Claude2 | Claude | review_approved | - | 2026-05-16 08:29:50 | Supervisor resumed P0-REG-001 for finalize after successful dispatch. |
 | `P0-PER-001` | Sprint 1 / EPIC-BFF-P0 | /bff/personas list/detail | - | Claude2 | Claude | review_approved | - | 2026-05-16 08:18:50 | Auto-reassigned ownership from Codex2 to Claude2 after repeated Codex2 terminal: Codex usage limit reached |
 | `P0-AUD-001` | Sprint 1 / EPIC-BFF-P0 | /bff/audit read endpoint | - | Claude2 | Claude | review_approved | - | 2026-05-16 08:44:50 | Review approved: /bff/audit dedicated handler correct. Filters, pagination, envelope, meta, RBAC all verified. 11 contract tests + 3 live wiring pass. Returning to Claude2 for finalization. |
@@ -164,10 +164,10 @@ Last updated: 2026-05-16 09:03:10
 | `TEL-001-RB` | Sprint 4 / EPIC-TELEMETRY | TelemetryEvent canonical schema (rebaseline) | - | Claude | Claude2 | todo | - | 2026-05-16 08:36:20 | Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
 | `TEL-002-RB` | Sprint 4 / EPIC-TELEMETRY | RuntimeHeartbeat ingest endpoint (rebaseline) | - | Claude | Claude2 | todo | - | 2026-05-16 08:24:30 | Auto-reassigned ownership from Gemini to Claude after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Claude starts a fresh run. |
 | `INC-001-RB` | Sprint 4 / EPIC-TELEMETRY | /bff/incidents (IncidentCase) (rebaseline) | - | Claude2 | Codex | todo | - | 2026-05-16 07:25:02 | Assignment created |
-| `SRC-001` | Sprint 5 / EPIC-RESEARCH | SourceRecord schema + ingest API | - | Copilot | Codex | todo | - | 2026-05-16 07:25:33 | Assignment created |
-| `SRC-002` | Sprint 5 / EPIC-RESEARCH | paper ingest adapter skeleton | - | Copilot | Gemini2 | todo | - | 2026-05-16 07:25:51 | Assignment created |
-| `SRC-003` | Sprint 5 / EPIC-RESEARCH | repo allowlist ingest skeleton | - | Copilot | Gemini2 | todo | - | 2026-05-16 07:26:09 | Assignment created |
-| `SRC-004` | Sprint 5 / EPIC-RESEARCH | StrategySpecSeed builder | - | Copilot | Codex2 | todo | - | 2026-05-16 07:26:30 | Assignment created |
+| `SRC-001` | Sprint 5 / EPIC-RESEARCH | SourceRecord schema + ingest API | - | Codex2 | Claude | todo | - | 2026-05-16 09:10:57 | Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Codex2 starts a fresh run. |
+| `SRC-002` | Sprint 5 / EPIC-RESEARCH | paper ingest adapter skeleton | - | Claude | Claude2 | todo | - | 2026-05-16 09:11:12 | Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
+| `SRC-003` | Sprint 5 / EPIC-RESEARCH | repo allowlist ingest skeleton | - | Claude | Claude2 | todo | - | 2026-05-16 09:11:26 | Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
+| `SRC-004` | Sprint 5 / EPIC-RESEARCH | StrategySpecSeed builder | - | Claude | Claude2 | todo | - | 2026-05-16 09:11:30 | Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
 | `STRAT-001` | Sprint 5 / EPIC-RESEARCH | StrategySpec schema / model | - | Claude | Claude2 | todo | - | 2026-05-16 08:36:30 | Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
 | `STRAT-002` | Sprint 5 / EPIC-RESEARCH | StrategySpec registry endpoints | - | Claude | Claude2 | todo | - | 2026-05-16 08:00:04 | Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
 | `STRAT-003` | Sprint 5 / EPIC-RESEARCH | Source -> StrategySpec conversion service | - | Copilot | Codex | todo | - | 2026-05-16 07:27:52 | Assignment created |
@@ -175,15 +175,15 @@ Last updated: 2026-05-16 09:03:10
 | `EXP-001` | Sprint 5 / EPIC-RESEARCH | ExperimentTask / ExperimentRun schema | - | Claude | Claude2 | todo | - | 2026-05-16 08:53:53 | Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
 | `EXP-002` | Sprint 5 / EPIC-RESEARCH | /bff/research-experiments list/detail | - | Claude2 | Codex2 | todo | - | 2026-05-16 07:29:06 | Assignment created |
 | `EXP-005` | Sprint 5 / EPIC-RESEARCH | ExperimentRun -> Artifact registry writeback | - | Claude | Claude2 | todo | - | 2026-05-16 08:18:44 | Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
-| `QLIB-001` | Sprint 5 / EPIC-RESEARCH | Qlib adapter skeleton | - | Gemini | Copilot | review | - | 2026-05-16 08:58:52 | Verification report completed at support/evidence/QLIB-001/verification.md. Task is in review. |
-| `VBT-001` | Sprint 5 / EPIC-RESEARCH | vectorbt rapid eval adapter | - | Gemini2 | Claude | in_progress | - | 2026-05-16 09:03:10 | Gemini2 |
+| `QLIB-001` | Sprint 5 / EPIC-RESEARCH | Qlib adapter skeleton | - | Gemini | Claude | review_approved | - | 2026-05-16 09:10:44 | Supervisor resumed QLIB-001 for finalize after successful dispatch. |
+| `VBT-001` | Sprint 5 / EPIC-RESEARCH | vectorbt rapid eval adapter | - | Gemini2 | Claude | in_progress | - | 2026-05-16 09:15:05 | Re-review round 2: required changes still unaddressed + new worker.py regression (BacktestConfig kwargs mismatch). Must fix: worker.py short_window/long_window to strategy_params, _get_ohlcv_data() 2-bar regression (HTTP 500), metric_delta shape. Should fix: import placement, preview_quality label. All 33 adapter tests pass; training-session preview test still fails (500 != 201). Returning to Gemini2 for fix. |
 | `PER-002` | Sprint 5 / EPIC-RESEARCH | skills/tools/capabilities read API | - | Claude2 | Codex | todo | - | 2026-05-16 07:30:18 | Assignment created |
 | `TRN-001` | Sprint 5 / EPIC-RESEARCH | TeachingSession / TeachingEvent schema | - | Claude | Claude2 | todo | - | 2026-05-16 08:54:05 | Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
 | `TRN-002` | Sprint 5 / EPIC-RESEARCH | trainer session endpoints | - | Claude | Codex2 | todo | - | 2026-05-16 07:31:25 | Assignment created |
 | `TRN-003` | Sprint 5 / EPIC-RESEARCH | rapid-eval request / response | - | Claude2 | Copilot | todo | - | 2026-05-16 07:31:56 | Assignment created |
 | `TRN-004` | Sprint 5 / EPIC-RESEARCH | trainer commit / discard / replay | - | Claude | Codex2 | todo | - | 2026-05-16 07:32:26 | Assignment created |
 | `IMT-001` | Sprint 5 / EPIC-RESEARCH | TraderTrajectory schema | - | Claude | Claude2 | todo | - | 2026-05-16 08:36:13 | Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
-| `IMT-002` | Sprint 5 / EPIC-RESEARCH | PreferenceExample / CorrectionTrace schema | - | Codex2 | Copilot | todo | - | 2026-05-16 07:33:36 | Assignment created |
+| `IMT-002` | Sprint 5 / EPIC-RESEARCH | PreferenceExample / CorrectionTrace schema | - | Claude | Claude2 | todo | - | 2026-05-16 09:11:18 | Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
 | `IMT-003` | Sprint 5 / EPIC-RESEARCH | imitation dataset builder skeleton | - | Copilot | Codex2 | todo | - | 2026-05-16 07:34:00 | Assignment created |
 | `IMT-004` | Sprint 5 / EPIC-RESEARCH | behavior policy artifact type registration | - | Claude | Claude2 | todo | - | 2026-05-16 08:36:24 | Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
 | `ASK-001` | Sprint 5 / EPIC-RESEARCH | /bff/agora/ask/sessions | - | Claude2 | Codex2 | todo | - | 2026-05-16 07:35:24 | Assignment created |
@@ -204,8 +204,8 @@ Last updated: 2026-05-16 09:03:10
 | `P0-REG-001` | Claude | Claude2 | Auto-reassigned ownership from Codex2 to Claude2 after repeated Codex2 terminal: Codex usage limit reached | pending | 2026-05-16 08:18:41 |
 | `P0-PER-001` | Claude | Claude2 | Auto-reassigned ownership from Codex2 to Claude2 after repeated Codex2 terminal: Codex usage limit reached | pending | 2026-05-16 08:18:51 |
 | `P0-AUD-001` | Claude | Claude2 | Review approved: /bff/audit dedicated handler correct. Filters, pagination, envelope, meta, RBAC all verified. 11 contract tests + 3 live wiring pass. Returning to Claude2 for finalization. | pending | 2026-05-16 08:44:50 |
-| `P0-APP-001` | Claude | Codex2 | Ready for review: POST /bff/approvals/{id}/decide dedicated handler. Approver/admin role gate, decision->CommandType routing (approve/reject/request_revision/escalate/freeze), rejection_reason+revision_notes validation, 404 for unknown ids, Idempotency-Key required. Evidence: support/evidence/P0-APP-001/acceptance.md. Verification: 15 contract tests passed; live wiring 7/8 (1 pre-existing P0-CAP-001 fail-closed 503). Commit: e8d18e92. | pending | 2026-05-16 08:54:37 |
-| `QLIB-001` | Gemini | Copilot | Qlib adapter skeleton re-verified for Sprint 5. All 33 unit tests and smoke tests pass. Documentation in integrations/qlib/ updated with latest verification results. | pending | 2026-05-16 08:57:21 |
+| `QLIB-001` | Claude | Gemini | Review approved: Qlib adapter skeleton correct. 33 unit tests pass in reviewer env. Smoke test OK. Governance semantics verified: draft state, none stage, registry_write_authority=registry_service_only, fail-closed worker gate. Returning to Gemini for finalization. | pending | 2026-05-16 09:06:54 |
+| `P0-APP-001` | Codex2 | Claude2 | Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 terminal: Codex usage limit reached | pending | 2026-05-16 09:11:06 |
 
 ## Blockers
 
@@ -221,6 +221,7 @@ Last updated: 2026-05-16 09:03:10
 | `P0-PER-001` | Claude | 審查通過：GET /bff/personas 回傳正確 data/items/page_info/meta 信封；_project_persona_dto DTO 欄位完整（id/name/owner/updatedAt/state/risk/archetype/routedStrategies/successRate/labelKey/lifecycleStatus）；OBJECT_NOT_FOUND 404 行為確認；overlay merge 正確；16 個合約測試全過；execute-plans live wiring persona 相關測試全過<br>跨任務附註：seeded detail matrix 測試 1 warning 為 read_store.py:73 pre-existing datetime.utcnow() DeprecationWarning，非 P0-PER-001 引入，不影響本次審查通過 | support/reviews/P0-PER-001-review-claude.md |
 | `P0-AUD-001` | Claude | 審查通過：GET /bff/audit 專用 handler 正確實作；actor/action_type/target_type/from/to 五維過濾器與 _page_slice 分頁正確；回傳標準 BFF 信封 {data, items, page_info, meta}；_read_surface_meta 與 governance_audit_events surface 正確關聯；11 個合約測試全過；live wiring 3 pass<br>跨任務附註：main.py audit hunk 位於併行 dirty worktree（與 sibling task 共存），test+evidence 已於 commit 83f6c138 獨立提交，不影響本次審查通過 | support/reviews/P0-AUD-001-review-claude.md |
 | `DEP-003` | Claude | 審查通過：GET /api/deployment/projections、/projections/{plan_id}、/plans/{plan_id}/projection 三條路由正確實作；DeploymentProjectionReadModelService 為純衍生讀取，無任何寫入操作；source_status、lifecycle_state、actual_stage/projected_stage 語義全部正確；RuntimeBinding 多路徑查找與 graceful missing 正確；18 個測試全過；contract.md 與 README.md 已更新<br>跨任務附註：evidence 檔案仍標示 Reviewer: Codex2 為原始分配前的痕跡，不影響本次審查通過 | support/reviews/DEP-003-review-claude.md |
+| `QLIB-001` | Claude | 審查通過：GovernedQlibDataAdapter 正確執行 OHLCV + source_dataset_refs 治理邊界；33 個單元測試在 Reviewer 環境全過；smoke test assertions OK；artifact_state=draft、deployment_stage=none、registry_write_authority=registry_service_only 語義全正確；ActivationReadyGate 環境變數門控正確（worker exitcode=2 已驗）；preflight 模組無探針時 fail-closed<br>跨任務附註：integrations/qlib/integration.md 仍顯示 Reviewer: Copilot 為 reassignment 前遺留，不影響本次審查通過 | support/reviews/QLIB-001-review-claude.md |
 
 ## Lovable Coordination
 
@@ -291,23 +292,23 @@ Last updated: 2026-05-16 09:03:10
 
 ## Latest Checkpoints
 
-- 2026-05-16 09:01:57 Orchestrator: PostToolUse: Bash
-- 2026-05-16 09:01:58 Orchestrator: PostToolUse: Bash
-- 2026-05-16 09:02:01 Orchestrator: PreToolUse: Bash
-- 2026-05-16 09:02:04 Orchestrator: PostToolUse: Bash
-- 2026-05-16 09:02:20 Orchestrator: PreToolUse: Bash
-- 2026-05-16 09:02:21 Orchestrator: PostToolUse: Bash
-- 2026-05-16 09:02:24 Orchestrator: PreToolUse: Bash
-- 2026-05-16 09:02:24 Orchestrator: PostToolUse: Bash
-- 2026-05-16 09:02:25 Orchestrator: PreToolUse: Bash
-- 2026-05-16 09:02:25 Orchestrator: PostToolUse: Bash
-- 2026-05-16 09:02:27 Orchestrator: PreToolUse: Bash
-- 2026-05-16 09:02:28 Orchestrator: PostToolUse: Bash
-- 2026-05-16 09:02:30 Orchestrator: PreToolUse: Bash
-- 2026-05-16 09:02:31 Orchestrator: PostToolUse: Bash
-- 2026-05-16 09:02:46 Orchestrator: PreToolUse: Bash
-- 2026-05-16 09:02:47 Orchestrator: PostToolUse: Bash
-- 2026-05-16 09:03:04 Orchestrator: PreToolUse: Write
-- 2026-05-16 09:03:04 Orchestrator: PostToolUse: Write
-- 2026-05-16 09:03:10 Orchestrator: PreToolUse: Bash
-- 2026-05-16 09:03:10 Claude: `VBT-001` Gemini2
+- 2026-05-16 09:13:31 Orchestrator: PreToolUse: Bash
+- 2026-05-16 09:13:32 Orchestrator: PostToolUse: Bash
+- 2026-05-16 09:13:34 Orchestrator: PreToolUse: Bash
+- 2026-05-16 09:13:35 Orchestrator: PostToolUse: Bash
+- 2026-05-16 09:13:38 Orchestrator: PreToolUse: Bash
+- 2026-05-16 09:13:38 Orchestrator: PostToolUse: Bash
+- 2026-05-16 09:13:43 Orchestrator: PreToolUse: Bash
+- 2026-05-16 09:13:43 Orchestrator: PostToolUse: Bash
+- 2026-05-16 09:13:45 Orchestrator: PreToolUse: Bash
+- 2026-05-16 09:13:46 Orchestrator: PostToolUse: Bash
+- 2026-05-16 09:13:49 Orchestrator: PreToolUse: Bash
+- 2026-05-16 09:13:49 Orchestrator: PostToolUse: Bash
+- 2026-05-16 09:14:07 Orchestrator: PreToolUse: Bash
+- 2026-05-16 09:14:07 Orchestrator: PostToolUse: Bash
+- 2026-05-16 09:14:11 Orchestrator: PreToolUse: Bash
+- 2026-05-16 09:14:12 Orchestrator: PostToolUse: Bash
+- 2026-05-16 09:14:59 Orchestrator: PreToolUse: Write
+- 2026-05-16 09:14:59 Orchestrator: PostToolUse: Write
+- 2026-05-16 09:15:05 Orchestrator: PreToolUse: Bash
+- 2026-05-16 09:15:05 Claude: `VBT-001` Re-review round 2: required changes still unaddressed + new worker.py regression (BacktestConfig kwargs mismatch). Must fix: worker.py short_window/long_window to strategy_params, _get_ohlcv_data() 2-bar regression (HTTP 500), metric_delta shape. Should fix: import placement, preview_quality label. All 33 adapter tests pass; training-session preview test still fails (500 != 201). Returning to Gemini2 for fix.
