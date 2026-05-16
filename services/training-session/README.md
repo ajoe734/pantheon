@@ -29,3 +29,22 @@ The service emits `session_type=trainer` and current runtime statuses
 The event model rejects timestamp alias drift and duplicate event ids in a
 session. It does not launch rapid eval, mutate live persona state, or publish
 registry artifacts; those remain downstream TRN/IMT responsibilities.
+
+## Replay Decisions
+
+The replay decision routes own the durable commit/discard record for a completed
+trainer candidate:
+
+- `POST /api/training/replays/{session_id}/commit`
+- `POST /api/training/replays/{session_id}/discard`
+
+Both routes accept `Idempotency-Key` and `X-Idempotency-Key`. When a decision
+with the same key and payload is retried, the service replays the existing
+decision without appending a second `TeachingEvent`; the same key with a
+different decision payload returns a conflict.
+
+Commit decisions stamp traceable lineage references into `artifacts` and the
+decision event `artifact_refs`, including `lineage_ref`, `lineage_edge_id`,
+`persona_policy_ref`, and `route_policy_ref`. Discard decisions record a
+decision/lineage reference but leave `after_artifact_ref` empty and do not claim
+persona or route-policy mutation.

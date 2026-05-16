@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from services.foundation.health import register_fastapi_health_routes
@@ -51,6 +53,73 @@ def _replay_candidate_snapshot_at(replay: Dict[str, Any]) -> Optional[str]:
         if isinstance(eval_ref, dict) and eval_ref.get("candidate_snapshot_at"):
             return str(eval_ref["candidate_snapshot_at"])
     return None
+
+
+def _stable_hash(payload: Dict[str, Any]) -> str:
+    return sha256(json.dumps(payload, ensure_ascii=True, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _replay_decision_hash(session_id: str, body: "ReplayDecisionBody", state: str) -> str:
+    return _stable_hash(
+        {
+            "session_id": session_id,
+            "state": state,
+            "expected_candidate_snapshot_at": body.expected_candidate_snapshot_at,
+            "actor_id": body.actor_id,
+            "note": body.note,
+        }
+    )
+
+
+def _decision_lineage_refs(
+    *,
+    session_id: str,
+    replay: Dict[str, Any],
+    state: str,
+    timestamp: str,
+) -> Dict[str, Any]:
+    persona_id = str(replay.get("persona_id") or "").strip()
+    suffix = "commit" if state == "committed" else "discard"
+    refs = {
+        "decision_record_ref": f"trainer-replay-decision:{session_id}:{state}",
+        "lineage_ref": f"trainer-replay-lineage:{session_id}:{state}",
+        "lineage_edge_id": f"lin-{session_id}-{suffix}",
+        "lineage_recorded_at": timestamp,
+    }
+    if state == "committed" and persona_id:
+        refs.update(
+            {
+                "persona_policy_ref": f"persona:{persona_id}:policy:{session_id}",
+                "route_policy_ref": f"persona:{persona_id}:route-policy:{session_id}",
+            }
+        )
+    return refs
+
+
+def _mark_replay_idempotency(
+    replay: Dict[str, Any],
+    *,
+    idempotency_key: Optional[str],
+    request_hash: Optional[str],
+    replayed: bool,
+) -> Dict[str, Any]:
+    if not idempotency_key:
+        return replay
+    resolution = replay.setdefault("replay_resolution", {})
+    resolution["idempotency"] = {
+        "key": idempotency_key,
+        "request_hash": request_hash,
+        "replayed": replayed,
+    }
+    return replay
+
+
+def _idempotency_key(primary: Optional[str], alias: Optional[str]) -> Optional[str]:
+    normalized = str(primary or "").strip()
+    if normalized:
+        return normalized
+    normalized = str(alias or "").strip()
+    return normalized or None
 
 
 def _control_patch_error(control: Dict[str, Any], value: Any) -> Optional[Dict[str, Any]]:
@@ -646,10 +715,28 @@ def complete_session(session_id: str) -> Dict[str, Any]:
     return replay
 
 
-def _decide_replay(session_id: str, body: ReplayDecisionBody, state: str) -> Dict[str, Any]:
+def _decide_replay(
+    session_id: str,
+    body: ReplayDecisionBody,
+    state: str,
+    *,
+    idempotency_key: Optional[str] = None,
+) -> Dict[str, Any]:
     replay = get_replay(session_id)
     timestamp = body.decided_at or utc_now()
     resolution = replay.setdefault("replay_resolution", {})
+    request_hash = _replay_decision_hash(session_id, body, state) if idempotency_key else None
+    existing_idempotency = resolution.get("idempotency")
+    if idempotency_key and isinstance(existing_idempotency, dict):
+        if existing_idempotency.get("key") == idempotency_key:
+            if existing_idempotency.get("request_hash") != request_hash:
+                raise HTTPException(status_code=409, detail="idempotency key conflict")
+            return _mark_replay_idempotency(
+                replay,
+                idempotency_key=idempotency_key,
+                request_hash=request_hash,
+                replayed=True,
+            )
     if resolution.get("state") not in {"pending_decision", None}:
         raise HTTPException(status_code=409, detail="replay already decided")
     candidate_snapshot_at = _replay_candidate_snapshot_at(replay)
@@ -662,10 +749,24 @@ def _decide_replay(session_id: str, body: ReplayDecisionBody, state: str) -> Dic
     artifacts = replay.setdefault("artifacts", {})
     if state == "committed":
         artifacts["after_artifact_ref"] = f"{session_id}-committed-artifact"
+    artifacts.update(
+        _decision_lineage_refs(
+            session_id=session_id,
+            replay=replay,
+            state=state,
+            timestamp=timestamp,
+        )
+    )
     decision_artifact_refs = {
         "before_artifact_ref": artifacts.get("before_artifact_ref"),
         "candidate_artifact_ref": artifacts.get("candidate_artifact_ref"),
         "after_artifact_ref": artifacts.get("after_artifact_ref"),
+        "decision_record_ref": artifacts.get("decision_record_ref"),
+        "lineage_ref": artifacts.get("lineage_ref"),
+        "lineage_edge_id": artifacts.get("lineage_edge_id"),
+        "lineage_recorded_at": artifacts.get("lineage_recorded_at"),
+        "persona_policy_ref": artifacts.get("persona_policy_ref"),
+        "route_policy_ref": artifacts.get("route_policy_ref"),
     }
     decision_event = _build_teaching_event(
         session_id=session_id,
@@ -684,16 +785,42 @@ def _decide_replay(session_id: str, body: ReplayDecisionBody, state: str) -> Dic
         artifact_refs=decision_artifact_refs,
     )
     replay.setdefault("events", []).append(decision_event)
+    _mark_replay_idempotency(
+        replay,
+        idempotency_key=idempotency_key,
+        request_hash=request_hash,
+        replayed=False,
+    )
     store.append_event(decision_event)
     store.put_replay(session_id, replay)
     return replay
 
 
 @app.post("/api/training/replays/{session_id}/commit")
-def commit_replay(session_id: str, body: ReplayDecisionBody) -> Dict[str, Any]:
-    return _decide_replay(session_id, body, "committed")
+def commit_replay(
+    session_id: str,
+    body: ReplayDecisionBody,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+) -> Dict[str, Any]:
+    return _decide_replay(
+        session_id,
+        body,
+        "committed",
+        idempotency_key=_idempotency_key(idempotency_key, x_idempotency_key),
+    )
 
 
 @app.post("/api/training/replays/{session_id}/discard")
-def discard_replay(session_id: str, body: ReplayDecisionBody) -> Dict[str, Any]:
-    return _decide_replay(session_id, body, "discarded")
+def discard_replay(
+    session_id: str,
+    body: ReplayDecisionBody,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+) -> Dict[str, Any]:
+    return _decide_replay(
+        session_id,
+        body,
+        "discarded",
+        idempotency_key=_idempotency_key(idempotency_key, x_idempotency_key),
+    )
