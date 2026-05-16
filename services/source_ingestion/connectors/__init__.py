@@ -21,6 +21,7 @@ from .base import (
 )
 from .examples import ExternalFeedProviderExample, StaticRecordsProviderExample, example_provider_catalog
 from .paper import OpenAlexPaperIngestAdapter
+from .repo_allowlist import RepoAllowlistEntry, RepoAllowlistProvider
 
 __all__ = [
     "AuthPolicy",
@@ -42,6 +43,8 @@ __all__ = [
     "SourceType",
     "ExternalFeedProviderExample",
     "OpenAlexPaperIngestAdapter",
+    "RepoAllowlistEntry",
+    "RepoAllowlistProvider",
     "StaticRecordsProviderExample",
     "example_provider_catalog",
 ]

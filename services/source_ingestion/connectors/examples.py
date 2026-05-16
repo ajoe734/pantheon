@@ -17,6 +17,7 @@ from .base import (
     SourceRecord,
 )
 from .paper import OpenAlexPaperIngestAdapter
+from .repo_allowlist import RepoAllowlistProvider
 
 
 @dataclass(frozen=True)
@@ -229,6 +230,24 @@ def example_provider_catalog() -> tuple[SourceConnectorProvider, ...]:
                 "entitlement_tags": ["example-alpha-research"],
                 "access_scope": ["research"],
             },
+        ),
+        RepoAllowlistProvider(
+            connector_id="example-github-repo-allowlist",
+            allowlist=(
+                {
+                    "repo_full_name": "QuantConnect/Lean",
+                    "allowed_paths": ("Algorithm.Python/", "Research/", "Documentation/"),
+                    "ref": "master",
+                    "purpose": "official LEAN research examples and bridge reference",
+                },
+            ),
+            source_metadata=SourceMetadata(
+                display_name="GitHub repo allowlist example",
+                homepage_url="https://github.com/QuantConnect/Lean",
+                docs_url="https://docs.github.com/rest",
+                owner="pantheon-source-ingest",
+                tags=("example", "repo", "allowlist"),
+            ),
         ),
     )
 
