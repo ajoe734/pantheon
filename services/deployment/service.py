@@ -67,6 +67,10 @@ from deployment_saga import (  # type: ignore
     InboxReceipt,
     OutboxRecord,
 )
+from persona_capital_binding import (  # type: ignore
+    PersonaCapitalBinding,
+    PersonaCapitalBindingError,
+)
 
 try:
     from .models import (
@@ -165,22 +169,26 @@ def _resolve_capital_pool_store_path() -> Path | None:
     explicit = os.getenv("PANTHEON_CAPITAL_POOL_STORE_PATH", "").strip()
     if explicit:
         return Path(explicit).expanduser()
-    data_dir = os.getenv("DEPLOYMENT_DATA_DIR") or os.getenv("PANTHEON_GOVERNANCE_DATA_DIR") or ""
-    if data_dir:
-        candidate = Path(data_dir).expanduser() / "capital_pools.json"
-        return candidate
-    return None
+    data_dir = (
+        os.getenv("CAPITAL_DATA_DIR")
+        or os.getenv("DEPLOYMENT_DATA_DIR")
+        or os.getenv("PANTHEON_GOVERNANCE_DATA_DIR")
+        or "/tmp/pantheon/governance"
+    )
+    return Path(data_dir).expanduser() / "capital_pools.json"
 
 
 def _resolve_persona_binding_store_path() -> Path | None:
     explicit = os.getenv("PANTHEON_PERSONA_BINDING_STORE_PATH", "").strip()
     if explicit:
         return Path(explicit).expanduser()
-    data_dir = os.getenv("DEPLOYMENT_DATA_DIR") or os.getenv("PANTHEON_GOVERNANCE_DATA_DIR") or ""
-    if data_dir:
-        candidate = Path(data_dir).expanduser() / "persona_capital_bindings.json"
-        return candidate
-    return None
+    data_dir = (
+        os.getenv("CAPITAL_DATA_DIR")
+        or os.getenv("DEPLOYMENT_DATA_DIR")
+        or os.getenv("PANTHEON_GOVERNANCE_DATA_DIR")
+        or "/tmp/pantheon/governance"
+    )
+    return Path(data_dir).expanduser() / "persona_capital_bindings.json"
 
 
 CAPITAL_POOL_STORE_PATH = _resolve_capital_pool_store_path()
@@ -548,6 +556,177 @@ class DeploymentProjectionReadModelService:
         return sorted(sagas, key=lambda saga: (saga.updated_at, saga.created_at), reverse=True)[0]
 
 
+_DEPLOYABLE_TARGET_STAGES = {"paper", "canary", "live"}
+_SCOPE_ORDER = {"none": 0, "paper": 1, "canary": 2, "live": 3}
+_ACTIVE_RUNTIME_STATUSES = {"active"}
+
+
+class PoolRuntimeCompatibilityService:
+    """Read-only preflight over pool, persona binding, and runtime snapshots."""
+
+    def __init__(
+        self,
+        *,
+        capital_pool_store_path: Path | None,
+        persona_binding_store_path: Path | None,
+        runtime_binding_store_path: Path,
+    ) -> None:
+        self.capital_pool_store_path = capital_pool_store_path
+        self.persona_binding_store_path = persona_binding_store_path
+        self.runtime_binding_store_path = runtime_binding_store_path
+
+    def check(self, request: PoolCompatibilityRequest) -> PoolCompatibilityResponse:
+        target_stage = request.target_stage.value
+        errors: list[str] = []
+        warnings: list[str] = []
+
+        pool = self._find_capital_pool(request.capital_pool_id)
+        pool_found = pool is not None
+        pool_status = _optional_str(pool.get("status")) if pool else None
+        pool_active = pool_status == "active" if pool_status else False
+        single_runtime_enforced = _truthy(pool.get("single_runtime_enforced"), default=True) if pool else None
+
+        if not pool_found:
+            errors.append(f"CapitalPool '{request.capital_pool_id}' not found")
+        elif not pool_active:
+            errors.append(f"CapitalPool '{request.capital_pool_id}' must be active; got '{pool_status}'")
+
+        if target_stage not in _DEPLOYABLE_TARGET_STAGES:
+            errors.append(
+                "Pool/runtime compatibility check supports deployment targets "
+                "paper, canary, and live"
+            )
+
+        persona_binding_found = False
+        persona_scope_ok = False
+        persona_binding_id: str | None = None
+        allowed_deployment_scope: str | None = None
+
+        sponsor_persona_id = str(request.sponsor_persona_id or "").strip()
+        if not sponsor_persona_id:
+            errors.append("sponsor_persona_id is required for persona binding compatibility")
+        elif target_stage in _DEPLOYABLE_TARGET_STAGES:
+            candidates = self._active_persona_bindings(
+                persona_id=sponsor_persona_id,
+                capital_pool_id=request.capital_pool_id,
+            )
+            persona_binding_found = bool(candidates)
+            permitted = []
+            for binding in candidates:
+                allowed_deployment_scope = _max_scope(
+                    allowed_deployment_scope,
+                    _optional_str(binding.get("allowed_deployment_scope")),
+                )
+                try:
+                    if PersonaCapitalBinding.from_dict(binding).permits_deployment_to(target_stage):
+                        permitted.append(binding)
+                except (PersonaCapitalBindingError, ValueError, TypeError) as exc:
+                    warnings.append(
+                        "Ignored invalid PersonaCapitalBinding "
+                        f"{binding.get('binding_id') or '<unknown>'}: {exc}"
+                    )
+            persona_scope_ok = bool(permitted)
+            if permitted:
+                chosen = max(
+                    permitted,
+                    key=lambda binding: _SCOPE_ORDER.get(
+                        str(binding.get("allowed_deployment_scope") or "none"),
+                        -1,
+                    ),
+                )
+                persona_binding_id = _record_identity(chosen, "binding_id")
+                allowed_deployment_scope = _optional_str(chosen.get("allowed_deployment_scope"))
+            elif persona_binding_found:
+                errors.append(
+                    f"No active PersonaCapitalBinding for persona '{sponsor_persona_id}' "
+                    f"permits target_stage '{target_stage}'"
+                )
+            else:
+                errors.append(
+                    f"No active PersonaCapitalBinding found for persona '{sponsor_persona_id}' "
+                    f"and capital pool '{request.capital_pool_id}'"
+                )
+
+        active_runtime_bindings = self._active_runtime_bindings(request.capital_pool_id)
+        active_runtime_binding_ids = [
+            binding_id
+            for binding in active_runtime_bindings
+            if (binding_id := _record_identity(binding, "binding_id", "id", "runtime_binding_id"))
+        ]
+        active_runtime_binding_count = len(active_runtime_bindings)
+
+        single_runtime_ok: bool | None
+        if single_runtime_enforced is None:
+            single_runtime_ok = None
+        elif single_runtime_enforced:
+            single_runtime_ok = active_runtime_binding_count <= 1
+            if active_runtime_binding_count > 1:
+                errors.append(
+                    f"CapitalPool '{request.capital_pool_id}' violates single-runtime policy: "
+                    f"{active_runtime_binding_count} active RuntimeBindings found"
+                )
+            elif active_runtime_binding_count == 1:
+                warnings.append(
+                    "CapitalPool already has an active RuntimeBinding; dispatch must use a "
+                    "replace, freeze, resume, or rollback path instead of creating a second active binding."
+                )
+        else:
+            single_runtime_ok = True
+
+        if self.runtime_binding_store_path and not self.runtime_binding_store_path.exists():
+            warnings.append(
+                f"RuntimeBinding store '{self.runtime_binding_store_path}' does not exist; "
+                "active runtime count treated as zero."
+            )
+
+        return PoolCompatibilityResponse(
+            ok=not errors,
+            capital_pool_id=request.capital_pool_id,
+            target_stage=target_stage,
+            pool_found=pool_found,
+            pool_status=pool_status,
+            pool_active=pool_active,
+            single_runtime_enforced=single_runtime_enforced,
+            persona_binding_found=persona_binding_found,
+            persona_scope_ok=persona_scope_ok,
+            persona_binding_id=persona_binding_id,
+            allowed_deployment_scope=allowed_deployment_scope,
+            active_runtime_binding_count=active_runtime_binding_count,
+            active_runtime_binding_ids=active_runtime_binding_ids,
+            single_runtime_ok=single_runtime_ok,
+            errors=errors,
+            warnings=warnings,
+        )
+
+    def _find_capital_pool(self, pool_id: str) -> Optional[Dict[str, Any]]:
+        if self.capital_pool_store_path is None or not self.capital_pool_store_path.exists():
+            return None
+        return _load_record(
+            self.capital_pool_store_path,
+            key_candidates=("pool_id", "capital_pool_id", "id"),
+            target_key=pool_id,
+        )
+
+    def _active_persona_bindings(self, *, persona_id: str, capital_pool_id: str) -> list[Dict[str, Any]]:
+        if self.persona_binding_store_path is None or not self.persona_binding_store_path.exists():
+            return []
+        return [
+            record
+            for record in _load_records(self.persona_binding_store_path)
+            if str(record.get("persona_id") or "") == persona_id
+            and str(record.get("capital_pool_id") or "") == capital_pool_id
+            and str(record.get("status") or "").lower() == "active"
+        ]
+
+    def _active_runtime_bindings(self, capital_pool_id: str) -> list[Dict[str, Any]]:
+        return [
+            record
+            for record in _load_records(self.runtime_binding_store_path)
+            if str(record.get("capital_pool_id") or "") == capital_pool_id
+            and str(record.get("status") or "").lower() in _ACTIVE_RUNTIME_STATUSES
+        ]
+
+
 class FoundationDeploymentError(Exception):
     def __init__(self, *, status_code: int, detail: Dict[str, Any]) -> None:
         self.status_code = status_code
@@ -795,6 +974,36 @@ def _load_records(path: Path) -> list[Dict[str, Any]]:
     if isinstance(payload, list):
         return [item for item in payload if isinstance(item, dict)]
     return []
+
+
+def _optional_str(value: Any) -> Optional[str]:
+    return str(value) if value not in (None, "") else None
+
+
+def _truthy(value: Any, *, default: bool = False) -> bool:
+    if value in (None, ""):
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() not in {"0", "false", "no", "off"}
+    return bool(value)
+
+
+def _record_identity(record: Mapping[str, Any], *keys: str) -> Optional[str]:
+    for key in keys:
+        value = record.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return None
+
+
+def _max_scope(current: Optional[str], candidate: Optional[str]) -> Optional[str]:
+    if candidate is None:
+        return current
+    if current is None:
+        return candidate
+    return candidate if _SCOPE_ORDER.get(candidate, -1) > _SCOPE_ORDER.get(current, -1) else current
 
 
 def _approval_outcome(approval_decision: Optional[Dict[str, Any]]) -> Optional[str]:
@@ -1180,6 +1389,11 @@ projection_service = DeploymentProjectionReadModelService(
     registry_snapshot_path=REGISTRY_SNAPSHOT_PATH,
     runtime_binding_store_path=RUNTIME_BINDING_STORE_PATH,
 )
+compatibility_service = PoolRuntimeCompatibilityService(
+    capital_pool_store_path=CAPITAL_POOL_STORE_PATH,
+    persona_binding_store_path=PERSONA_BINDING_STORE_PATH,
+    runtime_binding_store_path=RUNTIME_BINDING_STORE_PATH,
+)
 
 app = FastAPI(
     title="Pantheon Deployment Service",
@@ -1224,6 +1438,14 @@ async def validate_deployment_plan(body: CreateDeploymentPlanRequest):
     except DeploymentPlanError as exc:
         return ValidateDeploymentPlanResponse(ok=False, errors=[str(exc)])
     return ValidateDeploymentPlanResponse(ok=True, plan=_plan_body(plan), errors=[])
+
+
+@app.post(
+    "/api/deployment/plans/compatibility-check",
+    response_model=PoolCompatibilityResponse,
+)
+async def check_pool_runtime_compatibility(body: PoolCompatibilityRequest):
+    return compatibility_service.check(body)
 
 
 @app.get("/api/deployment/plans", response_model=List[DeploymentPlanBody])

@@ -17,6 +17,7 @@ The service exposes two canonical surfaces:
 - `DEP-001` `DeploymentPlan` create / validate / read / status APIs
 - `DEP-002` deployment saga dispatch / progress / outbox / inbox APIs
 - `DEP-003` deployment projection read model APIs
+- `CAP-002-RB` pool/runtime compatibility preflight API
 
 The governing semantics still come from:
 
@@ -40,6 +41,7 @@ This service owns the deployable HTTP surface and file-backed persistence only.
 | Inbox dedupe / per-saga ordering receipts | **Deployment Service** |
 | Compensation decision derivation | **Deployment Service** via canonical DEP-002 policy logic |
 | Deployment projection read model | **Deployment Service** derived-only composition |
+| Pool/runtime compatibility preflight | **Deployment Service** read-only composition over capital and runtime snapshots |
 | ApprovalDecision lifecycle | `services/governance/` |
 | Registry artifact lifecycle | `services/registry/` |
 | RuntimeBinding writes / execution | Runtime Manager / execution plane |
@@ -95,6 +97,55 @@ Response:
 
 When validation fails, `ok = false`, `plan = null`, and `errors[]` contains the
 planner / validation failures.
+
+---
+
+### `POST /api/deployment/plans/compatibility-check`
+
+Read-only preflight for DeploymentPlan approval. The route checks:
+
+- `CapitalPool` exists and has governance `status = active`
+- the sponsoring persona has an active `PersonaCapitalBinding` for the pool
+- the binding's `allowed_deployment_scope` permits target `paper`, `canary`, or
+  `live`
+- the current RuntimeBinding snapshot does not violate the pool's
+  `single_runtime_enforced` invariant
+
+Request body:
+
+- `capital_pool_id` (required)
+- `target_stage` (required; `paper`, `canary`, or `live` for this preflight)
+- `sponsor_persona_id` (required for compatibility truth; missing value returns
+  `ok = false`)
+
+Response fields:
+
+- `ok`
+- pool facts: `pool_found`, `pool_status`, `pool_active`,
+  `single_runtime_enforced`
+- persona facts: `persona_binding_found`, `persona_scope_ok`,
+  `persona_binding_id`, `allowed_deployment_scope`
+- runtime facts: `active_runtime_binding_count`,
+  `active_runtime_binding_ids`, `single_runtime_ok`
+- `errors[]` and `warnings[]`
+
+Read-only rule:
+
+- this route never writes `CapitalPool`, `PersonaCapitalBinding`,
+  `DeploymentPlan`, or `RuntimeBinding`
+- exactly one active RuntimeBinding is reported as compatible with the current
+  pool invariant but emits a warning because dispatch must use the appropriate
+  replace/freeze/resume/rollback path instead of creating a second active
+  binding
+
+Snapshot lookup:
+
+- `capital_pools.json` and `persona_capital_bindings.json` come from
+  `CAPITAL_DATA_DIR`, then `DEPLOYMENT_DATA_DIR`, then
+  `PANTHEON_GOVERNANCE_DATA_DIR`, then `/tmp/pantheon/governance`
+- RuntimeBinding lookup uses `PANTHEON_RUNTIME_BINDING_STORE_PATH` when present,
+  then `${PANTHEON_RUNTIME_DATA_DIR}/runtime_bindings.json`, then
+  `/tmp/pantheon/runtime-manager/bindings.json`
 
 ---
 

@@ -390,8 +390,10 @@ class PoolCompatibilityResponse(BaseModel):
     single_runtime_enforced: Optional[bool] = None
     persona_binding_found: Optional[bool] = None
     persona_scope_ok: Optional[bool] = None
+    persona_binding_id: Optional[str] = None
     allowed_deployment_scope: Optional[str] = None
     active_runtime_binding_count: Optional[int] = None
+    active_runtime_binding_ids: List[str] = Field(default_factory=list)
     single_runtime_ok: Optional[bool] = None
     errors: List[str] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)

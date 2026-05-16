@@ -75,6 +75,62 @@ def _plan_payload(
     return payload
 
 
+def _seed_capital_pool(
+    governance_dir: Path,
+    *,
+    pool_id: str = "pool-001",
+    status: str = "active",
+    single_runtime_enforced: bool = True,
+) -> None:
+    (governance_dir / "capital_pools.json").write_text(
+        json.dumps(
+            [
+                {
+                    "pool_id": pool_id,
+                    "name": "Main Pool",
+                    "owner_id": "fund-001",
+                    "owner_type": "fund",
+                    "status": status,
+                    "created_at": "2026-04-10T00:00:00Z",
+                    "single_runtime_enforced": single_runtime_enforced,
+                }
+            ],
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _seed_persona_binding(
+    governance_dir: Path,
+    *,
+    binding_id: str = "binding-001",
+    persona_id: str = "persona-ops",
+    capital_pool_id: str = "pool-001",
+    role: str = "live_owner",
+    allowed_deployment_scope: str = "canary",
+    status: str = "active",
+) -> None:
+    (governance_dir / "persona_capital_bindings.json").write_text(
+        json.dumps(
+            [
+                {
+                    "binding_id": binding_id,
+                    "persona_id": persona_id,
+                    "capital_pool_id": capital_pool_id,
+                    "role": role,
+                    "allowed_deployment_scope": allowed_deployment_scope,
+                    "status": status,
+                    "created_at": "2026-04-10T00:00:00Z",
+                    "approval_decision_id": "approval-001",
+                }
+            ],
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
 @pytest.fixture()
 def client():
     tempdir = tempfile.mkdtemp(prefix="deployment_service_")
@@ -87,6 +143,7 @@ def client():
     _seed_registry_snapshot(registry_snapshot)
 
     env_backup = {
+        "CAPITAL_DATA_DIR": os.environ.get("CAPITAL_DATA_DIR"),
         "DEPLOYMENT_DATA_DIR": os.environ.get("DEPLOYMENT_DATA_DIR"),
         "PANTHEON_GOVERNANCE_DATA_DIR": os.environ.get("PANTHEON_GOVERNANCE_DATA_DIR"),
         "PANTHEON_RUNTIME_BINDING_STORE_PATH": os.environ.get("PANTHEON_RUNTIME_BINDING_STORE_PATH"),
@@ -94,6 +151,7 @@ def client():
             "PANTHEON_DEPLOYMENT_REGISTRY_SNAPSHOT_PATH"
         ),
     }
+    os.environ["CAPITAL_DATA_DIR"] = str(governance_dir)
     os.environ["DEPLOYMENT_DATA_DIR"] = str(governance_dir)
     os.environ["PANTHEON_GOVERNANCE_DATA_DIR"] = str(governance_dir)
     os.environ["PANTHEON_RUNTIME_BINDING_STORE_PATH"] = str(runtime_binding_store)
@@ -118,6 +176,115 @@ def test_health(client):
     response = test_client.get("/health")
     assert response.status_code == 200
     assert response.json()["service"] == "pantheon-deployment"
+
+
+def test_pool_runtime_compatibility_allows_active_pool_and_binding(client):
+    test_client, governance_dir = client
+    _seed_capital_pool(governance_dir)
+    _seed_persona_binding(governance_dir, allowed_deployment_scope="canary")
+
+    response = test_client.post(
+        "/api/deployment/plans/compatibility-check",
+        json={
+            "capital_pool_id": "pool-001",
+            "sponsor_persona_id": "persona-ops",
+            "target_stage": "canary",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ok"] is True
+    assert body["pool_found"] is True
+    assert body["pool_active"] is True
+    assert body["single_runtime_enforced"] is True
+    assert body["persona_binding_found"] is True
+    assert body["persona_scope_ok"] is True
+    assert body["persona_binding_id"] == "binding-001"
+    assert body["allowed_deployment_scope"] == "canary"
+    assert body["active_runtime_binding_count"] == 0
+    assert body["single_runtime_ok"] is True
+
+
+def test_pool_runtime_compatibility_rejects_suspended_pool_and_scope_gap(client):
+    test_client, governance_dir = client
+    _seed_capital_pool(governance_dir, status="suspended")
+    _seed_persona_binding(governance_dir, allowed_deployment_scope="paper")
+
+    response = test_client.post(
+        "/api/deployment/plans/compatibility-check",
+        json={
+            "capital_pool_id": "pool-001",
+            "sponsor_persona_id": "persona-ops",
+            "target_stage": "canary",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ok"] is False
+    assert body["pool_status"] == "suspended"
+    assert body["pool_active"] is False
+    assert body["persona_binding_found"] is True
+    assert body["persona_scope_ok"] is False
+    assert any("must be active" in error for error in body["errors"])
+    assert any("permits target_stage" in error for error in body["errors"])
+
+
+def test_pool_runtime_compatibility_flags_single_runtime_invariant_violation(client):
+    test_client, governance_dir = client
+    _seed_capital_pool(governance_dir)
+    _seed_persona_binding(governance_dir, allowed_deployment_scope="live")
+    runtime_store = governance_dir.parent / "runtime_bindings.json"
+    runtime_store.write_text(
+        json.dumps(
+            [
+                {
+                    "binding_id": "rb-active-001",
+                    "runtime_id": "runtime-001",
+                    "plan_id": "plan-001",
+                    "persona_capital_binding_id": "binding-001",
+                    "capital_pool_id": "pool-001",
+                    "artifact_id": "reg-strat-001-1.2.0",
+                    "artifact_version": "1.2.0",
+                    "deployment_mode": "paper",
+                    "status": "active",
+                    "effective_at": "2026-04-10T00:00:00Z",
+                },
+                {
+                    "binding_id": "rb-active-002",
+                    "runtime_id": "runtime-002",
+                    "plan_id": "plan-002",
+                    "persona_capital_binding_id": "binding-001",
+                    "capital_pool_id": "pool-001",
+                    "artifact_id": "reg-strat-001-1.2.0",
+                    "artifact_version": "1.2.0",
+                    "deployment_mode": "canary",
+                    "status": "active",
+                    "effective_at": "2026-04-10T00:01:00Z",
+                },
+            ],
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    response = test_client.post(
+        "/api/deployment/plans/compatibility-check",
+        json={
+            "capital_pool_id": "pool-001",
+            "sponsor_persona_id": "persona-ops",
+            "target_stage": "live",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ok"] is False
+    assert body["active_runtime_binding_count"] == 2
+    assert body["active_runtime_binding_ids"] == ["rb-active-001", "rb-active-002"]
+    assert body["single_runtime_ok"] is False
+    assert any("single-runtime policy" in error for error in body["errors"])
 
 
 def test_create_plan_from_snapshots(client):

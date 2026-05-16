@@ -21,6 +21,7 @@ The service can now:
 - record failures and finalize compensation
 - inspect pending outbox events and durable inbox receipts
 - read a strategy-scoped deployment read model
+- run a pool/runtime compatibility preflight before DeploymentPlan approval
 - read DEP-003 deployment projections that join plan, approval, runtime, saga,
   and execution metadata state without becoming a write authority
 
@@ -50,6 +51,13 @@ The service persists to:
 - or `/tmp/pantheon/governance/`
 
 Approval lookups default to `${...}/approval_decisions.json`.
+
+Pool/runtime compatibility checks read:
+
+- `${CAPITAL_DATA_DIR|DEPLOYMENT_DATA_DIR|PANTHEON_GOVERNANCE_DATA_DIR}/capital_pools.json`
+- `${CAPITAL_DATA_DIR|DEPLOYMENT_DATA_DIR|PANTHEON_GOVERNANCE_DATA_DIR}/persona_capital_bindings.json`
+- `PANTHEON_RUNTIME_BINDING_STORE_PATH`, `${PANTHEON_RUNTIME_DATA_DIR}/runtime_bindings.json`,
+  or `/tmp/pantheon/runtime-manager/bindings.json`
 
 Registry lookups are optional and use `PANTHEON_DEPLOYMENT_REGISTRY_SNAPSHOT_PATH`.
 If that snapshot path is not configured, callers must embed `registry_entry` in
