@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-16 23:26:23
+Last updated: 2026-05-17 07:29:09
 
 ## Objective
 
@@ -37,13 +37,13 @@ Last updated: 2026-05-16 23:26:23
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: No active assignment
-- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: No active assignment
-- `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
-- `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
-- `Claude2`: execution, control-plane, governance-review; next: No active assignment
-- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check.
+- `Claude`: execution, control-plane, governance-review; next: Auto-reassigned ownership from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota. Task returned to todo until Claude starts a fresh run.
+- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: Assignment created
+- `Codex`: integration, status-system, schema, acceptance; next: Implementing qlib rolling-window OOS ExperimentRun pipeline, OOS evaluator, tests, and contract artifacts.
+- `Codex2`: integration, status-system, schema, acceptance; next: Assignment created
+- `Copilot`: research-ingest, external-search, spec-review, critique; next: Assignment created
+- `Claude2`: execution, control-plane, governance-review; next: Supervisor auto-started PER-003 after successful dispatch.
+- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Implementation done. Ready for review.
 
 ## Delivery Layers
 
@@ -52,12 +52,32 @@ Last updated: 2026-05-16 23:26:23
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | Gemini2 | blocked | - | - |
+| `IMT-005` | Sprint 7 / EPIC-IMITATION-TRAINING | BC baseline trainer on imitation dataset | Codex | in_progress | `IMT-003`, `IMT-004` | 新增 BC (Behavior Cloning) baseline trainer，吃 IMT-003 dataset builder 產出的 dataset，輸出 behavior_policy artifact (IMT-004 type)。獨立檔案，無共用 module。 |
+| `IMT-006` | Sprint 7 / EPIC-IMITATION-TRAINING | Imitation evaluation metrics: action-match + return-gap + KL | Codex | in_progress | `IMT-001`, `IMT-004` | 新增 imitation evaluation metrics module：action-match accuracy, return-gap vs expert baseline, KL divergence。獨立於 bc_trainer.py。 |
+| `IMT-007` | Sprint 7 / EPIC-IMITATION-TRAINING | Behavior-policy artifact validation gate | Claude | todo | `IMT-004`, `IMT-006` | behavior_policy artifact 進入 registry / governance 前的驗證閘門：metadata 完整、checksum 一致、IMT-006 eval metrics 達門檻、policy 不出現 deploy/canary/live 觸發詞。獨立 module。 |
+| `IMT-008` | Sprint 7 / EPIC-IMITATION-TRAINING | TRL preference-pair dataset bridge | Copilot | todo | `IMT-002`, `IMT-003` | 新增 TRL (Transformer Reinforcement Learning) preference-pair dataset bridge：把 IMT-002 PreferenceExample / CorrectionTrace 轉成 TRL 期望的 chosen/rejected 對。獨立 module。 |
+| `TRN-005` | Sprint 7 / EPIC-TRAINER-ADVANCED | Trainer commit -> persona policy lineage edge | Codex | in_progress | `TRN-004` | 把 TRN-004 commit 動作的副作用接到 persona policy 的 lineage：每次 commit 在 persona policy artifact 上產生 lineage edge 指向 trainer session id 與 teaching event ids。獨立 module。 |
+| `TRN-006` | Sprint 7 / EPIC-TRAINER-ADVANCED | Rapid-eval -> vectorbt backend integration | Codex2 | todo | `TRN-003`, `VBT-001` | 把 TRN-003 rapid-eval skeleton 接到實際 backend（vectorbt VBT-001 via adapter facade）。獨立檔案，不修 TRN-003 既有 endpoint signature。 |
+| `TRN-007` | Sprint 7 / EPIC-TRAINER-ADVANCED | Trainer trace -> imitation dataset export | Copilot | todo | `TRN-001`, `IMT-002` | 把 trainer teaching_event stream 匯出成 imitation dataset 可消化的格式。獨立 module，不修 TRN-001 schema。 |
+| `PER-003` | Sprint 7 / EPIC-TRAINER-ADVANCED | Persona registry live integration acceptance | Claude2 | in_progress | `PER-001`, `PER-002` | 把 execute-plans Persona 頁面從 fixture-backed 切換到 live persona_registry service。確認 /bff/personas 與 /bff/personas/{id} read path 走 services/control-plane/persona/persona_registry.py。獨立 acceptance。 |
+| `ASK-006` | Sprint 7 / EPIC-CONSULT-ADVANCED | Consult -> Committee -> Memo -> Review e2e test | Codex | todo | `ASK-001`, `ASK-002`, `ASK-003`, `ASK-004`, `ASK-005` | ASK-001..005 已落地 consult/committee flow，這個 task 寫一條 e2e integration test：ask session create -> committee invoke -> memo publish -> Management review queue 接到 handoff。獨立 test 檔。 |
+| `ASK-007` | Sprint 7 / EPIC-CONSULT-ADVANCED | Consult memo evidence redaction regression | Codex2 | todo | `ASK-004` | 驗證 consult memo publish 流程的 evidence redaction：persona-internal 機密欄位（policy_internals memory_trace internal_score）不能洩漏到 review-facing memo。獨立 test 檔。 |
+| `ASK-008` | Sprint 7 / EPIC-CONSULT-ADVANCED | Committee sponsor decision -> governance action bridge | Claude | todo | `ASK-003`, `GOV-001`, `EVO-001` | committee 結出 sponsor decision 後，提供把 sponsor decision bridge 到 governance action (例如觸發 ApprovalDecision proposal 或 EvolutionDecision proposal) 的 module。獨立 module，不直接改 governance service。 |
+| `LEAN-ALGO-001` | Sprint 7 / EPIC-LEAN-RUNTIME | LEAN algorithm-level smoke via artifact loader | Gemini | todo | `EX-002-RB`, `EX-003`, `RT-002` | EX-003 已完成 smoke path 但 LEAN algorithm-level coverage 還 deferred。這個 task 寫一個最小 LEAN Python algorithm，從 artifact loader 載入 approved artifact 跑一段 paper backtest，驗證 RuntimeBinding 串到 LEAN runtime 的 actual run path。CPU-only smoke。 |
+| `OPS-REFACTOR-001` | Sprint 7 / EPIC-OPS-BACKLOG | Re-apply dispatch policy refactor on current master | Claude | todo | - | 把 archive/codex-orchestrator-dispatch-policy-cleanup-2026-04-28 tag 內的 dispatch_policy 抽取重新套用到當前 supervisor.py。原 cherry-pick 因 supervisor.py 1776 commit drift 衝突；本任務以 current master 為基準重做。獨立新增 .orchestrator/dispatch_policy.py + test。 |
+| `OPS-WORKER-PUSH-CRED-001` | Sprint 7 / EPIC-OPS-BACKLOG | Background worker git push credentials provisioning | Gemini | todo | - | 解決 background worker 跑 git push 必失敗的根因。設計選項：SSH key per worker 或 GitHub PAT via env。產出 setup 腳本與 .orchestrator/ runtime 環境讀取邏輯，不直接 commit credential 本身。獨立檔案。 |
+| `OPS-REBASE-AUTO-001` | Sprint 7 / EPIC-OPS-BACKLOG | Auto-handle empty commits in worker rebase flow | Claude2 | todo | - | 修正 worker 跑 git pull --rebase 遇到 # empty pick 會卡 approval queue 的問題。設計 rebase_helper module 自動帶 --allow-empty 或 --skip 策略，supervisor.py 改用 helper 1 行替換。獨立 helper module 與 OPS-REFACTOR-001 不衝突。 |
+| `OPS-SIDECAR-CLEANUP-001` | Sprint 7 / EPIC-OPS-BACKLOG | Sidecar packet retention and cleanup policy | Codex | todo | - | support/sidecars/ 持續累積 packets 但缺退場機制。設計 retention/cleanup module：parent task done 後 N 天，sidecar packet 移至 support/sidecars/archived/，超過 M 天直接刪。獨立 module，可由 cron / chair-review 觸發。 |
 
 ### External / Upstream Integration Work
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| _(none)_ | - | - | - | - | - | - |
+| `OSS-QLIB-002` | Sprint 7 / EPIC-OSS-RESEARCH | Qlib rolling-window OOS pipeline + eval | Codex | in_progress | - | 在 services/research/qlib/ 之上實作 rolling-window / OOS pipeline。建在已 archived 的 QLIB-001 dataset manifest 基礎上，產出 OOS metrics 並寫回 ExperimentRun。 |
+| `OSS-STAT-001` | Sprint 7 / EPIC-OSS-RESEARCH | statsmodels cointegration adapter skeleton | Claude | todo | - | 新增 services/research/statsmodels/ adapter，落實 stat-arb 風格 cointegration / Engle-Granger 檢定，產生 signal_snapshot artifact。獨立於其他 research adapter，無共用檔案。 |
+| `OSS-QUANTLIB-001` | Sprint 7 / EPIC-OSS-RESEARCH | QuantLib option pricing adapter skeleton | Copilot | todo | - | 新增 services/research/quantlib/ adapter，落實 vanilla European/American option Black-Scholes 與 Binomial 定價，產生 pricing_snapshot artifact。獨立於其他 research adapter。 |
+| `OSS-RLLIB-001` | Sprint 7 / EPIC-OSS-RESEARCH | RLlib PPO adapter skeleton | Claude | todo | - | 新增 services/research/rllib/ adapter skeleton，落實 Ray RLlib PPO 訓練 mini-loop，輸出 model_artifact。CPU-only smoke (no GPU)，獨立於其他 research adapter。 |
+| `OSS-FINRL-001` | Sprint 7 / EPIC-OSS-RESEARCH | FinRL DQN/PPO adapter skeleton | Gemini2 | review | - | 新增 services/research/finrl/ adapter skeleton，落實 FinRL DQN/PPO 在歷史 OHLCV 上 mini-training，輸出 model_artifact。CPU-only smoke。獨立於其他 research adapter。 |
 
 ## Recently Executed Tasks
 
@@ -92,12 +112,33 @@ Last updated: 2026-05-16 23:26:23
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | - | Gemini2 | Gemini | blocked | - | 2026-05-15 23:15:06 | Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check. |
+| `OSS-QLIB-002` | Sprint 7 / EPIC-OSS-RESEARCH | Qlib rolling-window OOS pipeline + eval | 在 services/research/qlib/ 之上實作 rolling-window / OOS pipeline。建在已 archived 的 QLIB-001 dataset manifest 基礎上，產出 OOS metrics 並寫回 ExperimentRun。 | Codex | Codex2 | in_progress | - | 2026-05-17 07:29:09 | Implementing qlib rolling-window OOS ExperimentRun pipeline, OOS evaluator, tests, and contract artifacts. |
+| `OSS-STAT-001` | Sprint 7 / EPIC-OSS-RESEARCH | statsmodels cointegration adapter skeleton | 新增 services/research/statsmodels/ adapter，落實 stat-arb 風格 cointegration / Engle-Granger 檢定，產生 signal_snapshot artifact。獨立於其他 research adapter，無共用檔案。 | Claude | Codex | todo | - | 2026-05-17 07:28:05 | Auto-reassigned ownership from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota. Task returned to todo until Claude starts a fresh run. |
+| `OSS-QUANTLIB-001` | Sprint 7 / EPIC-OSS-RESEARCH | QuantLib option pricing adapter skeleton | 新增 services/research/quantlib/ adapter，落實 vanilla European/American option Black-Scholes 與 Binomial 定價，產生 pricing_snapshot artifact。獨立於其他 research adapter。 | Copilot | Codex2 | todo | - | 2026-05-17 07:20:58 | Assignment created |
+| `OSS-RLLIB-001` | Sprint 7 / EPIC-OSS-RESEARCH | RLlib PPO adapter skeleton | 新增 services/research/rllib/ adapter skeleton，落實 Ray RLlib PPO 訓練 mini-loop，輸出 model_artifact。CPU-only smoke (no GPU)，獨立於其他 research adapter。 | Claude | Codex | todo | - | 2026-05-17 07:27:46 | Auto-reassigned ownership from Gemini to Claude after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Claude starts a fresh run. |
+| `OSS-FINRL-001` | Sprint 7 / EPIC-OSS-RESEARCH | FinRL DQN/PPO adapter skeleton | 新增 services/research/finrl/ adapter skeleton，落實 FinRL DQN/PPO 在歷史 OHLCV 上 mini-training，輸出 model_artifact。CPU-only smoke。獨立於其他 research adapter。 | Gemini2 | Codex2 | review | - | 2026-05-17 07:29:09 | Implementation done. Ready for review. |
+| `IMT-005` | Sprint 7 / EPIC-IMITATION-TRAINING | BC baseline trainer on imitation dataset | 新增 BC (Behavior Cloning) baseline trainer，吃 IMT-003 dataset builder 產出的 dataset，輸出 behavior_policy artifact (IMT-004 type)。獨立檔案，無共用 module。 | Codex | Codex2 | in_progress | `IMT-003`, `IMT-004` | 2026-05-17 07:27:02 | Supervisor auto-started IMT-005 after successful dispatch. |
+| `IMT-006` | Sprint 7 / EPIC-IMITATION-TRAINING | Imitation evaluation metrics: action-match + return-gap + KL | 新增 imitation evaluation metrics module：action-match accuracy, return-gap vs expert baseline, KL divergence。獨立於 bc_trainer.py。 | Codex | Codex2 | in_progress | `IMT-001`, `IMT-004` | 2026-05-17 07:25:28 | Supervisor auto-started IMT-006 after successful dispatch. |
+| `IMT-007` | Sprint 7 / EPIC-IMITATION-TRAINING | Behavior-policy artifact validation gate | behavior_policy artifact 進入 registry / governance 前的驗證閘門：metadata 完整、checksum 一致、IMT-006 eval metrics 達門檻、policy 不出現 deploy/canary/live 觸發詞。獨立 module。 | Claude | Codex2 | todo | `IMT-004`, `IMT-006` | 2026-05-17 07:22:33 | Assignment created |
+| `IMT-008` | Sprint 7 / EPIC-IMITATION-TRAINING | TRL preference-pair dataset bridge | 新增 TRL (Transformer Reinforcement Learning) preference-pair dataset bridge：把 IMT-002 PreferenceExample / CorrectionTrace 轉成 TRL 期望的 chosen/rejected 對。獨立 module。 | Copilot | Codex | todo | `IMT-002`, `IMT-003` | 2026-05-17 07:22:46 | Assignment created |
+| `TRN-005` | Sprint 7 / EPIC-TRAINER-ADVANCED | Trainer commit -> persona policy lineage edge | 把 TRN-004 commit 動作的副作用接到 persona policy 的 lineage：每次 commit 在 persona policy artifact 上產生 lineage edge 指向 trainer session id 與 teaching event ids。獨立 module。 | Codex | Claude | in_progress | `TRN-004` | 2026-05-17 07:28:23 | Implementing independent trainer commit persona-policy lineage edge module and focused tests. |
+| `TRN-006` | Sprint 7 / EPIC-TRAINER-ADVANCED | Rapid-eval -> vectorbt backend integration | 把 TRN-003 rapid-eval skeleton 接到實際 backend（vectorbt VBT-001 via adapter facade）。獨立檔案，不修 TRN-003 既有 endpoint signature。 | Codex2 | Codex | todo | `TRN-003`, `VBT-001` | 2026-05-17 07:23:50 | Assignment created |
+| `TRN-007` | Sprint 7 / EPIC-TRAINER-ADVANCED | Trainer trace -> imitation dataset export | 把 trainer teaching_event stream 匯出成 imitation dataset 可消化的格式。獨立 module，不修 TRN-001 schema。 | Copilot | Codex2 | todo | `TRN-001`, `IMT-002` | 2026-05-17 07:24:02 | Assignment created |
+| `PER-003` | Sprint 7 / EPIC-TRAINER-ADVANCED | Persona registry live integration acceptance | 把 execute-plans Persona 頁面從 fixture-backed 切換到 live persona_registry service。確認 /bff/personas 與 /bff/personas/{id} read path 走 services/control-plane/persona/persona_registry.py。獨立 acceptance。 | Claude2 | Codex2 | in_progress | `PER-001`, `PER-002` | 2026-05-17 07:25:10 | Supervisor auto-started PER-003 after successful dispatch. |
+| `ASK-006` | Sprint 7 / EPIC-CONSULT-ADVANCED | Consult -> Committee -> Memo -> Review e2e test | ASK-001..005 已落地 consult/committee flow，這個 task 寫一條 e2e integration test：ask session create -> committee invoke -> memo publish -> Management review queue 接到 handoff。獨立 test 檔。 | Codex | Codex2 | todo | `ASK-001`, `ASK-002`, `ASK-003`, `ASK-004`, `ASK-005` | 2026-05-17 07:24:59 | Assignment created |
+| `ASK-007` | Sprint 7 / EPIC-CONSULT-ADVANCED | Consult memo evidence redaction regression | 驗證 consult memo publish 流程的 evidence redaction：persona-internal 機密欄位（policy_internals memory_trace internal_score）不能洩漏到 review-facing memo。獨立 test 檔。 | Codex2 | Codex | todo | `ASK-004` | 2026-05-17 07:25:17 | Assignment created |
+| `ASK-008` | Sprint 7 / EPIC-CONSULT-ADVANCED | Committee sponsor decision -> governance action bridge | committee 結出 sponsor decision 後，提供把 sponsor decision bridge 到 governance action (例如觸發 ApprovalDecision proposal 或 EvolutionDecision proposal) 的 module。獨立 module，不直接改 governance service。 | Claude | Codex2 | todo | `ASK-003`, `GOV-001`, `EVO-001` | 2026-05-17 07:25:38 | Assignment created |
+| `LEAN-ALGO-001` | Sprint 7 / EPIC-LEAN-RUNTIME | LEAN algorithm-level smoke via artifact loader | EX-003 已完成 smoke path 但 LEAN algorithm-level coverage 還 deferred。這個 task 寫一個最小 LEAN Python algorithm，從 artifact loader 載入 approved artifact 跑一段 paper backtest，驗證 RuntimeBinding 串到 LEAN runtime 的 actual run path。CPU-only smoke。 | Gemini | Gemini2 | todo | `EX-002-RB`, `EX-003`, `RT-002` | 2026-05-17 07:26:26 | Assignment created |
+| `OPS-REFACTOR-001` | Sprint 7 / EPIC-OPS-BACKLOG | Re-apply dispatch policy refactor on current master | 把 archive/codex-orchestrator-dispatch-policy-cleanup-2026-04-28 tag 內的 dispatch_policy 抽取重新套用到當前 supervisor.py。原 cherry-pick 因 supervisor.py 1776 commit drift 衝突；本任務以 current master 為基準重做。獨立新增 .orchestrator/dispatch_policy.py + test。 | Claude | Claude2 | todo | - | 2026-05-17 07:27:36 | Assignment created |
+| `OPS-WORKER-PUSH-CRED-001` | Sprint 7 / EPIC-OPS-BACKLOG | Background worker git push credentials provisioning | 解決 background worker 跑 git push 必失敗的根因。設計選項：SSH key per worker 或 GitHub PAT via env。產出 setup 腳本與 .orchestrator/ runtime 環境讀取邏輯，不直接 commit credential 本身。獨立檔案。 | Gemini | Gemini2 | todo | - | 2026-05-17 07:28:01 | Assignment created |
+| `OPS-REBASE-AUTO-001` | Sprint 7 / EPIC-OPS-BACKLOG | Auto-handle empty commits in worker rebase flow | 修正 worker 跑 git pull --rebase 遇到 # empty pick 會卡 approval queue 的問題。設計 rebase_helper module 自動帶 --allow-empty 或 --skip 策略，supervisor.py 改用 helper 1 行替換。獨立 helper module 與 OPS-REFACTOR-001 不衝突。 | Claude2 | Claude | todo | - | 2026-05-17 07:28:23 | Assignment created |
+| `OPS-SIDECAR-CLEANUP-001` | Sprint 7 / EPIC-OPS-BACKLOG | Sidecar packet retention and cleanup policy | support/sidecars/ 持續累積 packets 但缺退場機制。設計 retention/cleanup module：parent task done 後 N 天，sidecar packet 移至 support/sidecars/archived/，超過 M 天直接刪。獨立 module，可由 cron / chair-review 觸發。 | Codex | Codex2 | todo | - | 2026-05-17 07:28:52 | Assignment created |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| _(none)_ | - | - | - | - | - |
+| `OSS-FINRL-001` | Gemini2 | Codex2 | Implementation done. Ready for review. | pending | 2026-05-17 07:29:09 |
 
 ## Blockers
 
@@ -180,23 +221,23 @@ Last updated: 2026-05-16 23:26:23
 
 ## Latest Checkpoints
 
-- 2026-05-16 23:23:18 Orchestrator: PreToolUse: Bash
-- 2026-05-16 23:23:19 Orchestrator: PostToolUse: Bash
-- 2026-05-16 23:23:48 Orchestrator: PreToolUse: Bash
-- 2026-05-16 23:24:02 Orchestrator: PostToolUse: Bash
-- 2026-05-16 23:24:09 Orchestrator: PreToolUse: Bash
-- 2026-05-16 23:24:13 Orchestrator: PostToolUse: Bash
-- 2026-05-16 23:24:31 Orchestrator: PreToolUse: Bash
-- 2026-05-16 23:24:32 Orchestrator: PostToolUse: Bash
-- 2026-05-16 23:24:39 Orchestrator: PreToolUse: Bash
-- 2026-05-16 23:24:40 Orchestrator: PostToolUse: Bash
-- 2026-05-16 23:24:53 Orchestrator: PreToolUse: Bash
-- 2026-05-16 23:24:54 Orchestrator: PostToolUse: Bash
-- 2026-05-16 23:25:10 Orchestrator: PreToolUse: Bash
-- 2026-05-16 23:25:11 Orchestrator: PostToolUse: Bash
-- 2026-05-16 23:25:21 Orchestrator: PreToolUse: Bash
-- 2026-05-16 23:25:21 Orchestrator: PostToolUse: Bash
-- 2026-05-16 23:25:44 Orchestrator: PreToolUse: Bash
-- 2026-05-16 23:25:44 Orchestrator: PostToolUse: Bash
-- 2026-05-16 23:25:59 Orchestrator: PreToolUse: TodoWrite
-- 2026-05-16 23:25:59 Orchestrator: PostToolUse: TodoWrite
+- 2026-05-17 07:27:44 Orchestrator: PreToolUse: Grep
+- 2026-05-17 07:27:45 Orchestrator: PostToolUse: Grep
+- 2026-05-17 07:27:46 Orchestrator: `OSS-STAT-001` Supervisor auto-started OSS-STAT-001 after successful dispatch.
+- 2026-05-17 07:27:46 Orchestrator: `OSS-RLLIB-001` Paused new dispatches for gemini until 2026-05-17 07:42:46 after terminal quota failure: Capacity / rate limit failure
+- 2026-05-17 07:27:54 Orchestrator: PreToolUse: Read
+- 2026-05-17 07:27:55 Orchestrator: PostToolUse: Read
+- 2026-05-17 07:28:01 Codex: `OPS-WORKER-PUSH-CRED-001` Assigned OPS-WORKER-PUSH-CRED-001 to Gemini with reviewer Gemini2
+- 2026-05-17 07:28:05 Orchestrator: `OSS-RLLIB-001` Auto-reassigned ownership from Gemini to Claude after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Claude starts a fresh run.
+- 2026-05-17 07:28:05 Orchestrator: `OSS-STAT-001` Paused new dispatches for copilot until 2026-05-17 07:43:05 after terminal quota failure: 402 You have no quota
+- 2026-05-17 07:28:22 Orchestrator: PreToolUse: Grep
+- 2026-05-17 07:28:22 Orchestrator: PostToolUse: Grep
+- 2026-05-17 07:28:23 Codex: `OPS-REBASE-AUTO-001` Assigned OPS-REBASE-AUTO-001 to Claude2 with reviewer Claude
+- 2026-05-17 07:28:23 Codex: `TRN-005` Implementing independent trainer commit persona-policy lineage edge module and focused tests.
+- 2026-05-17 07:28:31 Orchestrator: `OSS-STAT-001` Auto-reassigned ownership from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota. Task returned to todo until Claude starts a fresh run.
+- 2026-05-17 07:28:45 Orchestrator: PreToolUse: Grep
+- 2026-05-17 07:28:46 Orchestrator: PostToolUse: Grep
+- 2026-05-17 07:28:52 Codex: `OPS-SIDECAR-CLEANUP-001` Assigned OPS-SIDECAR-CLEANUP-001 to Codex with reviewer Codex2
+- 2026-05-17 07:29:06 Orchestrator: PostToolUse: Bash
+- 2026-05-17 07:29:09 Codex: `OSS-QLIB-002` Implementing qlib rolling-window OOS ExperimentRun pipeline, OOS evaluator, tests, and contract artifacts.
+- 2026-05-17 07:29:09 Gemini2: `OSS-FINRL-001` Handoff to Codex2: Implementation done. Ready for review.
