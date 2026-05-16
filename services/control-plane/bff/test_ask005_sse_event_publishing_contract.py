@@ -289,6 +289,36 @@ def test_bff_approvals_decide_body_idempotency_key_rejected_does_not_publish() -
 
 
 # ---------------------------------------------------------------------------
+# Idempotency conflict (reused key, different payload) must not double-publish
+# ---------------------------------------------------------------------------
+
+def test_bff_approvals_decide_idempotency_conflict_does_not_double_publish() -> None:
+    """Reusing an idempotency key with a different payload must return 409 and must not publish
+    a second SSE event — mirrors the _sem_command_response conflict path."""
+    client = TestClient(bff_main.app)
+    idem = _idem()
+
+    resp1 = client.post(
+        f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
+        json={"decision": "approve"},
+        headers={**APPROVER_HEADERS, "Idempotency-Key": idem},
+    )
+    assert resp1.status_code == 202, resp1.text
+    assert len(bff_main._sse_buffers["approval"]) == 1, "first call must publish exactly one SSE event"
+
+    # Reuse same key with a different decision payload — must return 409
+    resp2 = client.post(
+        f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
+        json={"decision": "reject", "rejection_reason": "conflict test"},
+        headers={**APPROVER_HEADERS, "Idempotency-Key": idem},
+    )
+    assert resp2.status_code == 409, f"expected 409 IDEMPOTENCY_CONFLICT, got {resp2.status_code}: {resp2.text}"
+    assert len(bff_main._sse_buffers["approval"]) == 1, (
+        "idempotency conflict path must not publish a second SSE event"
+    )
+
+
+# ---------------------------------------------------------------------------
 # No approval event on role gate failure
 # ---------------------------------------------------------------------------
 

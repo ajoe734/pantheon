@@ -25907,7 +25907,10 @@ async def bff_approvals_decide(
     })
     _existing_idem = _FINAL_CONTRACT_IDEMPOTENCY.get(_idem_key)
     _is_approval_replay = _existing_idem is not None and _existing_idem.get("request_hash") == _idem_hash
-    if not _is_approval_replay:
+    # Mirror _sem_command_response: a reused key with a different hash is an idempotency conflict
+    # that will result in a 409 — skip SSE publish to prevent double-publish on the conflict path.
+    _is_idem_conflict = _existing_idem is not None and not _is_approval_replay
+    if not _is_approval_replay and not _is_idem_conflict:
         # Extend pre-check to durable command_store to match _sem_command_response replay semantics:
         # if _FINAL_CONTRACT_IDEMPOTENCY was evicted but command_store still holds the record,
         # _sem_command_response will replay — skip SSE publish here too to prevent double-publish.
@@ -25916,8 +25919,10 @@ async def bff_approvals_decide(
             _stored_hash = (_durable_record.get("foundation") or {}).get("idempotency_record", {}).get("request_hash")
             if _stored_hash == _idem_hash:
                 _is_approval_replay = True
+            elif _stored_hash:
+                _is_idem_conflict = True
 
-    if not _is_approval_replay:
+    if not _is_approval_replay and not _is_idem_conflict:
         # escalate/freeze are stage transitions; use raw_decision to determine event type
         if raw_decision in _APPROVAL_STAGE_CHANGE_DECISIONS or command_type == CommandType.REQUEST_APPROVAL_REVISION:
             _publish_event(
