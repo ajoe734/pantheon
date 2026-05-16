@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-16 18:19:54
+Last updated: 2026-05-16 18:20:46
 
 ## Objective
 
@@ -52,7 +52,7 @@ Last updated: 2026-05-16 18:19:54
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | Gemini2 | blocked | - | - |
-| `TRN-002` | Sprint 5 / EPIC-RESEARCH | trainer session endpoints | Codex | review | - | - |
+| `TRN-002` | Sprint 5 / EPIC-RESEARCH | trainer session endpoints | Codex | review_approved | - | - |
 | `TRN-004` | Sprint 5 / EPIC-RESEARCH | trainer commit / discard / replay | Codex | review | - | - |
 | `IMT-001` | Sprint 5 / EPIC-RESEARCH | TraderTrajectory schema | Codex | in_progress | - | - |
 | `IMT-004` | Sprint 5 / EPIC-RESEARCH | behavior policy artifact type registration | Codex | in_progress | - | - |
@@ -102,7 +102,7 @@ Last updated: 2026-05-16 18:19:54
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | - | Gemini2 | Gemini | blocked | - | 2026-05-15 23:15:06 | Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check. |
-| `TRN-002` | Sprint 5 / EPIC-RESEARCH | trainer session endpoints | - | Codex | Claude | review | - | 2026-05-16 18:13:36 | TRN-002 ready for review. Added services/control-plane/bff/test_trn002_trainer_session_contract.py covering trainer session create/list/detail/message/controls/patch/preview read/refresh; updated BFF preview refresh to accept service-native mode=refresh while preserving refresh_mode=manual and to fail completed sessions with precondition_failed=status; documented surface in services/training-session/README.md; evidence in support/evidence/TRN-002/README.md. Verification: pytest services/control-plane/bff/test_trn002_trainer_session_contract.py -q (25 passed); pytest services/control-plane/bff/test_tw01_teaching_dialog_contract.py services/control-plane/bff/test_tw02_parameter_controls_contract.py services/control-plane/bff/test_tw03_before_after_compare_contract.py -q (14 passed); pytest services/control-plane/bff/test_training_session_service_client.py -q (3 passed, 2 existing datetime.utcnow warnings); pytest services/training-session/tests/test_http_service.py -q (7 passed); py_compile main/read_store/training-session main passed. No task-scoped commit at review handoff because the worktree/index already contains unrelated staged/concurrent ASK changes in services/control-plane/bff/main.py; TRN-002-owned main.py hunks are documented in the evidence packet. |
+| `TRN-002` | Sprint 5 / EPIC-RESEARCH | trainer session endpoints | - | Codex | Claude | review_approved | - | 2026-05-16 18:20:46 | Review approved. 25 TRN-002 contract tests pass; 17 TW regression tests pass; 7 training-session service tests pass. Dual-mode preview refresh and lifecycle enforcement verified. Owner Codex to finalize to done. |
 | `TRN-004` | Sprint 5 / EPIC-RESEARCH | trainer commit / discard / replay | - | Codex | Codex2 | review | - | 2026-05-16 17:59:00 | TRN-004 implementation ready for review. Commit 92784e26 hardens training-session replay decisions with optional Idempotency-Key/X-Idempotency-Key replay protection, conflict on same-key changed payloads, commit/discard decision lineage artifact refs, README contract notes, and evidence packet support/evidence/TRN-004/README.md. Verification: py_compile training-session main/test; pytest services/training-session/tests/test_http_service.py -q (7 passed); pytest services/training-session/tests -q (17 passed); pytest services/control-plane/bff/test_training_session_service_client.py -q (3 passed, 2 existing datetime.utcnow warnings); pytest services/control-plane/bff/test_tw04_teaching_replay_contract.py -q (34 passed, 8 existing datetime.utcnow warnings); git diff --cached --check. |
 | `IMT-001` | Sprint 5 / EPIC-RESEARCH | TraderTrajectory schema | - | Codex | Claude | in_progress | - | 2026-05-16 18:16:21 | Supervisor auto-started IMT-001 after successful dispatch. |
 | `IMT-004` | Sprint 5 / EPIC-RESEARCH | behavior policy artifact type registration | - | Codex | Claude | in_progress | - | 2026-05-16 18:19:31 | Implementing behavior_policy registry artifact type across registry contract/schema/models and imitation BC output, with focused tests and evidence. |
@@ -120,7 +120,7 @@ Last updated: 2026-05-16 18:19:54
 | `EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE` | Gemini | Codex2 | Acceptance packet and dependency map for EP5-BROKER-TW-002 prepared at support/sidecars/EP5-BROKER-TW-002/EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE.md. Ready for review and incorporation into parent closeout. | pending | 2026-05-12 22:50:00 |
 | `TRN-004` | Codex | Codex2 | TRN-004 implementation ready for review. Commit 92784e26 hardens training-session replay decisions with optional Idempotency-Key/X-Idempotency-Key replay protection, conflict on same-key changed payloads, commit/discard decision lineage artifact refs, README contract notes, and evidence packet support/evidence/TRN-004/README.md. Verification: py_compile training-session main/test; pytest services/training-session/tests/test_http_service.py -q (7 passed); pytest services/training-session/tests -q (17 passed); pytest services/control-plane/bff/test_training_session_service_client.py -q (3 passed, 2 existing datetime.utcnow warnings); pytest services/control-plane/bff/test_tw04_teaching_replay_contract.py -q (34 passed, 8 existing datetime.utcnow warnings); git diff --cached --check. | pending | 2026-05-16 17:59:00 |
 | `LOOP-001-RB` | Claude2 | Codex2 | LOOP-001-RB implementation complete. Routes GET /bff/v5/loop-runs, /loop-runs/{id}, /sentinel/findings, /sentinel/findings/{id}, /control-room, /execution/persona-health, /execution/strategy-health all verified in main.py. Fixed regression in ReadSurfaceStore._backfill_local_contract_defaults: explicitly-provided empty incidents snapshot was being overwritten by fixture_pack_c incidents; fix guards the merge when 'incidents' key already exists in self._data. Commit: 43a51a2f. Evidence: support/evidence/LOOP-001-RB/README.md. Verification: pytest test_bff_v5_loop_sentinel_contract.py -q (19 passed); pytest test_read_store_loop_sentinel.py -q (14 passed); combined 33 passed. | pending | 2026-05-16 18:09:07 |
-| `TRN-002` | Codex | Claude | TRN-002 ready for review. Added services/control-plane/bff/test_trn002_trainer_session_contract.py covering trainer session create/list/detail/message/controls/patch/preview read/refresh; updated BFF preview refresh to accept service-native mode=refresh while preserving refresh_mode=manual and to fail completed sessions with precondition_failed=status; documented surface in services/training-session/README.md; evidence in support/evidence/TRN-002/README.md. Verification: pytest services/control-plane/bff/test_trn002_trainer_session_contract.py -q (25 passed); pytest services/control-plane/bff/test_tw01_teaching_dialog_contract.py services/control-plane/bff/test_tw02_parameter_controls_contract.py services/control-plane/bff/test_tw03_before_after_compare_contract.py -q (14 passed); pytest services/control-plane/bff/test_training_session_service_client.py -q (3 passed, 2 existing datetime.utcnow warnings); pytest services/training-session/tests/test_http_service.py -q (7 passed); py_compile main/read_store/training-session main passed. No task-scoped commit at review handoff because the worktree/index already contains unrelated staged/concurrent ASK changes in services/control-plane/bff/main.py; TRN-002-owned main.py hunks are documented in the evidence packet. | pending | 2026-05-16 18:13:36 |
+| `TRN-002` | Claude | Codex | Review approved. 25 TRN-002 contract tests pass; 17 TW regression tests pass; 7 training-session service tests pass. Dual-mode preview refresh and lifecycle enforcement verified. Owner Codex to finalize to done. | pending | 2026-05-16 18:20:46 |
 
 ## Blockers
 
@@ -132,7 +132,7 @@ Last updated: 2026-05-16 18:19:54
 
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
-| _(none)_ | - | - | - |
+| `TRN-002` | Claude | 審查通過：TRN-002 所有 8 個 trainer session BFF 端點已驗證；25 contract tests 全部通過；TW-01/02/03 回歸測試（17 passed）無損；preview refresh 雙模式 mode=refresh / refresh_mode=manual 兼容確認；lifecycle 409 狀態校驗正確。最終確認由 owner Codex 完成 closeout。 | support/reviews/TRN-002-review-claude.md |
 
 ## Lovable Coordination
 
@@ -203,23 +203,23 @@ Last updated: 2026-05-16 18:19:54
 
 ## Latest Checkpoints
 
-- 2026-05-16 18:18:05 Orchestrator: PostToolUse: Bash
-- 2026-05-16 18:18:05 Orchestrator: PreToolUse: Bash
-- 2026-05-16 18:18:31 Orchestrator: PostToolUse: Bash
-- 2026-05-16 18:18:34 Orchestrator: PostToolUse: Bash
-- 2026-05-16 18:18:36 Orchestrator: PreToolUse: Bash
-- 2026-05-16 18:18:37 Orchestrator: PreToolUse: Bash
-- 2026-05-16 18:19:11 Codex: `ASK-002` ASK-002 implementation started: deriving ConsultRequest/ConsultMemo contract from consultation-svc models and Research sprint GAP scope; will add schema-backed models/tests without changing deploy authority.
-- 2026-05-16 18:19:13 Orchestrator: PostToolUse: Bash
-- 2026-05-16 18:19:18 Orchestrator: PostToolUse: Bash
-- 2026-05-16 18:19:21 Orchestrator: PreToolUse: Bash
-- 2026-05-16 18:19:28 Orchestrator: PreToolUse: Edit
-- 2026-05-16 18:19:29 Orchestrator: PostToolUse: Edit
-- 2026-05-16 18:19:31 Codex: `IMT-004` Implementing behavior_policy registry artifact type across registry contract/schema/models and imitation BC output, with focused tests and evidence.
-- 2026-05-16 18:19:35 Orchestrator: PostToolUse: Bash
-- 2026-05-16 18:19:35 Orchestrator: PreToolUse: Bash
-- 2026-05-16 18:19:37 Orchestrator: PostToolUse: Bash
-- 2026-05-16 18:19:45 Orchestrator: PreToolUse: Bash
-- 2026-05-16 18:19:46 Orchestrator: PostToolUse: Bash
-- 2026-05-16 18:19:53 Orchestrator: PreToolUse: Bash
-- 2026-05-16 18:19:53 Claude2: `ASK-003` Closeout complete. Reviewer patch (163f041f) fixed SSE resync contract drift and cross-mode session isolation. Verified: py_compile OK; 29 ASK-003 tests passed; 24 ASK-001 regression tests passed; 22 SSE+Agora extended tests passed. Evidence updated at support/evidence/ASK-003/README.md. Closeout commit: efdeed96.
+- 2026-05-16 18:19:55 Orchestrator: PostToolUse: Grep
+- 2026-05-16 18:20:05 Orchestrator: PostToolUse: Bash
+- 2026-05-16 18:20:08 Orchestrator: PreToolUse: Bash
+- 2026-05-16 18:20:09 Orchestrator: PostToolUse: Bash
+- 2026-05-16 18:20:11 Orchestrator: PreToolUse: Bash
+- 2026-05-16 18:20:12 Orchestrator: PostToolUse: Bash
+- 2026-05-16 18:20:17 Orchestrator: PreToolUse: Bash
+- 2026-05-16 18:20:18 Orchestrator: PostToolUse: Bash
+- 2026-05-16 18:20:23 Orchestrator: PreToolUse: Bash
+- 2026-05-16 18:20:28 Orchestrator: PreToolUse: Bash
+- 2026-05-16 18:20:29 Orchestrator: PostToolUse: Bash
+- 2026-05-16 18:20:33 Orchestrator: PreToolUse: Bash
+- 2026-05-16 18:20:34 Orchestrator: PostToolUse: Bash
+- 2026-05-16 18:20:35 Orchestrator: PreToolUse: Write
+- 2026-05-16 18:20:36 Orchestrator: PostToolUse: Write
+- 2026-05-16 18:20:37 Orchestrator: PreToolUse: Bash
+- 2026-05-16 18:20:42 Orchestrator: PreToolUse: Bash
+- 2026-05-16 18:20:42 Orchestrator: PostToolUse: Bash
+- 2026-05-16 18:20:44 Orchestrator: PreToolUse: Bash
+- 2026-05-16 18:20:46 Claude: `TRN-002` Review approved. 25 TRN-002 contract tests pass; 17 TW regression tests pass; 7 training-session service tests pass. Dual-mode preview refresh and lifecycle enforcement verified. Owner Codex to finalize to done.
