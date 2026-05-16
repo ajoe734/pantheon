@@ -22,6 +22,12 @@ from .models import (
     validate_strategy_spec,
     validate_strategy_spec_payload,
 )
+from .lineage import (
+    StrategySpecLineageError,
+    StrategySpecLineageRefs,
+    attach_lineage_refs_to_strategy_spec_payload,
+    build_strategy_spec_lineage_refs,
+)
 from .normalizer import (
     NormalizationResult,
     StrategySpecNormalizationError,
@@ -47,7 +53,11 @@ __all__ = [
     "StrategyQuantityType",
     "StrategySourceKind",
     "StrategySpec",
+    "StrategySpecLineageError",
+    "StrategySpecLineageRefs",
     "StrategySpecValidationError",
+    "attach_lineage_refs_to_strategy_spec_payload",
+    "build_strategy_spec_lineage_refs",
     "load_strategy_spec_schema",
     "strategy_spec_schema_path",
     "validate_strategy_spec",

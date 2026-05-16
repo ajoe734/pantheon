@@ -47,6 +47,27 @@ Every canonical output includes:
 
 That means downstream registry and execution work consume the same governed `StrategySpec`, not an ad hoc research note.
 
+## Evidence and code refs lineage
+
+`lineage.py` is the package surface for attaching governed source evidence and
+repo code references to a StrategySpec without creating registry or execution
+side effects.
+
+- `build_strategy_spec_lineage_refs()` accepts a `StrategySpecSeed` and optional
+  governed `SourceRecord` / `EvidenceItem` inputs from the seed lineage.
+- `evidence_refs[]` carries the seed evidence bundle plus supporting
+  `EvidenceItem` refs.
+- `code_refs[]` carries allowlisted repository, path, commit, symbol, and line
+  references from source/evidence metadata or from repo-source fallback fields.
+- `attach_lineage_refs_to_strategy_spec_payload()` returns a payload copy with
+  the refs attached and preserves `provenance.source_refs`.
+- `StrategySpecLineageRefs.to_lineage_edge()` emits the normalized
+  `strategy_spec_evidence_code_linked` edge for downstream lineage read models.
+
+The helper rejects `SourceRecord` or `EvidenceItem` inputs that are outside the
+seed lineage. It is evidence/linkage plumbing only; it does not write registry
+state, launch experiments, create deployment plans, or route orders.
+
 ## Compatibility note
 
 The current replication gate still expects a legacy research handoff envelope for lineage/governance checks. `RS-002` therefore emits:
