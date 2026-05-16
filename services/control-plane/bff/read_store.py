@@ -6771,7 +6771,12 @@ class ReadSurfaceStore:
     def _backfill_local_contract_defaults(self) -> bool:
         changed = False
         default_data = _default_read_data()
-        if _merge_default_fixture_pack(self._data, _load_default_fixture_pack_datasets()):
+        fixture_datasets = _load_default_fixture_pack_datasets()
+        # When the snapshot explicitly provides an "incidents" key (even if empty),
+        # preserve it as-is and do not inject fixture-pack incident records.
+        if "incidents" in self._data:
+            fixture_datasets.pop("incidents", None)
+        if _merge_default_fixture_pack(self._data, fixture_datasets):
             changed = True
         deployment_plans = self._data.get("deployment_plans")
         default_plans = default_data.get("deployment_plans", {})
@@ -7641,6 +7646,8 @@ class ReadSurfaceStore:
         session = self.get_agora_session(session_id)
         if session is None:
             return None
+        if str(session.get("mode") or "").strip() != "committee":
+            return None
         timestamp = opened_at or _utc_now_rfc3339()
         session = json.loads(json.dumps(session))
         session["status"] = "open"
@@ -7660,6 +7667,8 @@ class ReadSurfaceStore:
     ) -> Optional[Dict[str, Any]]:
         session = self.get_agora_session(session_id)
         if session is None:
+            return None
+        if str(session.get("mode") or "").strip() != "committee":
             return None
         timestamp = closed_at or _utc_now_rfc3339()
         session = json.loads(json.dumps(session))
