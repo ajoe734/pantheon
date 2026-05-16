@@ -278,3 +278,35 @@ def test_sentinel_findings_no_filter_returns_all_records(monkeypatch):
         "sf-drift-dismissed-medium",
         "sf-anomaly-escalated-low",
     }, f"unexpected ids: {ids}"
+
+
+# ---------------------------------------------------------------------------
+# OpenAPI regression: kind/status/severity query params must be in /openapi.json
+# ---------------------------------------------------------------------------
+
+def test_openapi_sentinel_findings_list_has_filter_query_params():
+    """/openapi.json must document kind, status, and severity as query params for GET /bff/v5/sentinel/findings.
+
+    Regression guard against the generic alias re-registering the path and
+    overwriting the dedicated filtered route in the OpenAPI schema.
+    """
+    spec = bff_main.app.openapi()
+    get_op = spec["paths"]["/bff/v5/sentinel/findings"]["get"]
+    operation_id = get_op.get("operationId", "")
+    params = {p["name"] for p in get_op.get("parameters", [])}
+    assert "kind" in params, (
+        f"OpenAPI GET /bff/v5/sentinel/findings missing 'kind' query param. "
+        f"operationId={operation_id!r}, params={sorted(params)}"
+    )
+    assert "status" in params, (
+        f"OpenAPI GET /bff/v5/sentinel/findings missing 'status' query param. "
+        f"operationId={operation_id!r}, params={sorted(params)}"
+    )
+    assert "severity" in params, (
+        f"OpenAPI GET /bff/v5/sentinel/findings missing 'severity' query param. "
+        f"operationId={operation_id!r}, params={sorted(params)}"
+    )
+    assert "sem_final_generic_read_alias" not in operation_id, (
+        f"OpenAPI GET /bff/v5/sentinel/findings is owned by the generic alias "
+        f"(operationId={operation_id!r}); duplicate route registration detected."
+    )

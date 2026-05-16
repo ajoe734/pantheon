@@ -25747,7 +25747,6 @@ def _sem_final_generic_detail_for_path(path: str, entity_id: str) -> Optional[Di
 @app.get("/bff/v5/execution/strategy-health")
 @app.get("/bff/v5/loop-runs")
 @app.get("/bff/v5/loop-runs/{id}")
-@app.get("/bff/v5/sentinel/findings")
 @app.get("/bff/v5/sentinel/findings/{id}")
 async def sem_final_generic_read_alias(
     request: Request,
