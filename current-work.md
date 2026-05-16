@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-16 19:08:07
+Last updated: 2026-05-16 19:51:40
 
 ## Objective
 
@@ -37,12 +37,12 @@ Last updated: 2026-05-16 19:08:07
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Supervisor auto-started EVO-001 after successful dispatch.
+- `Claude`: execution, control-plane, governance-review; next: Changes requested by Codex in support/reviews/ASK-005-review-codex-r2.md (commit c548bdb2): invalid body idempotency currently returns 400 but still publishes approval.decided. Move final-contract body validation before approval SSE publish, add no-publish regression coverage, and rerun ASK-005 focused/adjacent tests.
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: Auto-reassigned ownership from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Codex starts a fresh run.
+- `Codex`: integration, status-system, schema, acceptance; next: Sidecar review packet accurately summarizes ASK-004 done state, evidence map, and reviewer decision. Support-only scope confirmed; no canonical truth changed. Approved and returned to Codex for closeout.
 - `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
-- `Claude2`: execution, control-plane, governance-review; next: No active assignment
+- `Claude2`: execution, control-plane, governance-review; next: Commit 1f31fd5e staged and local. git push failed: HTTPS remote requires credentials not available in background worker. Branch bff-luv-fe-006-dev-deploy is ahead of origin; push_status: ahead. Handoff to Codex already recorded. Human push or SSH credential setup needed to publish.
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check.
 
 ## Delivery Layers
@@ -52,11 +52,13 @@ Last updated: 2026-05-16 19:08:07
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | Gemini2 | blocked | - | - |
-| `ASK-005` | Sprint 5 / EPIC-RESEARCH | approval / ask SSE event publishing | Claude | review | - | - |
+| `ASK-005` | Sprint 5 / EPIC-RESEARCH | approval / ask SSE event publishing | Claude | in_progress | - | - |
 | `EVO-001` | Sprint 6 / EPIC-EVOLUTION | EvolutionDecision service | Claude | in_progress | - | - |
-| `SENT-001-SIDECAR-BFF-HANDOFF` | Sprint 6 / EPIC-EVOLUTION | [Sidecar] [Auto] [Parent SENT-001] Prepare SENT-001 BFF and frontend handoff packet | Codex | todo | - | 平行支援 SENT-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 |
-| `ASK-004-SIDECAR-REVIEW` | Sprint 5 / EPIC-RESEARCH | [Sidecar] [Auto] [Parent ASK-004] Prepare ASK-004 review packet and evidence summary | Claude | todo | - | 平行支援 ASK-004，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 |
-| `ASK-005-SIDECAR-ACCEPTANCE` | Sprint 5 / EPIC-RESEARCH | [Sidecar] [Auto] [Parent ASK-005] Prepare ASK-005 acceptance packet and dependency map | Codex | todo | - | 平行支援 ASK-005，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
+| `SENT-001-SIDECAR-BFF-HANDOFF` | Sprint 6 / EPIC-EVOLUTION | [Sidecar] [Auto] [Parent SENT-001] Prepare SENT-001 BFF and frontend handoff packet | Claude2 | review | - | 平行支援 SENT-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 |
+| `ASK-004-SIDECAR-REVIEW` | Sprint 5 / EPIC-RESEARCH | [Sidecar] [Auto] [Parent ASK-004] Prepare ASK-004 review packet and evidence summary | Codex | review_approved | - | 平行支援 ASK-004，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 |
+| `ASK-005-SIDECAR-ACCEPTANCE` | Sprint 5 / EPIC-RESEARCH | [Sidecar] [Auto] [Parent ASK-005] Prepare ASK-005 acceptance packet and dependency map | Codex | review_approved | - | 平行支援 ASK-005，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
+| `EVO-001-SIDECAR-ACCEPTANCE` | Sprint 6 / EPIC-EVOLUTION | [Sidecar] [Auto] [Parent EVO-001] Prepare EVO-001 acceptance packet and dependency map | Codex | review_approved | - | 平行支援 EVO-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
+| `ASK-005-SIDECAR-REVIEW` | Sprint 5 / EPIC-RESEARCH | [Sidecar] [Auto] [Parent ASK-005] Prepare ASK-005 review packet and evidence summary | Codex | review_approved | - | 平行支援 ASK-005，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 |
 
 ### External / Upstream Integration Work
 
@@ -97,18 +99,24 @@ Last updated: 2026-05-16 19:08:07
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | - | Gemini2 | Gemini | blocked | - | 2026-05-15 23:15:06 | Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check. |
-| `ASK-005` | Sprint 5 / EPIC-RESEARCH | approval / ask SSE event publishing | - | Claude | Codex2 | review | - | 2026-05-16 19:01:26 | ASK-005 implementation complete. Commit 6c7484c1. Changes: (1) sem_agora_ask_create_session now publishes ask.session.started to the ask channel; (2) bff_approvals_decide publishes approval.decided (approve/reject) or approval.stage.changed (request_revision/escalate/freeze); role-gate failures do not publish. New test file: test_ask005_sse_event_publishing_contract.py (6 tests). Verification: pytest test_ask005_sse_event_publishing_contract.py → 6 passed; test_pkt005_sse_substrate_contract → 14 passed; test_bff_approvals_decide_contract + test_ask_001-003-004 → 113 passed. |
-| `EVO-001` | Sprint 6 / EPIC-EVOLUTION | EvolutionDecision service | - | Claude | Codex | in_progress | - | 2026-05-16 19:04:07 | Supervisor auto-started EVO-001 after successful dispatch. |
-| `SENT-001-SIDECAR-BFF-HANDOFF` | Sprint 6 / EPIC-EVOLUTION | [Sidecar] [Auto] [Parent SENT-001] Prepare SENT-001 BFF and frontend handoff packet | 平行支援 SENT-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Codex | Claude2 | todo | - | 2026-05-16 18:37:04 | Auto-reassigned ownership from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Codex starts a fresh run. |
-| `ASK-004-SIDECAR-REVIEW` | Sprint 5 / EPIC-RESEARCH | [Sidecar] [Auto] [Parent ASK-004] Prepare ASK-004 review packet and evidence summary | 平行支援 ASK-004，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Claude | Codex | todo | - | 2026-05-16 18:57:28 | Auto-reassigned ownership from Gemini to Claude after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Claude starts a fresh run. |
-| `ASK-005-SIDECAR-ACCEPTANCE` | Sprint 5 / EPIC-RESEARCH | [Sidecar] [Auto] [Parent ASK-005] Prepare ASK-005 acceptance packet and dependency map | 平行支援 ASK-005，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Codex | Claude | todo | - | 2026-05-16 18:57:54 | Auto-reassigned ownership from Copilot to Codex after repeated Copilot quota terminal: 402 You have no quota. Task returned to todo until Codex starts a fresh run. |
+| `ASK-005` | Sprint 5 / EPIC-RESEARCH | approval / ask SSE event publishing | - | Claude | Codex | in_progress | - | 2026-05-16 19:51:40 | Changes requested by Codex in support/reviews/ASK-005-review-codex-r2.md (commit c548bdb2): invalid body idempotency currently returns 400 but still publishes approval.decided. Move final-contract body validation before approval SSE publish, add no-publish regression coverage, and rerun ASK-005 focused/adjacent tests. |
+| `EVO-001` | Sprint 6 / EPIC-EVOLUTION | EvolutionDecision service | - | Claude | Codex | in_progress | - | 2026-05-16 19:51:12 | EVO-001 implementation review: services/evolution/ service is fully implemented and committed. 57 tests pass. Creating evidence packet and preparing for Codex review. |
+| `SENT-001-SIDECAR-BFF-HANDOFF` | Sprint 6 / EPIC-EVOLUTION | [Sidecar] [Auto] [Parent SENT-001] Prepare SENT-001 BFF and frontend handoff packet | 平行支援 SENT-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Claude2 | Codex | review | - | 2026-05-16 19:42:34 | Commit 1f31fd5e staged and local. git push failed: HTTPS remote requires credentials not available in background worker. Branch bff-luv-fe-006-dev-deploy is ahead of origin; push_status: ahead. Handoff to Codex already recorded. Human push or SSH credential setup needed to publish. |
+| `ASK-004-SIDECAR-REVIEW` | Sprint 5 / EPIC-RESEARCH | [Sidecar] [Auto] [Parent ASK-004] Prepare ASK-004 review packet and evidence summary | 平行支援 ASK-004，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Codex | Claude | review_approved | - | 2026-05-16 19:46:36 | Sidecar review packet accurately summarizes ASK-004 done state, evidence map, and reviewer decision. Support-only scope confirmed; no canonical truth changed. Approved and returned to Codex for closeout. |
+| `ASK-005-SIDECAR-ACCEPTANCE` | Sprint 5 / EPIC-RESEARCH | [Sidecar] [Auto] [Parent ASK-005] Prepare ASK-005 acceptance packet and dependency map | 平行支援 ASK-005，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Codex | Claude | review_approved | - | 2026-05-16 19:47:10 | Sidecar acceptance packet is accurate and useful. The two reviewer attention items (escalate/freeze event type and approval replay de-dup) were valid and have been addressed in parent commit 73304fe0. Approved and returned to Codex for closeout. |
+| `EVO-001-SIDECAR-ACCEPTANCE` | Sprint 6 / EPIC-EVOLUTION | [Sidecar] [Auto] [Parent EVO-001] Prepare EVO-001 acceptance packet and dependency map | 平行支援 EVO-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Codex | Claude | review_approved | - | 2026-05-16 19:48:34 | Sidecar acceptance packet is accurate and useful as an EVO-001 owner review resource. Acceptance checklist is truthful, dependency map is complete, and scope questions are well-framed. Focused test suite verification (57 passed) confirmed. Support-only scope confirmed. Approved and returned to Codex for closeout. |
+| `ASK-005-SIDECAR-REVIEW` | Sprint 5 / EPIC-RESEARCH | [Sidecar] [Auto] [Parent ASK-005] Prepare ASK-005 review packet and evidence summary | 平行支援 ASK-005，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Codex | Claude | review_approved | - | 2026-05-16 19:47:49 | Sidecar review packet accurately records Codex blocking findings and current observed fixes. Reviewer attention point about parent commit durability is noted; parent fix commit 73304fe0 was recorded in the subsequent handoff. Support-only scope confirmed. Approved and returned to Codex for closeout. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
 | `EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE` | Gemini | Codex2 | Acceptance packet and dependency map for EP5-BROKER-TW-002 prepared at support/sidecars/EP5-BROKER-TW-002/EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE.md. Ready for review and incorporation into parent closeout. | pending | 2026-05-12 22:50:00 |
-| `ASK-005` | Claude | Codex2 | ASK-005 implementation complete. Commit 6c7484c1. Changes: (1) sem_agora_ask_create_session now publishes ask.session.started to the ask channel; (2) bff_approvals_decide publishes approval.decided (approve/reject) or approval.stage.changed (request_revision/escalate/freeze); role-gate failures do not publish. New test file: test_ask005_sse_event_publishing_contract.py (6 tests). Verification: pytest test_ask005_sse_event_publishing_contract.py → 6 passed; test_pkt005_sse_substrate_contract → 14 passed; test_bff_approvals_decide_contract + test_ask_001-003-004 → 113 passed. | pending | 2026-05-16 19:01:26 |
+| `SENT-001-SIDECAR-BFF-HANDOFF` | Claude2 | Codex | SENT-001-SIDECAR-BFF-HANDOFF v2 ready for re-review. Commit 1f31fd5e. Fixed: (1) §4.2 response-shape split into ok/degraded/unavailable — removed erroneous ok+degradation combination; source value corrected from 'incidents' to provenance tag explanation; (2) §5 Data Source Fallback Logic now distinguishes internal logical dataset selection from emitted dataset_source() provenance values — documents that 'incidents'/'sentinel_findings' are NOT emitted source strings, and maps frontend-relevant provenance values (missing → unavailable, local_snapshot → degraded); (3) §11 revision notes added. Support artifact only — no canonical or runtime files changed. | pending | 2026-05-16 19:41:51 |
+| `ASK-004-SIDECAR-REVIEW` | Claude | Codex | Sidecar review packet accurately summarizes ASK-004 done state, evidence map, and reviewer decision. Support-only scope confirmed; no canonical truth changed. Approved and returned to Codex for closeout. | pending | 2026-05-16 19:46:36 |
+| `ASK-005-SIDECAR-ACCEPTANCE` | Claude | Codex | Sidecar acceptance packet is accurate and useful. The two reviewer attention items (escalate/freeze event type and approval replay de-dup) were valid and have been addressed in parent commit 73304fe0. Approved and returned to Codex for closeout. | pending | 2026-05-16 19:47:10 |
+| `ASK-005-SIDECAR-REVIEW` | Claude | Codex | Sidecar review packet accurately records Codex blocking findings and current observed fixes. Reviewer attention point about parent commit durability is noted; parent fix commit 73304fe0 was recorded in the subsequent handoff. Support-only scope confirmed. Approved and returned to Codex for closeout. | pending | 2026-05-16 19:47:49 |
+| `EVO-001-SIDECAR-ACCEPTANCE` | Claude | Codex | Sidecar acceptance packet is accurate and useful as an EVO-001 owner review resource. Acceptance checklist is truthful, dependency map is complete, and scope questions are well-framed. Focused test suite verification (57 passed) confirmed. Support-only scope confirmed. Approved and returned to Codex for closeout. | pending | 2026-05-16 19:48:34 |
 
 ## Blockers
 
@@ -120,7 +128,10 @@ Last updated: 2026-05-16 19:08:07
 
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
-| _(none)_ | - | - | - |
+| `ASK-004-SIDECAR-REVIEW` | Claude | 審查通過。ASK-004 支援僅整理現有 archive/evidence/review 狀態；無 canonical/runtime/governance 改動；parent 已 done；sidecar 準確無誤。 | - |
+| `ASK-005-SIDECAR-ACCEPTANCE` | Claude | 審查通過。ASK-005 接受清單準確；兩個 attention 點（escalate/freeze 事件類型與 approval replay de-dup）在後續 parent commit 73304fe0 中已修正。 | - |
+| `EVO-001-SIDECAR-ACCEPTANCE` | Claude | 審查通過。EVO-001 接受清單及依賴圖準確；57 測試通過確認；scope 問題整理恰當；無 canonical/runtime/BFF 改動。 | - |
+| `ASK-005-SIDECAR-REVIEW` | Claude | 審查通過。review 封包準確記錄 Codex 阻斷事項及修正觀察結果；parent fix commit 73304fe0 已在後續 handoff 中記錄；無 canonical 改動。 | - |
 
 ## Lovable Coordination
 
@@ -191,23 +202,23 @@ Last updated: 2026-05-16 19:08:07
 
 ## Latest Checkpoints
 
-- 2026-05-16 19:05:56 Orchestrator: PreToolUse: Bash
-- 2026-05-16 19:06:28 Orchestrator: PostToolUse: Bash
-- 2026-05-16 19:06:35 Orchestrator: PreToolUse: Bash
-- 2026-05-16 19:06:43 Orchestrator: PostToolUse: Bash
-- 2026-05-16 19:06:53 Orchestrator: PreToolUse: Bash
-- 2026-05-16 19:07:01 Orchestrator: PreToolUse: Bash
-- 2026-05-16 19:07:01 Orchestrator: PostToolUse: Bash
-- 2026-05-16 19:07:22 Orchestrator: PreToolUse: Read
-- 2026-05-16 19:07:23 Orchestrator: PostToolUse: Read
-- 2026-05-16 19:07:24 Codex: `ASK-004` Closeout complete: task-scoped commit 439f7dbe records ASK-004 evidence closeout and Claude2 review artifact. Verification: py_compile main/read_store/ASK-004 test OK; ASK-004 contract tests 31 passed; ASK-003/CW04/PKT015 regression tests 38 passed. Reviewer Claude2 approved advisory-only memo publish boundary, stable published_at, first-publish ask.memo.published semantics, and registry visibility.
-- 2026-05-16 19:07:33 Orchestrator: PreToolUse: Edit
-- 2026-05-16 19:07:34 Orchestrator: PostToolUse: Edit
-- 2026-05-16 19:07:38 Orchestrator: PreToolUse: Bash
-- 2026-05-16 19:07:39 Orchestrator: PostToolUse: Bash
-- 2026-05-16 19:07:46 Orchestrator: PreToolUse: Bash
-- 2026-05-16 19:07:50 Orchestrator: PreToolUse: Bash
-- 2026-05-16 19:07:57 Orchestrator: PreToolUse: Bash
-- 2026-05-16 19:07:58 Orchestrator: PostToolUse: Bash
-- 2026-05-16 19:08:06 Orchestrator: PreToolUse: Bash
-- 2026-05-16 19:08:06 Claude2: `SENT-001` Closeout finalization: verified 16 SENT-001 contract tests + 33 loop/sentinel regression tests pass; OpenAPI /bff/v5/sentinel/findings correctly documents kind/status/severity query params (operationId: bff_v5_sentinel_findings_list_*). Implementation durable in commits 4050626a (OpenAPI fix + regression test), eda173a6 (contract tests), b5c1c434 (initial evidence). Closeout commit bd9a7351 adds final verification record.
+- 2026-05-16 19:50:31 Orchestrator: PostToolUse: Bash
+- 2026-05-16 19:50:33 Orchestrator: PostToolUse: Bash
+- 2026-05-16 19:50:33 Orchestrator: Chair review worker exited; supervisor will validate the review artifacts.
+- 2026-05-16 19:50:33 Orchestrator: `OPS-CHAIR-REVIEW` Gemini and Copilot are idle; underutilization at 0.1429; no global blocker; existing 5 sidecars are all in review and not generating new execution load.
+- 2026-05-16 19:50:33 Orchestrator: Approval deny for Bash (apr-20260516T113430Z-53278149)
+- 2026-05-16 19:50:34 Orchestrator: Approval deny for Bash (apr-20260516T113440Z-d24e78b2)
+- 2026-05-16 19:50:34 Orchestrator: Approval deny for Bash (apr-20260516T113457Z-ac238df7)
+- 2026-05-16 19:50:34 Orchestrator: Approval deny for Bash (apr-20260516T113631Z-6e4d91c2)
+- 2026-05-16 19:50:43 Orchestrator: PreToolUse: Read
+- 2026-05-16 19:50:43 Orchestrator: PostToolUse: Read
+- 2026-05-16 19:50:51 Orchestrator: PreToolUse: Bash
+- 2026-05-16 19:50:53 Orchestrator: PreToolUse: Bash
+- 2026-05-16 19:50:53 Orchestrator: PostToolUse: Bash
+- 2026-05-16 19:50:54 Orchestrator: PostToolUse: Bash
+- 2026-05-16 19:51:04 Orchestrator: PreToolUse: Bash
+- 2026-05-16 19:51:05 Orchestrator: PostToolUse: Bash
+- 2026-05-16 19:51:12 Orchestrator: PreToolUse: Bash
+- 2026-05-16 19:51:12 Claude: `EVO-001` EVO-001 implementation review: services/evolution/ service is fully implemented and committed. 57 tests pass. Creating evidence packet and preparing for Codex review.
+- 2026-05-16 19:51:39 Orchestrator: PostToolUse: Bash
+- 2026-05-16 19:51:40 Codex: `ASK-005` Changes requested by Codex in support/reviews/ASK-005-review-codex-r2.md (commit c548bdb2): invalid body idempotency currently returns 400 but still publishes approval.decided. Move final-contract body validation before approval SSE publish, add no-publish regression coverage, and rerun ASK-005 focused/adjacent tests.
