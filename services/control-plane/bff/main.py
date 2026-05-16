@@ -6112,6 +6112,8 @@ def _rw01_surface_state(
 
 _TW01_SESSION_STATUSES = {"active", "paused", "completed", "abandoned"}
 _TW04_REPLAY_TERMINAL_STATUSES = {"completed", "abandoned"}
+_TRN003_RAPID_EVAL_SCOPES = frozenset({"persona_patch", "strategy_patch", "feature_patch", "risk_patch"})
+_TRN003_RAPID_EVAL_ACTIVE_STATUSES = frozenset({"active", "paused"})
 
 
 def _tw04_get_candidate_snapshot_at(replay: Dict[str, Any]) -> Optional[str]:
@@ -8823,6 +8825,122 @@ async def discard_trainer_replay(
             "Trainer replay discard store is unavailable.",
         )
     return result
+
+
+@app.post("/api/v1/trainer/sessions/{session_id}/rapid-eval")
+async def create_rapid_eval(
+    session_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    eval_scope = str(payload.get("eval_scope") or "").strip().lower()
+    if not eval_scope or eval_scope not in _TRN003_RAPID_EVAL_SCOPES:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid eval_scope",
+            f"eval_scope must be one of {sorted(_TRN003_RAPID_EVAL_SCOPES)}",
+            precondition_failed="eval_scope",
+        )
+
+    dataset_version_id_raw = payload.get("dataset_version_id")
+    if not dataset_version_id_raw or not str(dataset_version_id_raw).strip():
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Missing required field: dataset_version_id",
+            "dataset_version_id must be a non-empty string",
+            precondition_failed="dataset_version_id",
+        )
+    dataset_version_id = str(dataset_version_id_raw).strip()
+
+    max_runtime_seconds_raw = payload.get("max_runtime_seconds")
+    try:
+        max_runtime_seconds = int(max_runtime_seconds_raw)
+        if max_runtime_seconds <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid max_runtime_seconds",
+            "max_runtime_seconds must be a positive integer",
+            precondition_failed="max_runtime_seconds",
+        )
+
+    patch_ref = str(payload["patch_ref"]).strip() if payload.get("patch_ref") else None
+    persona_id = str(payload["persona_id"]).strip() if payload.get("persona_id") else None
+    strategy_id = str(payload["strategy_id"]).strip() if payload.get("strategy_id") else None
+
+    session = read_store.get_trainer_session(session_id)
+    if not session:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Trainer session not found",
+            f"Trainer session {session_id} does not exist",
+        )
+
+    if str(session.get("status") or "").strip().lower() not in _TRN003_RAPID_EVAL_ACTIVE_STATUSES:
+        raise _bff_error(
+            409,
+            ErrorCode.INVALID_STATE,
+            "Trainer session cannot submit rapid eval",
+            "rapid-eval is only allowed while the trainer session status is active or paused",
+            precondition_failed="status",
+        )
+
+    result = read_store.create_rapid_eval(
+        session_id,
+        persona_id=persona_id,
+        strategy_id=strategy_id,
+        eval_scope=eval_scope,
+        patch_ref=patch_ref,
+        dataset_version_id=dataset_version_id,
+        max_runtime_seconds=max_runtime_seconds,
+        requested_by=identity.operator_id or "unknown",
+        requested_at=utc_now(),
+    )
+    if result is None:
+        raise _bff_error(
+            503,
+            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            "Rapid eval store unavailable",
+            "Rapid eval creation store is unavailable.",
+        )
+    return result
+
+
+@app.get("/api/v1/trainer/sessions/{session_id}/rapid-eval/{eval_id}")
+async def get_rapid_eval(
+    session_id: str,
+    eval_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    session = read_store.get_trainer_session(session_id)
+    if not session:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Trainer session not found",
+            f"Trainer session {session_id} does not exist",
+        )
+
+    record = read_store.get_rapid_eval(eval_id, snapshot_at=utc_now())
+    if not record or record.get("session_id") != session_id:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Rapid eval not found",
+            f"Rapid eval {eval_id} does not exist for trainer session {session_id}",
+        )
+    return record
 
 
 @app.get("/api/v1/capital-pools")
