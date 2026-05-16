@@ -3,10 +3,26 @@
 Task: SENT-001-SIDECAR-BFF-HANDOFF - BFF/frontend handoff packet
 Owner: Claude2
 Reviewer: Codex
-Review date: 2026-05-16
-Disposition: changes requested
+Review dates: 2026-05-16 initial review; 2026-05-16 v2 re-review
+Disposition: approved after v2 re-review
 
-## Finding
+## Re-review Decision
+
+Approved. Commit `1f31fd5e` resolves the prior response-shape/provenance
+finding without broadening scope beyond the sidecar support artifact.
+
+The packet now separates normal, degraded, and unavailable response states;
+documents `meta.degradation` as non-ok only; and explains that
+`meta.surfaces.sentinel_findings.source` is a read-store provenance tag rather
+than the internal logical dataset key. The frontend rendering guidance now
+matches `_sem_final_list_response(...)`, `_dataset_surface_status(...)`, and
+`ReadSurfaceStore.dataset_source(...)`.
+
+No blocking findings remain for `SENT-001-SIDECAR-BFF-HANDOFF`.
+
+## Initial Finding (Resolved)
+
+Status: resolved in commit `1f31fd5e`.
 
 1. `meta.surfaces.sentinel_findings.source` is documented as the logical data tier, but the BFF emits read-store provenance values.
    - Packet references: `support/sidecars/SENT-001/SENT-001-SIDECAR-BFF-HANDOFF.md:101`, `support/sidecars/SENT-001/SENT-001-SIDECAR-BFF-HANDOFF.md:171`
@@ -21,11 +37,15 @@ Required fix: update the response-shape example and Data Source Fallback Logic s
 ## Verification
 
 ```bash
-git show --check --stat 5d1ca2c7
-# sidecar commit adds only support/sidecars/SENT-001/SENT-001-SIDECAR-BFF-HANDOFF.md
+git show --check --stat 1f31fd5e
+# support-only sidecar update; no whitespace errors
 
 pytest services/control-plane/bff/test_sent001_sentinel_findings_contract.py -q
-# 16 passed in 18.20s
+# 16 passed in 25.87s
+
+pytest services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py \
+       services/control-plane/bff/test_read_store_loop_sentinel.py -q
+# 33 passed in 41.25s
 ```
 
 Additional review source checks:
