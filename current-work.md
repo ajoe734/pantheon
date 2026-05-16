@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-16 18:38:14
+Last updated: 2026-05-16 18:40:26
 
 ## Objective
 
@@ -52,8 +52,7 @@ Last updated: 2026-05-16 18:38:14
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | Gemini2 | blocked | - | - |
-| `TRN-004` | Sprint 5 / EPIC-RESEARCH | trainer commit / discard / replay | Codex | review | - | - |
-| `IMT-001` | Sprint 5 / EPIC-RESEARCH | TraderTrajectory schema | Codex | review_approved | - | - |
+| `TRN-004` | Sprint 5 / EPIC-RESEARCH | trainer commit / discard / replay | Codex | review_approved | - | - |
 | `IMT-004` | Sprint 5 / EPIC-RESEARCH | behavior policy artifact type registration | Codex | review_approved | - | - |
 | `ASK-002` | Sprint 5 / EPIC-RESEARCH | ConsultRequest / ConsultMemo schema | Codex | review | - | - |
 | `ASK-004` | Sprint 5 / EPIC-RESEARCH | memo publish to registry / review | Codex | in_progress | - | - |
@@ -72,11 +71,12 @@ Last updated: 2026-05-16 18:38:14
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-16 18:33:35
-- Terminal tasks archived: `1145` total, `1127` completed, `18` superseded
+- Archive updated: 2026-05-16 18:40:26
+- Terminal tasks archived: `1146` total, `1128` completed, `18` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `IMT-001` | Sprint 5 / EPIC-RESEARCH | TraderTrajectory schema | Codex | completed | 2026-05-16 18:40:26 | `ai-task-archive/tasks/IMT-001.json` |
 | `TRN-002` | Sprint 5 / EPIC-RESEARCH | trainer session endpoints | Codex | completed | 2026-05-16 18:33:35 | `ai-task-archive/tasks/TRN-002.json` |
 | `ASK-003` | Sprint 5 / EPIC-RESEARCH | ask / committee session lifecycle | Claude2 | completed | 2026-05-16 18:19:53 | `ai-task-archive/tasks/ASK-003.json` |
 | `IMT-002` | Sprint 5 / EPIC-RESEARCH | PreferenceExample / CorrectionTrace schema | Codex | completed | 2026-05-16 18:07:48 | `ai-task-archive/tasks/IMT-002.json` |
@@ -96,15 +96,13 @@ Last updated: 2026-05-16 18:38:14
 | `INC-001-RB` | Sprint 4 / EPIC-TELEMETRY | Claude2 reclaiming as original task owner for review_approved closeout; Codex implementation reviewed and approved. | Claude2 | completed | 2026-05-16 14:51:26 | `ai-task-archive/tasks/INC-001-RB.json` |
 | `DEP-002-RB` | Sprint 2 / EPIC-GOV-DEPLOY | DeploymentPlan stage planner (rebaseline) | Codex | completed | 2026-05-16 14:38:02 | `ai-task-archive/tasks/DEP-002-RB.json` |
 | `TEL-001-RB` | Sprint 4 / EPIC-TELEMETRY | TelemetryEvent canonical schema (rebaseline) | Codex | completed | 2026-05-16 14:37:31 | `ai-task-archive/tasks/TEL-001-RB.json` |
-| `CAP-002-RB` | Sprint 2 / EPIC-GOV-DEPLOY | Pool/runtime compatibility checks (rebaseline) | Codex | completed | 2026-05-16 14:30:13 | `ai-task-archive/tasks/CAP-002-RB.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | - | Gemini2 | Gemini | blocked | - | 2026-05-15 23:15:06 | Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check. |
-| `TRN-004` | Sprint 5 / EPIC-RESEARCH | trainer commit / discard / replay | - | Codex | Claude2 | review | - | 2026-05-16 18:34:56 | Chair reassigned review from Codex2 to Claude2: Codex2 is quota-terminal paused until 2026-05-18T23:40Z. Claude2 has execution/control-plane capability and just completed SENT-001 (adjacent training-session endpoint family); she is available after this chair review session. |
-| `IMT-001` | Sprint 5 / EPIC-RESEARCH | TraderTrajectory schema | - | Codex | Claude | review_approved | - | 2026-05-16 18:35:42 | Supervisor resumed IMT-001 for finalize after successful dispatch. |
+| `TRN-004` | Sprint 5 / EPIC-RESEARCH | trainer commit / discard / replay | - | Codex | Claude2 | review_approved | - | 2026-05-16 18:40:12 | Review approved: TRN-004 implementation correct and complete. 61 tests pass. Returning to owner Codex for closeout. |
 | `IMT-004` | Sprint 5 / EPIC-RESEARCH | behavior policy artifact type registration | - | Codex | Claude | review_approved | - | 2026-05-16 18:37:32 | Review approved: behavior_policy registered consistently across schema/model/adapter layers; governance non-live gate confirmed; all 116+ tests passed. Returning to owner Codex for closeout. |
 | `ASK-002` | Sprint 5 / EPIC-RESEARCH | ConsultRequest / ConsultMemo schema | - | Codex | Claude | review | - | 2026-05-16 18:26:42 | ASK-002 ready for review. Commit b23fb2e3 adds Draft-07 ConsultRequest/ConsultMemo schemas, schema load/validate helpers, memo-to-request lineage validation, tighter consultation model identity/confidence constraints, and evidence at support/evidence/ASK-002/README.md. Advisory-only boundary covered by tests rejecting direct deployment/broker side-effect fields. Verification: py_compile consultation models/main/store/client; pytest services/consultation/test_models.py -q (8 passed); pytest services/consultation/smoke_test.py services/consultation/test_postgres_store.py -q (8 passed); pytest services/consultation/test_compose_activation.py -q (1 passed); pytest services/control-plane/bff/test_cw01_consult_request_contract.py services/control-plane/bff/test_read_store_service_clients.py -q (10 passed). |
 | `ASK-004` | Sprint 5 / EPIC-RESEARCH | memo publish to registry / review | - | Codex | Claude2 | in_progress | - | 2026-05-16 18:38:14 | Validating inherited ASK-004 BFF committee memo publish implementation against focused tests before review handoff. |
@@ -121,10 +119,9 @@ Last updated: 2026-05-16 18:38:14
 |---|---|---|---|---|---|
 | `EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE` | Gemini | Codex2 | Acceptance packet and dependency map for EP5-BROKER-TW-002 prepared at support/sidecars/EP5-BROKER-TW-002/EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE.md. Ready for review and incorporation into parent closeout. | pending | 2026-05-12 22:50:00 |
 | `ASK-002` | Codex | Claude | ASK-002 ready for review. Commit b23fb2e3 adds Draft-07 ConsultRequest/ConsultMemo schemas, schema load/validate helpers, memo-to-request lineage validation, tighter consultation model identity/confidence constraints, and evidence at support/evidence/ASK-002/README.md. Advisory-only boundary covered by tests rejecting direct deployment/broker side-effect fields. Verification: py_compile consultation models/main/store/client; pytest services/consultation/test_models.py -q (8 passed); pytest services/consultation/smoke_test.py services/consultation/test_postgres_store.py -q (8 passed); pytest services/consultation/test_compose_activation.py -q (1 passed); pytest services/control-plane/bff/test_cw01_consult_request_contract.py services/control-plane/bff/test_read_store_service_clients.py -q (10 passed). | pending | 2026-05-16 18:26:42 |
-| `IMT-001` | Claude | Codex | 審查通過：schema、model、tests 均符合 IMT-001 治理要求，所有 10 個測試通過，返還 owner Codex 進行 closeout。 | pending | 2026-05-16 18:30:42 |
-| `TRN-004` | Codex2 | Claude2 | Chair reassigned review from Codex2 to Claude2: Codex2 is quota-terminal paused until 2026-05-18T23:40Z. Claude2 has execution/control-plane capability and just completed SENT-001 (adjacent training-session endpoint family); she is available after this chair review session. | pending | 2026-05-16 18:34:56 |
 | `LOOP-001-RB` | Codex2 | Codex | Chair reassigned review from Codex2 to Codex: Codex2 is quota-terminal paused until 2026-05-18T23:40Z. Codex is already reviewing SENT-001 in the same /bff/v5/ endpoint module and is the natural reviewer once SENT-001 completes. | pending | 2026-05-16 18:35:06 |
 | `IMT-004` | Claude | Codex | Review approved: behavior_policy registered consistently across schema/model/adapter layers; governance non-live gate confirmed; all 116+ tests passed. Returning to owner Codex for closeout. | pending | 2026-05-16 18:37:32 |
+| `TRN-004` | Claude2 | Codex | Review approved: TRN-004 implementation correct and complete. 61 tests pass. Returning to owner Codex for closeout. | pending | 2026-05-16 18:40:12 |
 
 ## Blockers
 
@@ -136,7 +133,7 @@ Last updated: 2026-05-16 18:38:14
 
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
-| `IMT-001` | Claude | 審查通過：IMT-001 TraderTrajectory schema 及 Python model 所有治理不變量均在 JSON Schema 與 dataclass 兩層正確執行；actor_role 限制為 operator/approver；promotion_state 排除 live；storage_ref checksum 格式強制 sha256 pattern；lineage.source_trace_refs 不可為空；no_order_reason 在 decision 與 step 兩層均強制執行；governance const 欄位以 identity check 驗證；to_dataset_session 與 DatasetBuildRequest 整合測試通過；10 個聚焦測試全數通過，所有治理邊界均覆蓋。最終收尾由 owner Codex 完成。 | support/reviews/IMT-001-review-claude.md |
+| `TRN-004` | Claude2 | 審查通過：TRN-004 commit 92784e26 正確實作 trainer replay 決策路徑強化。Idempotency-Key 與 X-Idempotency-Key 兩種 header 均支援；同 key / 同 payload 重試回傳現有決策，不重複附加 TeachingEvent；同 key / 不同 payload 回傳 409 conflict；commit 決策正確在 artifacts 與 event artifact_refs 兩層寫入 lineage_ref、lineage_edge_id、persona_policy_ref、route_policy_ref；discard 決策保持 after_artifact_ref 為 None、不寫 persona/route policy 欄位；evidence packet 在 support/evidence/TRN-004/README.md。61 個測試全數通過，治理不變量均覆蓋。最終收尾由 owner Codex 完成。 | support/reviews/TRN-004-review-claude2.md |
 | `IMT-004` | Claude | 審查通過：behavior_policy 在 registry schema、Python enum、adapter 輸出三層一致註冊；artifact_state=draft + lifecycle_state=draft 雙欄位相容正確；registry test 驗證 draft→candidate→approved 全程 deployment_stage=none，無 live 洩漏；contract.md 明確禁止直接上線；preference/correction 兩個 JSON schema 及 Python model 同步更新；45+3+17+51 pytest 全過，兩項 smoke test 通過。治理不變量全部成立，closeout 交還 owner Codex。 | support/reviews/IMT-004-review-claude.md |
 
 ## Lovable Coordination
@@ -208,23 +205,23 @@ Last updated: 2026-05-16 18:38:14
 
 ## Latest Checkpoints
 
-- 2026-05-16 18:36:48 Orchestrator: PreToolUse: Bash
-- 2026-05-16 18:37:01 Orchestrator: PreToolUse: Bash
-- 2026-05-16 18:37:03 Orchestrator: PostToolUse: Bash
-- 2026-05-16 18:37:03 Orchestrator: `ASK-002-SIDECAR-REVIEW` Supervisor auto-started ASK-002-SIDECAR-REVIEW after successful dispatch.
-- 2026-05-16 18:37:04 Orchestrator: `SENT-001-SIDECAR-BFF-HANDOFF` Paused new dispatches for gemini until 2026-05-16 18:52:04 after terminal quota failure: Capacity / rate limit failure
-- 2026-05-16 18:37:05 Orchestrator: PostToolUse: Bash
-- 2026-05-16 18:37:06 Orchestrator: PreToolUse: Bash
-- 2026-05-16 18:37:17 Orchestrator: PreToolUse: Write
-- 2026-05-16 18:37:18 Orchestrator: PostToolUse: Write
-- 2026-05-16 18:37:26 Orchestrator: `SENT-001-SIDECAR-BFF-HANDOFF` Auto-reassigned ownership from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Codex starts a fresh run.
-- 2026-05-16 18:37:26 Orchestrator: `ASK-002-SIDECAR-REVIEW` Paused new dispatches for copilot until 2026-05-16 18:52:26 after terminal quota failure: 402 You have no quota
-- 2026-05-16 18:37:31 Orchestrator: PreToolUse: Bash
-- 2026-05-16 18:37:32 Claude: `IMT-004` Review approved: behavior_policy registered consistently across schema/model/adapter layers; governance non-live gate confirmed; all 116+ tests passed. Returning to owner Codex for closeout.
-- 2026-05-16 18:37:51 Orchestrator: `ASK-002-SIDECAR-REVIEW` Auto-reassigned ownership from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota. Task returned to todo until Claude starts a fresh run.
-- 2026-05-16 18:37:58 Orchestrator: PostToolUse: Bash
-- 2026-05-16 18:38:02 Orchestrator: PreToolUse: Bash
-- 2026-05-16 18:38:05 Orchestrator: PostToolUse: Bash
-- 2026-05-16 18:38:10 Orchestrator: PreToolUse: Bash
-- 2026-05-16 18:38:11 Orchestrator: PostToolUse: Bash
-- 2026-05-16 18:38:14 Codex: `ASK-004` Validating inherited ASK-004 BFF committee memo publish implementation against focused tests before review handoff.
+- 2026-05-16 18:39:11 Orchestrator: PreToolUse: Bash
+- 2026-05-16 18:39:21 Orchestrator: PreToolUse: Bash
+- 2026-05-16 18:39:23 Orchestrator: PostToolUse: Bash
+- 2026-05-16 18:39:23 Orchestrator: PostToolUse: Bash
+- 2026-05-16 18:39:35 Orchestrator: PreToolUse: Bash
+- 2026-05-16 18:39:36 Orchestrator: PostToolUse: Bash
+- 2026-05-16 18:39:38 Orchestrator: PreToolUse: Bash
+- 2026-05-16 18:39:39 Orchestrator: PostToolUse: Bash
+- 2026-05-16 18:39:46 Orchestrator: PreToolUse: Bash
+- 2026-05-16 18:39:49 Orchestrator: PostToolUse: Bash
+- 2026-05-16 18:39:53 Orchestrator: PreToolUse: Bash
+- 2026-05-16 18:39:56 Orchestrator: PostToolUse: Bash
+- 2026-05-16 18:40:03 Orchestrator: Stop: Stop
+- 2026-05-16 18:40:03 Orchestrator: SessionEnd: SessionEnd
+- 2026-05-16 18:40:05 Orchestrator: PreToolUse: Write
+- 2026-05-16 18:40:05 Orchestrator: PostToolUse: Write
+- 2026-05-16 18:40:12 Orchestrator: PreToolUse: Bash
+- 2026-05-16 18:40:12 Claude2: `TRN-004` Review approved: TRN-004 implementation correct and complete. 61 tests pass. Returning to owner Codex for closeout.
+- 2026-05-16 18:40:24 Orchestrator: PostToolUse: Bash
+- 2026-05-16 18:40:26 Codex: `IMT-001` Closeout complete: implementation commit 98bf9db2 and review packet commit 5d931ac1 are durable. Verification rerun: py_compile trajectory model/test passed; json.tool trader_trajectory.schema.json passed; package export smoke passed; pytest services/research/imitation/test_trajectory_models.py -q (10 passed); pytest services/research/imitation -q (51 passed). Unrelated dirty worktree entries remain outside IMT-001.
