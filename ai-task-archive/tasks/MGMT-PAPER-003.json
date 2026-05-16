@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PAPER-003",
+  "archived_at": "2026-05-15T16:54:11Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PAPER-003",
+    "title": "paper DeploymentPlan packet",
+    "summary_zh": null,
+    "phase": "Track E / EPIC-02 Management Paper Loop Proof",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Closeout complete: deliverable committed as ce422637 and closeout marker 81973c1d records finalization after concurrent HEAD advance. Verified evidence writer PASS, direct unit run 37 PASS/0 FAIL, pytest 39 passed plus 3 subtests passed, py_compile passed, and git diff --check passed on task-owned files.",
+    "last_update": "2026-05-15T16:54:11Z",
+    "review_notes_zh": [
+      "審查通過：paper DeploymentPlan factory/test/evidence 符合 MGMT-PAPER-003 scope。",
+      "查核重點：none→paper activate DeploymentPlan、deploy_new_binding、capital_scale_pct=0.0、pantheon/lean bridge、live_broker_disabled、live_capital_binding_disabled、secrets_included=false 均通過；validation_errors 為空、safety_assertions 10 項全為 true；ooda_decide_ref 與 runtime_binding_input_ref 均存在供下游任務消費。",
+      "驗證命令：37/37 direct PASS；pytest 39 passed 3 subtests passed；py_compile passed；git diff --check passed。"
+    ],
+    "review_file": "support/reviews/MGMT-PAPER-003-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T16:54:11Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "merge/backend-dev-into-master",
+      "git_clean_required": false,
+      "commit": "81973c1d4e6228d42cb7e41e3850d8bcfd8b9804",
+      "commit_subject": "MGMT-PAPER-003 closeout marker",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-PAPER-003",
+        "Reviewer": "Claude",
+        "Deliverable-Commit": "ce422637",
+        "Reason": "HEAD advanced after the task-scoped deliverable commit because another worker committed MGMT-SYN-003 before status finalization. This marker keeps the final done delivery metadata task-scoped without rewriting unrelated history."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 46,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/master",
+      "ahead": 5,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PAPER-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T16:27:58Z",
+      "resolved_at": "2026-05-15T16:28:52Z"
+    },
+    {
+      "task_id": "MGMT-PAPER-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: added MGMT-PAPER-003 paper DeploymentPlan packet factory/test/evidence. Task-owned files: services/control-plane/governance/paper_deployment_plan.py, services/control-plane/governance/test_paper_deployment_plan.py, support/evidence/MGMT-PAPER-003-paper-deployment-plan.json. Creates approved StrategySpec registry projection from MGMT-PAPER-001/002, none->paper activate DeploymentPlan, deploy_new_binding, 0 live capital scale, runtime bootstrap preview with pantheon/lean bridge identity, no secrets, live broker disabled, and live capital binding disabled. Verification: PYTHONDONTWRITEBYTECODE=1 python3 services/control-plane/governance/test_paper_deployment_plan.py => 37 PASS; PYTHONDONTWRITEBYTECODE=1 python3 services/control-plane/governance/paper_deployment_plan.py => PASS and evidence written; PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/control-plane/governance/paper_deployment_plan.py services/control-plane/governance/test_paper_deployment_plan.py => passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/governance/test_paper_deployment_plan.py services/control-plane/governance/test_deployment_plan.py services/control-plane/governance/test_paper_approval_decision.py -q => 39 passed, 3 subtests passed; git diff --check on task-owned files => passed. Worktree has unrelated dirty files from other tasks; review only listed task-owned files.",
+      "status": "done",
+      "created_at": "2026-05-15T16:34:25Z",
+      "resolved_at": "2026-05-15T16:37:44Z"
+    },
+    {
+      "task_id": "MGMT-PAPER-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all MGMT-PAPER-003 paper DeploymentPlan invariants verified. Returning to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-05-15T16:37:44Z",
+      "resolved_at": "2026-05-15T16:54:12Z"
+    }
+  ],
+  "blockers": []
+}
