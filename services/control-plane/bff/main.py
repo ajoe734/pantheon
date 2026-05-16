@@ -18711,6 +18711,110 @@ async def bff_get_persona_audit(
     }
 
 
+@app.get("/bff/personas/{persona_id}/skills")
+async def bff_get_persona_skills(
+    persona_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: skills accessible to a persona, derived from capability snapshot (PER-002)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _ensure_persona_exists(persona_id)
+    snapshot_at = utc_now()
+    snapshot = read_store.get_capability_snapshot_for_persona(persona_id)
+    effective_skill_ids = list((snapshot or {}).get("effective_skills") or [])
+    all_skills = _merged_skill_records()
+    skill_by_id: Dict[str, Dict[str, Any]] = {
+        str(s.get("skill_id") or s.get("id") or ""): s
+        for s in all_skills
+        if s.get("skill_id") or s.get("id")
+    }
+    items: List[Dict[str, Any]] = []
+    for sid in effective_skill_ids:
+        sid = str(sid)
+        record = skill_by_id.get(sid)
+        if record:
+            items.append(dict(record))
+        else:
+            items.append({"skill_id": sid, "id": sid, "name": sid, "status": "active"})
+    return {
+        "data": items,
+        "items": items,
+        "page_info": {"next_page_token": None, "total": len(items)},
+        "meta": _read_surface_meta(
+            "capability_snapshots", "persona_skills",
+            snapshot_at=snapshot_at, total=len(items),
+        ),
+    }
+
+
+@app.get("/bff/personas/{persona_id}/tools")
+async def bff_get_persona_tools(
+    persona_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: tools accessible to a persona, derived from capability snapshot (PER-002)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _ensure_persona_exists(persona_id)
+    snapshot_at = utc_now()
+    snapshot = read_store.get_capability_snapshot_for_persona(persona_id)
+    effective_tool_ids = list((snapshot or {}).get("effective_tools") or [])
+    all_tools = _merged_tool_records()
+    tool_by_id: Dict[str, Dict[str, Any]] = {
+        str(t.get("tool_id") or t.get("id") or ""): t
+        for t in all_tools
+        if t.get("tool_id") or t.get("id")
+    }
+    items: List[Dict[str, Any]] = []
+    for tid in effective_tool_ids:
+        tid = str(tid)
+        record = tool_by_id.get(tid)
+        if record:
+            items.append(dict(record))
+        else:
+            items.append({"tool_id": tid, "id": tid, "name": tid, "status": "active"})
+    return {
+        "data": items,
+        "items": items,
+        "page_info": {"next_page_token": None, "total": len(items)},
+        "meta": _read_surface_meta(
+            "capability_snapshots", "persona_tools",
+            snapshot_at=snapshot_at, total=len(items),
+        ),
+    }
+
+
+@app.get("/bff/personas/{persona_id}/capabilities")
+async def bff_get_persona_capabilities_surface(
+    persona_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: capability snapshot surface for a persona (PER-002 read surface)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _ensure_persona_exists(persona_id)
+    snapshot_at = utc_now()
+    snapshot = read_store.get_capability_snapshot_for_persona(persona_id)
+    data: Dict[str, Any] = {
+        "personaId": persona_id,
+        "effectiveSkills": (snapshot or {}).get("effective_skills") or [],
+        "effectiveTools": (snapshot or {}).get("effective_tools") or [],
+        "effectiveWorkflows": (snapshot or {}).get("effective_workflows") or [],
+        "restrictions": (snapshot or {}).get("restrictions") or [],
+        "generatedAt": (snapshot or {}).get("generated_at"),
+        "sourceRefs": (snapshot or {}).get("source_refs") or [],
+        "snapshotId": (snapshot or {}).get("snapshot_id"),
+    }
+    return {
+        "data": data,
+        "meta": _read_surface_meta(
+            "capability_snapshots", "persona_capabilities",
+            snapshot_at=snapshot_at,
+        ),
+    }
+
+
 @app.post("/bff/personas/{persona_id}/actions/{action_id}", status_code=202)
 async def bff_persona_action(
     persona_id: str,
@@ -21413,6 +21517,49 @@ async def bff_skill_sandbox_eval(
 _GOV_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 _GOV_BFF_INCIDENT_OVERLAY: Dict[str, Dict[str, Any]] = {}
 
+_INCIDENT_CASE_ALIAS_FIELDS = {
+    "binding_id": ("binding_id", "runtime_binding_id"),
+    "deployment_stage": ("deployment_stage", "deployment_mode"),
+    "deployment_plan_id": ("deployment_plan_id", "plan_id"),
+    "capital_pool_id": ("capital_pool_id", "affected_pool_id"),
+    "persona_capital_binding_id": ("persona_capital_binding_id",),
+    "artifact_id": ("artifact_id",),
+    "artifact_version": ("artifact_version",),
+    "runtime_id": ("runtime_id",),
+    "trace_id": ("trace_id", "correlation_id"),
+}
+
+
+def _first_present(payload: Dict[str, Any], keys: tuple[str, ...]) -> Any:
+    for key in keys:
+        value = payload.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _project_bff_incident_case(incident: Dict[str, Any]) -> Dict[str, Any]:
+    payload = dict(incident)
+    incident_id = str(payload.get("incident_id") or payload.get("id") or "")
+    if incident_id:
+        payload["id"] = payload.get("id") or incident_id
+        payload["incident_id"] = incident_id
+
+    for field, aliases in _INCIDENT_CASE_ALIAS_FIELDS.items():
+        value = _first_present(payload, aliases)
+        if value is not None:
+            payload[field] = value
+
+    created_at = payload.get("created_at") or payload.get("opened_at")
+    if created_at:
+        payload["created_at"] = created_at
+        payload["opened_at"] = payload.get("opened_at") or created_at
+
+    if not payload.get("lineage_ref") and payload.get("artifact_id") and payload.get("artifact_version"):
+        payload["lineage_ref"] = f"{payload['artifact_id']}@{payload['artifact_version']}"
+
+    return payload
+
 
 def _bff_incident_matches_filters(
     incident: Dict[str, Any],
@@ -21425,9 +21572,9 @@ def _bff_incident_matches_filters(
         requested_statuses = {token.strip().lower() for token in status.split(",") if token.strip()}
         if str(incident.get("status") or "").lower() not in requested_statuses:
             return False
-    if severity and incident.get("severity") != severity:
+    if severity and str(incident.get("severity") or "").lower() != severity.lower():
         return False
-    if affected_pool_id and incident.get("capital_pool_id") != affected_pool_id:
+    if affected_pool_id and (incident.get("capital_pool_id") or incident.get("affected_pool_id")) != affected_pool_id:
         return False
     return True
 
@@ -21438,7 +21585,14 @@ def _list_bff_incidents(
     severity: Optional[str] = None,
     affected_pool_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    incidents = list(read_store.list_incidents(status=status, severity=severity, affected_pool_id=affected_pool_id))
+    incidents = [
+        _project_bff_incident_case(incident)
+        for incident in read_store.list_incidents(
+            status=status,
+            severity=severity,
+            affected_pool_id=affected_pool_id,
+        )
+    ]
     seen = {str(item.get("incident_id") or item.get("id") or "") for item in incidents}
     for incident_id, incident in _GOV_BFF_INCIDENT_OVERLAY.items():
         if incident_id in seen:
@@ -21449,16 +21603,16 @@ def _list_bff_incidents(
             severity=severity,
             affected_pool_id=affected_pool_id,
         ):
-            incidents.append(dict(incident))
+            incidents.append(_project_bff_incident_case(incident))
     return sorted(incidents, key=lambda item: str(item.get("created_at") or item.get("submitted_at") or ""), reverse=True)
 
 
 def _get_bff_incident(incident_id: str) -> Optional[Dict[str, Any]]:
     incident = read_store.get_incident(incident_id)
     if incident:
-        return incident
+        return _project_bff_incident_case(incident)
     overlay = _GOV_BFF_INCIDENT_OVERLAY.get(incident_id)
-    return dict(overlay) if overlay else None
+    return _project_bff_incident_case(overlay) if overlay else None
 
 
 def _gov_bff_action_command(
@@ -22079,21 +22233,32 @@ async def bff_list_incidents(
     snapshot_at = utc_now()
     surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
     incidents = _list_bff_incidents(status=status, severity=severity, affected_pool_id=affected_pool_id)
+    total = len(incidents)
     if surface.get("status") == "unavailable":
         incidents = []
         next_page_token = None
+        total = 0
     else:
         incidents, next_page_token = _page_slice(incidents, page_token, page_size)
 
     meta = _snapshot_meta(snapshot_at)
     meta["surfaces"] = {"incidents": surface}
+    meta["total"] = total
     staleness = _meta_staleness()
     if staleness is not None:
         meta["staleness"] = staleness
+    degradation_reason = _surface_degradation_reason(
+        surface,
+        degraded_reason="Incident list is degraded and may be stale.",
+        unavailable_reason="Incident list is currently unavailable.",
+    )
+    if degradation_reason is not None:
+        meta["degradation"] = {"reason": degradation_reason}
 
     return {
+        "data": incidents,
         "items": incidents,
-        "page_info": {"next_page_token": next_page_token},
+        "page_info": {"next_page_token": next_page_token, "total": total},
         "meta": meta,
     }
 
@@ -22132,12 +22297,13 @@ async def bff_create_incident(
 
     incident_id = str(payload.get("incident_id") or payload.get("id") or uuid.uuid4())
     submitted_at = utc_now()
-    result = {
+    result = _project_bff_incident_case({
+        **payload,
         "id": incident_id,
         "incident_id": incident_id,
-        "status": "open",
+        "status": payload.get("status") or "open",
         "submitted_at": submitted_at,
-        "created_at": submitted_at,
+        "created_at": payload.get("created_at") or payload.get("opened_at") or submitted_at,
         "updated_at": submitted_at,
         "submitted_by": identity.operator_id,
         "title": payload.get("title") or "Untitled Incident",
@@ -22145,13 +22311,14 @@ async def bff_create_incident(
         "capital_pool_id": payload.get("capital_pool_id") or payload.get("affected_pool_id"),
         "runtime_id": payload.get("runtime_id"),
         "correlation_id": payload.get("correlation_id") or incident_id,
+        "trace_id": payload.get("trace_id") or payload.get("correlation_id") or incident_id,
         "audit_ref": {
             "target_type": "Incident",
             "target_id": incident_id,
             "href": f"/bff/audit/entities/Incident/{incident_id}",
         },
         "meta": {"idempotency_key": resolved_key},
-    }
+    })
     _GOV_BFF_INCIDENT_OVERLAY[incident_id] = result
     _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": req_hash, "result": result}
     return result
@@ -22167,8 +22334,11 @@ async def bff_get_incident(
     _require_read_role(identity)
 
     clean_id = incident_id.strip()
+    snapshot_at = utc_now()
+    surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
     incident = _get_bff_incident(clean_id)
     if not incident:
+        _raise_if_read_surface_unavailable(surface, label="Incident")
         raise _bff_error(
             404,
             ErrorCode.OBJECT_NOT_FOUND,
@@ -22176,10 +22346,9 @@ async def bff_get_incident(
             f"Incident {incident_id} does not exist",
         )
 
-    snapshot_at = utc_now()
     return {
         "data": incident,
-        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
+        "meta": _read_surface_meta("incidents", "incident", snapshot_at=snapshot_at, surface=surface),
     }
 
 
@@ -22202,8 +22371,11 @@ async def bff_incident_action(
     except Exception:
         pass
     clean_id = incident_id.strip()
+    snapshot_at = utc_now()
+    surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
     incident = _get_bff_incident(clean_id)
     if not incident:
+        _raise_if_read_surface_unavailable(surface, label="Incident")
         raise _bff_error(
             404,
             ErrorCode.OBJECT_NOT_FOUND,
