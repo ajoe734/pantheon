@@ -12,9 +12,11 @@ from .base import (
     LicensePolicy,
     RateLimitPolicy,
     SourceConnector,
+    SourceConnectorProvider,
     SourceMetadata,
     SourceRecord,
 )
+from .paper import OpenAlexPaperIngestAdapter
 
 
 @dataclass(frozen=True)
@@ -107,7 +109,7 @@ class ExternalFeedProviderExample:
         }
 
 
-def example_provider_catalog() -> tuple[StaticRecordsProviderExample, ExternalFeedProviderExample]:
+def example_provider_catalog() -> tuple[SourceConnectorProvider, ...]:
     return (
         StaticRecordsProviderExample(
             connector_id="example-static-notes",
@@ -127,16 +129,11 @@ def example_provider_catalog() -> tuple[StaticRecordsProviderExample, ExternalFe
                 tags=("example", "static_records"),
             ),
         ),
-        ExternalFeedProviderExample(
+        OpenAlexPaperIngestAdapter(
             connector_id="example-openalex-feed",
-            source_type="paper",
-            provider="OpenAlex feed example",
-            license_scope="open",
-            url="https://api.openalex.org/works",
-            allowed_url_prefixes=("https://api.openalex.org/",),
             max_records=25,
             source_metadata=SourceMetadata(
-                display_name="OpenAlex external feed example",
+                display_name="OpenAlex paper ingest example",
                 homepage_url="https://openalex.org",
                 docs_url="https://docs.openalex.org",
                 owner="OpenAlex",

@@ -20,6 +20,7 @@ from .base import (
     SourceType,
 )
 from .examples import ExternalFeedProviderExample, StaticRecordsProviderExample, example_provider_catalog
+from .paper import OpenAlexPaperIngestAdapter
 
 __all__ = [
     "AuthPolicy",
@@ -40,6 +41,7 @@ __all__ = [
     "SourceRecordStatus",
     "SourceType",
     "ExternalFeedProviderExample",
+    "OpenAlexPaperIngestAdapter",
     "StaticRecordsProviderExample",
     "example_provider_catalog",
 ]
