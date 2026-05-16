@@ -1,9 +1,10 @@
 # Qlib Integration — Governance Overlay
 
-Last updated: 2026-05-01
-Owner: P2-QLIB-PROD-DATA-ACTIVATION-001 (Codex2)
+Last updated: 2026-05-16
+Task: QLIB-001
+Owner: Gemini
 Reviewer: Claude
-Status: governed runtime and production-data packet boundary documented
+Status: governed runtime and production-data packet boundary re-verified for Sprint 5
 Related task: `LP-003`
 
 ## 1. Governance Principle
