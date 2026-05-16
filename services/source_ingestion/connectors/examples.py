@@ -12,9 +12,12 @@ from .base import (
     LicensePolicy,
     RateLimitPolicy,
     SourceConnector,
+    SourceConnectorProvider,
     SourceMetadata,
     SourceRecord,
 )
+from .paper import OpenAlexPaperIngestAdapter
+from .repo_allowlist import RepoAllowlistProvider
 
 
 @dataclass(frozen=True)
@@ -107,7 +110,7 @@ class ExternalFeedProviderExample:
         }
 
 
-def example_provider_catalog() -> tuple[StaticRecordsProviderExample, ExternalFeedProviderExample]:
+def example_provider_catalog() -> tuple[SourceConnectorProvider, ...]:
     return (
         StaticRecordsProviderExample(
             connector_id="example-static-notes",
@@ -127,16 +130,11 @@ def example_provider_catalog() -> tuple[StaticRecordsProviderExample, ExternalFe
                 tags=("example", "static_records"),
             ),
         ),
-        ExternalFeedProviderExample(
+        OpenAlexPaperIngestAdapter(
             connector_id="example-openalex-feed",
-            source_type="paper",
-            provider="OpenAlex feed example",
-            license_scope="open",
-            url="https://api.openalex.org/works",
-            allowed_url_prefixes=("https://api.openalex.org/",),
             max_records=25,
             source_metadata=SourceMetadata(
-                display_name="OpenAlex external feed example",
+                display_name="OpenAlex paper ingest example",
                 homepage_url="https://openalex.org",
                 docs_url="https://docs.openalex.org",
                 owner="OpenAlex",
@@ -232,6 +230,24 @@ def example_provider_catalog() -> tuple[StaticRecordsProviderExample, ExternalFe
                 "entitlement_tags": ["example-alpha-research"],
                 "access_scope": ["research"],
             },
+        ),
+        RepoAllowlistProvider(
+            connector_id="example-github-repo-allowlist",
+            allowlist=(
+                {
+                    "repo_full_name": "QuantConnect/Lean",
+                    "allowed_paths": ("Algorithm.Python/", "Research/", "Documentation/"),
+                    "ref": "master",
+                    "purpose": "official LEAN research examples and bridge reference",
+                },
+            ),
+            source_metadata=SourceMetadata(
+                display_name="GitHub repo allowlist example",
+                homepage_url="https://github.com/QuantConnect/Lean",
+                docs_url="https://docs.github.com/rest",
+                owner="pantheon-source-ingest",
+                tags=("example", "repo", "allowlist"),
+            ),
         ),
     )
 

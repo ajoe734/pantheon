@@ -22,6 +22,7 @@ from .models import (
     VetoRecord,
     CommitteeReferral,
     SynthesisError,
+    validate_allocation_policy_artifact_json,
     validate_persona_allocation_proposal_json,
 )
 from .conflict_classifier import (
@@ -51,5 +52,6 @@ __all__ = [
     "PoolRiskPolicy",
     "PortfolioSynthesizer",
     "classify_allocation_conflicts",
+    "validate_allocation_policy_artifact_json",
     "validate_persona_allocation_proposal_json",
 ]

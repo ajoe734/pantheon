@@ -16,6 +16,8 @@ The service exposes two canonical surfaces:
 
 - `DEP-001` `DeploymentPlan` create / validate / read / status APIs
 - `DEP-002` deployment saga dispatch / progress / outbox / inbox APIs
+- `DEP-003` deployment projection read model APIs
+- `CAP-002-RB` pool/runtime compatibility preflight API
 
 The governing semantics still come from:
 
@@ -38,6 +40,8 @@ This service owns the deployable HTTP surface and file-backed persistence only.
 | DeploymentSaga bootstrap + local outbox append | **Deployment Service** via canonical `DeploymentSagaStore` |
 | Inbox dedupe / per-saga ordering receipts | **Deployment Service** |
 | Compensation decision derivation | **Deployment Service** via canonical DEP-002 policy logic |
+| Deployment projection read model | **Deployment Service** derived-only composition |
+| Pool/runtime compatibility preflight | **Deployment Service** read-only composition over capital and runtime snapshots |
 | ApprovalDecision lifecycle | `services/governance/` |
 | Registry artifact lifecycle | `services/registry/` |
 | RuntimeBinding writes / execution | Runtime Manager / execution plane |
@@ -93,6 +97,91 @@ Response:
 
 When validation fails, `ok = false`, `plan = null`, and `errors[]` contains the
 planner / validation failures.
+
+---
+
+### `POST /api/deployment/stage-planner/check`
+
+Focused DEP-002-RB stage-rule check for callers that need planner truth before
+they have a full registry / approval payload.
+
+Request body:
+
+- `current_stage` (required; `none`, `paper`, `canary`, `live`, or `frozen`)
+- `target_stage` (required; `none`, `paper`, `canary`, `live`, or `frozen`)
+- optional `rollback_action` (`replace`, `pause_then_replace`, or
+  `liquidate_then_replace`)
+- optional `scale` override to check stage-specific scale caps
+
+Response fields:
+
+- `ok`
+- `ruleset = DEP-002-RB-stage-planner-v1`
+- `transition_type`
+- `runtime_action`
+- `rollback_required`
+- `default_scale`
+- `effective_scale`
+- `errors[]`
+
+Rules checked:
+
+- forbidden transitions such as `none -> canary`, `paper -> live`, and no-op
+  stage changes
+- active targets (`paper`, `canary`, `live`) require rollback linkage
+- rollback action controls rollback-transition runtime action
+- paper / canary / live / frozen scale defaults and hard caps
+
+This route is read-only and never creates a `DeploymentPlan`.
+
+---
+
+### `POST /api/deployment/plans/compatibility-check`
+
+Read-only preflight for DeploymentPlan approval. The route checks:
+
+- `CapitalPool` exists and has governance `status = active`
+- the sponsoring persona has an active `PersonaCapitalBinding` for the pool
+- the binding's `allowed_deployment_scope` permits target `paper`, `canary`, or
+  `live`
+- the current RuntimeBinding snapshot does not violate the pool's
+  `single_runtime_enforced` invariant
+
+Request body:
+
+- `capital_pool_id` (required)
+- `target_stage` (required; `paper`, `canary`, or `live` for this preflight)
+- `sponsor_persona_id` (required for compatibility truth; missing value returns
+  `ok = false`)
+
+Response fields:
+
+- `ok`
+- pool facts: `pool_found`, `pool_status`, `pool_active`,
+  `single_runtime_enforced`
+- persona facts: `persona_binding_found`, `persona_scope_ok`,
+  `persona_binding_id`, `allowed_deployment_scope`
+- runtime facts: `active_runtime_binding_count`,
+  `active_runtime_binding_ids`, `single_runtime_ok`
+- `errors[]` and `warnings[]`
+
+Read-only rule:
+
+- this route never writes `CapitalPool`, `PersonaCapitalBinding`,
+  `DeploymentPlan`, or `RuntimeBinding`
+- exactly one active RuntimeBinding is reported as compatible with the current
+  pool invariant but emits a warning because dispatch must use the appropriate
+  replace/freeze/resume/rollback path instead of creating a second active
+  binding
+
+Snapshot lookup:
+
+- `capital_pools.json` and `persona_capital_bindings.json` come from
+  `CAPITAL_DATA_DIR`, then `DEPLOYMENT_DATA_DIR`, then
+  `PANTHEON_GOVERNANCE_DATA_DIR`, then `/tmp/pantheon/governance`
+- RuntimeBinding lookup uses `PANTHEON_RUNTIME_BINDING_STORE_PATH` when present,
+  then `${PANTHEON_RUNTIME_DATA_DIR}/runtime_bindings.json`, then
+  `/tmp/pantheon/runtime-manager/bindings.json`
 
 ---
 
@@ -214,6 +303,56 @@ Read-model rule:
 - if at least one plan is `executed`, `current_stage` becomes the newest
   executed plan's `target_stage`
 - otherwise `current_stage` reflects the newest plan's `current_stage`
+
+---
+
+### `GET /api/deployment/projections`
+
+List DEP-003 deployment projection read models.
+
+Supported filters:
+
+- `strategy_id`
+- `capital_pool_id`
+- `target_stage`
+- `status`
+
+Response shape:
+
+- `projection_contract = DEP-003`
+- `derived_only = true`
+- plan identity, artifact, approval, stage, status, and lifecycle summary fields
+- `source_status` for `deployment_plan`, `approval_decision`, `registry_entry`,
+  `execution_projection`, `deployment_saga`, and `runtime_binding`
+- embedded `plan`
+- optional embedded `approval_decision`, `runtime_binding`, `deployment_saga`,
+  and `execution_projection`
+
+Read-model rule:
+
+- `DeploymentPlan` remains the only deployment-plan truth
+- `ApprovalDecision`, registry snapshot, runtime binding, and saga state are
+  joined read-only when their stores are available
+- `actual_stage` comes from RuntimeBinding when present, otherwise from executed
+  plan state, otherwise from `DeploymentPlan.current_stage`
+- `projected_stage` is always `DeploymentPlan.target_stage`
+- the projection never writes plan, approval, runtime, registry, or saga records
+
+RuntimeBinding lookup uses `PANTHEON_RUNTIME_BINDING_STORE_PATH` when present,
+then `${PANTHEON_RUNTIME_DATA_DIR}/runtime_bindings.json`, then
+`/tmp/pantheon/runtime-manager/bindings.json`.
+
+### `GET /api/deployment/projections/{plan_id}`
+
+Fetch one DEP-003 projection by deployment plan id.
+
+Alias:
+
+- `GET /api/deployment/plans/{plan_id}/projection`
+
+Errors:
+
+- `404 Not Found` when the plan does not exist
 
 ---
 

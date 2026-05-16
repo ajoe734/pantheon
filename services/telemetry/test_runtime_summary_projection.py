@@ -34,6 +34,26 @@ def _event(event_type: str = "heartbeat", *, created_at: str = "2026-05-01T00:00
     }
 
 
+def _runtime_heartbeat_event():
+    event = _event(created_at="2026-05-01T00:00:05Z")
+    event["metrics"].update({"queue_lag_ms": 3, "event_delivery_lag_ms": 8})
+    event["metadata"].update(
+        {
+            "source_type": "runtime_heartbeat",
+            "runtime_heartbeat": {
+                "connectivity_status": "connected",
+                "broker_status": "ok",
+                "queue_lag_ms": 3,
+                "event_delivery_lag_ms": 8,
+                "health_summary": {"runtime": "ok"},
+            },
+            "connectivity_status": "connected",
+            "broker_status": "ok",
+        }
+    )
+    return event
+
+
 class RuntimeSummaryProjectionStoreTest(unittest.TestCase):
     def test_heartbeat_updates_runtime_summary_identity_and_bridge(self):
         store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
@@ -49,6 +69,19 @@ class RuntimeSummaryProjectionStoreTest(unittest.TestCase):
         self.assertEqual(summary["engine_bridge_repo"], "ajoe734/pantheon-lean.git")
         self.assertEqual(summary["engine_bridge_commit"], "abc1234")
         self.assertEqual(summary["health_summary"]["telemetry"], "ok")
+
+    def test_runtime_heartbeat_status_fields_are_projected(self):
+        store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+
+        summary = store.project_event(_runtime_heartbeat_event())
+
+        self.assertEqual(summary["last_heartbeat_at"], "2026-05-01T00:00:05Z")
+        self.assertEqual(summary["connectivity_status"], "connected")
+        self.assertEqual(summary["broker_status"], "ok")
+        self.assertEqual(summary["queue_lag_ms"], 3)
+        self.assertEqual(summary["event_delivery_lag_ms"], 8)
+        self.assertEqual(summary["reported_health_summary"], {"runtime": "ok"})
+        self.assertEqual(summary["health_summary"]["broker"], "ok")
 
     def test_deploy_completed_sets_runtime_active_without_fabricating_heartbeat(self):
         store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)

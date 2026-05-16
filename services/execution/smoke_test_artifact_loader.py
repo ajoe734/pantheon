@@ -86,7 +86,8 @@ def run_smoke() -> None:
         execution_mode=ExecutionMode.LIVE,
     )
 
-    assert loaded.metadata["promotion_state"] == "live"
+    assert loaded.metadata["deployment_stage"] == "live"
+    assert loaded.metadata["artifact_state"] == "approved"
     assert loaded.metadata["rollback"]["target_version"] == "1.3.0"
     assert loaded.payload == artifact_bytes
     assert loaded.artifact_path is None

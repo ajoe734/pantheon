@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "task_id": "MGMT-SAFE-001",
+  "archived_at": "2026-05-15T15:59:51Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-SAFE-001",
+    "title": "live broker disabled smoke",
+    "summary_zh": null,
+    "phase": "Track E / EPIC-07 Safety / Fail-Closed Regression",
+    "owner": "Gemini2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Finalizing MGMT-SAFE-001: smoke script verified and evidence committed.",
+    "last_update": "2026-05-15T15:59:51Z",
+    "review_notes_zh": [
+      "審查通過：scripts/run_live_broker_disabled_smoke.py 驗證 live runtime_config.live_broker_enabled=True 會被 BootstrapContractError 拒絕，且 live 預設 request.runtime_config.live_broker_enabled=false。",
+      "Reviewer verification: PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_live_broker_disabled_smoke.py -> 1 passed；PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services.execution.lean_runtime.test_bootstrap_contract -q -> 8 passed；PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services.execution.lean_runtime.test_paper_runtime_smoke.PaperRuntimeSmokeTest.test_live_broker_enabled_flag_is_rejected_by_p0_contract services.execution.lean_runtime.test_paper_runtime_smoke.PaperRuntimeSmokeTest.test_live_bootstrap_is_health_only -q -> 2 passed；py_compile passed。",
+      "Closeout note: commit 67c94c8c contains the SAFE-001 smoke script but also unrelated MGMT-PAPER-005 telemetry files; finalization should scope its delivery summary to the live-broker smoke and avoid treating those paper telemetry files as SAFE-001 artifacts."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T15:59:51Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "merge/backend-dev-into-master",
+      "git_clean_required": false,
+      "commit": "b3b959d5c4032a125a752cdc5822fb9155c88498",
+      "commit_subject": "[MGMT-SAFE-001] Create closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Gemini2",
+        "Task-ID": "MGMT-SAFE-001",
+        "Reviewer": "Codex",
+        "Verification": "Verified smoke scripts and regression tests."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 29,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/master",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-SAFE-001",
+      "from": "Gemini2",
+      "to": "Codex",
+      "message": "Implemented smoke test for live broker disabled verification. Ready for review.",
+      "status": "done",
+      "created_at": "2026-05-15T15:22:39Z",
+      "resolved_at": "2026-05-15T15:39:22Z"
+    },
+    {
+      "task_id": "MGMT-SAFE-001",
+      "from": "Codex",
+      "to": "Gemini2",
+      "message": "Review approved: live broker disabled smoke passes focused verification. Owner should finalize with a SAFE-001-scoped closeout and note that commit 67c94c8c also contains unrelated MGMT-PAPER-005 files.",
+      "status": "done",
+      "created_at": "2026-05-15T15:39:22Z",
+      "resolved_at": "2026-05-15T15:59:52Z"
+    }
+  ],
+  "blockers": []
+}

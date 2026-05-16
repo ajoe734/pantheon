@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "IMT-001",
+  "archived_at": "2026-05-16T10:40:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "IMT-001",
+    "title": "TraderTrajectory schema",
+    "summary_zh": null,
+    "phase": "Sprint 5 / EPIC-RESEARCH",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Closeout complete: implementation commit 98bf9db2 and review packet commit 5d931ac1 are durable. Verification rerun: py_compile trajectory model/test passed; json.tool trader_trajectory.schema.json passed; package export smoke passed; pytest services/research/imitation/test_trajectory_models.py -q (10 passed); pytest services/research/imitation -q (51 passed). Unrelated dirty worktree entries remain outside IMT-001.",
+    "last_update": "2026-05-16T10:40:26Z",
+    "review_notes_zh": [
+      "審查通過：IMT-001 TraderTrajectory schema 及 Python model 所有治理不變量均在 JSON Schema 與 dataclass 兩層正確執行；actor_role 限制為 operator/approver；promotion_state 排除 live；storage_ref checksum 格式強制 sha256 pattern；lineage.source_trace_refs 不可為空；no_order_reason 在 decision 與 step 兩層均強制執行；governance const 欄位以 identity check 驗證；to_dataset_session 與 DatasetBuildRequest 整合測試通過；10 個聚焦測試全數通過，所有治理邊界均覆蓋。最終收尾由 owner Codex 完成。"
+    ],
+    "review_file": "support/reviews/IMT-001-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T10:40:26Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "5d931ac187ff89ede92b8d0ca8a1a7b3aa177c90",
+      "commit_subject": "IMT-001 record review approval",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "IMT-001",
+        "Reviewer": "Claude",
+        "Verification": "python3 -m py_compile services/research/imitation/trajectory_models.py services/research/imitation/test_trajectory_models.py (passed); python3 -m json.tool services/research/imitation/trader_trajectory.schema.json >/dev/null (passed); package export smoke passed; python3 -m pytest services/research/imitation/test_trajectory_models.py -q (10 passed); python3 -m pytest services/research/imitation -q (51 passed)."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 70,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "IMT-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T09:35:04Z",
+      "resolved_at": "2026-05-16T09:35:24Z"
+    },
+    {
+      "task_id": "IMT-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T09:35:24Z",
+      "resolved_at": "2026-05-16T09:39:40Z"
+    },
+    {
+      "task_id": "IMT-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "IMT-001 ready for review. Commit 98bf9db2 adds schema-backed TraderTrajectory contract, model validators, package exports, dataset-builder compatibility test, and evidence packet support/evidence/IMT-001/README.md. Verification: py_compile trajectory model/test passed; json.tool trader_trajectory.schema.json passed; pytest services/research/imitation/test_trajectory_models.py -q (10 passed); pytest services/research/imitation -q (51 passed). Note: existing uncommitted IMT-004 behavior_policy changes remain outside this task-scoped commit.",
+      "status": "done",
+      "created_at": "2026-05-16T10:24:39Z",
+      "resolved_at": "2026-05-16T10:30:42Z"
+    },
+    {
+      "task_id": "IMT-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "審查通過：schema、model、tests 均符合 IMT-001 治理要求，所有 10 個測試通過，返還 owner Codex 進行 closeout。",
+      "status": "done",
+      "created_at": "2026-05-16T10:30:42Z",
+      "resolved_at": "2026-05-16T10:40:26Z"
+    }
+  ],
+  "blockers": []
+}

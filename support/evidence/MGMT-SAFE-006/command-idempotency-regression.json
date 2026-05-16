@@ -1,0 +1,89 @@
+{
+  "rows": [
+    {
+      "error": "",
+      "evidence": {
+        "command": "PauseExecution",
+        "receipt_id": "cmd-79b055253927459b8d22ebf764ee9e79",
+        "status_code": 202
+      },
+      "row": "first-command-accepted",
+      "status": "passed"
+    },
+    {
+      "error": "",
+      "evidence": {
+        "original_receipt_id": "cmd-79b055253927459b8d22ebf764ee9e79",
+        "receipt_id": "cmd-79b055253927459b8d22ebf764ee9e79",
+        "status_code": 202
+      },
+      "row": "same-key-same-payload-replays",
+      "status": "passed"
+    },
+    {
+      "error": "",
+      "evidence": {
+        "audit_action_type": "bff.command.idempotency_conflict",
+        "error_code": "IDEMPOTENCY_CONFLICT",
+        "foundation_error_code": "IDEMPOTENCY_CONFLICT",
+        "status_code": 409
+      },
+      "row": "same-key-different-payload-conflicts",
+      "status": "passed"
+    },
+    {
+      "error": "",
+      "evidence": {
+        "error_code": "INVALID_REQUEST",
+        "precondition_failed": "body_idempotency_key",
+        "status_code": 400
+      },
+      "row": "body-idempotency-key-rejected",
+      "status": "passed"
+    },
+    {
+      "error": "",
+      "evidence": {
+        "admission_route": "POST /bff/v1/commands",
+        "audit_action_type": "bff.command.accepted",
+        "audit_reason": "MGMT-SAFE-006 idempotency replay proof",
+        "command_envelope": {
+          "correlation_id": "corr-mgmt-safe-006",
+          "idempotency_key": "mgmt-safe-006-final-command",
+          "request_id": "req-mgmt-safe-006",
+          "trace_id": "trace-mgmt-safe-006"
+        },
+        "command_id": "cmd-79b055253927459b8d22ebf764ee9e79",
+        "command_type": "PauseExecution",
+        "idempotency_record": {
+          "idempotency_key": "mgmt-safe-006-final-command",
+          "request_hash_present": true,
+          "status": "succeeded"
+        },
+        "record_count": 1,
+        "stored_status": "submitted",
+        "target": {
+          "id": "runtime-mgmt-safe-006",
+          "type": "Runtime"
+        },
+        "trace_context": {
+          "correlation_id": "corr-mgmt-safe-006",
+          "idempotency_key": "mgmt-safe-006-final-command",
+          "request_id": "req-mgmt-safe-006",
+          "trace_id": "trace-mgmt-safe-006"
+        }
+      },
+      "row": "single-durable-command-record",
+      "status": "passed"
+    }
+  ],
+  "status": "passed",
+  "summary": {
+    "conflict_status_code": 409,
+    "idempotency_key_source": "Idempotency-Key header",
+    "live_capital_side_effects": false,
+    "route": "POST /bff/v1/commands",
+    "smoke_passed": true
+  },
+  "task_id": "MGMT-SAFE-006"
+}

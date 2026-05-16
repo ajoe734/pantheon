@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "task_id": "ASK-002-SIDECAR-REVIEW",
+  "archived_at": "2026-05-16T10:47:58Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "ASK-002-SIDECAR-REVIEW",
+    "title": "Prepare ASK-002 review packet and evidence summary",
+    "summary_zh": "平行支援 ASK-002，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Sprint 5 / EPIC-RESEARCH",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/ASK-002/ASK-002-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Superseded by direct completion of ASK-002 review; review packet created at support/reviews/ASK-002-review-claude.md as part of the reviewer role.",
+    "last_update": "2026-05-16T10:47:58Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "ASK-002",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "superseded",
+    "superseded_by": "ASK-002"
+  },
+  "handoffs": [],
+  "blockers": []
+}

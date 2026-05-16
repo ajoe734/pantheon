@@ -223,6 +223,18 @@ class ApprovalDecision:
             raise ValueError(
                 f"Can only decide from 'under_review', got '{self.decision_state}'"
             )
+        effective_role = actor_role if actor_role is not None else self.actor_role
+        effective_actor_id = actor_id if actor_id is not None else self.actor_id
+        if not effective_role:
+            raise ValueError("actor_role is required to decide an approval")
+        if not effective_actor_id:
+            raise ValueError("actor_id is required to decide an approval")
+        normalized_role = ActorRole(effective_role)
+        normalized_risk = RiskLevel(self.risk_level)
+        if not OwnerMatrix.is_authorized(normalized_role, normalized_risk):
+            raise ValueError(
+                f"Role '{normalized_role.value}' not authorized for risk level '{normalized_risk.value}'"
+            )
         if outcome == DecisionOutcome.APPROVED_WITH_CONDITIONS:
             if not conditions:
                 raise ValueError(
@@ -235,10 +247,8 @@ class ApprovalDecision:
         self.decision_state = DecisionState.DECIDED
         self.rationale = rationale
         self.decided_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        if actor_role:
-            self.actor_role = actor_role
-        if actor_id:
-            self.actor_id = actor_id
+        self.actor_role = normalized_role
+        self.actor_id = effective_actor_id
 
     def revoke(self, actor_role: ActorRole | str, actor_id: str) -> None:
         """Revoke a decided decision."""

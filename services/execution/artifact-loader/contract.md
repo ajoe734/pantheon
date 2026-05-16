@@ -1,9 +1,9 @@
 # Artifact Loader Contract
 
-**Task:** EX-001  
-**Owner:** Codex  
-**Reviewer:** Claude  
-**Status:** IN PROGRESS — contract locked; service-local loader, Object Store adapter/materialization helper, and smoke path now exist; algorithm-level LEAN run coverage is still deferred
+**Task:** EX-001 / EX-002-RB
+**Owner:** Codex
+**Reviewer:** Claude
+**Status:** EX-002-RB reviewed and approved — loader now reads canonical `artifact_state + deployment_stage` (with `promotion_state` fallback for legacy object store metadata); algorithm-level LEAN run coverage is still deferred
 
 ---
 
@@ -14,20 +14,21 @@ The artifact loader is the execution-side gate between governed registry artifac
 Its job is not to decide promotion. Its job is to:
 
 - read governed metadata from a LEAN-compatible transport path
-- reject artifacts whose promotion state is not allowed for the current execution mode
+- reject artifacts whose canonical artifact/deployment state is not allowed for the current execution mode
 - verify checksum and metadata shape before artifact body load proceeds
 - hand approved artifact payloads into the execution runtime
 - prove that a live artifact carries governed fallback metadata, without deciding how rollback should execute
 
 This contract defines the loader-facing metadata and behavior.
 
-Compatibility note after `REG-004`:
+Migration note (EX-002-RB):
 
-- canonical registry state is now `artifact_state`
-- canonical deployment placement is now `deployment_stage`
-- the current loader contract still consumes the legacy execution envelope with `promotion_state`
-- until the loader metadata migration lands, this document should be read as the current compatibility
-  contract, not the canonical definition of registry lifecycle semantics
+- canonical registry lifecycle state is `artifact_state` (draft/candidate/approved/retired)
+- canonical deployment placement is `deployment_stage` (none/paper/canary/live/frozen)
+- the loader now requires `artifact_state=approved` whenever canonical execution metadata is present
+- the loader validates `deployment_stage` as the primary mode gate field
+- `promotion_state` is accepted as a backward-compat fallback only for pre-migration object store metadata
+- the execution projection emitted by `PromotionGate.build_execution_projection()` now carries canonical fields
 - rollback execution semantics (`replace`, `pause_then_replace`, `liquidate_then_replace`) remain owned by
   `DeploymentPlan.rollback.action_type` and the Runtime Manager; the loader validates fallback metadata only
 
@@ -72,16 +73,22 @@ backtest, and live contexts.
 
 The loader must behave differently by mode:
 
-| Mode | Allowed promotion states |
+| Mode | Required artifact state | Allowed deployment stage |
 |---|---|
-| `paper` | `paper` |
-| `live` | `live` |
+| `paper` | `approved` | `paper` |
+| `live` | `approved` | `live` |
 
-Rejected states in both modes:
+Rejected artifact states in both modes:
 
 - `draft`
 - `candidate`
 - `retired`
+
+Rejected deployment stages in both modes unless a later task explicitly adds a new execution mode:
+
+- `none`
+- `canary`
+- `frozen`
 
 This is a governance rule, not an optimization.
 
@@ -92,11 +99,12 @@ This is a governance rule, not an optimization.
 Before artifact body load proceeds, the loader must validate:
 
 1. metadata validates against the promoted-artifact metadata schema
-2. `promotion_state` is allowed for the current execution mode
-3. `checksum` is present
-4. `strategy_id` and `version` are present
-5. for `live`, rollback metadata exists
-6. loader does **not** interpret rollback action semantics; it only verifies that the fallback artifact reference
+2. `artifact_state=approved` when canonical split metadata is present
+3. `deployment_stage` (or legacy `promotion_state`) is allowed for the current execution mode
+4. `checksum` is present
+5. `strategy_id` and `version` are present
+6. for `live`, rollback metadata exists
+7. loader does **not** interpret rollback action semantics; it only verifies that the fallback artifact reference
    needed by Runtime Manager exists in metadata
 
 If any check fails, artifact load must stop before execution uses the payload.

@@ -24,6 +24,10 @@ surface in `services/source_ingestion/connectors`. A provider exposes:
 - source metadata for operator/search surfaces
 - fetch config using the same `static_records` or `external_feed` schema
 
+The first paper adapter skeleton is `OpenAlexPaperIngestAdapter`. It exposes a
+bounded OpenAlex connector/fetch policy and pure OpenAlex work-to-`SourceRecord`
+normalization before evidence/search indexing.
+
 ## Safety Rules
 
 External feed config is bounded and allowlisted:

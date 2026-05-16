@@ -356,6 +356,73 @@ class RuntimeManagerHttpRouteTests(unittest.TestCase):
         self.assertEqual(payload["old_binding"]["status"], "retired")
         self.assertEqual(payload["new_binding"]["artifact_id"], "artifact-delta")
 
+    def test_rt004_action_lane_deploy_pause_replace_and_history(self):
+        created_response = self.client.post(
+            "/api/runtimes/deploy",
+            json=_valid_deploy_request(
+                plan_id="plan-rt004-001",
+                capital_pool_id="pool-rt004",
+                runtime_id="rt-rt004-001",
+            ),
+            headers=self.auth,
+        )
+        created = created_response.get_json()
+
+        self.assertEqual(created_response.status_code, 201, created)
+        self.assertEqual(created["status"], "active")
+
+        pending_pause = self.client.post(
+            f"/api/runtime-bindings/{created['binding_id']}/transition",
+            json={"new_status": "pending_pause"},
+            headers=self.auth,
+        )
+        paused = self.client.post(
+            f"/api/runtime-bindings/{created['binding_id']}/transition",
+            json={"new_status": "paused"},
+            headers=self.auth,
+        )
+
+        self.assertEqual(pending_pause.status_code, 200, pending_pause.get_json())
+        self.assertEqual(pending_pause.get_json()["status"], "pending_pause")
+        self.assertEqual(paused.status_code, 200, paused.get_json())
+        self.assertEqual(paused.get_json()["status"], "paused")
+
+        replace_response = self.client.post(
+            "/api/rollback",
+            json={
+                "current_binding_id": created["binding_id"],
+                "action_type": "replace",
+                "replacement_plan_id": "plan-rt004-002",
+                "replacement_artifact_id": "artifact-rt004-replacement",
+                "replacement_artifact_version": "2.0.0",
+                "replacement_persona_capital_binding_id": "pcb-rt004-replacement",
+                "replacement_allowed_deployment_scope": "live",
+                "replacement_runtime_id": "rt-rt004-002",
+            },
+            headers=self.auth,
+        )
+        replaced = replace_response.get_json()
+
+        self.assertEqual(replace_response.status_code, 201, replaced)
+        self.assertEqual(replaced["action_type"], "replace")
+        self.assertEqual(replaced["old_binding"]["status"], "retired")
+        self.assertEqual(replaced["new_binding"]["status"], "active")
+        self.assertEqual(replaced["new_binding"]["rollback_parent"], created["binding_id"])
+        self.assertEqual(
+            replaced["position_lineage"]["current_managed_by_binding_id"],
+            replaced["new_binding"]["binding_id"],
+        )
+
+        history = self.client.get(
+            "/api/rollback/history?pool_id=pool-rt004",
+            headers=self.auth,
+        )
+        history_payload = history.get_json()
+
+        self.assertEqual(history.status_code, 200, history_payload)
+        self.assertEqual(history_payload["count"], 1)
+        self.assertEqual(history_payload["rollbacks"][0]["rollback_action_type"], "replace")
+
 
 class KillSwitchControllerUnitTests(unittest.TestCase):
     """Pure unit tests for KillSwitchController — no I/O."""

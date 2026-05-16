@@ -1,0 +1,115 @@
+{
+  "task_id": "MGMT-BROKER-006",
+  "generated_at": "2026-05-15T17:53:15Z",
+  "mode": "human_gate_packet",
+  "status": "ready_for_review",
+  "proof_boundary": "EP5-001 prerequisite_only; not EP5-002 proof",
+  "openclaw_runtime_boundary": {
+    "contract": "OPENCLAW_RUNTIME_CONTRACT.md",
+    "summary": "OpenClaw remains the governed control-plane/runtime substrate, not the execution kernel.",
+    "execution_kernel_owner": "Pantheon runtime-manager and execution plane"
+  },
+  "bundle": {
+    "operator_checklist": {
+      "path": "support/evidence/MGMT-BROKER-006/checklist/operator-checklist.json",
+      "status": "pass",
+      "check_health": false
+    },
+    "datasource_smoke": {
+      "path": "support/evidence/MGMT-BROKER-006/datasource-smoke/summary.json",
+      "status": "pass",
+      "providers": [
+        "ibkr",
+        "kraken",
+        "shioaji",
+        "tej"
+      ]
+    },
+    "canary_plan": {
+      "path": "support/evidence/MGMT-BROKER-006/plan/canary-deployment-plan.json",
+      "target_stage": "canary",
+      "capital_scale_pct": 5.0,
+      "gross_scale_pct": 25.0,
+      "rollback_action_type": "pause_then_replace",
+      "promotion_gate": {
+        "promotion_gate_decision_id": "apv-canary-001",
+        "human_gate_packet_ref": "support/evidence/MGMT-BROKER-006/human-gate/human-gate-packet.json",
+        "broker_sandbox_smoke_ref": "support/evidence/MGMT-BROKER-003/summary.json",
+        "risk_owner_approval_ref": "approval://risk-owner/canary-001",
+        "operator_approval_ref": "approval://operator/canary-001",
+        "persona_capital_binding_id": "pcb-canary-001",
+        "allowed_deployment_scope": "canary",
+        "capital_scale_pct": 5.0,
+        "gross_scale_pct": 25.0
+      }
+    },
+    "rollback_drill": {
+      "path": "docs/deployment/evidence/ep5-dual-vm-local/20260424T143020Z/rollback-drill-summary.json",
+      "status": "executed",
+      "replacement_binding_id": "rb-c357b5ab929f425c89efcb7b98eacf91",
+      "kill_switch_safe_mode": "paused"
+    },
+    "broker_sandbox_smoke": {
+      "path": "support/evidence/MGMT-BROKER-003/summary.json",
+      "status": "passed",
+      "provider": "Shioaji",
+      "order_ids": {
+        "pantheon_order_id": "4195d0aa0b4f4a0dbc63c57571e45e1b",
+        "shioaji_trade_id": "mock-shioaji-trade-001"
+      },
+      "reconciliation_status": "passed",
+      "proof_boundary": "broker_adapter_sandbox_smoke; not canary/live/capital proof",
+      "live_gate_status": "rejected",
+      "run_mode": "mock_api_replay"
+    },
+    "shioaji_sandbox_evidence_packet": {
+      "path": "support/evidence/MGMT-BROKER-004/shioaji-sandbox-evidence-packet.json",
+      "status": "passed",
+      "provider": "Shioaji",
+      "environment": "sandbox",
+      "account_status": "ready",
+      "proof_boundary": "broker_sandbox_evidence_packet; not canary/live/capital proof",
+      "broker_sandbox_smoke_ref": "support/evidence/MGMT-BROKER-003/summary.json",
+      "broker_sandbox_evidence_packet_ref": "support/evidence/MGMT-BROKER-004/shioaji-sandbox-evidence-packet.json",
+      "ooda_packet_status": "closed"
+    },
+    "dual_vm_evidence_dir": "docs/deployment/evidence/ep5-dual-vm-local/20260424T143020Z"
+  },
+  "event_trace_read_model": {
+    "status": "packetized",
+    "note": "Replay-clean event-trace projection evidence remains packetized from the archived EP5 closeout bundle; MGMT-BROKER-006 adds the MGMT-BROKER-004 Shioaji sandbox evidence packet to the canary human-gate readiness inputs.",
+    "acceptance_rule": "Must be either closed with replayable trace evidence or explicitly packetized before human gate."
+  },
+  "acceptance_checks": [
+    {
+      "name": "repo_authoritative_operator_packet",
+      "status": "pass",
+      "detail": "Checklist, datasource smoke, and rollback drill evidence are present and internally consistent."
+    },
+    {
+      "name": "canary_activation_gate_refs_present",
+      "status": "pass",
+      "detail": "canary human gate carries explicit human-gate, broker-smoke, risk-owner, operator, capital-binding, and policy-scale refs"
+    },
+    {
+      "name": "event_trace_gap_dispositioned",
+      "status": "pass",
+      "detail": "Replay-clean event-trace projection evidence remains packetized from the archived EP5 closeout bundle; MGMT-BROKER-006 adds the MGMT-BROKER-004 Shioaji sandbox evidence packet to the canary human-gate readiness inputs."
+    },
+    {
+      "name": "human_gate_bundle_complete",
+      "status": "pass",
+      "detail": "Human gate input bundle is replay-clean at the artifact level; EP5 proof remains deferred."
+    },
+    {
+      "name": "broker_sandbox_smoke_consumed",
+      "status": "pass",
+      "detail": "Shioaji broker sandbox smoke summary consumed with passed reconciliation and fail-closed live boundary."
+    },
+    {
+      "name": "shioaji_sandbox_evidence_packet_consumed",
+      "status": "pass",
+      "detail": "Shioaji sandbox evidence packet consumed with required passed checks, closed OODA packet, OODA validation, and fail-closed canary readiness inputs."
+    }
+  ]
+}

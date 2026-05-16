@@ -42,6 +42,7 @@ class ArtifactType(str, Enum):
     """Supported artifact types — §2 of contract.md."""
     STRATEGY_SPEC = "strategy_spec"
     MODEL_ARTIFACT = "model_artifact"
+    BEHAVIOR_POLICY = "behavior_policy"
     FEATURE_SET = "feature_set"
     PROMPT_BUNDLE = "prompt_bundle"
     SIGNAL_SNAPSHOT = "signal_snapshot"

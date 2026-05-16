@@ -2,9 +2,14 @@
 
 `RS-002` consumes governed `RS-001` discovery handoffs and turns them into the canonical objects defined by `OC-003`:
 
-1. `StrategySpec` validated against [services/control-plane/specs/strategy_spec.schema.json](/home/ajoe734/code/pantheon/services/control-plane/specs/strategy_spec.schema.json)
-2. `WorkflowHandoff` validated against [services/control-plane/specs/workflow_handoff.schema.json](/home/ajoe734/code/pantheon/services/control-plane/specs/workflow_handoff.schema.json)
+1. `StrategySpec` validated against [services/control-plane/specs/strategy_spec.schema.json](../../control-plane/specs/strategy_spec.schema.json)
+2. `WorkflowHandoff` validated against [services/control-plane/specs/workflow_handoff.schema.json](../../control-plane/specs/workflow_handoff.schema.json)
 3. A legacy replication compatibility envelope so the current `RS-003` gate can keep running while it migrates to the canonical handoff
+
+`models.py` is the typed StrategySpec domain model for code paths that need
+schema-backed construction, validation, or round-trip serialization. It does
+not grant execution authority; paper, canary, and live hints still require
+governance approval before any downstream deployment work.
 
 ## Why this exists
 
@@ -41,6 +46,27 @@ Every canonical output includes:
 - `governance_context.execution_context = research`
 
 That means downstream registry and execution work consume the same governed `StrategySpec`, not an ad hoc research note.
+
+## Evidence and code refs lineage
+
+`lineage.py` is the package surface for attaching governed source evidence and
+repo code references to a StrategySpec without creating registry or execution
+side effects.
+
+- `build_strategy_spec_lineage_refs()` accepts a `StrategySpecSeed` and optional
+  governed `SourceRecord` / `EvidenceItem` inputs from the seed lineage.
+- `evidence_refs[]` carries the seed evidence bundle plus supporting
+  `EvidenceItem` refs.
+- `code_refs[]` carries allowlisted repository, path, commit, symbol, and line
+  references from source/evidence metadata or from repo-source fallback fields.
+- `attach_lineage_refs_to_strategy_spec_payload()` returns a payload copy with
+  the refs attached and preserves `provenance.source_refs`.
+- `StrategySpecLineageRefs.to_lineage_edge()` emits the normalized
+  `strategy_spec_evidence_code_linked` edge for downstream lineage read models.
+
+The helper rejects `SourceRecord` or `EvidenceItem` inputs that are outside the
+seed lineage. It is evidence/linkage plumbing only; it does not write registry
+state, launch experiments, create deployment plans, or route orders.
 
 ## Compatibility note
 

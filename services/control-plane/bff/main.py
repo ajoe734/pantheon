@@ -659,6 +659,7 @@ def _bff_error(
 
 _FOUNDATION_COMMAND_ROUTE = "POST /api/v1/operator/commands"
 _FINAL_COMMAND_ROUTE = "POST /bff/v1/commands"
+_CANONICAL_ACTIONS_ROUTE = "POST /bff/actions/{type}/{id}/{action}"
 _ACTIONS_TO_COMMANDS_SOURCE_ROUTE = "POST /bff/actions/{entityType}/{entityId}/{actionId}"
 _ACTIONS_DEPRECATION_SINCE = "2026-05-14"
 _ACTIONS_SUNSET_DATE = "2026-06-15"
@@ -1033,6 +1034,214 @@ def _foundation_idempotency_conflict_error(
     )
 
 
+def _foundation_audit_for_command_record(
+    *,
+    identity: OperatorIdentity,
+    command_type: CommandType,
+    target_type: ObjectType,
+    target_id: str,
+    payload: Dict[str, Any],
+    reason: str,
+    command_id: str,
+    idempotency_key: str,
+    route: str,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> AuditAction:
+    environment = _foundation_environment_scope()
+    actor_ref = _foundation_actor_ref(identity)
+    trace = _build_foundation_trace(
+        environment=environment,
+        actor_ref=actor_ref,
+        trace_id=command_id,
+        correlation_id=command_id,
+        request_id=command_id,
+        idempotency_key=idempotency_key,
+    )
+    audit_metadata = {
+        "route": route,
+        "command": command_type.value,
+        "idempotency_key": idempotency_key,
+    }
+    if metadata:
+        audit_metadata.update({key: value for key, value in metadata.items() if value is not None})
+    return AuditAction.record(
+        actor_ref=actor_ref,
+        action_type="bff.command.accepted",
+        target_ref=f"{target_type.value}:{target_id}",
+        environment=environment,
+        reason=reason,
+        trace=trace,
+        payload={
+            "command": command_type.value,
+            "target": {"type": target_type.value, "id": target_id},
+            "payload": payload,
+        },
+        metadata=audit_metadata,
+    )
+
+
+def _command_audit_action_from_record(record: Dict[str, Any]) -> Dict[str, Any]:
+    foundation = record.get("foundation") if isinstance(record.get("foundation"), dict) else {}
+    audit_action = foundation.get("audit_action") if isinstance(foundation.get("audit_action"), dict) else None
+    if audit_action:
+        return dict(audit_action)
+    audit = record.get("audit") if isinstance(record.get("audit"), dict) else {}
+    audit_foundation = audit.get("foundation") if isinstance(audit.get("foundation"), dict) else {}
+    audit_action = (
+        audit_foundation.get("audit_action")
+        if isinstance(audit_foundation.get("audit_action"), dict)
+        else None
+    )
+    return dict(audit_action or {})
+
+
+def _audit_datetime(value: Any) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _project_command_record_audit_event(record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    command_id = str(record.get("command_id") or "").strip()
+    if not command_id:
+        return None
+    target = record.get("target") if isinstance(record.get("target"), dict) else {}
+    audit = record.get("audit") if isinstance(record.get("audit"), dict) else {}
+    foundation = record.get("foundation") if isinstance(record.get("foundation"), dict) else {}
+    audit_action = _command_audit_action_from_record(record)
+    idempotency_record = (
+        foundation.get("idempotency_record")
+        if isinstance(foundation.get("idempotency_record"), dict)
+        else {}
+    )
+    audit_actor_ref = audit_action.get("actor_ref") if isinstance(audit_action.get("actor_ref"), dict) else {}
+    metadata = audit_action.get("metadata") if isinstance(audit_action.get("metadata"), dict) else {}
+    trace_context = foundation.get("trace_context") if isinstance(foundation.get("trace_context"), dict) else {}
+    action_type = str(record.get("type") or metadata.get("command") or "").strip()
+    target_type = str(target.get("type") or "").strip()
+    target_id = str(target.get("id") or "").strip()
+    timestamp = str(
+        audit.get("timestamp")
+        or audit_action.get("timestamp")
+        or record.get("submitted_at")
+        or utc_now()
+    )
+    reason = str(audit.get("reason") or audit_action.get("reason") or action_type or "operator command")
+    event = {
+        "entry_id": str(audit_action.get("action_id") or f"audit-{command_id}"),
+        "actor": str(
+            audit.get("operator_id")
+            or audit.get("actor")
+            or audit_actor_ref.get("actor_id")
+            or "operator"
+        ),
+        "action_type": action_type,
+        "target_type": target_type,
+        "target_id": target_id,
+        "timestamp": timestamp,
+        "outcome": "accepted" if record.get("status") == CommandStatus.SUBMITTED.value else record.get("status"),
+        "audit_context": {
+            "reason": reason,
+            "command_id": command_id,
+            "receipt_id": command_id,
+            "idempotency_key": (
+                idempotency_record.get("idempotency_key")
+                or metadata.get("idempotency_key")
+                or audit.get("idempotency_key")
+            ),
+            "action_id": audit.get("action_id"),
+            "foundation_action_type": audit_action.get("action_type"),
+        },
+        "evidence_refs": audit.get("evidence_refs") if isinstance(audit.get("evidence_refs"), list) else [],
+        "command_ref": command_id,
+        "trace_id": audit_action.get("trace_id") or trace_context.get("trace_id"),
+        "correlation_id": (
+            audit_action.get("correlation_id")
+            or trace_context.get("correlation_id")
+        ),
+        "payload_checksum": audit_action.get("payload_checksum"),
+        "audit_action": audit_action or None,
+        "metadata": {
+            "source": "command_store",
+            "route": metadata.get("route"),
+            "source_route": metadata.get("source_route"),
+            "live_capital_side_effects": audit.get("live_capital_side_effects", False),
+        },
+    }
+    return json.loads(json.dumps(event))
+
+
+def _audit_event_matches(
+    event: Dict[str, Any],
+    *,
+    actor: Optional[str] = None,
+    action_types: Optional[List[str]] = None,
+    target_type: Optional[str] = None,
+    from_ts: Optional[datetime] = None,
+    to_ts: Optional[datetime] = None,
+) -> bool:
+    if actor and event.get("actor") != actor:
+        return False
+    if action_types:
+        allowed = {value for value in action_types if value}
+        if event.get("action_type") not in allowed:
+            return False
+    if target_type and event.get("target_type") != target_type:
+        return False
+    event_dt = _audit_datetime(event.get("timestamp"))
+    if from_ts is not None and (event_dt is None or event_dt < from_ts):
+        return False
+    if to_ts is not None and (event_dt is None or event_dt > to_ts):
+        return False
+    return True
+
+
+def _list_governance_audit_events(
+    *,
+    actor: Optional[str] = None,
+    action_types: Optional[List[str]] = None,
+    target_type: Optional[str] = None,
+    from_ts: Optional[datetime] = None,
+    to_ts: Optional[datetime] = None,
+) -> List[Dict[str, Any]]:
+    events = read_store.list_governance_audit_events(
+        actor=actor,
+        action_types=action_types,
+        target_type=target_type,
+        from_ts=from_ts,
+        to_ts=to_ts,
+    )
+    events_by_id: Dict[str, Dict[str, Any]] = {
+        str(event.get("entry_id") or event.get("auditId") or event.get("id") or index): event
+        for index, event in enumerate(events)
+    }
+    for record in command_store._get_all_commands():
+        event = _project_command_record_audit_event(record)
+        if not event or not _audit_event_matches(
+            event,
+            actor=actor,
+            action_types=action_types,
+            target_type=target_type,
+            from_ts=from_ts,
+            to_ts=to_ts,
+        ):
+            continue
+        events_by_id.setdefault(str(event.get("entry_id")), event)
+    merged = list(events_by_id.values())
+    merged.sort(key=lambda event: str(event.get("timestamp") or ""), reverse=True)
+    return json.loads(json.dumps(merged))
+
+
 # --------------------------------------------------------------------------- #
 # Command-specific precondition validators (§3 of contract)
 # --------------------------------------------------------------------------- #
@@ -1338,17 +1547,18 @@ def _resolve_final_idempotency_key(
 
 def _reject_body_idempotency_key(payload: Dict[str, Any]) -> None:
     """Reject final-contract payloads that carry idempotencyKey in the body."""
-    if "idempotencyKey" in payload:
+    body_key = "idempotencyKey" if "idempotencyKey" in payload else "idempotency_key" if "idempotency_key" in payload else None
+    if body_key is not None:
         raise _bff_error(
             400,
             ErrorCode.INVALID_REQUEST,
-            "idempotencyKey must not appear in the request body",
+            f"{body_key} must not appear in the request body",
             (
                 "Final contract routes require idempotency via the Idempotency-Key header, "
                 "not the request body"
             ),
             precondition_failed="body_idempotency_key",
-            suggestion="Remove idempotencyKey from the body and set the Idempotency-Key header",
+            suggestion=f"Remove {body_key} from the body and set the Idempotency-Key header",
         )
 
 
@@ -3581,10 +3791,12 @@ def _sem_optional_idempotency_key(
 async def bff_auth_refresh(
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
+    pantheon_session: Optional[str] = Cookie(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
-    identity = _extract_identity(authorization)
+    identity = _extract_identity(authorization, mfa_token=x_mfa_token, session_cookie=pantheon_session)
     _require_read_role(identity)
     resolved_key = _sem_optional_idempotency_key(idempotency_key, x_idempotency_key)
     record_key = _sem_session_idempotency_key("POST /bff/auth/refresh", identity, resolved_key)
@@ -3619,10 +3831,12 @@ async def bff_auth_refresh(
 async def bff_logout(
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
+    pantheon_session: Optional[str] = Cookie(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
-    identity = _extract_identity(authorization)
+    identity = _extract_identity(authorization, mfa_token=x_mfa_token, session_cookie=pantheon_session)
     _require_read_role(identity)
     resolved_key = _sem_optional_idempotency_key(idempotency_key, x_idempotency_key)
     record_key = _sem_session_idempotency_key("POST /bff/logout", identity, resolved_key)
@@ -5899,6 +6113,8 @@ def _rw01_surface_state(
 
 _TW01_SESSION_STATUSES = {"active", "paused", "completed", "abandoned"}
 _TW04_REPLAY_TERMINAL_STATUSES = {"completed", "abandoned"}
+_TRN003_RAPID_EVAL_SCOPES = frozenset({"persona_patch", "strategy_patch", "feature_patch", "risk_patch"})
+_TRN003_RAPID_EVAL_ACTIVE_STATUSES = frozenset({"active", "paused"})
 
 
 def _tw04_get_candidate_snapshot_at(replay: Dict[str, Any]) -> Optional[str]:
@@ -6004,15 +6220,34 @@ def _tw01_trainer_dialog_surface_state(
 
 def _tw03_validate_refresh_mode(payload: Dict[str, Any]) -> str:
     refresh_mode = str(payload.get("refresh_mode") or "").strip().lower()
-    if refresh_mode != "manual":
+    mode = str(payload.get("mode") or "").strip().lower()
+    if refresh_mode and refresh_mode != "manual":
         raise _bff_error(
             422,
             ErrorCode.INVALID_PARAMS,
             "Invalid trainer preview refresh mode",
-            "refresh_mode must equal 'manual' for TW-03",
+            "refresh_mode must equal 'manual' or mode must equal 'refresh'",
             precondition_failed="refresh_mode",
         )
-    return refresh_mode
+    if mode and mode != "refresh":
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid trainer preview refresh mode",
+            "refresh_mode must equal 'manual' or mode must equal 'refresh'",
+            precondition_failed="mode",
+        )
+    if refresh_mode == "manual":
+        return refresh_mode
+    if mode == "refresh":
+        return mode
+    raise _bff_error(
+        422,
+        ErrorCode.INVALID_PARAMS,
+        "Invalid trainer preview refresh mode",
+        "refresh_mode must equal 'manual' or mode must equal 'refresh'",
+        precondition_failed="refresh_mode",
+    )
 
 
 def _tw02_validate_patch_payload(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -7636,7 +7871,7 @@ def _project_final_command_response(
 
 def _legacy_action_deprecation_notice() -> Dict[str, Any]:
     return {
-        "route": "/bff/actions/{entityType}/{entityId}/{actionId}",
+        "route": "/bff/actions/{type}/{id}/{action}",
         "replacement": "/bff/v1/commands",
         "deprecated_since": _ACTIONS_DEPRECATION_SINCE,
         "sunset": _ACTIONS_SUNSET_DATE,
@@ -8370,6 +8605,14 @@ async def refresh_trainer_preview(
         session_status=session.get("status"),
         snapshot_at=utc_now(),
     )
+    if session.get("status") not in {"active", "paused"}:
+        raise _bff_error(
+            409,
+            ErrorCode.INVALID_STATE,
+            "Trainer session cannot refresh preview",
+            "POST /preview is only allowed while the trainer session status is active or paused",
+            precondition_failed="status",
+        )
     if preview.get("status") == "pending":
         return preview
     if not preview.get("allowedActions", {}).get("canRefreshPreview"):
@@ -8379,14 +8622,6 @@ async def refresh_trainer_preview(
             "Trainer preview refresh unavailable",
             "allowedActions.canRefreshPreview is false for this trainer preview",
             precondition_failed="allowedActions.canRefreshPreview",
-        )
-    if session.get("status") not in {"active", "paused"}:
-        raise _bff_error(
-            409,
-            ErrorCode.INVALID_STATE,
-            "Trainer session cannot refresh preview",
-            "POST /preview is only allowed while the trainer session status is active or paused",
-            precondition_failed="status",
         )
 
     refreshed = read_store.refresh_trainer_preview(
@@ -8610,6 +8845,122 @@ async def discard_trainer_replay(
             "Trainer replay discard store is unavailable.",
         )
     return result
+
+
+@app.post("/api/v1/trainer/sessions/{session_id}/rapid-eval")
+async def create_rapid_eval(
+    session_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    eval_scope = str(payload.get("eval_scope") or "").strip().lower()
+    if not eval_scope or eval_scope not in _TRN003_RAPID_EVAL_SCOPES:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid eval_scope",
+            f"eval_scope must be one of {sorted(_TRN003_RAPID_EVAL_SCOPES)}",
+            precondition_failed="eval_scope",
+        )
+
+    dataset_version_id_raw = payload.get("dataset_version_id")
+    if not dataset_version_id_raw or not str(dataset_version_id_raw).strip():
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Missing required field: dataset_version_id",
+            "dataset_version_id must be a non-empty string",
+            precondition_failed="dataset_version_id",
+        )
+    dataset_version_id = str(dataset_version_id_raw).strip()
+
+    max_runtime_seconds_raw = payload.get("max_runtime_seconds")
+    try:
+        max_runtime_seconds = int(max_runtime_seconds_raw)
+        if max_runtime_seconds <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid max_runtime_seconds",
+            "max_runtime_seconds must be a positive integer",
+            precondition_failed="max_runtime_seconds",
+        )
+
+    patch_ref = str(payload["patch_ref"]).strip() if payload.get("patch_ref") else None
+    persona_id = str(payload["persona_id"]).strip() if payload.get("persona_id") else None
+    strategy_id = str(payload["strategy_id"]).strip() if payload.get("strategy_id") else None
+
+    session = read_store.get_trainer_session(session_id)
+    if not session:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Trainer session not found",
+            f"Trainer session {session_id} does not exist",
+        )
+
+    if str(session.get("status") or "").strip().lower() not in _TRN003_RAPID_EVAL_ACTIVE_STATUSES:
+        raise _bff_error(
+            409,
+            ErrorCode.INVALID_STATE,
+            "Trainer session cannot submit rapid eval",
+            "rapid-eval is only allowed while the trainer session status is active or paused",
+            precondition_failed="status",
+        )
+
+    result = read_store.create_rapid_eval(
+        session_id,
+        persona_id=persona_id,
+        strategy_id=strategy_id,
+        eval_scope=eval_scope,
+        patch_ref=patch_ref,
+        dataset_version_id=dataset_version_id,
+        max_runtime_seconds=max_runtime_seconds,
+        requested_by=identity.operator_id or "unknown",
+        requested_at=utc_now(),
+    )
+    if result is None:
+        raise _bff_error(
+            503,
+            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            "Rapid eval store unavailable",
+            "Rapid eval creation store is unavailable.",
+        )
+    return result
+
+
+@app.get("/api/v1/trainer/sessions/{session_id}/rapid-eval/{eval_id}")
+async def get_rapid_eval(
+    session_id: str,
+    eval_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    session = read_store.get_trainer_session(session_id)
+    if not session:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Trainer session not found",
+            f"Trainer session {session_id} does not exist",
+        )
+
+    record = read_store.get_rapid_eval(eval_id, snapshot_at=utc_now())
+    if not record or record.get("session_id") != session_id:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Rapid eval not found",
+            f"Rapid eval {eval_id} does not exist for trainer session {session_id}",
+        )
+    return record
 
 
 @app.get("/api/v1/capital-pools")
@@ -10211,8 +10562,14 @@ async def get_openclaw_live_gate_audit(
     )
 
 
-@app.get("/api/v1/operator/openclaw/broker-adapter-readiness")
-@app.get("/api/v1/operator/openclaw/broker/adapter-readiness")
+@app.get(
+    "/api/v1/operator/openclaw/broker-adapter-readiness",
+    operation_id="get_openclaw_broker_adapter_readiness_legacy",
+)
+@app.get(
+    "/api/v1/operator/openclaw/broker/adapter-readiness",
+    operation_id="get_openclaw_broker_adapter_readiness",
+)
 async def get_openclaw_broker_adapter_readiness(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -12706,7 +13063,7 @@ async def list_governance_audit_trail(
     if action_type:
         action_types = [value.strip() for value in action_type.split(",") if value.strip()]
 
-    entries = read_store.list_governance_audit_events(
+    entries = _list_governance_audit_events(
         actor=actor,
         action_types=action_types,
         target_type=target_type,
@@ -12717,7 +13074,7 @@ async def list_governance_audit_trail(
         "governance_audit_events",
         snapshot_at=snapshot_at,
     )
-    if audit_surface.get("status") == "unavailable":
+    if audit_surface.get("status") == "unavailable" and not entries:
         entries = []
         next_page_token = None
     else:
@@ -16371,10 +16728,23 @@ def _capital_bff_action_command(
     cached = _capital_bff_idempotency_check(resolved_key, request_hash)
     if cached is not None:
         return cached
+    catalog_entry = get_catalog_entry(command_type.value)
     staleness_warning = _check_read_surface_state()
     command_id = str(uuid.uuid4())
     submitted_at = utc_now()
     target = TargetObject(type=entity_type, id=entity_id)
+    audit_action = _foundation_audit_for_command_record(
+        identity=identity,
+        command_type=command_type,
+        target_type=entity_type,
+        target_id=entity_id,
+        payload={"action_id": action_id, **payload},
+        reason=str(payload.get("reason") or action_id or command_type.value),
+        command_id=command_id,
+        idempotency_key=resolved_key,
+        route=f"POST /bff/{entity_type.value}/{entity_id}/actions/{action_id}",
+        metadata={"action_id": action_id, "catalog_entry": catalog_entry.action_id if catalog_entry else None},
+    )
     audit_record = {
         "operator_id": identity.operator_id,
         "roles_at_submission": identity.roles,
@@ -16396,7 +16766,9 @@ def _capital_bff_action_command(
     )
     foundation_ctx = {
         "idempotency_record": idempotency_record.to_dict(),
+        "audit_action": audit_action.to_dict(),
     }
+    audit_record["foundation"] = foundation_ctx
     command_store.submit_command(
         command_id=command_id,
         command_type=command_type,
@@ -16436,6 +16808,7 @@ async def bff_list_capital_pools(
     page_items, next_page_token = _page_slice(pools, page_token, page_size)
     return {
         "data": page_items,
+        "items": page_items,
         "page_info": {"next_page_token": next_page_token, "total": total},
         "meta": _read_surface_meta(
             "capital_pools", "capital_pool_list",
@@ -16493,20 +16866,33 @@ async def bff_get_capital_pool(
     pool_surface = _dataset_surface_status("capital_pools", snapshot_at=snapshot_at)
     pool = read_store.get_capital_pool(pool_id)
     if not pool:
+        _raise_if_read_surface_unavailable(pool_surface, label="Capital pool")
         raise _bff_error(
             404, ErrorCode.OBJECT_NOT_FOUND,
             "Capital pool not found",
             f"Capital pool {pool_id} does not exist",
         )
     bindings = read_store.get_bindings_for_pool(pool_id)
+    binding_surface = _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at)
     data = dict(pool)
     data["bindings"] = bindings
+    meta = _read_surface_meta(
+        "capital_pools",
+        "capital_pool_detail",
+        snapshot_at=snapshot_at,
+        surface=pool_surface,
+    )
+    meta.setdefault("surfaces", {})["persona_bindings"] = binding_surface
+    binding_reason = _surface_degradation_reason(
+        binding_surface,
+        degraded_reason="persona bindings are degraded and may be stale.",
+        unavailable_reason="persona bindings are currently unavailable.",
+    )
+    if binding_reason is not None:
+        meta.setdefault("degradation", {})["persona_bindings_reason"] = binding_reason
     return {
         "data": data,
-        "meta": _read_surface_meta(
-            "capital_pools", "capital_pool_detail",
-            snapshot_at=snapshot_at, surface=pool_surface,
-        ),
+        "meta": meta,
     }
 
 
@@ -17066,6 +17452,18 @@ def _strategy_persona_action_command(
     command_id = str(uuid.uuid4())
     submitted_at = utc_now()
     target = TargetObject(type=entity_type, id=entity_id)
+    audit_action = _foundation_audit_for_command_record(
+        identity=identity,
+        command_type=command_type,
+        target_type=entity_type,
+        target_id=entity_id,
+        payload={"action_id": action_id, **payload},
+        reason=str(payload.get("reason") or action_id or command_type.value),
+        command_id=command_id,
+        idempotency_key=resolved_key,
+        route=f"POST /bff/{entity_type.value}/{entity_id}/actions/{action_id}",
+        metadata={"action_id": action_id, "catalog_entry": catalog_entry.action_id if catalog_entry else None},
+    )
     audit_record = {
         "operator_id": identity.operator_id,
         "roles_at_submission": identity.roles,
@@ -17082,9 +17480,11 @@ def _strategy_persona_action_command(
             "request_hash": request_hash,
             "operation_type": f"bff.{command_type.value}",
             "target_ref": f"{entity_type.value}:{entity_id}",
-            "trace_id": None,
+            "trace_id": audit_action.trace_id,
         },
+        "audit_action": audit_action.to_dict(),
     }
+    audit_record["foundation"] = foundation_ctx
     command_store.submit_command(
         command_id=command_id,
         command_type=command_type,
@@ -17619,7 +18019,7 @@ async def bff_get_strategy_audit(
     _require_read_role(identity)
     _ensure_strategy_exists(strategy_id)
     snapshot_at = utc_now()
-    events = read_store.list_governance_audit_events(target_type="strategy") or []
+    events = _list_governance_audit_events() or []
     filtered = _filter_audit_events_by_target(events, strategy_id)
     return {
         "data": filtered,
@@ -17676,6 +18076,231 @@ def _ooda_packet_list_payload(
         "items": page_items,
         "page_info": {"next_page_token": next_page_token, "total": total},
         "meta": meta,
+    }
+
+
+def _synthesis_conflict_log_routes_enabled() -> bool:
+    raw = os.getenv("PANTHEON_SYNTHESIS_CONFLICT_LOG_VIEW_ENABLED")
+    if raw is None:
+        return True
+    return raw.strip().lower() not in {"0", "false", "no", "off", "disabled"}
+
+
+def _require_synthesis_conflict_log_routes_enabled() -> None:
+    if _synthesis_conflict_log_routes_enabled():
+        return
+    raise _bff_error(
+        503,
+        ErrorCode.DOWNSTREAM_UNAVAILABLE,
+        "Synthesis conflict log view disabled",
+        "PANTHEON_SYNTHESIS_CONFLICT_LOG_VIEW_ENABLED is disabled for this BFF instance.",
+        precondition_failed="synthesis_conflict_log_feature_flag",
+        suggestion="Re-enable the synthesis conflict log read surface before retrying this route.",
+    )
+
+
+def _synthesis_conflict_log_id(log: Dict[str, Any]) -> str:
+    return str(log.get("log_id") or log.get("id") or log.get("conflict_resolution_log_id") or "").strip()
+
+
+def _synthesis_conflict_resolution_state(log: Dict[str, Any]) -> str:
+    if log.get("rejected_reason"):
+        return "rejected"
+    if log.get("committee_ref"):
+        return "committee_required"
+    if log.get("vetoed_proposals"):
+        return "resolved_with_veto"
+    return "resolved"
+
+
+def _float_or_none(value: Any) -> Optional[float]:
+    if isinstance(value, bool) or value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _synthesis_conflict_proposal_rows(log: Dict[str, Any]) -> List[Dict[str, Any]]:
+    proposal_ids = [str(item) for item in (log.get("proposal_ids") or []) if str(item).strip()]
+    weighting_inputs = log.get("weighting_inputs") if isinstance(log.get("weighting_inputs"), dict) else {}
+    weighting_outputs = log.get("weighting_outputs") if isinstance(log.get("weighting_outputs"), dict) else {}
+    vetoes_by_proposal: Dict[str, Dict[str, Any]] = {}
+    for veto in log.get("vetoed_proposals") or []:
+        if not isinstance(veto, dict):
+            continue
+        proposal_id = str(veto.get("proposal_id") or "").strip()
+        if proposal_id:
+            vetoes_by_proposal[proposal_id] = veto
+            if proposal_id not in proposal_ids:
+                proposal_ids.append(proposal_id)
+
+    rows: List[Dict[str, Any]] = []
+    for proposal_id in proposal_ids:
+        veto = vetoes_by_proposal.get(proposal_id)
+        input_weight = _float_or_none(weighting_inputs.get(proposal_id))
+        output_share = _float_or_none(weighting_outputs.get(proposal_id))
+        state = "vetoed" if veto else "not_selected"
+        if not veto and output_share is not None and output_share > 0:
+            state = "selected"
+        row: Dict[str, Any] = {
+            "proposal_id": proposal_id,
+            "state": state,
+            "input_weight": input_weight,
+            "output_share": output_share,
+            "is_vetoed": bool(veto),
+        }
+        if veto:
+            row["persona_id"] = veto.get("persona_id")
+            row["veto_reason"] = veto.get("reason")
+            row["veto_detail"] = veto.get("detail")
+        rows.append(row)
+    return rows
+
+
+def _synthesis_conflict_log_view_payload(log: Dict[str, Any]) -> Dict[str, Any]:
+    raw = json.loads(json.dumps(log))
+    log_id = _synthesis_conflict_log_id(raw)
+    proposal_rows = _synthesis_conflict_proposal_rows(raw)
+    veto_count = sum(1 for row in proposal_rows if row.get("is_vetoed"))
+    selected_count = sum(1 for row in proposal_rows if row.get("state") == "selected")
+    resolution_state = _synthesis_conflict_resolution_state(raw)
+    artifact_id = raw.get("allocation_policy_artifact_id") or raw.get("artifact_id")
+    artifact_href = raw.get("allocation_policy_artifact_href") or raw.get("artifact_href")
+    governance_approval_id = raw.get("governance_approval_id")
+    view = {
+        "title": f"Synthesis conflict log {log_id}",
+        "resolution_state": resolution_state,
+        "summary": {
+            "proposal_count": len(proposal_rows),
+            "selected_count": selected_count,
+            "veto_count": veto_count,
+            "committee_required": bool(raw.get("committee_ref")),
+            "sponsor_persona_id": raw.get("sponsor_persona_id"),
+            "synthesis_method": raw.get("synthesis_method"),
+            "capital_pool_id": raw.get("capital_pool_id"),
+            "scope_ref": raw.get("scope_ref"),
+        },
+        "proposal_rows": proposal_rows,
+        "governance": {
+            "committee_ref": raw.get("committee_ref"),
+            "rejected_reason": raw.get("rejected_reason"),
+            "approval_id": governance_approval_id,
+            "decision": raw.get("governance_decision"),
+            "decision_state": raw.get("governance_decision_state"),
+            "can_proceed": raw.get("governance_can_proceed"),
+        },
+        "links": {
+            "allocation_policy_artifact": (
+                {"id": artifact_id, "href": artifact_href}
+                if artifact_id
+                else None
+            ),
+            "governance_approval": (
+                {"id": governance_approval_id, "href": f"/bff/approvals/{governance_approval_id}"}
+                if governance_approval_id
+                else None
+            ),
+        },
+    }
+    raw["id"] = log_id
+    raw["resolution_state"] = resolution_state
+    raw["view"] = view
+    return raw
+
+
+def _synthesis_conflict_log_list_payload(
+    logs: List[Dict[str, Any]],
+    *,
+    surface_key: str,
+    page_token: Optional[str] = None,
+    page_size: int = 20,
+) -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    total = len(logs)
+    page_logs, next_page_token = _page_slice(logs, page_token, page_size)
+    page_items = [_synthesis_conflict_log_view_payload(log) for log in page_logs]
+    return {
+        "data": page_items,
+        "items": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": _read_surface_meta(
+            "synthesis_conflict_logs",
+            surface_key,
+            snapshot_at=snapshot_at,
+            total=total,
+        ),
+    }
+
+
+@app.get("/bff/synthesis/conflict-logs")
+async def bff_list_synthesis_conflict_logs(
+    capital_pool_id: Optional[str] = None,
+    scope_ref: Optional[str] = None,
+    proposal_id: Optional[str] = None,
+    sponsor_persona_id: Optional[str] = None,
+    synthesis_method: Optional[str] = None,
+    committee_ref: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: list Management-visible multi-persona synthesis conflict logs."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _require_synthesis_conflict_log_routes_enabled()
+    logs = read_store.list_synthesis_conflict_logs(
+        capital_pool_id=capital_pool_id,
+        scope_ref=scope_ref,
+        proposal_id=proposal_id,
+        sponsor_persona_id=sponsor_persona_id,
+        synthesis_method=synthesis_method,
+        committee_ref=committee_ref,
+    )
+    return _synthesis_conflict_log_list_payload(
+        logs,
+        surface_key="synthesis_conflict_logs",
+        page_token=page_token,
+        page_size=page_size,
+    )
+
+
+@app.get("/bff/synthesis/conflict-logs/{log_id}")
+async def bff_get_synthesis_conflict_log(
+    log_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: get one Management-visible synthesis conflict log view."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _require_synthesis_conflict_log_routes_enabled()
+    clean_id = log_id.strip()
+    log_record = read_store.get_synthesis_conflict_log(clean_id)
+    source = read_store.dataset_source("synthesis_conflict_logs")
+    if not log_record:
+        if source == "missing":
+            return _sem_final_degraded_detail(
+                entity_id=clean_id,
+                label="Synthesis conflict log",
+                dataset="synthesis_conflict_logs",
+                surface_key="synthesis_conflict_log_detail",
+                source="missing",
+            )
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Synthesis conflict log not found",
+            f"Synthesis conflict log {log_id} does not exist",
+        )
+    snapshot_at = utc_now()
+    return {
+        "data": _synthesis_conflict_log_view_payload(log_record),
+        "meta": _read_surface_meta(
+            "synthesis_conflict_logs",
+            "synthesis_conflict_log_detail",
+            snapshot_at=snapshot_at,
+        ),
     }
 
 
@@ -18211,7 +18836,7 @@ async def bff_get_persona_audit(
     _require_read_role(identity)
     _ensure_persona_exists(persona_id)
     snapshot_at = utc_now()
-    events = read_store.list_governance_audit_events(target_type="persona") or []
+    events = _list_governance_audit_events() or []
     filtered = _filter_audit_events_by_target(events, persona_id)
     return {
         "data": filtered,
@@ -18220,6 +18845,110 @@ async def bff_get_persona_audit(
         "meta": _read_surface_meta(
             "governance_audit_events", "persona_audit",
             snapshot_at=snapshot_at, total=len(filtered),
+        ),
+    }
+
+
+@app.get("/bff/personas/{persona_id}/skills")
+async def bff_get_persona_skills(
+    persona_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: skills accessible to a persona, derived from capability snapshot (PER-002)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _ensure_persona_exists(persona_id)
+    snapshot_at = utc_now()
+    snapshot = read_store.get_capability_snapshot_for_persona(persona_id)
+    effective_skill_ids = list((snapshot or {}).get("effective_skills") or [])
+    all_skills = _merged_skill_records()
+    skill_by_id: Dict[str, Dict[str, Any]] = {
+        str(s.get("skill_id") or s.get("id") or ""): s
+        for s in all_skills
+        if s.get("skill_id") or s.get("id")
+    }
+    items: List[Dict[str, Any]] = []
+    for sid in effective_skill_ids:
+        sid = str(sid)
+        record = skill_by_id.get(sid)
+        if record:
+            items.append(dict(record))
+        else:
+            items.append({"skill_id": sid, "id": sid, "name": sid, "status": "active"})
+    return {
+        "data": items,
+        "items": items,
+        "page_info": {"next_page_token": None, "total": len(items)},
+        "meta": _read_surface_meta(
+            "capability_snapshots", "persona_skills",
+            snapshot_at=snapshot_at, total=len(items),
+        ),
+    }
+
+
+@app.get("/bff/personas/{persona_id}/tools")
+async def bff_get_persona_tools(
+    persona_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: tools accessible to a persona, derived from capability snapshot (PER-002)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _ensure_persona_exists(persona_id)
+    snapshot_at = utc_now()
+    snapshot = read_store.get_capability_snapshot_for_persona(persona_id)
+    effective_tool_ids = list((snapshot or {}).get("effective_tools") or [])
+    all_tools = _merged_tool_records()
+    tool_by_id: Dict[str, Dict[str, Any]] = {
+        str(t.get("tool_id") or t.get("id") or ""): t
+        for t in all_tools
+        if t.get("tool_id") or t.get("id")
+    }
+    items: List[Dict[str, Any]] = []
+    for tid in effective_tool_ids:
+        tid = str(tid)
+        record = tool_by_id.get(tid)
+        if record:
+            items.append(dict(record))
+        else:
+            items.append({"tool_id": tid, "id": tid, "name": tid, "status": "active"})
+    return {
+        "data": items,
+        "items": items,
+        "page_info": {"next_page_token": None, "total": len(items)},
+        "meta": _read_surface_meta(
+            "capability_snapshots", "persona_tools",
+            snapshot_at=snapshot_at, total=len(items),
+        ),
+    }
+
+
+@app.get("/bff/personas/{persona_id}/capabilities")
+async def bff_get_persona_capabilities_surface(
+    persona_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: capability snapshot surface for a persona (PER-002 read surface)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _ensure_persona_exists(persona_id)
+    snapshot_at = utc_now()
+    snapshot = read_store.get_capability_snapshot_for_persona(persona_id)
+    data: Dict[str, Any] = {
+        "personaId": persona_id,
+        "effectiveSkills": (snapshot or {}).get("effective_skills") or [],
+        "effectiveTools": (snapshot or {}).get("effective_tools") or [],
+        "effectiveWorkflows": (snapshot or {}).get("effective_workflows") or [],
+        "restrictions": (snapshot or {}).get("restrictions") or [],
+        "generatedAt": (snapshot or {}).get("generated_at"),
+        "sourceRefs": (snapshot or {}).get("source_refs") or [],
+        "snapshotId": (snapshot or {}).get("snapshot_id"),
+    }
+    return {
+        "data": data,
+        "meta": _read_surface_meta(
+            "capability_snapshots", "persona_capabilities",
+            snapshot_at=snapshot_at,
         ),
     }
 
@@ -18923,7 +19652,7 @@ SSE_ASK_EVENT_TYPES = {
 
 _SSE_RESYNC_ROUTES: Dict[str, tuple[str, ...]] = {
     "approval": ("/bff/approvals", "/bff/v5/interventions"),
-    "ask": ("/bff/agora/ask/sessions/{id}",),
+    "ask": ("/bff/agora/ask/sessions/{id}", "/bff/agora/committee/sessions/{id}"),
 }
 
 
@@ -19365,10 +20094,23 @@ def _evol_exp_bff_action_command(
     cached = _evol_exp_bff_idempotency_check(resolved_key, request_hash)
     if cached is not None:
         return cached
+    catalog_entry = get_catalog_entry(command_type.value)
     staleness_warning = _check_read_surface_state()
     command_id = str(uuid.uuid4())
     submitted_at = utc_now()
     target = TargetObject(type=entity_type, id=entity_id)
+    audit_action = _foundation_audit_for_command_record(
+        identity=identity,
+        command_type=command_type,
+        target_type=entity_type,
+        target_id=entity_id,
+        payload={"action_id": action_id, **payload},
+        reason=str(payload.get("reason") or action_id or command_type.value),
+        command_id=command_id,
+        idempotency_key=resolved_key,
+        route=f"POST /bff/{entity_type.value}/{entity_id}/actions/{action_id}",
+        metadata={"action_id": action_id, "catalog_entry": catalog_entry.action_id if catalog_entry else None},
+    )
     audit_record = {
         "operator_id": identity.operator_id,
         "roles_at_submission": identity.roles,
@@ -19388,6 +20130,11 @@ def _evol_exp_bff_action_command(
         },
         trace_id=command_id,
     )
+    foundation_ctx = {
+        "idempotency_record": idempotency_record.to_dict(),
+        "audit_action": audit_action.to_dict(),
+    }
+    audit_record["foundation"] = foundation_ctx
     command_store.submit_command(
         command_id=command_id,
         command_type=command_type,
@@ -19395,7 +20142,7 @@ def _evol_exp_bff_action_command(
         submitted_at=submitted_at,
         params={"action_id": action_id, **payload},
         audit_context=audit_record,
-        foundation_context={"idempotency_record": idempotency_record.to_dict()},
+        foundation_context=foundation_ctx,
     )
     result = _project_final_command_response(
         command_id=command_id,
@@ -20278,6 +21025,18 @@ def _tools_mcp_skills_action_command(
     command_id = str(uuid.uuid4())
     submitted_at = utc_now()
     target = TargetObject(type=entity_type, id=entity_id)
+    audit_action = _foundation_audit_for_command_record(
+        identity=identity,
+        command_type=command_type,
+        target_type=entity_type,
+        target_id=entity_id,
+        payload={"action_id": action_id, **payload},
+        reason=str(payload.get("reason") or action_id or command_type.value),
+        command_id=command_id,
+        idempotency_key=resolved_key,
+        route=f"POST /bff/{entity_type.value}/{entity_id}/actions/{action_id}",
+        metadata={"action_id": action_id, "catalog_entry": catalog_entry.action_id if catalog_entry else None},
+    )
     audit_record = {
         "operator_id": identity.operator_id,
         "roles_at_submission": identity.roles,
@@ -20294,9 +21053,11 @@ def _tools_mcp_skills_action_command(
             "request_hash": request_hash,
             "operation_type": f"bff.{command_type.value}",
             "target_ref": f"{entity_type.value}:{entity_id}",
-            "trace_id": None,
+            "trace_id": audit_action.trace_id,
         },
+        "audit_action": audit_action.to_dict(),
     }
+    audit_record["foundation"] = foundation_ctx
     command_store.submit_command(
         command_id=command_id,
         command_type=command_type,
@@ -20894,6 +21655,49 @@ async def bff_skill_sandbox_eval(
 _GOV_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 _GOV_BFF_INCIDENT_OVERLAY: Dict[str, Dict[str, Any]] = {}
 
+_INCIDENT_CASE_ALIAS_FIELDS = {
+    "binding_id": ("binding_id", "runtime_binding_id"),
+    "deployment_stage": ("deployment_stage", "deployment_mode"),
+    "deployment_plan_id": ("deployment_plan_id", "plan_id"),
+    "capital_pool_id": ("capital_pool_id", "affected_pool_id"),
+    "persona_capital_binding_id": ("persona_capital_binding_id",),
+    "artifact_id": ("artifact_id",),
+    "artifact_version": ("artifact_version",),
+    "runtime_id": ("runtime_id",),
+    "trace_id": ("trace_id", "correlation_id"),
+}
+
+
+def _first_present(payload: Dict[str, Any], keys: tuple[str, ...]) -> Any:
+    for key in keys:
+        value = payload.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _project_bff_incident_case(incident: Dict[str, Any]) -> Dict[str, Any]:
+    payload = dict(incident)
+    incident_id = str(payload.get("incident_id") or payload.get("id") or "")
+    if incident_id:
+        payload["id"] = payload.get("id") or incident_id
+        payload["incident_id"] = incident_id
+
+    for field, aliases in _INCIDENT_CASE_ALIAS_FIELDS.items():
+        value = _first_present(payload, aliases)
+        if value is not None:
+            payload[field] = value
+
+    created_at = payload.get("created_at") or payload.get("opened_at")
+    if created_at:
+        payload["created_at"] = created_at
+        payload["opened_at"] = payload.get("opened_at") or created_at
+
+    if not payload.get("lineage_ref") and payload.get("artifact_id") and payload.get("artifact_version"):
+        payload["lineage_ref"] = f"{payload['artifact_id']}@{payload['artifact_version']}"
+
+    return payload
+
 
 def _bff_incident_matches_filters(
     incident: Dict[str, Any],
@@ -20906,9 +21710,9 @@ def _bff_incident_matches_filters(
         requested_statuses = {token.strip().lower() for token in status.split(",") if token.strip()}
         if str(incident.get("status") or "").lower() not in requested_statuses:
             return False
-    if severity and incident.get("severity") != severity:
+    if severity and str(incident.get("severity") or "").lower() != severity.lower():
         return False
-    if affected_pool_id and incident.get("capital_pool_id") != affected_pool_id:
+    if affected_pool_id and (incident.get("capital_pool_id") or incident.get("affected_pool_id")) != affected_pool_id:
         return False
     return True
 
@@ -20919,7 +21723,14 @@ def _list_bff_incidents(
     severity: Optional[str] = None,
     affected_pool_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    incidents = list(read_store.list_incidents(status=status, severity=severity, affected_pool_id=affected_pool_id))
+    incidents = [
+        _project_bff_incident_case(incident)
+        for incident in read_store.list_incidents(
+            status=status,
+            severity=severity,
+            affected_pool_id=affected_pool_id,
+        )
+    ]
     seen = {str(item.get("incident_id") or item.get("id") or "") for item in incidents}
     for incident_id, incident in _GOV_BFF_INCIDENT_OVERLAY.items():
         if incident_id in seen:
@@ -20930,16 +21741,16 @@ def _list_bff_incidents(
             severity=severity,
             affected_pool_id=affected_pool_id,
         ):
-            incidents.append(dict(incident))
+            incidents.append(_project_bff_incident_case(incident))
     return sorted(incidents, key=lambda item: str(item.get("created_at") or item.get("submitted_at") or ""), reverse=True)
 
 
 def _get_bff_incident(incident_id: str) -> Optional[Dict[str, Any]]:
     incident = read_store.get_incident(incident_id)
     if incident:
-        return incident
+        return _project_bff_incident_case(incident)
     overlay = _GOV_BFF_INCIDENT_OVERLAY.get(incident_id)
-    return dict(overlay) if overlay else None
+    return _project_bff_incident_case(overlay) if overlay else None
 
 
 def _gov_bff_action_command(
@@ -20974,6 +21785,18 @@ def _gov_bff_action_command(
     command_id = str(uuid.uuid4())
     submitted_at = utc_now()
     target = TargetObject(type=entity_type, id=entity_id)
+    audit_action = _foundation_audit_for_command_record(
+        identity=identity,
+        command_type=command_type,
+        target_type=entity_type,
+        target_id=entity_id,
+        payload={"action_id": action_id, **payload},
+        reason=str(payload.get("reason") or action_id or command_type.value),
+        command_id=command_id,
+        idempotency_key=resolved_key,
+        route=f"POST /bff/{entity_type.value}/{entity_id}/actions/{action_id}",
+        metadata={"action_id": action_id, "catalog_entry": catalog_entry.action_id if catalog_entry else None},
+    )
     audit_record = {
         "operator_id": identity.operator_id,
         "roles_at_submission": identity.roles,
@@ -20996,7 +21819,11 @@ def _gov_bff_action_command(
         },
         trace_id=command_id,
     )
-    foundation_ctx = {"idempotency_record": idempotency_record.to_dict()}
+    foundation_ctx = {
+        "idempotency_record": idempotency_record.to_dict(),
+        "audit_action": audit_action.to_dict(),
+    }
+    audit_record["foundation"] = foundation_ctx
     command_store.submit_command(
         command_id=command_id,
         command_type=command_type,
@@ -21177,7 +22004,7 @@ async def bff_review_audit(
 
     snapshot_at = utc_now()
     clean_id = review_id.strip()
-    events = read_store.list_governance_audit_events()
+    events = _list_governance_audit_events()
     item_events = [
         e for e in events
         if str(e.get("target_id") or e.get("item_id") or "") == clean_id
@@ -21377,9 +22204,11 @@ async def bff_list_runtimes(
         bindings = []
         next_page_token = None
     else:
+        total = len(bindings)
         bindings, next_page_token = _page_slice(bindings, page_token, page_size)
 
     meta = _snapshot_meta(snapshot_at)
+    meta["total"] = 0 if surface.get("status") == "unavailable" else total
     meta["surfaces"] = {"runtimes": surface}
     staleness = _meta_staleness()
     if staleness is not None:
@@ -21401,12 +22230,15 @@ async def bff_get_runtime(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
+    snapshot_at = utc_now()
+    surface = _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at)
     clean_id = runtime_id.strip()
     binding = read_store.get_runtime_binding_by_runtime_id(clean_id)
     if not binding:
         # fall back to binding_id lookup
         binding = read_store.get_runtime_binding(clean_id)
     if not binding:
+        _raise_if_read_surface_unavailable(surface, label="Runtime")
         raise _bff_error(
             404,
             ErrorCode.OBJECT_NOT_FOUND,
@@ -21414,10 +22246,11 @@ async def bff_get_runtime(
             f"Runtime {runtime_id} does not exist",
         )
 
-    snapshot_at = utc_now()
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {"runtime": surface}
     return {
         "data": binding,
-        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
+        "meta": meta,
     }
 
 
@@ -21538,21 +22371,32 @@ async def bff_list_incidents(
     snapshot_at = utc_now()
     surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
     incidents = _list_bff_incidents(status=status, severity=severity, affected_pool_id=affected_pool_id)
+    total = len(incidents)
     if surface.get("status") == "unavailable":
         incidents = []
         next_page_token = None
+        total = 0
     else:
         incidents, next_page_token = _page_slice(incidents, page_token, page_size)
 
     meta = _snapshot_meta(snapshot_at)
     meta["surfaces"] = {"incidents": surface}
+    meta["total"] = total
     staleness = _meta_staleness()
     if staleness is not None:
         meta["staleness"] = staleness
+    degradation_reason = _surface_degradation_reason(
+        surface,
+        degraded_reason="Incident list is degraded and may be stale.",
+        unavailable_reason="Incident list is currently unavailable.",
+    )
+    if degradation_reason is not None:
+        meta["degradation"] = {"reason": degradation_reason}
 
     return {
+        "data": incidents,
         "items": incidents,
-        "page_info": {"next_page_token": next_page_token},
+        "page_info": {"next_page_token": next_page_token, "total": total},
         "meta": meta,
     }
 
@@ -21591,12 +22435,13 @@ async def bff_create_incident(
 
     incident_id = str(payload.get("incident_id") or payload.get("id") or uuid.uuid4())
     submitted_at = utc_now()
-    result = {
+    result = _project_bff_incident_case({
+        **payload,
         "id": incident_id,
         "incident_id": incident_id,
-        "status": "open",
+        "status": payload.get("status") or "open",
         "submitted_at": submitted_at,
-        "created_at": submitted_at,
+        "created_at": payload.get("created_at") or payload.get("opened_at") or submitted_at,
         "updated_at": submitted_at,
         "submitted_by": identity.operator_id,
         "title": payload.get("title") or "Untitled Incident",
@@ -21604,13 +22449,14 @@ async def bff_create_incident(
         "capital_pool_id": payload.get("capital_pool_id") or payload.get("affected_pool_id"),
         "runtime_id": payload.get("runtime_id"),
         "correlation_id": payload.get("correlation_id") or incident_id,
+        "trace_id": payload.get("trace_id") or payload.get("correlation_id") or incident_id,
         "audit_ref": {
             "target_type": "Incident",
             "target_id": incident_id,
             "href": f"/bff/audit/entities/Incident/{incident_id}",
         },
         "meta": {"idempotency_key": resolved_key},
-    }
+    })
     _GOV_BFF_INCIDENT_OVERLAY[incident_id] = result
     _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": req_hash, "result": result}
     return result
@@ -21626,8 +22472,11 @@ async def bff_get_incident(
     _require_read_role(identity)
 
     clean_id = incident_id.strip()
+    snapshot_at = utc_now()
+    surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
     incident = _get_bff_incident(clean_id)
     if not incident:
+        _raise_if_read_surface_unavailable(surface, label="Incident")
         raise _bff_error(
             404,
             ErrorCode.OBJECT_NOT_FOUND,
@@ -21635,10 +22484,9 @@ async def bff_get_incident(
             f"Incident {incident_id} does not exist",
         )
 
-    snapshot_at = utc_now()
     return {
         "data": incident,
-        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
+        "meta": _read_surface_meta("incidents", "incident", snapshot_at=snapshot_at, surface=surface),
     }
 
 
@@ -21661,8 +22509,11 @@ async def bff_incident_action(
     except Exception:
         pass
     clean_id = incident_id.strip()
+    snapshot_at = utc_now()
+    surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
     incident = _get_bff_incident(clean_id)
     if not incident:
+        _raise_if_read_surface_unavailable(surface, label="Incident")
         raise _bff_error(
             404,
             ErrorCode.OBJECT_NOT_FOUND,
@@ -21689,6 +22540,42 @@ async def bff_list_alerts(
 
 # -- Audit -------------------------------------------------------------------
 
+@app.get("/bff/audit")
+async def bff_list_audit(
+    actor: Optional[str] = None,
+    action_type: Optional[str] = None,
+    target_type: Optional[str] = None,
+    from_: Optional[datetime] = Query(default=None, alias="from"),
+    to: Optional[datetime] = Query(default=None),
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=500),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: governance audit event list with actor/type/time filters and pagination."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    action_types = [v.strip() for v in action_type.split(",") if v.strip()] if action_type else None
+    events = _list_governance_audit_events(
+        actor=actor,
+        action_types=action_types,
+        target_type=target_type,
+        from_ts=from_,
+        to_ts=to,
+    )
+    total = len(events)
+    page_items, next_page_token = _page_slice(events, page_token, page_size)
+    return {
+        "data": page_items,
+        "items": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": _read_surface_meta(
+            "governance_audit_events", "audit_list",
+            snapshot_at=snapshot_at, total=total,
+        ),
+    }
+
+
 @app.get("/bff/audit/events")
 async def bff_list_audit_events(
     actor: Optional[str] = None,
@@ -21710,7 +22597,7 @@ async def bff_list_audit_events(
     from_dt = _parse_rfc3339_header(from_ts) if from_ts else None
     to_dt = _parse_rfc3339_header(to_ts) if to_ts else None
 
-    events = read_store.list_governance_audit_events(
+    events = _list_governance_audit_events(
         actor=actor,
         action_types=action_types,
         target_type=target_type,
@@ -21742,7 +22629,7 @@ async def bff_get_entity_audit(
     clean_type = entity_type.strip()
     clean_id = entity_id.strip()
 
-    events = read_store.list_governance_audit_events(target_type=clean_type)
+    events = _list_governance_audit_events(target_type=clean_type)
     entity_events = [
         e for e in events
         if str(e.get("target_id") or e.get("entity_id") or "") == clean_id
@@ -21776,7 +22663,7 @@ async def bff_audit_export(
     from_dt = _parse_rfc3339_header(from_ts) if from_ts else None
     to_dt = _parse_rfc3339_header(to_ts) if to_ts else None
 
-    events = read_store.list_governance_audit_events(
+    events = _list_governance_audit_events(
         actor=actor,
         action_types=action_types,
         target_type=target_type,
@@ -22617,7 +23504,7 @@ async def bff_list_events(
 
     snapshot_at = utc_now()
     action_types = [event_type] if event_type else None
-    events = read_store.list_governance_audit_events(
+    events = _list_governance_audit_events(
         actor=actor,
         action_types=action_types,
         target_type=target_type,
@@ -23024,6 +23911,27 @@ def _sem_command_response(
         status=ActionCommandStatus.ACCEPTED.value,
         accepted_at=now,
     )
+    reason = str(payload.get("reason") or command_type.value)
+    audit_action = _foundation_audit_for_command_record(
+        identity=identity,
+        command_type=command_type,
+        target_type=target_type,
+        target_id=target_id,
+        payload=payload,
+        reason=reason,
+        command_id=command_id,
+        idempotency_key=clean_key,
+        route="POST /bff/semantic-command",
+    )
+    foundation_ctx = {
+        "idempotency_record": {
+            "idempotency_key": clean_key,
+            "request_hash": request_hash,
+            "status": "succeeded",
+            "trace_id": audit_action.trace_id,
+        },
+        "audit_action": audit_action.to_dict(),
+    }
     record = command_store.submit_command(
         command_id,
         command_type,
@@ -23032,48 +23940,43 @@ def _sem_command_response(
         payload,
         {
             "actor": identity.operator_id,
-            "reason": str(payload.get("reason") or command_type.value),
+            "reason": reason,
             "live_capital_side_effects": False,
             "receipt_dual_write": receipt_dual_write,
+            "foundation": foundation_ctx,
         },
-        {
-            "idempotency_record": {
-                "idempotency_key": clean_key,
-                "request_hash": request_hash,
-                "status": "succeeded",
-            }
-        },
+        foundation_ctx,
     )
     result = _sem_command_payload_from_record(record, idempotency_key=clean_key, replayed=False)
     _FINAL_CONTRACT_IDEMPOTENCY[clean_key] = {"request_hash": request_hash, "result": result}
     return JSONResponse(status_code=status_code, content=result)
 
 
-@app.post("/bff/actions/{entityType}/{entityId}/{actionId}", status_code=202)
-async def sem_canonical_action_command(
+def _submit_canonical_action_command(
+    *,
     background_tasks: BackgroundTasks,
     response: Response,
-    entityType: str,
-    entityId: str,
-    actionId: str,
-    payload: Dict[str, Any] = Body(default_factory=dict),
-    authorization: Optional[str] = Header(default=None),
-    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
-    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
-    x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
-    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
-    x_confirm_token: Optional[str] = Header(default=None, alias="X-Confirm-Token"),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    entity_type: str,
+    entity_id: str,
+    action_id: str,
+    payload: Dict[str, Any],
+    authorization: Optional[str],
+    x_mfa_token: Optional[str],
+    x_trace_id: Optional[str],
+    x_correlation_id: Optional[str],
+    x_request_id: Optional[str],
+    x_confirm_token: Optional[str],
+    idempotency_key: Optional[str],
+    x_idempotency_key: Optional[str],
 ):
     deprecation = _legacy_action_deprecation_notice()
     _apply_legacy_action_deprecation_headers(response)
     payload = dict(payload or {})
     _reject_body_idempotency_key(payload)
     command_payload = _action_adapter_command_payload(
-        entity_type=entityType,
-        entity_id=entityId,
-        action_id=actionId,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        action_id=action_id,
         payload=payload,
     )
     params = command_payload["params"]
@@ -23101,6 +24004,76 @@ async def sem_canonical_action_command(
         enqueue=False,
         include_durable_meta=True,
         response_deprecation=deprecation,
+    )
+
+
+@app.post("/bff/actions/{type}/{id}/{action}", status_code=202)
+async def sem_canonical_action_command(
+    background_tasks: BackgroundTasks,
+    response: Response,
+    type: str,
+    id: str,
+    action: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+    x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
+    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+    x_confirm_token: Optional[str] = Header(default=None, alias="X-Confirm-Token"),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    return _submit_canonical_action_command(
+        background_tasks=background_tasks,
+        response=response,
+        entity_type=type,
+        entity_id=id,
+        action_id=action,
+        payload=payload,
+        authorization=authorization,
+        x_mfa_token=x_mfa_token,
+        x_trace_id=x_trace_id,
+        x_correlation_id=x_correlation_id,
+        x_request_id=x_request_id,
+        x_confirm_token=x_confirm_token,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+    )
+
+
+@app.post("/bff/actions/{entityType}/{entityId}/{actionId}", status_code=202, include_in_schema=False)
+async def sem_legacy_named_action_command(
+    background_tasks: BackgroundTasks,
+    response: Response,
+    entityType: str,
+    entityId: str,
+    actionId: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+    x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
+    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+    x_confirm_token: Optional[str] = Header(default=None, alias="X-Confirm-Token"),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    return _submit_canonical_action_command(
+        background_tasks=background_tasks,
+        response=response,
+        entity_type=entityType,
+        entity_id=entityId,
+        action_id=actionId,
+        payload=payload,
+        authorization=authorization,
+        x_mfa_token=x_mfa_token,
+        x_trace_id=x_trace_id,
+        x_correlation_id=x_correlation_id,
+        x_request_id=x_request_id,
+        x_confirm_token=x_confirm_token,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
     )
 
 
@@ -23386,6 +24359,64 @@ async def sem_v5_sentinel_remediation_execute_command(
     )
 
 
+_SENTINEL_FINDING_KINDS = {"hiq_sentinel", "risk_breach", "strategy_drift", "loop_anomaly"}
+_SENTINEL_FINDING_STATUSES = {"open", "resolved", "dismissed", "escalated"}
+_SENTINEL_FINDING_SEVERITIES = {"critical", "high", "medium", "low"}
+
+
+@app.get("/bff/v5/sentinel/findings")
+async def bff_v5_sentinel_findings_list(
+    kind: Optional[str] = Query(default=None, description="Filter by kind: hiq_sentinel, risk_breach, strategy_drift, loop_anomaly"),
+    status: Optional[str] = Query(default=None, description="Filter by status: open, resolved, dismissed, escalated"),
+    severity: Optional[str] = Query(default=None, description="Filter by severity: critical, high, medium, low"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """
+    GET /bff/v5/sentinel/findings — list sentinel findings from the read surface store.
+
+    Optional query filters:
+      ?kind=hiq_sentinel|risk_breach|strategy_drift|loop_anomaly
+      ?status=open|resolved|dismissed|escalated
+      ?severity=critical|high|medium|low
+
+    Returns source-aware list response.  When the source is missing the items
+    list is empty and meta.surfaces.sentinel_findings.source is 'missing'.
+    """
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    if kind is not None and kind.lower() not in _SENTINEL_FINDING_KINDS:
+        raise _bff_error(
+            400,
+            ErrorCode.INVALID_REQUEST,
+            f"Invalid kind '{kind}'. Must be one of: {', '.join(sorted(_SENTINEL_FINDING_KINDS))}",
+            "Unknown sentinel finding kind filter value",
+        )
+    if status is not None and status.lower() not in _SENTINEL_FINDING_STATUSES:
+        raise _bff_error(
+            400,
+            ErrorCode.INVALID_REQUEST,
+            f"Invalid status '{status}'. Must be one of: {', '.join(sorted(_SENTINEL_FINDING_STATUSES))}",
+            "Unknown sentinel finding status filter value",
+        )
+    if severity is not None and severity.lower() not in _SENTINEL_FINDING_SEVERITIES:
+        raise _bff_error(
+            400,
+            ErrorCode.INVALID_REQUEST,
+            f"Invalid severity '{severity}'. Must be one of: {', '.join(sorted(_SENTINEL_FINDING_SEVERITIES))}",
+            "Unknown sentinel finding severity filter value",
+        )
+
+    available, records = read_store.list_sentinel_findings(
+        kind=kind,
+        status=status,
+        severity=severity,
+    )
+    src_dataset = "sentinel_findings" if available and read_store.dataset_source("incidents") == "missing" else "incidents"
+    source = None if available else "missing"
+    return _sem_final_list_response(records, dataset=src_dataset, surface_key="sentinel_findings", source=source)
+
+
 def _sem_local_records(dataset: str) -> tuple[str, List[Dict[str, Any]]]:
     data = getattr(read_store, "_data", {})
     raw = data.get(dataset) if isinstance(data, dict) else None
@@ -23440,6 +24471,524 @@ async def sem_agora_inbox(authorization: Optional[str] = Header(default=None)):
 async def sem_agora_ask_sessions(authorization: Optional[str] = Header(default=None)):
     _require_read_role(_extract_identity(authorization))
     return _sem_list_payload("agora_sessions", "agora_ask_sessions", filter_mode="quick_ask")
+
+
+_ASK_SESSIONS_IDEMPOTENCY = _AGORA_CORE_BFF_IDEMPOTENCY
+
+
+@app.post("/bff/agora/ask/sessions", status_code=201)
+async def sem_agora_ask_create_session(
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """ASK-001: create an agora ask session explicitly."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({"route": "POST /bff/agora/ask/sessions", "payload": payload})
+    cached = _agora_core_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    now = utc_now()
+    session_id = str(payload.get("sessionId") or payload.get("session_id") or f"ask-{uuid.uuid4().hex[:10]}")
+    title = str(payload.get("title") or "Agora ask session").strip()
+    session = read_store.create_agora_session(
+        session_id=session_id,
+        title=title,
+        actor_id=identity.operator_id,
+        payload={
+            **dict(payload),
+            "mode": "quick_ask",
+            "participants": payload.get("participants") or [{"type": "operator", "id": identity.operator_id}],
+        },
+        created_at=now,
+    )
+    _publish_event(
+        _sse_buffers["ask"],
+        _sse_subscribers["ask"],
+        "ask.session.started",
+        {"session_id": session_id, "mode": "quick_ask"},
+    )
+    result = {
+        "data": session,
+        "meta": {
+            "snapshot_at": now,
+            "surfaces": {"agora_ask_session_detail": {"status": "ok", "source": "bff_local"}},
+        },
+    }
+    _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+@app.get("/bff/agora/ask/sessions/{sessionId}")
+async def sem_agora_ask_session_detail(
+    sessionId: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """ASK-001: ask session detail — also serves as the SSE resync route for the ask channel."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    session = read_store.get_agora_session(sessionId)
+    if session is None or str(session.get("mode") or "").strip() != "quick_ask":
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Ask session not found",
+            f"Ask session {sessionId} does not exist",
+            precondition_failed="session_id",
+        )
+    return {
+        "data": session,
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": {"agora_ask_session_detail": {"status": "ok", "source": "bff_local"}},
+        },
+    }
+
+
+@app.post("/bff/agora/ask/sessions/{sessionId}/close", status_code=200)
+async def sem_agora_ask_close_session(
+    sessionId: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """ASK-001: close an agora ask session."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({
+        "route": f"POST /bff/agora/ask/sessions/{sessionId}/close",
+        "sessionId": sessionId,
+        "payload": payload,
+    })
+    cached = _agora_core_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    now = utc_now()
+    outcome = str(payload.get("outcome") or "").strip() or None
+    existing = read_store.get_agora_session(sessionId)
+    if existing is None or str(existing.get("mode") or "").strip() != "quick_ask":
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Ask session not found",
+            f"Ask session {sessionId} does not exist",
+            precondition_failed="session_id",
+        )
+    session = read_store.close_agora_session(sessionId, closed_at=now, outcome=outcome)
+    if session is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Ask session not found",
+            f"Ask session {sessionId} does not exist",
+            precondition_failed="session_id",
+        )
+    _publish_event(
+        _sse_buffers["ask"],
+        _sse_subscribers["ask"],
+        "ask.session.completed",
+        {"sessionId": sessionId, "outcome": outcome},
+    )
+    result = {
+        "data": session,
+        "meta": {
+            "snapshot_at": now,
+            "surfaces": {"agora_ask_session_detail": {"status": "ok", "source": "bff_local"}},
+        },
+    }
+    _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+# ---- ASK-003: committee session lifecycle ----
+
+
+@app.get("/bff/agora/committee/sessions")
+async def sem_agora_committee_sessions(authorization: Optional[str] = Header(default=None)):
+    """ASK-003: list committee sessions (mode=committee)."""
+    _require_read_role(_extract_identity(authorization))
+    return _sem_list_payload("agora_sessions", "agora_committee_sessions", filter_mode="committee")
+
+
+@app.post("/bff/agora/committee/sessions", status_code=201)
+async def sem_agora_committee_create_session(
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """ASK-003: create a committee session."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({"route": "POST /bff/agora/committee/sessions", "payload": payload})
+    cached = _agora_core_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    now = utc_now()
+    session_id = str(
+        payload.get("sessionId") or payload.get("session_id") or f"committee-{uuid.uuid4().hex[:10]}"
+    )
+    title = str(payload.get("title") or "Committee session").strip()
+    session = read_store.create_agora_session(
+        session_id=session_id,
+        title=title,
+        actor_id=identity.operator_id,
+        payload={
+            **dict(payload),
+            "mode": "committee",
+            "status": "pending",
+            "participants": payload.get("participants") or [],
+            "quorumState": payload.get("quorumState") or "pending",
+            "consensusState": payload.get("consensusState") or "open",
+            "participantRoster": payload.get("participantRoster") or [],
+            "linkedRequestId": payload.get("linkedRequestId") or payload.get("linked_request_id"),
+        },
+        created_at=now,
+    )
+    result = {
+        "data": session,
+        "meta": {
+            "snapshot_at": now,
+            "surfaces": {"agora_committee_session_detail": {"status": "ok", "source": "bff_local"}},
+        },
+    }
+    _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+@app.get("/bff/agora/committee/sessions/{sessionId}")
+async def sem_agora_committee_session_detail(
+    sessionId: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """ASK-003: committee session detail — also serves as SSE resync route for ask channel."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    session = read_store.get_agora_session(sessionId)
+    if session is None or str(session.get("mode") or "").strip() != "committee":
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Committee session not found",
+            f"Committee session {sessionId} does not exist",
+            precondition_failed="session_id",
+        )
+    return {
+        "data": session,
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": {"agora_committee_session_detail": {"status": "ok", "source": "bff_local"}},
+        },
+    }
+
+
+@app.post("/bff/agora/committee/sessions/{sessionId}/open", status_code=200)
+async def sem_agora_committee_open_session(
+    sessionId: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """ASK-003: open a pending committee session."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({
+        "route": f"POST /bff/agora/committee/sessions/{sessionId}/open",
+        "sessionId": sessionId,
+        "payload": payload,
+    })
+    cached = _agora_core_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    now = utc_now()
+    session = read_store.open_committee_session(sessionId, opened_at=now)
+    if session is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Committee session not found",
+            f"Committee session {sessionId} does not exist",
+            precondition_failed="session_id",
+        )
+    _publish_event(
+        _sse_buffers["ask"],
+        _sse_subscribers["ask"],
+        "ask.session.started",
+        {"sessionId": sessionId, "mode": "committee"},
+    )
+    result = {
+        "data": session,
+        "meta": {
+            "snapshot_at": now,
+            "surfaces": {"agora_committee_session_detail": {"status": "ok", "source": "bff_local"}},
+        },
+    }
+    _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+@app.post("/bff/agora/committee/sessions/{sessionId}/close", status_code=200)
+async def sem_agora_committee_close_session(
+    sessionId: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """ASK-003: close a committee session."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({
+        "route": f"POST /bff/agora/committee/sessions/{sessionId}/close",
+        "sessionId": sessionId,
+        "payload": payload,
+    })
+    cached = _agora_core_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    now = utc_now()
+    outcome = str(payload.get("outcome") or "").strip() or None
+    memo_ids = payload.get("memoIds") or payload.get("memo_ids") or None
+    session = read_store.close_committee_session(
+        sessionId,
+        closed_at=now,
+        outcome=outcome,
+        memo_ids=memo_ids,
+    )
+    if session is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Committee session not found",
+            f"Committee session {sessionId} does not exist",
+            precondition_failed="session_id",
+        )
+    _publish_event(
+        _sse_buffers["ask"],
+        _sse_subscribers["ask"],
+        "ask.session.completed",
+        {"sessionId": sessionId, "mode": "committee", "outcome": outcome},
+    )
+    result = {
+        "data": session,
+        "meta": {
+            "snapshot_at": now,
+            "surfaces": {"agora_committee_session_detail": {"status": "ok", "source": "bff_local"}},
+        },
+    }
+    _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+# ---- ASK-004: committee session memo publish to registry / review ---- #
+
+
+@app.get("/bff/agora/committee/sessions/{sessionId}/memos")
+async def sem_agora_committee_session_memos(
+    sessionId: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """ASK-004: list memos linked to a committee session."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    session = read_store.get_agora_session(sessionId)
+    if session is None or str(session.get("mode") or "").strip() != "committee":
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Committee session not found",
+            f"Committee session {sessionId} does not exist",
+            precondition_failed="session_id",
+        )
+    snapshot_at = utc_now()
+    memos = read_store.list_committee_session_memos(sessionId)
+    return {
+        "items": memos,
+        "page_info": {"next_page_token": None, "total": len(memos)},
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": {"agora_committee_session_memos": {"status": "ok", "source": "bff_local"}},
+        },
+    }
+
+
+@app.post("/bff/agora/committee/sessions/{sessionId}/memos", status_code=201)
+async def sem_agora_committee_submit_memo(
+    sessionId: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """ASK-004: submit a draft memo for a committee session."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({
+        "route": f"POST /bff/agora/committee/sessions/{sessionId}/memos",
+        "sessionId": sessionId,
+        "payload": payload,
+    })
+    cached = _agora_core_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    now = utc_now()
+    session = read_store.get_agora_session(sessionId)
+    if session is None or str(session.get("mode") or "").strip() != "committee":
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Committee session not found",
+            f"Committee session {sessionId} does not exist",
+            precondition_failed="session_id",
+        )
+    memo_id = str(payload.get("memoId") or payload.get("memo_id") or "").strip() or f"memo-{uuid.uuid4().hex[:12]}"
+    if read_store.get_consult_memo(memo_id) is not None:
+        raise _bff_error(
+            409,
+            ErrorCode.CONCURRENT_MODIFICATION,
+            "Committee memo id already exists",
+            f"Memo {memo_id} already exists in the consult memo registry",
+            precondition_failed="memo_id",
+            suggestion="Retry with a new memoId or replay the original request with the same Idempotency-Key",
+        )
+    memo = read_store.submit_committee_session_memo(
+        sessionId,
+        memo_id=memo_id,
+        actor_id=identity.operator_id,
+        payload=payload,
+        created_at=now,
+    )
+    result = {
+        "data": memo,
+        "meta": {
+            "snapshot_at": now,
+            "surfaces": {"agora_committee_memo_detail": {"status": "ok", "source": "bff_local"}},
+        },
+    }
+    _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+@app.get("/bff/agora/committee/sessions/{sessionId}/memos/{memoId}")
+async def sem_agora_committee_memo_detail(
+    sessionId: str,
+    memoId: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """ASK-004: get a committee session memo for review."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    session = read_store.get_agora_session(sessionId)
+    if session is None or str(session.get("mode") or "").strip() != "committee":
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Committee session not found",
+            f"Committee session {sessionId} does not exist",
+            precondition_failed="session_id",
+        )
+    memo = read_store.get_committee_session_memo(sessionId, memoId)
+    if memo is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Committee memo not found",
+            f"Memo {memoId} for session {sessionId} does not exist",
+            precondition_failed="memo_id",
+        )
+    return {
+        "data": memo,
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": {"agora_committee_memo_detail": {"status": "ok", "source": "bff_local"}},
+        },
+    }
+
+
+@app.post("/bff/agora/committee/sessions/{sessionId}/memos/{memoId}/publish", status_code=200)
+async def sem_agora_committee_publish_memo(
+    sessionId: str,
+    memoId: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """ASK-004: publish a committee session memo to the consult memo registry."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({
+        "route": f"POST /bff/agora/committee/sessions/{sessionId}/memos/{memoId}/publish",
+        "sessionId": sessionId,
+        "memoId": memoId,
+        "payload": payload,
+    })
+    cached = _agora_core_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    now = utc_now()
+    session = read_store.get_agora_session(sessionId)
+    if session is None or str(session.get("mode") or "").strip() != "committee":
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Committee session not found",
+            f"Committee session {sessionId} does not exist",
+            precondition_failed="session_id",
+        )
+    existing_memo = read_store.get_committee_session_memo(sessionId, memoId)
+    was_published = str((existing_memo or {}).get("status") or "").strip().lower() == "published"
+    memo = read_store.publish_committee_session_memo(
+        sessionId,
+        memoId,
+        actor_id=identity.operator_id,
+        published_at=now,
+    )
+    if memo is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Committee memo not found",
+            f"Memo {memoId} for session {sessionId} does not exist",
+            precondition_failed="memo_id",
+        )
+    if not was_published:
+        _publish_event(
+            _sse_buffers["ask"],
+            _sse_subscribers["ask"],
+            "ask.memo.published",
+            {"sessionId": sessionId, "memoId": memoId},
+        )
+    result = {
+        "data": memo,
+        "meta": {
+            "snapshot_at": now,
+            "surfaces": {"agora_committee_memo_detail": {"status": "ok", "source": "bff_local"}},
+        },
+    }
+    _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
 
 
 @app.get("/bff/agora/skill-coaching/sessions")
@@ -23563,6 +25112,7 @@ async def sem_bff_capabilities(authorization: Optional[str] = Header(default=Non
                 "executePlansBff": True,
                 "sessionAuthMe": True,
                 "oodaPackets": _ooda_packet_routes_enabled(),
+                "synthesisConflictLogs": _synthesis_conflict_log_routes_enabled(),
             }
         },
         "meta": {"snapshot_at": utc_now()},
@@ -23798,10 +25348,124 @@ def _sem_final_alert_detail(alert_id: str) -> Dict[str, Any]:
     )
 
 
+# MGMT-OODA-005: stage definitions for control-room OODA status card
+_OODA_STAGE_DEFS = [
+    ("observe", "Observe", "telemetry/source/search health"),
+    ("orient", "Orient", "active signal/persona proposal count"),
+    ("decide", "Decide", "pending approvals/interventions"),
+    ("act", "Act", "paper runtime / sandbox broker state"),
+    ("learn", "Learn", "evolution/postmortem/retrain state"),
+]
+
+# Stage-to-status mapping: which packet status values map to each stage card
+_OODA_STAGE_STATUSES: Dict[str, List[str]] = {
+    "observe": ["open", "observing"],
+    "orient": ["oriented"],
+    "decide": ["decided"],
+    "act": ["acted"],
+    "learn": ["evolving"],
+}
+
+
+def _build_ooda_control_room_status_card(snapshot_at: str) -> Dict[str, Any]:
+    """Return the OODA stage summary card for the Control Room.
+
+    Gated by PANTHEON_OODA_PACKET_ENABLED. Returns a fail-closed card when
+    disabled. Each stage card carries an active_count (open loops at that
+    stage) and a direct link to the filtered packet list.
+    """
+    if not _ooda_packet_routes_enabled():
+        return {
+            "enabled": False,
+            "gate_state": "fail_closed",
+            "open_loop_count": 0,
+            "closed_loop_count": 0,
+            "failed_loop_count": 0,
+            "total_packet_count": 0,
+            "stages": {
+                stage: {
+                    "label": label,
+                    "description": desc,
+                    "status": "fail_closed",
+                    "active_count": 0,
+                    "detail_link": f"/bff/ooda/packets?stage={stage}",
+                }
+                for stage, label, desc in _OODA_STAGE_DEFS
+            },
+            "live_capital_side_effects": False,
+            "fail_closed_gate_posture": "fail_closed",
+            "meta": {
+                "snapshot_at": snapshot_at,
+                "source": "fail_closed",
+                "status": "fail_closed",
+                "surface_key": "ooda_control_room_status",
+            },
+        }
+
+    packets = read_store.list_ooda_packets()
+    ooda_src = read_store.dataset_source("ooda_packets")
+
+    open_statuses = {"open", "observing", "oriented", "decided", "acted", "evolving"}
+    open_count = sum(
+        1 for p in packets if str(p.get("status") or "").lower() in open_statuses
+    )
+    closed_count = sum(
+        1 for p in packets if str(p.get("status") or "").lower() == "closed"
+    )
+    failed_count = sum(
+        1 for p in packets if str(p.get("status") or "").lower() == "failed"
+    )
+
+    stage_counts: Dict[str, int] = {
+        stage: sum(
+            1
+            for p in packets
+            if str(p.get("status") or "").lower() in status_vals
+        )
+        for stage, status_vals in _OODA_STAGE_STATUSES.items()
+    }
+
+    # Safety assertion: no pre-activation packet should carry live capital side effects
+    live_side_effects_detected = any(
+        p.get("act", {}).get("live_capital_side_effects", False) is True
+        for p in packets
+        if str(p.get("environment") or "").lower() != "live"
+    )
+
+    surface_status = "ok" if ooda_src not in (None, "missing") else "unavailable"
+
+    return {
+        "enabled": True,
+        "gate_state": "enabled",
+        "open_loop_count": open_count,
+        "closed_loop_count": closed_count,
+        "failed_loop_count": failed_count,
+        "total_packet_count": len(packets),
+        "stages": {
+            stage: {
+                "label": label,
+                "description": desc,
+                "status": "ok",
+                "active_count": stage_counts[stage],
+                "detail_link": f"/bff/ooda/packets?stage={stage}",
+            }
+            for stage, label, desc in _OODA_STAGE_DEFS
+        },
+        "live_capital_side_effects": live_side_effects_detected,
+        "fail_closed_gate_posture": "fail_closed",
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "source": ooda_src if ooda_src else "missing",
+            "status": surface_status,
+            "surface_key": "ooda_control_room_status",
+        },
+    }
+
+
 def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
     if path == "/bff/audit":
         return _sem_final_list_response(
-            read_store.list_governance_audit_events(),
+            _list_governance_audit_events(),
             dataset="governance_audit_events",
             surface_key="audit",
         )
@@ -23897,6 +25561,7 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
                 "source": "composed_read_models",
                 "staleness": {"served_from": "mixed", "last_known_at": snapshot_at},
             }
+        ooda_card = _build_ooda_control_room_status_card(snapshot_at)
         return {
             "loops": {
                 "items": loop_runs,
@@ -23910,12 +25575,14 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
                 "items": sentinel_findings,
                 "meta": {"snapshot_at": snapshot_at, "surfaces": {"sentinel_findings": sentinel_surface}},
             },
+            "ooda_status": ooda_card,
             "meta": {
                 "snapshot_at": snapshot_at,
                 "surfaces": {
                     "control_room": control_surface,
                     "loop_runs": loop_surface,
                     "sentinel_findings": sentinel_surface,
+                    "ooda_control_room_status": ooda_card["meta"],
                 },
             },
         }
@@ -24065,7 +25732,6 @@ def _sem_final_generic_detail_for_path(path: str, entity_id: str) -> Optional[Di
 @app.get("/bff/approvals/{id}")
 @app.get("/bff/artifacts")
 @app.get("/bff/artifacts/{id}")
-@app.get("/bff/audit")
 @app.get("/bff/channels")
 @app.get("/bff/channels/{id}")
 @app.get("/bff/events/stream")
@@ -24087,7 +25753,6 @@ def _sem_final_generic_detail_for_path(path: str, entity_id: str) -> Optional[Di
 @app.get("/bff/v5/execution/strategy-health")
 @app.get("/bff/v5/loop-runs")
 @app.get("/bff/v5/loop-runs/{id}")
-@app.get("/bff/v5/sentinel/findings")
 @app.get("/bff/v5/sentinel/findings/{id}")
 async def sem_final_generic_read_alias(
     request: Request,
@@ -24143,9 +25808,156 @@ async def sem_final_generic_patch_alias(id: str, payload: Dict[str, Any] = Body(
     return {"data": {"id": id, **payload}, "meta": {"snapshot_at": utc_now()}}
 
 
+_BFF_APPROVAL_DECIDE_COMMANDS: Dict[str, CommandType] = {
+    "approve": CommandType.APPROVE_DECISION,
+    "reject": CommandType.REJECT_DECISION,
+    "request_revision": CommandType.REQUEST_APPROVAL_REVISION,
+}
+
+# Decisions that emit approval.stage.changed rather than approval.decided.
+# escalate and freeze are stage transitions despite mapping to APPROVE_DECISION command type.
+_APPROVAL_STAGE_CHANGE_DECISIONS: frozenset = frozenset({"request_revision", "escalate", "freeze"})
+
+
+@app.post("/bff/approvals/{id}/decide", status_code=202)
+async def bff_approvals_decide(
+    id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: decide a pending approval — approve / reject / request_revision / escalate / freeze."""
+    identity = _extract_identity(authorization)
+    if not {"approver", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.INSUFFICIENT_ROLE,
+            "Approval decide requires 'approver' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with approver or admin role",
+        )
+
+    clean_id = id.strip()
+    raw_decision = str(payload.get("decision") or "").strip().lower()
+    command_type = _BFF_APPROVAL_DECIDE_COMMANDS.get(raw_decision)
+
+    if command_type is None:
+        if raw_decision in {"escalate", "freeze"}:
+            # escalate/freeze map to approve command pending dedicated types
+            command_type = CommandType.APPROVE_DECISION
+        elif not raw_decision:
+            # infer from body fields if decision field is absent
+            if str(payload.get("rejection_reason") or "").strip():
+                command_type = CommandType.REJECT_DECISION
+            elif str(payload.get("revision_notes") or "").strip():
+                command_type = CommandType.REQUEST_APPROVAL_REVISION
+            else:
+                command_type = CommandType.APPROVE_DECISION
+        else:
+            raise _bff_error(
+                422,
+                ErrorCode.INVALID_PARAMS,
+                "Invalid decision value",
+                f"decision={raw_decision!r} is not one of approve, reject, request_revision, escalate, freeze",
+                precondition_failed="decision",
+            )
+
+    if command_type == CommandType.REJECT_DECISION:
+        if not str(payload.get("rejection_reason") or "").strip():
+            raise _bff_error(
+                422,
+                ErrorCode.INVALID_PARAMS,
+                "reject decision requires a non-empty rejection_reason",
+                "rejection_reason must be a non-empty string",
+                precondition_failed="rejection_reason",
+            )
+    elif command_type == CommandType.REQUEST_APPROVAL_REVISION:
+        if not str(payload.get("revision_notes") or "").strip():
+            raise _bff_error(
+                422,
+                ErrorCode.INVALID_PARAMS,
+                "request_revision decision requires a non-empty revision_notes",
+                "revision_notes must be a non-empty string",
+                precondition_failed="revision_notes",
+            )
+
+    decision_record = read_store.get_approval_decision(clean_id)
+    if decision_record is None and read_store.dataset_source("approval_decisions") != "missing":
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Approval decision not found",
+            f"approval_id={clean_id!r} does not exist",
+            precondition_failed="approval_id",
+        )
+
+    # Reject body idempotency keys before any side effects (must mirror _sem_command_response order).
+    _reject_body_idempotency_key(payload)
+
+    # Idempotency pre-check: skip SSE publish on command replay to avoid duplicate events.
+    # Replicates the hash key _sem_command_response uses so the check is consistent.
+    _idem_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    _idem_hash = _stable_json_hash({
+        "command": command_type.value,
+        "target_type": ObjectType.APPROVAL_DECISION.value,
+        "target_id": clean_id,
+        "payload": {**payload, "decision_id": clean_id},
+    })
+    _existing_idem = _FINAL_CONTRACT_IDEMPOTENCY.get(_idem_key)
+    _is_approval_replay = _existing_idem is not None and _existing_idem.get("request_hash") == _idem_hash
+    # Mirror _sem_command_response: a reused key with a different hash is an idempotency conflict
+    # that will result in a 409 — skip SSE publish to prevent double-publish on the conflict path.
+    _is_idem_conflict = _existing_idem is not None and not _is_approval_replay
+    if not _is_approval_replay and not _is_idem_conflict:
+        # Extend pre-check to durable command_store to match _sem_command_response replay semantics:
+        # if _FINAL_CONTRACT_IDEMPOTENCY was evicted but command_store still holds the record,
+        # _sem_command_response will replay — skip SSE publish here too to prevent double-publish.
+        _durable_record = command_store.get_command_by_idempotency_key(_idem_key)
+        if _durable_record:
+            _stored_hash = (_durable_record.get("foundation") or {}).get("idempotency_record", {}).get("request_hash")
+            if _stored_hash == _idem_hash:
+                _is_approval_replay = True
+            elif _stored_hash:
+                _is_idem_conflict = True
+
+    if not _is_approval_replay and not _is_idem_conflict:
+        # escalate/freeze are stage transitions; use raw_decision to determine event type
+        if raw_decision in _APPROVAL_STAGE_CHANGE_DECISIONS or command_type == CommandType.REQUEST_APPROVAL_REVISION:
+            _publish_event(
+                _sse_buffers["approval"],
+                _sse_subscribers["approval"],
+                "approval.stage.changed",
+                {
+                    "approval_id": clean_id,
+                    "previous_stage": "under_review",
+                    "current_stage": raw_decision or "request_revision",
+                    "actor_id": identity.operator_id,
+                },
+            )
+        else:
+            _outcome = "approved" if command_type == CommandType.APPROVE_DECISION else "rejected"
+            _publish_event(
+                _sse_buffers["approval"],
+                _sse_subscribers["approval"],
+                "approval.decided",
+                {"approval_id": clean_id, "outcome": _outcome, "decided_by": identity.operator_id},
+            )
+
+    return _sem_command_response(
+        command_type=command_type,
+        target_type=ObjectType.APPROVAL_DECISION,
+        target_id=clean_id,
+        payload={**payload, "decision_id": clean_id},
+        identity=identity,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+    )
+
+
 @app.post("/bff/alerts/{id}/acknowledge", status_code=202)
 @app.post("/bff/alerts/{id}/escalate-incident", status_code=202)
-@app.post("/bff/approvals/{id}/decide", status_code=202)
 @app.post("/bff/incidents/{id}/append-postmortem", status_code=202)
 @app.post("/bff/incidents/{id}/resolve", status_code=202)
 @app.post("/bff/incidents/{id}/rollback-deployment", status_code=202)

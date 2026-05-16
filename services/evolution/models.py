@@ -78,6 +78,22 @@ class ProposeRequest(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
 
 
+class ProposeFromIncidentRequest(BaseModel):
+    decision_id: str
+    incident_id: str
+    postmortem_id: Optional[str] = None
+    created_by_id: str = "evolution-controller-incident-postmortem"
+    created_by_role: str = "evolution_controller"
+    action_type: Optional[str] = None
+    target_type: str = "candidate_artifact"
+    target_id: Optional[str] = None
+    target_version: Optional[str] = None
+    target_stage: Optional[str] = None
+    rationale: Optional[str] = None
+    has_active_runtime: bool = False
+    metadata: Optional[Dict[str, Any]] = None
+
+
 # ---------------------------------------------------------------------------
 # Review / Approve / Reject / Execute / Cancel
 # ---------------------------------------------------------------------------

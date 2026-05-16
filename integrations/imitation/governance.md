@@ -29,11 +29,12 @@ Malformed or ineligible sessions are excluded and recorded in artifact metadata.
 
 ## 3. Output Governance
 
-The imitation workflow emits a governed artifact bundle and a registry-ready model entry.
+The imitation workflow emits a governed artifact bundle and a registry-ready behavior-policy entry.
 
 Governed output rules:
 
-- lifecycle starts at `draft`
+- artifact type is `behavior_policy`
+- artifact state starts at `draft`
 - artifact family is `imitation_policy`
 - lineage must include `source_dataset_refs`
 - the registry entry remains descriptive until later promotion review

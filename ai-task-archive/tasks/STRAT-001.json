@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "task_id": "STRAT-001",
+  "archived_at": "2026-05-16T07:58:36Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "STRAT-001",
+    "title": "StrategySpec schema / model",
+    "summary_zh": null,
+    "phase": "Sprint 5 / EPIC-RESEARCH",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Finalized STRAT-001 after Claude review approval. Task-scoped commit 75723d4c adds schema-backed StrategySpec model, strengthened schema constraints, shared normalizer validation, exports, tests, and evidence/review notes. Verification: py_compile strategy_spec model/normalizer/__init__; pytest services/research/strategy_spec -q (19 passed); git diff --check targeted STRAT-001 files; git diff --cached --check before commit.",
+    "last_update": "2026-05-16T07:58:36Z",
+    "review_notes_zh": [
+      "審查通過。schema 強化正確：minLength/additionalProperties/lifecycle_state enum/source_record/execution_mode_hint 全部到位。domain model frozen dataclass 完整 round-trip；governance gate（paper/canary/live 要求 approval_required=true）由 validate_strategy_spec() 在 model 層強制執行，live 測試確認有效。normalizer 相容性透過共享 validate_strategy_spec_payload 保持。10 個 tests（含 7 個 test_models.py）全通過；後續 STRAT-003/004 增加 8 個 tests 仍全數通過。無 blocking findings。"
+    ],
+    "review_file": "support/evidence/STRAT-001/review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T07:58:36Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "75723d4ccbfaf6ef03e90e90cb301a1c1d245da7",
+      "commit_subject": "STRAT-001 add strategy spec model",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "STRAT-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 80,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 9,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "STRAT-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T06:48:59Z",
+      "resolved_at": "2026-05-16T06:50:37Z"
+    },
+    {
+      "task_id": "STRAT-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "STRAT-001 ready for review. Added schema-backed StrategySpec domain model, strengthened canonical strategy_spec.schema.json with lifecycle/source_record/canary/non-empty constraints, exported model helpers, and kept RS-002 normalizer output compatible via shared schema validation helper. Evidence: support/evidence/STRAT-001/README.md. Verification: py_compile strategy_spec model/normalizer/__init__; pytest services/research/strategy_spec -q (10 passed); git diff --check targeted STRAT-001 files.",
+      "status": "done",
+      "created_at": "2026-05-16T07:07:20Z",
+      "resolved_at": "2026-05-16T07:46:41Z"
+    },
+    {
+      "task_id": "STRAT-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: StrategySpec schema/model is correctly bounded. Schema additionalProperties:false, minLength constraints, lifecycle/canary/source_record additions all correct. Governance gate (paper/canary/live requires approval_required=true) enforced at model layer and confirmed by live test. Normalizer compatibility intact. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-16T07:46:41Z",
+      "resolved_at": "2026-05-16T07:58:37Z"
+    }
+  ],
+  "blockers": []
+}

@@ -236,7 +236,7 @@ class TestMainRoutes(unittest.TestCase):
             batch_size=10,
             batch_interval=0.05,
             binding_store=_StubBindingStore(),
-            runtime_summary_store=RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=120),
+            runtime_summary_store=RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=10_000_000_000),
         )
         asyncio.run_coroutine_threadsafe(svc.start(), loop).result(timeout=5)
 
@@ -312,6 +312,63 @@ class TestMainRoutes(unittest.TestCase):
         list_resp = self.client.get("/api/telemetry/runtime-summaries")
         self.assertEqual(list_resp.status_code, 200)
         self.assertGreaterEqual(list_resp.get_json()["count"], 1)
+
+    def test_runtime_heartbeat_endpoint_accepts_payload_and_status_query(self):
+        heartbeat = {
+            "runtime_id": "lean-worker-1",
+            "runtime_binding_id": _KNOWN_BINDING_ID,
+            "capital_pool_id": "pool-alpha",
+            "artifact_id": "artifact-123",
+            "deployment_mode": "paper",
+            "heartbeat_time": "2026-04-15T12:00:05Z",
+            "connectivity_status": "connected",
+            "broker_status": "ok",
+            "queue_lag_ms": 7,
+            "event_delivery_lag_ms": 12,
+            "health_summary": {
+                "runtime": "ok",
+                "telemetry": "ok",
+                "broker": "ok",
+            },
+            "target": {"strategy_id": "strategy-http-001"},
+        }
+
+        resp = self.client.post("/api/v1/telemetry/heartbeats", json=heartbeat)
+        self.assertEqual(resp.status_code, 202)
+        accepted = resp.get_json()
+        self.assertEqual(accepted["status"], "accepted")
+        self.assertEqual(accepted["runtime_id"], "lean-worker-1")
+        self.assertEqual(accepted["runtime_binding_id"], _KNOWN_BINDING_ID)
+        self.assertEqual(accepted["heartbeat_status"]["status"], "connected")
+
+        status_resp = self.client.get("/api/v1/telemetry/runtime/lean-worker-1/heartbeat")
+        self.assertEqual(status_resp.status_code, 200)
+        status = status_resp.get_json()
+        self.assertEqual(status["runtime_id"], "lean-worker-1")
+        self.assertEqual(status["runtime_binding_id"], _KNOWN_BINDING_ID)
+        self.assertEqual(status["last_heartbeat_at"], "2026-04-15T12:00:05Z")
+        self.assertEqual(status["deployment_mode"], "paper")
+        self.assertEqual(status["status"], "connected")
+        self.assertEqual(status["broker_status"], "ok")
+        self.assertEqual(status["queue_lag_ms"], 7)
+        self.assertEqual(status["event_delivery_lag_ms"], 12)
+
+    def test_runtime_heartbeat_endpoint_rejects_unknown_binding(self):
+        heartbeat = {
+            "runtime_id": "lean-worker-1",
+            "runtime_binding_id": "missing-binding-001",
+            "capital_pool_id": "pool-alpha",
+            "artifact_id": "artifact-123",
+            "deployment_mode": "paper",
+            "heartbeat_time": "2026-04-15T12:00:10Z",
+            "connectivity_status": "connected",
+            "broker_status": "ok",
+            "health_summary": {},
+        }
+
+        resp = self.client.post("/api/v1/telemetry/heartbeats", json=heartbeat)
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.get_json()["error"]["code"], "BINDING_NOT_FOUND")
 
     # --- ingest: binding-invalid rejection through HTTP surface ---
 

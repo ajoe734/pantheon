@@ -623,6 +623,14 @@ class TelemetryIngestService:
             return []
         return self._runtime_summary_store.list()
 
+    def has_runtime_binding_store(self) -> bool:
+        return self._binding_store is not None
+
+    def resolve_runtime_binding(self, binding_id: str) -> Optional[Any]:
+        if self._binding_store is None:
+            return None
+        return self._binding_store.get_binding(binding_id)
+
     # -- Diagnostics / Replay --
 
     def get_dlq_entries(self, tag_filter: Optional[str] = None, limit: int = 100) -> list[dict[str, Any]]:

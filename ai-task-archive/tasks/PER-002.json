@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "task_id": "PER-002",
+  "archived_at": "2026-05-16T07:46:09Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PER-002",
+    "title": "skills/tools/capabilities read API",
+    "summary_zh": null,
+    "phase": "Sprint 5 / EPIC-RESEARCH",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Closeout complete. Deliverable committed at 0b1fca5f (GET /bff/personas/{persona_id}/skills, /tools, /capabilities). Final verification: 18 contract tests passed, 17 persona regressions passed. Reviewer Codex approved, no blocking findings. Closeout evidence note committed at 24f5f272.",
+    "last_update": "2026-05-16T07:46:09Z",
+    "review_notes_zh": [
+      "PER-002 reviewer approval: no blocking findings. Verified persona skills/tools/capabilities contract (18 passed), persona regressions (17 passed), and incident adjacent-contract coverage (7 passed). Owner Claude2 should perform review_approved closeout per task-closeout-finalization."
+    ],
+    "review_file": "support/reviews/PER-002-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T07:46:09Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "24f5f272cca4841887689a545d57137c14a57a9b",
+      "commit_subject": "PER-002 closeout evidence note",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude2",
+        "Task-ID": "PER-002",
+        "Reviewer": "Codex",
+        "18 passed": "test_per002_bff_persona_skills_tools_capabilities_contract.py",
+        "17 passed": "test_persona_management.py + test_bff_strategy_persona_contract.py"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 80,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 6,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PER-002",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "PER-002 implementation complete. Added GET /bff/personas/{persona_id}/skills, /bff/personas/{persona_id}/tools, and /bff/personas/{persona_id}/capabilities read endpoints. All three derive data from the capability snapshot, require read-role auth, and return 404 for unknown personas. Contract test: test_per002_bff_persona_skills_tools_capabilities_contract.py (18 tests, all pass). Verification: 18 passed (contract tests) + 17 passed (regression: test_persona_management, test_bff_strategy_persona_contract). Commit: 0b1fca5f. Evidence: support/evidence/PER-002/README.md.",
+      "status": "done",
+      "created_at": "2026-05-16T07:13:55Z",
+      "resolved_at": "2026-05-16T07:27:25Z"
+    },
+    {
+      "task_id": "PER-002",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Approved by Codex. Review artifact: support/reviews/PER-002-review-codex.md. Verification: PER-002 contract 18 passed; persona regressions 17 passed; incident adjacent contracts 7 passed. Owner Claude2 to finalize review_approved -> done.",
+      "status": "done",
+      "created_at": "2026-05-16T07:27:25Z",
+      "resolved_at": "2026-05-16T07:46:10Z"
+    }
+  ],
+  "blockers": []
+}

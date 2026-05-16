@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "MGMT-SYN-004",
+  "archived_at": "2026-05-15T17:13:32Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-SYN-004",
+    "title": "allocation synthesis method v1",
+    "summary_zh": null,
+    "phase": "Track E / EPIC-03 Multi-Persona Synthesis",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Closeout complete: task-scoped commit cf006972 records allocation synthesis facade, tests, and Claude review note. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/optimizer-svc/allocation_aggregation/synthesis.py services/optimizer-svc/test_allocation_synthesis_method.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/optimizer-svc/test_allocation_synthesis_method.py services/optimizer-svc/test_portfolio_synthesis.py services/optimizer-svc/test_allocation_conflict_classifier.py services/optimizer-svc/test_persona_allocation_proposal_store.py -q => 21 passed.",
+    "last_update": "2026-05-15T17:13:32Z",
+    "review_notes_zh": [
+      "審查通過：synthesis.py 正確作為 PortfolioSynthesizer 的 v1 facade，risk_first/weighted_committee 均別名為 WEIGHTED_FUSION，single_proposal 直通，manual_override 明確拒絕，committee referral 在 facade 邊界正確捕捉並拋出 SynthesisError。",
+      "驗證命令：py_compile synthesis.py test_allocation_synthesis_method.py => PASS；pytest test_allocation_synthesis_method.py test_portfolio_synthesis.py test_allocation_conflict_classifier.py test_persona_allocation_proposal_store.py -q => 21 passed。",
+      "constraints_bundle 含 risk_policy_ref、requested/resolved method 正確注入 artifact；scope_ref 自動推導；無 broker session、無 capital mutation、無 live order route。",
+      "次要觀察（不阻塞）：SUPPORTED_SYNTHESIS_METHODS 包含 manual_override/committee_override 但 v1 均拒絕，後續可考慮改名為 KNOWN_SYNTHESIS_METHODS。"
+    ],
+    "review_file": "support/reviews/MGMT-SYN-004-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T17:13:32Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "merge/backend-dev-into-master",
+      "git_clean_required": false,
+      "commit": "cf0069723790618bbfafaa2d65d3688db576a0a0",
+      "commit_subject": "MGMT-SYN-004 add allocation synthesis facade",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-SYN-004",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 51,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/master",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-SYN-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T16:48:58Z",
+      "resolved_at": "2026-05-15T16:50:09Z"
+    },
+    {
+      "task_id": "MGMT-SYN-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented store-backed allocation synthesis method v1: added services/optimizer-svc/allocation_aggregation/synthesis.py, exported synthesize_allocation/synthesize_allocation_with_log, and covered risk_first/weighted fusion, single proposal, method validation, and committee-referral rejection in services/optimizer-svc/test_allocation_synthesis_method.py. Verification: python3 -m pytest services/optimizer-svc/test_allocation_synthesis_method.py services/optimizer-svc/test_portfolio_synthesis.py services/optimizer-svc/test_allocation_conflict_classifier.py services/optimizer-svc/test_persona_allocation_proposal_store.py -q => 21 passed.",
+      "status": "done",
+      "created_at": "2026-05-15T16:57:43Z",
+      "resolved_at": "2026-05-15T17:06:51Z"
+    },
+    {
+      "task_id": "MGMT-SYN-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved by Claude: allocation synthesis method v1 passes scoped review and focused verification. 21 tests passed, facade correctly scoped. Owner Codex should complete closeout per task-closeout-finalization.",
+      "status": "done",
+      "created_at": "2026-05-15T17:06:51Z",
+      "resolved_at": "2026-05-15T17:13:33Z"
+    }
+  ],
+  "blockers": []
+}

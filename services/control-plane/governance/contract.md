@@ -37,7 +37,7 @@ Conflict rule: this document is the single source of truth for approval authorit
 | `decision_id` | string | 是 | 唯一識別碼 |
 | `target_type` | enum | 是 | 目標物件型別 |
 | `target_id` | string | 是 | 目標物件 ID |
-| `target_version` | semver | 是 | 目標版本 |
+| `target_version` | string | 是 | 目標版本或 immutable snapshot key |
 | `decision` | enum | `decided` 時必要 | `approved` / `rejected` / `approved_with_conditions` |
 | `decision_state` | enum | 是 | 生命週期狀態 |
 | `actor_role` | enum | `under_review` 起必要 | 決定者的角色 |
@@ -156,6 +156,7 @@ stateDiagram-v2
 
 - audit event type: `approval_decision_created`
 - audit event type: `approval_decision_state_changed`
+- audit event type: `approval_decision_decided`
 - audit event type: `approval_decision_revoked`
 
 audit payload 必須包含完整的 `decision_id`、`target_type`、`target_id`、`decision`、`actor_id`。

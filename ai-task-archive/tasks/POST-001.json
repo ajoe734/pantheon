@@ -1,0 +1,194 @@
+{
+  "version": 1,
+  "task_id": "POST-001",
+  "archived_at": "2026-05-16T05:51:19Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "POST-001",
+    "title": "Postmortem schema + endpoint",
+    "summary_zh": null,
+    "phase": "Sprint 4 / EPIC-TELEMETRY",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Owner finalized review-approved POST-001. Closeout commits: 327a9957 acceptance evidence, cad5b313 reviewer approval artifact. Verification rerun: py_compile postmortem/BFF modules passed; services/incident/test_incident.py + services/postmortems/test_main_routes.py 98 passed; services/incident/smoke_test_incident.py 59 passed; BFF postmortem/post_incident pytest filter 4 passed. Unrelated dirty worktree changes remain outside POST-001 scope.",
+    "last_update": "2026-05-16T05:51:19Z",
+    "review_notes_zh": [
+      "審查通過：Postmortem schema 完整覆蓋所有血緣字段，域層強制引用完整性，BFF operator 端點正確路由且有 capability 閘控，98+4 測試全部通過，已知非相關 IN-05 失敗為既有問題"
+    ],
+    "review_file": "services/postmortems/review_post_001_claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T05:51:19Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "cad5b313c2fb63b824551eae9e1beb00fe00e369",
+      "commit_subject": "POST-001 record reviewer approval",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "POST-001",
+        "Reviewer": "Claude",
+        "Verification": "py_compile postmortem/BFF modules passed; services/incident/test_incident.py + services/postmortems/test_main_routes.py 98 passed; services/incident/smoke_test_incident.py 59 passed; BFF postmortem/post_incident filter 4 passed."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 65,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "POST-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T02:03:19Z",
+      "resolved_at": "2026-05-16T02:04:16Z"
+    },
+    {
+      "task_id": "POST-001",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T02:21:18Z",
+      "resolved_at": "2026-05-16T02:22:14Z"
+    },
+    {
+      "task_id": "POST-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T02:39:12Z",
+      "resolved_at": "2026-05-16T02:40:11Z"
+    },
+    {
+      "task_id": "POST-001",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T02:57:03Z",
+      "resolved_at": "2026-05-16T02:57:58Z"
+    },
+    {
+      "task_id": "POST-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T03:14:53Z",
+      "resolved_at": "2026-05-16T03:15:47Z"
+    },
+    {
+      "task_id": "POST-001",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T03:32:38Z",
+      "resolved_at": "2026-05-16T03:33:38Z"
+    },
+    {
+      "task_id": "POST-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T03:50:32Z",
+      "resolved_at": "2026-05-16T03:51:28Z"
+    },
+    {
+      "task_id": "POST-001",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T04:08:21Z",
+      "resolved_at": "2026-05-16T04:09:19Z"
+    },
+    {
+      "task_id": "POST-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T04:26:20Z",
+      "resolved_at": "2026-05-16T04:27:15Z"
+    },
+    {
+      "task_id": "POST-001",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T04:44:12Z",
+      "resolved_at": "2026-05-16T04:45:10Z"
+    },
+    {
+      "task_id": "POST-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T05:02:18Z",
+      "resolved_at": "2026-05-16T05:03:15Z"
+    },
+    {
+      "task_id": "POST-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T05:21:06Z",
+      "resolved_at": "2026-05-16T05:21:43Z"
+    },
+    {
+      "task_id": "POST-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T05:28:06Z",
+      "resolved_at": "2026-05-16T05:28:52Z"
+    },
+    {
+      "task_id": "POST-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: Postmortem schema and endpoints verified. Evidence: support/evidence/POST-001/acceptance.md. Commit 327a9957. Verification: py_compile postmortem/BFF modules passed; services/incident/test_incident.py + services/postmortems/test_main_routes.py 98 passed; services/incident/smoke_test_incident.py 59 passed; BFF postmortem/post_incident pytest filter 4 passed. Full BFF incident smoke has unrelated IN-05 idempotency-key failures.",
+      "status": "done",
+      "created_at": "2026-05-16T05:35:27Z",
+      "resolved_at": "2026-05-16T05:43:37Z"
+    },
+    {
+      "task_id": "POST-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: Postmortem schema complete with full lineage evidence fields; domain layer enforces referential integrity at write time; BFF operator endpoints correctly route with capability gating. 98+4 tests pass independently verified. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-16T05:43:37Z",
+      "resolved_at": "2026-05-16T05:51:19Z"
+    }
+  ],
+  "blockers": []
+}

@@ -19,13 +19,22 @@ def _checksum(payload: bytes) -> str:
     return f"sha256:{hashlib.sha256(payload).hexdigest()}"
 
 
+_STAGE_TO_ARTIFACT_STATE = {
+    "paper": "approved",
+    "live": "approved",
+    "candidate": "candidate",
+    "retired": "retired",
+}
+
+
 def build_metadata(state: str = "paper") -> dict:
     metadata = {
         "registry_id": "reg-strat-001-1.2.3",
         "strategy_id": "strat-001",
         "version": "1.2.3",
         "artifact_type": "model_artifact",
-        "promotion_state": state,
+        "artifact_state": _STAGE_TO_ARTIFACT_STATE.get(state, "approved"),
+        "deployment_stage": state,
         "checksum": _checksum(b'{"weights":[1,2,3]}'),
         "lineage": {
             "parent_registry_ids": ["reg-strat-001-1.2.2"],
@@ -129,11 +138,12 @@ class TestArtifactLoader(unittest.TestCase):
 
         loaded = loader.load("strat-001", "1.2.3", ExecutionMode.PAPER)
 
-        self.assertEqual(loaded.metadata["promotion_state"], "paper")
+        self.assertEqual(loaded.metadata["deployment_stage"], "paper")
+        self.assertEqual(loaded.metadata["artifact_state"], "approved")
         self.assertEqual(loaded.payload, self.payload)
         self.assertEqual(loaded.projection.metadata_key, self.projection.metadata_key)
 
-    def test_rejects_wrong_promotion_state_for_mode(self):
+    def test_rejects_wrong_deployment_stage_for_mode(self):
         loader = self._build_loader(build_metadata(state="live"))
 
         with self.assertRaises(ArtifactLoadError):
@@ -195,7 +205,8 @@ class TestArtifactLoader(unittest.TestCase):
         loaded = loader.load("strat-001", "1.2.3", ExecutionMode.PAPER)
 
         self.assertEqual(loaded.payload, self.payload)
-        self.assertEqual(loaded.metadata["promotion_state"], "paper")
+        self.assertEqual(loaded.metadata["deployment_stage"], "paper")
+        self.assertEqual(loaded.metadata["artifact_state"], "approved")
         self.assertTrue(loaded.artifact_path)
         self.assertTrue(Path(loaded.artifact_path).exists())
 
@@ -243,6 +254,191 @@ class TestArtifactLoader(unittest.TestCase):
                 type("BrokenProjection", (), {"metadata_key": "a", "artifact_key": "b"})(),
                 self.payload,
             )
+
+
+class TestEX002RBLoaderMetadataMigration(unittest.TestCase):
+    """EX-002-RB: Verify loader migration from promotion_state to artifact_state + deployment_stage."""
+
+    def setUp(self):
+        self.payload = b'{"weights":[1,2,3]}'
+        self.projection = ArtifactLoader.build_projection("strat-001", "1.2.3")
+
+    def _build_loader(self, metadata: dict) -> ArtifactLoader:
+        store = FakeObjectStore(
+            {
+                self.projection.metadata_key: json.dumps(metadata),
+                self.projection.artifact_key: self.payload,
+            }
+        )
+        return ArtifactLoader(store)
+
+    def test_gate_projection_emits_canonical_artifact_state_and_deployment_stage(self):
+        gate = PromotionGate()
+        entry = {
+            "registry_id": "reg-strat-001-1.2.3",
+            "artifact_type": "model_artifact",
+            "strategy_id": "strat-001",
+            "version": "1.2.3",
+            "lifecycle_state": "paper",
+            "checksum": _checksum(self.payload),
+            "lineage": {"source_run_ids": ["train-run-001"]},
+        }
+        projection = gate.build_execution_projection(entry)
+
+        self.assertEqual(projection.metadata["artifact_state"], "approved")
+        self.assertEqual(projection.metadata["deployment_stage"], "paper")
+        self.assertEqual(projection.metadata["promotion_state"], "paper")
+
+    def test_gate_live_projection_emits_canonical_fields(self):
+        gate = PromotionGate()
+        entry = {
+            "registry_id": "reg-strat-001-1.2.3",
+            "artifact_type": "model_artifact",
+            "strategy_id": "strat-001",
+            "version": "1.2.3",
+            "lifecycle_state": "live",
+            "approver": "risk-committee",
+            "checksum": _checksum(self.payload),
+            "lineage": {"source_run_ids": ["train-run-001"]},
+            "metadata": {
+                "rollback": {
+                    "target_registry_id": "reg-strat-001-1.2.2",
+                    "target_version": "1.2.2",
+                }
+            },
+        }
+        projection = gate.build_execution_projection(entry)
+
+        self.assertEqual(projection.metadata["artifact_state"], "approved")
+        self.assertEqual(projection.metadata["deployment_stage"], "live")
+        self.assertEqual(projection.metadata["promotion_state"], "live")
+
+    def test_loader_reads_deployment_stage_as_canonical_field(self):
+        metadata = {
+            "registry_id": "reg-strat-001-1.2.3",
+            "strategy_id": "strat-001",
+            "version": "1.2.3",
+            "artifact_type": "model_artifact",
+            "artifact_state": "approved",
+            "deployment_stage": "paper",
+            "checksum": _checksum(self.payload),
+            "lineage": {"source_run_ids": ["train-run-001"]},
+            "created_at": "2026-04-06T12:00:00Z",
+        }
+        loader = self._build_loader(metadata)
+        loaded = loader.load("strat-001", "1.2.3", ExecutionMode.PAPER)
+
+        self.assertEqual(loaded.metadata["deployment_stage"], "paper")
+        self.assertEqual(loaded.metadata["artifact_state"], "approved")
+
+    def test_loader_falls_back_to_legacy_promotion_state(self):
+        metadata = {
+            "registry_id": "reg-strat-001-1.2.3",
+            "strategy_id": "strat-001",
+            "version": "1.2.3",
+            "artifact_type": "model_artifact",
+            "promotion_state": "paper",
+            "checksum": _checksum(self.payload),
+            "lineage": {"source_run_ids": ["train-run-001"]},
+            "created_at": "2026-04-06T12:00:00Z",
+        }
+        loader = self._build_loader(metadata)
+        loaded = loader.load("strat-001", "1.2.3", ExecutionMode.PAPER)
+
+        self.assertIsNone(loaded.metadata.get("deployment_stage"))
+        self.assertEqual(loaded.metadata["promotion_state"], "paper")
+
+    def test_loader_deployment_stage_takes_precedence_over_promotion_state(self):
+        metadata = {
+            "registry_id": "reg-strat-001-1.2.3",
+            "strategy_id": "strat-001",
+            "version": "1.2.3",
+            "artifact_type": "model_artifact",
+            "artifact_state": "approved",
+            "deployment_stage": "paper",
+            "promotion_state": "live",
+            "checksum": _checksum(self.payload),
+            "lineage": {"source_run_ids": ["train-run-001"]},
+            "created_at": "2026-04-06T12:00:00Z",
+        }
+        loader = self._build_loader(metadata)
+        loaded = loader.load("strat-001", "1.2.3", ExecutionMode.PAPER)
+
+        self.assertEqual(loaded.metadata["deployment_stage"], "paper")
+
+    def test_loader_rejects_split_metadata_without_approved_artifact_state(self):
+        metadata = {
+            "registry_id": "reg-strat-001-1.2.3",
+            "strategy_id": "strat-001",
+            "version": "1.2.3",
+            "artifact_type": "model_artifact",
+            "deployment_stage": "paper",
+            "checksum": _checksum(self.payload),
+            "lineage": {"source_run_ids": ["train-run-001"]},
+            "created_at": "2026-04-06T12:00:00Z",
+        }
+        loader = self._build_loader(metadata)
+
+        with self.assertRaisesRegex(ArtifactLoadError, "artifact_state='approved'"):
+            loader.load("strat-001", "1.2.3", ExecutionMode.PAPER)
+
+    def test_loader_rejects_unapproved_artifact_state_for_executable_stage(self):
+        metadata = {
+            "registry_id": "reg-strat-001-1.2.3",
+            "strategy_id": "strat-001",
+            "version": "1.2.3",
+            "artifact_type": "model_artifact",
+            "artifact_state": "candidate",
+            "deployment_stage": "paper",
+            "checksum": _checksum(self.payload),
+            "lineage": {"source_run_ids": ["train-run-001"]},
+            "created_at": "2026-04-06T12:00:00Z",
+        }
+        loader = self._build_loader(metadata)
+
+        with self.assertRaisesRegex(ArtifactLoadError, "artifact_state='approved'"):
+            loader.load("strat-001", "1.2.3", ExecutionMode.PAPER)
+
+    def test_loader_rejects_legacy_stage_when_artifact_state_is_not_approved(self):
+        metadata = {
+            "registry_id": "reg-strat-001-1.2.3",
+            "strategy_id": "strat-001",
+            "version": "1.2.3",
+            "artifact_type": "model_artifact",
+            "artifact_state": "candidate",
+            "promotion_state": "paper",
+            "checksum": _checksum(self.payload),
+            "lineage": {"source_run_ids": ["train-run-001"]},
+            "created_at": "2026-04-06T12:00:00Z",
+        }
+        loader = self._build_loader(metadata)
+
+        with self.assertRaisesRegex(ArtifactLoadError, "artifact_state='approved'"):
+            loader.load("strat-001", "1.2.3", ExecutionMode.PAPER)
+
+    def test_loader_rejects_wrong_deployment_stage(self):
+        metadata = {
+            "registry_id": "reg-strat-001-1.2.3",
+            "strategy_id": "strat-001",
+            "version": "1.2.3",
+            "artifact_type": "model_artifact",
+            "artifact_state": "approved",
+            "deployment_stage": "live",
+            "promotion_state": "live",
+            "approved_at": "2026-04-06T12:05:00Z",
+            "approver": "risk-committee",
+            "rollback": {
+                "target_registry_id": "reg-strat-001-1.2.2",
+                "target_version": "1.2.2",
+            },
+            "checksum": _checksum(self.payload),
+            "lineage": {"source_run_ids": ["train-run-001"]},
+            "created_at": "2026-04-06T12:00:00Z",
+        }
+        loader = self._build_loader(metadata)
+
+        with self.assertRaises(ArtifactLoadError):
+            loader.load("strat-001", "1.2.3", ExecutionMode.PAPER)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,129 @@
+{
+  "packet_id": "mgmt-qlib-006-management-linkage-v1",
+  "task_id": "MGMT-QLIB-006",
+  "created_at": "2026-05-15T17:30:00Z",
+  "artifact_id": "qlib-tw-cross-sectional-alpha-model-draft-v1",
+  "lineage_id": "lineage-qlib-tw-cross-sectional-alpha-v1",
+  "strategy_id": "tw-cross-sectional-equity-alpha",
+  "strategy_spec_id": "qlib-tw-cross-sectional-alpha-spec-v1",
+  "experiment_id": "exp-mgmt-qlib-006",
+  "research_linkage": {
+    "kind": "qlib_admission_research_linkage",
+    "framework": "qlib",
+    "admission_stage": "management_review_linked",
+    "strategy_id": "tw-cross-sectional-equity-alpha",
+    "strategy_spec_id": "qlib-tw-cross-sectional-alpha-spec-v1",
+    "dataset_manifest_id": "qlib-dataset-manifest:dataset-tw-equity-ohlcv-top50-2024-daily",
+    "source_task_ids": [
+      "MGMT-QLIB-001",
+      "MGMT-QLIB-002",
+      "MGMT-QLIB-004",
+      "MGMT-QLIB-006"
+    ],
+    "pending_task_ids": [
+      "MGMT-QLIB-003",
+      "MGMT-QLIB-005"
+    ],
+    "research_refs": [
+      {
+        "ref_type": "research_experiment",
+        "ref_id": "exp-mgmt-qlib-006",
+        "route": "/bff/research-experiments/exp-mgmt-qlib-006"
+      },
+      {
+        "ref_type": "strategy_artifacts",
+        "ref_id": "tw-cross-sectional-equity-alpha",
+        "route": "/bff/strategies/tw-cross-sectional-equity-alpha/artifacts"
+      }
+    ],
+    "evidence_refs": [
+      {
+        "ref_type": "dataset_manifest",
+        "task_id": "MGMT-QLIB-001",
+        "ref": "support/evidence/MGMT-QLIB-001/dataset_manifest.json"
+      },
+      {
+        "ref_type": "strategy_spec_packet",
+        "task_id": "MGMT-QLIB-002",
+        "ref": "support/evidence/MGMT-QLIB-002/strategy_spec_packet.json"
+      },
+      {
+        "ref_type": "model_eval_artifact_review",
+        "task_id": "MGMT-QLIB-004",
+        "ref": "support/reviews/MGMT-QLIB-004-review-codex2.md"
+      }
+    ],
+    "expected_evidence_refs": [
+      {
+        "ref_type": "registry_admission_packet",
+        "task_id": "MGMT-QLIB-005",
+        "ref": "support/evidence/MGMT-QLIB-005/registry_admission_packet.json",
+        "status": "pending_upstream_task"
+      }
+    ],
+    "artifact_refs": [
+      {
+        "artifact_name": "model_artifact",
+        "artifact_type": "model_artifact",
+        "artifact_ref": "qlib-tw-cross-sectional-alpha-model-draft-v1@1.0.0",
+        "artifact_state": "draft",
+        "deployment_stage": "none",
+        "registry_id": "qlib-tw-cross-sectional-alpha-model-draft-v1"
+      },
+      {
+        "artifact_name": "evaluation_report",
+        "artifact_type": "evaluation_result",
+        "artifact_ref": "eval-qlib-tw-cross-sectional-alpha-model-draft-v1@1.0.0",
+        "target_artifact_ref": "qlib-tw-cross-sectional-alpha-model-draft-v1@1.0.0",
+        "artifact_state": "draft",
+        "deployment_stage": "none"
+      },
+      {
+        "artifact_name": "registry_entry_projection",
+        "artifact_type": "registry_entry_projection",
+        "artifact_ref": "artifact://qlib/qlib-tw-cross-sectional-alpha-model-draft-v1/1.0.0/registry_entry",
+        "artifact_state": "draft",
+        "deployment_stage": "none"
+      },
+      {
+        "artifact_name": "candidate_packet",
+        "artifact_type": "registry_candidate_handoff",
+        "artifact_ref": "artifact://qlib/qlib-tw-cross-sectional-alpha-model-draft-v1/1.0.0/candidate_packet",
+        "artifact_state": "draft",
+        "deployment_stage": "none"
+      }
+    ],
+    "ooda_refs": [
+      {
+        "stage": "observe",
+        "ref_type": "dataset_manifest",
+        "ref": "support/evidence/MGMT-QLIB-001/dataset_manifest.json"
+      },
+      {
+        "stage": "orient",
+        "ref_type": "strategy_spec_packet",
+        "ref": "support/evidence/MGMT-QLIB-002/strategy_spec_packet.json"
+      },
+      {
+        "stage": "decide",
+        "ref_type": "registry_admission_packet",
+        "ref": "support/evidence/MGMT-QLIB-005/registry_admission_packet.json",
+        "status": "pending_upstream_task"
+      }
+    ],
+    "management_routes": {
+      "artifact_detail": "/bff/artifacts/qlib-tw-cross-sectional-alpha-model-draft-v1",
+      "api_artifact_detail": "/api/v1/artifacts/qlib-tw-cross-sectional-alpha-model-draft-v1",
+      "research_experiment_detail": "/bff/research-experiments/exp-mgmt-qlib-006",
+      "strategy_artifacts": "/bff/strategies/tw-cross-sectional-equity-alpha/artifacts"
+    },
+    "safety_assertions": {
+      "registry_write_performed": false,
+      "registry_write_authority": "registry_service_only",
+      "broker_session_opened": false,
+      "order_route": "none",
+      "deployment_stage": "none",
+      "live_capital_side_effects": false
+    }
+  }
+}

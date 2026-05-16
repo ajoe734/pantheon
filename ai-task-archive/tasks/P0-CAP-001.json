@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "P0-CAP-001",
+  "archived_at": "2026-05-16T00:38:13Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P0-CAP-001",
+    "title": "/bff/capital-pools list/detail",
+    "summary_zh": null,
+    "phase": "Sprint 1 / EPIC-BFF-P0",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Closeout complete: py_compile OK; 27 capital contract tests + 4 live wiring tests all pass matching review approval. Task-exclusive files (evidence, review, capital contract test) committed in 5d5fc37f. main.py/read_store.py implementation hunks remain in worktree with concurrent BFF task changes (non-interactive isolation exception per background worker rule).",
+    "last_update": "2026-05-16T00:38:13Z",
+    "review_notes_zh": [
+      "審查通過：GET /bff/capital-pools 嚴格 data/items/page_info 信封正確；pool_id 與管理顯示欄位保留；detail 在 pool source 不可驗證時以 DOWNSTREAM_UNAVAILABLE 503 失敗關閉；persona_bindings 降級原因正確回報於 meta.surfaces 與 meta.degradation",
+      "合約測試 27 passed；live wiring subset 4 passed；py_compile clean；無需修改"
+    ],
+    "review_file": "support/reviews/P0-CAP-001-review-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T00:38:13Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "5d5fc37f8c36ec6808b5be0c1460c6693c2c9fdc",
+      "commit_subject": "P0-CAP-001: /bff/capital-pools list/detail closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Verification": "py_compile OK; 27 contract tests passed; 4 live wiring tests passed.",
+        "Note": "main.py and read_store.py contain concurrent hunks from multiple concurrent BFF tasks",
+        "LLM-Agent": "Claude",
+        "Task-ID": "P0-CAP-001",
+        "Reviewer": "Claude2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 52,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P0-CAP-001",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Ready for review: /bff/capital-pools list now returns strict data/items/page_info envelope; canonical pool projection preserves pool_id and management display fields; detail now fails closed with DOWNSTREAM_UNAVAILABLE when pool source is unverifiable and reports persona_bindings surface degradation in meta. Evidence: support/evidence/P0-CAP-001/README.md. Verification: py_compile main/read_store/capital test passed; pytest services/control-plane/bff/test_bff_capital_ranking_rebalance_contract.py -q => 27 passed; seeded final detail matrix => 1 passed; final live wiring route/OpenAPI/live-probe subset => 3 passed. Note: worktree also contains concurrent non-P0-CAP-001 dirty hunks in main.py and other BFF/state files; review scope is capital-pools hunks in main.py/read_store.py, the capital contract tests, and P0-CAP-001 evidence.",
+      "status": "done",
+      "created_at": "2026-05-15T23:30:04Z",
+      "resolved_at": "2026-05-15T23:34:42Z"
+    },
+    {
+      "task_id": "P0-CAP-001",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved: /bff/capital-pools list strict envelope, pool_id preservation, fail-closed DOWNSTREAM_UNAVAILABLE, and persona_bindings surface degradation all verified. 27 contract tests + 4 live wiring tests pass. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-15T23:34:42Z",
+      "resolved_at": "2026-05-15T23:59:36Z"
+    },
+    {
+      "task_id": "P0-CAP-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-05-15T23:59:37Z",
+      "resolved_at": "2026-05-16T00:38:13Z"
+    }
+  ],
+  "blockers": []
+}

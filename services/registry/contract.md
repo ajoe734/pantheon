@@ -41,6 +41,7 @@ The registry must support more than one artifact class.
 |---|---|
 | `strategy_spec` | normalized StrategySpec from research ingestion |
 | `model_artifact` | trained model weights or bundle |
+| `behavior_policy` | behavior-cloned trader policy candidate from governed imitation datasets |
 | `feature_set` | versioned feature definitions |
 | `prompt_bundle` | persona optimization output such as DSPy program |
 | `signal_snapshot` | versioned signal or allocation snapshot |
@@ -53,6 +54,7 @@ Not every artifact is executable, but every artifact uses the same governance vo
 Not every artifact traverses every deployment stage.
 
 - executable artifacts may be deployed to `paper`, `canary`, or `live` only after they are `approved`
+- `behavior_policy` artifacts are governed learned policies; they must remain non-live until normal evaluation, approval, deployment planning, and runtime binding gates complete
 - reference artifacts such as `evaluation_result`, `critique_result`, and `optimizer_result` are governed but non-executable, and in v1 normally remain `candidate` or `approved` until superseded or explicitly `retired`
 
 ---
@@ -232,6 +234,25 @@ The storage backend is still open, but the logical operations are not.
 | `resolve_deployment_view(strategy_id)` | return the derived deployment-stage view from deployment/runtime objects |
 
 `resolve_deployment_view()` is a composed read path, not a registry-only write authority.
+
+### StrategySpec registry facade
+
+`STRAT-002` adds a narrow StrategySpec-specific HTTP facade over the generic registry operations.
+It does not create a second lifecycle or bypass the generic registry state machine.
+
+| HTTP operation | Description |
+|---|---|
+| `POST /api/registry/strategy-specs` | register a `strategy_spec` artifact with required lineage plus `storage_ref`/`checksum`, or an inline StrategySpec payload from which checksum and inline storage are derived |
+| `GET /api/registry/strategy-specs/{registry_id}` | read one `strategy_spec` registry entry and reject non-StrategySpec artifacts on this facade |
+| `GET /api/registry/strategies/{strategy_id}/strategy-specs` | list only StrategySpec entries for a strategy family, optionally filtered by `artifact_state` |
+| `POST /api/registry/strategy-specs/{registry_id}/advance` | advance a StrategySpec entry through the same `draft -> candidate -> approved -> retired` artifact-state machine |
+
+The facade exists so source-seed and distillation workers can register StrategySpec artifacts without
+supplying or trusting `artifact_type` themselves. It must still preserve:
+
+- lineage from source seed, source run, parent registry entry, dataset, or source StrategySpec
+- `storage_ref` and `checksum` on every registered StrategySpec artifact
+- the same `artifact_state` / `deployment_stage` split as the generic registry entry API
 
 ---
 

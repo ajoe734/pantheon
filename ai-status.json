@@ -1,9 +1,9 @@
 {
   "project": "pantheon",
-  "sprint": "2026-05-13-ep5-qlib-bff-consolidation",
-  "sprint_started_at": "2026-05-13T02:00:00Z",
-  "objective": "並行 4 條 track：(A) Shioaji TW broker sandbox smoke — services/broker/shioaji/ adapter, place/cancel/readback/reconcile, 餵進 scripts/run_ep5_canary_readiness.py human-gate packet；(B) Qlib LightGBM alpha activation — 寫 RS-003 baseline StrategySpec，從 TWSE/TPEx 抓 ≥50 instruments × ≥2 years OHLCV，跑 production_activation_smoke.py --backend real，submit registry admission packet；(C) services/ namespace normalization — control_plane→control-plane/internal，registry-core/decision-domain→registry/decision_domain；(D) BFF Consolidation — 補完 BFF execute-plans live wiring 的剩餘 20–30% production gap (route manifest contract diff，command envelope unification，non-empty fixture & detail journey，SSE real stream replay，strict env cutover，seed-only surface elimination)。Track D 27 tasks (BFF-CONSOL-001..027) 分 4 wave，Wave 1–2 與 Track A/B/C 並行不衝突；Wave 3 的 command adapter rollout (019/020/021) gated on EP5 paper-canary closeout (Day 12)；strict cutover 走 isolated Lovable preview branch；receipt dual-write 驗證通過後即可 deprecate 舊 receipt，後續 regression 追蹤不再以固定天數阻塞派工。broker production live 與 capital binding 仍 fail-closed；canary 仍需 risk-owner + operator approval gate。Track A/B 共用 TW market dataset 不重做兩次。(E) Management Console OODA layer + paper-loop proof — 依 2026-05-15 supplemental SA/SD (docs/04/pantheon_sa_supplemental_2026-05-15/) 疊一層 OODA packet schema + Management control-room/strategy/runtime 上的 OODA 可視化 + multi-persona synthesis 證明 + Qlib admission + Shioaji sandbox evidence + evolution follow-through + fail-closed regression。共 7 EPIC 46 task (MGMT-OODA / PAPER / SYN / QLIB / BROKER / EVO / SAFE)。EPIC-04 與 Track B、EPIC-05 與 Track A 共用 TW dataset 與 broker sandbox 證據；EPIC-07 強制驗證 broker production live 與 capital binding 持續 fail-closed；M1 OODA packet 是首個收斂點。",
-  "updated_at": "2026-05-15T15:52:59Z",
+  "sprint": "2026-05-16-pantheon-bff-p0-foundation",
+  "sprint_started_at": "2026-05-16T00:00:00Z",
+  "objective": "跨進開發團隊 GAP master rebaseline (docs/04/pantheon_sa_supplemental_2026-05-15/GAP_dev_team_master_rebaseline_2026-05-15.md)，以 pantheon@master + execute-plans@main 為基準。並行 6 條 EPIC，按 P0→P3 階梯推進：(I) EPIC-BFF-P0 (P0 10 task / Sprint 1) — session trio (/bff/me, auth/refresh, logout) + /openapi.json + canonical action endpoint + approval decide + registry reads (strategies/personas/capital-pools/audit)，讓 execute-plans@main 在 VITE_BFF_FALLBACK=strict 下可 bootstrap 核心 Management flow 不再 fallback mock；(II) EPIC-GOV-DEPLOY (P1 5 task / Sprint 2) — ApprovalDecision first-class + DeploymentPlan contract/service + stage planner + deployment projection + pool/runtime compatibility 檢查；(III) EPIC-RUNTIME (P1 6 task / Sprint 3) — RuntimeBinding schema + Runtime Manager skeleton + /bff/runtimes + deploy/pause/replace/rollback actions + loader metadata migration (promotion_state → artifact_state + deployment_stage) + LEAN algorithm-level smoke；(IV) EPIC-TELEMETRY (P2 7 task / Sprint 4) — TelemetryEvent canonical schema + RuntimeHeartbeat ingest + AuditAction backend + /bff/alerts + /bff/incidents + reconciliation record + Postmortem schema/endpoint；(V) EPIC-RESEARCH (P3 28 task / Sprint 5) — Source Ingest (SRC) + StrategySpec (STRAT) + Experiment orchestrator (EXP) + Qlib/vectorbt adapters + Persona/Trainer (PER/TRN) + Imitation dataset (IMT) + Consult/Committee (ASK)；(VI) EPIC-EVOLUTION (P3 3 task / Sprint 6) — EvolutionDecision service + /bff/v5/loop-runs + /bff/v5/sentinel/findings。GAP § 10 最大阻塞：BFF live endpoints 不足 → EPIC-BFF-P0 必須最先收斂；Registry/Promotion canonical 已 implemented，DeploymentPlan/RuntimeBinding 是 governance→execution 缺口；Artifact Loader 仍寫 legacy promotion_state，EX-002 metadata migration 是 execution-side 技術債。fail-closed 鐵律延續：broker production live、capital binding live 仍禁止；canary 需 risk-owner + operator 雙閘；evidence 走 support/evidence/<epic>-<task>/。Track E 收尾備註：46 個 MGMT-* task 中 45 個 done+archive，僅 MGMT-BROKER-002 仍 blocked 等 Shioaji credentials (commit 22e5ca3b 已備 sidecar acceptance packet)；M7 canary readiness 因此未閉合；Track E objective 不在本 sprint 推進範圍，僅 carry-over 記錄。",
+  "updated_at": "2026-05-16T14:25:27Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -94,13 +94,11 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "finalize",
-      "current_task_ids": [
-        "MGMT-PAPER-002"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/claude-execution-control",
-      "next": "Supervisor paused finalize on MGMT-PAPER-002 to free Claude for higher-priority review work; task remains review_approved.",
-      "last_update": "2026-05-15T15:50:12Z"
+      "next": "",
+      "last_update": "2026-05-16T14:22:36Z"
     },
     {
       "name": "Gemini",
@@ -114,7 +112,7 @@
       "current_task_ids": [],
       "branch": "feat/gemini-research-runtime",
       "next": "",
-      "last_update": "2026-05-15T15:43:57Z"
+      "last_update": "2026-05-16T11:57:00Z"
     },
     {
       "name": "Codex",
@@ -124,14 +122,11 @@
         "schema",
         "acceptance"
       ],
-      "status": "working",
-      "current_task_ids": [
-        "MGMT-SYN-001",
-        "MGMT-QLIB-004"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/codex-collab-system",
-      "next": "Supervisor auto-started MGMT-QLIB-004 after successful dispatch.",
-      "last_update": "2026-05-15T15:51:20Z"
+      "next": "",
+      "last_update": "2026-05-16T14:11:12Z"
     },
     {
       "name": "Codex2",
@@ -141,16 +136,11 @@
         "schema",
         "acceptance"
       ],
-      "status": "working",
-      "current_task_ids": [
-        "MGMT-BROKER-005",
-        "MGMT-EVO-006",
-        "MGMT-SAFE-003",
-        "MGMT-SAFE-004"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "bff-luv-fe-006-dev-deploy",
-      "next": "Started OpenClaw broker tool denial smoke implementation; scoping to adapter HTTP bridge and evidence artifact.",
-      "last_update": "2026-05-15T15:52:59Z"
+      "next": "",
+      "last_update": "2026-05-16T09:59:55Z"
     },
     {
       "name": "Copilot",
@@ -160,17 +150,11 @@
         "spec-review",
         "critique"
       ],
-      "status": "ready",
-      "current_task_ids": [
-        "MGMT-SYN-003",
-        "MGMT-QLIB-001",
-        "MGMT-QLIB-002",
-        "MGMT-EVO-002",
-        "MGMT-SAFE-005"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/grok-research-critique",
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:53:25Z"
+      "next": "",
+      "last_update": "2026-05-16T11:18:39Z"
     },
     {
       "name": "Claude2",
@@ -179,18 +163,11 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "ready",
-      "current_task_ids": [
-        "MGMT-OODA-005",
-        "MGMT-OODA-006",
-        "MGMT-PAPER-006",
-        "MGMT-SYN-006",
-        "MGMT-QLIB-006",
-        "MGMT-EVO-003"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/claude2-execution-control",
-      "next": "Supervisor preempted MGMT-OODA-005 to free Claude2 for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
-      "last_update": "2026-05-15T15:06:52Z"
+      "next": "",
+      "last_update": "2026-05-16T14:11:37Z"
     },
     {
       "name": "Gemini2",
@@ -202,280 +179,14 @@
       ],
       "status": "blocked",
       "current_task_ids": [
-        "MGMT-BROKER-002",
-        "MGMT-BROKER-003",
-        "MGMT-SAFE-002"
+        "MGMT-BROKER-002"
       ],
       "branch": "bff-luv-fe-006-dev-deploy",
-      "next": "Review blocked: direct smoke passes with python3 tests/run_capital_binding_smoke.py, but python3 -m pytest tests/run_capital_binding_smoke.py -q fails with SystemExit: 0 because test_capital_binding_disabled() calls sys.exit() inside a pytest-collected test. Convert the check to assertions/unittest or move CLI exit handling under __main__ so the smoke remains directly runnable and pytest-targetable; prefer a canonical non-active binding status such as suspended or revoked for the disabled-binding case.",
-      "last_update": "2026-05-15T15:48:00Z"
+      "next": "Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check.",
+      "last_update": "2026-05-15T15:15:06Z"
     }
   ],
   "tasks": [
-    {
-      "id": "MGMT-OODA-005",
-      "title": "Control Room OODA status card",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-01 OODA Packet Foundation",
-      "owner": "Claude2",
-      "reviewer": "Claude",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Supervisor preempted MGMT-OODA-005 to free Claude2 for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
-      "last_update": "2026-05-15T15:06:52Z"
-    },
-    {
-      "id": "MGMT-OODA-006",
-      "title": "OODA packet drawer component",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-01 OODA Packet Foundation",
-      "owner": "Claude2",
-      "reviewer": "Claude",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:51:14Z"
-    },
-    {
-      "id": "MGMT-PAPER-002",
-      "title": "paper ApprovalDecision packet",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-02 Management Paper Loop Proof",
-      "owner": "Claude",
-      "reviewer": "Codex2",
-      "status": "review_approved",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Supervisor paused finalize on MGMT-PAPER-002 to free Claude for higher-priority review work; task remains review_approved.",
-      "last_update": "2026-05-15T15:50:12Z",
-      "review_notes_zh": [
-        "無阻塞發現：commit 3676ddfd 的 paper ApprovalDecision factory、test、evidence artifact 符合 MGMT-PAPER-002 scope。",
-        "查核重點：ApprovalDecision 為 strategy_spec target、medium risk、risk_owner actor、lifecycle proposed→under_review→decided(approved)，validation_errors 為空，evidence artifact 保留 live_capital_side_effects=false 與 ooda_decide_ref.approval_decision_id。",
-        "驗證命令：python3 services/control-plane/governance/test_paper_approval_decision.py；python3 services/control-plane/governance/paper_approval_decision.py；python3 -m pytest services/control-plane/governance/test_paper_approval_decision.py -q；python3 -m py_compile services/control-plane/governance/paper_approval_decision.py services/control-plane/governance/test_paper_approval_decision.py。"
-      ]
-    },
-    {
-      "id": "MGMT-PAPER-003",
-      "title": "paper DeploymentPlan packet",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-02 Management Paper Loop Proof",
-      "owner": "Claude",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:51:51Z"
-    },
-    {
-      "id": "MGMT-PAPER-004",
-      "title": "paper RuntimeBinding packet",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-02 Management Paper Loop Proof",
-      "owner": "Claude",
-      "reviewer": "Gemini",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:52:08Z"
-    },
-    {
-      "id": "MGMT-PAPER-006",
-      "title": "paper EvolutionDecision review packet",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-02 Management Paper Loop Proof",
-      "owner": "Claude2",
-      "reviewer": "Copilot",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:52:38Z"
-    },
-    {
-      "id": "MGMT-SYN-001",
-      "title": "PersonaAllocationProposal schema",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-03 Multi-Persona Synthesis",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "in_progress",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Supervisor re-dispatched MGMT-SYN-001; task remains in progress.",
-      "last_update": "2026-05-15T15:50:53Z"
-    },
-    {
-      "id": "MGMT-SYN-003",
-      "title": "allocation conflict classifier",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-03 Multi-Persona Synthesis",
-      "owner": "Copilot",
-      "reviewer": "Claude",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:53:25Z"
-    },
-    {
-      "id": "MGMT-SYN-004",
-      "title": "allocation synthesis method v1",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-03 Multi-Persona Synthesis",
-      "owner": "Claude",
-      "reviewer": "Copilot",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:53:35Z"
-    },
-    {
-      "id": "MGMT-SYN-005",
-      "title": "AllocationPolicyArtifact output",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-03 Multi-Persona Synthesis",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:53:45Z"
-    },
-    {
-      "id": "MGMT-SYN-006",
-      "title": "Management UI conflict log view",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-03 Multi-Persona Synthesis",
-      "owner": "Claude2",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:53:53Z"
-    },
-    {
-      "id": "MGMT-SYN-007",
-      "title": "multi-persona synthesis proof evidence",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-03 Multi-Persona Synthesis",
-      "owner": "Codex2",
-      "reviewer": "Claude",
-      "status": "review_approved",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Supervisor resumed MGMT-SYN-007 for finalize after successful dispatch.",
-      "last_update": "2026-05-15T15:50:25Z",
-      "review_notes_zh": [
-        "審查通過：commit 92be6f04 的三份 PersonaAllocationProposal 快照正確回放至 optimizer-svc proposal store，PoolRiskPolicy 封殺 leveraged_short 策略（persona-leverage-skeptic），剩餘兩份 proposal 產生 AllocationPolicyArtifact alloc-policy-mgmt-syn-007-001，sponsor=persona-tw-momentum，synthesis_method=weighted_fusion。",
-        "驗證命令：python3 -m py_compile scripts/generate_mgmt_syn_007_evidence.py → OK；python3 scripts/generate_mgmt_syn_007_evidence.py → 成功輸出目標 artifact/log ID；python3 -m pytest services/optimizer-svc/test_portfolio_synthesis.py services/optimizer-svc/test_persona_allocation_proposal_store.py -q → 13 passed。",
-        "OODA packet (ooda-mgmt-syn-007-persona-synthesis) loop_type=persona_synthesis、status=closed、live_capital_side_effects=false、validate_packet() 通過。7 項 M5 proof assertion 全部為 true。",
-        "非阻塞追蹤：proof_assertions.optimizer_solver_not_arbitrator 為靜態 literal true，可在後續迭代改為計算式驗證；本 task acceptance 不依賴此邊界。"
-      ],
-      "review_file": "support/reviews/MGMT-SYN-007-review-claude.md"
-    },
-    {
-      "id": "MGMT-QLIB-001",
-      "title": "Qlib dataset manifest",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-04 Qlib Admission",
-      "owner": "Copilot",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:54:15Z"
-    },
-    {
-      "id": "MGMT-QLIB-002",
-      "title": "Qlib StrategySpec builder",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-04 Qlib Admission",
-      "owner": "Copilot",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:54:29Z"
-    },
-    {
-      "id": "MGMT-QLIB-004",
-      "title": "Qlib model / eval artifact refs",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-04 Qlib Admission",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "in_progress",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Supervisor auto-started MGMT-QLIB-004 after successful dispatch.",
-      "last_update": "2026-05-15T15:51:20Z"
-    },
-    {
-      "id": "MGMT-QLIB-005",
-      "title": "Qlib registry admission packet",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-04 Qlib Admission",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:54:57Z"
-    },
-    {
-      "id": "MGMT-QLIB-006",
-      "title": "Management artifact / research linkage",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-04 Qlib Admission",
-      "owner": "Claude2",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:55:07Z"
-    },
-    {
-      "id": "MGMT-BROKER-001",
-      "title": "Shioaji sandbox adapter facade",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-05 Shioaji Sandbox",
-      "owner": "Codex",
-      "reviewer": "Gemini2",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Auto-reassigned ownership from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Codex starts a fresh run.",
-      "last_update": "2026-05-15T15:00:10Z"
-    },
     {
       "id": "MGMT-BROKER-002",
       "title": "Shioaji account readiness check",
@@ -490,249 +201,6 @@
       "next": "Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check.",
       "last_update": "2026-05-15T15:15:06Z",
       "waiting_for": "Gemini"
-    },
-    {
-      "id": "MGMT-BROKER-003",
-      "title": "Claiming MGMT-BROKER-003 to advance broker sandbox smoke",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-05 Shioaji Sandbox",
-      "owner": "Gemini2",
-      "reviewer": "Codex",
-      "status": "in_progress",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Review blocked: support/evidence/MGMT-BROKER-003/summary.json and the sandbox_smoke regression still identify the packet as EP5-BROKER-TW-002-RERUN-REAL-FIX instead of MGMT-BROKER-003. Regenerate task-scoped evidence, ideally via explicit --task-id metadata, then return for review. Review file: support/reviews/MGMT-BROKER-003-review-codex.md",
-      "last_update": "2026-05-15T15:38:15Z"
-    },
-    {
-      "id": "MGMT-BROKER-004",
-      "title": "Shioaji evidence packet",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-05 Shioaji Sandbox",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:55:43Z"
-    },
-    {
-      "id": "MGMT-BROKER-005",
-      "title": "Shioaji fail-closed tests",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-05 Shioaji Sandbox",
-      "owner": "Codex2",
-      "reviewer": "Codex",
-      "status": "review",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Ready for review. Commit ddcb0d76 adds Shioaji fail-closed regressions for closed sandbox gate no-SDK side effects, unconditional live-disabled no side effects, and closed-gate smoke artifact boundaries. Evidence note: support/evidence/MGMT-BROKER-005/README.md. Verification passed: shioaji adapter tests, shioaji sandbox smoke tests, ep5 canary readiness tests with PYTHONPATH=scripts, broker sandbox order smoke tests with PYTHONPATH=scripts, and py_compile.",
-      "last_update": "2026-05-15T15:47:57Z"
-    },
-    {
-      "id": "MGMT-BROKER-006",
-      "title": "Shioaji canary readiness packet integration",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-05 Shioaji Sandbox",
-      "owner": "Claude",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:56:03Z"
-    },
-    {
-      "id": "MGMT-EVO-001",
-      "title": "telemetry-to-evolution packet link",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-06 Evolution Follow-Through",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:56:13Z"
-    },
-    {
-      "id": "MGMT-EVO-002",
-      "title": "EvolutionDecision proposal from incident / postmortem",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-06 Evolution Follow-Through",
-      "owner": "Copilot",
-      "reviewer": "Claude",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:56:23Z"
-    },
-    {
-      "id": "MGMT-EVO-003",
-      "title": "evolution review / approval UI linkage",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-06 Evolution Follow-Through",
-      "owner": "Claude2",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:56:34Z"
-    },
-    {
-      "id": "MGMT-EVO-004",
-      "title": "retrain / revalidate dispatch",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-06 Evolution Follow-Through",
-      "owner": "Codex",
-      "reviewer": "Copilot",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Auto-reassigned ownership from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Codex starts a fresh run.",
-      "last_update": "2026-05-15T15:44:19Z"
-    },
-    {
-      "id": "MGMT-EVO-005",
-      "title": "rollback / freeze follow-through",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-06 Evolution Follow-Through",
-      "owner": "Claude",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:56:58Z"
-    },
-    {
-      "id": "MGMT-EVO-006",
-      "title": "evolution observation window report",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-06 Evolution Follow-Through",
-      "owner": "Codex2",
-      "reviewer": "Claude",
-      "status": "review",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Implemented read-only observation window report endpoint GET /api/evolution/proposals/{decision_id}/observation-report. Artifacts: services/evolution/main.py, services/evolution/models.py, services/evolution/test_evolution_service.py, support/evidence/MGMT-EVO-006/summary.md. Verification: python3 -m pytest services/evolution/test_evolution_service.py -q (53 passed).",
-      "last_update": "2026-05-15T15:49:58Z"
-    },
-    {
-      "id": "MGMT-EVO-007",
-      "title": "evolution OODA loop closure",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-06 Evolution Follow-Through",
-      "owner": "Claude",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:57:23Z"
-    },
-    {
-      "id": "MGMT-SAFE-001",
-      "title": "live broker disabled smoke",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-07 Safety / Fail-Closed Regression",
-      "owner": "Gemini2",
-      "reviewer": "Codex",
-      "status": "review_approved",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Review approved: live broker disabled smoke passes focused verification. Owner should finalize with a SAFE-001-scoped closeout and note that commit 67c94c8c also contains unrelated MGMT-PAPER-005 files.",
-      "last_update": "2026-05-15T15:39:22Z",
-      "review_notes_zh": [
-        "審查通過：scripts/run_live_broker_disabled_smoke.py 驗證 live runtime_config.live_broker_enabled=True 會被 BootstrapContractError 拒絕，且 live 預設 request.runtime_config.live_broker_enabled=false。",
-        "Reviewer verification: PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_live_broker_disabled_smoke.py -> 1 passed；PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services.execution.lean_runtime.test_bootstrap_contract -q -> 8 passed；PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services.execution.lean_runtime.test_paper_runtime_smoke.PaperRuntimeSmokeTest.test_live_broker_enabled_flag_is_rejected_by_p0_contract services.execution.lean_runtime.test_paper_runtime_smoke.PaperRuntimeSmokeTest.test_live_bootstrap_is_health_only -q -> 2 passed；py_compile passed。",
-        "Closeout note: commit 67c94c8c contains the SAFE-001 smoke script but also unrelated MGMT-PAPER-005 telemetry files; finalization should scope its delivery summary to the live-broker smoke and avoid treating those paper telemetry files as SAFE-001 artifacts."
-      ]
-    },
-    {
-      "id": "MGMT-SAFE-002",
-      "title": "capital binding disabled smoke",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-07 Safety / Fail-Closed Regression",
-      "owner": "Gemini2",
-      "reviewer": "Codex",
-      "status": "in_progress",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Review blocked: direct smoke passes with python3 tests/run_capital_binding_smoke.py, but python3 -m pytest tests/run_capital_binding_smoke.py -q fails with SystemExit: 0 because test_capital_binding_disabled() calls sys.exit() inside a pytest-collected test. Convert the check to assertions/unittest or move CLI exit handling under __main__ so the smoke remains directly runnable and pytest-targetable; prefer a canonical non-active binding status such as suspended or revoked for the disabled-binding case.",
-      "last_update": "2026-05-15T15:48:00Z"
-    },
-    {
-      "id": "MGMT-SAFE-003",
-      "title": "OpenClaw broker tool denial smoke",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-07 Safety / Fail-Closed Regression",
-      "owner": "Codex2",
-      "reviewer": "Copilot",
-      "status": "in_progress",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Started OpenClaw broker tool denial smoke implementation; scoping to adapter HTTP bridge and evidence artifact.",
-      "last_update": "2026-05-15T15:52:59Z"
-    },
-    {
-      "id": "MGMT-SAFE-004",
-      "title": "canary human gate smoke",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-07 Safety / Fail-Closed Regression",
-      "owner": "Codex2",
-      "reviewer": "Claude",
-      "status": "in_progress",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Supervisor auto-started MGMT-SAFE-004 after successful dispatch.",
-      "last_update": "2026-05-15T15:51:39Z"
-    },
-    {
-      "id": "MGMT-SAFE-005",
-      "title": "no live side effects assertion",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-07 Safety / Fail-Closed Regression",
-      "owner": "Copilot",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:58:35Z"
-    },
-    {
-      "id": "MGMT-SAFE-006",
-      "title": "command idempotency regression",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-07 Safety / Fail-Closed Regression",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:58:52Z"
     }
   ],
   "handoffs": [
@@ -752,136 +220,6 @@
       "status": "done",
       "created_at": "2026-04-17T11:50:38Z",
       "resolved_at": "2026-04-17T12:39:53Z"
-    },
-    {
-      "task_id": "MGMT-PAPER-002",
-      "from": "Claude",
-      "to": "Codex2",
-      "message": "Paper ApprovalDecision packet complete. Deliverables: paper_approval_decision.py (factory + evidence writer), test_paper_approval_decision.py (30 PASS 0 FAIL), MGMT-PAPER-002-paper-approval-decision.json (evidence artifact with ooda_decide_ref). Full lifecycle proposed→under_review→decided(approved) exercised. No live capital side effects. Commit: 3676ddfd. Ready for review.",
-      "status": "done",
-      "created_at": "2026-05-15T15:02:23Z",
-      "resolved_at": "2026-05-15T15:11:02Z"
-    },
-    {
-      "task_id": "MGMT-PAPER-002",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Review approved by Codex2: MGMT-PAPER-002 paper ApprovalDecision packet passes scoped review and focused verification. Owner Claude should complete closeout per task-closeout-finalization.",
-      "status": "pending",
-      "created_at": "2026-05-15T15:11:02Z"
-    },
-    {
-      "task_id": "MGMT-BROKER-003",
-      "from": "Gemini2",
-      "to": "Gemini",
-      "message": "Smoke test completed with mock-api (real credentials pending; readiness needs operator check).",
-      "status": "done",
-      "created_at": "2026-05-15T15:16:43Z",
-      "resolved_at": "2026-05-15T15:21:04Z"
-    },
-    {
-      "task_id": "MGMT-SYN-001",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Ready for review: added PersonaAllocationProposal JSON Schema plus dataclass/API validation alignment. Task-owned files: services/optimizer-svc/portfolio_synthesis/persona_allocation_proposal.schema.json, services/optimizer-svc/test_persona_allocation_proposal_schema.py, services/optimizer-svc/portfolio_synthesis/models.py, services/optimizer-svc/portfolio_synthesis/__init__.py, services/optimizer-svc/main.py. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services/optimizer-svc/test_persona_allocation_proposal_schema.py -> 6 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s services/optimizer-svc -p 'test_*.py' -> 13 passed; PYTHONDONTWRITEBYTECODE=1 python3 services/optimizer-svc/smoke_test_portfolio_synthesis.py -> 3/3 smoke groups passed; py_compile optimizer-svc files passed. Note: due concurrent workspace staging, these schema files landed in commit abe1da51 alongside an OODA fix rather than an isolated MGMT-SYN-001 commit; no history rewrite attempted.",
-      "status": "done",
-      "created_at": "2026-05-15T15:18:00Z",
-      "resolved_at": "2026-05-15T15:31:14Z"
-    },
-    {
-      "task_id": "MGMT-BROKER-003",
-      "from": "Gemini",
-      "to": "Codex",
-      "message": "Auto-reassigned review from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure",
-      "status": "done",
-      "created_at": "2026-05-15T15:21:04Z",
-      "resolved_at": "2026-05-15T15:38:15Z"
-    },
-    {
-      "task_id": "MGMT-SAFE-001",
-      "from": "Gemini2",
-      "to": "Codex",
-      "message": "Implemented smoke test for live broker disabled verification. Ready for review.",
-      "status": "done",
-      "created_at": "2026-05-15T15:22:39Z",
-      "resolved_at": "2026-05-15T15:39:22Z"
-    },
-    {
-      "task_id": "MGMT-SYN-001",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Review blocked: PersonaAllocationProposal schema/dataclass/API validation are not aligned. Required changes: (1) API/dataclass path must enforce schema-required fields instead of accepting omitted fields through defaults; omitted created_at is currently accepted and auto-created via ProposalIn.model_dump(exclude_none=True) -> PersonaAllocationProposal. (2) dataclass validation must either enforce schema constraints for directions uniqueItems and target_weights key pattern ^[A-Za-z0-9._:/-]+$, or intentionally relax the schema with matching tests. (3) add regression tests for omitted created_at through the API/model path, duplicate directions, and invalid target_weight keys. Reviewer verification passed existing tests: schema unittest 6 passed; optimizer-svc unittest discover 13 passed; portfolio smoke 3/3; py_compile passed.",
-      "status": "done",
-      "created_at": "2026-05-15T15:31:14Z",
-      "resolved_at": "2026-05-15T15:31:14Z"
-    },
-    {
-      "task_id": "MGMT-SAFE-002",
-      "from": "Gemini2",
-      "to": "Codex",
-      "message": "Smoke test ready for review.",
-      "status": "done",
-      "created_at": "2026-05-15T15:35:43Z",
-      "resolved_at": "2026-05-15T15:48:00Z"
-    },
-    {
-      "task_id": "MGMT-BROKER-003",
-      "from": "Codex",
-      "to": "Gemini2",
-      "message": "Review blocked: support/evidence/MGMT-BROKER-003/summary.json and the sandbox_smoke regression still identify the packet as EP5-BROKER-TW-002-RERUN-REAL-FIX instead of MGMT-BROKER-003. Regenerate task-scoped evidence, ideally via explicit --task-id metadata, then return for review. Review file: support/reviews/MGMT-BROKER-003-review-codex.md",
-      "status": "done",
-      "created_at": "2026-05-15T15:38:15Z",
-      "resolved_at": "2026-05-15T15:38:15Z"
-    },
-    {
-      "task_id": "MGMT-SAFE-001",
-      "from": "Codex",
-      "to": "Gemini2",
-      "message": "Review approved: live broker disabled smoke passes focused verification. Owner should finalize with a SAFE-001-scoped closeout and note that commit 67c94c8c also contains unrelated MGMT-PAPER-005 files.",
-      "status": "pending",
-      "created_at": "2026-05-15T15:39:22Z"
-    },
-    {
-      "task_id": "MGMT-SYN-007",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Ready for review: added deterministic MGMT-SYN-007 M5 synthesis proof evidence in commit 92be6f04. Artifacts: scripts/generate_mgmt_syn_007_evidence.py, support/evidence/MGMT-SYN-007/proposals.jsonl, support/evidence/MGMT-SYN-007/synthesis-proof.json, support/evidence/MGMT-SYN-007/README.md. Evidence records three PersonaAllocationProposal snapshots, replays them through the optimizer-svc proposal store, emits conflict-log-mgmt-syn-007-001 with one risk-policy veto, produces single AllocationPolicyArtifact alloc-policy-mgmt-syn-007-001 with sponsor persona-tw-momentum, includes governance approval packet and persona_synthesis OODA packet, and records no live capital side effects. Verification: python3 scripts/generate_mgmt_syn_007_evidence.py; python3 -m py_compile scripts/generate_mgmt_syn_007_evidence.py; python3 -m pytest services/optimizer-svc/test_portfolio_synthesis.py services/optimizer-svc/test_persona_allocation_proposal_store.py -q -> 13 passed.",
-      "status": "done",
-      "created_at": "2026-05-15T15:42:16Z",
-      "resolved_at": "2026-05-15T15:45:24Z"
-    },
-    {
-      "task_id": "MGMT-SYN-007",
-      "from": "Claude",
-      "to": "Codex2",
-      "message": "Review approved: all M5 proof assertions pass; synthesis evidence deterministic and self-asserting; 13 optimizer-svc tests pass. Returned to Codex2 for closeout finalization.",
-      "status": "pending",
-      "created_at": "2026-05-15T15:45:24Z"
-    },
-    {
-      "task_id": "MGMT-BROKER-005",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Ready for review. Commit ddcb0d76 adds Shioaji fail-closed regressions for closed sandbox gate no-SDK side effects, unconditional live-disabled no side effects, and closed-gate smoke artifact boundaries. Evidence note: support/evidence/MGMT-BROKER-005/README.md. Verification passed: shioaji adapter tests, shioaji sandbox smoke tests, ep5 canary readiness tests with PYTHONPATH=scripts, broker sandbox order smoke tests with PYTHONPATH=scripts, and py_compile.",
-      "status": "pending",
-      "created_at": "2026-05-15T15:47:57Z"
-    },
-    {
-      "task_id": "MGMT-SAFE-002",
-      "from": "Codex",
-      "to": "Gemini2",
-      "message": "Review blocked: direct smoke passes with python3 tests/run_capital_binding_smoke.py, but python3 -m pytest tests/run_capital_binding_smoke.py -q fails with SystemExit: 0 because test_capital_binding_disabled() calls sys.exit() inside a pytest-collected test. Convert the check to assertions/unittest or move CLI exit handling under __main__ so the smoke remains directly runnable and pytest-targetable; prefer a canonical non-active binding status such as suspended or revoked for the disabled-binding case.",
-      "status": "done",
-      "created_at": "2026-05-15T15:48:00Z",
-      "resolved_at": "2026-05-15T15:48:00Z"
-    },
-    {
-      "task_id": "MGMT-EVO-006",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Implemented read-only observation window report endpoint GET /api/evolution/proposals/{decision_id}/observation-report. Artifacts: services/evolution/main.py, services/evolution/models.py, services/evolution/test_evolution_service.py, support/evidence/MGMT-EVO-006/summary.md. Verification: python3 -m pytest services/evolution/test_evolution_service.py -q (53 passed).",
-      "status": "pending",
-      "created_at": "2026-05-15T15:49:58Z"
     }
   ],
   "blockers": [
@@ -905,22 +243,22 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 9,
-      "active": 0,
-      "blocked": 0,
-      "done": 0,
-      "review": 0,
-      "review_approved": 1,
-      "todo": 8
-    },
-    "Claude2": {
-      "total": 6,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 6
+      "todo": 0
+    },
+    "Claude2": {
+      "total": 0,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 0
     },
     "Gemini": {
       "total": 0,
@@ -932,40 +270,40 @@
       "todo": 0
     },
     "Gemini2": {
-      "total": 4,
-      "active": 3,
+      "total": 1,
+      "active": 1,
       "blocked": 1,
       "done": 0,
       "review": 0,
-      "review_approved": 1,
-      "todo": 2
+      "review_approved": 0,
+      "todo": 0
     },
     "Codex": {
-      "total": 7,
-      "active": 2,
-      "blocked": 0,
-      "done": 0,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 7
-    },
-    "Codex2": {
-      "total": 5,
-      "active": 4,
-      "blocked": 0,
-      "done": 0,
-      "review": 2,
-      "review_approved": 1,
-      "todo": 2
-    },
-    "Copilot": {
-      "total": 5,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 5
+      "todo": 0
+    },
+    "Codex2": {
+      "total": 0,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 0
+    },
+    "Copilot": {
+      "total": 0,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 0
     }
   }
 }

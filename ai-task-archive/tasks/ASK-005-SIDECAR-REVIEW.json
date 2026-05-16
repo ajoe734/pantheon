@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "task_id": "ASK-005-SIDECAR-REVIEW",
+  "archived_at": "2026-05-16T14:13:36Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASK-005-SIDECAR-REVIEW",
+    "title": "Prepare ASK-005 review packet and evidence summary",
+    "summary_zh": "平行支援 ASK-005，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Sprint 5 / EPIC-RESEARCH",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/ASK-005/ASK-005-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete. Support packet updated with Claude review approval, parent fix commit 73304fe0 publication note, and finalization verification. Task-scoped commit 0b98baae. Verification: AI_NAME=Codex ./scripts/ai-status.sh show ASK-005-SIDECAR-REVIEW; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_ask005_sse_event_publishing_contract.py -q (12 passed in 11.64s).",
+    "last_update": "2026-05-16T14:13:36Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "ASK-005",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過。review 封包準確記錄 Codex 阻斷事項及修正觀察結果；parent fix commit 73304fe0 已在後續 handoff 中記錄；無 canonical 改動。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T14:13:36Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "HEAD",
+      "git_clean_required": false,
+      "commit": "0b98baae0e0bb6024a7cc556ce8a6f235e811f5d",
+      "commit_subject": "ASK-005-SIDECAR-REVIEW: record closeout approval",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "ASK-005-SIDECAR-REVIEW",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 71,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASK-005-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "ASK-005 sidecar review packet is ready at support/sidecars/ASK-005/ASK-005-SIDECAR-REVIEW.md. Scope is support-only: it summarizes Codex review blockers, current observed fixes for escalate/freeze approval.stage.changed and approval replay de-dup, and parent publication watchpoints. Artifact committed in d763d4e7; focused verification passed: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_ask005_sse_event_publishing_contract.py -q (9 passed).",
+      "status": "done",
+      "created_at": "2026-05-16T11:43:11Z",
+      "resolved_at": "2026-05-16T11:47:49Z"
+    },
+    {
+      "task_id": "ASK-005-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar review packet accurately records Codex blocking findings and current observed fixes. Reviewer attention point about parent commit durability is noted; parent fix commit 73304fe0 was recorded in the subsequent handoff. Support-only scope confirmed. Approved and returned to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-05-16T11:47:49Z",
+      "resolved_at": "2026-05-16T14:13:37Z"
+    }
+  ],
+  "blockers": []
+}

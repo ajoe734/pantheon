@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "MGMT-EVO-002",
+  "archived_at": "2026-05-15T18:06:20Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-EVO-002",
+    "title": "EvolutionDecision proposal from incident / postmortem",
+    "summary_zh": null,
+    "phase": "Track E / EPIC-06 Evolution Follow-Through",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Owner finalized approved MGMT-EVO-002 at commit c17f9ab8 after re-reading task brief, Codex2 approval, and task artifacts. Verified py_compile, services/evolution/test_evolution_service.py 57 passed, and task-file diff check passed. Task-owned code/test/review artifact committed; unrelated dirty worktree entries remain outside this closeout.",
+    "last_update": "2026-05-15T18:06:20Z",
+    "review_notes_zh": [
+      "審查通過：from-incident endpoint 只建立 proposed EvolutionDecision，保留 incident/postmortem lineage 與 back-link，未觸發 runtime/broker/capital mutation。",
+      "驗證：py_compile passed；services/evolution/test_evolution_service.py 57 passed；task files git diff --check passed。"
+    ],
+    "review_file": "support/reviews/MGMT-EVO-002-review-codex2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T18:06:20Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "c17f9ab86a42d484156b9aeedac5770141225992",
+      "commit_subject": "MGMT-EVO-002 add incident evolution proposal endpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-EVO-002",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 46,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 4,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-EVO-002",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Copilot is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-15T16:35:20Z",
+      "resolved_at": "2026-05-15T16:35:52Z"
+    },
+    {
+      "task_id": "MGMT-EVO-002",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Ready for review: added POST /api/evolution/proposals/from-incident to derive a proposed EvolutionDecision from canonical IncidentCase/Postmortem evidence, including lineage links, postmortem back-link reuse, safety metadata, and no runtime/broker/capital mutation. Task-owned files: services/evolution/models.py, services/evolution/main.py, services/evolution/test_evolution_service.py. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/evolution/models.py services/evolution/main.py services/evolution/test_evolution_service.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/evolution/test_evolution_service.py -q -> 57 passed.",
+      "status": "done",
+      "created_at": "2026-05-15T16:42:48Z",
+      "resolved_at": "2026-05-15T17:56:19Z"
+    },
+    {
+      "task_id": "MGMT-EVO-002",
+      "from": "Copilot",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Copilot to Codex2 after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-05-15T17:56:19Z",
+      "resolved_at": "2026-05-15T18:00:17Z"
+    },
+    {
+      "task_id": "MGMT-EVO-002",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: incident/postmortem-derived EvolutionDecision proposal endpoint is gated, lineage-linked, and verified; owner should finalize closeout.",
+      "status": "done",
+      "created_at": "2026-05-15T18:00:17Z",
+      "resolved_at": "2026-05-15T18:06:21Z"
+    }
+  ],
+  "blockers": []
+}

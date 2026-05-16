@@ -67,6 +67,10 @@ from deployment_saga import (  # type: ignore
     InboxReceipt,
     OutboxRecord,
 )
+from persona_capital_binding import (  # type: ignore
+    PersonaCapitalBinding,
+    PersonaCapitalBindingError,
+)
 
 try:
     from .models import (
@@ -76,17 +80,23 @@ try:
         DeploymentDispatchResponse,
         DeploymentExecutionProjectionBody,
         DeploymentPlanBody,
+        DeploymentScaleBody,
         DeploymentPlanSummary,
+        DeploymentProjectionReadModelResponse,
         DeploymentSagaBody,
         DeploymentSagaBootstrapBody,
         DispatchDeploymentPlanRequest,
         FinalizeCompensationRequest,
         InboxReceiptBody,
         OutboxRecordBody,
+        PoolCompatibilityRequest,
+        PoolCompatibilityResponse,
         PlanStatusBody,
         RecordBindingCreatedRequest,
         RecordRuntimeActiveRequest,
         RecordSagaFailureRequest,
+        StagePlannerCheckRequest,
+        StagePlannerCheckResponse,
         StrategyReadModelResponse,
         UpdatePlanStatusRequest,
         ValidateDeploymentPlanResponse,
@@ -99,17 +109,23 @@ except ImportError:
         DeploymentDispatchResponse,
         DeploymentExecutionProjectionBody,
         DeploymentPlanBody,
+        DeploymentScaleBody,
         DeploymentPlanSummary,
+        DeploymentProjectionReadModelResponse,
         DeploymentSagaBody,
         DeploymentSagaBootstrapBody,
         DispatchDeploymentPlanRequest,
         FinalizeCompensationRequest,
         InboxReceiptBody,
         OutboxRecordBody,
+        PoolCompatibilityRequest,
+        PoolCompatibilityResponse,
         PlanStatusBody,
         RecordBindingCreatedRequest,
         RecordRuntimeActiveRequest,
         RecordSagaFailureRequest,
+        StagePlannerCheckRequest,
+        StagePlannerCheckResponse,
         StrategyReadModelResponse,
         UpdatePlanStatusRequest,
         ValidateDeploymentPlanResponse,
@@ -136,12 +152,53 @@ def _resolve_governance_dir() -> Path:
     return path
 
 
+def _resolve_runtime_binding_store_path() -> Path:
+    explicit = os.getenv("PANTHEON_RUNTIME_BINDING_STORE_PATH", "").strip()
+    if explicit:
+        return Path(explicit).expanduser()
+    runtime_dir = os.getenv("PANTHEON_RUNTIME_DATA_DIR", "").strip()
+    if runtime_dir:
+        return Path(runtime_dir).expanduser() / "runtime_bindings.json"
+    return Path("/tmp/pantheon/runtime-manager/bindings.json")
+
+
 DATA_DIR = _resolve_governance_dir()
 PLAN_STORE_PATH = DATA_DIR / "deployment_plans.json"
 SAGA_STORE_PATH = DATA_DIR / "deployment_sagas.json"
 APPROVAL_STORE_PATH = DATA_DIR / "approval_decisions.json"
+RUNTIME_BINDING_STORE_PATH = _resolve_runtime_binding_store_path()
 _REGISTRY_SNAPSHOT_ENV = os.getenv("PANTHEON_DEPLOYMENT_REGISTRY_SNAPSHOT_PATH", "").strip()
 REGISTRY_SNAPSHOT_PATH = Path(_REGISTRY_SNAPSHOT_ENV).expanduser() if _REGISTRY_SNAPSHOT_ENV else None
+
+
+def _resolve_capital_pool_store_path() -> Path | None:
+    explicit = os.getenv("PANTHEON_CAPITAL_POOL_STORE_PATH", "").strip()
+    if explicit:
+        return Path(explicit).expanduser()
+    data_dir = (
+        os.getenv("CAPITAL_DATA_DIR")
+        or os.getenv("DEPLOYMENT_DATA_DIR")
+        or os.getenv("PANTHEON_GOVERNANCE_DATA_DIR")
+        or "/tmp/pantheon/governance"
+    )
+    return Path(data_dir).expanduser() / "capital_pools.json"
+
+
+def _resolve_persona_binding_store_path() -> Path | None:
+    explicit = os.getenv("PANTHEON_PERSONA_BINDING_STORE_PATH", "").strip()
+    if explicit:
+        return Path(explicit).expanduser()
+    data_dir = (
+        os.getenv("CAPITAL_DATA_DIR")
+        or os.getenv("DEPLOYMENT_DATA_DIR")
+        or os.getenv("PANTHEON_GOVERNANCE_DATA_DIR")
+        or "/tmp/pantheon/governance"
+    )
+    return Path(data_dir).expanduser() / "persona_capital_bindings.json"
+
+
+CAPITAL_POOL_STORE_PATH = _resolve_capital_pool_store_path()
+PERSONA_BINDING_STORE_PATH = _resolve_persona_binding_store_path()
 
 store = DeploymentPlanStore(str(PLAN_STORE_PATH))
 saga_store = DeploymentSagaStore(str(SAGA_STORE_PATH))
@@ -273,6 +330,82 @@ class DeploymentPlannerService:
         self.plan_store.put(plan)
         return plan
 
+    def check_stage_transition(self, request: StagePlannerCheckRequest) -> StagePlannerCheckResponse:
+        current_stage = DeploymentStage(request.current_stage.value)
+        target_stage = DeploymentStage(request.target_stage.value)
+        rollback_required = target_stage in {
+            DeploymentStage.PAPER,
+            DeploymentStage.CANARY,
+            DeploymentStage.LIVE,
+        }
+        rollback = (
+            RollbackRef(
+                target_artifact_id="stage-check-rollback-artifact",
+                target_version="0.9.0",
+                action_type=request.rollback_action.value,
+            )
+            if request.rollback_action is not None
+            else None
+        )
+        default_scale: DeploymentScale | None = None
+        effective_scale: DeploymentScale | None = (
+            DeploymentScale(**request.scale.model_dump())
+            if request.scale is not None
+            else None
+        )
+        transition_type = None
+        runtime_action = None
+        errors: list[str] = []
+
+        try:
+            transition_type = self.planner.derive_transition_type(current_stage, target_stage)
+            runtime_action = self.planner.default_runtime_action(transition_type, rollback)
+            default_scale = self.planner.default_scale(target_stage)
+            if effective_scale is None:
+                effective_scale = default_scale
+        except DeploymentPlanError as exc:
+            errors.append(str(exc))
+
+        if transition_type is not None and runtime_action is not None and effective_scale is not None:
+            plan = DeploymentPlan(
+                plan_id="stage-check-plan",
+                approval_decision_id="stage-check-approval",
+                artifact_id="stage-check-artifact",
+                artifact_version="1.0.0",
+                artifact_type="model_artifact",
+                strategy_id="stage-check-strategy",
+                capital_pool_id="stage-check-pool",
+                current_stage=current_stage,
+                target_stage=target_stage,
+                transition_type=transition_type,
+                runtime_action=runtime_action,
+                status=PlanStatus.APPROVED,
+                created_at="2026-05-16T00:00:00Z",
+                scale=effective_scale,
+                rollback=rollback,
+            )
+            errors.extend(plan.validate())
+
+        return StagePlannerCheckResponse(
+            ok=not errors,
+            current_stage=current_stage.value,
+            target_stage=target_stage.value,
+            transition_type=_enum_value(transition_type) if transition_type is not None else None,
+            runtime_action=_enum_value(runtime_action) if runtime_action is not None else None,
+            rollback_required=rollback_required,
+            default_scale=(
+                DeploymentScaleBody(**default_scale.to_dict())
+                if default_scale is not None
+                else None
+            ),
+            effective_scale=(
+                DeploymentScaleBody(**effective_scale.to_dict())
+                if effective_scale is not None
+                else None
+            ),
+            errors=errors,
+        )
+
     def strategy_read_model(
         self,
         *,
@@ -345,6 +478,335 @@ class DeploymentPlannerService:
             "approval_decision payload is required unless approval_decision_id resolves from "
             f"{self.approval_store_path}"
         )
+
+
+class DeploymentProjectionReadModelService:
+    """Derived-only read model over DeploymentPlan, approval, saga, and runtime state."""
+
+    def __init__(
+        self,
+        *,
+        planner_service: DeploymentPlannerService,
+        saga_store: DeploymentSagaStore,
+        approval_store_path: Path,
+        registry_snapshot_path: Path | None,
+        runtime_binding_store_path: Path,
+    ) -> None:
+        self.planner_service = planner_service
+        self.saga_store = saga_store
+        self.approval_store_path = approval_store_path
+        self.registry_snapshot_path = registry_snapshot_path
+        self.runtime_binding_store_path = runtime_binding_store_path
+
+    def list_projections(
+        self,
+        *,
+        strategy_id: str | None = None,
+        capital_pool_id: str | None = None,
+        target_stage: str | None = None,
+        status: str | None = None,
+    ) -> list[DeploymentProjectionReadModelResponse]:
+        return [
+            self._build_projection(plan)
+            for plan in self.planner_service.list_plans(
+                strategy_id=strategy_id,
+                capital_pool_id=capital_pool_id,
+                target_stage=target_stage,
+                status=status,
+            )
+        ]
+
+    def get_projection(self, plan_id: str) -> DeploymentProjectionReadModelResponse:
+        return self._build_projection(self.planner_service.get_plan(plan_id))
+
+    def _build_projection(self, plan: DeploymentPlan) -> DeploymentProjectionReadModelResponse:
+        plan_payload = plan.to_dict()
+        approval_decision = self._find_approval_decision(plan.approval_decision_id)
+        runtime_binding = self._find_runtime_binding_for_plan(plan.plan_id)
+        deployment_saga = self._find_latest_saga_for_plan(plan.plan_id)
+        registry_entry = self._find_registry_entry(plan.artifact_id)
+
+        source_status = {
+            "deployment_plan": "canonical",
+            "approval_decision": "canonical" if approval_decision else "missing",
+            "runtime_binding": "canonical" if runtime_binding else "missing",
+            "deployment_saga": "canonical" if deployment_saga else "missing",
+            "registry_entry": "canonical" if registry_entry else "missing",
+        }
+
+        execution_projection = None
+        projection_error = None
+        if registry_entry is not None:
+            try:
+                projected = self.planner_service.planner.build_execution_projection(
+                    plan,
+                    registry_entry,
+                )
+                execution_projection = DeploymentExecutionProjectionBody(**projected.__dict__)
+                source_status["execution_projection"] = "derived"
+            except DeploymentPlanError as exc:
+                projection_error = str(exc)
+                source_status["registry_entry"] = "invalid"
+                source_status["execution_projection"] = "invalid_source"
+        else:
+            source_status["execution_projection"] = "missing_source"
+
+        runtime_stage = _runtime_binding_stage(runtime_binding)
+        plan_status = _enum_value(plan.status)
+        target_stage = _enum_value(plan.target_stage)
+        current_stage = _enum_value(plan.current_stage)
+        actual_stage = runtime_stage or (target_stage if plan_status == PlanStatus.EXECUTED.value else current_stage)
+        approval_outcome = _approval_outcome(approval_decision)
+        approval_state = _approval_state(approval_decision)
+        runtime_binding_id = _runtime_binding_id(runtime_binding)
+        runtime_id = _runtime_id(runtime_binding)
+        runtime_status = _runtime_status(runtime_binding)
+        saga_status = _enum_value(deployment_saga.status) if deployment_saga else None
+        lifecycle_state = _projection_lifecycle_state(
+            plan_status=plan_status,
+            runtime_status=runtime_status,
+            deployment_saga_status=saga_status,
+        )
+        summary: Dict[str, Any] = {
+            "has_approval_authority": approval_outcome in {"approved", "approved_with_conditions"},
+            "runtime_backing_present": runtime_binding is not None,
+            "execution_projection_available": execution_projection is not None,
+            "rollback_action_type": _rollback_action_type(plan),
+            "scale": plan_payload.get("scale"),
+            "created_at": plan_payload.get("created_at"),
+        }
+        if projection_error:
+            summary["execution_projection_error"] = projection_error
+
+        return DeploymentProjectionReadModelResponse(
+            plan_id=plan.plan_id,
+            strategy_id=plan.strategy_id,
+            artifact_id=plan.artifact_id,
+            artifact_version=plan.artifact_version,
+            capital_pool_id=plan.capital_pool_id,
+            approval_decision_id=plan.approval_decision_id,
+            current_stage=current_stage,
+            target_stage=target_stage,
+            projected_stage=target_stage,
+            actual_stage=actual_stage,
+            plan_status=plan_status,
+            approval_outcome=approval_outcome,
+            approval_state=approval_state,
+            runtime_binding_id=runtime_binding_id,
+            runtime_id=runtime_id,
+            runtime_status=runtime_status,
+            deployment_saga_id=deployment_saga.saga_id if deployment_saga else None,
+            deployment_saga_status=saga_status,
+            lifecycle_state=lifecycle_state,
+            source_status=source_status,
+            summary=summary,
+            plan=_plan_body(plan),
+            approval_decision=approval_decision,
+            runtime_binding=runtime_binding,
+            deployment_saga=_saga_body(deployment_saga) if deployment_saga else None,
+            execution_projection=execution_projection,
+        )
+
+    def _find_approval_decision(self, approval_decision_id: str) -> Optional[Dict[str, Any]]:
+        if not self.approval_store_path.exists():
+            return None
+        return _load_record(
+            self.approval_store_path,
+            key_candidates=("decision_id", "id"),
+            target_key=approval_decision_id,
+        )
+
+    def _find_registry_entry(self, artifact_id: str) -> Optional[Dict[str, Any]]:
+        if self.registry_snapshot_path is None or not self.registry_snapshot_path.exists():
+            return None
+        return _load_record(
+            self.registry_snapshot_path,
+            key_candidates=("registry_id", "id", "artifact_id"),
+            target_key=artifact_id,
+        )
+
+    def _find_runtime_binding_for_plan(self, plan_id: str) -> Optional[Dict[str, Any]]:
+        for record in _load_records(self.runtime_binding_store_path):
+            if str(record.get("plan_id") or record.get("deployment_plan_id") or "") == plan_id:
+                return record
+        return None
+
+    def _find_latest_saga_for_plan(self, plan_id: str) -> DeploymentSaga | None:
+        sagas = [saga for saga in self.saga_store.list_all() if saga.plan_id == plan_id]
+        if not sagas:
+            return None
+        return sorted(sagas, key=lambda saga: (saga.updated_at, saga.created_at), reverse=True)[0]
+
+
+_DEPLOYABLE_TARGET_STAGES = {"paper", "canary", "live"}
+_SCOPE_ORDER = {"none": 0, "paper": 1, "canary": 2, "live": 3}
+_ACTIVE_RUNTIME_STATUSES = {"active"}
+
+
+class PoolRuntimeCompatibilityService:
+    """Read-only preflight over pool, persona binding, and runtime snapshots."""
+
+    def __init__(
+        self,
+        *,
+        capital_pool_store_path: Path | None,
+        persona_binding_store_path: Path | None,
+        runtime_binding_store_path: Path,
+    ) -> None:
+        self.capital_pool_store_path = capital_pool_store_path
+        self.persona_binding_store_path = persona_binding_store_path
+        self.runtime_binding_store_path = runtime_binding_store_path
+
+    def check(self, request: PoolCompatibilityRequest) -> PoolCompatibilityResponse:
+        target_stage = request.target_stage.value
+        errors: list[str] = []
+        warnings: list[str] = []
+
+        pool = self._find_capital_pool(request.capital_pool_id)
+        pool_found = pool is not None
+        pool_status = _optional_str(pool.get("status")) if pool else None
+        pool_active = pool_status == "active" if pool_status else False
+        single_runtime_enforced = _truthy(pool.get("single_runtime_enforced"), default=True) if pool else None
+
+        if not pool_found:
+            errors.append(f"CapitalPool '{request.capital_pool_id}' not found")
+        elif not pool_active:
+            errors.append(f"CapitalPool '{request.capital_pool_id}' must be active; got '{pool_status}'")
+
+        if target_stage not in _DEPLOYABLE_TARGET_STAGES:
+            errors.append(
+                "Pool/runtime compatibility check supports deployment targets "
+                "paper, canary, and live"
+            )
+
+        persona_binding_found = False
+        persona_scope_ok = False
+        persona_binding_id: str | None = None
+        allowed_deployment_scope: str | None = None
+
+        sponsor_persona_id = str(request.sponsor_persona_id or "").strip()
+        if not sponsor_persona_id:
+            errors.append("sponsor_persona_id is required for persona binding compatibility")
+        elif target_stage in _DEPLOYABLE_TARGET_STAGES:
+            candidates = self._active_persona_bindings(
+                persona_id=sponsor_persona_id,
+                capital_pool_id=request.capital_pool_id,
+            )
+            persona_binding_found = bool(candidates)
+            permitted = []
+            for binding in candidates:
+                allowed_deployment_scope = _max_scope(
+                    allowed_deployment_scope,
+                    _optional_str(binding.get("allowed_deployment_scope")),
+                )
+                try:
+                    if PersonaCapitalBinding.from_dict(binding).permits_deployment_to(target_stage):
+                        permitted.append(binding)
+                except (PersonaCapitalBindingError, ValueError, TypeError) as exc:
+                    warnings.append(
+                        "Ignored invalid PersonaCapitalBinding "
+                        f"{binding.get('binding_id') or '<unknown>'}: {exc}"
+                    )
+            persona_scope_ok = bool(permitted)
+            if permitted:
+                chosen = max(
+                    permitted,
+                    key=lambda binding: _SCOPE_ORDER.get(
+                        str(binding.get("allowed_deployment_scope") or "none"),
+                        -1,
+                    ),
+                )
+                persona_binding_id = _record_identity(chosen, "binding_id")
+                allowed_deployment_scope = _optional_str(chosen.get("allowed_deployment_scope"))
+            elif persona_binding_found:
+                errors.append(
+                    f"No active PersonaCapitalBinding for persona '{sponsor_persona_id}' "
+                    f"permits target_stage '{target_stage}'"
+                )
+            else:
+                errors.append(
+                    f"No active PersonaCapitalBinding found for persona '{sponsor_persona_id}' "
+                    f"and capital pool '{request.capital_pool_id}'"
+                )
+
+        active_runtime_bindings = self._active_runtime_bindings(request.capital_pool_id)
+        active_runtime_binding_ids = [
+            binding_id
+            for binding in active_runtime_bindings
+            if (binding_id := _record_identity(binding, "binding_id", "id", "runtime_binding_id"))
+        ]
+        active_runtime_binding_count = len(active_runtime_bindings)
+
+        single_runtime_ok: bool | None
+        if single_runtime_enforced is None:
+            single_runtime_ok = None
+        elif single_runtime_enforced:
+            single_runtime_ok = active_runtime_binding_count <= 1
+            if active_runtime_binding_count > 1:
+                errors.append(
+                    f"CapitalPool '{request.capital_pool_id}' violates single-runtime policy: "
+                    f"{active_runtime_binding_count} active RuntimeBindings found"
+                )
+            elif active_runtime_binding_count == 1:
+                warnings.append(
+                    "CapitalPool already has an active RuntimeBinding; dispatch must use a "
+                    "replace, freeze, resume, or rollback path instead of creating a second active binding."
+                )
+        else:
+            single_runtime_ok = True
+
+        if self.runtime_binding_store_path and not self.runtime_binding_store_path.exists():
+            warnings.append(
+                f"RuntimeBinding store '{self.runtime_binding_store_path}' does not exist; "
+                "active runtime count treated as zero."
+            )
+
+        return PoolCompatibilityResponse(
+            ok=not errors,
+            capital_pool_id=request.capital_pool_id,
+            target_stage=target_stage,
+            pool_found=pool_found,
+            pool_status=pool_status,
+            pool_active=pool_active,
+            single_runtime_enforced=single_runtime_enforced,
+            persona_binding_found=persona_binding_found,
+            persona_scope_ok=persona_scope_ok,
+            persona_binding_id=persona_binding_id,
+            allowed_deployment_scope=allowed_deployment_scope,
+            active_runtime_binding_count=active_runtime_binding_count,
+            active_runtime_binding_ids=active_runtime_binding_ids,
+            single_runtime_ok=single_runtime_ok,
+            errors=errors,
+            warnings=warnings,
+        )
+
+    def _find_capital_pool(self, pool_id: str) -> Optional[Dict[str, Any]]:
+        if self.capital_pool_store_path is None or not self.capital_pool_store_path.exists():
+            return None
+        return _load_record(
+            self.capital_pool_store_path,
+            key_candidates=("pool_id", "capital_pool_id", "id"),
+            target_key=pool_id,
+        )
+
+    def _active_persona_bindings(self, *, persona_id: str, capital_pool_id: str) -> list[Dict[str, Any]]:
+        if self.persona_binding_store_path is None or not self.persona_binding_store_path.exists():
+            return []
+        return [
+            record
+            for record in _load_records(self.persona_binding_store_path)
+            if str(record.get("persona_id") or "") == persona_id
+            and str(record.get("capital_pool_id") or "") == capital_pool_id
+            and str(record.get("status") or "").lower() == "active"
+        ]
+
+    def _active_runtime_bindings(self, capital_pool_id: str) -> list[Dict[str, Any]]:
+        return [
+            record
+            for record in _load_records(self.runtime_binding_store_path)
+            if str(record.get("capital_pool_id") or "") == capital_pool_id
+            and str(record.get("status") or "").lower() in _ACTIVE_RUNTIME_STATUSES
+        ]
 
 
 class FoundationDeploymentError(Exception):
@@ -577,6 +1039,118 @@ def _load_record(path: Path, *, key_candidates: Iterable[str], target_key: str) 
                 if str(item.get(key) or "") == target_key:
                     return item
     return None
+
+
+def _load_records(path: Path) -> list[Dict[str, Any]]:
+    if not path.exists():
+        return []
+    text = path.read_text(encoding="utf-8").strip()
+    if not text:
+        return []
+    payload = json.loads(text)
+    if isinstance(payload, dict):
+        records = payload.get("records") if isinstance(payload.get("records"), list) else payload
+        if isinstance(records, list):
+            return [item for item in records if isinstance(item, dict)]
+        return [item for item in records.values() if isinstance(item, dict)]
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    return []
+
+
+def _optional_str(value: Any) -> Optional[str]:
+    return str(value) if value not in (None, "") else None
+
+
+def _truthy(value: Any, *, default: bool = False) -> bool:
+    if value in (None, ""):
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() not in {"0", "false", "no", "off"}
+    return bool(value)
+
+
+def _record_identity(record: Mapping[str, Any], *keys: str) -> Optional[str]:
+    for key in keys:
+        value = record.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return None
+
+
+def _max_scope(current: Optional[str], candidate: Optional[str]) -> Optional[str]:
+    if candidate is None:
+        return current
+    if current is None:
+        return candidate
+    return candidate if _SCOPE_ORDER.get(candidate, -1) > _SCOPE_ORDER.get(current, -1) else current
+
+
+def _approval_outcome(approval_decision: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not approval_decision:
+        return None
+    value = approval_decision.get("decision") or approval_decision.get("outcome")
+    return str(value) if value not in (None, "") else None
+
+
+def _approval_state(approval_decision: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not approval_decision:
+        return None
+    value = approval_decision.get("decision_state") or approval_decision.get("state")
+    return str(value) if value not in (None, "") else None
+
+
+def _runtime_binding_id(runtime_binding: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not runtime_binding:
+        return None
+    value = runtime_binding.get("binding_id") or runtime_binding.get("id") or runtime_binding.get("runtime_binding_id")
+    return str(value) if value not in (None, "") else None
+
+
+def _runtime_id(runtime_binding: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not runtime_binding:
+        return None
+    value = runtime_binding.get("runtime_id")
+    return str(value) if value not in (None, "") else None
+
+
+def _runtime_status(runtime_binding: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not runtime_binding:
+        return None
+    value = runtime_binding.get("status")
+    return str(value) if value not in (None, "") else None
+
+
+def _runtime_binding_stage(runtime_binding: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not runtime_binding:
+        return None
+    value = runtime_binding.get("deployment_mode") or runtime_binding.get("deployment_stage")
+    return str(value) if value not in (None, "") else None
+
+
+def _rollback_action_type(plan: DeploymentPlan) -> Optional[str]:
+    if not plan.rollback:
+        return None
+    return _enum_value(plan.rollback.action_type)
+
+
+def _projection_lifecycle_state(
+    *,
+    plan_status: str,
+    runtime_status: Optional[str],
+    deployment_saga_status: Optional[str],
+) -> str:
+    if plan_status in {PlanStatus.REJECTED.value, PlanStatus.ABORTED.value, PlanStatus.FAILED.value}:
+        return "terminal"
+    if runtime_status == "active" or plan_status == PlanStatus.EXECUTED.value:
+        return "active"
+    if deployment_saga_status:
+        return f"saga:{deployment_saga_status}"
+    if plan_status == PlanStatus.APPROVED.value:
+        return "ready_for_dispatch"
+    return plan_status
 
 
 def _foundation_environment_for_plan(plan: DeploymentPlan) -> EnvironmentScope:
@@ -890,6 +1464,18 @@ orchestration_service = DeploymentOrchestrationService(
     planner_service=planner_service,
     saga_store=saga_store,
 )
+projection_service = DeploymentProjectionReadModelService(
+    planner_service=planner_service,
+    saga_store=saga_store,
+    approval_store_path=APPROVAL_STORE_PATH,
+    registry_snapshot_path=REGISTRY_SNAPSHOT_PATH,
+    runtime_binding_store_path=RUNTIME_BINDING_STORE_PATH,
+)
+compatibility_service = PoolRuntimeCompatibilityService(
+    capital_pool_store_path=CAPITAL_POOL_STORE_PATH,
+    persona_binding_store_path=PERSONA_BINDING_STORE_PATH,
+    runtime_binding_store_path=RUNTIME_BINDING_STORE_PATH,
+)
 
 app = FastAPI(
     title="Pantheon Deployment Service",
@@ -936,6 +1522,22 @@ async def validate_deployment_plan(body: CreateDeploymentPlanRequest):
     return ValidateDeploymentPlanResponse(ok=True, plan=_plan_body(plan), errors=[])
 
 
+@app.post(
+    "/api/deployment/stage-planner/check",
+    response_model=StagePlannerCheckResponse,
+)
+async def check_deployment_stage_planner(body: StagePlannerCheckRequest):
+    return planner_service.check_stage_transition(body)
+
+
+@app.post(
+    "/api/deployment/plans/compatibility-check",
+    response_model=PoolCompatibilityResponse,
+)
+async def check_pool_runtime_compatibility(body: PoolCompatibilityRequest):
+    return compatibility_service.check(body)
+
+
 @app.get("/api/deployment/plans", response_model=List[DeploymentPlanBody])
 async def list_deployment_plans(
     strategy_id: str | None = Query(default=None),
@@ -958,6 +1560,43 @@ async def get_deployment_plan(plan_id: str):
         return _plan_body(planner_service.get_plan(plan_id))
     except DeploymentPlanError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.get(
+    "/api/deployment/projections",
+    response_model=List[DeploymentProjectionReadModelResponse],
+)
+async def list_deployment_projections(
+    strategy_id: str | None = Query(default=None),
+    capital_pool_id: str | None = Query(default=None),
+    target_stage: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+):
+    return projection_service.list_projections(
+        strategy_id=strategy_id,
+        capital_pool_id=capital_pool_id,
+        target_stage=target_stage,
+        status=status,
+    )
+
+
+@app.get(
+    "/api/deployment/projections/{plan_id}",
+    response_model=DeploymentProjectionReadModelResponse,
+)
+async def get_deployment_projection(plan_id: str):
+    try:
+        return projection_service.get_projection(plan_id)
+    except DeploymentPlanError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.get(
+    "/api/deployment/plans/{plan_id}/projection",
+    response_model=DeploymentProjectionReadModelResponse,
+)
+async def get_deployment_plan_projection(plan_id: str):
+    return await get_deployment_projection(plan_id)
 
 
 @app.post("/api/deployment/plans/{plan_id}/status", response_model=DeploymentPlanBody)

@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import json
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
+from models import TeachingEvent, TeachingSession
 from store import TrainingSessionStore, build_training_session_store
 
 
@@ -52,6 +55,73 @@ def _replay_candidate_snapshot_at(replay: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+def _stable_hash(payload: Dict[str, Any]) -> str:
+    return sha256(json.dumps(payload, ensure_ascii=True, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _replay_decision_hash(session_id: str, body: "ReplayDecisionBody", state: str) -> str:
+    return _stable_hash(
+        {
+            "session_id": session_id,
+            "state": state,
+            "expected_candidate_snapshot_at": body.expected_candidate_snapshot_at,
+            "actor_id": body.actor_id,
+            "note": body.note,
+        }
+    )
+
+
+def _decision_lineage_refs(
+    *,
+    session_id: str,
+    replay: Dict[str, Any],
+    state: str,
+    timestamp: str,
+) -> Dict[str, Any]:
+    persona_id = str(replay.get("persona_id") or "").strip()
+    suffix = "commit" if state == "committed" else "discard"
+    refs = {
+        "decision_record_ref": f"trainer-replay-decision:{session_id}:{state}",
+        "lineage_ref": f"trainer-replay-lineage:{session_id}:{state}",
+        "lineage_edge_id": f"lin-{session_id}-{suffix}",
+        "lineage_recorded_at": timestamp,
+    }
+    if state == "committed" and persona_id:
+        refs.update(
+            {
+                "persona_policy_ref": f"persona:{persona_id}:policy:{session_id}",
+                "route_policy_ref": f"persona:{persona_id}:route-policy:{session_id}",
+            }
+        )
+    return refs
+
+
+def _mark_replay_idempotency(
+    replay: Dict[str, Any],
+    *,
+    idempotency_key: Optional[str],
+    request_hash: Optional[str],
+    replayed: bool,
+) -> Dict[str, Any]:
+    if not idempotency_key:
+        return replay
+    resolution = replay.setdefault("replay_resolution", {})
+    resolution["idempotency"] = {
+        "key": idempotency_key,
+        "request_hash": request_hash,
+        "replayed": replayed,
+    }
+    return replay
+
+
+def _idempotency_key(primary: Optional[str], alias: Optional[str]) -> Optional[str]:
+    normalized = str(primary or "").strip()
+    if normalized:
+        return normalized
+    normalized = str(alias or "").strip()
+    return normalized or None
+
+
 def _control_patch_error(control: Dict[str, Any], value: Any) -> Optional[Dict[str, Any]]:
     allowed = control.get("allowed_range")
     if isinstance(allowed, dict) and isinstance(value, (int, float)):
@@ -67,16 +137,136 @@ def _control_patch_error(control: Dict[str, Any], value: Any) -> Optional[Dict[s
     return None
 
 
+def _actor_type_from_actor(actor: Optional[str]) -> str:
+    normalized = str(actor or "").strip().lower()
+    if normalized in {"persona", "assistant"}:
+        return "persona"
+    if normalized in {"system", "service", "training-session", "training-session-svc"}:
+        return "service"
+    return "user"
+
+
+def _teaching_event_payload(
+    *,
+    message_body: Optional[str] = None,
+    summary: Optional[str] = None,
+    outcome_signal: Optional[str] = None,
+    evidence_ref: Optional[Dict[str, Any]] = None,
+    patch_delta: Optional[List[Dict[str, Any]]] = None,
+    eval_ref: Optional[Dict[str, Any]] = None,
+    artifact_refs: Optional[Dict[str, Any]] = None,
+    payload: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    normalized = dict(payload or {})
+    for key, value in (
+        ("message_body", message_body),
+        ("summary", summary),
+        ("outcome_signal", outcome_signal),
+        ("evidence_ref", evidence_ref),
+        ("patch_delta", patch_delta),
+        ("eval_ref", eval_ref),
+        ("artifact_refs", artifact_refs),
+    ):
+        if value is not None:
+            normalized[key] = value
+    return normalized
+
+
+def _build_teaching_event(
+    *,
+    session_id: str,
+    event_id: str,
+    event_type: str,
+    actor: str,
+    timestamp: str,
+    sequence_number: int,
+    actor_type: Optional[str] = None,
+    actor_label: Optional[str] = None,
+    message_body: Optional[str] = None,
+    summary: Optional[str] = None,
+    outcome_signal: Optional[str] = None,
+    evidence_ref: Optional[Dict[str, Any]] = None,
+    patch_delta: Optional[List[Dict[str, Any]]] = None,
+    eval_ref: Optional[Dict[str, Any]] = None,
+    artifact_refs: Optional[Dict[str, Any]] = None,
+    payload: Optional[Dict[str, Any]] = None,
+    correlation_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    event_payload = _teaching_event_payload(
+        message_body=message_body,
+        summary=summary,
+        outcome_signal=outcome_signal,
+        evidence_ref=evidence_ref,
+        patch_delta=patch_delta,
+        eval_ref=eval_ref,
+        artifact_refs=artifact_refs,
+        payload=payload,
+    )
+    return TeachingEvent.from_dict(
+        {
+            "event_id": event_id,
+            "session_id": session_id,
+            "actor": actor,
+            "actor_type": actor_type or _actor_type_from_actor(actor),
+            "actor_label": actor_label,
+            "event_type": event_type,
+            "payload": event_payload,
+            "message_body": message_body,
+            "summary": summary,
+            "timestamp": timestamp,
+            "emitted_at": timestamp,
+            "correlation_id": correlation_id or f"{session_id}:{event_id}",
+            "sequence_number": sequence_number,
+            "outcome_signal": outcome_signal,
+            "evidence_ref": evidence_ref,
+            "patch_delta": patch_delta,
+            "eval_ref": eval_ref,
+            "artifact_refs": artifact_refs,
+        }
+    ).to_dict()
+
+
+def _teaching_session_contract(session: Dict[str, Any]) -> Dict[str, Any]:
+    session_id = str(session.get("session_id") or session.get("id") or "").strip()
+    contract = {
+        "id": session.get("id") or session_id,
+        "session_id": session_id,
+        "persona_id": session.get("persona_id"),
+        "opened_by": session.get("opened_by") or session.get("operator_id") or "system",
+        "mode": session.get("mode") or "coaching",
+        "session_type": session.get("session_type") or "trainer",
+        "objective": session.get("objective") or session.get("topic"),
+        "topic": session.get("topic") or session.get("objective"),
+        "status": session.get("status") or "active",
+        "started_at": session.get("started_at") or session.get("created_at"),
+        "ended_at": session.get("ended_at") or session.get("completed_at"),
+        "current_control_state_ref": session.get("current_control_state_ref"),
+        "trace_id": session.get("trace_id") or f"trace-{session_id or uuid.uuid4().hex[:12]}",
+        "context_refs": session.get("context_refs") if isinstance(session.get("context_refs"), list) else [],
+        "actor_context": session.get("actor_context") if isinstance(session.get("actor_context"), dict) else {},
+        "events": session.get("events") if isinstance(session.get("events"), list) else [],
+        "outcomes": session.get("outcomes") if isinstance(session.get("outcomes"), list) else [],
+    }
+    for key in ("replay_resolution", "artifacts", "metadata"):
+        if isinstance(session.get(key), dict):
+            contract[key] = session[key]
+    return TeachingSession.from_dict(contract).to_dict()
+
+
 class CreateSessionBody(BaseModel):
     persona_id: str
     objective: str
+    mode: str = "coaching"
     context_refs: List[Dict[str, Any]] = Field(default_factory=list)
     actor_id: str = "operator"
+    current_control_state_ref: Optional[str] = None
+    trace_id: Optional[str] = None
     created_at: Optional[str] = None
 
 
 class AppendEventBody(BaseModel):
     actor: str = "operator"
+    actor_type: Optional[str] = None
     actor_label: Optional[str] = None
     event_type: str = "message"
     message_body: Optional[str] = None
@@ -86,6 +276,8 @@ class AppendEventBody(BaseModel):
     patch_delta: Optional[List[Dict[str, Any]]] = None
     eval_ref: Optional[Dict[str, Any]] = None
     artifact_refs: Optional[Dict[str, Any]] = None
+    payload: Optional[Dict[str, Any]] = None
+    correlation_id: Optional[str] = None
     emitted_at: Optional[str] = None
 
 
@@ -152,21 +344,25 @@ def create_session(body: CreateSessionBody) -> Dict[str, Any]:
     timestamp = body.created_at or utc_now()
     existing_ids = {str(session.get("session_id") or "") for session in store.list_sessions()}
     session_id = _session_id(timestamp, existing_ids)
-    session = {
+    session = _teaching_session_contract({
         "id": session_id,
         "session_id": session_id,
         "persona_id": body.persona_id,
         "session_type": "trainer",
+        "mode": body.mode,
         "objective": body.objective,
         "topic": body.objective,
         "status": "active",
         "started_at": timestamp,
         "ended_at": None,
         "opened_by": body.actor_id,
+        "current_control_state_ref": body.current_control_state_ref,
+        "trace_id": body.trace_id or f"trace-{uuid.uuid4().hex[:12]}",
         "context_refs": body.context_refs,
+        "actor_context": {},
         "events": [],
         "outcomes": [],
-    }
+    })
     store.put_session(session)
     store.put_controls(session_id, {"session_id": session_id, "controls": []})
     store.put_preview_bundle(
@@ -207,22 +403,25 @@ def append_event(session_id: str, body: AppendEventBody) -> Dict[str, Any]:
     events = session.setdefault("events", [])
     event_id = _next_event_id(timestamp, events)
     sequence_number = max((int(event.get("sequence_number") or 0) for event in events), default=0) + 1
-    event = {
-        "event_id": event_id,
-        "session_id": session_id,
-        "actor": body.actor,
-        "actor_label": body.actor_label,
-        "event_type": body.event_type,
-        "message_body": body.message_body,
-        "summary": body.summary,
-        "emitted_at": timestamp,
-        "sequence_number": sequence_number,
-        "outcome_signal": body.outcome_signal,
-        "evidence_ref": body.evidence_ref,
-        "patch_delta": body.patch_delta,
-        "eval_ref": body.eval_ref,
-        "artifact_refs": body.artifact_refs,
-    }
+    event = _build_teaching_event(
+        session_id=session_id,
+        event_id=event_id,
+        event_type=body.event_type,
+        actor=body.actor,
+        actor_type=body.actor_type,
+        actor_label=body.actor_label,
+        message_body=body.message_body,
+        summary=body.summary,
+        timestamp=timestamp,
+        sequence_number=sequence_number,
+        outcome_signal=body.outcome_signal,
+        evidence_ref=body.evidence_ref,
+        patch_delta=body.patch_delta,
+        eval_ref=body.eval_ref,
+        artifact_refs=body.artifact_refs,
+        payload=body.payload,
+        correlation_id=body.correlation_id,
+    )
     events.append(event)
     if body.outcome_signal:
         outcomes = session.setdefault("outcomes", [])
@@ -325,6 +524,32 @@ def get_preview(session_id: str) -> Dict[str, Any]:
     return record
 
 
+from services.research.vectorbt.adapter.vectorbt_adapter import run_vectorbt_workflow, BacktestConfig
+
+# ... (rest of imports)
+
+# Add stub for OHLCV data
+def _get_ohlcv_data(session_id: str) -> List[Dict[str, Any]]:
+    # In a real implementation, this would fetch data based on context_refs
+    # For now, return a dataset with enough bars for governed vectorbt (MIN_BARS=30)
+    data = []
+    start_date = datetime(2026, 1, 1)
+    for instrument in ["STUB1", "STUB2"]:
+        for i in range(35):
+            date = (start_date + timedelta(days=i)).strftime("%Y-%m-%d")
+            data.append({
+                "instrument": instrument,
+                "date": date,
+                "open": 100.0 + i,
+                "high": 105.0 + i,
+                "low": 95.0 + i,
+                "close": 100.0 + i,
+                "volume": 1000.0 + i
+            })
+    return data
+
+# ...
+
 @app.post("/api/training/sessions/{session_id}/preview", status_code=201)
 def refresh_preview(session_id: str, body: RefreshPreviewBody) -> Dict[str, Any]:
     session = store.get_session(session_id)
@@ -332,6 +557,63 @@ def refresh_preview(session_id: str, body: RefreshPreviewBody) -> Dict[str, Any]
         raise HTTPException(status_code=404, detail="training session not found")
     timestamp = body.refreshed_at or utc_now()
     controls = (store.get_controls(session_id) or {}).get("controls") or []
+    
+    # Extract strategy parameters
+    strategy_params = {
+        control.get("parameter_key"): control.get("current_value")
+        for control in controls
+        if isinstance(control, dict) and control.get("parameter_key")
+    }
+    
+    # Prepare data for vectorbt
+    ohlcv_records = _get_ohlcv_data(session_id)
+    dataset = {
+        "dataset_id": f"preview-{session_id}",
+        "strategy_id": f"preview-{session_id}",
+        "source_dataset_ref": "stub-ref",
+        "records": ohlcv_records,
+    }
+    
+    # Run backtest
+    config = BacktestConfig(strategy_params=strategy_params)
+    try:
+        backtest_result = run_vectorbt_workflow(dataset, config=config)
+        metrics = backtest_result.backtest_result.aggregate_metrics
+        metric_delta = [
+            {
+                "metric_key": "total_return",
+                "display_label": "Total Return",
+                "baseline_value": 0.0,
+                "candidate_value": metrics.get("mean_total_return", 0.0),
+                "delta": metrics.get("mean_total_return", 0.0),
+                "delta_pct": metrics.get("mean_total_return", 0.0) * 100,
+                "unit": "pct",
+                "direction": "up" if metrics.get("mean_total_return", 0.0) >= 0 else "down"
+            },
+            {
+                "metric_key": "sharpe_ratio",
+                "display_label": "Sharpe Ratio",
+                "baseline_value": 0.0,
+                "candidate_value": metrics.get("mean_sharpe_ratio", 0.0),
+                "delta": metrics.get("mean_sharpe_ratio", 0.0),
+                "delta_pct": 0.0,
+                "unit": "ratio",
+                "direction": "up"
+            },
+            {
+                "metric_key": "max_drawdown",
+                "display_label": "Max Drawdown",
+                "baseline_value": 0.0,
+                "candidate_value": metrics.get("mean_max_drawdown", 0.0),
+                "delta": metrics.get("mean_max_drawdown", 0.0),
+                "delta_pct": 0.0,
+                "unit": "pct",
+                "direction": "down"
+            }
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Backtest failed: {str(e)}")
+
     bundle = store.get_preview_bundle(session_id) or {"session_id": session_id, "evaluations": {}}
     evaluations = bundle.setdefault("evaluations", {})
     eval_id = f"teval-{uuid.uuid4().hex[:12]}"
@@ -351,14 +633,15 @@ def refresh_preview(session_id: str, body: RefreshPreviewBody) -> Dict[str, Any]
         "status": "completed",
         "baseline_snapshot_at": session.get("started_at"),
         "candidate_snapshot_at": timestamp,
-        "metric_delta": {"return_delta": 0.0, "drawdown_delta": 0.0},
+        "metric_delta": metric_delta,
         "control_diff": control_diff,
-        "preview_quality": "directional_only",
+        "preview_quality": "vectorbt_real",
     }
     evaluations[eval_id] = preview
     bundle["preview"] = preview
     store.put_preview_bundle(session_id, bundle)
     return preview
+
 
 
 @app.get("/api/training/replays")
@@ -394,6 +677,7 @@ def complete_session(session_id: str) -> Dict[str, Any]:
     timestamp = utc_now()
     session["status"] = "completed"
     session["ended_at"] = timestamp
+    session = _teaching_session_contract(session)
     store.put_session(session)
     preview = (store.get_preview_bundle(session_id) or {}).get("preview") or {}
     candidate_snapshot_at = preview.get("candidate_snapshot_at") or timestamp
@@ -404,37 +688,55 @@ def complete_session(session_id: str) -> Dict[str, Any]:
         "candidate_artifact_ref": f"{session_id}-candidate-artifact",
         "after_artifact_ref": None,
     }
-    replay_event = {
-        "event_id": _next_event_id(timestamp, replay.get("events") or []),
-        "session_id": session_id,
-        "actor": "system",
-        "actor_label": "Training Session Service",
-        "event_type": "preview_trigger",
-        "summary": "Replay candidate materialized from preview.",
-        "message_body": None,
-        "emitted_at": timestamp,
-        "sequence_number": max(
+    replay_eval_ref = {
+        "eval_id": preview.get("eval_id"),
+        "baseline_snapshot_at": preview.get("baseline_snapshot_at"),
+        "candidate_snapshot_at": candidate_snapshot_at,
+    }
+    replay_event = _build_teaching_event(
+        session_id=session_id,
+        event_id=_next_event_id(timestamp, replay.get("events") or []),
+        actor="system",
+        actor_label="Training Session Service",
+        event_type="preview_trigger",
+        summary="Replay candidate materialized from preview.",
+        timestamp=timestamp,
+        sequence_number=max(
             (int(event.get("sequence_number") or 0) for event in replay.get("events", [])),
             default=0,
         )
         + 1,
-        "outcome_signal": "teaching-complete",
-        "eval_ref": {
-            "eval_id": preview.get("eval_id"),
-            "baseline_snapshot_at": preview.get("baseline_snapshot_at"),
-            "candidate_snapshot_at": candidate_snapshot_at,
-        },
-    }
+        outcome_signal="teaching-complete",
+        eval_ref=replay_eval_ref,
+    )
     replay.setdefault("events", []).append(replay_event)
     store.append_event(replay_event)
     store.put_replay(session_id, replay)
     return replay
 
 
-def _decide_replay(session_id: str, body: ReplayDecisionBody, state: str) -> Dict[str, Any]:
+def _decide_replay(
+    session_id: str,
+    body: ReplayDecisionBody,
+    state: str,
+    *,
+    idempotency_key: Optional[str] = None,
+) -> Dict[str, Any]:
     replay = get_replay(session_id)
     timestamp = body.decided_at or utc_now()
     resolution = replay.setdefault("replay_resolution", {})
+    request_hash = _replay_decision_hash(session_id, body, state) if idempotency_key else None
+    existing_idempotency = resolution.get("idempotency")
+    if idempotency_key and isinstance(existing_idempotency, dict):
+        if existing_idempotency.get("key") == idempotency_key:
+            if existing_idempotency.get("request_hash") != request_hash:
+                raise HTTPException(status_code=409, detail="idempotency key conflict")
+            return _mark_replay_idempotency(
+                replay,
+                idempotency_key=idempotency_key,
+                request_hash=request_hash,
+                replayed=True,
+            )
     if resolution.get("state") not in {"pending_decision", None}:
         raise HTTPException(status_code=409, detail="replay already decided")
     candidate_snapshot_at = _replay_candidate_snapshot_at(replay)
@@ -447,41 +749,78 @@ def _decide_replay(session_id: str, body: ReplayDecisionBody, state: str) -> Dic
     artifacts = replay.setdefault("artifacts", {})
     if state == "committed":
         artifacts["after_artifact_ref"] = f"{session_id}-committed-artifact"
-    decision_event = {
-        "event_id": _next_event_id(timestamp, replay.get("events") or []),
-        "session_id": session_id,
-        "actor": "system",
-        "actor_label": "Training Session Service",
-        "event_type": "commit" if state == "committed" else "discard",
-        "summary": f"Replay candidate {state} by {body.actor_id}.",
-        "message_body": None,
-        "emitted_at": timestamp,
-        "sequence_number": max(
+    artifacts.update(
+        _decision_lineage_refs(
+            session_id=session_id,
+            replay=replay,
+            state=state,
+            timestamp=timestamp,
+        )
+    )
+    decision_artifact_refs = {
+        "before_artifact_ref": artifacts.get("before_artifact_ref"),
+        "candidate_artifact_ref": artifacts.get("candidate_artifact_ref"),
+        "after_artifact_ref": artifacts.get("after_artifact_ref"),
+        "decision_record_ref": artifacts.get("decision_record_ref"),
+        "lineage_ref": artifacts.get("lineage_ref"),
+        "lineage_edge_id": artifacts.get("lineage_edge_id"),
+        "lineage_recorded_at": artifacts.get("lineage_recorded_at"),
+        "persona_policy_ref": artifacts.get("persona_policy_ref"),
+        "route_policy_ref": artifacts.get("route_policy_ref"),
+    }
+    decision_event = _build_teaching_event(
+        session_id=session_id,
+        event_id=_next_event_id(timestamp, replay.get("events") or []),
+        actor="system",
+        actor_label="Training Session Service",
+        event_type="commit" if state == "committed" else "discard",
+        summary=f"Replay candidate {state} by {body.actor_id}.",
+        timestamp=timestamp,
+        sequence_number=max(
             (int(event.get("sequence_number") or 0) for event in replay.get("events", [])),
             default=0,
         )
         + 1,
-        "outcome_signal": None,
-        "evidence_ref": None,
-        "patch_delta": None,
-        "eval_ref": {"candidate_snapshot_at": candidate_snapshot_at},
-        "artifact_refs": {
-            "before_artifact_ref": artifacts.get("before_artifact_ref"),
-            "candidate_artifact_ref": artifacts.get("candidate_artifact_ref"),
-            "after_artifact_ref": artifacts.get("after_artifact_ref"),
-        },
-    }
+        eval_ref={"candidate_snapshot_at": candidate_snapshot_at},
+        artifact_refs=decision_artifact_refs,
+    )
     replay.setdefault("events", []).append(decision_event)
+    _mark_replay_idempotency(
+        replay,
+        idempotency_key=idempotency_key,
+        request_hash=request_hash,
+        replayed=False,
+    )
     store.append_event(decision_event)
     store.put_replay(session_id, replay)
     return replay
 
 
 @app.post("/api/training/replays/{session_id}/commit")
-def commit_replay(session_id: str, body: ReplayDecisionBody) -> Dict[str, Any]:
-    return _decide_replay(session_id, body, "committed")
+def commit_replay(
+    session_id: str,
+    body: ReplayDecisionBody,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+) -> Dict[str, Any]:
+    return _decide_replay(
+        session_id,
+        body,
+        "committed",
+        idempotency_key=_idempotency_key(idempotency_key, x_idempotency_key),
+    )
 
 
 @app.post("/api/training/replays/{session_id}/discard")
-def discard_replay(session_id: str, body: ReplayDecisionBody) -> Dict[str, Any]:
-    return _decide_replay(session_id, body, "discarded")
+def discard_replay(
+    session_id: str,
+    body: ReplayDecisionBody,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+) -> Dict[str, Any]:
+    return _decide_replay(
+        session_id,
+        body,
+        "discarded",
+        idempotency_key=_idempotency_key(idempotency_key, x_idempotency_key),
+    )

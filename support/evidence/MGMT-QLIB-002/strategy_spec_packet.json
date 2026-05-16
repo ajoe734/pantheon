@@ -1,0 +1,270 @@
+{
+  "created_at": "2026-05-15T16:45:00Z",
+  "created_by": "Codex2",
+  "downstream_scope": {
+    "broker_session_opened": false,
+    "deployment_stage": "none",
+    "order_route": "none",
+    "registry_write_authority": "registry_service_only",
+    "registry_write_performed": false,
+    "strategy_spec_builder_only": true,
+    "training_performed": false
+  },
+  "packet_id": "qlib-strategy-spec:qlib-tw-cross-sectional-alpha-spec-v1:1.0.0",
+  "preflight_packet": {
+    "governed_dataset": {
+      "data_frequency": "daily",
+      "end_date": "2026-01-05",
+      "exchange_segments": [
+        "TWSE",
+        "TPEx"
+      ],
+      "governed": true,
+      "history_end": "2026-01-05",
+      "history_start": "2024-01-02",
+      "history_years": 2.0096,
+      "market": "Taiwan",
+      "min_periods_per_instrument": 504,
+      "num_instruments": 50,
+      "ohlcv_fields": [
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume"
+      ],
+      "period_count_source": "support/sidecars/QLIB-ACT-002/QLIB-ACT-002-SIDECAR-ACCEPTANCE.md",
+      "provider_dataset_id": "tw-equity-ohlcv-top50-2024-daily",
+      "source_dataset_ref": "dataset:tw-equity-ohlcv-top50-2024-daily",
+      "source_dataset_refs": [
+        "dataset:tw-equity-ohlcv-top50-2024-daily"
+      ],
+      "start_date": "2024-01-02"
+    },
+    "rs003_candidate": {
+      "artifact_id": "qlib-tw-cross-sectional-alpha-spec-v1",
+      "artifact_state": "candidate",
+      "candidate_projection_only": true,
+      "candidate_registry_id": "qlib-tw-cross-sectional-alpha-spec-v1",
+      "deployment_stage": "none",
+      "pass_evidence_ref": "docs/reviews/2026-05-12-qlib-act-001-codex2-review.md",
+      "registry_id": "qlib-tw-cross-sectional-alpha-spec-v1",
+      "replication_evidence_ref": "docs/reviews/2026-05-12-qlib-act-001-codex2-review.md",
+      "rs003_evidence_ref": "docs/reviews/2026-05-12-qlib-act-001-codex2-review.md",
+      "source_strategy_spec_ref": "services/registry/strategy-specs/qlib-tw-cross-sectional-alpha-v1.md"
+    },
+    "strategy_spec_binding": {
+      "canonical_strategy_spec_id": "qlib-tw-cross-sectional-alpha-spec-v1",
+      "dataset_manifest_id": "qlib-dataset-manifest:dataset-tw-equity-ohlcv-top50-2024-daily",
+      "dataset_ref": "dataset:tw-equity-ohlcv-top50-2024-daily",
+      "execution_boundary": {
+        "deployment_stage": "none",
+        "direct_order_route": false,
+        "output_type": "alpha_score",
+        "registry_write_authority": "registry_service_only"
+      },
+      "feature_set": [
+        "momentum",
+        "volatility",
+        "volume",
+        "technical",
+        "cross_sectional_rank"
+      ],
+      "framework": "qlib",
+      "label_definition": "5 trading day forward return z-scored cross-sectionally: label_5d = (close[t+5] - close[t]) / close[t].",
+      "model_family": "lightgbm",
+      "problem_type": "ranking",
+      "schema_version": "1.0",
+      "source_dataset_refs": [
+        "dataset:tw-equity-ohlcv-top50-2024-daily"
+      ],
+      "source_strategy_spec_id": "qlib-tw-cross-sectional-alpha-spec-v1",
+      "strategy_id": "tw-cross-sectional-equity-alpha",
+      "strategy_spec_id": "qlib-tw-cross-sectional-alpha-spec-v1",
+      "supervised_target": "Cross-sectional ranking/regression of expected forward return; output is a scoring-only alpha signal, not an action policy.",
+      "task_id": "MGMT-QLIB-002"
+    }
+  },
+  "registry_entry": {
+    "artifact_state": "candidate",
+    "artifact_type": "strategy_spec",
+    "checksum": "sha256:98438f6efc84644f420e08125bad821e0db475e8dcc489f69f45712bccbbd974",
+    "created_at": "2026-05-15T16:45:00Z",
+    "deployment_summary": {
+      "current_stage": "none"
+    },
+    "evaluation_summary": {
+      "dataset_gate_satisfied": true,
+      "evaluation_kind": "strategy_spec_schema_and_binding_check",
+      "status": "pass",
+      "strategy_spec_schema_valid": true,
+      "training_performed": false
+    },
+    "lineage": {
+      "parent_registry_ids": [],
+      "source_dataset_refs": [
+        "dataset:tw-equity-ohlcv-top50-2024-daily"
+      ],
+      "source_run_ids": [
+        "MGMT-QLIB-002",
+        "MGMT-QLIB-001"
+      ]
+    },
+    "metadata": {
+      "candidate_projection_only": true,
+      "framework": "qlib",
+      "horizon": "5 trading days",
+      "label": "5d_forward_return_zscored",
+      "live_capital_side_effects": false,
+      "market": "Taiwan",
+      "model_family": "lightgbm",
+      "problem_type": "ranking",
+      "rs003_review_ref": "docs/reviews/2026-05-12-qlib-act-001-codex2-review.md",
+      "source_strategy_spec_doc": "services/registry/strategy-specs/qlib-tw-cross-sectional-alpha-v1.md",
+      "universe": "TWSE + TPEx governed dataset manifest"
+    },
+    "producer_run_id": "MGMT-QLIB-002",
+    "registry_id": "qlib-tw-cross-sectional-alpha-spec-v1",
+    "storage_ref": {
+      "backend": "inline",
+      "path": "$.strategy_spec"
+    },
+    "strategy_id": "tw-cross-sectional-equity-alpha",
+    "version": "1.0.0"
+  },
+  "rs003_candidate": {
+    "artifact_id": "qlib-tw-cross-sectional-alpha-spec-v1",
+    "artifact_state": "candidate",
+    "candidate_projection_only": true,
+    "candidate_registry_id": "qlib-tw-cross-sectional-alpha-spec-v1",
+    "deployment_stage": "none",
+    "pass_evidence_ref": "docs/reviews/2026-05-12-qlib-act-001-codex2-review.md",
+    "registry_id": "qlib-tw-cross-sectional-alpha-spec-v1",
+    "replication_evidence_ref": "docs/reviews/2026-05-12-qlib-act-001-codex2-review.md",
+    "rs003_evidence_ref": "docs/reviews/2026-05-12-qlib-act-001-codex2-review.md",
+    "source_strategy_spec_ref": "services/registry/strategy-specs/qlib-tw-cross-sectional-alpha-v1.md"
+  },
+  "safety_assertions": {
+    "deployment_stage_remains_none": true,
+    "no_broker_session": true,
+    "no_order_route": true,
+    "no_registry_write": true,
+    "no_training_run": true,
+    "scoring_only_not_direct_action": true
+  },
+  "schema_version": "1.0",
+  "source_refs": {
+    "activation_criteria_ref": "services/learning/qlib/ACTIVATION_CRITERIA.md",
+    "dataset_manifest_ref": "support/evidence/MGMT-QLIB-001/dataset_manifest.json",
+    "rs003_review_ref": "docs/reviews/2026-05-12-qlib-act-001-codex2-review.md",
+    "source_strategy_spec_doc": "services/registry/strategy-specs/qlib-tw-cross-sectional-alpha-v1.md"
+  },
+  "strategy_spec": {
+    "data_dependencies": [
+      {
+        "kind": "dataset",
+        "ref": "dataset:tw-equity-ohlcv-top50-2024-daily"
+      },
+      {
+        "kind": "repo",
+        "ref": "services/registry/strategy-specs/qlib-tw-cross-sectional-alpha-v1.md"
+      },
+      {
+        "kind": "note",
+        "ref": "support/evidence/MGMT-QLIB-001/dataset_manifest.json"
+      },
+      {
+        "kind": "repo",
+        "ref": "services/learning/qlib/ACTIVATION_CRITERIA.md"
+      }
+    ],
+    "evaluation_plan": {
+      "candidate_gate": "RS-003 StrategySpec review, governed >=50 instrument / >=2 year dataset manifest, and supervised StrategySpec binding must all be attached before registry admission.",
+      "live_gate": "Live and capital-binding activation remain fail-closed until the paper/canary/live policy admits a separate governed request.",
+      "metrics": [
+        "information_coefficient",
+        "information_ratio",
+        "test_sharpe_ratio",
+        "max_drawdown",
+        "annualized_return",
+        "turnover_rate",
+        "feature_stability",
+        "no_order_route"
+      ],
+      "paper_gate": "Paper or canary deployment is out of scope for this builder and requires a separate approval decision and deployment plan."
+    },
+    "execution_profile": {
+      "execution_mode_hint": "research",
+      "quantity_type": "PERCENT_PORTFOLIO",
+      "rebalance_cadence": "daily close research scoring; optimizer owns allocation",
+      "signal_schema_version": "qlib-alpha-score-v1"
+    },
+    "governance": {
+      "approval_required": true,
+      "policy_id": "paper-canary-live-policy",
+      "risk_profile": "medium: research candidate, scoring-only, no order route"
+    },
+    "hypothesis": "A supervised LightGBM model over governed point-in-time TWSE and TPEx daily OHLCV features can rank instruments by expected 5-day forward return without broker, order, or live capital side effects.",
+    "market_scope": {
+      "asset_classes": [
+        "equity"
+      ],
+      "frequency": "daily",
+      "symbols": [
+        "universe:tw-equity-ohlcv-top50-2024-daily"
+      ],
+      "venues": [
+        "TWSE",
+        "TPEx"
+      ]
+    },
+    "objective": "Provide the Qlib admission lane with a machine-readable StrategySpec that binds the RS-003 baseline alpha target to the governed TW OHLCV dataset manifest and can be reviewed by registry admission.",
+    "provenance": {
+      "created_at": "2026-05-15T16:45:00Z",
+      "created_by": "Codex2",
+      "source_kind": "workflow",
+      "source_refs": [
+        "strategy-spec:qlib-tw-cross-sectional-alpha-spec-v1",
+        "qlib-dataset-manifest:dataset-tw-equity-ohlcv-top50-2024-daily",
+        "dataset:tw-equity-ohlcv-top50-2024-daily",
+        "docs/reviews/2026-05-12-qlib-act-001-codex2-review.md",
+        "MGMT-QLIB-002"
+      ]
+    },
+    "spec_version": "1.0",
+    "strategy_id": "tw-cross-sectional-equity-alpha",
+    "title": "Qlib LightGBM TW cross-sectional equity alpha"
+  },
+  "strategy_spec_binding": {
+    "canonical_strategy_spec_id": "qlib-tw-cross-sectional-alpha-spec-v1",
+    "dataset_manifest_id": "qlib-dataset-manifest:dataset-tw-equity-ohlcv-top50-2024-daily",
+    "dataset_ref": "dataset:tw-equity-ohlcv-top50-2024-daily",
+    "execution_boundary": {
+      "deployment_stage": "none",
+      "direct_order_route": false,
+      "output_type": "alpha_score",
+      "registry_write_authority": "registry_service_only"
+    },
+    "feature_set": [
+      "momentum",
+      "volatility",
+      "volume",
+      "technical",
+      "cross_sectional_rank"
+    ],
+    "framework": "qlib",
+    "label_definition": "5 trading day forward return z-scored cross-sectionally: label_5d = (close[t+5] - close[t]) / close[t].",
+    "model_family": "lightgbm",
+    "problem_type": "ranking",
+    "schema_version": "1.0",
+    "source_dataset_refs": [
+      "dataset:tw-equity-ohlcv-top50-2024-daily"
+    ],
+    "source_strategy_spec_id": "qlib-tw-cross-sectional-alpha-spec-v1",
+    "strategy_id": "tw-cross-sectional-equity-alpha",
+    "strategy_spec_id": "qlib-tw-cross-sectional-alpha-spec-v1",
+    "supervised_target": "Cross-sectional ranking/regression of expected forward return; output is a scoring-only alpha signal, not an action policy.",
+    "task_id": "MGMT-QLIB-002"
+  },
+  "task_id": "MGMT-QLIB-002"
+}

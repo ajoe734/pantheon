@@ -81,7 +81,9 @@ class TestImitationWorkflow(unittest.TestCase):
             config=TrainingConfig(version="0.2.0", requested_by="Codex", epochs=2),
         )
 
-        self.assertEqual(result.registry_entry["artifact_type"], "model_artifact")
+        self.assertEqual(result.artifact_bundle["registry_hints"]["artifact_type"], "behavior_policy")
+        self.assertEqual(result.registry_entry["artifact_type"], "behavior_policy")
+        self.assertEqual(result.registry_entry["artifact_state"], "draft")
         self.assertEqual(result.registry_entry["lifecycle_state"], "draft")
         self.assertEqual(result.registry_entry["metadata"]["model_family"], "imitation_policy")
         self.assertEqual(

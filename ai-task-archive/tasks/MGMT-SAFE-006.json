@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "task_id": "MGMT-SAFE-006",
+  "archived_at": "2026-05-15T18:11:01Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-SAFE-006",
+    "title": "command idempotency regression",
+    "summary_zh": null,
+    "phase": "Track E / EPIC-07 Safety / Fail-Closed Regression",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Closeout complete: py_compile PASS, pytest 2 passed, smoke 5/5 passed at closeout verification. Review file committed at 7d813ea5. Implementation committed at ca6787aa. No live broker, runtime mutation, capital binding, or deployment side effects. Task-owned files: scripts/run_command_idempotency_regression.py, scripts/test_run_command_idempotency_regression.py, support/evidence/MGMT-SAFE-006/command-idempotency-regression.json, support/reviews/MGMT-SAFE-006-review-claude.md.",
+    "last_update": "2026-05-15T18:11:01Z",
+    "review_notes_zh": [
+      "審查通過：5/5 smoke checks passed — first-command-accepted(202), same-key-same-payload-replays(同一 receipt), same-key-different-payload-conflicts(409 IDEMPOTENCY_CONFLICT, 含 foundation_error 與 audit_action), body-idempotency-key-rejected(400 INVALID_REQUEST), single-durable-command-record(1 筆，idempotency status=succeeded，trace/audit 完整)。",
+      "無 live broker、runtime mutation、capital binding、deployment side effects；context manager 隔離確保 idempotency ledger 在每次測試後清除。",
+      "Verification: py_compile PASS；pytest 2 passed；smoke 5/5 passed；git diff --check PASS。返回 Claude2 進行 closeout finalization。"
+    ],
+    "review_file": "support/reviews/MGMT-SAFE-006-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T18:11:01Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "7d813ea5e6a970290ce335721be116250d5cb92e",
+      "commit_subject": "MGMT-SAFE-006 closeout: add reviewer approval record",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude2",
+        "Task-ID": "MGMT-SAFE-006",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 45,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-SAFE-006",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Helper-claimed by idle Claude2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T17:56:33Z",
+      "resolved_at": "2026-05-15T17:56:47Z"
+    },
+    {
+      "task_id": "MGMT-SAFE-006",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Ready for review: command idempotency regression smoke. Proves BFF final-contract route enforces Idempotency-Key header: (1) first command accepted 202, (2) same-key same-payload replays original receipt, (3) same-key changed-payload returns 409 IDEMPOTENCY_CONFLICT, (4) body-level idempotencyKey rejected 400, (5) single durable record with complete trace/audit/idempotency metadata. Task-owned files: scripts/run_command_idempotency_regression.py, scripts/test_run_command_idempotency_regression.py, support/evidence/MGMT-SAFE-006/command-idempotency-regression.json. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest scripts/test_run_command_idempotency_regression.py -v => 2 passed; PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_command_idempotency_regression.py --json-out evidence => 5/5 passed; git diff --check task files => clean. No live broker, runtime mutation, capital binding, or deployment side effects.",
+      "status": "done",
+      "created_at": "2026-05-15T17:59:08Z",
+      "resolved_at": "2026-05-15T18:04:49Z"
+    },
+    {
+      "task_id": "MGMT-SAFE-006",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Review approved: command idempotency regression smoke passes all 5 checks. Returning to Claude2 for closeout finalization.",
+      "status": "done",
+      "created_at": "2026-05-15T18:04:49Z",
+      "resolved_at": "2026-05-15T18:11:02Z"
+    }
+  ],
+  "blockers": []
+}

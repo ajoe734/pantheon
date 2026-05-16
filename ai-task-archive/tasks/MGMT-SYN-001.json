@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "MGMT-SYN-001",
+  "archived_at": "2026-05-15T16:08:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-SYN-001",
+    "title": "PersonaAllocationProposal schema",
+    "summary_zh": null,
+    "phase": "Track E / EPIC-03 Multi-Persona Synthesis",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Owner finalized review-approved PersonaAllocationProposal schema/API/dataclass alignment in commit d28dfb3f. Verification: schema unittest 9 passed; optimizer unittest discover 16 passed; portfolio synthesis smoke 3/3 passed; persona allocation store pytest 6 passed; py_compile touched optimizer files passed.",
+    "last_update": "2026-05-15T16:08:44Z",
+    "review_notes_zh": [
+      "無阻塞發現：PersonaAllocationProposal API 與 dataclass 路徑已將 schema-required 欄位 target_type、directions、target_weights、conviction、uncertainty、evidence_refs、created_at 改為必填。",
+      "查核重點：dataclass 以 kw_only required fields 避免 default fallback，並補上 duplicate-free directions 與 target_weights key pattern ^[A-Za-z0-9._:/-]+$；FastAPI omitted created_at 會回 422。",
+      "驗證命令：PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services/optimizer-svc/test_persona_allocation_proposal_schema.py；PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s services/optimizer-svc -p 'test_*.py'；PYTHONDONTWRITEBYTECODE=1 python3 services/optimizer-svc/smoke_test_portfolio_synthesis.py；PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/optimizer-svc/test_persona_allocation_proposal_store.py -q；PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/optimizer-svc/main.py services/optimizer-svc/portfolio_synthesis/models.py services/optimizer-svc/test_persona_allocation_proposal_schema.py services/optimizer-svc/test_portfolio_synthesis.py services/optimizer-svc/smoke_test_portfolio_synthesis.py。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T16:08:44Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "merge/backend-dev-into-master",
+      "git_clean_required": false,
+      "commit": "d28dfb3fbf3100f0aed1da7d1ce55835e7ca588e",
+      "commit_subject": "MGMT-SYN-001 align persona allocation proposal validation",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-SYN-001",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 36,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/master",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-SYN-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review: added PersonaAllocationProposal JSON Schema plus dataclass/API validation alignment. Task-owned files: services/optimizer-svc/portfolio_synthesis/persona_allocation_proposal.schema.json, services/optimizer-svc/test_persona_allocation_proposal_schema.py, services/optimizer-svc/portfolio_synthesis/models.py, services/optimizer-svc/portfolio_synthesis/__init__.py, services/optimizer-svc/main.py. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services/optimizer-svc/test_persona_allocation_proposal_schema.py -> 6 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s services/optimizer-svc -p 'test_*.py' -> 13 passed; PYTHONDONTWRITEBYTECODE=1 python3 services/optimizer-svc/smoke_test_portfolio_synthesis.py -> 3/3 smoke groups passed; py_compile optimizer-svc files passed. Note: due concurrent workspace staging, these schema files landed in commit abe1da51 alongside an OODA fix rather than an isolated MGMT-SYN-001 commit; no history rewrite attempted.",
+      "status": "done",
+      "created_at": "2026-05-15T15:18:00Z",
+      "resolved_at": "2026-05-15T15:31:14Z"
+    },
+    {
+      "task_id": "MGMT-SYN-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review blocked: PersonaAllocationProposal schema/dataclass/API validation are not aligned. Required changes: (1) API/dataclass path must enforce schema-required fields instead of accepting omitted fields through defaults; omitted created_at is currently accepted and auto-created via ProposalIn.model_dump(exclude_none=True) -> PersonaAllocationProposal. (2) dataclass validation must either enforce schema constraints for directions uniqueItems and target_weights key pattern ^[A-Za-z0-9._:/-]+$, or intentionally relax the schema with matching tests. (3) add regression tests for omitted created_at through the API/model path, duplicate directions, and invalid target_weight keys. Reviewer verification passed existing tests: schema unittest 6 passed; optimizer-svc unittest discover 13 passed; portfolio smoke 3/3; py_compile passed.",
+      "status": "done",
+      "created_at": "2026-05-15T15:31:14Z",
+      "resolved_at": "2026-05-15T15:31:14Z"
+    },
+    {
+      "task_id": "MGMT-SYN-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for re-review: aligned PersonaAllocationProposal API/dataclass path with schema-required fields by making target_type, directions, target_weights, conviction, uncertainty, evidence_refs, and created_at required; dataclass now enforces duplicate-free directions and target_weights key pattern ^[A-Za-z0-9._:/-]+$; added regressions for omitted created_at through FastAPI, duplicate directions, and invalid target_weight keys. Task-owned files: services/optimizer-svc/portfolio_synthesis/models.py, services/optimizer-svc/main.py, services/optimizer-svc/test_persona_allocation_proposal_schema.py, services/optimizer-svc/test_portfolio_synthesis.py, services/optimizer-svc/smoke_test_portfolio_synthesis.py. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services/optimizer-svc/test_persona_allocation_proposal_schema.py -> 9 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s services/optimizer-svc -p 'test_*.py' -> 16 passed; PYTHONDONTWRITEBYTECODE=1 python3 services/optimizer-svc/smoke_test_portfolio_synthesis.py -> 3/3 smoke groups passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/optimizer-svc/test_persona_allocation_proposal_store.py -q -> 6 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile optimizer-svc touched files -> passed.",
+      "status": "done",
+      "created_at": "2026-05-15T15:55:07Z",
+      "resolved_at": "2026-05-15T16:01:08Z"
+    },
+    {
+      "task_id": "MGMT-SYN-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved. PersonaAllocationProposal schema/API/dataclass alignment verified; owner Codex should finalize MGMT-SYN-001 through the closeout checklist.",
+      "status": "done",
+      "created_at": "2026-05-15T16:01:08Z",
+      "resolved_at": "2026-05-15T16:08:46Z"
+    }
+  ],
+  "blockers": []
+}

@@ -48,7 +48,7 @@ The smoke script loads `examples/trajectory_dataset_sample.json` and proves that
 
 1. the governed trajectory dataset parses successfully
 2. ineligible trajectories are not required for the happy path
-3. `run_imitation_workflow()` emits a registry-ready `model_artifact`
+3. `run_imitation_workflow()` emits a registry-ready `behavior_policy`
 4. the artifact writes a stable storage path under `learning/imitation/{strategy_id}/{version}/`
 5. training metrics are available from the backend result
 

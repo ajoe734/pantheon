@@ -1,0 +1,10 @@
+{
+  "task_id": "EP5-001",
+  "generated_at": "2026-05-15T17:34:44Z",
+  "status": "prepared",
+  "target_stage": "canary",
+  "capital_scale_pct": 5.0,
+  "gross_scale_pct": 25.0,
+  "rollback_action_type": "pause_then_replace",
+  "proof_boundary": "entry path only; not EP5 proof"
+}

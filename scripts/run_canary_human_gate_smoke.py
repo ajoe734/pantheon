@@ -4,7 +4,8 @@
 The smoke exercises the real EP5 canary readiness packet builder with fixture
 artifacts. A packet can become ready only when it carries explicit canary
 promotion refs, risk-owner and operator approval refs, Shioaji broker sandbox
-smoke evidence, and fail-closed live/no-real-capital evidence.
+smoke evidence, the Shioaji sandbox evidence packet, and fail-closed
+live/no-real-capital evidence.
 """
 
 from __future__ import annotations
@@ -86,13 +87,79 @@ def _valid_broker_smoke() -> dict[str, Any]:
     }
 
 
-def _packet(output_dir: Path, case_id: str, plan: dict[str, Any], broker_smoke: dict[str, Any] | None) -> dict[str, Any]:
+def _valid_shioaji_evidence(
+    *,
+    broker_smoke_ref: str,
+    evidence_packet_ref: str,
+    status: str = "passed",
+) -> dict[str, Any]:
+    acceptance_check_details = {
+        "broker_is_shioaji": "source smoke provider is Shioaji",
+        "environment_is_sandbox": "order response stays in sandbox",
+        "place_result_recorded": "place response status is submitted",
+        "cancel_result_recorded": "cancel response status is cancelled",
+        "readback_after_cancel_recorded": "readback after cancel confirms cancelled status",
+        "reconcile_passed": "reconciliation status is passed",
+        "live_broker_fail_closed": "live broker request is rejected with SHIOAJI_LIVE_DISABLED",
+        "capital_binding_not_enabled": "real capital is neither used nor reserved",
+        "no_secret_material_persisted": "raw Shioaji secret material is not persisted",
+    }
+    return {
+        "schema_version": "shioaji_sandbox_evidence_packet.v1",
+        "task_id": "MGMT-BROKER-004",
+        "milestone_id": "MGMT-OODA-M3",
+        "provider": "Shioaji",
+        "broker": "shioaji",
+        "environment": "sandbox",
+        "status": status,
+        "account_status": "ready",
+        "production_live_enabled": False,
+        "capital_binding_enabled": False,
+        "human_gate_required": True,
+        "proof_boundary": "broker_sandbox_evidence_packet; not canary/live/capital proof",
+        "fail_closed_posture": {
+            "live_gate": {
+                "status": "rejected",
+                "response": {"error_code": "SHIOAJI_LIVE_DISABLED"},
+            },
+            "no_real_capital": {
+                "real_capital_used": False,
+                "real_capital_reserved": False,
+                "production_live_order_submitted": False,
+            },
+        },
+        "canary_readiness_inputs": {
+            "broker_sandbox_smoke_ref": broker_smoke_ref,
+            "broker_sandbox_evidence_packet_ref": evidence_packet_ref,
+            "human_gate_required": True,
+            "risk_owner_approval_required": True,
+            "operator_approval_required": True,
+        },
+        "acceptance_checks": [
+            {"name": name, "status": "pass", "detail": acceptance_check_details[name]}
+            for name in readiness.SHIOAJI_SANDBOX_REQUIRED_ACCEPTANCE_CHECK_NAMES
+        ],
+        "ooda_packet": {"status": "closed"},
+        "ooda_packet_validation_errors": [],
+    }
+
+
+def _packet(
+    output_dir: Path,
+    case_id: str,
+    plan: dict[str, Any],
+    broker_smoke: dict[str, Any] | None,
+    shioaji_evidence: dict[str, Any] | None = None,
+    *,
+    auto_shioaji_evidence: bool = True,
+) -> dict[str, Any]:
     case_dir = output_dir / "fixtures" / case_id
     checklist_path = case_dir / "operator-checklist.json"
     datasource_summary_path = case_dir / "datasource-summary.json"
     plan_path = case_dir / "canary-deployment-plan.json"
     drill_summary_path = case_dir / "rollback-drill-summary.json"
     broker_smoke_summary_path = case_dir / "broker-smoke-summary.json"
+    shioaji_evidence_packet_path = case_dir / "shioaji-sandbox-evidence-packet.json"
 
     _write_json(checklist_path, {"status": "pass", "check_health": True})
     _write_json(
@@ -110,6 +177,13 @@ def _packet(output_dir: Path, case_id: str, plan: dict[str, Any], broker_smoke: 
     )
     if broker_smoke is not None:
         _write_json(broker_smoke_summary_path, broker_smoke)
+    if auto_shioaji_evidence and shioaji_evidence is None and broker_smoke is not None:
+        shioaji_evidence = _valid_shioaji_evidence(
+            broker_smoke_ref=str(broker_smoke_summary_path),
+            evidence_packet_ref=str(shioaji_evidence_packet_path),
+        )
+    if shioaji_evidence is not None:
+        _write_json(shioaji_evidence_packet_path, shioaji_evidence)
 
     return readiness.build_human_gate_packet(
         checklist_path=checklist_path,
@@ -117,6 +191,7 @@ def _packet(output_dir: Path, case_id: str, plan: dict[str, Any], broker_smoke: 
         plan_path=plan_path,
         drill_summary_path=drill_summary_path,
         broker_smoke_summary_path=broker_smoke_summary_path if broker_smoke is not None else None,
+        shioaji_evidence_packet_path=shioaji_evidence_packet_path if shioaji_evidence is not None else None,
         dual_vm_evidence_dir=case_dir,
         event_trace_status="packetized",
         event_trace_note="Trace read-model evidence remains packetized for this smoke.",
@@ -144,25 +219,31 @@ def _row_for_ready_packet(output_dir: Path) -> SmokeRow:
     checks = _checks(packet)
     canary_plan = packet["bundle"]["canary_plan"]
     broker_smoke = packet["bundle"]["broker_sandbox_smoke"]
+    shioaji_evidence = packet["bundle"]["shioaji_sandbox_evidence_packet"]
     return _check(
-        "ready-with-explicit-human-gate-and-broker-smoke",
+        "ready-with-explicit-human-gate-broker-smoke-and-shioaji-evidence",
         packet["status"] == "ready_for_review"
         and checks["canary_activation_gate_refs_present"]["status"] == "pass"
         and checks["broker_sandbox_smoke_consumed"]["status"] == "pass"
+        and checks["shioaji_sandbox_evidence_packet_consumed"]["status"] == "pass"
         and canary_plan["target_stage"] == "canary"
         and canary_plan["promotion_gate"]["risk_owner_approval_ref"] == "approval://risk-owner/canary-smoke"
         and canary_plan["promotion_gate"]["operator_approval_ref"] == "approval://operator/canary-smoke"
         and broker_smoke["provider"] == "Shioaji"
         and broker_smoke["reconciliation_status"] == "passed"
-        and broker_smoke["live_gate_status"] == "rejected",
+        and broker_smoke["live_gate_status"] == "rejected"
+        and shioaji_evidence["provider"] == "Shioaji"
+        and shioaji_evidence["status"] == "passed",
         {
             "packet_status": packet["status"],
             "canary_gate_check": checks["canary_activation_gate_refs_present"]["status"],
             "broker_smoke_check": checks["broker_sandbox_smoke_consumed"]["status"],
+            "shioaji_evidence_check": checks["shioaji_sandbox_evidence_packet_consumed"]["status"],
             "target_stage": canary_plan["target_stage"],
             "live_gate_status": broker_smoke["live_gate_status"],
+            "shioaji_evidence_status": shioaji_evidence["status"],
         },
-        "valid canary human-gate packet must be ready only with explicit approvals and Shioaji sandbox smoke",
+        "valid canary human-gate packet must be ready only with explicit approvals, Shioaji sandbox smoke, and Shioaji evidence",
     )
 
 
@@ -194,6 +275,29 @@ def _row_for_missing_broker_smoke(output_dir: Path) -> SmokeRow:
             "detail": checks["broker_sandbox_smoke_consumed"]["detail"],
         },
         "packet must stay incomplete without Shioaji broker sandbox smoke summary",
+    )
+
+
+def _row_for_missing_shioaji_evidence(output_dir: Path) -> SmokeRow:
+    packet = _packet(
+        output_dir,
+        "missing-shioaji-evidence",
+        _valid_canary_plan(),
+        _valid_broker_smoke(),
+        None,
+        auto_shioaji_evidence=False,
+    )
+    checks = _checks(packet)
+    return _check(
+        "missing-shioaji-evidence-keeps-packet-incomplete",
+        packet["status"] == "incomplete"
+        and checks["broker_sandbox_smoke_consumed"]["status"] == "pass"
+        and checks["shioaji_sandbox_evidence_packet_consumed"]["status"] == "fail",
+        {
+            "packet_status": packet["status"],
+            "detail": checks["shioaji_sandbox_evidence_packet_consumed"]["detail"],
+        },
+        "packet must stay incomplete without the Shioaji sandbox evidence packet",
     )
 
 
@@ -239,6 +343,7 @@ def run_smoke(output_dir: Path) -> dict[str, Any]:
         _row_for_ready_packet(output_dir),
         _row_for_missing_operator(output_dir),
         _row_for_missing_broker_smoke(output_dir),
+        _row_for_missing_shioaji_evidence(output_dir),
         _row_for_live_target(output_dir),
         _row_for_live_enabled_broker_smoke(output_dir),
     ]
@@ -256,10 +361,12 @@ def run_smoke(output_dir: Path) -> dict[str, Any]:
             "risk_owner_approval_required": True,
             "operator_approval_required": True,
             "broker_sandbox_smoke_required": True,
+            "shioaji_sandbox_evidence_required": True,
         },
         "assertions": {
             "canary_packet_ready_only_with_human_gate_refs": smoke_passed,
             "shioaji_broker_sandbox_smoke_required": smoke_passed,
+            "shioaji_sandbox_evidence_packet_required": smoke_passed,
             "live_target_rejected": smoke_passed,
             "production_live_boundary_must_be_fail_closed": smoke_passed,
         },

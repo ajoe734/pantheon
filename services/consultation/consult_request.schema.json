@@ -1,0 +1,198 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/consultation/consult-request/v1",
+  "title": "ConsultRequest",
+  "description": "Canonical consultation service request contract. A ConsultRequest records advisory request identity, target lineage, request-to-session handoff state, evidence anchors, and trace identity. It does not grant deployment, rollback, broker, or capital authority.",
+  "type": "object",
+  "required": [
+    "request_id",
+    "request_type",
+    "requested_by",
+    "target_type",
+    "target_id",
+    "context_refs",
+    "evidence_refs",
+    "priority",
+    "status",
+    "metadata",
+    "trace_id",
+    "created_at"
+  ],
+  "properties": {
+    "request_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "request_type": {
+      "type": "string",
+      "enum": [
+        "strategy_review",
+        "redteam",
+        "data_leakage",
+        "execution_risk",
+        "capital_pool",
+        "incident",
+        "persona_policy"
+      ]
+    },
+    "requested_by": {
+      "$ref": "#/definitions/actorRef"
+    },
+    "from_persona_id": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "target_type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "target_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "task": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "consultation_type": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "context_refs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/contextRefItem"
+      }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "priority": {
+      "type": "string",
+      "enum": [
+        "low",
+        "normal",
+        "high",
+        "urgent"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "submitted",
+        "assigned",
+        "in_progress",
+        "memo_pending",
+        "published",
+        "cancelled",
+        "failed"
+      ]
+    },
+    "policy_id": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "linked_session_id": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "request_to_session_status": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "completed_at": {
+      "$ref": "#/definitions/nullableDateTime"
+    },
+    "canceled_at": {
+      "$ref": "#/definitions/nullableDateTime"
+    },
+    "session_handoff_note": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "trace_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "actorRef": {
+      "type": "object",
+      "required": [
+        "actor_type",
+        "actor_id"
+      ],
+      "properties": {
+        "actor_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "actor_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "contextRef": {
+      "type": "object",
+      "required": [
+        "type",
+        "id"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "contextRefItem": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "$ref": "#/definitions/contextRef"
+        }
+      ]
+    },
+    "nullableString": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "nullableDateTime": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  }
+}

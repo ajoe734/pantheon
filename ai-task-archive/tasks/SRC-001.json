@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "task_id": "SRC-001",
+  "archived_at": "2026-05-16T07:34:32Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SRC-001",
+    "title": "SourceRecord schema + ingest API",
+    "summary_zh": null,
+    "phase": "Sprint 5 / EPIC-RESEARCH",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "SRC-001 finalized by owner. Commit fc4fa61f adds SourceRecord schema, schema readback, inline SourceRecord ingest endpoint, contract tests, and review evidence. Verification: py_compile source ingest files; pytest services/source_ingestion/test_src001_source_record_contract.py -q (3 passed); pytest services/source_ingestion/test_service.py::test_trigger_success_persists_run_and_watermark_for_replay -q (1 passed); json.tool schema; git diff --check task files.",
+    "last_update": "2026-05-16T07:34:32Z",
+    "review_notes_zh": [
+      "審查通過。SourceRecord JSON Schema Draft-7 邊界正確：必填欄位完整、source_type/status enum 與 Python enum 一致、additionalProperties:false 強制頂層結構；schema description 明確標示 research-only。GET /api/source-ingest/schemas/source-record 為純 schema 讀回；POST /api/source-ingest/source-records 以 facade 模式委派現有受管 ingest lifecycle，非空 records 檢查與 source_type 不匹配拒絕均正確。readback 回傳 status=normalized、source_dedupe_key、content_hash 均符合 schema。3 個 contract test 全通過；replay regression 通過。無 execution route；研究邊界正確閉合。"
+    ],
+    "review_file": "support/evidence/SRC-001/review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T07:34:32Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "fc4fa61f2c0696cd8e88eb0a6b4bc5c6cb92d7e3",
+      "commit_subject": "SRC-001 add SourceRecord schema ingest API",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SRC-001",
+        "Reviewer": "Claude",
+        "- python3 -m pytest services/source_ingestion/test_service.py": ":test_trigger_success_persists_run_and_watermark_for_replay -q (1 passed)"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 82,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SRC-001",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Copilot is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-16T01:09:39Z",
+      "resolved_at": "2026-05-16T01:09:56Z"
+    },
+    {
+      "task_id": "SRC-001",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T06:23:43Z",
+      "resolved_at": "2026-05-16T06:25:47Z"
+    },
+    {
+      "task_id": "SRC-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T06:48:15Z",
+      "resolved_at": "2026-05-16T06:49:46Z"
+    },
+    {
+      "task_id": "SRC-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T07:12:24Z",
+      "resolved_at": "2026-05-16T07:14:54Z"
+    },
+    {
+      "task_id": "SRC-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "SRC-001 ready for review: SourceRecord schema, schema endpoint, inline SourceRecord ingest endpoint, readback contract test, and evidence note are in place. Verification: py_compile; pytest services/source_ingestion/test_src001_source_record_contract.py -q; pytest services/source_ingestion/test_service.py::test_trigger_success_persists_run_and_watermark_for_replay -q; json.tool schema.",
+      "status": "done",
+      "created_at": "2026-05-16T07:19:15Z",
+      "resolved_at": "2026-05-16T07:26:51Z"
+    },
+    {
+      "task_id": "SRC-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: SourceRecord schema is correctly bounded (research-only, additionalProperties:false, enum alignment), schema endpoint is a pure readback, ingest endpoint correctly delegates to the governed lifecycle with source_type mismatch rejection, readback returns schema-conformant record. 3 contract tests + replay regression all pass. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-16T07:26:51Z",
+      "resolved_at": "2026-05-16T07:34:33Z"
+    }
+  ],
+  "blockers": []
+}

@@ -71,6 +71,7 @@ class ProposalDirection(str, Enum):
 
 
 SCHEMA_PATH = Path(__file__).with_name("persona_allocation_proposal.schema.json")
+ALLOCATION_POLICY_ARTIFACT_SCHEMA_PATH = Path(__file__).with_name("allocation_policy_artifact.schema.json")
 _TARGET_TYPES = {item.value for item in ProposalTargetType}
 _DIRECTIONS = {item.value for item in ProposalDirection}
 _TARGET_WEIGHT_KEY_RE = re.compile(r"^[A-Za-z0-9._:/-]+$")
@@ -274,6 +275,9 @@ class VetoRecord:
     reason: str        # VetoReason value or custom string
     detail: str = ""
 
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
 
 # ---------------------------------------------------------------------------
 # Committee referral
@@ -301,6 +305,9 @@ class CommitteeReferral:
     trigger_reason: str
     created_at: str = field(default_factory=_utc_now)
 
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
 
 # ---------------------------------------------------------------------------
 # Output: ConflictResolutionLog
@@ -326,6 +333,9 @@ class ConflictResolutionLog:
     sponsor_persona_id: Optional[str] = None
     rejected_reason: Optional[str] = None   # set when all proposals are vetoed/rejected
     synthesis_method: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
 
 
 # ---------------------------------------------------------------------------
@@ -353,3 +363,89 @@ class AllocationPolicyArtifact:
     provenance_refs: List[str] = field(default_factory=list)       # proposal_ids
     conflict_resolution_log_id: str = ""
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        for attr in [
+            "artifact_id",
+            "capital_pool_id",
+            "scope_ref",
+            "sponsor_persona_id",
+            "synthesis_method",
+            "created_at",
+            "conflict_resolution_log_id",
+        ]:
+            if not _is_non_empty_string(getattr(self, attr)):
+                raise SynthesisError(f"{attr} must be a non-empty string")
+
+        if self.synthesis_method not in {item.value for item in SynthesisMethod}:
+            raise SynthesisError(
+                f"synthesis_method must be one of {[item.value for item in SynthesisMethod]}, "
+                f"got {self.synthesis_method!r}"
+            )
+
+        if not isinstance(self.target_weights, Mapping):
+            raise SynthesisError("target_weights must be a symbol-to-weight mapping")
+        if not self.target_weights:
+            raise SynthesisError("target_weights must contain at least one target")
+        for symbol, weight in self.target_weights.items():
+            if not _is_non_empty_string(symbol):
+                raise SynthesisError("target_weights keys must be non-empty strings")
+            if not _TARGET_WEIGHT_KEY_RE.fullmatch(symbol):
+                raise SynthesisError(
+                    "target_weights keys must match pattern ^[A-Za-z0-9._:/-]+$"
+                )
+            _validate_number_range(f"target_weights[{symbol!r}]", weight, 0.0, 1.0)
+        total = sum(self.target_weights.values())
+        if total > 1.0 + 1e-9:
+            raise SynthesisError(
+                f"target_weights sum {total:.4f} > 1.0 for allocation artifact {self.artifact_id}"
+            )
+
+        if not isinstance(self.constraints_bundle, Mapping):
+            raise SynthesisError("constraints_bundle must be an object")
+        if self.risk_budget is not None:
+            _validate_number_range("risk_budget", self.risk_budget, 0.0, 1.0)
+        if not isinstance(self.provenance_refs, list):
+            raise SynthesisError("provenance_refs must be a list of proposal references")
+        if not self.provenance_refs:
+            raise SynthesisError("provenance_refs must contain at least one proposal reference")
+        for ref in self.provenance_refs:
+            if not _is_non_empty_string(ref):
+                raise SynthesisError("provenance_refs entries must be non-empty strings")
+        if not isinstance(self.metadata, Mapping):
+            raise SynthesisError("metadata must be an object")
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Return the canonical JSON-serializable allocation policy artifact."""
+        return asdict(self)
+
+
+def validate_allocation_policy_artifact_json(data: Dict[str, Any]) -> List[str]:
+    """Validate an AllocationPolicyArtifact dict against v1 structural rules."""
+    errors: List[str] = []
+    required = [
+        "artifact_id",
+        "capital_pool_id",
+        "scope_ref",
+        "sponsor_persona_id",
+        "synthesis_method",
+        "target_weights",
+        "created_at",
+        "provenance_refs",
+        "conflict_resolution_log_id",
+    ]
+    for key in required:
+        if key not in data or data[key] is None:
+            errors.append(f"Missing required field: {key}")
+
+    if errors:
+        return errors
+
+    try:
+        AllocationPolicyArtifact(**data)
+    except SynthesisError as exc:
+        errors.append(str(exc))
+    except TypeError as exc:
+        errors.append(str(exc))
+
+    return errors

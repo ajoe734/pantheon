@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "IMT-004",
+  "archived_at": "2026-05-16T10:48:08Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "IMT-004",
+    "title": "behavior policy artifact type registration",
+    "summary_zh": null,
+    "phase": "Sprint 5 / EPIC-RESEARCH",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Closeout: IMT-004 finalized after Claude review approval. Latest closeout commit f9069d27 records verification metadata; reviewed implementation commit df0ab9f3 registers behavior_policy across registry schema/model, imitation adapter output, and preference/correction targets with non-live governance preserved. Verification rerun: json.tool registry/preference/correction schemas; py_compile touched registry/imitation modules; pytest services/registry/test_service.py -q (45 passed); pytest services/learning/imitation/test_adapter.py -q (3 passed); pytest services/research/imitation/test_preference_models.py -q (17 passed); pytest services/research/imitation -q (51 passed); python3 services/learning/imitation/smoke_test.py passed; python3 services/research/imitation/smoke_test.py passed.",
+    "last_update": "2026-05-16T10:48:08Z",
+    "review_notes_zh": [
+      "審查通過：behavior_policy 在 registry schema、Python enum、adapter 輸出三層一致註冊；artifact_state=draft + lifecycle_state=draft 雙欄位相容正確；registry test 驗證 draft→candidate→approved 全程 deployment_stage=none，無 live 洩漏；contract.md 明確禁止直接上線；preference/correction 兩個 JSON schema 及 Python model 同步更新；45+3+17+51 pytest 全過，兩項 smoke test 通過。治理不變量全部成立，closeout 交還 owner Codex。"
+    ],
+    "review_file": "support/reviews/IMT-004-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T10:48:08Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "f9069d2750d5cabcc153fbc36496f24646154de1",
+      "commit_subject": "IMT-004 closeout verification",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "IMT-004",
+        "Reviewer": "Claude",
+        "Implementation commit reviewed": "df0ab9f3",
+        "Review file": "support/reviews/IMT-004-review-claude.md",
+        "Evidence file": "support/evidence/IMT-004/README.md"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 76,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 3,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "IMT-004",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T09:36:51Z",
+      "resolved_at": "2026-05-16T09:59:02Z"
+    },
+    {
+      "task_id": "IMT-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "IMT-004 ready for review. Commit df0ab9f3 registers behavior_policy as a governed registry artifact type, updates imitation BC output to emit artifact_type=behavior_policy with artifact_state=draft plus legacy lifecycle_state, allows preference/correction targets to reference behavior_policy, and records evidence in support/evidence/IMT-004/README.md. Verification: json.tool registry/preference/correction schemas; py_compile touched registry/imitation modules; pytest services/registry/test_service.py -q (45 passed); pytest services/learning/imitation/test_adapter.py -q (3 passed); pytest services/research/imitation/test_preference_models.py -q (17 passed); python3 services/learning/imitation/smoke_test.py (passed); pytest services/research/imitation -q (51 passed); python3 services/research/imitation/smoke_test.py (passed).",
+      "status": "done",
+      "created_at": "2026-05-16T10:26:22Z",
+      "resolved_at": "2026-05-16T10:37:32Z"
+    },
+    {
+      "task_id": "IMT-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: behavior_policy registered consistently across schema/model/adapter layers; governance non-live gate confirmed; all 116+ tests passed. Returning to owner Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-05-16T10:37:32Z",
+      "resolved_at": "2026-05-16T10:48:09Z"
+    }
+  ],
+  "blockers": []
+}

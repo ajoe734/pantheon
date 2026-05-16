@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "MGMT-EVO-003-SIDECAR-REVIEW",
+  "archived_at": "2026-05-15T18:56:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-EVO-003-SIDECAR-REVIEW",
+    "title": "Prepare MGMT-EVO-003 review packet and evidence summary",
+    "summary_zh": "平行支援 MGMT-EVO-003，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Track E / EPIC-06 Evolution Follow-Through",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/MGMT-EVO-003/MGMT-EVO-003-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Done: finalized support-only MGMT-EVO-003 sidecar review packet. Commit d3cf8b5d. Verification: closeout test/jq/rg check confirmed sidecar packet, parent review approval, parent archive done commit f4021113, and EPIC-06 evidence chain. No canonical truth/runtime files changed. State/archive commit skipped because pre-existing unrelated dirty generated files prevent isolated staging.",
+    "last_update": "2026-05-15T18:56:04Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-EVO-003",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：MGMT-EVO-003 sidecar packet 僅新增 support-only evidence summary，未改 L1 canonical truth。",
+      "抽查通過：parent archive 為 done、parent review note 已 approved、EPIC-06 evidence chain 包含 MGMT-EVO-003，packet 引用的 focused Vitest/build 結果與既有記錄一致。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T18:56:04Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "d3cf8b5dbbbb2e7816b5a513ad4fad8b84ee4bc4",
+      "commit_subject": "MGMT-EVO-003-SIDECAR-REVIEW finalize sidecar packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-EVO-003-SIDECAR-REVIEW",
+        "Reviewer": "Codex",
+        "Verification": "checked sidecar, parent review, parent archive, and EPIC-06 evidence chain with test/jq/rg closeout command."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 31,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-EVO-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T18:40:34Z",
+      "resolved_at": "2026-05-15T18:40:50Z"
+    },
+    {
+      "task_id": "MGMT-EVO-003-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: support-only sidecar packet created at support/sidecars/MGMT-EVO-003/MGMT-EVO-003-SIDECAR-REVIEW.md. Parent MGMT-EVO-003 is already archived done; packet summarizes parent review, archive, pantheon f4021113, execute-plans 6346300, EPIC-06 evidence, and re-run verification. Verification: npm test -- src/lib/bff/__tests__/client.test.ts src/management/components/ooda/OodaPacketDrawer.test.tsx in /home/lupin/code/execute-plans => 25 passed; npm run build => passed with existing Browserslist/realtime chunk/large chunk warnings.",
+      "status": "done",
+      "created_at": "2026-05-15T18:45:11Z",
+      "resolved_at": "2026-05-15T18:49:10Z"
+    },
+    {
+      "task_id": "MGMT-EVO-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: support-only sidecar evidence packet accepted. Parent MGMT-EVO-003 archive/review/evidence links verified; no canonical truth changes required. Owner Codex2 should finalize closeout as review_approved -> done.",
+      "status": "done",
+      "created_at": "2026-05-15T18:49:10Z",
+      "resolved_at": "2026-05-15T18:56:05Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "MGMT-EVO-003",
+  "archived_at": "2026-05-15T18:35:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-EVO-003",
+    "title": "evolution review / approval UI linkage",
+    "summary_zh": null,
+    "phase": "Track E / EPIC-06 Evolution Follow-Through",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Done: finalized evolution review/approval UI linkage. Commits: pantheon f4021113, execute-plans 6346300. Verification: npm test -- src/lib/bff/__tests__/client.test.ts src/management/components/ooda/OodaPacketDrawer.test.tsx in /home/lupin/code/execute-plans passed (25 tests); npm run build passed with existing Browserslist/realtime chunk/large chunk warnings. Push not performed during closeout because both branches already had unrelated ahead commits before this task commit.",
+    "last_update": "2026-05-15T18:35:33Z",
+    "review_notes_zh": [
+      "審查通過：mutation-review live read adapter 與 OODA drawer review/approval links 已覆蓋並驗證。",
+      "驗證：在 /home/lupin/code/execute-plans 執行 focused Vitest 25 passed，npm run build 通過；僅既有 Browserslist/chunk warnings。"
+    ],
+    "review_file": "support/reviews/MGMT-EVO-003-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T18:35:33Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "f40211132c0549185243f5c49d327d4fd0f40351",
+      "commit_subject": "MGMT-EVO-003 link evolution review UI",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-EVO-003",
+        "Reviewer": "Codex",
+        "Verification": "npm test -- src/lib/bff/__tests__/client.test.ts src/management/components/ooda/OodaPacketDrawer.test.tsx in /home/lupin/code/execute-plans (25 passed); npm run build in /home/lupin/code/execute-plans (passed with existing Browserslist/chunk warnings)."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 38,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 3,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-EVO-003",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T17:18:11Z",
+      "resolved_at": "2026-05-15T17:19:18Z"
+    },
+    {
+      "task_id": "MGMT-EVO-003",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T17:27:40Z",
+      "resolved_at": "2026-05-15T17:28:45Z"
+    },
+    {
+      "task_id": "MGMT-EVO-003",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: wired Management evolution review/approval linkage. Updated BFF path/client adapters for GET /api/v1/operator/mutation-review/{decision_id}, added OODA drawer links from evolution_decision_id to mutation review and approval_decision_id to /management/approvals, and covered both client adapter and drawer links in focused tests. Task-owned Pantheon mirror files: execute-plans/src/lib/bff-v1/paths.ts, execute-plans/src/lib/bff/client.ts, execute-plans/src/lib/bff/__tests__/client.test.ts, execute-plans/src/management/components/ooda/OodaPacketDrawer.tsx, execute-plans/src/management/components/ooda/OodaPacketDrawer.test.tsx. Actual execute-plans repo verified with npm test -- src/lib/bff/__tests__/client.test.ts src/management/components/ooda/OodaPacketDrawer.test.tsx (23 passed) and npm run build (passed; existing Browserslist/chunk warnings only).",
+      "status": "done",
+      "created_at": "2026-05-15T17:48:50Z",
+      "resolved_at": "2026-05-15T18:03:18Z"
+    },
+    {
+      "task_id": "MGMT-EVO-003",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: mutation-review read adapter and OODA review/approval links verified; focused Vitest 25 passed and npm run build passed with existing warnings only. Owner Codex2 should finalize closeout.",
+      "status": "done",
+      "created_at": "2026-05-15T18:03:18Z",
+      "resolved_at": "2026-05-15T18:35:33Z"
+    }
+  ],
+  "blockers": []
+}

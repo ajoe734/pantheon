@@ -1,0 +1,10 @@
+{
+  "task_id": "MGMT-BROKER-006",
+  "generated_at": "2026-05-15T17:53:15Z",
+  "mode": "human_gate_packet",
+  "status": "ready_for_review",
+  "event_trace_status": "packetized",
+  "proof_boundary": "EP5-001 prerequisite_only; not EP5-002 proof",
+  "broker_sandbox_smoke_status": "passed",
+  "shioaji_sandbox_evidence_packet_status": "passed"
+}

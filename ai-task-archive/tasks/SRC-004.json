@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "SRC-004",
+  "archived_at": "2026-05-16T07:57:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SRC-004",
+    "title": "StrategySpecSeed builder",
+    "summary_zh": null,
+    "phase": "Sprint 5 / EPIC-RESEARCH",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "SRC-004 finalized after Claude review approval. Task commits: 5a872693 implementation, 7f8877bc review artifact. Verified: python3 -m py_compile services/source_ingestion/strategy_seed_builder.py services/source_ingestion/tests/test_strategy_seed_builder.py; python3 -m pytest services/source_ingestion/tests/test_strategy_seed_builder.py -q (5 passed); python3 -m pytest services/knowledge/evidence/tests/test_bundle.py -q (4 passed); python3 -m pytest services/source_ingestion -q (73 passed); git diff --check targeted SRC-004 files passed. Note: generated collaboration/state files were already dirty with unrelated task updates before closeout, so no whole-state closeout commit was created.",
+    "last_update": "2026-05-16T07:57:44Z",
+    "review_notes_zh": [
+      "審查通過。StrategySpecSeed builder 研究邊界正確閉合：lineage.registry_write_performed=false 及 execution_route=none 均由 schema 強制；rejection guard 在 REJECTED source record 時立即拋出錯誤；lineage 保存 evidence_bundle_id/source_ids/citation_refs/trace_refs/promotion_requires 完整；seed_id 由 SHA-256 deterministic hash 生成；schema Draft-7 additionalProperties:false 正確。73 個 source_ingestion tests 全通過；5 個 SRC-004 專屬 tests 全通過。無 registry write、無 execution route。"
+    ],
+    "review_file": "support/evidence/SRC-004/review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T07:57:44Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "7f8877bc73789cf76520d07137ecf1b122a273d9",
+      "commit_subject": "SRC-004 add review artifact",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SRC-004",
+        "Reviewer": "Claude",
+        "Verification": "py_compile strategy seed builder/test passed; pytest services/source_ingestion/tests/test_strategy_seed_builder.py -q (5 passed); pytest services/knowledge/evidence/tests/test_bundle.py -q (4 passed); pytest services/source_ingestion -q (73 passed); git diff --check targeted SRC-004 files passed."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 83,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 8,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SRC-004",
+      "from": "Copilot",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Copilot is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-16T01:09:51Z",
+      "resolved_at": "2026-05-16T01:10:30Z"
+    },
+    {
+      "task_id": "SRC-004",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T06:48:38Z",
+      "resolved_at": "2026-05-16T06:50:10Z"
+    },
+    {
+      "task_id": "SRC-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "SRC-004 ready for review. Implemented research-only StrategySpecSeed builder from EvidenceBundle with lineage/citation preservation, explicit schema, deterministic hint extraction, rejected-source guard, and promotion lineage edge without registry writes or execution routes. Commit: 5a872693. Evidence: support/evidence/SRC-004/README.md. Verification: py_compile builder/test; pytest test_strategy_seed_builder.py 5 passed; pytest services/source_ingestion/tests 46 passed; pytest services/knowledge/evidence/tests/test_bundle.py 4 passed; pytest services/source_ingestion 73 passed; git diff --check targeted files passed.",
+      "status": "done",
+      "created_at": "2026-05-16T07:11:54Z",
+      "resolved_at": "2026-05-16T07:36:37Z"
+    },
+    {
+      "task_id": "SRC-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: research-only StrategySpecSeed builder is correctly bounded. lineage/citation preservation complete, rejected-source guard operational, promotion lineage edge carries no registry write authority. 73 source_ingestion + 5 seed-specific tests all pass. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-16T07:36:37Z",
+      "resolved_at": "2026-05-16T07:57:46Z"
+    }
+  ],
+  "blockers": []
+}

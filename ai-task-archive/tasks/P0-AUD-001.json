@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "task_id": "P0-AUD-001",
+  "archived_at": "2026-05-16T05:53:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P0-AUD-001",
+    "title": "/bff/audit read endpoint",
+    "summary_zh": null,
+    "phase": "Sprint 1 / EPIC-BFF-P0",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Closeout complete: GET /bff/audit handler verified — py_compile OK; 11 contract tests + 3 live-wiring tests = 14 passed. All deliverables durable in HEAD (83f6c138 + 5107a989 + 56444548). Isolated commit not required for main.py due to entangled RT-003 hunks per background-worker git rule; evidence and test files committed separately.",
+    "last_update": "2026-05-16T05:53:57Z",
+    "review_notes_zh": [
+      "審查通過：GET /bff/audit 專用 handler 正確實作；actor/action_type/target_type/from/to 五維過濾器與 _page_slice 分頁正確；回傳標準 BFF 信封 {data, items, page_info, meta}；_read_surface_meta 與 governance_audit_events surface 正確關聯；11 個合約測試全過；live wiring 3 pass",
+      "跨任務附註：main.py audit hunk 位於併行 dirty worktree（與 sibling task 共存），test+evidence 已於 commit 83f6c138 獨立提交，不影響本次審查通過"
+    ],
+    "review_file": "support/reviews/P0-AUD-001-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T05:53:57Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "56444548027d6d660ed84b3c42e55a645790b058",
+      "commit_subject": "P0-AUD-001 closeout: finalize acceptance evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "and closeout re-verification results": "py_compile OK, 11 contract tests",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "P0-AUD-001",
+        "Reviewer": "Claude",
+        "Verification": "py_compile OK; 11 contract + 3 live-wiring = 14 passed"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 65,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P0-AUD-001",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Ready for review: GET /bff/audit now has a dedicated handler with actor/action_type/target_type/from/to filters, page_token+page_size pagination, and standard BFF envelope {data, items, page_info, meta}. /bff/audit removed from generic stub decorator. Evidence: support/evidence/P0-AUD-001/acceptance.md. Verification: py_compile OK; pytest test_bff_audit_contract.py -q => 11 passed; live wiring path/probe/openapi subset => 3 passed. Note: main.py hunk is in concurrent dirty worktree with sibling task hunks; only new test and evidence files staged in commit 83f6c138.",
+      "status": "done",
+      "created_at": "2026-05-16T00:00:40Z",
+      "resolved_at": "2026-05-16T00:01:16Z"
+    },
+    {
+      "task_id": "P0-AUD-001",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Ready for review: GET /bff/audit dedicated handler with filter+pagination. 11 contract tests pass. Evidence: support/evidence/P0-AUD-001/acceptance.md.",
+      "status": "done",
+      "created_at": "2026-05-16T00:01:16Z",
+      "resolved_at": "2026-05-16T00:01:43Z"
+    },
+    {
+      "task_id": "P0-AUD-001",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Ready for review: GET /bff/audit dedicated handler with actor/action_type/target_type/from/to filters and page_token pagination. Verification: py_compile OK; 11 contract tests passed; live wiring 3 passed. Evidence: support/evidence/P0-AUD-001/acceptance.md. Commit 83f6c138 adds test+evidence files; main.py audit hunk in concurrent dirty worktree.",
+      "status": "done",
+      "created_at": "2026-05-16T00:01:43Z",
+      "resolved_at": "2026-05-16T00:18:25Z"
+    },
+    {
+      "task_id": "P0-AUD-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Codex to Codex2 after repeated Codex terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-05-16T00:18:25Z",
+      "resolved_at": "2026-05-16T00:36:09Z"
+    },
+    {
+      "task_id": "P0-AUD-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-05-16T00:36:09Z",
+      "resolved_at": "2026-05-16T00:44:50Z"
+    },
+    {
+      "task_id": "P0-AUD-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Review approved: /bff/audit dedicated handler correct. Filters, pagination, envelope, meta, RBAC all verified. 11 contract tests + 3 live wiring pass. Returning to Claude2 for finalization.",
+      "status": "done",
+      "created_at": "2026-05-16T00:44:50Z",
+      "resolved_at": "2026-05-16T05:51:34Z"
+    },
+    {
+      "task_id": "P0-AUD-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Restoring review_approved: accidentally downgraded to in_progress via progress command during closeout. Task was review_approved with Claude approval. Restoring to proceed with done transition.",
+      "status": "done",
+      "created_at": "2026-05-16T05:52:37Z",
+      "resolved_at": "2026-05-16T05:53:57Z"
+    }
+  ],
+  "blockers": []
+}

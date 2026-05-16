@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "task_id": "MGMT-QLIB-006",
+  "archived_at": "2026-05-15T17:31:58Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-QLIB-006",
+    "title": "Management artifact / research linkage",
+    "summary_zh": null,
+    "phase": "Track E / EPIC-04 Qlib Admission",
+    "owner": "Codex2",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Closed MGMT-QLIB-006 after Claude2 approval. Task commit 0380666fbc44de75c31716dacc9edb2c931e0120 records Management/BFF research_linkage projection, contract tests, evidence packet, and review artifact. Verification rerun: py_compile read_store.py + test_mgmt_qlib_006_artifact_research_linkage.py; pytest test_mgmt_qlib_006_artifact_research_linkage.py -q (2 passed); pytest test_rw05_artifact_compare_contract.py test_bff_consol_017_detail_smoke_b.py -q (9 passed). Safety boundary unchanged: no registry write, broker session, order route, deployment, or live capital side effects.",
+    "last_update": "2026-05-15T17:31:58Z",
+    "review_notes_zh": [
+      "無阻塞發現：read_store.py 的 _rw05_research_linkage 靜態方法正確從 artifact/metadata/provenance 層級串接查找並回傳深拷貝，並整合進 list-item 與 detail 兩個投影路徑。",
+      "查核重點：/api/v1/artifacts/{id}、/bff/artifacts/{id}、/bff/strategies/{id}/artifacts 三條路由均正確暴露 research_linkage，欄位涵蓋 framework、strategy_id、strategy_spec_id、dataset_manifest_id、source_task_ids（MGMT-QLIB-001/002/004）、pending_task_ids（MGMT-QLIB-005）、evidence_refs、artifact_refs（model_artifact、evaluation_report、candidate_packet）及完整 safety assertions。",
+      "驗證命令（獨立重跑）：py_compile read_store.py + test file → PASS；pytest test_mgmt_qlib_006_artifact_research_linkage.py -q → 2 passed；pytest test_rw05_artifact_compare_contract.py test_bff_consol_017_detail_smoke_b.py -q → 9 passed。",
+      "安全邊界確認：無 registry write、無 broker session、無 order route、無 deployment、無 live capital side effects。"
+    ],
+    "review_file": "support/reviews/MGMT-QLIB-006-review-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T17:31:58Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "0380666fbc44de75c31716dacc9edb2c931e0120",
+      "commit_subject": "MGMT-QLIB-006 expose research linkage",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-QLIB-006",
+        "Reviewer": "Claude2",
+        "Verification": "PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/control-plane/bff/read_store.py services/control-plane/bff/test_mgmt_qlib_006_artifact_research_linkage.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_mgmt_qlib_006_artifact_research_linkage.py -q; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_rw05_artifact_compare_contract.py services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py -q."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 58,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-QLIB-006",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T17:03:40Z",
+      "resolved_at": "2026-05-15T17:04:49Z"
+    },
+    {
+      "task_id": "MGMT-QLIB-006",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Ready for review: added Management/BFF artifact research_linkage projection for Qlib admission artifacts, plus MGMT-QLIB-006 evidence packet and contract tests. Task-owned files: services/control-plane/bff/read_store.py, services/control-plane/bff/test_mgmt_qlib_006_artifact_research_linkage.py, support/evidence/MGMT-QLIB-006/. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/control-plane/bff/read_store.py services/control-plane/bff/test_mgmt_qlib_006_artifact_research_linkage.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_mgmt_qlib_006_artifact_research_linkage.py -q -> 2 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_rw05_artifact_compare_contract.py services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py -q -> 9 passed. No registry writes, broker sessions, order routes, deployment, or live capital side effects.",
+      "status": "done",
+      "created_at": "2026-05-15T17:14:34Z",
+      "resolved_at": "2026-05-15T17:22:08Z"
+    },
+    {
+      "task_id": "MGMT-QLIB-006",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Review approved by Claude2: Management/BFF artifact research_linkage projection passes scoped review and independent verification. Owner Codex2 should complete closeout per task-closeout-finalization.",
+      "status": "done",
+      "created_at": "2026-05-15T17:22:08Z",
+      "resolved_at": "2026-05-15T17:31:59Z"
+    }
+  ],
+  "blockers": []
+}

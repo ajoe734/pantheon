@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "task_id": "ASK-001",
+  "archived_at": "2026-05-16T10:03:43Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASK-001",
+    "title": "/bff/agora/ask/sessions",
+    "summary_zh": null,
+    "phase": "Sprint 5 / EPIC-RESEARCH",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Finalized ASK-001 after Claude2 review approval. Implementation idempotency fix is in a24a9b49; task-scoped closeout artifact commit 38bcc763 records approval/evidence. Verification: py_compile BFF ask-session files OK; pytest services/control-plane/bff/test_ask_001_sessions_contract.py -q 22 passed; pytest services/control-plane/bff/test_bff_agora_extended_contract.py -q 8 passed. Implementation commit was mixed with ASK-003 due interleaved BFF hunks; closeout artifacts are isolated.",
+    "last_update": "2026-05-16T10:03:43Z",
+    "review_notes_zh": [
+      "審查通過：idempotency 修復正確，_ASK_SESSIONS_IDEMPOTENCY 改為 _AGORA_CORE_BFF_IDEMPOTENCY 別名，create/close 兩個路由均讀寫同一 dict，checker 與寫入一致。22 個合約測試全部通過，含 generated session ID replay、create/close 衝突等 regression。一個失敗測試為無關 ASK-003 dirty hunk，非 ASK-001 範疇。scope boundary 乾淨，無 broker 路由或 capital binding。"
+    ],
+    "review_file": "support/reviews/ASK-001-review-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T10:03:43Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "38bcc76367edaa787a7213c4755a85debcf94067",
+      "commit_subject": "ASK-001 closeout review artifacts",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "ASK-001",
+        "Reviewer": "Claude2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 65,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 9,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASK-001",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "ASK-001 implementation complete. Added POST /bff/agora/ask/sessions (create), GET /bff/agora/ask/sessions/{sessionId} (detail/SSE resync), POST /bff/agora/ask/sessions/{sessionId}/close (close with outcome). close_agora_session() added to ReadSurfaceStore. All routes enforce Idempotency-Key; close publishes ask.session.completed SSE event. 19 contract tests pass; agora extended + SSE substrate regression clean. Commit: 4f3bc011. Evidence: support/evidence/ASK-001/README.md.",
+      "status": "done",
+      "created_at": "2026-05-16T08:42:24Z",
+      "resolved_at": "2026-05-16T08:52:09Z"
+    },
+    {
+      "task_id": "ASK-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-05-16T08:52:09Z",
+      "resolved_at": "2026-05-16T09:05:29Z"
+    },
+    {
+      "task_id": "ASK-001",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Changes requested: ASK-001 POST idempotency records are written to _ASK_SESSIONS_IDEMPOTENCY but checked via _AGORA_CORE_BFF_IDEMPOTENCY, so create/close retries and conflicts are not enforced. See support/reviews/ASK-001-review-codex.md.",
+      "status": "done",
+      "created_at": "2026-05-16T09:05:29Z",
+      "resolved_at": "2026-05-16T09:05:29Z"
+    },
+    {
+      "task_id": "ASK-001",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T09:10:10Z",
+      "resolved_at": "2026-05-16T09:10:11Z"
+    },
+    {
+      "task_id": "ASK-001",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "ASK-001 reviewer-change fix ready. Fixed create/close idempotency cache mismatch by writing ASK session replay records to _AGORA_CORE_BFF_IDEMPOTENCY, kept _ASK_SESSIONS_IDEMPOTENCY as shared-cache alias, added regressions for generated session replay plus create/close conflict. Evidence updated: support/evidence/ASK-001/README.md. Verification: py_compile main.py + test_ask_001_sessions_contract.py OK; pytest services/control-plane/bff/test_ask_001_sessions_contract.py -q -> 22 passed; pytest services/control-plane/bff/test_bff_agora_extended_contract.py -q -> 8 passed; combined agora extended + SSE substrate -> 21 passed, 1 failed due unrelated dirty ASK-003 resync header adding /bff/agora/committee/sessions/{id}. No isolated commit created because services/control-plane/bff/main.py also contains unrelated ASK-003 dirty hunks in the same worktree.",
+      "status": "done",
+      "created_at": "2026-05-16T09:46:11Z",
+      "resolved_at": "2026-05-16T09:53:44Z"
+    },
+    {
+      "task_id": "ASK-001",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved: idempotency cache mismatch fixed, 22 tests pass, scope boundary clean. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-16T09:53:44Z",
+      "resolved_at": "2026-05-16T10:03:44Z"
+    }
+  ],
+  "blockers": []
+}

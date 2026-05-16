@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "task_id": "EXP-005",
+  "archived_at": "2026-05-16T09:16:41Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXP-005",
+    "title": "ExperimentRun -> Artifact registry writeback",
+    "summary_zh": null,
+    "phase": "Sprint 5 / EPIC-RESEARCH",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/research/experiments/registry_writeback.py",
+      "services/research/experiments/test_registry_writeback.py",
+      "services/research/experiments/__init__.py",
+      "services/research/experiments/README.md",
+      "services/research/main.py",
+      "services/research/tests/test_research_orchestrator_http_service.py",
+      "support/evidence/EXP-005/README.md"
+    ],
+    "acceptance": [
+      "Completed ExperimentRun artifacts can be written to the artifact registry only as draft or candidate entries with deployment_stage=none",
+      "Registry entries record producer_run_id plus lineage to ExperimentRun StrategySpec and dataset refs",
+      "Non-completed runs approved-state writes and non-none deployment-stage requests are rejected",
+      "Focused ExperimentRun research orchestrator and registry tests pass"
+    ],
+    "next": "EXP-005 finalized after Claude review approval. Task commit 9d78c4b1 adds controlled ExperimentRun artifact registry writeback with draft/candidate-only and deployment_stage=none guards, producer_run_id and run/StrategySpec/dataset lineage, HTTP idempotency, and evidence/review records. Closeout verification: py_compile registry_writeback/main; git diff --check targeted EXP-005 files; pytest registry_writeback + research HTTP service + registry service -q (56 passed).",
+    "last_update": "2026-05-16T09:16:41Z",
+    "review_notes_zh": [
+      "審查通過。完成狀態守衛正確攔截（run.status != completed → raise；HTTP 409）；artifact_state 限定 draft/candidate，approved 被 _artifact_state() 拒絕；deployment_stage 從 hints/artifact 雙重來源讀取，非 none 即 raise，metadata 中亦顯式寫入 deployment_stage=none；producer_run_id 直接設為 run.run_id；lineage 完整：source_run_ids、source_strategy_spec_id（含 fallback）、source_dataset_refs 均正確組裝。HTTP 層 idempotency_key 覆蓋重複請求。56 tests pass（test_registry_writeback + HTTP service + registry suite），無迴歸。三項非阻塞觀察：底層 write_ 函式對重複 registry_id 拋出例外（非返回），可接受因 HTTP 層已攔截；metadata override 可注入 deployment_stage key 但僅影響 metadata dict，不影響 registry entry 實際欄位；缺少直接測試 artifact 層 deployment_stage 讀取路徑，但守衛邏輯正確。"
+    ],
+    "review_file": "support/evidence/EXP-005/review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T09:16:41Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "9d78c4b147a581a69811d497bdceb36d2fa930a8",
+      "commit_subject": "EXP-005 add experiment registry writeback",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "EXP-005",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 58,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXP-005",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T07:40:30Z",
+      "resolved_at": "2026-05-16T07:43:38Z"
+    },
+    {
+      "task_id": "EXP-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: implemented controlled ExperimentRun artifact registry writeback for completed runs only. Writeback creates draft/candidate registry entries with deployment_stage=none, producer_run_id, run/StrategySpec/dataset lineage, idempotent HTTP path, and rejection coverage. Verification: py_compile registry_writeback/main; pytest services/research/experiments/test_models.py services/research/experiments/test_registry_writeback.py services/research/tests -q (27 passed); pytest services/registry/test_service.py -q (44 passed).",
+      "status": "done",
+      "created_at": "2026-05-16T08:55:15Z",
+      "resolved_at": "2026-05-16T08:57:02Z"
+    },
+    {
+      "task_id": "EXP-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: implemented controlled ExperimentRun artifact registry writeback for completed runs only. Writeback creates draft/candidate registry entries with deployment_stage=none, producer_run_id, run/StrategySpec/dataset lineage, idempotent HTTP path, and rejection coverage. Verification: py_compile registry_writeback/main; pytest services/research/experiments/test_models.py services/research/experiments/test_registry_writeback.py services/research/tests -q (27 passed); pytest services/registry/test_service.py -q (44 passed).",
+      "status": "done",
+      "created_at": "2026-05-16T08:57:02Z",
+      "resolved_at": "2026-05-16T09:04:15Z"
+    },
+    {
+      "task_id": "EXP-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "EXP-005 registry writeback review passed. Safety invariants enforced at library and HTTP layers, lineage complete, idempotency covered, 56 tests pass. Returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-16T09:04:15Z",
+      "resolved_at": "2026-05-16T09:16:46Z"
+    }
+  ],
+  "blockers": []
+}

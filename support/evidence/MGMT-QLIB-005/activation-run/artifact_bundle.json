@@ -1,0 +1,138 @@
+{
+  "artifact_family": "qlib_alpha",
+  "created_at": "2026-05-15T17:14:25Z",
+  "created_by": "P2-QLIB-PROD-DATA-ACTIVATION-001",
+  "dataset_summary": {
+    "data_frequency": "daily",
+    "dataset_id": "dataset:tw-equity-ohlcv-top50-2024-daily",
+    "feature_names": [
+      "momentum_1d",
+      "momentum_2d",
+      "volume_change_1d",
+      "volatility_1d"
+    ],
+    "history_end": "2026-01-20",
+    "history_start": "2024-01-02",
+    "history_years": 2.0507,
+    "instruments": [
+      "TWSE_0000",
+      "TWSE_0001",
+      "TWSE_0002",
+      "TWSE_0003",
+      "TWSE_0004",
+      "TWSE_0005",
+      "TWSE_0006",
+      "TWSE_0007",
+      "TWSE_0008",
+      "TWSE_0009",
+      "TWSE_0010",
+      "TWSE_0011",
+      "TWSE_0012",
+      "TWSE_0013",
+      "TWSE_0014",
+      "TWSE_0015",
+      "TWSE_0016",
+      "TWSE_0017",
+      "TWSE_0018",
+      "TWSE_0019",
+      "TWSE_0020",
+      "TWSE_0021",
+      "TWSE_0022",
+      "TWSE_0023",
+      "TWSE_0024",
+      "TWSE_0025",
+      "TWSE_0026",
+      "TWSE_0027",
+      "TWSE_0028",
+      "TWSE_0029",
+      "TWSE_0030",
+      "TWSE_0031",
+      "TWSE_0032",
+      "TWSE_0033",
+      "TWSE_0034",
+      "TWSE_0035",
+      "TWSE_0036",
+      "TWSE_0037",
+      "TWSE_0038",
+      "TWSE_0039",
+      "TWSE_0040",
+      "TWSE_0041",
+      "TWSE_0042",
+      "TWSE_0043",
+      "TWSE_0044",
+      "TWSE_0045",
+      "TWSE_0046",
+      "TWSE_0047",
+      "TWSE_0048",
+      "TWSE_0049"
+    ],
+    "min_instrument_history_years": 2.0507,
+    "min_periods_per_instrument": 536,
+    "num_features": 4,
+    "num_instruments": 50,
+    "num_periods": 534,
+    "num_samples": 26700,
+    "source_dataset_refs": [
+      "dataset:tw-equity-ohlcv-top50-2024-daily"
+    ],
+    "source_strategy_spec_id": "qlib-tw-cross-sectional-alpha-spec-v1",
+    "strategy_id": "tw-cross-sectional-equity-alpha"
+  },
+  "evaluation_summary": {
+    "ic": 0.0,
+    "mean_label": -2.102e-05,
+    "mse": 0.000133346,
+    "num_features": 4,
+    "num_instruments": 50,
+    "num_samples": 26700
+  },
+  "framework": "qlib",
+  "framework_version": "0.9.6",
+  "governance": {
+    "direct_live_influence": false,
+    "lean_consumption": "scoring_only_not_direct_action",
+    "notes": [
+      "Stub backend is intended for governed smoke tests and packaging validation."
+    ],
+    "output_type": "alpha_score",
+    "required_ohlcv_fields": [
+      "open",
+      "high",
+      "low",
+      "close",
+      "volume"
+    ]
+  },
+  "model": {
+    "feature_names": [
+      "momentum_1d",
+      "momentum_2d",
+      "volume_change_1d",
+      "volatility_1d"
+    ],
+    "grand_mean_label": -2.1023440866608518e-05,
+    "n_estimators": 10,
+    "num_leaves": 7,
+    "predictor": "stub_mean"
+  },
+  "model_family": "lightgbm",
+  "registry_hints": {
+    "artifact_state": "draft",
+    "artifact_type": "model_artifact",
+    "deployment_stage": "none",
+    "model_family": "lightgbm",
+    "source_dataset_refs": [
+      "dataset:tw-equity-ohlcv-top50-2024-daily"
+    ]
+  },
+  "schema_version": "1.0",
+  "training_config": {
+    "learning_rate": 0.05,
+    "max_depth": 3,
+    "n_estimators": 10,
+    "num_leaves": 7,
+    "requested_by": "P2-QLIB-PROD-DATA-ACTIVATION-001",
+    "seed": 42,
+    "version": "1.0.0"
+  }
+}

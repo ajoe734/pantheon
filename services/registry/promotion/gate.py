@@ -34,6 +34,21 @@ class ExecutionProjection:
     metadata: dict[str, Any]
 
 
+_LIFECYCLE_TO_ARTIFACT_STATE: dict[str, str] = {
+    "candidate": "candidate",
+    "paper": "approved",
+    "live": "approved",
+    "retired": "retired",
+}
+
+_LIFECYCLE_TO_DEPLOYMENT_STAGE: dict[str, str] = {
+    "candidate": "none",
+    "paper": "paper",
+    "live": "live",
+    "retired": "frozen",
+}
+
+
 class PromotionGate:
     def __init__(self, logger: logging.Logger | None = None):
         self.log = logger or logging.getLogger(__name__)
@@ -152,11 +167,15 @@ class PromotionGate:
         if not isinstance(lineage, dict):
             raise PromotionError("Execution projection requires a lineage object.")
 
+        artifact_state = _LIFECYCLE_TO_ARTIFACT_STATE.get(state, state)
+        deployment_stage = _LIFECYCLE_TO_DEPLOYMENT_STAGE.get(state, "none")
         metadata = {
             "registry_id": normalized["registry_id"],
             "strategy_id": normalized["strategy_id"],
             "version": normalized["version"],
             "artifact_type": normalized["artifact_type"],
+            "artifact_state": artifact_state,
+            "deployment_stage": deployment_stage,
             "promotion_state": state,
             "checksum": normalized["checksum"],
             "lineage": lineage,

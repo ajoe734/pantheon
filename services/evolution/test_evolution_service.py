@@ -23,6 +23,7 @@ import sys
 import tempfile
 import uuid
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -805,29 +806,39 @@ def test_execute_invalid_freeze_mode_returns_400():
 # Evolution → incident store back-link
 # ---------------------------------------------------------------------------
 
-def _seed_incident_and_postmortem(postmortem_id: str) -> None:
+def _seed_incident_and_postmortem(
+    postmortem_id: str,
+    *,
+    incident_id: str | None = None,
+    incident_overrides: dict[str, Any] | None = None,
+    postmortem_overrides: dict[str, Any] | None = None,
+) -> str:
     """Seed a minimal IncidentCase + Postmortem into the incident store."""
     import datetime
     now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    inc_id = f"inc-seed-{postmortem_id}"
+    inc_id = incident_id or f"inc-seed-{postmortem_id}"
+    incident_payload = {
+        "incident_id": inc_id,
+        "title": "Seed incident for evolution link test",
+        "status": "open",
+        "severity": "medium",
+        "created_at": now,
+        "binding_id": "bind-seed-001",
+        "deployment_stage": "paper",
+        "deployment_plan_id": "plan-seed-001",
+        "capital_pool_id": "pool-seed-001",
+        "persona_capital_binding_id": "pcb-seed-001",
+        "artifact_id": "artifact-seed-001",
+        "artifact_version": "v1",
+        "runtime_id": "runtime-seed-001",
+        "trace_id": "trace-seed-001",
+    }
+    incident_payload.update(incident_overrides or {})
     inc = IncidentCase(
-        incident_id=inc_id,
-        title="Seed incident for evolution link test",
-        status="open",
-        severity="medium",
-        created_at=now,
-        binding_id="bind-seed-001",
-        deployment_stage="paper",
-        deployment_plan_id="plan-seed-001",
-        capital_pool_id="pool-seed-001",
-        persona_capital_binding_id="pcb-seed-001",
-        artifact_id="artifact-seed-001",
-        artifact_version="v1",
-        runtime_id="runtime-seed-001",
-        trace_id="trace-seed-001",
+        **incident_payload,
     )
     evo_main.incident_store.create_incident(inc)
-    pm = Postmortem(
+    postmortem_payload = dict(
         postmortem_id=postmortem_id,
         title="Seed postmortem for evolution link test",
         status="draft",
@@ -844,7 +855,10 @@ def _seed_incident_and_postmortem(postmortem_id: str) -> None:
         trace_id=inc.trace_id,
         root_cause="Seed root cause for test.",
     )
+    postmortem_payload.update(postmortem_overrides or {})
+    pm = Postmortem(**postmortem_payload)
     evo_main.incident_store.create_postmortem(pm)
+    return inc_id
 
 
 def test_propose_with_linked_postmortem_populates_back_link():
@@ -909,6 +923,116 @@ def test_propose_with_unknown_postmortem_returns_422():
     r = client.post("/api/evolution/proposals", json=body)
     assert r.status_code == 422
     assert "postmortem" in r.json()["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
+# MGMT-EVO-002: proposal creation from incident / postmortem
+# ---------------------------------------------------------------------------
+
+def test_propose_from_incident_postmortem_derives_review_gated_freeze():
+    """
+    MGMT-EVO-002: critical IncidentCase + Postmortem evidence creates only a
+    proposed EvolutionDecision with incident/postmortem links and no execution.
+    """
+    pm_id = f"pm-derive-{uuid.uuid4().hex[:8]}"
+    inc_id = _seed_incident_and_postmortem(
+        pm_id,
+        incident_overrides={
+            "severity": "critical",
+            "deployment_stage": "live",
+            "artifact_id": "artifact-live-critical",
+            "artifact_version": "v9",
+            "runtime_id": "runtime-live-critical",
+            "trace_id": "trace-live-critical",
+        },
+        postmortem_overrides={
+            "root_cause": "Live runtime accepted a stale artifact binding.",
+        },
+    )
+
+    did = uid()
+    r = client.post("/api/evolution/proposals/from-incident", json={
+        "decision_id": did,
+        "incident_id": inc_id,
+        "postmortem_id": pm_id,
+        "has_active_runtime": True,
+    })
+
+    assert r.status_code == 201, r.text
+    d = r.json()
+    assert d["decision_id"] == did
+    assert d["decision_state"] == "proposed"
+    assert d["action_type"] == "freeze"
+    assert d["risk_level"] == "high"
+    assert d["target_type"] == "candidate_artifact"
+    assert d["target_id"] == "artifact-live-critical"
+    assert d["target_version"] == "v9"
+    assert d["target_stage"] == "live"
+    assert d["linked_incident_id"] == inc_id
+    assert d["linked_postmortem_id"] == pm_id
+    assert d["capital_pool_id"] == "pool-seed-001"
+    assert d["review_chain"] == []
+    assert d["execution_result"] is None
+    assert d["cooldown_ends_at"] is None
+    assert {ref["ref_id"] for ref in d["evidence_refs"]} == {inc_id, pm_id}
+    assert d["threshold_snapshots"][0]["metric_name"] == "severity1_incident_count"
+    assert d["metadata"]["task_id"] == "MGMT-EVO-002"
+    assert d["metadata"]["source"] == "incident_postmortem"
+    assert d["metadata"]["source_trace_id"] == "trace-live-critical"
+    assert d["metadata"]["proposal_only"] is True
+    assert d["metadata"]["runtime_binding_mutation_allowed"] is False
+    assert d["metadata"]["broker_order_allowed"] is False
+    assert d["metadata"]["capital_binding_mutation_allowed"] is False
+
+    pm = evo_main.incident_store.get_postmortem(pm_id)
+    assert pm is not None
+    assert pm.linked_evolution_decision_id == did
+
+
+def test_propose_from_incident_uses_existing_postmortem_when_not_explicit():
+    """When no postmortem_id is supplied, the incident's postmortem is linked if present."""
+    pm_id = f"pm-auto-{uuid.uuid4().hex[:8]}"
+    inc_id = _seed_incident_and_postmortem(pm_id)
+
+    r = client.post("/api/evolution/proposals/from-incident", json={
+        "decision_id": uid(),
+        "incident_id": inc_id,
+        "action_type": "revalidate",
+    })
+
+    assert r.status_code == 201, r.text
+    d = r.json()
+    assert d["action_type"] == "revalidate"
+    assert d["risk_level"] == "low"
+    assert d["linked_incident_id"] == inc_id
+    assert d["linked_postmortem_id"] == pm_id
+    assert d["metadata"]["proposal_only"] is True
+
+
+def test_propose_from_incident_missing_incident_returns_404():
+    r = client.post("/api/evolution/proposals/from-incident", json={
+        "decision_id": uid(),
+        "incident_id": "inc-does-not-exist",
+    })
+
+    assert r.status_code == 404
+    assert "incidentcase" in r.json()["detail"].lower()
+
+
+def test_propose_from_incident_rejects_postmortem_for_different_incident():
+    pm_a = f"pm-mismatch-a-{uuid.uuid4().hex[:8]}"
+    pm_b = f"pm-mismatch-b-{uuid.uuid4().hex[:8]}"
+    inc_a = _seed_incident_and_postmortem(pm_a, incident_id=f"inc-a-{uuid.uuid4().hex[:8]}")
+    _seed_incident_and_postmortem(pm_b, incident_id=f"inc-b-{uuid.uuid4().hex[:8]}")
+
+    r = client.post("/api/evolution/proposals/from-incident", json={
+        "decision_id": uid(),
+        "incident_id": inc_a,
+        "postmortem_id": pm_b,
+    })
+
+    assert r.status_code == 422
+    assert "belongs to incident" in r.json()["detail"]
 
 
 # ---------------------------------------------------------------------------

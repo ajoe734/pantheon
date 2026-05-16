@@ -1,0 +1,450 @@
+{
+  "task_id": "MGMT-EVO-005",
+  "milestone_id": "MGMT-OODA-M6",
+  "epic": "EPIC-06 Evolution Follow-Through",
+  "packet_id": "mgmt-evo-005-rollback-freeze-followthrough",
+  "generated_at": "2026-05-15T17:55:00Z",
+  "environment": "local_replay",
+  "summary": {
+    "packet_passed": true,
+    "freeze_stage_followthrough_traced": true,
+    "runtime_rollback_followthrough_traced": true,
+    "runtime_manager_replay_passed": true,
+    "live_execution_performed": false,
+    "broker_session_opened": false,
+    "capital_binding_mutation_performed": false
+  },
+  "scenarios": [
+    {
+      "scenario_id": "freeze_stage_followthrough",
+      "description": "Approved live freeze emits a deployment-plane freeze_stage command.",
+      "parent_decision": {
+        "decision_id": "evo-mgmt-005-freeze-stage",
+        "target_type": "persona_capital_binding",
+        "target_id": "persona-capital-binding-live-mgmt-evo-005",
+        "target_version": "v1",
+        "action_type": "freeze",
+        "decision_state": "executed",
+        "risk_level": "high",
+        "created_at": "2026-05-15T17:55:00Z",
+        "created_by_role": "evolution_controller",
+        "created_by_id": "evolution-controller-mgmt-evo-005",
+        "rationale": "Severity-1 execution drift requires governed freeze follow-through. Rollback remains a companion runtime mitigation, not the freeze object itself.",
+        "approval_decision_id": "approval-mgmt-evo-005",
+        "evidence_refs": [
+          {
+            "ref_type": "manual_review_ticket",
+            "ref_id": "incident-mgmt-evo-005",
+            "storage_ref": {
+              "backend": "support/evidence",
+              "path": "support/evidence/MGMT-EVO-005/rollback-freeze-followthrough.json"
+            },
+            "note": "Synthetic local replay anchor for rollback/freeze follow-through."
+          }
+        ],
+        "threshold_snapshots": [
+          {
+            "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.5 and section 11.1",
+            "signal_type": "governance_incident",
+            "metric_name": "severity1_execution_drift",
+            "comparator": "gte",
+            "observed_value": 1,
+            "threshold_value": 1,
+            "window": "incident-followthrough",
+            "breached": true,
+            "note": "High-risk live freeze path requires governance committee approval."
+          }
+        ],
+        "review_chain": [
+          {
+            "step_type": "reviewed",
+            "actor_role": "governance_committee",
+            "actor_id": "committee-mgmt-evo-005",
+            "timestamp": "2026-05-15T17:55:00Z",
+            "note": "Reviewed high-risk freeze follow-through packet."
+          },
+          {
+            "step_type": "approved",
+            "actor_role": "governance_committee",
+            "actor_id": "committee-mgmt-evo-005",
+            "timestamp": "2026-05-15T17:55:00Z",
+            "note": "Approved local replay of freeze and rollback follow-through."
+          },
+          {
+            "step_type": "executed",
+            "actor_role": "evolution_controller",
+            "actor_id": "evolution-controller-mgmt-evo-005",
+            "timestamp": "2026-05-15T17:55:00Z",
+            "note": "freeze_live_active_runtime submitted to governance; 1 follow-through command(s) emitted."
+          }
+        ],
+        "linked_postmortem_id": "postmortem-mgmt-evo-005",
+        "linked_incident_id": "incident-mgmt-evo-005",
+        "capital_pool_id": "capital-pool-mgmt-evo-005",
+        "persona_id": "persona-quant-live-01",
+        "target_stage": "live",
+        "cooldown_started_at": "2026-05-15T17:55:00Z",
+        "cooldown_ends_at": "2026-05-29T17:55:00Z",
+        "observation_window_started_at": "2026-05-15T17:55:00Z",
+        "observation_window_ends_at": "2026-05-29T17:55:00Z",
+        "execution_result": {
+          "status": "submitted",
+          "plane": "governance",
+          "executed_at": "2026-05-15T17:55:00Z",
+          "execution_ref_id": "dispatch-evo-mgmt-005-freeze-stage",
+          "outcome_summary": "freeze_live_active_runtime submitted to governance; 1 follow-through command(s) emitted."
+        },
+        "superseded_by": null,
+        "supersedes_decision_id": null,
+        "metadata": {
+          "task_id": "MGMT-EVO-005",
+          "source": "local_followthrough_replay",
+          "live_mutation_allowed": false,
+          "broker_order_allowed": false,
+          "capital_binding_mutation_allowed": false
+        }
+      },
+      "outcome": {
+        "boundary": {
+          "boundary_key": "freeze_live_active_runtime",
+          "execution_plane": "governance",
+          "threshold_policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md \u00a77.5-\u00a77.6",
+          "reviewed_owner_roles": [
+            "governance_committee"
+          ],
+          "approved_owner_roles": [
+            "governance_committee"
+          ],
+          "default_cooldown_days": 14,
+          "default_observation_days": 14,
+          "followthrough": [
+            "deployment.freeze_stage",
+            "runtime.rollback"
+          ],
+          "notes": "Freeze is the governance decision. DeploymentPlan or RollbackCommand carries operational follow-through."
+        },
+        "primary_command": {
+          "command_id": "dispatch-evo-mgmt-005-freeze-stage",
+          "decision_id": "evo-mgmt-005-freeze-stage",
+          "execution_plane": "governance",
+          "action_type": "freeze",
+          "target_type": "persona_capital_binding",
+          "target_id": "persona-capital-binding-live-mgmt-evo-005",
+          "target_version": "v1",
+          "target_stage": "live",
+          "cooldown_ends_at": "2026-05-29T17:55:00Z",
+          "observation_window_ends_at": "2026-05-29T17:55:00Z",
+          "metadata": {
+            "approval_decision_id": "approval-mgmt-evo-005",
+            "boundary_key": "freeze_live_active_runtime",
+            "linked_incident_id": "incident-mgmt-evo-005",
+            "linked_postmortem_id": "postmortem-mgmt-evo-005",
+            "followthrough": [
+              "deployment.freeze_stage",
+              "runtime.rollback"
+            ]
+          }
+        },
+        "execution_result": {
+          "status": "submitted",
+          "plane": "governance",
+          "executed_at": "2026-05-15T17:55:00Z",
+          "execution_ref_id": "dispatch-evo-mgmt-005-freeze-stage",
+          "outcome_summary": "freeze_live_active_runtime submitted to governance; 1 follow-through command(s) emitted."
+        },
+        "followthrough_commands": [
+          {
+            "command_id": "dispatch-evo-mgmt-005-freeze-stage-freeze-stage",
+            "decision_id": "evo-mgmt-005-freeze-stage",
+            "execution_plane": "deployment",
+            "action_type": "freeze_stage",
+            "target_type": "persona_capital_binding",
+            "target_id": "persona-capital-binding-live-mgmt-evo-005",
+            "target_version": "v1",
+            "target_stage": "frozen",
+            "cooldown_ends_at": "2026-05-29T17:55:00Z",
+            "observation_window_ends_at": "2026-05-29T17:55:00Z",
+            "metadata": {
+              "current_stage": "live",
+              "target_stage": "frozen",
+              "runtime_action": "freeze_binding",
+              "parent_decision_id": "evo-mgmt-005-freeze-stage"
+            }
+          }
+        ]
+      },
+      "assertions": {
+        "decision_executed": true,
+        "boundary_is_live_active_runtime": true,
+        "deployment_freeze_stage_command_emitted": true,
+        "rollback_command_not_emitted": true
+      },
+      "evidence": {
+        "boundary_key": "freeze_live_active_runtime",
+        "followthrough_action_types": [
+          "freeze_stage"
+        ]
+      }
+    },
+    {
+      "scenario_id": "runtime_rollback_followthrough",
+      "description": "Approved live freeze emits a runtime rollback companion command.",
+      "parent_decision": {
+        "decision_id": "evo-mgmt-005-runtime-rollback",
+        "target_type": "persona_capital_binding",
+        "target_id": "persona-capital-binding-live-mgmt-evo-005",
+        "target_version": "v1",
+        "action_type": "freeze",
+        "decision_state": "executed",
+        "risk_level": "high",
+        "created_at": "2026-05-15T17:55:00Z",
+        "created_by_role": "evolution_controller",
+        "created_by_id": "evolution-controller-mgmt-evo-005",
+        "rationale": "Severity-1 execution drift requires governed freeze follow-through. Rollback remains a companion runtime mitigation, not the freeze object itself.",
+        "approval_decision_id": "approval-mgmt-evo-005",
+        "evidence_refs": [
+          {
+            "ref_type": "manual_review_ticket",
+            "ref_id": "incident-mgmt-evo-005",
+            "storage_ref": {
+              "backend": "support/evidence",
+              "path": "support/evidence/MGMT-EVO-005/rollback-freeze-followthrough.json"
+            },
+            "note": "Synthetic local replay anchor for rollback/freeze follow-through."
+          }
+        ],
+        "threshold_snapshots": [
+          {
+            "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.5 and section 11.1",
+            "signal_type": "governance_incident",
+            "metric_name": "severity1_execution_drift",
+            "comparator": "gte",
+            "observed_value": 1,
+            "threshold_value": 1,
+            "window": "incident-followthrough",
+            "breached": true,
+            "note": "High-risk live freeze path requires governance committee approval."
+          }
+        ],
+        "review_chain": [
+          {
+            "step_type": "reviewed",
+            "actor_role": "governance_committee",
+            "actor_id": "committee-mgmt-evo-005",
+            "timestamp": "2026-05-15T17:55:00Z",
+            "note": "Reviewed high-risk freeze follow-through packet."
+          },
+          {
+            "step_type": "approved",
+            "actor_role": "governance_committee",
+            "actor_id": "committee-mgmt-evo-005",
+            "timestamp": "2026-05-15T17:55:00Z",
+            "note": "Approved local replay of freeze and rollback follow-through."
+          },
+          {
+            "step_type": "executed",
+            "actor_role": "evolution_controller",
+            "actor_id": "evolution-controller-mgmt-evo-005",
+            "timestamp": "2026-05-15T17:55:00Z",
+            "note": "freeze_live_active_runtime submitted to governance; rollback companion emitted (pause_then_replace)."
+          }
+        ],
+        "linked_postmortem_id": "postmortem-mgmt-evo-005",
+        "linked_incident_id": "incident-mgmt-evo-005",
+        "capital_pool_id": "capital-pool-mgmt-evo-005",
+        "persona_id": "persona-quant-live-01",
+        "target_stage": "live",
+        "cooldown_started_at": "2026-05-15T17:55:00Z",
+        "cooldown_ends_at": "2026-05-29T17:55:00Z",
+        "observation_window_started_at": "2026-05-15T17:55:00Z",
+        "observation_window_ends_at": "2026-05-29T17:55:00Z",
+        "execution_result": {
+          "status": "submitted",
+          "plane": "governance",
+          "executed_at": "2026-05-15T17:55:00Z",
+          "execution_ref_id": "dispatch-evo-mgmt-005-runtime-rollback",
+          "outcome_summary": "freeze_live_active_runtime submitted to governance; rollback companion emitted (pause_then_replace)."
+        },
+        "superseded_by": null,
+        "supersedes_decision_id": null,
+        "metadata": {
+          "task_id": "MGMT-EVO-005",
+          "source": "local_followthrough_replay",
+          "live_mutation_allowed": false,
+          "broker_order_allowed": false,
+          "capital_binding_mutation_allowed": false
+        }
+      },
+      "outcome": {
+        "boundary": {
+          "boundary_key": "freeze_live_active_runtime",
+          "execution_plane": "governance",
+          "threshold_policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md \u00a77.5-\u00a77.6",
+          "reviewed_owner_roles": [
+            "governance_committee"
+          ],
+          "approved_owner_roles": [
+            "governance_committee"
+          ],
+          "default_cooldown_days": 14,
+          "default_observation_days": 14,
+          "followthrough": [
+            "deployment.freeze_stage",
+            "runtime.rollback"
+          ],
+          "notes": "Freeze is the governance decision. DeploymentPlan or RollbackCommand carries operational follow-through."
+        },
+        "primary_command": {
+          "command_id": "dispatch-evo-mgmt-005-runtime-rollback",
+          "decision_id": "evo-mgmt-005-runtime-rollback",
+          "execution_plane": "governance",
+          "action_type": "freeze",
+          "target_type": "persona_capital_binding",
+          "target_id": "persona-capital-binding-live-mgmt-evo-005",
+          "target_version": "v1",
+          "target_stage": "live",
+          "cooldown_ends_at": "2026-05-29T17:55:00Z",
+          "observation_window_ends_at": "2026-05-29T17:55:00Z",
+          "metadata": {
+            "approval_decision_id": "approval-mgmt-evo-005",
+            "boundary_key": "freeze_live_active_runtime",
+            "linked_incident_id": "incident-mgmt-evo-005",
+            "linked_postmortem_id": "postmortem-mgmt-evo-005",
+            "followthrough": [
+              "deployment.freeze_stage",
+              "runtime.rollback"
+            ]
+          }
+        },
+        "execution_result": {
+          "status": "submitted",
+          "plane": "governance",
+          "executed_at": "2026-05-15T17:55:00Z",
+          "execution_ref_id": "dispatch-evo-mgmt-005-runtime-rollback",
+          "outcome_summary": "freeze_live_active_runtime submitted to governance; rollback companion emitted (pause_then_replace)."
+        },
+        "followthrough_commands": [],
+        "rollback_command": {
+          "command_id": "rollback-evo-mgmt-005-runtime-rollback",
+          "decision_id": "evo-mgmt-005-runtime-rollback",
+          "rollback_action_type": "pause_then_replace",
+          "target_binding_id": "runtime-binding-live-mgmt-evo-005",
+          "capital_pool_id": "capital-pool-mgmt-evo-005",
+          "persona_id": "persona-quant-live-01",
+          "fallback_artifact_id": "artifact-paper-safe-fallback-001",
+          "fallback_artifact_version": "1.0.0",
+          "reason": "Approved freeze requires runtime mitigation on an active deployment.",
+          "metadata": {
+            "parent_decision_id": "evo-mgmt-005-runtime-rollback",
+            "target_stage": "live"
+          }
+        }
+      },
+      "assertions": {
+        "decision_executed": true,
+        "boundary_is_live_active_runtime": true,
+        "rollback_command_emitted": true,
+        "rollback_action_type_pause_then_replace": true,
+        "rollback_target_binding_id_present": true
+      },
+      "evidence": {
+        "boundary_key": "freeze_live_active_runtime",
+        "rollback_action_type": "pause_then_replace",
+        "rollback_target_binding_id": "runtime-binding-live-mgmt-evo-005"
+      }
+    }
+  ],
+  "runtime_manager_replay": {
+    "mode": "in_memory_runtime_manager_replay",
+    "freeze_result": {
+      "evolution_decision_id": "evo-mgmt-005-freeze-stage",
+      "deployment_plan_id": "deployment-plan-mgmt-evo-005-freeze",
+      "plan_runtime_action": "freeze_binding",
+      "binding": {
+        "binding_id": "rb-6bf660cfe1b9488cb37889fe9a1081ef",
+        "runtime_id": "runtime-mgmt-evo-005-freeze",
+        "capital_pool_id": "pool-mgmt-evo-005-freeze",
+        "artifact_id": "artifact-plan-mgmt-evo-005-freeze",
+        "artifact_version": "1.0.0",
+        "deployment_mode": "paper",
+        "effective_at": "2026-05-15T18:11:19Z",
+        "status": "paused",
+        "plan_id": "plan-mgmt-evo-005-freeze",
+        "persona_capital_binding_id": "pcb-mgmt-evo-005-freeze"
+      },
+      "actor_id": "risk-owner-mgmt-evo-005",
+      "executed_at": "2026-05-15T18:11:19Z",
+      "note": "Local in-memory replay only; no broker or capital side effects."
+    },
+    "rollback_result": {
+      "action_type": "pause_then_replace",
+      "old_binding": {
+        "binding_id": "rb-4165764476964bf1a8f6f2358034f066",
+        "runtime_id": "runtime-mgmt-evo-005-rollback-active",
+        "capital_pool_id": "pool-mgmt-evo-005-rollback",
+        "artifact_id": "artifact-plan-mgmt-evo-005-rollback-active",
+        "artifact_version": "1.0.0",
+        "deployment_mode": "paper",
+        "effective_at": "2026-05-15T18:11:19Z",
+        "status": "retired",
+        "plan_id": "plan-mgmt-evo-005-rollback-active",
+        "persona_capital_binding_id": "pcb-mgmt-evo-005-rollback-active",
+        "retired_at": "2026-05-15T18:11:19Z"
+      },
+      "new_binding": {
+        "binding_id": "rb-c49fc759b99e4909993f8119b5ea5c0f",
+        "runtime_id": "runtime-mgmt-evo-005-rollback-replacement",
+        "capital_pool_id": "pool-mgmt-evo-005-rollback",
+        "artifact_id": "artifact-paper-safe-fallback-001",
+        "artifact_version": "1.0.0",
+        "deployment_mode": "paper",
+        "effective_at": "2026-05-15T18:11:19Z",
+        "status": "active",
+        "plan_id": "plan-mgmt-evo-005-rollback-replacement",
+        "persona_capital_binding_id": "pcb-mgmt-evo-005-rollback-replacement",
+        "rollback_parent": "rb-4165764476964bf1a8f6f2358034f066",
+        "rollback_action_type": "pause_then_replace"
+      },
+      "cutover_at": "2026-05-15T18:11:19Z",
+      "position_lineage": {
+        "opened_by_artifact_id": "artifact-plan-mgmt-evo-005-rollback-active",
+        "prev_binding_id": "rb-4165764476964bf1a8f6f2358034f066",
+        "prev_artifact_id": "artifact-plan-mgmt-evo-005-rollback-active",
+        "new_binding_id": "rb-c49fc759b99e4909993f8119b5ea5c0f",
+        "new_artifact_id": "artifact-paper-safe-fallback-001",
+        "current_managed_by_binding_id": "rb-c49fc759b99e4909993f8119b5ea5c0f",
+        "cutover_at": "2026-05-15T18:11:19Z",
+        "note": "current_managed_by_binding_id updated to new binding after cutover. opened_by_artifact_id is immutable per ROLLBACK_AND_POSITION_SEMANTICS.md \u00a77."
+      }
+    },
+    "assertions": {
+      "freeze_binding_paused": true,
+      "rollback_old_binding_retired": true,
+      "rollback_new_binding_active": true,
+      "rollback_parent_linked": true,
+      "runtime_manager_only_binding_writer": true
+    }
+  },
+  "safety_assertions": {
+    "freeze_is_governance_quarantine": true,
+    "rollback_is_companion_runtime_mitigation": true,
+    "rollback_does_not_create_new_evolution_window": true,
+    "runtime_manager_remains_binding_write_authority": true,
+    "no_broker_order_performed": true,
+    "no_live_capital_side_effects": true,
+    "no_external_service_called": true
+  },
+  "policy_refs": [
+    "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.5",
+    "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 11.1",
+    "EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md section 5.2",
+    "ROLLBACK_AND_POSITION_SEMANTICS.md section 10",
+    "KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md section 3"
+  ],
+  "source_refs": [
+    "services/control-plane/governance/evolution_controller.py",
+    "services/runtime-manager/service.py",
+    "services/evolution/main.py",
+    "support/sidecars/DEPTH-EVO004/DEPTH-EVO004-SIDECAR-ACCEPTANCE.md"
+  ]
+}

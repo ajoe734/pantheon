@@ -1,0 +1,221 @@
+{
+  "generated_at": "2026-05-15T17:34:44Z",
+  "providers": {
+    "ibkr": {
+      "configured_provider": "IBKR",
+      "expected_provider": "IBKR",
+      "provider_ok": true,
+      "secret_name_refs": {
+        "api_key": "pantheon-prod-broker-api-key",
+        "api_secret": "pantheon-prod-broker-api-secret"
+      },
+      "order_payload": {
+        "contract": {
+          "symbol": "AAPL",
+          "exchange": "SMART",
+          "currency": "USD",
+          "secType": "STK"
+        },
+        "order": {
+          "action": "BUY",
+          "totalQuantity": 1,
+          "orderType": "MKT",
+          "tif": "DAY",
+          "outsideRth": false,
+          "account": "broker-subaccount-canary-us-equities"
+        },
+        "broker": "IBKR"
+      },
+      "market_data_request": {
+        "contract": {
+          "symbol": "AAPL",
+          "exchange": "SMART",
+          "currency": "USD",
+          "secType": "STK"
+        },
+        "genericTicks": "",
+        "snapshot": true,
+        "regulatorySnapshot": false,
+        "marketDataType": 1,
+        "readonly": false,
+        "provider": "IBKR market data",
+        "sourceClass": "broker_execution",
+        "boundaryRole": "execution_sync_fallback"
+      },
+      "normalized_quote": {
+        "symbol": "AAPL",
+        "exchange": "SMART",
+        "ts": "2026-04-24T17:00:00Z",
+        "last": 183.42,
+        "bid": 183.4,
+        "ask": 183.45,
+        "bid_size": null,
+        "ask_size": null,
+        "close": 183.1,
+        "volume": 10234,
+        "market_data_type": 1,
+        "provider": "IBKR market data",
+        "source_class": "broker_execution",
+        "boundary_role": "execution_sync_fallback"
+      }
+    },
+    "shioaji": {
+      "configured_provider": "Shioaji",
+      "expected_provider": "Shioaji",
+      "provider_ok": true,
+      "secret_name_refs": {
+        "api_key": "pantheon-prod-shioaji-api-key",
+        "secret_key": "pantheon-prod-shioaji-secret-key"
+      },
+      "order_payload": {
+        "symbol": "2330",
+        "side": "BUY",
+        "quantity": 1,
+        "order_type": "ROD",
+        "price_type": "LMT",
+        "odd_lot": false,
+        "day_trade_short": false,
+        "price": 950.0,
+        "simulation": true,
+        "account": "paper-tw-equities"
+      },
+      "quote_subscription": {
+        "exchange": "TSE",
+        "symbol": "2330",
+        "quote_type": "tick",
+        "version": "v1",
+        "intraday_odd": false,
+        "bind": true
+      },
+      "normalized_quote": {
+        "symbol": "2330",
+        "venue": "TSE",
+        "ts": "2026-04-24T01:30:00Z",
+        "close": 950.0,
+        "bid": 949.5,
+        "ask": 950.5,
+        "bid_volume": 25,
+        "ask_volume": 30,
+        "reference_price": 945.0,
+        "day_volume": 1200
+      }
+    },
+    "kraken": {
+      "configured_provider": "Kraken",
+      "expected_provider": "Kraken",
+      "provider_ok": true,
+      "secret_name_refs": {
+        "api_key": "pantheon-prod-kraken-api-key",
+        "api_secret": "pantheon-prod-kraken-api-secret"
+      },
+      "order_payload": {
+        "type": "buy",
+        "ordertype": "market",
+        "volume": "0.01",
+        "pair": "BTC/USD",
+        "venue": "KRAKEN",
+        "provider": "Kraken",
+        "validate": true
+      },
+      "market_data_request": {
+        "pair": "BTC/USD",
+        "interval": 1,
+        "venue": "KRAKEN",
+        "provider": "Kraken",
+        "sourceClass": "broker_execution",
+        "boundaryRole": "venue_canonical"
+      },
+      "normalized_quote": {
+        "symbol": "BTCUSD",
+        "venue": "KRAKEN",
+        "base_asset": "BTC",
+        "quote_asset": "USD",
+        "ts": "2026-04-24T17:00:00Z",
+        "last": 64320.4,
+        "close": 64320.4,
+        "bid": 64320.1,
+        "ask": 64321.0,
+        "vwap": null,
+        "volume": 128.55,
+        "funding_rate": null,
+        "provider": "Kraken",
+        "source_class": "broker_execution",
+        "boundary_role": "venue_canonical",
+        "transport": "rest",
+        "channel": "rest_snapshot",
+        "replay_source": "rest_snapshot",
+        "is_replayable": false
+      }
+    },
+    "tej": {
+      "configured_provider": "TEJ",
+      "expected_provider": "TEJ",
+      "provider_ok": true,
+      "secret_name_refs": {
+        "api_key": "pantheon-prod-tej-api-key"
+      },
+      "dataset_code": "TWN/APRCD1",
+      "normalized_dataset": {
+        "dataset_code": "TWN/APRCD1",
+        "symbol": "2330",
+        "as_of_date": "2026-04-24",
+        "values": {
+          "close": 950.0,
+          "pe_ratio": 18.2,
+          "foreign_holding_pct": 72.4
+        },
+        "source_metadata": {
+          "raw_record": {
+            "coid": "2330",
+            "mdate": "2026-04-24",
+            "close": 950.0,
+            "pe_ratio": 18.2,
+            "foreign_holding_pct": 72.4
+          }
+        },
+        "governance_metadata": {
+          "source_key": "tej",
+          "source_class": "research_grade",
+          "api_endpoint": "tej://dataset-smoke",
+          "retrieved_at": "2026-05-15T17:34:44.128690+00:00",
+          "governance_context": "Governed vendor research/reference source; does not replace official disclosure truth"
+        }
+      }
+    }
+  },
+  "provider_checklist": [
+    {
+      "name": "ibkr_provider_declared",
+      "status": "pass",
+      "detail": "US broker execution: EXECUTION_BROKER_PROVIDER=IBKR"
+    },
+    {
+      "name": "shioaji_provider_declared",
+      "status": "pass",
+      "detail": "Taiwan broker execution: TW_EXECUTION_PROVIDER=Shioaji"
+    },
+    {
+      "name": "kraken_provider_declared",
+      "status": "pass",
+      "detail": "Crypto venue execution: CRYPTO_EXECUTION_PROVIDER=Kraken"
+    },
+    {
+      "name": "tej_provider_declared",
+      "status": "pass",
+      "detail": "Taiwan research-grade vendor: TW_RESEARCH_PROVIDER=TEJ"
+    },
+    {
+      "name": "governed_provider_matrix_declared",
+      "status": "pass",
+      "detail": "governed provider refs declared for IBKR, Shioaji, Kraken, and TEJ"
+    },
+    {
+      "name": "governed_provider_secret_refs_present",
+      "status": "pass",
+      "detail": "tracked secret-name refs exist for IBKR, Shioaji, Kraken, and TEJ"
+    }
+  ],
+  "task_id": "APP-003-DATASOURCE-OPS-001",
+  "mode": "datasource_smoke",
+  "env_file": "env/canary-exec.env.example"
+}

@@ -1,0 +1,122 @@
+{
+  "assertions": {
+    "non_live_ooda_packets_reject_live_capital_side_effects": true,
+    "optional_safety_smokes_fail_closed_when_present": true,
+    "required_evidence_loaded": true,
+    "side_effect_flags_all_false": true
+  },
+  "rows": [
+    {
+      "error": "",
+      "evidence": {
+        "checked_fields": [
+          "capital_side_effects_allowed",
+          "live_capital_side_effects",
+          "live_execution_enabled",
+          "live_mutation_allowed",
+          "live_order_submitted",
+          "order_side_effects_allowed",
+          "production_broker_enabled",
+          "production_live_broker_session_opened",
+          "production_live_enabled",
+          "production_live_order_submitted",
+          "production_live_side_effects_allowed",
+          "real_capital_used",
+          "real_order_submitted"
+        ],
+        "missing_optional": [],
+        "missing_required": [],
+        "optional_loaded": 5,
+        "required_artifacts": 8,
+        "required_loaded": 8,
+        "violation_count": 0,
+        "violations": []
+      },
+      "row": "evidence-side-effect-flags-stay-false",
+      "status": "passed"
+    },
+    {
+      "error": "",
+      "evidence": {
+        "checked": [
+          {
+            "environment": "paper",
+            "live_capital_side_effects": false,
+            "location": "support/evidence/MGMT-OODA-M2-paper-loop.json:$.ooda_packet",
+            "packet_id": "ooda-paper-mgmt-loop-001",
+            "validation_errors": []
+          },
+          {
+            "environment": "paper",
+            "live_capital_side_effects": false,
+            "location": "support/evidence/MGMT-PAPER-007-complete-paper-ooda-packet.json:$.ooda_packet",
+            "packet_id": "ooda-paper-mgmt-loop-001",
+            "validation_errors": []
+          },
+          {
+            "environment": "paper",
+            "live_capital_side_effects": false,
+            "location": "support/evidence/MGMT-SYN-007/synthesis-proof.json:$.ooda_packet",
+            "packet_id": "ooda-mgmt-syn-007-persona-synthesis",
+            "validation_errors": []
+          }
+        ],
+        "failures": [],
+        "packet_count": 3
+      },
+      "row": "non-live-ooda-packets-validate-without-live-side-effects",
+      "status": "passed"
+    },
+    {
+      "error": "",
+      "evidence": {
+        "environment": "paper",
+        "jsonschema_available": true,
+        "live_capital_side_effects": true,
+        "model_errors": [
+          "act.live_capital_side_effects must be false in dev, paper, sandbox, and canary environments"
+        ],
+        "schema_error": "False was expected",
+        "schema_rejected": true
+      },
+      "row": "non-live-guard-rejects-forced-live-side-effect",
+      "status": "passed"
+    },
+    {
+      "error": "",
+      "evidence": {
+        "failures": [],
+        "findings": [
+          {
+            "artifact": "MGMT-SAFE-003",
+            "checked": true,
+            "passed": true
+          },
+          {
+            "artifact": "MGMT-SAFE-004",
+            "checked": true,
+            "passed": true
+          }
+        ]
+      },
+      "row": "optional-safety-smoke-summaries-remain-fail-closed",
+      "status": "passed"
+    }
+  ],
+  "status": "passed",
+  "summary": {
+    "capital_side_effects_allowed": false,
+    "live_capital_side_effects": false,
+    "ooda_packet_count": 3,
+    "optional_loaded": 5,
+    "order_side_effects_allowed": false,
+    "passed": 4,
+    "production_live_order_submitted": false,
+    "real_capital_used": false,
+    "required_loaded": 8,
+    "rows": 4,
+    "side_effect_violation_count": 0,
+    "smoke_passed": true
+  },
+  "task_id": "MGMT-SAFE-005"
+}

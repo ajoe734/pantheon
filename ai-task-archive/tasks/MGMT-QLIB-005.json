@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "MGMT-QLIB-005",
+  "archived_at": "2026-05-15T17:39:42Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-QLIB-005",
+    "title": "Qlib registry admission packet",
+    "summary_zh": null,
+    "phase": "Track E / EPIC-04 Qlib Admission",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Finalized MGMT-QLIB-005 after Claude review approval. Deliverables are durable in commit 84cbc2d7 due concurrent closeout commit; owner traceability closeout commit 5baf0d4c records the task-scoped finalization before done. Verification rerun: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/learning/qlib/test_registry_admission.py services/research/qlib/test_production_activation.py services/research/qlib/test_adapter.py -q -> 31 passed; py_compile registry_admission/test/qlib_adapter -> PASS; jq admission safety assertion -> true; git diff --check task paths -> clean. Scope remains review-only draft_to_candidate with registry_write_performed=false, deployment_stage=none, order_route=none.",
+    "last_update": "2026-05-15T17:39:42Z",
+    "review_notes_zh": [
+      "無阻塞發現：registry admission packet 正確限定 draft->candidate 僅審查範圍，所有安全邊界通過。",
+      "查核重點：registry_write_performed=false、deployment_stage=none、order_route=none、candidate_artifact.artifact_state=draft、safety_assertions 全 true。入口驗證 (_validate_inputs) + 輸出驗證 (validate_registry_admission_packet) 雙層防禦正確。",
+      "驗證命令：pytest 3 files 31 passed；py_compile PASS；jq admission safety assertion -> true。stub_lgbm backend 使用已在 README 明確聲明，非阻塞。"
+    ],
+    "review_file": "support/reviews/MGMT-QLIB-005-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T17:39:42Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "5baf0d4cc4895ac268a1fb4b36b7185135afb9dc",
+      "commit_subject": "MGMT-QLIB-005 closeout verification",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-QLIB-005",
+        "Reviewer": "Claude",
+        "Verification": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/learning/qlib/test_registry_admission.py services/research/qlib/test_production_activation.py services/research/qlib/test_adapter.py -q -> 31 passed; py_compile registry_admission/test/qlib_adapter -> PASS; jq admission safety assertion -> true; git diff --check task paths -> clean."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 59,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-QLIB-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T17:03:31Z",
+      "resolved_at": "2026-05-15T17:04:33Z"
+    },
+    {
+      "task_id": "MGMT-QLIB-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: added Qlib registry admission packet helper/test and support/evidence/MGMT-QLIB-005. Packet combines dataset manifest, StrategySpec packet, activation-run artifacts, model/eval refs, production dataset proof, and requests only draft -> candidate with deployment_stage=none, registry_write_performed=false, order_route=none. Also removed null optional approval fields from Qlib draft registry_entry so admission schema validation passes. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/learning/qlib/test_registry_admission.py services/research/qlib/test_production_activation.py services/research/qlib/test_adapter.py -q -> 31 passed; py_compile registry_admission/test/qlib_adapter -> passed; jq admission safety assertion -> true.",
+      "status": "done",
+      "created_at": "2026-05-15T17:15:54Z",
+      "resolved_at": "2026-05-15T17:21:48Z"
+    },
+    {
+      "task_id": "MGMT-QLIB-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved and returned to owner Codex for finalization. Admission packet passes all safety and scope checks. 31 tests pass.",
+      "status": "done",
+      "created_at": "2026-05-15T17:21:48Z",
+      "resolved_at": "2026-05-15T17:39:42Z"
+    }
+  ],
+  "blockers": []
+}

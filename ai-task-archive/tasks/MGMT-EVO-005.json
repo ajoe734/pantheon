@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "task_id": "MGMT-EVO-005",
+  "archived_at": "2026-05-15T18:14:08Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-EVO-005",
+    "title": "rollback / freeze follow-through",
+    "summary_zh": null,
+    "phase": "Track E / EPIC-06 Evolution Follow-Through",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Finalized after Claude approval. Task commit d3dd6269 adds rollback/freeze follow-through packet and tests. Verification: packet generation PASS; pytest 3 passed; py_compile PASS; git diff --cached --check clean. Scope stayed local-only with no broker session, no live execution, and no capital-binding mutation.",
+    "last_update": "2026-05-15T18:14:08Z",
+    "review_notes_zh": [
+      "審查通過：freeze/rollback follow-through 路徑分離清晰，freeze_stage 與 pause_then_replace rollback companion 各自正確走不同 follow-through 分支。RuntimeManagerService in-memory replay 全部 assertions 為 true。安全斷言完整，無 broker session、無 live execution、無 capital binding mutation。3 tests passed，py_compile PASS，evidence JSON 一致。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T18:14:08Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "d3dd6269d0bef215cfa69f24f8ec6f73e87814c6",
+      "commit_subject": "MGMT-EVO-005 rollback freeze follow-through evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-EVO-005",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 39,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-EVO-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T17:41:08Z",
+      "resolved_at": "2026-05-15T17:42:38Z"
+    },
+    {
+      "task_id": "MGMT-EVO-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: added local rollback/freeze follow-through evidence packet for MGMT-EVO-005. Task-owned files: scripts/run_evolution_followthrough_packet.py, scripts/test_run_evolution_followthrough_packet.py, support/evidence/MGMT-EVO-005/README.md, support/evidence/MGMT-EVO-005/rollback-freeze-followthrough.json. The packet traces approved high-risk freeze to deployment freeze_stage and runtime pause_then_replace rollback companion, then replays RuntimeManagerService.evolution_freeze() and rollback() against in-memory stores only. Safety assertions: no broker session, no live execution, no capital-binding mutation, runtime-manager remains binding writer. Verification: PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_evolution_followthrough_packet.py --json-out support/evidence/MGMT-EVO-005/rollback-freeze-followthrough.json -> PASS; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest scripts/test_run_evolution_followthrough_packet.py -q -> 3 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/run_evolution_followthrough_packet.py scripts/test_run_evolution_followthrough_packet.py -> PASS; git diff --check task files -> clean. Worktree has unrelated dirty files from other tasks; review only listed task-owned files.",
+      "status": "done",
+      "created_at": "2026-05-15T17:51:25Z",
+      "resolved_at": "2026-05-15T17:58:09Z"
+    },
+    {
+      "task_id": "MGMT-EVO-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: rollback/freeze follow-through packet is correct and complete. Freeze and rollback companion paths are cleanly separated, RuntimeManagerService in-memory replay passes all assertions, safety assertions complete. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-15T17:58:09Z",
+      "resolved_at": "2026-05-15T18:14:08Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "task_id": "IMT-003",
+  "archived_at": "2026-05-16T09:40:02Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "IMT-003",
+    "title": "imitation dataset builder skeleton",
+    "summary_zh": null,
+    "phase": "Sprint 5 / EPIC-RESEARCH",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Closeout complete. Implementation committed fa9584e3, evidence 169418f8, review artifact 602a2d09. py_compile OK; pytest 24 passed; smoke_test all passed. Governance constants consistent with learning adapter. Review file added to closeout commit.",
+    "last_update": "2026-05-16T09:40:02Z",
+    "review_notes_zh": [
+      "審查通過。governance 常數與 services/learning/imitation/adapter.py 一致（ALLOWED_ACTOR_ROLES/ALLOWED_PROMOTION_STATES/ELIGIBLE_DECISIONS 完全相同）；_filter_reason 四軸過濾順序正確；decision alias approved/edited 正常；__init__.py 8 項 export 完整；24 unit tests + smoke test 全過。兩項非阻塞觀察：_DECISION_ALIASES 中 rejected→reject 無害（仍被 ELIGIBLE_DECISIONS 過濾）；require_strategy_id_match=True 預設安全。Review artifact: support/reviews/IMT-003-review-claude.md。"
+    ],
+    "review_file": "support/reviews/IMT-003-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T09:40:02Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "602a2d09acd8a58a77d2b4358dc8e165c10b6ece",
+      "commit_subject": "IMT-003: add review artifact for imitation dataset builder closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Verification": "py_compile OK; pytest 24 passed; smoke_test all passed.",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "IMT-003",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 61,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "IMT-003",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Copilot is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-16T01:27:42Z",
+      "resolved_at": "2026-05-16T01:28:00Z"
+    },
+    {
+      "task_id": "IMT-003",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "IMT-003 implementation complete. Imitation dataset builder skeleton in services/research/imitation/. Deliverables: dataset_builder.py (ImitationDatasetBuilder, DatasetBuildRequest, RawTrajectorySession, TrajectoryStep, DatasetBuildResult with actor_role/decision/promotion_state governance filters), __init__.py, smoke_test.py, test_dataset_builder.py. Verification: py_compile OK; pytest 24 passed; smoke_test all passed. Commit: fa9584e3. Evidence: support/evidence/IMT-003/README.md.",
+      "status": "done",
+      "created_at": "2026-05-16T09:04:56Z",
+      "resolved_at": "2026-05-16T09:27:20Z"
+    },
+    {
+      "task_id": "IMT-003",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Review approved. Governance constants consistent with learning adapter, all 24 tests pass, smoke test passes. Returned to Claude2 for finalization.",
+      "status": "done",
+      "created_at": "2026-05-16T09:27:20Z",
+      "resolved_at": "2026-05-16T09:40:06Z"
+    }
+  ],
+  "blockers": []
+}

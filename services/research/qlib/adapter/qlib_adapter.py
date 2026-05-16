@@ -793,9 +793,6 @@ def _build_registry_entry(
                 "source_strategy_spec_bound": bool(dataset.source_strategy_spec_id),
             },
         },
-        "approved_at": None,
-        "approver": None,
-        "rollback_target": None,
     }
 
 
