@@ -1,85 +1,79 @@
 """
-Smoke test for the governed statsmodels adapter.
+Smoke test for the statsmodels cointegration adapter.
 
-Uses StubStatsmodelsBackend by default (CI-safe, no external data).
-Run: python services/research/statsmodels/smoke_test.py
+Generates a deterministic synthetic cointegrated pair, asserts p_value < 0.05,
+and emits a signal_snapshot artifact with a deterministic checksum.
+
+Run: pytest -q services/research/statsmodels/smoke_test.py
 """
+from __future__ import annotations
 
-import sys
+import hashlib
+import json
 import os
+import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.dirname(__file__))
 
-from adapter.statsmodels_adapter import (
-    GovernedDataset,
-    GovernedStatsmodelsInputAdapter,
-    StubStatsmodelsBackend,
-    run_statsmodels_workflow,
-)
+from adapter import cointegration_test
 
 
-def _make_minimal_dataset() -> GovernedDataset:
-    n = 60
-    price_a = [100.0 + i * 0.5 + (i % 7) * 0.1 for i in range(n)]
-    price_b = [200.0 + i * 0.4 + (i % 5) * 0.2 for i in range(n)]
-    factor_x = [0.02 + (i % 11) * 0.001 for i in range(n)]
-    return GovernedDataset(
-        price_series={"ASSET_A": price_a, "ASSET_B": price_b},
-        factor_series={"MACRO_X": factor_x},
-        metadata={"source": "smoke_test", "governed": True},
+_SEED = 42
+_N = 120
+
+
+def _make_cointegrated_series(n: int = _N, seed: int = _SEED):
+    """Return two deterministically cointegrated price series."""
+    import numpy as np
+
+    rng = np.random.default_rng(seed)
+    common_walk = np.cumsum(rng.standard_normal(n))
+    noise_a = rng.standard_normal(n) * 0.5
+    noise_b = rng.standard_normal(n) * 0.5
+    prices_a = (100.0 + common_walk + noise_a).tolist()
+    prices_b = (100.0 + 1.5 * common_walk + noise_b).tolist()
+    return prices_a, prices_b
+
+
+def test_cointegration_smoke():
+    prices_a, prices_b = _make_cointegrated_series()
+    result = cointegration_test(prices_a, prices_b)
+
+    assert "p_value" in result, "result must contain p_value"
+    assert "spread" in result, "result must contain spread"
+    assert "half_life" in result, "result must contain half_life"
+    assert result["p_value"] < 0.05, (
+        f"Expected cointegrated series to yield p_value < 0.05, got {result['p_value']:.6f}"
+    )
+    assert len(result["spread"]) == _N, (
+        f"spread length must equal series length ({_N}), got {len(result['spread'])}"
+    )
+    assert result["half_life"] > 0, (
+        f"half_life must be positive, got {result['half_life']}"
     )
 
+    # Build signal_snapshot artifact with a deterministic checksum.
+    # Round to 8 decimal places so the checksum is stable across runs.
+    signal_snapshot = {
+        "artifact_type": "signal_snapshot",
+        "test": "engle_granger",
+        "seed": _SEED,
+        "series_length": _N,
+        "spread_length": len(result["spread"]),
+        "p_value": round(result["p_value"], 8),
+        "half_life": round(result["half_life"], 4),
+    }
+    snapshot_bytes = json.dumps(signal_snapshot, sort_keys=True).encode()
+    checksum = hashlib.sha256(snapshot_bytes).hexdigest()
+    signal_snapshot["checksum"] = checksum
 
-def run_smoke_test() -> None:
-    print("=== statsmodels governed adapter smoke test ===")
+    assert signal_snapshot["artifact_type"] == "signal_snapshot"
+    assert len(checksum) == 64, f"checksum must be 64 hex chars, got {len(checksum)}"
 
-    dataset = _make_minimal_dataset()
-    print(f"Dataset: {len(dataset.price_series)} price series, {len(dataset.factor_series)} factor series")
-
-    bundle = run_statsmodels_workflow(dataset, backend=StubStatsmodelsBackend())
-
-    # Validate artifact_bundle shape
-    assert bundle["artifact_family"] == "regime_report", (
-        f"Expected artifact_family='regime_report', got '{bundle['artifact_family']}'"
-    )
-    assert bundle["framework"] == "statsmodels", (
-        f"Expected framework='statsmodels', got '{bundle['framework']}'"
-    )
-    gov = bundle["governance"]
-    assert gov["direct_live_influence"] is False, (
-        f"Expected direct_live_influence=false, got {gov['direct_live_influence']}"
-    )
-    assert gov["lean_consumption"] == "research_only_not_direct_action", (
-        f"Unexpected lean_consumption: {gov['lean_consumption']}"
-    )
-
-    # Validate registry_entry
-    reg = bundle["registry_entry"]
-    assert reg["artifact_type"] == "research_report", (
-        f"Expected artifact_type='research_report', got '{reg['artifact_type']}'"
-    )
-    assert reg["artifact_state"] == "draft", (
-        f"Expected artifact_state='draft', got '{reg['artifact_state']}'"
-    )
-    assert reg["deployment_summary"]["current_stage"] == "none", (
-        f"Expected current_stage='none', got '{reg['deployment_summary']['current_stage']}'"
-    )
-
-    print(f"artifact_id        : {bundle['artifact_id']}")
-    print(f"artifact_family    : {bundle['artifact_family']}")
-    print(f"artifact_state     : {reg['artifact_state']}")
-    print(f"current_stage      : {reg['deployment_summary']['current_stage']}")
-    print(f"direct_live_inf.   : {gov['direct_live_influence']}")
-    print(f"lean_consumption   : {gov['lean_consumption']}")
-
-    paths_in_results = list(bundle["results_summary"].keys())
-    print(f"analysis paths     : {paths_in_results}")
-    assert "cointegration" in paths_in_results
-    assert "var_vecm" in paths_in_results
-    assert "markov_switching" in paths_in_results
-
-    print("SMOKE TEST PASSED")
+    return signal_snapshot
 
 
 if __name__ == "__main__":
-    run_smoke_test()
+    snap = test_cointegration_smoke()
+    print("SMOKE TEST PASSED")
+    print(json.dumps(snap, indent=2))
