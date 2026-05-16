@@ -8,7 +8,7 @@
 **Sidecar owner:** `Codex`
 **Sidecar reviewer:** `Claude`
 **Generated:** `2026-05-16T11:48:00Z`
-**Status:** `review-ready`
+**Status:** `review-approved`
 
 > Scope constraint: support artifact only. This packet summarizes observed
 > ASK-005 review state, evidence, verification, and reviewer handoff notes. It
@@ -25,23 +25,23 @@ blocking fixes:
    instead of being reported as terminal `approval.decided` events.
 2. Approval decision idempotency replay must not publish duplicate SSE events.
 
-The current observed parent worktree and evidence now show both review findings
+The current observed parent worktree and evidence show both review findings
 addressed:
 
 - `bff_approvals_decide` defines `_APPROVAL_STAGE_CHANGE_DECISIONS` with
   `request_revision`, `escalate`, and `freeze`.
 - approval event publishing now runs behind an idempotency pre-check against
   `_FINAL_CONTRACT_IDEMPOTENCY`.
-- the direct ASK-005 test file contains 9 tests, including new coverage for
+- the direct ASK-005 test file contains 12 tests at closeout, including coverage for
   `escalate`, `freeze`, and approval replay de-duplication.
-- focused local verification passed: `9 passed in 17.74s`.
+- focused local verification passed during closeout: `12 passed in 11.64s`.
 
-Reviewer attention remains around publication state rather than behavior: the
-current `git log -8` does not show a parent fix commit after Codex review commit
-`afaca235`, while `services/control-plane/bff/main.py` remains dirty in the
-worktree. Parent `ASK-005` should not be treated as fully reviewable/final until
-Claude's parent-owned runtime changes and evidence are committed or otherwise
-made durable by the parent task.
+Original reviewer attention was around publication state rather than behavior:
+the first sidecar run did not yet see a durable parent fix commit after Codex
+review commit `afaca235`. Claude's sidecar approval records that the parent fix
+commit `73304fe0` was later captured in the subsequent handoff. Parent
+`ASK-005` remains a separate task and should be approved or finalized only by
+its own owner/reviewer flow.
 
 ## Sources Used
 
@@ -107,7 +107,8 @@ Sidecar-local verification:
 
 ```text
 PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_ask005_sse_event_publishing_contract.py -q
-# 9 passed in 17.74s
+# initial sidecar run: 9 passed in 17.74s
+# closeout run 2026-05-16T14:12:30Z: 12 passed in 11.64s
 
 rg -n "ASK-005|ask.session.started|approval.decided|approval.stage.changed|idempot" \
   docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json
@@ -124,10 +125,10 @@ commands may also update L0/generated collaboration state.
 
 1. Parent `ASK-005` is still `in_progress` in durable state. This packet should
    support review but should not be read as parent approval.
-2. The observed behavior fixes are in the current worktree, but a parent fix
-   commit after `afaca235` was not visible in `git log -8` during this sidecar
-   run. Require the parent owner to make the runtime/evidence changes durable
-   before parent review approval.
+2. The original publication watchpoint has been carried into review approval:
+   Claude recorded parent fix commit `73304fe0` in the subsequent handoff.
+   Require the parent owner to keep the runtime/evidence changes durable before
+   parent review approval.
 3. The approval replay guard duplicates the request-hash construction used by
    `_sem_command_response`. It passes focused tests, but future refactors should
    consider centralizing that hash calculation to avoid drift.
@@ -148,3 +149,21 @@ To `Claude`, sidecar reviewer and parent owner:
 Recommended sidecar disposition: approve this packet as a truthful support
 summary. Parent disposition should remain separate and should depend on the
 parent task's committed fix state.
+
+## Closeout Addendum
+
+Claude approved this sidecar packet and returned it to Codex for owner closeout.
+The approval confirms that the packet accurately records the Codex blocking
+findings, observed ASK-005 fixes, and the publication watchpoint. Support-only
+scope remains intact: no L1 canonical truth, runtime, registry, or governance
+implementation files were changed by this sidecar.
+
+Finalization verification:
+
+```text
+AI_NAME=Codex ./scripts/ai-status.sh show ASK-005-SIDECAR-REVIEW
+# status review_approved; owner Codex; reviewer Claude; artifact target matches
+
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_ask005_sse_event_publishing_contract.py -q
+# 12 passed in 11.64s
+```
