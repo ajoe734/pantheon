@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-16 08:38:13
+Last updated: 2026-05-16 08:44:58
 
 ## Objective
 
@@ -38,11 +38,11 @@ Last updated: 2026-05-16 08:38:13
 ## Active Slices
 
 - `Claude`: execution, control-plane, governance-review; next: Assignment created
-- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: Assignment created
+- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: Supervisor auto-started QLIB-001 after successful dispatch.
 - `Codex`: integration, status-system, schema, acceptance; next: Assignment created
 - `Codex2`: integration, status-system, schema, acceptance; next: Assignment created
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: Assignment created
-- `Claude2`: execution, control-plane, governance-review; next: Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached
+- `Claude2`: execution, control-plane, governance-review; next: Supervisor resumed P0-REG-001 for finalize after successful dispatch.
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Auto-reassigned review from Codex to Codex2 after repeated Codex terminal: Codex usage limit reached
 
 ## Delivery Layers
@@ -55,7 +55,7 @@ Last updated: 2026-05-16 08:38:13
 | `P0-APP-001` | Sprint 1 / EPIC-BFF-P0 | approval decide endpoint /bff/approvals/{id}/decide | Claude | todo | - | - |
 | `P0-REG-001` | Sprint 1 / EPIC-BFF-P0 | /bff/strategies list/detail | Claude2 | review_approved | - | - |
 | `P0-PER-001` | Sprint 1 / EPIC-BFF-P0 | /bff/personas list/detail | Claude2 | review_approved | - | - |
-| `P0-AUD-001` | Sprint 1 / EPIC-BFF-P0 | /bff/audit read endpoint | Claude2 | review | - | - |
+| `P0-AUD-001` | Sprint 1 / EPIC-BFF-P0 | /bff/audit read endpoint | Claude2 | review_approved | - | - |
 | `DEP-003` | Sprint 2 / EPIC-GOV-DEPLOY | deployment projection read model | Claude2 | review_approved | - | - |
 | `RT-001` | Sprint 3 / EPIC-RUNTIME | RuntimeBinding schema | Claude | todo | - | - |
 | `RT-002` | Sprint 3 / EPIC-RUNTIME | Runtime Manager skeleton | Claude2 | todo | - | - |
@@ -84,7 +84,7 @@ Last updated: 2026-05-16 08:38:13
 | `EXP-001` | Sprint 5 / EPIC-RESEARCH | ExperimentTask / ExperimentRun schema | Codex2 | todo | - | - |
 | `EXP-002` | Sprint 5 / EPIC-RESEARCH | /bff/research-experiments list/detail | Claude2 | todo | - | - |
 | `EXP-005` | Sprint 5 / EPIC-RESEARCH | ExperimentRun -> Artifact registry writeback | Claude | todo | - | - |
-| `QLIB-001` | Sprint 5 / EPIC-RESEARCH | Qlib adapter skeleton | Gemini | todo | - | - |
+| `QLIB-001` | Sprint 5 / EPIC-RESEARCH | Qlib adapter skeleton | Gemini | in_progress | - | - |
 | `VBT-001` | Sprint 5 / EPIC-RESEARCH | vectorbt rapid eval adapter | Gemini2 | review | - | - |
 | `PER-002` | Sprint 5 / EPIC-RESEARCH | skills/tools/capabilities read API | Claude2 | todo | - | - |
 | `TRN-001` | Sprint 5 / EPIC-RESEARCH | TeachingSession / TeachingEvent schema | Codex2 | todo | - | - |
@@ -146,7 +146,7 @@ Last updated: 2026-05-16 08:38:13
 | `P0-APP-001` | Sprint 1 / EPIC-BFF-P0 | approval decide endpoint /bff/approvals/{id}/decide | - | Claude | Codex2 | todo | - | 2026-05-16 07:04:33 | Assignment created |
 | `P0-REG-001` | Sprint 1 / EPIC-BFF-P0 | /bff/strategies list/detail | - | Claude2 | Claude | review_approved | - | 2026-05-16 08:29:50 | Supervisor resumed P0-REG-001 for finalize after successful dispatch. |
 | `P0-PER-001` | Sprint 1 / EPIC-BFF-P0 | /bff/personas list/detail | - | Claude2 | Claude | review_approved | - | 2026-05-16 08:18:50 | Auto-reassigned ownership from Codex2 to Claude2 after repeated Codex2 terminal: Codex usage limit reached |
-| `P0-AUD-001` | Sprint 1 / EPIC-BFF-P0 | /bff/audit read endpoint | - | Claude2 | Claude | review | - | 2026-05-16 08:36:09 | Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached |
+| `P0-AUD-001` | Sprint 1 / EPIC-BFF-P0 | /bff/audit read endpoint | - | Claude2 | Claude | review_approved | - | 2026-05-16 08:44:50 | Review approved: /bff/audit dedicated handler correct. Filters, pagination, envelope, meta, RBAC all verified. 11 contract tests + 3 live wiring pass. Returning to Claude2 for finalization. |
 | `DEP-003` | Sprint 2 / EPIC-GOV-DEPLOY | deployment projection read model | - | Claude2 | Claude | review_approved | - | 2026-05-16 08:18:36 | Auto-reassigned ownership from Codex to Claude2 after repeated Codex terminal: Codex usage limit reached |
 | `RT-001` | Sprint 3 / EPIC-RUNTIME | RuntimeBinding schema | - | Claude | Claude2 | todo | - | 2026-05-16 07:33:47 | Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
 | `RT-002` | Sprint 3 / EPIC-RUNTIME | Runtime Manager skeleton | - | Claude2 | Claude | todo | - | 2026-05-16 08:23:57 | Supervisor preempted RT-002 to free Claude2 for higher-priority review/finalize work; task returned to todo until a fresh run restarts it. |
@@ -175,7 +175,7 @@ Last updated: 2026-05-16 08:38:13
 | `EXP-001` | Sprint 5 / EPIC-RESEARCH | ExperimentTask / ExperimentRun schema | - | Codex2 | Codex | todo | - | 2026-05-16 07:28:38 | Assignment created |
 | `EXP-002` | Sprint 5 / EPIC-RESEARCH | /bff/research-experiments list/detail | - | Claude2 | Codex2 | todo | - | 2026-05-16 07:29:06 | Assignment created |
 | `EXP-005` | Sprint 5 / EPIC-RESEARCH | ExperimentRun -> Artifact registry writeback | - | Claude | Claude2 | todo | - | 2026-05-16 08:18:44 | Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
-| `QLIB-001` | Sprint 5 / EPIC-RESEARCH | Qlib adapter skeleton | - | Gemini | Copilot | todo | - | 2026-05-16 07:29:42 | Assignment created |
+| `QLIB-001` | Sprint 5 / EPIC-RESEARCH | Qlib adapter skeleton | - | Gemini | Copilot | in_progress | - | 2026-05-16 08:41:48 | Supervisor auto-started QLIB-001 after successful dispatch. |
 | `VBT-001` | Sprint 5 / EPIC-RESEARCH | vectorbt rapid eval adapter | - | Gemini2 | Codex2 | review | - | 2026-05-16 08:36:04 | Auto-reassigned review from Codex to Codex2 after repeated Codex terminal: Codex usage limit reached |
 | `PER-002` | Sprint 5 / EPIC-RESEARCH | skills/tools/capabilities read API | - | Claude2 | Codex | todo | - | 2026-05-16 07:30:18 | Assignment created |
 | `TRN-001` | Sprint 5 / EPIC-RESEARCH | TeachingSession / TeachingEvent schema | - | Codex2 | Codex | todo | - | 2026-05-16 07:30:55 | Assignment created |
@@ -204,7 +204,7 @@ Last updated: 2026-05-16 08:38:13
 | `P0-REG-001` | Claude | Claude2 | Auto-reassigned ownership from Codex2 to Claude2 after repeated Codex2 terminal: Codex usage limit reached | pending | 2026-05-16 08:18:41 |
 | `P0-PER-001` | Claude | Claude2 | Auto-reassigned ownership from Codex2 to Claude2 after repeated Codex2 terminal: Codex usage limit reached | pending | 2026-05-16 08:18:51 |
 | `VBT-001` | Codex | Codex2 | Auto-reassigned review from Codex to Codex2 after repeated Codex terminal: Codex usage limit reached | pending | 2026-05-16 08:36:04 |
-| `P0-AUD-001` | Codex2 | Claude | Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached | pending | 2026-05-16 08:36:09 |
+| `P0-AUD-001` | Claude | Claude2 | Review approved: /bff/audit dedicated handler correct. Filters, pagination, envelope, meta, RBAC all verified. 11 contract tests + 3 live wiring pass. Returning to Claude2 for finalization. | pending | 2026-05-16 08:44:50 |
 
 ## Blockers
 
@@ -218,6 +218,7 @@ Last updated: 2026-05-16 08:38:13
 |---|---|---|---|
 | `P0-REG-001` | Claude | 審查通過：GET /bff/strategies 回傳正確 data/items/page_info/meta 信封；_project_strategy_dto DTO 欄位完整（id/name/state/risk/alpha/capitalPoolId/personaIds 等）；OBJECT_NOT_FOUND 404 行為確認；overlay merge 正確；16 個合約測試全過；execute-plans live wiring 策略相關測試全過<br>跨任務附註：test_execute_plans_final_stub_auth_smoke_avoids_server_errors 1 項失敗係 P0-CAP-001 fail-closed 503 的副作用（/bff/capital-pools/pool_001），非 P0-REG-001 範圍，不影響本次審查通過；後續由 P0-CAP-001 owner 修正該測試 | support/reviews/P0-REG-001-review-claude.md |
 | `P0-PER-001` | Claude | 審查通過：GET /bff/personas 回傳正確 data/items/page_info/meta 信封；_project_persona_dto DTO 欄位完整（id/name/owner/updatedAt/state/risk/archetype/routedStrategies/successRate/labelKey/lifecycleStatus）；OBJECT_NOT_FOUND 404 行為確認；overlay merge 正確；16 個合約測試全過；execute-plans live wiring persona 相關測試全過<br>跨任務附註：seeded detail matrix 測試 1 warning 為 read_store.py:73 pre-existing datetime.utcnow() DeprecationWarning，非 P0-PER-001 引入，不影響本次審查通過 | support/reviews/P0-PER-001-review-claude.md |
+| `P0-AUD-001` | Claude | 審查通過：GET /bff/audit 專用 handler 正確實作；actor/action_type/target_type/from/to 五維過濾器與 _page_slice 分頁正確；回傳標準 BFF 信封 {data, items, page_info, meta}；_read_surface_meta 與 governance_audit_events surface 正確關聯；11 個合約測試全過；live wiring 3 pass<br>跨任務附註：main.py audit hunk 位於併行 dirty worktree（與 sibling task 共存），test+evidence 已於 commit 83f6c138 獨立提交，不影響本次審查通過 | support/reviews/P0-AUD-001-review-claude.md |
 | `DEP-003` | Claude | 審查通過：GET /api/deployment/projections、/projections/{plan_id}、/plans/{plan_id}/projection 三條路由正確實作；DeploymentProjectionReadModelService 為純衍生讀取，無任何寫入操作；source_status、lifecycle_state、actual_stage/projected_stage 語義全部正確；RuntimeBinding 多路徑查找與 graceful missing 正確；18 個測試全過；contract.md 與 README.md 已更新<br>跨任務附註：evidence 檔案仍標示 Reviewer: Codex2 為原始分配前的痕跡，不影響本次審查通過 | support/reviews/DEP-003-review-claude.md |
 
 ## Lovable Coordination
@@ -289,23 +290,23 @@ Last updated: 2026-05-16 08:38:13
 
 ## Latest Checkpoints
 
-- 2026-05-16 08:36:42 Orchestrator: PreToolUse: Bash
-- 2026-05-16 08:36:44 Orchestrator: PostToolUse: Bash
-- 2026-05-16 08:36:48 Orchestrator: PreToolUse: Bash
-- 2026-05-16 08:37:01 Orchestrator: PostToolUse: Bash
-- 2026-05-16 08:37:07 Orchestrator: PreToolUse: Bash
-- 2026-05-16 08:37:14 Orchestrator: PostToolUse: Bash
-- 2026-05-16 08:37:27 Orchestrator: PreToolUse: Bash
-- 2026-05-16 08:37:28 Orchestrator: PostToolUse: Bash
-- 2026-05-16 08:37:28 Orchestrator: PreToolUse: Bash
-- 2026-05-16 08:37:29 Orchestrator: PostToolUse: Bash
-- 2026-05-16 08:37:32 Orchestrator: PreToolUse: Bash
-- 2026-05-16 08:37:33 Orchestrator: PostToolUse: Bash
-- 2026-05-16 08:37:33 Orchestrator: PreToolUse: Bash
-- 2026-05-16 08:37:34 Orchestrator: PostToolUse: Bash
-- 2026-05-16 08:37:55 Orchestrator: PreToolUse: Bash
-- 2026-05-16 08:37:56 Orchestrator: PostToolUse: Bash
-- 2026-05-16 08:38:05 Orchestrator: PreToolUse: Bash
-- 2026-05-16 08:38:05 Orchestrator: PostToolUse: Bash
-- 2026-05-16 08:38:12 Orchestrator: PreToolUse: Bash
-- 2026-05-16 08:38:13 Claude: `P0-CAP-001` Closeout complete: py_compile OK; 27 capital contract tests + 4 live wiring tests all pass matching review approval. Task-exclusive files (evidence, review, capital contract test) committed in 5d5fc37f. main.py/read_store.py implementation hunks remain in worktree with concurrent BFF task changes (non-interactive isolation exception per background worker rule).
+- 2026-05-16 08:42:50 Orchestrator: PreToolUse: Grep
+- 2026-05-16 08:42:51 Orchestrator: PostToolUse: Grep
+- 2026-05-16 08:42:57 Orchestrator: PreToolUse: Grep
+- 2026-05-16 08:42:58 Orchestrator: PostToolUse: Grep
+- 2026-05-16 08:43:01 Orchestrator: PreToolUse: Read
+- 2026-05-16 08:43:01 Orchestrator: PostToolUse: Read
+- 2026-05-16 08:43:28 Orchestrator: PreToolUse: Read
+- 2026-05-16 08:43:28 Orchestrator: PostToolUse: Read
+- 2026-05-16 08:43:35 Orchestrator: PreToolUse: Grep
+- 2026-05-16 08:43:35 Orchestrator: PostToolUse: Grep
+- 2026-05-16 08:44:02 Orchestrator: PreToolUse: Bash
+- 2026-05-16 08:44:09 Orchestrator: PostToolUse: Bash
+- 2026-05-16 08:44:14 Orchestrator: PreToolUse: Bash
+- 2026-05-16 08:44:20 Orchestrator: PostToolUse: Bash
+- 2026-05-16 08:44:38 Orchestrator: PreToolUse: Write
+- 2026-05-16 08:44:38 Orchestrator: PostToolUse: Write
+- 2026-05-16 08:44:50 Orchestrator: PreToolUse: Bash
+- 2026-05-16 08:44:50 Claude: `P0-AUD-001` Review approved: /bff/audit dedicated handler correct. Filters, pagination, envelope, meta, RBAC all verified. 11 contract tests + 3 live wiring pass. Returning to Claude2 for finalization.
+- 2026-05-16 08:44:54 Orchestrator: PostToolUse: Bash
+- 2026-05-16 08:44:58 Orchestrator: PreToolUse: Bash
