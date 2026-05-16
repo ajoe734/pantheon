@@ -15927,3 +15927,89 @@ class ReadSurfaceStore:
                 "surfaces": {"trainer_replay": surface_state},
             },
         }
+
+    # ------------------------------------------------------------------ #
+    # TRN-003: rapid-eval store
+    # ------------------------------------------------------------------ #
+
+    def _rapid_eval_store_path(self) -> Optional[Path]:
+        raw = os.getenv("PANTHEON_BFF_RAPID_EVAL_STORE", "").strip()
+        return Path(raw) if raw else None
+
+    def _load_rapid_evals(self) -> Dict[str, Any]:
+        path = self._rapid_eval_store_path()
+        if path is None or not path.exists():
+            return {}
+        text = path.read_text(encoding="utf-8").strip()
+        return json.loads(text) if text else {}
+
+    def _save_rapid_evals(self, records: Dict[str, Any]) -> None:
+        path = self._rapid_eval_store_path()
+        if path is None:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(records, indent=2, ensure_ascii=True))
+
+    def create_rapid_eval(
+        self,
+        session_id: str,
+        *,
+        persona_id: Optional[str] = None,
+        strategy_id: Optional[str] = None,
+        eval_scope: str,
+        patch_ref: Optional[str] = None,
+        dataset_version_id: str,
+        max_runtime_seconds: int,
+        requested_by: str,
+        requested_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if self._rapid_eval_store_path() is None:
+            return None
+        records = self._load_rapid_evals()
+        timestamp = requested_at or _utc_now_rfc3339()
+        existing_ids = set(records.keys())
+        date_prefix = timestamp[:10].replace("-", "")
+        index = len(existing_ids) + 1
+        eval_id = f"reval-{date_prefix}-{index:03d}"
+        while eval_id in existing_ids:
+            index += 1
+            eval_id = f"reval-{date_prefix}-{index:03d}"
+        record: Dict[str, Any] = {
+            "rapid_eval_id": eval_id,
+            "session_id": session_id,
+            "status": "queued",
+            "eval_scope": eval_scope,
+            "dataset_version_id": dataset_version_id,
+            "max_runtime_seconds": max_runtime_seconds,
+            "patch_ref": patch_ref,
+            "persona_id": persona_id,
+            "strategy_id": strategy_id,
+            "requested_by": requested_by,
+            "requested_at": timestamp,
+            "completed_at": None,
+            "advisory_note": (
+                "Rapid eval queued for bounded execution. "
+                "Results will be available once the eval completes."
+            ),
+            "meta": {
+                "snapshot_at": timestamp,
+                "surfaces": {"rapid_eval": "ok"},
+            },
+        }
+        records[eval_id] = record
+        self._save_rapid_evals(records)
+        return json.loads(json.dumps(record))
+
+    def get_rapid_eval(
+        self,
+        eval_id: Optional[str],
+        *,
+        snapshot_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if not eval_id:
+            return None
+        records = self._load_rapid_evals()
+        record = records.get(str(eval_id))
+        if record is None:
+            return None
+        return json.loads(json.dumps(record))
