@@ -80,6 +80,7 @@ try:
         DeploymentDispatchResponse,
         DeploymentExecutionProjectionBody,
         DeploymentPlanBody,
+        DeploymentScaleBody,
         DeploymentPlanSummary,
         DeploymentProjectionReadModelResponse,
         DeploymentSagaBody,
@@ -94,6 +95,8 @@ try:
         RecordBindingCreatedRequest,
         RecordRuntimeActiveRequest,
         RecordSagaFailureRequest,
+        StagePlannerCheckRequest,
+        StagePlannerCheckResponse,
         StrategyReadModelResponse,
         UpdatePlanStatusRequest,
         ValidateDeploymentPlanResponse,
@@ -106,6 +109,7 @@ except ImportError:
         DeploymentDispatchResponse,
         DeploymentExecutionProjectionBody,
         DeploymentPlanBody,
+        DeploymentScaleBody,
         DeploymentPlanSummary,
         DeploymentProjectionReadModelResponse,
         DeploymentSagaBody,
@@ -120,6 +124,8 @@ except ImportError:
         RecordBindingCreatedRequest,
         RecordRuntimeActiveRequest,
         RecordSagaFailureRequest,
+        StagePlannerCheckRequest,
+        StagePlannerCheckResponse,
         StrategyReadModelResponse,
         UpdatePlanStatusRequest,
         ValidateDeploymentPlanResponse,
@@ -323,6 +329,82 @@ class DeploymentPlannerService:
         plan.status = next_status
         self.plan_store.put(plan)
         return plan
+
+    def check_stage_transition(self, request: StagePlannerCheckRequest) -> StagePlannerCheckResponse:
+        current_stage = DeploymentStage(request.current_stage.value)
+        target_stage = DeploymentStage(request.target_stage.value)
+        rollback_required = target_stage in {
+            DeploymentStage.PAPER,
+            DeploymentStage.CANARY,
+            DeploymentStage.LIVE,
+        }
+        rollback = (
+            RollbackRef(
+                target_artifact_id="stage-check-rollback-artifact",
+                target_version="0.9.0",
+                action_type=request.rollback_action.value,
+            )
+            if request.rollback_action is not None
+            else None
+        )
+        default_scale: DeploymentScale | None = None
+        effective_scale: DeploymentScale | None = (
+            DeploymentScale(**request.scale.model_dump())
+            if request.scale is not None
+            else None
+        )
+        transition_type = None
+        runtime_action = None
+        errors: list[str] = []
+
+        try:
+            transition_type = self.planner.derive_transition_type(current_stage, target_stage)
+            runtime_action = self.planner.default_runtime_action(transition_type, rollback)
+            default_scale = self.planner.default_scale(target_stage)
+            if effective_scale is None:
+                effective_scale = default_scale
+        except DeploymentPlanError as exc:
+            errors.append(str(exc))
+
+        if transition_type is not None and runtime_action is not None and effective_scale is not None:
+            plan = DeploymentPlan(
+                plan_id="stage-check-plan",
+                approval_decision_id="stage-check-approval",
+                artifact_id="stage-check-artifact",
+                artifact_version="1.0.0",
+                artifact_type="model_artifact",
+                strategy_id="stage-check-strategy",
+                capital_pool_id="stage-check-pool",
+                current_stage=current_stage,
+                target_stage=target_stage,
+                transition_type=transition_type,
+                runtime_action=runtime_action,
+                status=PlanStatus.APPROVED,
+                created_at="2026-05-16T00:00:00Z",
+                scale=effective_scale,
+                rollback=rollback,
+            )
+            errors.extend(plan.validate())
+
+        return StagePlannerCheckResponse(
+            ok=not errors,
+            current_stage=current_stage.value,
+            target_stage=target_stage.value,
+            transition_type=_enum_value(transition_type) if transition_type is not None else None,
+            runtime_action=_enum_value(runtime_action) if runtime_action is not None else None,
+            rollback_required=rollback_required,
+            default_scale=(
+                DeploymentScaleBody(**default_scale.to_dict())
+                if default_scale is not None
+                else None
+            ),
+            effective_scale=(
+                DeploymentScaleBody(**effective_scale.to_dict())
+                if effective_scale is not None
+                else None
+            ),
+            errors=errors,
+        )
 
     def strategy_read_model(
         self,
@@ -1438,6 +1520,14 @@ async def validate_deployment_plan(body: CreateDeploymentPlanRequest):
     except DeploymentPlanError as exc:
         return ValidateDeploymentPlanResponse(ok=False, errors=[str(exc)])
     return ValidateDeploymentPlanResponse(ok=True, plan=_plan_body(plan), errors=[])
+
+
+@app.post(
+    "/api/deployment/stage-planner/check",
+    response_model=StagePlannerCheckResponse,
+)
+async def check_deployment_stage_planner(body: StagePlannerCheckRequest):
+    return planner_service.check_stage_transition(body)
 
 
 @app.post(

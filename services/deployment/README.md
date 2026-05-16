@@ -14,6 +14,7 @@ The service can now:
 
 - create validated deployment plans
 - dry-run stage-transition validation
+- check stage-planner rules without requiring registry / approval payloads
 - list and fetch stored plans
 - advance plan status through `approved -> executing -> executed`
 - bootstrap the canonical deploy saga and first outbox event
@@ -29,7 +30,7 @@ The service can now:
 
 | File | Purpose |
 |---|---|
-| `models.py` | Pydantic request / response models for plans, sagas, outbox, inbox |
+| `models.py` | Pydantic request / response models for plans, stage planner checks, sagas, outbox, inbox |
 | `service.py` | FastAPI app plus file-backed planner / orchestration service |
 | `test_service.py` | In-process API coverage via `TestClient` |
 | `smoke_test.py` | HTTP smoke test against a live server |
@@ -72,5 +73,6 @@ DEP-003 projection lookups read RuntimeBinding rows from
 
 ```bash
 pytest services/deployment/test_service.py -v
+pytest services/deployment/test_dep002_rebaseline_stage_planner.py -v
 python3 services/deployment/smoke_test.py
 ```

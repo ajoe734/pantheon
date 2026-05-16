@@ -100,6 +100,42 @@ planner / validation failures.
 
 ---
 
+### `POST /api/deployment/stage-planner/check`
+
+Focused DEP-002-RB stage-rule check for callers that need planner truth before
+they have a full registry / approval payload.
+
+Request body:
+
+- `current_stage` (required; `none`, `paper`, `canary`, `live`, or `frozen`)
+- `target_stage` (required; `none`, `paper`, `canary`, `live`, or `frozen`)
+- optional `rollback_action` (`replace`, `pause_then_replace`, or
+  `liquidate_then_replace`)
+- optional `scale` override to check stage-specific scale caps
+
+Response fields:
+
+- `ok`
+- `ruleset = DEP-002-RB-stage-planner-v1`
+- `transition_type`
+- `runtime_action`
+- `rollback_required`
+- `default_scale`
+- `effective_scale`
+- `errors[]`
+
+Rules checked:
+
+- forbidden transitions such as `none -> canary`, `paper -> live`, and no-op
+  stage changes
+- active targets (`paper`, `canary`, `live`) require rollback linkage
+- rollback action controls rollback-transition runtime action
+- paper / canary / live / frozen scale defaults and hard caps
+
+This route is read-only and never creates a `DeploymentPlan`.
+
+---
+
 ### `POST /api/deployment/plans/compatibility-check`
 
 Read-only preflight for DeploymentPlan approval. The route checks:

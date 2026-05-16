@@ -128,6 +128,26 @@ class ValidateDeploymentPlanResponse(BaseModel):
     errors: List[str] = Field(default_factory=list)
 
 
+class StagePlannerCheckRequest(BaseModel):
+    current_stage: DeploymentStageBody
+    target_stage: DeploymentStageBody
+    rollback_action: Optional[RollbackActionTypeBody] = None
+    scale: Optional[DeploymentScaleBody] = None
+
+
+class StagePlannerCheckResponse(BaseModel):
+    ok: bool
+    ruleset: str = "DEP-002-RB-stage-planner-v1"
+    current_stage: str
+    target_stage: str
+    transition_type: Optional[str] = None
+    runtime_action: Optional[str] = None
+    rollback_required: bool
+    default_scale: Optional[DeploymentScaleBody] = None
+    effective_scale: Optional[DeploymentScaleBody] = None
+    errors: List[str] = Field(default_factory=list)
+
+
 class UpdatePlanStatusRequest(BaseModel):
     status: PlanStatusBody
 
