@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-05-16T06:03:32Z",
+  "updated_at": "2026-05-16T06:13:28Z",
   "counts": {
-    "total": 1122,
-    "completed": 1104,
+    "total": 1123,
+    "completed": 1105,
     "superseded": 18
   },
   "recent_terminal_ids": [
+    "QLIB-001",
     "DEP-003",
     "ALT-001",
     "P0-AUD-001",
@@ -25,7 +26,6 @@
     "P0-BFF-003",
     "SRC-005",
     "P0-BFF-002",
-    "EX-003",
-    "P0-ACT-001"
+    "EX-003"
   ]
 }
