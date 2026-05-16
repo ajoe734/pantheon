@@ -1,12 +1,19 @@
 {
   "version": 1,
-  "updated_at": "2026-05-16T10:40:26Z",
+  "updated_at": "2026-05-16T11:08:06Z",
   "counts": {
-    "total": 1146,
-    "completed": 1128,
-    "superseded": 18
+    "total": 1153,
+    "completed": 1134,
+    "superseded": 19
   },
   "recent_terminal_ids": [
+    "SENT-001",
+    "ASK-004",
+    "ASK-002",
+    "IMT-004",
+    "ASK-002-SIDECAR-REVIEW",
+    "TRN-004",
+    "LOOP-001-RB",
     "IMT-001",
     "TRN-002",
     "ASK-003",
@@ -19,13 +26,6 @@
     "TRN-003",
     "EXP-005",
     "PER-002",
-    "SRC-003",
-    "EXP-002",
-    "SRC-001",
-    "SRC-002",
-    "TEL-002-RB",
-    "INC-001-RB",
-    "DEP-002-RB",
-    "TEL-001-RB"
+    "SRC-003"
   ]
 }

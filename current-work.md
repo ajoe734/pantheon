@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-16 18:48:09
+Last updated: 2026-05-16 19:08:07
 
 ## Objective
 
@@ -37,12 +37,12 @@ Last updated: 2026-05-16 18:48:09
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run.
+- `Claude`: execution, control-plane, governance-review; next: Supervisor auto-started EVO-001 after successful dispatch.
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: Validating inherited ASK-004 BFF committee memo publish implementation against focused tests before review handoff.
+- `Codex`: integration, status-system, schema, acceptance; next: Auto-reassigned ownership from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Codex starts a fresh run.
 - `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
-- `Claude2`: execution, control-plane, governance-review; next: Codex review requests changes; see support/reviews/SENT-001-review-codex.md. Required: fix duplicate /bff/v5/sentinel/findings OpenAPI registration so kind/status/severity query params appear in /openapi.json, add a focused OpenAPI regression test, and make the SENT-001 implementation hunks durable/task-scoped because current referenced commits only contain tests/evidence while main.py/read_store.py implementation is still dirty.
+- `Claude2`: execution, control-plane, governance-review; next: No active assignment
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check.
 
 ## Delivery Layers
@@ -52,12 +52,11 @@ Last updated: 2026-05-16 18:48:09
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | Gemini2 | blocked | - | - |
-| `ASK-002` | Sprint 5 / EPIC-RESEARCH | ConsultRequest / ConsultMemo schema | Codex | review_approved | - | - |
-| `ASK-004` | Sprint 5 / EPIC-RESEARCH | memo publish to registry / review | Codex | in_progress | - | - |
-| `ASK-005` | Sprint 5 / EPIC-RESEARCH | approval / ask SSE event publishing | Claude | todo | - | - |
-| `EVO-001` | Sprint 6 / EPIC-EVOLUTION | EvolutionDecision service | Claude | todo | - | - |
-| `SENT-001` | Sprint 6 / EPIC-EVOLUTION | /bff/v5/sentinel/findings endpoint | Claude2 | in_progress | - | - |
+| `ASK-005` | Sprint 5 / EPIC-RESEARCH | approval / ask SSE event publishing | Claude | review | - | - |
+| `EVO-001` | Sprint 6 / EPIC-EVOLUTION | EvolutionDecision service | Claude | in_progress | - | - |
 | `SENT-001-SIDECAR-BFF-HANDOFF` | Sprint 6 / EPIC-EVOLUTION | [Sidecar] [Auto] [Parent SENT-001] Prepare SENT-001 BFF and frontend handoff packet | Codex | todo | - | 平行支援 SENT-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 |
+| `ASK-004-SIDECAR-REVIEW` | Sprint 5 / EPIC-RESEARCH | [Sidecar] [Auto] [Parent ASK-004] Prepare ASK-004 review packet and evidence summary | Claude | todo | - | 平行支援 ASK-004，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 |
+| `ASK-005-SIDECAR-ACCEPTANCE` | Sprint 5 / EPIC-RESEARCH | [Sidecar] [Auto] [Parent ASK-005] Prepare ASK-005 acceptance packet and dependency map | Codex | todo | - | 平行支援 ASK-005，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
 
 ### External / Upstream Integration Work
 
@@ -67,11 +66,14 @@ Last updated: 2026-05-16 18:48:09
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-16 18:48:08
-- Terminal tasks archived: `1150` total, `1131` completed, `19` superseded
+- Archive updated: 2026-05-16 19:08:06
+- Terminal tasks archived: `1153` total, `1134` completed, `19` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `SENT-001` | Sprint 6 / EPIC-EVOLUTION | /bff/v5/sentinel/findings endpoint | Claude2 | completed | 2026-05-16 19:08:06 | `ai-task-archive/tasks/SENT-001.json` |
+| `ASK-004` | Sprint 5 / EPIC-RESEARCH | memo publish to registry / review | Codex | completed | 2026-05-16 19:07:24 | `ai-task-archive/tasks/ASK-004.json` |
+| `ASK-002` | Sprint 5 / EPIC-RESEARCH | ConsultRequest / ConsultMemo schema | Codex | completed | 2026-05-16 18:53:03 | `ai-task-archive/tasks/ASK-002.json` |
 | `IMT-004` | Sprint 5 / EPIC-RESEARCH | behavior policy artifact type registration | Codex | completed | 2026-05-16 18:48:08 | `ai-task-archive/tasks/IMT-004.json` |
 | `ASK-002-SIDECAR-REVIEW` | Sprint 5 / EPIC-RESEARCH | Prepare ASK-002 review packet and evidence summary | Claude | superseded | 2026-05-16 18:47:58 | `ai-task-archive/tasks/ASK-002-SIDECAR-REVIEW.json` |
 | `TRN-004` | Sprint 5 / EPIC-RESEARCH | trainer commit / discard / replay | Codex | completed | 2026-05-16 18:47:33 | `ai-task-archive/tasks/TRN-004.json` |
@@ -89,28 +91,24 @@ Last updated: 2026-05-16 18:48:09
 | `EXP-005` | Sprint 5 / EPIC-RESEARCH | ExperimentRun -> Artifact registry writeback | Codex | completed | 2026-05-16 17:16:41 | `ai-task-archive/tasks/EXP-005.json` |
 | `PER-002` | Sprint 5 / EPIC-RESEARCH | skills/tools/capabilities read API | Claude2 | completed | 2026-05-16 15:46:09 | `ai-task-archive/tasks/PER-002.json` |
 | `SRC-003` | Sprint 5 / EPIC-RESEARCH | repo allowlist ingest skeleton | Codex | completed | 2026-05-16 15:36:50 | `ai-task-archive/tasks/SRC-003.json` |
-| `EXP-002` | Sprint 5 / EPIC-RESEARCH | /bff/research-experiments list/detail | Claude2 | completed | 2026-05-16 15:35:28 | `ai-task-archive/tasks/EXP-002.json` |
-| `SRC-001` | Sprint 5 / EPIC-RESEARCH | SourceRecord schema + ingest API | Codex | completed | 2026-05-16 15:34:32 | `ai-task-archive/tasks/SRC-001.json` |
-| `SRC-002` | Sprint 5 / EPIC-RESEARCH | paper ingest adapter skeleton | Codex | completed | 2026-05-16 15:19:29 | `ai-task-archive/tasks/SRC-002.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | - | Gemini2 | Gemini | blocked | - | 2026-05-15 23:15:06 | Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check. |
-| `ASK-002` | Sprint 5 / EPIC-RESEARCH | ConsultRequest / ConsultMemo schema | - | Codex | Claude | review_approved | - | 2026-05-16 18:47:19 | Review approved: ConsultRequest/ConsultMemo schemas correct and complete; advisory boundary enforced; all 27 tests pass. Returning to owner Codex for closeout. |
-| `ASK-004` | Sprint 5 / EPIC-RESEARCH | memo publish to registry / review | - | Codex | Claude2 | in_progress | - | 2026-05-16 18:38:14 | Validating inherited ASK-004 BFF committee memo publish implementation against focused tests before review handoff. |
-| `ASK-005` | Sprint 5 / EPIC-RESEARCH | approval / ask SSE event publishing | - | Claude | Codex2 | todo | - | 2026-05-16 08:53:22 | Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
-| `EVO-001` | Sprint 6 / EPIC-EVOLUTION | EvolutionDecision service | - | Claude | Codex | todo | - | 2026-05-16 07:37:02 | Assignment created |
-| `SENT-001` | Sprint 6 / EPIC-EVOLUTION | /bff/v5/sentinel/findings endpoint | - | Claude2 | Codex | in_progress | - | 2026-05-16 18:33:21 | Codex review requests changes; see support/reviews/SENT-001-review-codex.md. Required: fix duplicate /bff/v5/sentinel/findings OpenAPI registration so kind/status/severity query params appear in /openapi.json, add a focused OpenAPI regression test, and make the SENT-001 implementation hunks durable/task-scoped because current referenced commits only contain tests/evidence while main.py/read_store.py implementation is still dirty. |
+| `ASK-005` | Sprint 5 / EPIC-RESEARCH | approval / ask SSE event publishing | - | Claude | Codex2 | review | - | 2026-05-16 19:01:26 | ASK-005 implementation complete. Commit 6c7484c1. Changes: (1) sem_agora_ask_create_session now publishes ask.session.started to the ask channel; (2) bff_approvals_decide publishes approval.decided (approve/reject) or approval.stage.changed (request_revision/escalate/freeze); role-gate failures do not publish. New test file: test_ask005_sse_event_publishing_contract.py (6 tests). Verification: pytest test_ask005_sse_event_publishing_contract.py → 6 passed; test_pkt005_sse_substrate_contract → 14 passed; test_bff_approvals_decide_contract + test_ask_001-003-004 → 113 passed. |
+| `EVO-001` | Sprint 6 / EPIC-EVOLUTION | EvolutionDecision service | - | Claude | Codex | in_progress | - | 2026-05-16 19:04:07 | Supervisor auto-started EVO-001 after successful dispatch. |
 | `SENT-001-SIDECAR-BFF-HANDOFF` | Sprint 6 / EPIC-EVOLUTION | [Sidecar] [Auto] [Parent SENT-001] Prepare SENT-001 BFF and frontend handoff packet | 平行支援 SENT-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Codex | Claude2 | todo | - | 2026-05-16 18:37:04 | Auto-reassigned ownership from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Codex starts a fresh run. |
+| `ASK-004-SIDECAR-REVIEW` | Sprint 5 / EPIC-RESEARCH | [Sidecar] [Auto] [Parent ASK-004] Prepare ASK-004 review packet and evidence summary | 平行支援 ASK-004，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Claude | Codex | todo | - | 2026-05-16 18:57:28 | Auto-reassigned ownership from Gemini to Claude after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Claude starts a fresh run. |
+| `ASK-005-SIDECAR-ACCEPTANCE` | Sprint 5 / EPIC-RESEARCH | [Sidecar] [Auto] [Parent ASK-005] Prepare ASK-005 acceptance packet and dependency map | 平行支援 ASK-005，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Codex | Claude | todo | - | 2026-05-16 18:57:54 | Auto-reassigned ownership from Copilot to Codex after repeated Copilot quota terminal: 402 You have no quota. Task returned to todo until Codex starts a fresh run. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
 | `EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE` | Gemini | Codex2 | Acceptance packet and dependency map for EP5-BROKER-TW-002 prepared at support/sidecars/EP5-BROKER-TW-002/EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE.md. Ready for review and incorporation into parent closeout. | pending | 2026-05-12 22:50:00 |
-| `ASK-002` | Claude | Codex | Review approved: ConsultRequest/ConsultMemo schemas correct and complete; advisory boundary enforced; all 27 tests pass. Returning to owner Codex for closeout. | pending | 2026-05-16 18:47:19 |
+| `ASK-005` | Claude | Codex2 | ASK-005 implementation complete. Commit 6c7484c1. Changes: (1) sem_agora_ask_create_session now publishes ask.session.started to the ask channel; (2) bff_approvals_decide publishes approval.decided (approve/reject) or approval.stage.changed (request_revision/escalate/freeze); role-gate failures do not publish. New test file: test_ask005_sse_event_publishing_contract.py (6 tests). Verification: pytest test_ask005_sse_event_publishing_contract.py → 6 passed; test_pkt005_sse_substrate_contract → 14 passed; test_bff_approvals_decide_contract + test_ask_001-003-004 → 113 passed. | pending | 2026-05-16 19:01:26 |
 
 ## Blockers
 
@@ -122,7 +120,7 @@ Last updated: 2026-05-16 18:48:09
 
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
-| `ASK-002` | Claude | 審查通過：ASK-002 commit b23fb2e3 正確實作 Draft-07 ConsultRequest/ConsultMemo schemas。additionalProperties: false 在兩個 schema 中均有效阻止 deployment_command 與 broker_order 等副作用欄位注入；allOf conditional 正確強制 published memo 需要 published_at；Pydantic model 約束（min_length、confidence bounds）與 schema 一致；validate_consult_memo_against_request 跨物件 lineage 驗證完整；全部 27 個測試通過（8+8+1+10）。Advisory-only 邊界成立，closeout 交還 owner Codex。 | support/reviews/ASK-002-review-claude.md |
+| _(none)_ | - | - | - |
 
 ## Lovable Coordination
 
@@ -193,23 +191,23 @@ Last updated: 2026-05-16 18:48:09
 
 ## Latest Checkpoints
 
-- 2026-05-16 18:46:33 Orchestrator: PreToolUse: Bash
-- 2026-05-16 18:46:34 Orchestrator: PostToolUse: Bash
-- 2026-05-16 18:46:40 Orchestrator: PreToolUse: Bash
-- 2026-05-16 18:46:44 Orchestrator: PreToolUse: Bash
-- 2026-05-16 18:46:45 Orchestrator: PostToolUse: Bash
-- 2026-05-16 18:46:48 Orchestrator: PreToolUse: Bash
-- 2026-05-16 18:46:48 Orchestrator: PostToolUse: Bash
-- 2026-05-16 18:46:56 Orchestrator: Stop: Stop
-- 2026-05-16 18:46:57 Orchestrator: SessionEnd: SessionEnd
-- 2026-05-16 18:47:07 Orchestrator: PreToolUse: Write
-- 2026-05-16 18:47:08 Orchestrator: PostToolUse: Write
-- 2026-05-16 18:47:18 Orchestrator: PreToolUse: Bash
-- 2026-05-16 18:47:19 Claude: `ASK-002` Review approved: ConsultRequest/ConsultMemo schemas correct and complete; advisory boundary enforced; all 27 tests pass. Returning to owner Codex for closeout.
-- 2026-05-16 18:47:31 Orchestrator: PostToolUse: Bash
-- 2026-05-16 18:47:33 Codex: `TRN-004` TRN-004 closeout complete: implementation commit 92784e26 is already task-scoped and approved by Claude2 in support/reviews/TRN-004-review-claude2.md; closeout verification commit d7d395c6 records current owner/reviewer metadata. Verification rerun: py_compile training-session main/test passed; pytest services/training-session/tests/test_http_service.py -q (7 passed); pytest services/training-session/tests -q (17 passed); pytest services/control-plane/bff/test_training_session_service_client.py -q (3 passed, existing utcnow warnings); pytest services/control-plane/bff/test_tw04_teaching_replay_contract.py -q (34 passed, existing utcnow warnings). Existing dirty/staged worktree entries are unrelated to TRN-004 and were not staged for this closeout.
-- 2026-05-16 18:47:36 Orchestrator: PreToolUse: Bash
-- 2026-05-16 18:47:37 Orchestrator: PostToolUse: Bash
-- 2026-05-16 18:47:58 Orchestrator: PreToolUse: Bash
-- 2026-05-16 18:47:58 Claude: `ASK-002-SIDECAR-REVIEW` Superseded by direct completion of ASK-002 review; review packet created at support/reviews/ASK-002-review-claude.md as part of the reviewer role.
-- 2026-05-16 18:48:08 Codex: `IMT-004` Closeout: IMT-004 finalized after Claude review approval. Latest closeout commit f9069d27 records verification metadata; reviewed implementation commit df0ab9f3 registers behavior_policy across registry schema/model, imitation adapter output, and preference/correction targets with non-live governance preserved. Verification rerun: json.tool registry/preference/correction schemas; py_compile touched registry/imitation modules; pytest services/registry/test_service.py -q (45 passed); pytest services/learning/imitation/test_adapter.py -q (3 passed); pytest services/research/imitation/test_preference_models.py -q (17 passed); pytest services/research/imitation -q (51 passed); python3 services/learning/imitation/smoke_test.py passed; python3 services/research/imitation/smoke_test.py passed.
+- 2026-05-16 19:05:56 Orchestrator: PreToolUse: Bash
+- 2026-05-16 19:06:28 Orchestrator: PostToolUse: Bash
+- 2026-05-16 19:06:35 Orchestrator: PreToolUse: Bash
+- 2026-05-16 19:06:43 Orchestrator: PostToolUse: Bash
+- 2026-05-16 19:06:53 Orchestrator: PreToolUse: Bash
+- 2026-05-16 19:07:01 Orchestrator: PreToolUse: Bash
+- 2026-05-16 19:07:01 Orchestrator: PostToolUse: Bash
+- 2026-05-16 19:07:22 Orchestrator: PreToolUse: Read
+- 2026-05-16 19:07:23 Orchestrator: PostToolUse: Read
+- 2026-05-16 19:07:24 Codex: `ASK-004` Closeout complete: task-scoped commit 439f7dbe records ASK-004 evidence closeout and Claude2 review artifact. Verification: py_compile main/read_store/ASK-004 test OK; ASK-004 contract tests 31 passed; ASK-003/CW04/PKT015 regression tests 38 passed. Reviewer Claude2 approved advisory-only memo publish boundary, stable published_at, first-publish ask.memo.published semantics, and registry visibility.
+- 2026-05-16 19:07:33 Orchestrator: PreToolUse: Edit
+- 2026-05-16 19:07:34 Orchestrator: PostToolUse: Edit
+- 2026-05-16 19:07:38 Orchestrator: PreToolUse: Bash
+- 2026-05-16 19:07:39 Orchestrator: PostToolUse: Bash
+- 2026-05-16 19:07:46 Orchestrator: PreToolUse: Bash
+- 2026-05-16 19:07:50 Orchestrator: PreToolUse: Bash
+- 2026-05-16 19:07:57 Orchestrator: PreToolUse: Bash
+- 2026-05-16 19:07:58 Orchestrator: PostToolUse: Bash
+- 2026-05-16 19:08:06 Orchestrator: PreToolUse: Bash
+- 2026-05-16 19:08:06 Claude2: `SENT-001` Closeout finalization: verified 16 SENT-001 contract tests + 33 loop/sentinel regression tests pass; OpenAPI /bff/v5/sentinel/findings correctly documents kind/status/severity query params (operationId: bff_v5_sentinel_findings_list_*). Implementation durable in commits 4050626a (OpenAPI fix + regression test), eda173a6 (contract tests), b5c1c434 (initial evidence). Closeout commit bd9a7351 adds final verification record.

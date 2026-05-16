@@ -3,7 +3,7 @@
   "sprint": "2026-05-16-pantheon-bff-p0-foundation",
   "sprint_started_at": "2026-05-16T00:00:00Z",
   "objective": "跨進開發團隊 GAP master rebaseline (docs/04/pantheon_sa_supplemental_2026-05-15/GAP_dev_team_master_rebaseline_2026-05-15.md)，以 pantheon@master + execute-plans@main 為基準。並行 6 條 EPIC，按 P0→P3 階梯推進：(I) EPIC-BFF-P0 (P0 10 task / Sprint 1) — session trio (/bff/me, auth/refresh, logout) + /openapi.json + canonical action endpoint + approval decide + registry reads (strategies/personas/capital-pools/audit)，讓 execute-plans@main 在 VITE_BFF_FALLBACK=strict 下可 bootstrap 核心 Management flow 不再 fallback mock；(II) EPIC-GOV-DEPLOY (P1 5 task / Sprint 2) — ApprovalDecision first-class + DeploymentPlan contract/service + stage planner + deployment projection + pool/runtime compatibility 檢查；(III) EPIC-RUNTIME (P1 6 task / Sprint 3) — RuntimeBinding schema + Runtime Manager skeleton + /bff/runtimes + deploy/pause/replace/rollback actions + loader metadata migration (promotion_state → artifact_state + deployment_stage) + LEAN algorithm-level smoke；(IV) EPIC-TELEMETRY (P2 7 task / Sprint 4) — TelemetryEvent canonical schema + RuntimeHeartbeat ingest + AuditAction backend + /bff/alerts + /bff/incidents + reconciliation record + Postmortem schema/endpoint；(V) EPIC-RESEARCH (P3 28 task / Sprint 5) — Source Ingest (SRC) + StrategySpec (STRAT) + Experiment orchestrator (EXP) + Qlib/vectorbt adapters + Persona/Trainer (PER/TRN) + Imitation dataset (IMT) + Consult/Committee (ASK)；(VI) EPIC-EVOLUTION (P3 3 task / Sprint 6) — EvolutionDecision service + /bff/v5/loop-runs + /bff/v5/sentinel/findings。GAP § 10 最大阻塞：BFF live endpoints 不足 → EPIC-BFF-P0 必須最先收斂；Registry/Promotion canonical 已 implemented，DeploymentPlan/RuntimeBinding 是 governance→execution 缺口；Artifact Loader 仍寫 legacy promotion_state，EX-002 metadata migration 是 execution-side 技術債。fail-closed 鐵律延續：broker production live、capital binding live 仍禁止；canary 需 risk-owner + operator 雙閘；evidence 走 support/evidence/<epic>-<task>/。Track E 收尾備註：46 個 MGMT-* task 中 45 個 done+archive，僅 MGMT-BROKER-002 仍 blocked 等 Shioaji credentials (commit 22e5ca3b 已備 sidecar acceptance packet)；M7 canary readiness 因此未閉合；Track E objective 不在本 sprint 推進範圍，僅 carry-over 記錄。",
-  "updated_at": "2026-05-16T10:48:09Z",
+  "updated_at": "2026-05-16T11:08:07Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -94,14 +94,14 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "ready",
+      "status": "working",
       "current_task_ids": [
         "ASK-005",
         "EVO-001"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run.",
-      "last_update": "2026-05-16T00:53:22Z"
+      "next": "Supervisor auto-started EVO-001 after successful dispatch.",
+      "last_update": "2026-05-16T11:04:07Z"
     },
     {
       "name": "Gemini",
@@ -115,7 +115,7 @@
       "current_task_ids": [],
       "branch": "feat/gemini-research-runtime",
       "next": "",
-      "last_update": "2026-05-16T10:36:19Z"
+      "last_update": "2026-05-16T10:56:33Z"
     },
     {
       "name": "Codex",
@@ -125,13 +125,14 @@
         "schema",
         "acceptance"
       ],
-      "status": "working",
+      "status": "ready",
       "current_task_ids": [
-        "ASK-004"
+        "SENT-001-SIDECAR-BFF-HANDOFF",
+        "ASK-005-SIDECAR-ACCEPTANCE"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Validating inherited ASK-004 BFF committee memo publish implementation against focused tests before review handoff.",
-      "last_update": "2026-05-16T10:38:14Z"
+      "next": "Auto-reassigned ownership from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Codex starts a fresh run.",
+      "last_update": "2026-05-16T10:37:04Z"
     },
     {
       "name": "Codex2",
@@ -159,7 +160,7 @@
       "current_task_ids": [],
       "branch": "feat/grok-research-critique",
       "next": "",
-      "last_update": "2026-05-16T10:36:42Z"
+      "last_update": "2026-05-16T10:56:58Z"
     },
     {
       "name": "Claude2",
@@ -168,13 +169,11 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "working",
-      "current_task_ids": [
-        "SENT-001"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/claude2-execution-control",
-      "next": "Codex review requests changes; see support/reviews/SENT-001-review-codex.md. Required: fix duplicate /bff/v5/sentinel/findings OpenAPI registration so kind/status/severity query params appear in /openapi.json, add a focused OpenAPI regression test, and make the SENT-001 implementation hunks durable/task-scoped because current referenced commits only contain tests/evidence while main.py/read_store.py implementation is still dirty.",
-      "last_update": "2026-05-16T10:33:21Z"
+      "next": "",
+      "last_update": "2026-05-16T11:04:29Z"
     },
     {
       "name": "Gemini2",
@@ -210,50 +209,18 @@
       "waiting_for": "Gemini"
     },
     {
-      "id": "ASK-002",
-      "title": "ConsultRequest / ConsultMemo schema",
-      "summary_zh": null,
-      "phase": "Sprint 5 / EPIC-RESEARCH",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "review_approved",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Review approved: ConsultRequest/ConsultMemo schemas correct and complete; advisory boundary enforced; all 27 tests pass. Returning to owner Codex for closeout.",
-      "last_update": "2026-05-16T10:47:19Z",
-      "review_notes_zh": [
-        "審查通過：ASK-002 commit b23fb2e3 正確實作 Draft-07 ConsultRequest/ConsultMemo schemas。additionalProperties: false 在兩個 schema 中均有效阻止 deployment_command 與 broker_order 等副作用欄位注入；allOf conditional 正確強制 published memo 需要 published_at；Pydantic model 約束（min_length、confidence bounds）與 schema 一致；validate_consult_memo_against_request 跨物件 lineage 驗證完整；全部 27 個測試通過（8+8+1+10）。Advisory-only 邊界成立，closeout 交還 owner Codex。"
-      ],
-      "review_file": "support/reviews/ASK-002-review-claude.md"
-    },
-    {
-      "id": "ASK-004",
-      "title": "memo publish to registry / review",
-      "summary_zh": null,
-      "phase": "Sprint 5 / EPIC-RESEARCH",
-      "owner": "Codex",
-      "reviewer": "Claude2",
-      "status": "in_progress",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Validating inherited ASK-004 BFF committee memo publish implementation against focused tests before review handoff.",
-      "last_update": "2026-05-16T10:38:14Z"
-    },
-    {
       "id": "ASK-005",
       "title": "approval / ask SSE event publishing",
       "summary_zh": null,
       "phase": "Sprint 5 / EPIC-RESEARCH",
       "owner": "Claude",
       "reviewer": "Codex2",
-      "status": "todo",
+      "status": "review",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run.",
-      "last_update": "2026-05-16T00:53:22Z"
+      "next": "ASK-005 implementation complete. Commit 6c7484c1. Changes: (1) sem_agora_ask_create_session now publishes ask.session.started to the ask channel; (2) bff_approvals_decide publishes approval.decided (approve/reject) or approval.stage.changed (request_revision/escalate/freeze); role-gate failures do not publish. New test file: test_ask005_sse_event_publishing_contract.py (6 tests). Verification: pytest test_ask005_sse_event_publishing_contract.py → 6 passed; test_pkt005_sse_substrate_contract → 14 passed; test_bff_approvals_decide_contract + test_ask_001-003-004 → 113 passed.",
+      "last_update": "2026-05-16T11:01:26Z"
     },
     {
       "id": "EVO-001",
@@ -262,26 +229,12 @@
       "phase": "Sprint 6 / EPIC-EVOLUTION",
       "owner": "Claude",
       "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T23:37:02Z"
-    },
-    {
-      "id": "SENT-001",
-      "title": "/bff/v5/sentinel/findings endpoint",
-      "summary_zh": null,
-      "phase": "Sprint 6 / EPIC-EVOLUTION",
-      "owner": "Claude2",
-      "reviewer": "Codex",
       "status": "in_progress",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Codex review requests changes; see support/reviews/SENT-001-review-codex.md. Required: fix duplicate /bff/v5/sentinel/findings OpenAPI registration so kind/status/severity query params appear in /openapi.json, add a focused OpenAPI regression test, and make the SENT-001 implementation hunks durable/task-scoped because current referenced commits only contain tests/evidence while main.py/read_store.py implementation is still dirty.",
-      "last_update": "2026-05-16T10:33:21Z"
+      "next": "Supervisor auto-started EVO-001 after successful dispatch.",
+      "last_update": "2026-05-16T11:04:07Z"
     },
     {
       "id": "SENT-001-SIDECAR-BFF-HANDOFF",
@@ -308,6 +261,58 @@
       "helper_kind": "bff_handoff_packet",
       "mutates_canonical": false,
       "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "ASK-004-SIDECAR-REVIEW",
+      "title": "Prepare ASK-004 review packet and evidence summary",
+      "summary_zh": "平行支援 ASK-004，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+      "phase": "Sprint 5 / EPIC-RESEARCH",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/ASK-004/ASK-004-SIDECAR-REVIEW.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Auto-reassigned ownership from Gemini to Claude after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Claude starts a fresh run.",
+      "last_update": "2026-05-16T10:57:28Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "ASK-004",
+      "helper_kind": "review_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "ASK-005-SIDECAR-ACCEPTANCE",
+      "title": "Prepare ASK-005 acceptance packet and dependency map",
+      "summary_zh": "平行支援 ASK-005，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+      "phase": "Sprint 5 / EPIC-RESEARCH",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/ASK-005/ASK-005-SIDECAR-ACCEPTANCE.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Auto-reassigned ownership from Copilot to Codex after repeated Copilot quota terminal: 402 You have no quota. Task returned to todo until Codex starts a fresh run.",
+      "last_update": "2026-05-16T10:57:54Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "ASK-005",
+      "helper_kind": "acceptance_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
     }
   ],
   "handoffs": [
@@ -329,48 +334,12 @@
       "resolved_at": "2026-04-17T12:39:53Z"
     },
     {
-      "task_id": "ASK-002",
+      "task_id": "ASK-005",
       "from": "Claude",
       "to": "Codex2",
-      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T09:37:45Z",
-      "resolved_at": "2026-05-16T09:59:44Z"
-    },
-    {
-      "task_id": "ASK-002",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "ASK-002 ready for review. Commit b23fb2e3 adds Draft-07 ConsultRequest/ConsultMemo schemas, schema load/validate helpers, memo-to-request lineage validation, tighter consultation model identity/confidence constraints, and evidence at support/evidence/ASK-002/README.md. Advisory-only boundary covered by tests rejecting direct deployment/broker side-effect fields. Verification: py_compile consultation models/main/store/client; pytest services/consultation/test_models.py -q (8 passed); pytest services/consultation/smoke_test.py services/consultation/test_postgres_store.py -q (8 passed); pytest services/consultation/test_compose_activation.py -q (1 passed); pytest services/control-plane/bff/test_cw01_consult_request_contract.py services/control-plane/bff/test_read_store_service_clients.py -q (10 passed).",
-      "status": "done",
-      "created_at": "2026-05-16T10:26:42Z",
-      "resolved_at": "2026-05-16T10:47:19Z"
-    },
-    {
-      "task_id": "SENT-001",
-      "from": "Claude2",
-      "to": "Codex",
-      "message": "SENT-001 implementation complete. New file: test_sent001_sentinel_findings_contract.py (15 contract tests covering kind/status/severity query filters and kind field in SentinelFinding derived model). No changes to main.py or read_store.py needed — filters and kind field were already implemented. Commits: eda173a6 (tests), b5c1c434 (evidence). Verification: pytest test_sent001_sentinel_findings_contract.py -q (15 passed); pytest test_bff_v5_loop_sentinel_contract.py test_read_store_loop_sentinel.py -q (33 passed). Evidence: support/evidence/SENT-001/README.md.",
-      "status": "done",
-      "created_at": "2026-05-16T10:28:18Z",
-      "resolved_at": "2026-05-16T10:33:21Z"
-    },
-    {
-      "task_id": "SENT-001",
-      "from": "Codex",
-      "to": "Claude2",
-      "message": "Codex review requests changes; see support/reviews/SENT-001-review-codex.md. Required: fix duplicate /bff/v5/sentinel/findings OpenAPI registration so kind/status/severity query params appear in /openapi.json, add a focused OpenAPI regression test, and make the SENT-001 implementation hunks durable/task-scoped because current referenced commits only contain tests/evidence while main.py/read_store.py implementation is still dirty.",
-      "status": "done",
-      "created_at": "2026-05-16T10:33:21Z",
-      "resolved_at": "2026-05-16T10:33:21Z"
-    },
-    {
-      "task_id": "ASK-002",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Review approved: ConsultRequest/ConsultMemo schemas correct and complete; advisory boundary enforced; all 27 tests pass. Returning to owner Codex for closeout.",
+      "message": "ASK-005 implementation complete. Commit 6c7484c1. Changes: (1) sem_agora_ask_create_session now publishes ask.session.started to the ask channel; (2) bff_approvals_decide publishes approval.decided (approve/reject) or approval.stage.changed (request_revision/escalate/freeze); role-gate failures do not publish. New test file: test_ask005_sse_event_publishing_contract.py (6 tests). Verification: pytest test_ask005_sse_event_publishing_contract.py → 6 passed; test_pkt005_sse_substrate_contract → 14 passed; test_bff_approvals_decide_contract + test_ask_001-003-004 → 113 passed.",
       "status": "pending",
-      "created_at": "2026-05-16T10:47:19Z"
+      "created_at": "2026-05-16T11:01:26Z"
     }
   ],
   "blockers": [
@@ -394,22 +363,22 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 2,
+      "total": 3,
+      "active": 2,
+      "blocked": 0,
+      "done": 0,
+      "review": 1,
+      "review_approved": 0,
+      "todo": 2
+    },
+    "Claude2": {
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 2
-    },
-    "Claude2": {
-      "total": 1,
-      "active": 1,
-      "blocked": 0,
-      "done": 0,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Gemini": {
       "total": 0,
@@ -430,12 +399,12 @@
       "todo": 0
     },
     "Codex": {
-      "total": 3,
-      "active": 1,
+      "total": 2,
+      "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
-      "review_approved": 1,
+      "review_approved": 0,
       "todo": 2
     },
     "Codex2": {
