@@ -13,6 +13,11 @@ from pydantic import BaseModel, Field
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
 from models import TeachingEvent, TeachingSession
+from policy_lineage import (
+    PolicyLineageError,
+    build_lineage_read_store,
+    record_commit as record_policy_lineage_commit,
+)
 from store import TrainingSessionStore, build_training_session_store
 
 
@@ -94,6 +99,17 @@ def _decision_lineage_refs(
             }
         )
     return refs
+
+
+def _teaching_event_ids(replay: Dict[str, Any]) -> List[str]:
+    event_ids: List[str] = []
+    for event in replay.get("events") or []:
+        if not isinstance(event, dict):
+            continue
+        event_id = str(event.get("event_id") or "").strip()
+        if event_id:
+            event_ids.append(event_id)
+    return event_ids
 
 
 def _mark_replay_idempotency(
@@ -757,6 +773,20 @@ def _decide_replay(
             timestamp=timestamp,
         )
     )
+    if state == "committed":
+        try:
+            policy_edges = record_policy_lineage_commit(
+                session_id,
+                _teaching_event_ids(replay),
+                str(replay.get("persona_id") or ""),
+                store=build_lineage_read_store(store.data_dir),
+                commit_at=timestamp,
+                policy_artifact_id=artifacts.get("persona_policy_ref"),
+            )
+        except PolicyLineageError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        artifacts["policy_lineage_edge_ids"] = [edge["edge_id"] for edge in policy_edges]
+        artifacts["policy_lineage_store_ref"] = "lineage-read:training-session-policy-lineage"
     decision_artifact_refs = {
         "before_artifact_ref": artifacts.get("before_artifact_ref"),
         "candidate_artifact_ref": artifacts.get("candidate_artifact_ref"),
@@ -767,6 +797,8 @@ def _decide_replay(
         "lineage_recorded_at": artifacts.get("lineage_recorded_at"),
         "persona_policy_ref": artifacts.get("persona_policy_ref"),
         "route_policy_ref": artifacts.get("route_policy_ref"),
+        "policy_lineage_edge_ids": artifacts.get("policy_lineage_edge_ids"),
+        "policy_lineage_store_ref": artifacts.get("policy_lineage_store_ref"),
     }
     decision_event = _build_teaching_event(
         session_id=session_id,
