@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-16 17:05:29
+Last updated: 2026-05-16 17:28:30
 
 ## Objective
 
@@ -37,12 +37,12 @@ Last updated: 2026-05-16 17:05:29
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run.
+- `Claude`: execution, control-plane, governance-review; next: Assignment created
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: Supervisor auto-started STRAT-004 after successful dispatch.
+- `Codex`: integration, status-system, schema, acceptance; next: EXP-001 implementation is already committed as 1dc686c6 and remains valid. Verified py_compile, pytest services/research/experiments/test_models.py -q (12 passed), and git diff --check for task paths. Review artifact is present at support/reviews/EXP-001-review-claude.md; please publish approval through the canonical approve flow.
 - `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
-- `Claude2`: execution, control-plane, governance-review; next: Changes requested: ASK-001 POST idempotency records are written to _ASK_SESSIONS_IDEMPOTENCY but checked via _AGORA_CORE_BFF_IDEMPOTENCY, so create/close retries and conflicts are not enforced. See support/reviews/ASK-001-review-codex.md.
+- `Claude2`: execution, control-plane, governance-review; next: Review approved. Governance constants consistent with learning adapter, all 24 tests pass, smoke test passes. Returned to Claude2 for finalization.
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check.
 
 ## Delivery Layers
@@ -52,19 +52,16 @@ Last updated: 2026-05-16 17:05:29
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | Gemini2 | blocked | - | - |
-| `STRAT-003` | Sprint 5 / EPIC-RESEARCH | Source -> StrategySpec conversion service | Codex | review_approved | - | - |
-| `STRAT-004` | Sprint 5 / EPIC-RESEARCH | evidence / code refs lineage | Codex | in_progress | - | - |
-| `EXP-001` | Sprint 5 / EPIC-RESEARCH | ExperimentTask / ExperimentRun schema | Claude | todo | - | - |
-| `EXP-005` | Sprint 5 / EPIC-RESEARCH | ExperimentRun -> Artifact registry writeback | Codex | review_approved | - | - |
-| `TRN-001` | Sprint 5 / EPIC-RESEARCH | TeachingSession / TeachingEvent schema | Claude | todo | - | - |
-| `TRN-002` | Sprint 5 / EPIC-RESEARCH | trainer session endpoints | Claude | todo | - | - |
-| `TRN-003` | Sprint 5 / EPIC-RESEARCH | rapid-eval request / response | Claude2 | review | - | - |
+| `STRAT-004` | Sprint 5 / EPIC-RESEARCH | evidence / code refs lineage | Codex | review_approved | - | - |
+| `EXP-001` | Sprint 5 / EPIC-RESEARCH | ExperimentTask / ExperimentRun schema | Codex | review | - | - |
+| `TRN-001` | Sprint 5 / EPIC-RESEARCH | TeachingSession / TeachingEvent schema | Codex | in_progress | - | - |
+| `TRN-002` | Sprint 5 / EPIC-RESEARCH | trainer session endpoints | Codex | todo | - | - |
 | `TRN-004` | Sprint 5 / EPIC-RESEARCH | trainer commit / discard / replay | Claude | todo | - | - |
 | `IMT-001` | Sprint 5 / EPIC-RESEARCH | TraderTrajectory schema | Claude | todo | - | - |
 | `IMT-002` | Sprint 5 / EPIC-RESEARCH | PreferenceExample / CorrectionTrace schema | Claude | todo | - | - |
-| `IMT-003` | Sprint 5 / EPIC-RESEARCH | imitation dataset builder skeleton | Claude2 | review | - | - |
+| `IMT-003` | Sprint 5 / EPIC-RESEARCH | imitation dataset builder skeleton | Claude2 | review_approved | - | - |
 | `IMT-004` | Sprint 5 / EPIC-RESEARCH | behavior policy artifact type registration | Claude | todo | - | - |
-| `ASK-001` | Sprint 5 / EPIC-RESEARCH | /bff/agora/ask/sessions | Claude2 | in_progress | - | - |
+| `ASK-001` | Sprint 5 / EPIC-RESEARCH | /bff/agora/ask/sessions | Codex | todo | - | - |
 | `ASK-002` | Sprint 5 / EPIC-RESEARCH | ConsultRequest / ConsultMemo schema | Claude | todo | - | - |
 | `ASK-003` | Sprint 5 / EPIC-RESEARCH | ask / committee session lifecycle | Claude2 | todo | - | - |
 | `ASK-004` | Sprint 5 / EPIC-RESEARCH | memo publish to registry / review | Claude | todo | - | - |
@@ -81,11 +78,13 @@ Last updated: 2026-05-16 17:05:29
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-16 15:46:09
-- Terminal tasks archived: `1135` total, `1117` completed, `18` superseded
+- Archive updated: 2026-05-16 17:28:15
+- Terminal tasks archived: `1137` total, `1119` completed, `18` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `TRN-003` | Sprint 5 / EPIC-RESEARCH | rapid-eval request / response | Claude2 | completed | 2026-05-16 17:28:15 | `ai-task-archive/tasks/TRN-003.json` |
+| `EXP-005` | Sprint 5 / EPIC-RESEARCH | ExperimentRun -> Artifact registry writeback | Codex | completed | 2026-05-16 17:16:41 | `ai-task-archive/tasks/EXP-005.json` |
 | `PER-002` | Sprint 5 / EPIC-RESEARCH | skills/tools/capabilities read API | Claude2 | completed | 2026-05-16 15:46:09 | `ai-task-archive/tasks/PER-002.json` |
 | `SRC-003` | Sprint 5 / EPIC-RESEARCH | repo allowlist ingest skeleton | Codex | completed | 2026-05-16 15:36:50 | `ai-task-archive/tasks/SRC-003.json` |
 | `EXP-002` | Sprint 5 / EPIC-RESEARCH | /bff/research-experiments list/detail | Claude2 | completed | 2026-05-16 15:35:28 | `ai-task-archive/tasks/EXP-002.json` |
@@ -104,29 +103,24 @@ Last updated: 2026-05-16 17:05:29
 | `P0-AUD-001` | Sprint 1 / EPIC-BFF-P0 | /bff/audit read endpoint | Claude2 | completed | 2026-05-16 13:53:57 | `ai-task-archive/tasks/P0-AUD-001.json` |
 | `POST-001` | Sprint 4 / EPIC-TELEMETRY | Postmortem schema + endpoint | Codex | completed | 2026-05-16 13:51:19 | `ai-task-archive/tasks/POST-001.json` |
 | `AUD-002` | Sprint 4 / EPIC-TELEMETRY | AuditAction backend (write engine) | Codex | completed | 2026-05-16 13:47:22 | `ai-task-archive/tasks/AUD-002.json` |
-| `RT-004` | Sprint 3 / EPIC-RUNTIME | Runtime deploy/pause/replace/rollback actions | Codex | completed | 2026-05-16 13:44:24 | `ai-task-archive/tasks/RT-004.json` |
-| `RT-002` | Sprint 3 / EPIC-RUNTIME | Runtime Manager skeleton | Codex | completed | 2026-05-16 13:43:58 | `ai-task-archive/tasks/RT-002.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | - | Gemini2 | Gemini | blocked | - | 2026-05-15 23:15:06 | Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check. |
-| `STRAT-003` | Sprint 5 / EPIC-RESEARCH | Source -> StrategySpec conversion service | - | Codex | Claude | review_approved | - | 2026-05-16 17:01:54 | Supervisor resumed STRAT-003 for finalize after successful dispatch. |
-| `STRAT-004` | Sprint 5 / EPIC-RESEARCH | evidence / code refs lineage | - | Codex | Claude | in_progress | - | 2026-05-16 17:02:36 | Supervisor auto-started STRAT-004 after successful dispatch. |
-| `EXP-001` | Sprint 5 / EPIC-RESEARCH | ExperimentTask / ExperimentRun schema | - | Claude | Codex | todo | - | 2026-05-16 16:53:29 | Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
-| `EXP-005` | Sprint 5 / EPIC-RESEARCH | ExperimentRun -> Artifact registry writeback | - | Codex | Claude | review_approved | - | 2026-05-16 17:04:15 | EXP-005 registry writeback review passed. Safety invariants enforced at library and HTTP layers, lineage complete, idempotency covered, 56 tests pass. Returned to Codex for finalization. |
-| `TRN-001` | Sprint 5 / EPIC-RESEARCH | TeachingSession / TeachingEvent schema | - | Claude | Codex | todo | - | 2026-05-16 16:54:07 | Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
-| `TRN-002` | Sprint 5 / EPIC-RESEARCH | trainer session endpoints | - | Claude | Codex2 | todo | - | 2026-05-16 07:31:25 | Assignment created |
-| `TRN-003` | Sprint 5 / EPIC-RESEARCH | rapid-eval request / response | - | Claude2 | Copilot | review | - | 2026-05-16 17:00:26 | TRN-003 implementation complete. Added create_rapid_eval and get_rapid_eval to ReadSurfaceStore backed by PANTHEON_BFF_RAPID_EVAL_STORE env-var JSON file. BFF routes POST/GET /api/v1/trainer/sessions/{id}/rapid-eval now fully wired. Verification: 13 contract tests pass; 51 trainer workbench + 8 agora tests clean. Commit: 7afc034b. Evidence: support/evidence/TRN-003/README.md. |
+| `STRAT-004` | Sprint 5 / EPIC-RESEARCH | evidence / code refs lineage | - | Codex | Claude | review_approved | - | 2026-05-16 17:24:42 | Supervisor resumed STRAT-004 for finalize after successful dispatch. |
+| `EXP-001` | Sprint 5 / EPIC-RESEARCH | ExperimentTask / ExperimentRun schema | - | Codex | Claude | review | - | 2026-05-16 17:28:30 | EXP-001 implementation is already committed as 1dc686c6 and remains valid. Verified py_compile, pytest services/research/experiments/test_models.py -q (12 passed), and git diff --check for task paths. Review artifact is present at support/reviews/EXP-001-review-claude.md; please publish approval through the canonical approve flow. |
+| `TRN-001` | Sprint 5 / EPIC-RESEARCH | TeachingSession / TeachingEvent schema | - | Codex | Claude | in_progress | - | 2026-05-16 17:24:59 | Implemented TeachingSession/TeachingEvent schema-backed models and wired training-session service events to emit canonical actor_type payload timestamp correlation fields; focused schema and HTTP lifecycle tests pass. |
+| `TRN-002` | Sprint 5 / EPIC-RESEARCH | trainer session endpoints | - | Codex | Claude | todo | - | 2026-05-16 17:17:54 | Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Codex starts a fresh run. |
 | `TRN-004` | Sprint 5 / EPIC-RESEARCH | trainer commit / discard / replay | - | Claude | Codex2 | todo | - | 2026-05-16 07:32:26 | Assignment created |
 | `IMT-001` | Sprint 5 / EPIC-RESEARCH | TraderTrajectory schema | - | Claude | Claude2 | todo | - | 2026-05-16 08:36:13 | Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
 | `IMT-002` | Sprint 5 / EPIC-RESEARCH | PreferenceExample / CorrectionTrace schema | - | Claude | Claude2 | todo | - | 2026-05-16 09:11:18 | Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
-| `IMT-003` | Sprint 5 / EPIC-RESEARCH | imitation dataset builder skeleton | - | Claude2 | Claude | review | - | 2026-05-16 17:04:56 | IMT-003 implementation complete. Imitation dataset builder skeleton in services/research/imitation/. Deliverables: dataset_builder.py (ImitationDatasetBuilder, DatasetBuildRequest, RawTrajectorySession, TrajectoryStep, DatasetBuildResult with actor_role/decision/promotion_state governance filters), __init__.py, smoke_test.py, test_dataset_builder.py. Verification: py_compile OK; pytest 24 passed; smoke_test all passed. Commit: fa9584e3. Evidence: support/evidence/IMT-003/README.md. |
+| `IMT-003` | Sprint 5 / EPIC-RESEARCH | imitation dataset builder skeleton | - | Claude2 | Claude | review_approved | - | 2026-05-16 17:27:20 | Review approved. Governance constants consistent with learning adapter, all 24 tests pass, smoke test passes. Returned to Claude2 for finalization. |
 | `IMT-004` | Sprint 5 / EPIC-RESEARCH | behavior policy artifact type registration | - | Claude | Claude2 | todo | - | 2026-05-16 08:36:24 | Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
-| `ASK-001` | Sprint 5 / EPIC-RESEARCH | /bff/agora/ask/sessions | - | Claude2 | Codex | in_progress | - | 2026-05-16 17:05:29 | Changes requested: ASK-001 POST idempotency records are written to _ASK_SESSIONS_IDEMPOTENCY but checked via _AGORA_CORE_BFF_IDEMPOTENCY, so create/close retries and conflicts are not enforced. See support/reviews/ASK-001-review-codex.md. |
+| `ASK-001` | Sprint 5 / EPIC-RESEARCH | /bff/agora/ask/sessions | - | Codex | Claude2 | todo | - | 2026-05-16 17:16:33 | Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Codex starts a fresh run. |
 | `ASK-002` | Sprint 5 / EPIC-RESEARCH | ConsultRequest / ConsultMemo schema | - | Claude | Claude2 | todo | - | 2026-05-16 08:36:34 | Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
-| `ASK-003` | Sprint 5 / EPIC-RESEARCH | ask / committee session lifecycle | - | Claude2 | Codex | todo | - | 2026-05-16 07:36:12 | Assignment created |
+| `ASK-003` | Sprint 5 / EPIC-RESEARCH | ask / committee session lifecycle | - | Claude2 | Codex | todo | - | 2026-05-16 17:24:12 | Supervisor preempted ASK-003 to free Claude2 for higher-priority review/finalize work; task returned to todo until a fresh run restarts it. |
 | `ASK-004` | Sprint 5 / EPIC-RESEARCH | memo publish to registry / review | - | Claude | Codex2 | todo | - | 2026-05-16 07:36:31 | Assignment created |
 | `ASK-005` | Sprint 5 / EPIC-RESEARCH | approval / ask SSE event publishing | - | Claude | Codex2 | todo | - | 2026-05-16 08:53:22 | Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run. |
 | `EVO-001` | Sprint 6 / EPIC-EVOLUTION | EvolutionDecision service | - | Claude | Codex | todo | - | 2026-05-16 07:37:02 | Assignment created |
@@ -138,10 +132,9 @@ Last updated: 2026-05-16 17:05:29
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
 | `EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE` | Gemini | Codex2 | Acceptance packet and dependency map for EP5-BROKER-TW-002 prepared at support/sidecars/EP5-BROKER-TW-002/EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE.md. Ready for review and incorporation into parent closeout. | pending | 2026-05-12 22:50:00 |
-| `STRAT-003` | Claude | Codex | STRAT-003 Source->StrategySpec conversion service review passed. Side-effect-free, safety invariants enforced, STRAT-002 integration verified end-to-end. Returned to Codex for finalization. | pending | 2026-05-16 16:57:42 |
-| `TRN-003` | Claude2 | Copilot | TRN-003 implementation complete. Added create_rapid_eval and get_rapid_eval to ReadSurfaceStore backed by PANTHEON_BFF_RAPID_EVAL_STORE env-var JSON file. BFF routes POST/GET /api/v1/trainer/sessions/{id}/rapid-eval now fully wired. Verification: 13 contract tests pass; 51 trainer workbench + 8 agora tests clean. Commit: 7afc034b. Evidence: support/evidence/TRN-003/README.md. | pending | 2026-05-16 17:00:26 |
-| `EXP-005` | Claude | Codex | EXP-005 registry writeback review passed. Safety invariants enforced at library and HTTP layers, lineage complete, idempotency covered, 56 tests pass. Returned to Codex for finalization. | pending | 2026-05-16 17:04:15 |
-| `IMT-003` | Claude2 | Claude | IMT-003 implementation complete. Imitation dataset builder skeleton in services/research/imitation/. Deliverables: dataset_builder.py (ImitationDatasetBuilder, DatasetBuildRequest, RawTrajectorySession, TrajectoryStep, DatasetBuildResult with actor_role/decision/promotion_state governance filters), __init__.py, smoke_test.py, test_dataset_builder.py. Verification: py_compile OK; pytest 24 passed; smoke_test all passed. Commit: fa9584e3. Evidence: support/evidence/IMT-003/README.md. | pending | 2026-05-16 17:04:56 |
+| `STRAT-004` | Claude | Codex | STRAT-004 review approved. Lineage surface correct, execution boundary respected, all 22 tests pass. Returned to Codex for finalization. | pending | 2026-05-16 17:15:10 |
+| `IMT-003` | Claude | Claude2 | Review approved. Governance constants consistent with learning adapter, all 24 tests pass, smoke test passes. Returned to Claude2 for finalization. | pending | 2026-05-16 17:27:20 |
+| `EXP-001` | Codex | Claude | EXP-001 implementation is already committed as 1dc686c6 and remains valid. Verified py_compile, pytest services/research/experiments/test_models.py -q (12 passed), and git diff --check for task paths. Review artifact is present at support/reviews/EXP-001-review-claude.md; please publish approval through the canonical approve flow. | pending | 2026-05-16 17:28:30 |
 
 ## Blockers
 
@@ -153,8 +146,8 @@ Last updated: 2026-05-16 17:05:29
 
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
-| `STRAT-003` | Claude | 審查通過。convert_source_material 正確委派至 seed builder（拒絕 rejected sources）；_build_registry_payload 硬編碼 artifact_state=draft，不可繞過；lineage 完整可追溯（source_run_ids=[seed_id], source_dataset_refs=source_ids）；storage_ref/checksum 與 STRAT-002 facade 規範一致。安全不變量：research_only=True / registry_write_performed=False / execution_route=none 在 _conversion_metadata 末尾強制覆寫，測試明確驗證無法由呼叫者覆蓋。_validate_seed_inputs 拒絕範圍外 source_records 或 evidence_items。STRAT-002/STRAT-003 端對端整合：test_converted_registry_payload_registers_and_advances_to_candidate 驗證 conversion 產出直接可提交並推進至 candidate，deployment_stage 維持 none。21 tests pass，5 seed builder tests pass，44 registry tests pass，無迴歸。三項非阻塞觀察：task_id STRAT-003 硬編碼在 metadata、SHA-1 用於 stable_strategy_id、_frequency 在無頻率訊號時回退 research，均可接受。 | support/evidence/STRAT-003/review-claude.md |
-| `EXP-005` | Claude | 審查通過。完成狀態守衛正確攔截（run.status != completed → raise；HTTP 409）；artifact_state 限定 draft/candidate，approved 被 _artifact_state() 拒絕；deployment_stage 從 hints/artifact 雙重來源讀取，非 none 即 raise，metadata 中亦顯式寫入 deployment_stage=none；producer_run_id 直接設為 run.run_id；lineage 完整：source_run_ids、source_strategy_spec_id（含 fallback）、source_dataset_refs 均正確組裝。HTTP 層 idempotency_key 覆蓋重複請求。56 tests pass（test_registry_writeback + HTTP service + registry suite），無迴歸。三項非阻塞觀察：底層 write_ 函式對重複 registry_id 拋出例外（非返回），可接受因 HTTP 層已攔截；metadata override 可注入 deployment_stage key 但僅影響 metadata dict，不影響 registry entry 實際欄位；缺少直接測試 artifact 層 deployment_stage 讀取路徑，但守衛邏輯正確。 | support/evidence/EXP-005/review-claude.md |
+| `STRAT-004` | Claude | 審查通過。build_strategy_spec_lineage_refs 正確組裝 evidence_bundle + evidence_item refs 及 allowlisted code_refs；_validate_seed_inputs 拒絕 seed lineage 外的 SourceRecord/EvidenceItem；attach_lineage_refs_to_strategy_spec_payload 保留 provenance.source_refs；lineage edge to_lineage_edge 欄位完整；__init__.py 四項 export 正確；contract.md 2.4 明確標示 lineage-only 無執行授權。14 targeted tests + 22 strategy_spec tests 全過。兩項非阻塞觀察：trace_id 空值時 fallback 為空字串（可接受）；seed 中重複 evidence_item_id 不被 _validate_seed_inputs 攔截但 dedup 後產生單一 ref（可接受）。 | support/evidence/STRAT-004/review-claude.md |
+| `IMT-003` | Claude | 審查通過。governance 常數與 services/learning/imitation/adapter.py 一致（ALLOWED_ACTOR_ROLES/ALLOWED_PROMOTION_STATES/ELIGIBLE_DECISIONS 完全相同）；_filter_reason 四軸過濾順序正確；decision alias approved/edited 正常；__init__.py 8 項 export 完整；24 unit tests + smoke test 全過。兩項非阻塞觀察：_DECISION_ALIASES 中 rejected→reject 無害（仍被 ELIGIBLE_DECISIONS 過濾）；require_strategy_id_match=True 預設安全。Review artifact: support/reviews/IMT-003-review-claude.md。 | support/reviews/IMT-003-review-claude.md |
 
 ## Lovable Coordination
 
@@ -225,23 +218,23 @@ Last updated: 2026-05-16 17:05:29
 
 ## Latest Checkpoints
 
-- 2026-05-16 17:03:18 Orchestrator: PreToolUse: Write
-- 2026-05-16 17:03:21 Orchestrator: PostToolUse: Write
-- 2026-05-16 17:03:25 Orchestrator: PostToolUse: Bash
-- 2026-05-16 17:03:28 Orchestrator: PreToolUse: Bash
-- 2026-05-16 17:03:31 Claude2: `IMT-003` IMT-003 implementation complete. Imitation dataset builder skeleton delivered: ImitationDatasetBuilder + DatasetBuildRequest + RawTrajectorySession + TrajectoryStep + DatasetBuildResult with governance filters (actor_role/decision/promotion_state). Verification: py_compile OK; pytest test_dataset_builder.py -v (24 passed); smoke_test.py (all checks passed). Commit: fa9584e3. Evidence: support/evidence/IMT-003/README.md.
-- 2026-05-16 17:03:31 Orchestrator: PreToolUse: Bash
-- 2026-05-16 17:03:34 Orchestrator: `STRAT-004` Supervisor auto-started STRAT-004 after successful dispatch.
-- 2026-05-16 17:03:34 Orchestrator: PostToolUse: Bash
-- 2026-05-16 17:03:36 Orchestrator: `TRN-003` Worker started via copilot_local: review_ready_dispatch
-- 2026-05-16 17:03:53 Orchestrator: PreToolUse: Write
-- 2026-05-16 17:03:55 Orchestrator: PostToolUse: Write
-- 2026-05-16 17:04:11 Orchestrator: PreToolUse: Bash
-- 2026-05-16 17:04:15 Claude: `EXP-005` EXP-005 registry writeback review passed. Safety invariants enforced at library and HTTP layers, lineage complete, idempotency covered, 56 tests pass. Returned to Codex for finalization.
-- 2026-05-16 17:04:50 Orchestrator: PostToolUse: Bash
-- 2026-05-16 17:04:56 Orchestrator: PreToolUse: Bash
-- 2026-05-16 17:04:56 Claude2: `IMT-003` Handoff to Claude: IMT-003 implementation complete. Imitation dataset builder skeleton in services/research/imitation/. Deliverables: dataset_builder.py (ImitationDatasetBuilder, DatasetBuildRequest, RawTrajectorySession, TrajectoryStep, DatasetBuildResult with actor_role/decision/promotion_state governance filters), __init__.py, smoke_test.py, test_dataset_builder.py. Verification: py_compile OK; pytest 24 passed; smoke_test all passed. Commit: fa9584e3. Evidence: support/evidence/IMT-003/README.md.
-- 2026-05-16 17:05:14 Orchestrator: PostToolUse: Bash
-- 2026-05-16 17:05:17 Orchestrator: PreToolUse: Bash
-- 2026-05-16 17:05:25 Codex: `STRAT-002` STRAT-002 owner closeout finalized after Claude review approval. Durable commits: 6a1ee000 implementation, 06ffdb1d prior review record, 556a1290 archive, c97ca09c task-scoped evidence path referenced by current status. Verification rerun: py_compile registry service/main/test_service; git diff --check targeted STRAT-002 files; pytest services/registry -q (69 passed).
-- 2026-05-16 17:05:29 Codex: `ASK-001` Changes requested: ASK-001 POST idempotency records are written to _ASK_SESSIONS_IDEMPOTENCY but checked via _AGORA_CORE_BFF_IDEMPOTENCY, so create/close retries and conflicts are not enforced. See support/reviews/ASK-001-review-codex.md.
+- 2026-05-16 17:27:13 Orchestrator: `EXP-001` Supervisor auto-started EXP-001 after successful dispatch.
+- 2026-05-16 17:27:13 Orchestrator: `ASK-003` Worker exited before the task reached a terminal status.
+- 2026-05-16 17:27:15 Orchestrator: PreToolUse: Bash
+- 2026-05-16 17:27:19 Orchestrator: PreToolUse: Bash
+- 2026-05-16 17:27:20 Claude: `IMT-003` Review approved. Governance constants consistent with learning adapter, all 24 tests pass, smoke test passes. Returned to Claude2 for finalization.
+- 2026-05-16 17:27:44 Orchestrator: PostToolUse: Bash
+- 2026-05-16 17:27:48 Orchestrator: PreToolUse: Edit
+- 2026-05-16 17:27:50 Orchestrator: PostToolUse: Edit
+- 2026-05-16 17:27:55 Orchestrator: PreToolUse: Bash
+- 2026-05-16 17:27:56 Orchestrator: PostToolUse: Bash
+- 2026-05-16 17:28:02 Orchestrator: PreToolUse: Bash
+- 2026-05-16 17:28:05 Orchestrator: PostToolUse: Bash
+- 2026-05-16 17:28:12 Orchestrator: PostToolUse: Bash
+- 2026-05-16 17:28:12 Orchestrator: PreToolUse: Bash
+- 2026-05-16 17:28:17 Orchestrator: PreToolUse: Bash
+- 2026-05-16 17:28:15 Claude2: `TRN-003` Owner finalization complete. TRN-003 rapid-eval request/response: implementation 7afc034b, Codex review 0cdc16a4, closeout 2062b3cf. All 13 contract tests pass. Evidence updated to reflect auto-reassigned reviewer (Codex). No blocking findings from review.
+- 2026-05-16 17:28:18 Orchestrator: PostToolUse: Bash
+- 2026-05-16 17:28:24 Orchestrator: Stop: Stop
+- 2026-05-16 17:28:25 Orchestrator: SessionEnd: SessionEnd
+- 2026-05-16 17:28:30 Codex: `EXP-001` Handoff to Claude: EXP-001 implementation is already committed as 1dc686c6 and remains valid. Verified py_compile, pytest services/research/experiments/test_models.py -q (12 passed), and git diff --check for task paths. Review artifact is present at support/reviews/EXP-001-review-claude.md; please publish approval through the canonical approve flow.
