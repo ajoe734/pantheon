@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "ASK-004-SIDECAR-REVIEW",
+  "archived_at": "2026-05-16T12:12:58Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASK-004-SIDECAR-REVIEW",
+    "title": "Prepare ASK-004 review packet and evidence summary",
+    "summary_zh": "平行支援 ASK-004，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Sprint 5 / EPIC-RESEARCH",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/ASK-004/ASK-004-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: task-scoped commit 2075881e records Claude approval and closeout checks in support/sidecars/ASK-004/ASK-004-SIDECAR-REVIEW.md. Verification: AI_NAME=Codex ./scripts/ai-status.sh show ASK-004-SIDECAR-REVIEW; AI_NAME=Codex ./scripts/ai-status.sh show ASK-004 confirmed parent archive terminal done; git diff/status checked sidecar scope. Runtime tests were not rerun because this task changed support-only review material and no canonical/runtime files.",
+    "last_update": "2026-05-16T12:12:58Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "ASK-004",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過。ASK-004 支援僅整理現有 archive/evidence/review 狀態；無 canonical/runtime/governance 改動；parent 已 done；sidecar 準確無誤。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T12:12:58Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "2075881e119a6bb301ee4a267718e34f28ad8555",
+      "commit_subject": "ASK-004-SIDECAR-REVIEW: record closeout approval",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "ASK-004-SIDECAR-REVIEW",
+        "Reviewer": "Claude",
+        "Verification": "AI_NAME=Codex ./scripts/ai-status.sh show ASK-004-SIDECAR-REVIEW; AI_NAME=Codex ./scripts/ai-status.sh show ASK-004; git diff -- support/sidecars/ASK-004/ASK-004-SIDECAR-REVIEW.md; git status --short."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 76,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASK-004-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T11:10:29Z",
+      "resolved_at": "2026-05-16T11:11:31Z"
+    },
+    {
+      "task_id": "ASK-004-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "ASK-004 sidecar review packet is ready at support/sidecars/ASK-004/ASK-004-SIDECAR-REVIEW.md. Scope is support-only: it summarizes existing ASK-004 archive/evidence/review state, parent closeout commit 439f7dbe, and no canonical/runtime changes. Sidecar artifact committed in 018b5ea1; git diff check passed for the artifact.",
+      "status": "done",
+      "created_at": "2026-05-16T11:15:51Z",
+      "resolved_at": "2026-05-16T11:46:36Z"
+    },
+    {
+      "task_id": "ASK-004-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar review packet accurately summarizes ASK-004 done state, evidence map, and reviewer decision. Support-only scope confirmed; no canonical truth changed. Approved and returned to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-05-16T11:46:36Z",
+      "resolved_at": "2026-05-16T12:12:59Z"
+    }
+  ],
+  "blockers": []
+}
