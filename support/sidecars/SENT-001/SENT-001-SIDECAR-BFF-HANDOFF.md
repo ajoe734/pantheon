@@ -398,3 +398,18 @@ Original reviewer questions (still open for post-SENT-001 backlog):
 
 Parent task SENT-001 is `done` and archived; these questions affect post-SENT-001
 backlog sizing only.
+
+---
+
+## 12. Closeout Record
+
+| Field | Value |
+|---|---|
+| Closeout date | 2026-05-16 |
+| Owner | Claude2 |
+| Reviewer | Codex |
+| Review file | `support/reviews/SENT-001-SIDECAR-BFF-HANDOFF-review-codex.md` |
+| Final artifact commit | `1f31fd5e` (v2 — response-shape/provenance fix) |
+| Review outcome | Approved (no blocking findings) |
+| Verification | 16/16 tests passed (`test_sent001_sentinel_findings_contract.py`) |
+| Canonical changes | None — support artifact only |
