@@ -259,6 +259,31 @@ Publication rule:
 - chair man must approve a normal non-force `git push` when branch/upstream are clear, closeout commit metadata matches the task or closeout batch, and no human hold is present
 - never use force, mirror, delete, all-branch, or tag-wide pushes as routine closeout
 
+### Multi-Branch Integration Policy
+
+Workers run on different branches by capability lane to avoid concurrent-edit conflict; per-task `git push` only publishes to the worker's own branch. This means task output does not reach `master` automatically and must be integrated periodically.
+
+Branch roles:
+
+- `master`: canonical line. Codex-lane work (integration contracts, schema, acceptance) commits directly here; other lanes' work arrives via scheduled integration merge.
+- `bff-luv-fe-<N>-dev-deploy` / `feat/<topic>` / `<lane>-execution-control`: per-lane or per-feature working branches. Workers push their task closeouts here, not to `master`.
+- `merge/backend-dev-into-master`: integration staging line. Tracks `master` plus any work being prepared for the next integration cycle.
+- `backend-dev-publish-<date>`: historical backend dev publish snapshot used during a specific consolidation wave (kept for audit, not for new work).
+- `archive/<branch>-<date>` tags: pointer for branches that have been retired after their work is on `master` or explicitly abandoned.
+
+Periodic integration cadence:
+
+- at each sprint boundary, before sprint planning, **the chair-review (or a designated `OPS-INTEG-*` task) must drive a deploy → master integration**
+- the integration sequence is: `git fetch origin`; create `integration/<YYYY-MM-DD>-<topic>` from `origin/master`; `git merge --no-ff <deploy-branch>`; push to `master`; then forward `merge/backend-dev-into-master` to the new `master` via a separate sync merge
+- never let a lane's deploy branch drift more than one sprint behind `master`; if a lane goes silent, retire the branch with an `archive/<branch>-<date>` tag and delete the remote ref
+- a deploy branch with `ahead > 0` against `master` for more than one sprint without an integration merge is a process violation and must surface as a chair-review finding
+
+Branch retirement:
+
+- when a branch's work has been integrated (or superseded), tag it `archive/<branch>-<YYYY-MM-DD>` with a message stating where the work landed
+- after the archive tag is pushed, delete the remote branch with `git push origin --delete <branch>` (non-force, non-mirror)
+- do not delete a branch that is still ahead of `master` without first integrating or explicitly accepting the loss
+
 ### Discussion Planning Mode
 
 `discussion_planning` is additive. It does not replace the current execution lifecycle.
