@@ -3,7 +3,7 @@
   "sprint": "2026-05-16-pantheon-bff-p0-foundation",
   "sprint_started_at": "2026-05-16T00:00:00Z",
   "objective": "跨進開發團隊 GAP master rebaseline (docs/04/pantheon_sa_supplemental_2026-05-15/GAP_dev_team_master_rebaseline_2026-05-15.md)，以 pantheon@master + execute-plans@main 為基準。並行 6 條 EPIC，按 P0→P3 階梯推進：(I) EPIC-BFF-P0 (P0 10 task / Sprint 1) — session trio (/bff/me, auth/refresh, logout) + /openapi.json + canonical action endpoint + approval decide + registry reads (strategies/personas/capital-pools/audit)，讓 execute-plans@main 在 VITE_BFF_FALLBACK=strict 下可 bootstrap 核心 Management flow 不再 fallback mock；(II) EPIC-GOV-DEPLOY (P1 5 task / Sprint 2) — ApprovalDecision first-class + DeploymentPlan contract/service + stage planner + deployment projection + pool/runtime compatibility 檢查；(III) EPIC-RUNTIME (P1 6 task / Sprint 3) — RuntimeBinding schema + Runtime Manager skeleton + /bff/runtimes + deploy/pause/replace/rollback actions + loader metadata migration (promotion_state → artifact_state + deployment_stage) + LEAN algorithm-level smoke；(IV) EPIC-TELEMETRY (P2 7 task / Sprint 4) — TelemetryEvent canonical schema + RuntimeHeartbeat ingest + AuditAction backend + /bff/alerts + /bff/incidents + reconciliation record + Postmortem schema/endpoint；(V) EPIC-RESEARCH (P3 28 task / Sprint 5) — Source Ingest (SRC) + StrategySpec (STRAT) + Experiment orchestrator (EXP) + Qlib/vectorbt adapters + Persona/Trainer (PER/TRN) + Imitation dataset (IMT) + Consult/Committee (ASK)；(VI) EPIC-EVOLUTION (P3 3 task / Sprint 6) — EvolutionDecision service + /bff/v5/loop-runs + /bff/v5/sentinel/findings。GAP § 10 最大阻塞：BFF live endpoints 不足 → EPIC-BFF-P0 必須最先收斂；Registry/Promotion canonical 已 implemented，DeploymentPlan/RuntimeBinding 是 governance→execution 缺口；Artifact Loader 仍寫 legacy promotion_state，EX-002 metadata migration 是 execution-side 技術債。fail-closed 鐵律延續：broker production live、capital binding live 仍禁止；canary 需 risk-owner + operator 雙閘；evidence 走 support/evidence/<epic>-<task>/。Track E 收尾備註：46 個 MGMT-* task 中 45 個 done+archive，僅 MGMT-BROKER-002 仍 blocked 等 Shioaji credentials (commit 22e5ca3b 已備 sidecar acceptance packet)；M7 canary readiness 因此未閉合；Track E objective 不在本 sprint 推進範圍，僅 carry-over 記錄。",
-  "updated_at": "2026-05-16T05:30:40Z",
+  "updated_at": "2026-05-16T05:44:24Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -96,7 +96,7 @@
       ],
       "status": "ready",
       "current_task_ids": [
-        "DEP-001-RB",
+        "RT-003",
         "CAP-002-RB",
         "EX-002-RB",
         "TEL-001-RB",
@@ -123,7 +123,7 @@
       ],
       "branch": "feat/claude-execution-control",
       "next": "Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run.",
-      "last_update": "2026-05-16T05:22:38Z"
+      "last_update": "2026-05-16T05:41:50Z"
     },
     {
       "name": "Gemini",
@@ -147,17 +147,14 @@
         "schema",
         "acceptance"
       ],
-      "status": "working",
+      "status": "finalize",
       "current_task_ids": [
-        "RT-003",
-        "RT-004",
         "AUD-002",
-        "ALT-001",
         "POST-001"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Inspecting existing BFF runtime list/detail implementation and running focused runtime endpoint tests.",
-      "last_update": "2026-05-16T05:30:40Z"
+      "next": "Supervisor resumed AUD-002 for finalize after successful dispatch.",
+      "last_update": "2026-05-16T05:41:20Z"
     },
     {
       "name": "Codex2",
@@ -171,7 +168,7 @@
       "current_task_ids": [],
       "branch": "bff-luv-fe-006-dev-deploy",
       "next": "",
-      "last_update": "2026-05-16T05:21:54Z"
+      "last_update": "2026-05-16T05:41:35Z"
     },
     {
       "name": "Copilot",
@@ -196,15 +193,13 @@
       ],
       "status": "finalize",
       "current_task_ids": [
-        "P0-REG-001",
-        "P0-PER-001",
         "P0-AUD-001",
         "DEP-003",
         "QLIB-001"
       ],
       "branch": "feat/claude2-execution-control",
-      "next": "Supervisor paused finalize on P0-REG-001 to free Claude2 for higher-priority review work; task remains review_approved.",
-      "last_update": "2026-05-16T05:22:03Z"
+      "next": "Review approved: /bff/audit dedicated handler correct. Filters, pagination, envelope, meta, RBAC all verified. 11 contract tests + 3 live wiring pass. Returning to Claude2 for finalization.",
+      "last_update": "2026-05-16T00:44:50Z"
     },
     {
       "name": "Gemini2",
@@ -238,44 +233,6 @@
       "next": "Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check.",
       "last_update": "2026-05-15T15:15:06Z",
       "waiting_for": "Gemini"
-    },
-    {
-      "id": "P0-REG-001",
-      "title": "/bff/strategies list/detail",
-      "summary_zh": null,
-      "phase": "Sprint 1 / EPIC-BFF-P0",
-      "owner": "Claude2",
-      "reviewer": "Claude",
-      "status": "review_approved",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Supervisor paused finalize on P0-REG-001 to free Claude2 for higher-priority review work; task remains review_approved.",
-      "last_update": "2026-05-16T05:22:03Z",
-      "review_notes_zh": [
-        "審查通過：GET /bff/strategies 回傳正確 data/items/page_info/meta 信封；_project_strategy_dto DTO 欄位完整（id/name/state/risk/alpha/capitalPoolId/personaIds 等）；OBJECT_NOT_FOUND 404 行為確認；overlay merge 正確；16 個合約測試全過；execute-plans live wiring 策略相關測試全過",
-        "跨任務附註：test_execute_plans_final_stub_auth_smoke_avoids_server_errors 1 項失敗係 P0-CAP-001 fail-closed 503 的副作用（/bff/capital-pools/pool_001），非 P0-REG-001 範圍，不影響本次審查通過；後續由 P0-CAP-001 owner 修正該測試"
-      ],
-      "review_file": "support/reviews/P0-REG-001-review-claude.md"
-    },
-    {
-      "id": "P0-PER-001",
-      "title": "/bff/personas list/detail",
-      "summary_zh": null,
-      "phase": "Sprint 1 / EPIC-BFF-P0",
-      "owner": "Claude2",
-      "reviewer": "Claude",
-      "status": "review_approved",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Auto-reassigned ownership from Codex2 to Claude2 after repeated Codex2 terminal: Codex usage limit reached",
-      "last_update": "2026-05-16T00:18:50Z",
-      "review_notes_zh": [
-        "審查通過：GET /bff/personas 回傳正確 data/items/page_info/meta 信封；_project_persona_dto DTO 欄位完整（id/name/owner/updatedAt/state/risk/archetype/routedStrategies/successRate/labelKey/lifecycleStatus）；OBJECT_NOT_FOUND 404 行為確認；overlay merge 正確；16 個合約測試全過；execute-plans live wiring persona 相關測試全過",
-        "跨任務附註：seeded detail matrix 測試 1 warning 為 read_store.py:73 pre-existing datetime.utcnow() DeprecationWarning，非 P0-PER-001 引入，不影響本次審查通過"
-      ],
-      "review_file": "support/reviews/P0-PER-001-review-claude.md"
     },
     {
       "id": "P0-AUD-001",
@@ -316,53 +273,18 @@
       "review_file": "support/reviews/DEP-003-review-claude.md"
     },
     {
-      "id": "RT-002",
-      "title": "Runtime Manager skeleton",
-      "summary_zh": null,
-      "phase": "Sprint 3 / EPIC-RUNTIME",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "review_approved",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Review approved: RT-002 skeleton inventory/bind/status surface meets P1 acceptance criteria. All pre-conditions enforced, 12+40 tests re-verified passing. Returning to Codex for closeout.",
-      "last_update": "2026-05-16T05:30:27Z",
-      "review_notes_zh": [
-        "審查通過：inventory/bind/status 三條 API 符合 P1 acceptance scope",
-        "重新運行全部測試驗證通過 (12+40 passed)",
-        "pre-conditions 全部正確執行",
-        "後續 RT-004 負責 deploy/pause/replace/rollback 行動路徑"
-      ],
-      "review_file": "support/evidence/RT-002/review-claude.md"
-    },
-    {
       "id": "RT-003",
       "title": "/bff/runtimes list/detail",
       "summary_zh": null,
       "phase": "Sprint 3 / EPIC-RUNTIME",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "in_progress",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "todo",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Inspecting existing BFF runtime list/detail implementation and running focused runtime endpoint tests.",
-      "last_update": "2026-05-16T05:30:40Z"
-    },
-    {
-      "id": "RT-004",
-      "title": "Runtime deploy/pause/replace/rollback actions",
-      "summary_zh": null,
-      "phase": "Sprint 3 / EPIC-RUNTIME",
-      "owner": "Codex",
-      "reviewer": "Claude2",
-      "status": "review",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "RT-004 ready for review. Evidence: support/evidence/RT-004/acceptance.md. Commit: 42d7b6c1. Verified deploy/pause/replace/rollback action lane: runtime-manager focused slice 16 passed; internal command surface 6 passed; py_compile service/main/client/tests passed.",
-      "last_update": "2026-05-16T05:21:05Z"
+      "next": "Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run.",
+      "last_update": "2026-05-16T05:41:50Z"
     },
     {
       "id": "AUD-002",
@@ -371,12 +293,16 @@
       "phase": "Sprint 4 / EPIC-TELEMETRY",
       "owner": "Codex",
       "reviewer": "Claude",
-      "status": "review",
+      "status": "review_approved",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Ready for review: AuditAction write engine now projects command-store audit records into governance audit readers and attaches foundation AuditAction context to semantic/gov/capital/strategy/persona/evolution/tools action write helpers. Commit 008e73f6. Evidence: support/evidence/AUD-002/acceptance.md. Verification: py_compile passed; AUD-002/audit/final-command/replay/actions suite 35 passed; capital/strategy/evolution/agora suite 80 passed; governance command submission 21 passed. Known unrelated failure remains in test_bff_governance_runtime_risk_audit_contract incident fixture ordering.",
-      "last_update": "2026-05-16T05:24:35Z"
+      "next": "Supervisor resumed AUD-002 for finalize after successful dispatch.",
+      "last_update": "2026-05-16T05:41:20Z",
+      "review_notes_zh": [
+        "審查通過：AuditAction 寫入引擎正確投影命令存儲記錄至審計讀取器，35+80+21 測試全部通過，已知非相關失敗為既有問題"
+      ],
+      "review_file": "services/control-plane/bff/review_aud_002_claude.md"
     },
     {
       "id": "ALT-001",
@@ -384,13 +310,13 @@
       "summary_zh": null,
       "phase": "Sprint 4 / EPIC-TELEMETRY",
       "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "in_progress",
+      "reviewer": "Claude2",
+      "status": "todo",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Supervisor auto-started ALT-001 after successful dispatch.",
-      "last_update": "2026-05-16T05:28:38Z"
+      "next": "Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Codex starts a fresh run.",
+      "last_update": "2026-05-16T05:42:06Z"
     },
     {
       "id": "POST-001",
@@ -399,44 +325,30 @@
       "phase": "Sprint 4 / EPIC-TELEMETRY",
       "owner": "Codex",
       "reviewer": "Claude",
-      "status": "in_progress",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Supervisor auto-started POST-001 after successful dispatch.",
-      "last_update": "2026-05-16T05:28:52Z"
-    },
-    {
-      "id": "GOV-001-RB",
-      "title": "ApprovalDecision schema + write authority (rebaseline)",
-      "summary_zh": null,
-      "phase": "Sprint 2 / EPIC-GOV-DEPLOY",
-      "owner": "Codex",
-      "reviewer": "Claude",
       "status": "review_approved",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Supervisor resumed GOV-001-RB for finalize after successful dispatch.",
-      "last_update": "2026-05-16T05:28:13Z",
+      "next": "Review approved: Postmortem schema complete with full lineage evidence fields; domain layer enforces referential integrity at write time; BFF operator endpoints correctly route with capability gating. 98+4 tests pass independently verified. Returning to Codex for finalization.",
+      "last_update": "2026-05-16T05:43:37Z",
       "review_notes_zh": [
-        "審查通過 — decide() 寫入權限保護正確；schema target_version 接受服務版本字串；drift 測試確保 write_authority 與 OWNER_MATRIX 同步；contract 文件 approval_decision_decided 事件；69+42+29+234 tests 全通過"
+        "審查通過：Postmortem schema 完整覆蓋所有血緣字段，域層強制引用完整性，BFF operator 端點正確路由且有 capability 閘控，98+4 測試全部通過，已知非相關 IN-05 失敗為既有問題"
       ],
-      "review_file": "support/evidence/GOV-001-RB/approval-decision-rebaseline.md"
+      "review_file": "services/postmortems/review_post_001_claude.md"
     },
     {
       "id": "DEP-001-RB",
       "title": "DeploymentPlan contract + service (rebaseline)",
       "summary_zh": null,
       "phase": "Sprint 2 / EPIC-GOV-DEPLOY",
-      "owner": "Claude",
-      "reviewer": "Codex",
+      "owner": "Codex",
+      "reviewer": "Claude",
       "status": "todo",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run.",
-      "last_update": "2026-05-16T05:22:38Z"
+      "next": "Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Codex starts a fresh run.",
+      "last_update": "2026-05-16T05:42:21Z"
     },
     {
       "id": "DEP-002-RB",
@@ -953,24 +865,6 @@
       "resolved_at": "2026-04-17T12:39:53Z"
     },
     {
-      "task_id": "P0-REG-001",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Ready for review: /bff/strategies list/detail are present in services/control-plane/bff/main.py with execute-plans Strategy DTO projection, pagination envelope, read-surface meta, and OBJECT_NOT_FOUND detail behavior. Evidence: support/evidence/P0-REG-001/README.md. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_bff_strategy_persona_contract.py -q => 16 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q => 8 passed, 2 existing datetime.utcnow deprecation warnings.",
-      "status": "done",
-      "created_at": "2026-05-15T23:24:15Z",
-      "resolved_at": "2026-05-15T23:59:10Z"
-    },
-    {
-      "task_id": "P0-PER-001",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Ready for review: /bff/personas list/detail verified with evidence at support/evidence/P0-PER-001/acceptance.md. Focused tests passed: test_bff_strategy_persona_contract.py -q (16 passed) and final live wiring OpenAPI/list-detail selection (1 passed, 7 deselected).",
-      "status": "done",
-      "created_at": "2026-05-15T23:26:02Z",
-      "resolved_at": "2026-05-16T00:08:48Z"
-    },
-    {
       "task_id": "DEP-003",
       "from": "Codex",
       "to": "Codex2",
@@ -987,15 +881,6 @@
       "status": "done",
       "created_at": "2026-05-15T23:33:19Z",
       "resolved_at": "2026-05-16T00:14:07Z"
-    },
-    {
-      "task_id": "P0-REG-001",
-      "from": "Claude",
-      "to": "Codex2",
-      "message": "Review approved: /bff/strategies list/detail implementation correct. DTO projection, pagination envelope, read-surface meta, and OBJECT_NOT_FOUND behavior all verified. 16 contract tests pass. Strategy live wiring tests pass. 1 unrelated test failure (capital-pools fail-closed 503) is P0-CAP-001 scope, not a blocker. Returning to Codex2 for finalization.",
-      "status": "done",
-      "created_at": "2026-05-15T23:59:10Z",
-      "resolved_at": "2026-05-16T00:18:40Z"
     },
     {
       "task_id": "P0-AUD-001",
@@ -1025,15 +910,6 @@
       "resolved_at": "2026-05-16T00:18:25Z"
     },
     {
-      "task_id": "P0-PER-001",
-      "from": "Claude",
-      "to": "Codex2",
-      "message": "Review approved: /bff/personas list/detail implementation correct. DTO projection, pagination envelope, read-surface meta, and OBJECT_NOT_FOUND behavior all verified. 16 contract tests pass. Seeded detail matrix pass. Returning to Codex2 for finalization.",
-      "status": "done",
-      "created_at": "2026-05-16T00:08:48Z",
-      "resolved_at": "2026-05-16T00:18:50Z"
-    },
-    {
       "task_id": "DEP-003",
       "from": "Claude",
       "to": "Codex",
@@ -1060,22 +936,6 @@
       "created_at": "2026-05-16T00:18:36Z"
     },
     {
-      "task_id": "P0-REG-001",
-      "from": "Claude",
-      "to": "Claude2",
-      "message": "Auto-reassigned ownership from Codex2 to Claude2 after repeated Codex2 terminal: Codex usage limit reached",
-      "status": "pending",
-      "created_at": "2026-05-16T00:18:41Z"
-    },
-    {
-      "task_id": "P0-PER-001",
-      "from": "Claude",
-      "to": "Claude2",
-      "message": "Auto-reassigned ownership from Codex2 to Claude2 after repeated Codex2 terminal: Codex usage limit reached",
-      "status": "pending",
-      "created_at": "2026-05-16T00:18:51Z"
-    },
-    {
       "task_id": "P0-AUD-001",
       "from": "Codex2",
       "to": "Claude",
@@ -1091,15 +951,6 @@
       "message": "Review approved: /bff/audit dedicated handler correct. Filters, pagination, envelope, meta, RBAC all verified. 11 contract tests + 3 live wiring pass. Returning to Claude2 for finalization.",
       "status": "pending",
       "created_at": "2026-05-16T00:44:50Z"
-    },
-    {
-      "task_id": "RT-002",
-      "from": "Claude2",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T00:52:13Z",
-      "resolved_at": "2026-05-16T00:52:45Z"
     },
     {
       "task_id": "RT-003",
@@ -1191,15 +1042,6 @@
       "resolved_at": "2026-05-16T01:28:00Z"
     },
     {
-      "task_id": "RT-002",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T01:27:52Z",
-      "resolved_at": "2026-05-16T01:28:41Z"
-    },
-    {
       "task_id": "RT-003",
       "from": "Claude",
       "to": "Codex2",
@@ -1209,15 +1051,6 @@
       "resolved_at": "2026-05-16T01:28:49Z"
     },
     {
-      "task_id": "RT-002",
-      "from": "Claude2",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T01:45:23Z",
-      "resolved_at": "2026-05-16T01:45:48Z"
-    },
-    {
       "task_id": "RT-003",
       "from": "Claude2",
       "to": "Codex",
@@ -1225,15 +1058,6 @@
       "status": "done",
       "created_at": "2026-05-16T01:45:28Z",
       "resolved_at": "2026-05-16T01:46:03Z"
-    },
-    {
-      "task_id": "RT-004",
-      "from": "Claude",
-      "to": "Codex2",
-      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T01:45:33Z",
-      "resolved_at": "2026-05-16T01:46:10Z"
     },
     {
       "task_id": "AUD-002",
@@ -1252,24 +1076,6 @@
       "status": "done",
       "created_at": "2026-05-16T01:45:41Z",
       "resolved_at": "2026-05-16T01:46:29Z"
-    },
-    {
-      "task_id": "RT-002",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T02:02:55Z",
-      "resolved_at": "2026-05-16T02:03:34Z"
-    },
-    {
-      "task_id": "RT-004",
-      "from": "Claude2",
-      "to": "Codex2",
-      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T02:03:00Z",
-      "resolved_at": "2026-05-16T02:03:44Z"
     },
     {
       "task_id": "AUD-002",
@@ -1299,15 +1105,6 @@
       "resolved_at": "2026-05-16T02:04:16Z"
     },
     {
-      "task_id": "GOV-001-RB",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T02:03:24Z",
-      "resolved_at": "2026-05-16T02:04:24Z"
-    },
-    {
       "task_id": "DEP-001-RB",
       "from": "Claude",
       "to": "Codex2",
@@ -1315,24 +1112,6 @@
       "status": "done",
       "created_at": "2026-05-16T02:03:29Z",
       "resolved_at": "2026-05-16T02:04:32Z"
-    },
-    {
-      "task_id": "RT-002",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T02:20:53Z",
-      "resolved_at": "2026-05-16T02:21:33Z"
-    },
-    {
-      "task_id": "RT-004",
-      "from": "Claude",
-      "to": "Codex2",
-      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T02:20:57Z",
-      "resolved_at": "2026-05-16T02:21:41Z"
     },
     {
       "task_id": "AUD-002",
@@ -1362,15 +1141,6 @@
       "resolved_at": "2026-05-16T02:22:14Z"
     },
     {
-      "task_id": "GOV-001-RB",
-      "from": "Claude2",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T02:21:23Z",
-      "resolved_at": "2026-05-16T02:22:23Z"
-    },
-    {
       "task_id": "DEP-001-RB",
       "from": "Claude2",
       "to": "Codex2",
@@ -1378,24 +1148,6 @@
       "status": "done",
       "created_at": "2026-05-16T02:21:28Z",
       "resolved_at": "2026-05-16T02:22:31Z"
-    },
-    {
-      "task_id": "RT-002",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T02:38:45Z",
-      "resolved_at": "2026-05-16T02:39:28Z"
-    },
-    {
-      "task_id": "RT-004",
-      "from": "Claude2",
-      "to": "Codex2",
-      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T02:38:49Z",
-      "resolved_at": "2026-05-16T02:39:37Z"
     },
     {
       "task_id": "AUD-002",
@@ -1425,15 +1177,6 @@
       "resolved_at": "2026-05-16T02:40:11Z"
     },
     {
-      "task_id": "GOV-001-RB",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T02:39:18Z",
-      "resolved_at": "2026-05-16T02:40:21Z"
-    },
-    {
       "task_id": "DEP-001-RB",
       "from": "Claude",
       "to": "Codex2",
@@ -1441,24 +1184,6 @@
       "status": "done",
       "created_at": "2026-05-16T02:39:23Z",
       "resolved_at": "2026-05-16T02:40:27Z"
-    },
-    {
-      "task_id": "RT-002",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T02:56:38Z",
-      "resolved_at": "2026-05-16T02:57:18Z"
-    },
-    {
-      "task_id": "RT-004",
-      "from": "Claude",
-      "to": "Codex2",
-      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T02:56:43Z",
-      "resolved_at": "2026-05-16T02:57:26Z"
     },
     {
       "task_id": "AUD-002",
@@ -1488,15 +1213,6 @@
       "resolved_at": "2026-05-16T02:57:58Z"
     },
     {
-      "task_id": "GOV-001-RB",
-      "from": "Claude2",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T02:57:09Z",
-      "resolved_at": "2026-05-16T02:58:04Z"
-    },
-    {
       "task_id": "DEP-001-RB",
       "from": "Claude2",
       "to": "Codex2",
@@ -1504,24 +1220,6 @@
       "status": "done",
       "created_at": "2026-05-16T02:57:13Z",
       "resolved_at": "2026-05-16T02:58:13Z"
-    },
-    {
-      "task_id": "RT-002",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T03:14:28Z",
-      "resolved_at": "2026-05-16T03:15:08Z"
-    },
-    {
-      "task_id": "RT-004",
-      "from": "Claude2",
-      "to": "Codex2",
-      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T03:14:33Z",
-      "resolved_at": "2026-05-16T03:15:17Z"
     },
     {
       "task_id": "AUD-002",
@@ -1551,15 +1249,6 @@
       "resolved_at": "2026-05-16T03:15:47Z"
     },
     {
-      "task_id": "GOV-001-RB",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T03:14:58Z",
-      "resolved_at": "2026-05-16T03:15:56Z"
-    },
-    {
       "task_id": "DEP-001-RB",
       "from": "Claude",
       "to": "Codex2",
@@ -1567,24 +1256,6 @@
       "status": "done",
       "created_at": "2026-05-16T03:15:03Z",
       "resolved_at": "2026-05-16T03:16:03Z"
-    },
-    {
-      "task_id": "RT-002",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T03:32:13Z",
-      "resolved_at": "2026-05-16T03:32:53Z"
-    },
-    {
-      "task_id": "RT-004",
-      "from": "Claude",
-      "to": "Codex2",
-      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T03:32:18Z",
-      "resolved_at": "2026-05-16T03:33:02Z"
     },
     {
       "task_id": "AUD-002",
@@ -1614,15 +1285,6 @@
       "resolved_at": "2026-05-16T03:33:38Z"
     },
     {
-      "task_id": "GOV-001-RB",
-      "from": "Claude2",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T03:32:43Z",
-      "resolved_at": "2026-05-16T03:33:46Z"
-    },
-    {
       "task_id": "DEP-001-RB",
       "from": "Claude2",
       "to": "Codex2",
@@ -1630,24 +1292,6 @@
       "status": "done",
       "created_at": "2026-05-16T03:32:48Z",
       "resolved_at": "2026-05-16T03:33:54Z"
-    },
-    {
-      "task_id": "RT-002",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T03:50:10Z",
-      "resolved_at": "2026-05-16T03:50:47Z"
-    },
-    {
-      "task_id": "RT-004",
-      "from": "Claude2",
-      "to": "Codex2",
-      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T03:50:14Z",
-      "resolved_at": "2026-05-16T03:50:56Z"
     },
     {
       "task_id": "AUD-002",
@@ -1677,15 +1321,6 @@
       "resolved_at": "2026-05-16T03:51:28Z"
     },
     {
-      "task_id": "GOV-001-RB",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T03:50:37Z",
-      "resolved_at": "2026-05-16T03:51:36Z"
-    },
-    {
       "task_id": "DEP-001-RB",
       "from": "Claude",
       "to": "Codex2",
@@ -1693,24 +1328,6 @@
       "status": "done",
       "created_at": "2026-05-16T03:50:41Z",
       "resolved_at": "2026-05-16T03:51:44Z"
-    },
-    {
-      "task_id": "RT-002",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T04:07:58Z",
-      "resolved_at": "2026-05-16T04:08:36Z"
-    },
-    {
-      "task_id": "RT-004",
-      "from": "Claude",
-      "to": "Codex2",
-      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T04:08:02Z",
-      "resolved_at": "2026-05-16T04:08:44Z"
     },
     {
       "task_id": "AUD-002",
@@ -1740,15 +1357,6 @@
       "resolved_at": "2026-05-16T04:09:19Z"
     },
     {
-      "task_id": "GOV-001-RB",
-      "from": "Claude2",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T04:08:26Z",
-      "resolved_at": "2026-05-16T04:09:28Z"
-    },
-    {
       "task_id": "DEP-001-RB",
       "from": "Claude2",
       "to": "Codex2",
@@ -1756,24 +1364,6 @@
       "status": "done",
       "created_at": "2026-05-16T04:08:30Z",
       "resolved_at": "2026-05-16T04:09:35Z"
-    },
-    {
-      "task_id": "RT-002",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T04:25:52Z",
-      "resolved_at": "2026-05-16T04:26:35Z"
-    },
-    {
-      "task_id": "RT-004",
-      "from": "Claude2",
-      "to": "Codex2",
-      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T04:25:57Z",
-      "resolved_at": "2026-05-16T04:26:43Z"
     },
     {
       "task_id": "AUD-002",
@@ -1803,15 +1393,6 @@
       "resolved_at": "2026-05-16T04:27:15Z"
     },
     {
-      "task_id": "GOV-001-RB",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T04:26:24Z",
-      "resolved_at": "2026-05-16T04:27:23Z"
-    },
-    {
       "task_id": "DEP-001-RB",
       "from": "Claude",
       "to": "Codex2",
@@ -1819,24 +1400,6 @@
       "status": "done",
       "created_at": "2026-05-16T04:26:30Z",
       "resolved_at": "2026-05-16T04:27:32Z"
-    },
-    {
-      "task_id": "RT-002",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T04:43:46Z",
-      "resolved_at": "2026-05-16T04:44:28Z"
-    },
-    {
-      "task_id": "RT-004",
-      "from": "Claude",
-      "to": "Codex2",
-      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T04:43:52Z",
-      "resolved_at": "2026-05-16T04:44:37Z"
     },
     {
       "task_id": "AUD-002",
@@ -1866,15 +1429,6 @@
       "resolved_at": "2026-05-16T04:45:10Z"
     },
     {
-      "task_id": "GOV-001-RB",
-      "from": "Claude2",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T04:44:17Z",
-      "resolved_at": "2026-05-16T04:45:20Z"
-    },
-    {
       "task_id": "DEP-001-RB",
       "from": "Claude2",
       "to": "Codex2",
@@ -1882,24 +1436,6 @@
       "status": "done",
       "created_at": "2026-05-16T04:44:22Z",
       "resolved_at": "2026-05-16T04:45:28Z"
-    },
-    {
-      "task_id": "RT-002",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T05:01:53Z",
-      "resolved_at": "2026-05-16T05:02:34Z"
-    },
-    {
-      "task_id": "RT-004",
-      "from": "Claude2",
-      "to": "Codex2",
-      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T05:01:58Z",
-      "resolved_at": "2026-05-16T05:02:41Z"
     },
     {
       "task_id": "AUD-002",
@@ -1929,15 +1465,6 @@
       "resolved_at": "2026-05-16T05:03:15Z"
     },
     {
-      "task_id": "GOV-001-RB",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T05:02:23Z",
-      "resolved_at": "2026-05-16T05:03:24Z"
-    },
-    {
       "task_id": "DEP-001-RB",
       "from": "Claude",
       "to": "Codex2",
@@ -1947,32 +1474,6 @@
       "resolved_at": "2026-05-16T05:03:55Z"
     },
     {
-      "task_id": "RT-002",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "RT-002 ready for review. Evidence: support/evidence/RT-002/acceptance.md. Commit: 42486208. Verified runtime-manager skeleton inventory/bind/status: service/client slice 12 passed; non-HTTP slice 40 passed; full HTTP route suite in /tmp venv 50 passed; py_compile service/main/client passed.",
-      "status": "done",
-      "created_at": "2026-05-16T05:09:40Z",
-      "resolved_at": "2026-05-16T05:22:13Z"
-    },
-    {
-      "task_id": "GOV-001-RB",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Ready for review: tightened ApprovalDecision decide write-authority, aligned target_version schema/contract, added drift tests and support/evidence/GOV-001-RB/approval-decision-rebaseline.md. Verification: 69 focused tests passed; unittest 42 passed; smoke 29 PASS/0 FAIL; broader governance/deployment 234 passed + 3 subtests.",
-      "status": "done",
-      "created_at": "2026-05-16T05:11:02Z",
-      "resolved_at": "2026-05-16T05:16:48Z"
-    },
-    {
-      "task_id": "GOV-001-RB",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Review approved: decide() write-authority enforcement correct, schema and contract aligned, drift tests pass. Returning to Codex for closeout finalization.",
-      "status": "pending",
-      "created_at": "2026-05-16T05:16:48Z"
-    },
-    {
       "task_id": "ALT-001",
       "from": "Codex",
       "to": "Codex2",
@@ -1980,14 +1481,6 @@
       "status": "done",
       "created_at": "2026-05-16T05:20:54Z",
       "resolved_at": "2026-05-16T05:21:29Z"
-    },
-    {
-      "task_id": "RT-004",
-      "from": "Codex",
-      "to": "Claude2",
-      "message": "RT-004 ready for review. Evidence: support/evidence/RT-004/acceptance.md. Commit: 42d7b6c1. Verified deploy/pause/replace/rollback action lane: runtime-manager focused slice 16 passed; internal command surface 6 passed; py_compile service/main/client/tests passed.",
-      "status": "pending",
-      "created_at": "2026-05-16T05:21:05Z"
     },
     {
       "task_id": "POST-001",
@@ -2008,21 +1501,13 @@
       "resolved_at": "2026-05-16T05:21:54Z"
     },
     {
-      "task_id": "RT-002",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached",
-      "status": "done",
-      "created_at": "2026-05-16T05:22:13Z",
-      "resolved_at": "2026-05-16T05:30:27Z"
-    },
-    {
       "task_id": "AUD-002",
       "from": "Codex",
       "to": "Claude",
       "message": "Ready for review: AuditAction write engine now projects command-store audit records into governance audit readers and attaches foundation AuditAction context to semantic/gov/capital/strategy/persona/evolution/tools action write helpers. Commit 008e73f6. Evidence: support/evidence/AUD-002/acceptance.md. Verification: py_compile passed; AUD-002/audit/final-command/replay/actions suite 35 passed; capital/strategy/evolution/agora suite 80 passed; governance command submission 21 passed. Known unrelated failure remains in test_bff_governance_runtime_risk_audit_contract incident fixture ordering.",
-      "status": "pending",
-      "created_at": "2026-05-16T05:24:35Z"
+      "status": "done",
+      "created_at": "2026-05-16T05:24:35Z",
+      "resolved_at": "2026-05-16T05:37:50Z"
     },
     {
       "task_id": "RT-003",
@@ -2052,12 +1537,56 @@
       "resolved_at": "2026-05-16T05:28:52Z"
     },
     {
-      "task_id": "RT-002",
+      "task_id": "POST-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: Postmortem schema and endpoints verified. Evidence: support/evidence/POST-001/acceptance.md. Commit 327a9957. Verification: py_compile postmortem/BFF modules passed; services/incident/test_incident.py + services/postmortems/test_main_routes.py 98 passed; services/incident/smoke_test_incident.py 59 passed; BFF postmortem/post_incident pytest filter 4 passed. Full BFF incident smoke has unrelated IN-05 idempotency-key failures.",
+      "status": "done",
+      "created_at": "2026-05-16T05:35:27Z",
+      "resolved_at": "2026-05-16T05:43:37Z"
+    },
+    {
+      "task_id": "AUD-002",
       "from": "Claude",
       "to": "Codex",
-      "message": "Review approved: RT-002 skeleton inventory/bind/status surface meets P1 acceptance criteria. All pre-conditions enforced, 12+40 tests re-verified passing. Returning to Codex for closeout.",
+      "message": "Review approved: AuditAction write engine correctly projects command-store records into audit readers. All test suites pass (35+80+21). Known unrelated incident fixture failure is pre-existing. Returning to Codex for finalization.",
       "status": "pending",
-      "created_at": "2026-05-16T05:30:27Z"
+      "created_at": "2026-05-16T05:37:50Z"
+    },
+    {
+      "task_id": "RT-003",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T05:40:03Z",
+      "resolved_at": "2026-05-16T05:40:35Z"
+    },
+    {
+      "task_id": "ALT-001",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T05:40:12Z",
+      "resolved_at": "2026-05-16T05:41:09Z"
+    },
+    {
+      "task_id": "DEP-001-RB",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T05:40:19Z",
+      "resolved_at": "2026-05-16T05:41:35Z"
+    },
+    {
+      "task_id": "POST-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: Postmortem schema complete with full lineage evidence fields; domain layer enforces referential integrity at write time; BFF operator endpoints correctly route with capability gating. 98+4 tests pass independently verified. Returning to Codex for finalization.",
+      "status": "pending",
+      "created_at": "2026-05-16T05:43:37Z"
     }
   ],
   "blockers": [
@@ -2090,12 +1619,12 @@
       "todo": 24
     },
     "Claude2": {
-      "total": 16,
+      "total": 14,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
-      "review_approved": 5,
+      "review_approved": 3,
       "todo": 11
     },
     "Gemini": {
@@ -2117,13 +1646,13 @@
       "todo": 0
     },
     "Codex": {
-      "total": 7,
-      "active": 5,
+      "total": 4,
+      "active": 0,
       "blocked": 0,
       "done": 0,
-      "review": 2,
+      "review": 0,
       "review_approved": 2,
-      "todo": 3
+      "todo": 2
     },
     "Codex2": {
       "total": 0,
