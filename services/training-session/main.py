@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query
@@ -332,13 +332,22 @@ from services.research.vectorbt.adapter.vectorbt_adapter import run_vectorbt_wor
 # Add stub for OHLCV data
 def _get_ohlcv_data(session_id: str) -> List[Dict[str, Any]]:
     # In a real implementation, this would fetch data based on context_refs
-    # For now, return a minimal stub dataset
-    return [
-        {"instrument": "STUB1", "date": "2026-01-01", "open": 100.0, "high": 105.0, "low": 95.0, "close": 100.0, "volume": 1000.0},
-        {"instrument": "STUB1", "date": "2026-01-02", "open": 100.0, "high": 110.0, "low": 99.0, "close": 105.0, "volume": 1200.0},
-        {"instrument": "STUB2", "date": "2026-01-01", "open": 50.0, "high": 55.0, "low": 45.0, "close": 50.0, "volume": 2000.0},
-        {"instrument": "STUB2", "date": "2026-01-02", "open": 50.0, "high": 60.0, "low": 49.0, "close": 55.0, "volume": 2200.0},
-    ]
+    # For now, return a dataset with enough bars for governed vectorbt (MIN_BARS=30)
+    data = []
+    start_date = datetime(2026, 1, 1)
+    for instrument in ["STUB1", "STUB2"]:
+        for i in range(35):
+            date = (start_date + timedelta(days=i)).strftime("%Y-%m-%d")
+            data.append({
+                "instrument": instrument,
+                "date": date,
+                "open": 100.0 + i,
+                "high": 105.0 + i,
+                "low": 95.0 + i,
+                "close": 100.0 + i,
+                "volume": 1000.0 + i
+            })
+    return data
 
 # ...
 
@@ -370,7 +379,39 @@ def refresh_preview(session_id: str, body: RefreshPreviewBody) -> Dict[str, Any]
     config = BacktestConfig(strategy_params=strategy_params)
     try:
         backtest_result = run_vectorbt_workflow(dataset, config=config)
-        metric_delta = backtest_result.backtest_result.aggregate_metrics
+        metrics = backtest_result.backtest_result.aggregate_metrics
+        metric_delta = [
+            {
+                "metric_key": "total_return",
+                "display_label": "Total Return",
+                "baseline_value": 0.0,
+                "candidate_value": metrics.get("mean_total_return", 0.0),
+                "delta": metrics.get("mean_total_return", 0.0),
+                "delta_pct": metrics.get("mean_total_return", 0.0) * 100,
+                "unit": "pct",
+                "direction": "up" if metrics.get("mean_total_return", 0.0) >= 0 else "down"
+            },
+            {
+                "metric_key": "sharpe_ratio",
+                "display_label": "Sharpe Ratio",
+                "baseline_value": 0.0,
+                "candidate_value": metrics.get("mean_sharpe_ratio", 0.0),
+                "delta": metrics.get("mean_sharpe_ratio", 0.0),
+                "delta_pct": 0.0,
+                "unit": "ratio",
+                "direction": "up"
+            },
+            {
+                "metric_key": "max_drawdown",
+                "display_label": "Max Drawdown",
+                "baseline_value": 0.0,
+                "candidate_value": metrics.get("mean_max_drawdown", 0.0),
+                "delta": metrics.get("mean_max_drawdown", 0.0),
+                "delta_pct": 0.0,
+                "unit": "pct",
+                "direction": "down"
+            }
+        ]
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Backtest failed: {str(e)}")
 
@@ -395,7 +436,7 @@ def refresh_preview(session_id: str, body: RefreshPreviewBody) -> Dict[str, Any]
         "candidate_snapshot_at": timestamp,
         "metric_delta": metric_delta,
         "control_diff": control_diff,
-        "preview_quality": "real_vectorbt",
+        "preview_quality": "vectorbt_real",
     }
     evaluations[eval_id] = preview
     bundle["preview"] = preview
