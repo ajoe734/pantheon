@@ -19,6 +19,10 @@ Date: 2026-05-16
 
 Claude approved the task in `support/evidence/SRC-003/review-claude.md`.
 
+## Commit Isolation Note
+
+During closeout, a concurrent worker committed the already staged SRC-003 implementation files into commit `19d306c4` alongside unrelated EXP-002 evidence. The reviewed SRC-003 files are durable in HEAD; this evidence note records the SRC-003-specific closeout without rewriting shared history.
+
 ## Closeout Verification
 
 ```bash
