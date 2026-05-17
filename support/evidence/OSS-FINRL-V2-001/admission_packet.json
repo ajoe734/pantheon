@@ -1,0 +1,18 @@
+{
+    "packet_id": "finrl-admission-simulated-run-id",
+    "target_type": "model_artifact",
+    "environment": "production",
+    "timestamp": "2026-05-17T11:21:18.066708+00:00",
+    "source_run_id": "simulated-run-id",
+    "evaluation_summary": {
+        "sharpe": 1.5,
+        "annual_return": 0.2,
+        "max_drawdown": 0.1
+    },
+    "artifact_ref": "finrl-policy-twse-ppo-strategy-001-1.0.0",
+    "required_evidence": [
+        "training_metrics_artifact",
+        "model_checksum_verified"
+    ],
+    "can_proceed": true
+}
