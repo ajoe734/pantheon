@@ -338,7 +338,7 @@ export function buildCodexSlotRoster(orchState, status) {
   }
   return codexWorkerSlots.map((slot) => {
     const worker = bySlot.get(slot.id) || null;
-    const active = worker && ["running", "pending"].includes(worker.bucket);
+    const active = worker && ["running", "pending"].includes(worker.bucket) && worker.is_live_runtime !== false;
     return {
       ...slot,
       label: slot.id.replace(/^codex/, "Codex"),
@@ -357,12 +357,21 @@ export function normalizeWorkerRecords(orchState, status) {
     const task = taskMap.get(worker?.task_id) || null;
     const taskStatus = task?.status || null;
     const logicalAgentId = logicalWorkerAgentId(worker);
+    const runtimeBucket = String(worker?.runtime_bucket || worker?.bucket || "").toLowerCase();
+    const isLiveRuntime = worker?.is_live_runtime;
     let bucket = "pending";
 
-    if (["superseded", "reassigned"].includes(worker?.status)) {
+    if (["running", "pending", "transition", "completed", "stale"].includes(runtimeBucket)) {
+      bucket = runtimeBucket;
+      if (isLiveRuntime === false && ["running", "pending"].includes(bucket)) {
+        bucket = "stale";
+      }
+    } else if (["superseded", "reassigned"].includes(worker?.status)) {
       bucket = "transition";
     } else if (terminalTaskStatus(taskStatus) || ["completed", "failed"].includes(worker?.status)) {
       bucket = "completed";
+    } else if (isLiveRuntime === false && ["running", "started"].includes(worker?.status)) {
+      bucket = "stale";
     } else if (["running", "started"].includes(worker?.status)) {
       bucket = "running";
     } else if (["waiting_approval", "suspended_approval", "manual_pending", "retry_backoff", "stalled", "fallback"].includes(worker?.status)) {
@@ -377,6 +386,9 @@ export function normalizeWorkerRecords(orchState, status) {
       dispatch_mode: runtimeDispatchMode(worker),
       bucket,
       reason: worker?.reason || worker?.request_snapshot?.reason || null,
+      is_live_runtime: isLiveRuntime,
+      pid_alive: worker?.pid_alive,
+      pid_state: worker?.pid_state || null,
       display_actor: actorLabel(logicalAgentId, worker?.provider),
     };
   });
@@ -386,6 +398,9 @@ export function normalizeWorkerRecords(orchState, status) {
 
 export function workerLifecycleBadge(worker) {
   const status = String(worker?.status || "").toLowerCase();
+  if (worker?.bucket === "stale" || (worker?.is_live_runtime === false && ["running", "started"].includes(status))) {
+    return { label: "stale", className: "lifecycle-stale" };
+  }
   if (["running", "started"].includes(status)) {
     return { label: "active", className: "lifecycle-active" };
   }
@@ -452,7 +467,9 @@ function normalizedActorName(value) {
   const lowered = String(value || "").trim().toLowerCase();
   const aliases = {
     "claude 2": "claude2",
+    "claude (2)": "claude2",
     "gemini 2": "gemini2",
+    "gemini (2)": "gemini2",
     "codex (2)": "codex2",
     "codex 2": "codex2",
     "codex (3)": "codex",
@@ -504,7 +521,7 @@ export function buildTruthMismatches(status, orchState, approvalQueue = null) {
   const pendingApprovalRunIds = new Set(
     approvals.map((approval) => String(approval?.worker_run_id || "").trim()).filter(Boolean)
   );
-  const liveWorkers = workers.filter((worker) => ["running", "pending"].includes(worker.bucket));
+  const liveWorkers = workers.filter((worker) => ["running", "pending"].includes(worker.bucket) && worker.is_live_runtime !== false);
   const liveWorkersByTask = new Map();
   const mismatches = [];
   const seen = new Set();
@@ -827,9 +844,9 @@ export function deriveAgentState(status, orchState) {
     );
     const waiting = queued.filter((task) => !ready.includes(task));
 
-    const liveRunningWorkers = workers.filter((worker) => worker.logical_agent_id === agentId && worker.bucket === "running");
-    const livePendingWorkers = workers.filter((worker) => worker.logical_agent_id === agentId && worker.bucket === "pending");
-    const liveTransitionWorkers = workers.filter((worker) => worker.logical_agent_id === agentId && worker.bucket === "transition");
+    const liveRunningWorkers = workers.filter((worker) => worker.logical_agent_id === agentId && worker.bucket === "running" && worker.is_live_runtime !== false);
+    const livePendingWorkers = workers.filter((worker) => worker.logical_agent_id === agentId && worker.bucket === "pending" && worker.is_live_runtime !== false);
+    const transitionWorkers = workers.filter((worker) => worker.logical_agent_id === agentId && worker.bucket === "transition");
 
     let derivedStatus = "idle";
     let derivedTaskIds = [];
@@ -851,10 +868,10 @@ export function deriveAgentState(status, orchState) {
     } else if (active.some((task) => task.status === "review")) {
       derivedStatus = "reviewing";
       derivedTaskIds = active.map((task) => task.id);
-    } else if (livePendingWorkers.length || liveTransitionWorkers.length) {
+    } else if (livePendingWorkers.length) {
       derivedStatus = "pending";
-      derivedTaskIds = [...livePendingWorkers, ...liveTransitionWorkers].map((worker) => worker.task_id).filter(Boolean);
-      const latest = [...livePendingWorkers, ...liveTransitionWorkers].sort((a, b) => (b.last_event_at || "").localeCompare(a.last_event_at || ""))[0];
+      derivedTaskIds = livePendingWorkers.map((worker) => worker.task_id).filter(Boolean);
+      const latest = [...livePendingWorkers].sort((a, b) => (b.last_event_at || "").localeCompare(a.last_event_at || ""))[0];
       derivedNext = latest?.last_error || taskMap.get(latest?.task_id)?.next || derivedNext;
       derivedLastUpdate = latest?.last_event_at || derivedLastUpdate;
     } else if (ready.length) {
@@ -888,6 +905,7 @@ export function deriveAgentState(status, orchState) {
       approved_count: approved.length,
       live_running_count: liveRunningWorkers.length,
       live_pending_count: livePendingWorkers.length,
+      transition_count: transitionWorkers.length,
       target_workload: Number.isFinite(Number(status?.workload?.[agent.name])) ? Number(status.workload[agent.name]) : null,
     };
   });
