@@ -11,6 +11,8 @@ set -euo pipefail
 REPO="/home/lupin/code/pantheon"
 ENV_FILE="$REPO/env/.env.shioaji"
 LOG_DIR="$REPO/.orchestrator/logs"
+VENV_PYTHON="$REPO/.venv-shioaji/bin/python"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 LOG="$LOG_DIR/supervisor-restart-shioaji-${TS}.log"
 RUN_LOG="$LOG_DIR/shioaji-restart-runner-${TS}.log"
@@ -38,6 +40,11 @@ if [[ -z "${BROKER_SHIOAJI_API_KEY:-}" || -z "${BROKER_SHIOAJI_SECRET_KEY:-}" ]]
 fi
 echo "env loaded: sandbox_enabled=${BROKER_SHIOAJI_SANDBOX_ENABLED:-} api_key_len=${#BROKER_SHIOAJI_API_KEY} secret_key_len=${#BROKER_SHIOAJI_SECRET_KEY}"
 
+if [[ -x "$VENV_PYTHON" ]]; then
+  PYTHON_BIN="$VENV_PYTHON"
+fi
+echo "python_bin=$PYTHON_BIN"
+
 # 2. Stop old supervisor (graceful, then force)
 OLD_PIDS=$(pgrep -f ".orchestrator/supervisor.py" || true)
 if [[ -n "$OLD_PIDS" ]]; then
@@ -63,7 +70,7 @@ fi
 
 # 3. Start new supervisor detached with env inherited
 echo "launching new supervisor → $LOG"
-setsid nohup python3 -u "$REPO/.orchestrator/supervisor.py" --verbose > "$LOG" 2>&1 < /dev/null &
+setsid nohup "$PYTHON_BIN" -u "$REPO/.orchestrator/supervisor.py" --verbose > "$LOG" 2>&1 < /dev/null &
 NEW_PID=$!
 disown
 echo "new supervisor PID $NEW_PID"
