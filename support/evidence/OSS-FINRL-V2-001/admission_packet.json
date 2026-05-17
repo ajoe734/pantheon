@@ -1,18 +1,42 @@
 {
-    "packet_id": "finrl-admission-simulated-run-id",
-    "target_type": "model_artifact",
-    "environment": "production",
-    "timestamp": "2026-05-17T11:21:18.066708+00:00",
-    "source_run_id": "simulated-run-id",
-    "evaluation_summary": {
-        "sharpe": 1.5,
-        "annual_return": 0.2,
-        "max_drawdown": 0.1
-    },
-    "artifact_ref": "finrl-policy-twse-ppo-strategy-001-1.0.0",
-    "required_evidence": [
-        "training_metrics_artifact",
-        "model_checksum_verified"
-    ],
-    "can_proceed": true
+  "allowed_next_action": "offline_registry_review_only",
+  "artifact_ref": "finrl-policy-twse-ppo-strategy-001-1.0.0",
+  "can_proceed": false,
+  "current_artifact_state": "draft",
+  "deployment_stage": "none",
+  "environment": "offline_review",
+  "evaluation_summary": {
+    "algorithm": "ppo",
+    "bounded_epochs": 12,
+    "framework_import_ready": false,
+    "max_action_prior": 0.960901,
+    "mean_exposure_proxy": 0.20469195,
+    "mean_reward_proxy": 0.00588276,
+    "num_instruments": 5,
+    "num_steps": 45,
+    "reward_proxy_stddev": 0.00216365,
+    "sharpe": 43.1613
+  },
+  "evidence_refs": {
+    "artifact_bundle": "support/evidence/OSS-FINRL-V2-001/artifact_bundle.json",
+    "candidate_packet": "support/evidence/OSS-FINRL-V2-001/candidate_packet.json",
+    "evaluation_summary": "support/evidence/OSS-FINRL-V2-001/evaluation_summary.json",
+    "registry_entry": "support/evidence/OSS-FINRL-V2-001/registry_entry.json"
+  },
+  "gate_state": "closed",
+  "governance_notes": [
+    "Admission packet is review-only and cannot promote to paper/canary/live.",
+    "FinRL RL gate remains closed; produced artifact_state=draft with deployment_stage=none."
+  ],
+  "packet_id": "finrl-admission-finrl-ppo-86253a1cf3b6",
+  "requested_artifact_state": "candidate",
+  "required_evidence": [
+    "training_metrics_artifact",
+    "model_checksum_verified",
+    "rl_gate_closed",
+    "no_live_execution"
+  ],
+  "source_run_id": "finrl-ppo-86253a1cf3b6",
+  "target_type": "model_artifact",
+  "timestamp": "2026-05-17T16:23:11Z"
 }

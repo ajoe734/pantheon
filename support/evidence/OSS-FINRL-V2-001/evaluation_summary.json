@@ -1,0 +1,12 @@
+{
+  "algorithm": "ppo",
+  "bounded_epochs": 12,
+  "framework_import_ready": false,
+  "max_action_prior": 0.960901,
+  "mean_exposure_proxy": 0.20469195,
+  "mean_reward_proxy": 0.00588276,
+  "num_instruments": 5,
+  "num_steps": 45,
+  "reward_proxy_stddev": 0.00216365,
+  "sharpe": 43.1613
+}

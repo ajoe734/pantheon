@@ -1,0 +1,60 @@
+{
+  "approved_at": null,
+  "approver": null,
+  "artifact_state": "draft",
+  "artifact_type": "model_artifact",
+  "checksum": "sha256:3a6939f109899e05c2d0eaeb040f96db6dd8fd93c863dfe5deb0a31ba23df448",
+  "created_at": "2026-05-17T16:23:11Z",
+  "deployment_summary": {
+    "current_stage": "none"
+  },
+  "evaluation_summary": {
+    "algorithm": "ppo",
+    "bounded_epochs": 12,
+    "framework_import_ready": false,
+    "max_action_prior": 0.960901,
+    "mean_exposure_proxy": 0.20469195,
+    "mean_reward_proxy": 0.00588276,
+    "num_instruments": 5,
+    "num_steps": 45,
+    "reward_proxy_stddev": 0.00216365,
+    "sharpe": 43.1613
+  },
+  "lineage": {
+    "source_dataset_refs": [
+      "twse-ohlcv-offline-sample-2024-001"
+    ],
+    "source_run_ids": [
+      "finrl-ppo-86253a1cf3b6"
+    ],
+    "source_strategy_spec_id": "strategy-spec:twse-ppo-offline-v1"
+  },
+  "metadata": {
+    "action_labels": [
+      "hold",
+      "buy_small",
+      "sell_small",
+      "buy_large",
+      "sell_large"
+    ],
+    "algorithm": "ppo",
+    "data_frequency": "daily",
+    "dataset_checksum": "sha256:657a9d33f03a74e0784e7f6f9ad1812e9122b5b799a80f88933a4b1c18269b32",
+    "decision_focus": "exit_timing",
+    "framework": "finrl",
+    "framework_version": "0.3.7",
+    "model_family": "rl_policy",
+    "num_steps": 45,
+    "observation_dim": 7,
+    "training_backend": "finrl_ppo"
+  },
+  "producer_run_id": "finrl-ppo-86253a1cf3b6",
+  "registry_id": "finrl-policy-twse-ppo-strategy-001-1.0.0",
+  "rollback_target": null,
+  "storage_ref": {
+    "backend": "object_store",
+    "path": "research/finrl/offline/twse-ppo-strategy-001/1.0.0/artifact.json"
+  },
+  "strategy_id": "twse-ppo-strategy-001",
+  "version": "1.0.0"
+}
