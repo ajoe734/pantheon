@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "task_id": "LEAN-ALGO-001",
+  "archived_at": "2026-05-17T00:17:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LEAN-ALGO-001",
+    "title": "LEAN algorithm-level smoke via artifact loader",
+    "summary_zh": "EX-003 已完成 smoke path 但 LEAN algorithm-level coverage 還 deferred。這個 task 寫一個最小 LEAN Python algorithm，從 artifact loader 載入 approved artifact 跑一段 paper backtest，驗證 RuntimeBinding 串到 LEAN runtime 的 actual run path。CPU-only smoke。",
+    "phase": "Sprint 7 / EPIC-LEAN-RUNTIME",
+    "owner": "Codex",
+    "reviewer": "Gemini2",
+    "status": "done",
+    "depends_on": [
+      "EX-002-RB",
+      "EX-003",
+      "RT-002"
+    ],
+    "artifacts": [
+      "services/execution/lean_runtime/test_algorithm_smoke.py",
+      "services/execution/lean_runtime/smoke_algorithm.py",
+      "services/execution/lean_runtime/lean_smoke_contract.md",
+      "lean/Algorithm.Python/pantheon_algo/smoke_loader_test.py"
+    ],
+    "acceptance": [
+      "smoke_algorithm.py loads artifact via services/execution/artifact-loader using artifact_state=approved and deployment_stage=paper",
+      "smoke runs against 5 trading days of deterministic synthetic OHLCV (no live broker no network)",
+      "test asserts 1 OnData callback fires and 1 fill is recorded with the loaded artifact's signal",
+      "test passes pytest -q exit 0",
+      "no broker credentials accessed (BROKER_PRODUCTION_LIVE_ENABLED stays false)"
+    ],
+    "next": "Closed LEAN-ALGO-001 with parent commit 54f88776 and LEAN submodule commit 5ad024943. Verified: python3 -m pytest -q services/execution/lean_runtime/test_algorithm_smoke.py (2 passed); python3 -m pytest -q services/execution/lean_runtime/test_algorithm_smoke.py services/execution/test_artifact_loader.py services/execution/lean_runtime/test_bootstrap_contract.py services/execution/lean_runtime/test_runtime_context.py (39 passed). Pre-existing unrelated dirty state/worktree files prevent an isolated generated state/archive commit.",
+    "last_update": "2026-05-17T00:17:26Z",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-17T00:17:26Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "54f8877675c724ddc7eb3a2dbfbe2a0062ac889b",
+      "commit_subject": "LEAN-ALGO-001: add LEAN artifact loader smoke",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "LEAN-ALGO-001",
+        "Reviewer": "Gemini2",
+        "Wave": "2026-W20",
+        "Verified": "focused smoke 2 passed; execution-plane regression 39 passed"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 42,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LEAN-ALGO-001",
+      "from": "Codex",
+      "to": "Gemini2",
+      "message": "LEAN-ALGO-001 implementation is ready for review. Please review the four task artifacts: services/execution/lean_runtime/test_algorithm_smoke.py, services/execution/lean_runtime/smoke_algorithm.py, services/execution/lean_runtime/lean_smoke_contract.md, and lean/Algorithm.Python/pantheon_algo/smoke_loader_test.py. Focused verification passed: 2 algorithm-smoke tests and 39 execution/bootstrap regression tests.",
+      "status": "done",
+      "created_at": "2026-05-17T00:03:35Z",
+      "resolved_at": "2026-05-17T00:06:50Z"
+    },
+    {
+      "task_id": "LEAN-ALGO-001",
+      "from": "Gemini2",
+      "to": "Codex",
+      "message": "Review approved and returned to the owner for finalization",
+      "status": "done",
+      "created_at": "2026-05-17T00:06:50Z",
+      "resolved_at": "2026-05-17T00:17:26Z"
+    }
+  ],
+  "blockers": []
+}
