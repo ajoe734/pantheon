@@ -153,3 +153,6 @@ Test coverage:
 - missing source_record does not raise
 - `load_corpus` bulk-load round-trip
 - `load_corpus` preserves domain IDs when generic row IDs are also present
+
+The final verification was rerun after the domain-ID preservation regression
+fix and after refreshing the PR branch on the current `dev` base.
