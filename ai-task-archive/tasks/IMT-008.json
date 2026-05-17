@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "task_id": "IMT-008",
+  "archived_at": "2026-05-17T02:24:08Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "IMT-008",
+    "title": "TRL preference-pair dataset bridge",
+    "summary_zh": "新增 TRL (Transformer Reinforcement Learning) preference-pair dataset bridge：把 IMT-002 PreferenceExample / CorrectionTrace 轉成 TRL 期望的 chosen/rejected 對。獨立 module。",
+    "phase": "Sprint 7 / EPIC-IMITATION-TRAINING",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "IMT-002",
+      "IMT-003"
+    ],
+    "artifacts": [
+      "services/research/imitation/trl_bridge.py",
+      "services/research/imitation/test_trl_bridge.py",
+      "services/research/imitation/trl_bridge_contract.md"
+    ],
+    "acceptance": [
+      "trl_bridge.py exposes to_trl_pairs(preference_examples) returning list of dict with chosen rejected prompt fields",
+      "trl_bridge.py exposes from_correction_traces(correction_traces) returning the same shape",
+      "test_trl_bridge.py covers 5+ deterministic samples for each conversion direction",
+      "test passes pytest -q exit 0",
+      "output schema matches trl.DPOTrainer expected input format documented in contract.md"
+    ],
+    "next": "Closeout complete: committed IMT-008 TRL bridge as 2a543f21 after reviewer approval. Verification: focused TRL bridge pytest 6 passed; full services/research/imitation pytest 64 passed; py_compile OK; staged diff-check clean. Artifacts: trl_bridge.py, test_trl_bridge.py, trl_bridge_contract.md, support/sidecars/IMT-008/IMT-008-REVIEW.md.",
+    "last_update": "2026-05-17T02:24:08Z",
+    "review_notes_zh": [
+      "審查通過：所有接受標準驗證完成",
+      "to_trl_pairs 正確轉換 chosen/rejected/prompt，5 個樣本通過",
+      "from_correction_traces 正確映射 after→chosen, before→rejected，5 個樣本通過",
+      "TrlBridgeError 正確阻擋未配對及單 mapping 輸入",
+      "py_compile OK, diff-check clean, 6 tests passed, imitation slice 64 passed"
+    ],
+    "review_file": "support/sidecars/IMT-008/IMT-008-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-17T02:24:08Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "2a543f2110645a7d37d45a0db8b90073ac5c9924",
+      "commit_subject": "IMT-008: add TRL preference bridge",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "IMT-008",
+        "Reviewer": "Claude",
+        "Wave": "2026-W20",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q services/research/imitation/test_trl_bridge.py (6 passed); PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q services/research/imitation/ (64 passed); python3 -m py_compile services/research/imitation/trl_bridge.py services/research/imitation/test_trl_bridge.py; git diff --cached --check."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 34,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 4,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "IMT-008",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-17T01:57:17Z",
+      "resolved_at": "2026-05-17T01:57:56Z"
+    },
+    {
+      "task_id": "IMT-008",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "IMT-008 ready for review. Added trl_bridge.py, test_trl_bridge.py, and trl_bridge_contract.md. Verified focused pytest (6 passed) and imitation slice (64 passed); repo-level pytest -q is blocked by missing flask in unrelated collection tests.",
+      "status": "done",
+      "created_at": "2026-05-17T02:12:42Z",
+      "resolved_at": "2026-05-17T02:17:20Z"
+    },
+    {
+      "task_id": "IMT-008",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 5 acceptance criteria pass. 6 tests, imitation slice 64 passed, diff-check clean. Returned to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-05-17T02:17:20Z",
+      "resolved_at": "2026-05-17T02:24:08Z"
+    }
+  ],
+  "blockers": []
+}
