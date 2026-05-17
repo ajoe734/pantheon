@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-05-17T01:01:47Z",
+  "updated_at": "2026-05-17T01:39:19Z",
   "counts": {
-    "total": 1165,
-    "completed": 1145,
+    "total": 1166,
+    "completed": 1146,
     "superseded": 20
   },
   "recent_terminal_ids": [
+    "PER-003",
     "TRN-007",
     "OPS-REBASE-AUTO-001",
     "OPS-WORKER-PUSH-CRED-001",
@@ -25,7 +26,6 @@
     "IMT-004",
     "ASK-002-SIDECAR-REVIEW",
     "TRN-004",
-    "LOOP-001-RB",
-    "IMT-001"
+    "LOOP-001-RB"
   ]
 }

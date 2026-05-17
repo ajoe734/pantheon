@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-17 09:36:37
+Last updated: 2026-05-17 09:39:19
 
 ## Objective
 
@@ -42,7 +42,7 @@ Last updated: 2026-05-17 09:36:37
 - `Codex`: integration, status-system, schema, acceptance; next: Chair reassigned review from Codex2 to Claude2: Codex2 pause blocks this review and ASK-006 is on the current consultation path.
 - `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
-- `Claude2`: execution, control-plane, governance-review; next: Supervisor paused finalize on PER-003 to free Claude2 for higher-priority review work; task remains review_approved.
+- `Claude2`: execution, control-plane, governance-review; next: No active assignment
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Supervisor re-dispatched OSS-FINRL-001; task remains in progress.
 
 ## Delivery Layers
@@ -56,7 +56,6 @@ Last updated: 2026-05-17 09:36:37
 | `IMT-007` | Sprint 7 / EPIC-IMITATION-TRAINING | Behavior-policy artifact validation gate | Claude | todo | `IMT-004`, `IMT-006` | behavior_policy artifact 進入 registry / governance 前的驗證閘門：metadata 完整、checksum 一致、IMT-006 eval metrics 達門檻、policy 不出現 deploy/canary/live 觸發詞。獨立 module。 |
 | `IMT-008` | Sprint 7 / EPIC-IMITATION-TRAINING | TRL preference-pair dataset bridge | Claude | todo | `IMT-002`, `IMT-003` | 新增 TRL (Transformer Reinforcement Learning) preference-pair dataset bridge：把 IMT-002 PreferenceExample / CorrectionTrace 轉成 TRL 期望的 chosen/rejected 對。獨立 module。 |
 | `TRN-006` | Sprint 7 / EPIC-TRAINER-ADVANCED | Rapid-eval -> vectorbt backend integration | Codex | review_approved | `TRN-003`, `VBT-001` | 把 TRN-003 rapid-eval skeleton 接到實際 backend（vectorbt VBT-001 via adapter facade）。獨立檔案，不修 TRN-003 既有 endpoint signature。 |
-| `PER-003` | Sprint 7 / EPIC-TRAINER-ADVANCED | Persona registry live integration acceptance | Claude2 | review_approved | `PER-001`, `PER-002` | 把 execute-plans Persona 頁面從 fixture-backed 切換到 live persona_registry service。確認 /bff/personas 與 /bff/personas/{id} read path 走 services/control-plane/persona/persona_registry.py。獨立 acceptance。 |
 | `ASK-006` | Sprint 7 / EPIC-CONSULT-ADVANCED | Consult -> Committee -> Memo -> Review e2e test | Codex | review | `ASK-001`, `ASK-002`, `ASK-003`, `ASK-004`, `ASK-005` | ASK-001..005 已落地 consult/committee flow，這個 task 寫一條 e2e integration test：ask session create -> committee invoke -> memo publish -> Management review queue 接到 handoff。獨立 test 檔。 |
 | `ASK-007` | Sprint 7 / EPIC-CONSULT-ADVANCED | Consult memo evidence redaction regression | Codex | review | `ASK-004` | 驗證 consult memo publish 流程的 evidence redaction：persona-internal 機密欄位（policy_internals memory_trace internal_score）不能洩漏到 review-facing memo。獨立 test 檔。 |
 | `ASK-008` | Sprint 7 / EPIC-CONSULT-ADVANCED | Committee sponsor decision -> governance action bridge | Claude | todo | `ASK-003`, `GOV-001`, `EVO-001` | committee 結出 sponsor decision 後，提供把 sponsor decision bridge 到 governance action (例如觸發 ApprovalDecision proposal 或 EvolutionDecision proposal) 的 module。獨立 module，不直接改 governance service。 |
@@ -78,11 +77,12 @@ Last updated: 2026-05-17 09:36:37
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-17 09:01:47
-- Terminal tasks archived: `1165` total, `1145` completed, `20` superseded
+- Archive updated: 2026-05-17 09:39:19
+- Terminal tasks archived: `1166` total, `1146` completed, `20` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `PER-003` | Sprint 7 / EPIC-TRAINER-ADVANCED | Persona registry live integration acceptance | Claude2 | completed | 2026-05-17 09:39:19 | `ai-task-archive/tasks/PER-003.json` |
 | `TRN-007` | Sprint 7 / EPIC-TRAINER-ADVANCED | Trainer trace -> imitation dataset export | Codex | completed | 2026-05-17 09:01:47 | `ai-task-archive/tasks/TRN-007.json` |
 | `OPS-REBASE-AUTO-001` | Sprint 7 / EPIC-OPS-BACKLOG | Auto-handle empty commits in worker rebase flow | Codex | completed | 2026-05-17 08:43:51 | `ai-task-archive/tasks/OPS-REBASE-AUTO-001.json` |
 | `OPS-WORKER-PUSH-CRED-001` | Sprint 7 / EPIC-OPS-BACKLOG | Background worker git push credentials provisioning | Codex | completed | 2026-05-17 08:34:45 | `ai-task-archive/tasks/OPS-WORKER-PUSH-CRED-001.json` |
@@ -102,7 +102,6 @@ Last updated: 2026-05-17 09:36:37
 | `ASK-002-SIDECAR-REVIEW` | Sprint 5 / EPIC-RESEARCH | Prepare ASK-002 review packet and evidence summary | Claude | superseded | 2026-05-16 18:47:58 | `ai-task-archive/tasks/ASK-002-SIDECAR-REVIEW.json` |
 | `TRN-004` | Sprint 5 / EPIC-RESEARCH | trainer commit / discard / replay | Codex | completed | 2026-05-16 18:47:33 | `ai-task-archive/tasks/TRN-004.json` |
 | `LOOP-001-RB` | Sprint 6 / EPIC-EVOLUTION | /bff/v5/loop-runs endpoint (rebaseline) | Claude2 | completed | 2026-05-16 18:46:09 | `ai-task-archive/tasks/LOOP-001-RB.json` |
-| `IMT-001` | Sprint 5 / EPIC-RESEARCH | TraderTrajectory schema | Codex | completed | 2026-05-16 18:40:26 | `ai-task-archive/tasks/IMT-001.json` |
 
 ## Task Board
 
@@ -117,7 +116,6 @@ Last updated: 2026-05-17 09:36:37
 | `IMT-007` | Sprint 7 / EPIC-IMITATION-TRAINING | Behavior-policy artifact validation gate | behavior_policy artifact 進入 registry / governance 前的驗證閘門：metadata 完整、checksum 一致、IMT-006 eval metrics 達門檻、policy 不出現 deploy/canary/live 觸發詞。獨立 module。 | Claude | Codex2 | todo | `IMT-004`, `IMT-006` | 2026-05-17 07:22:33 | Assignment created |
 | `IMT-008` | Sprint 7 / EPIC-IMITATION-TRAINING | TRL preference-pair dataset bridge | 新增 TRL (Transformer Reinforcement Learning) preference-pair dataset bridge：把 IMT-002 PreferenceExample / CorrectionTrace 轉成 TRL 期望的 chosen/rejected 對。獨立 module。 | Claude | Codex | todo | `IMT-002`, `IMT-003` | 2026-05-17 07:48:59 | Auto-reassigned ownership from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota. Task returned to todo until Claude starts a fresh run. |
 | `TRN-006` | Sprint 7 / EPIC-TRAINER-ADVANCED | Rapid-eval -> vectorbt backend integration | 把 TRN-003 rapid-eval skeleton 接到實際 backend（vectorbt VBT-001 via adapter facade）。獨立檔案，不修 TRN-003 既有 endpoint signature。 | Codex | Claude2 | review_approved | `TRN-003`, `VBT-001` | 2026-05-17 09:36:13 | Review approved: rapid_eval_integration.py meets all acceptance criteria — real vectorbt backend, correct eval_summary shape, 2 isolated tests pass, combined 35+5 subtests pass, diff-check clean. Returning to owner Codex for finalization. |
-| `PER-003` | Sprint 7 / EPIC-TRAINER-ADVANCED | Persona registry live integration acceptance | 把 execute-plans Persona 頁面從 fixture-backed 切換到 live persona_registry service。確認 /bff/personas 與 /bff/personas/{id} read path 走 services/control-plane/persona/persona_registry.py。獨立 acceptance。 | Claude2 | Codex | review_approved | `PER-001`, `PER-002` | 2026-05-17 09:28:33 | Supervisor paused finalize on PER-003 to free Claude2 for higher-priority review work; task remains review_approved. |
 | `ASK-006` | Sprint 7 / EPIC-CONSULT-ADVANCED | Consult -> Committee -> Memo -> Review e2e test | ASK-001..005 已落地 consult/committee flow，這個 task 寫一條 e2e integration test：ask session create -> committee invoke -> memo publish -> Management review queue 接到 handoff。獨立 test 檔。 | Codex | Claude2 | review | `ASK-001`, `ASK-002`, `ASK-003`, `ASK-004`, `ASK-005` | 2026-05-17 09:27:31 | Chair reassigned review from Codex2 to Claude2: Codex2 pause blocks this review and ASK-006 is on the current consultation path. |
 | `ASK-007` | Sprint 7 / EPIC-CONSULT-ADVANCED | Consult memo evidence redaction regression | 驗證 consult memo publish 流程的 evidence redaction：persona-internal 機密欄位（policy_internals memory_trace internal_score）不能洩漏到 review-facing memo。獨立 test 檔。 | Codex | Claude2 | review | `ASK-004` | 2026-05-17 09:27:18 | Chair reassigned review from Codex2 to Claude2: Codex2 pause blocks this fresh review; Claude2 can review Codex-owned BFF/consultation work after closeout. |
 | `ASK-008` | Sprint 7 / EPIC-CONSULT-ADVANCED | Committee sponsor decision -> governance action bridge | committee 結出 sponsor decision 後，提供把 sponsor decision bridge 到 governance action (例如觸發 ApprovalDecision proposal 或 EvolutionDecision proposal) 的 module。獨立 module，不直接改 governance service。 | Claude | Codex2 | todo | `ASK-003`, `GOV-001`, `EVO-001` | 2026-05-17 07:25:38 | Assignment created |
@@ -134,7 +132,6 @@ Last updated: 2026-05-17 09:36:37
 |---|---|---|---|---|---|
 | `IMT-006` | Codex | Codex2 | Implemented services/research/imitation/eval_metrics.py and test_eval_metrics.py. evaluate() returns JSON-serializable evaluation_result payload with action_match_rate, return_gap, kl_divergence for behavior_policy refs; supports deterministic, stochastic/uniform, keyed predictions, nearest-centroid policies, and counterfactual rewards. Verification: pytest -q services/research/imitation/test_eval_metrics.py; pytest -q services/research/imitation | pending | 2026-05-17 07:31:55 |
 | `OPS-SIDECAR-CLEANUP-001` | Codex | Codex2 | Ready for review. Added .orchestrator/sidecar_cleanup.py with scan/classify/execute retention API, CLI dry-run/apply mode, 14-day archive and 60-day delete policy; added contract doc and focused tests covering fresh, archivable, delete-eligible, dry-run no-op, real execute, and CLI exit 0. Verification: python3 -m pytest .orchestrator/test_sidecar_cleanup.py; python3 .orchestrator/test_sidecar_cleanup.py; python3 -m py_compile .orchestrator/sidecar_cleanup.py .orchestrator/test_sidecar_cleanup.py. | pending | 2026-05-17 07:46:46 |
-| `PER-003` | Codex | Claude2 | Review approved by Codex. Acceptance verifies service_store persona list/detail paths, pagination, strict no-fixture fallback, and PersonaRegistry seed -> BFF read smoke. Owner Claude2 should finalize to done per closeout checklist. | pending | 2026-05-17 08:15:12 |
 | `OSS-STAT-001-SIDECAR-ACCEPTANCE` | Gemini | Claude | Acceptance packet drafted and ready for review in support/sidecars/OSS-STAT-001/OSS-STAT-001-SIDECAR-ACCEPTANCE.md. The packet documents the resolved shadowing issue and the final artifact shapes. | pending | 2026-05-17 09:05:00 |
 | `ASK-007` | Codex2 | Claude2 | Chair reassigned review from Codex2 to Claude2: Codex2 pause blocks this fresh review; Claude2 can review Codex-owned BFF/consultation work after closeout. | pending | 2026-05-17 09:27:18 |
 | `ASK-006` | Codex2 | Claude2 | Chair reassigned review from Codex2 to Claude2: Codex2 pause blocks this review and ASK-006 is on the current consultation path. | pending | 2026-05-17 09:27:31 |
@@ -153,7 +150,6 @@ Last updated: 2026-05-17 09:36:37
 |---|---|---|---|
 | `OSS-QLIB-002` | Claude | 驗證通過。run() 回傳 schema-valid ExperimentRun，metadata 含 producer_run_id / lineage / evaluation_summary / safety_assertions。<br>evaluate() 回傳 sharpe / sortino / max_dd / ic，IC 使用觀測層 prediction vs actual_return，sharpe/sortino/max_dd 使用截面平均報酬。<br>2 個測試 (happy-path + insufficient-data fail-fast) pytest -q exit 0；全 qlib suite 35 passed。<br>diff --check 無 trailing whitespace。deployment_stage=none 有斷言，無 registry/broker/order side effect。 | - |
 | `TRN-006` | Claude2 | TRN-006 review passed. run_rapid_eval 正確暴露 sharpe/sortino/max_dd eval_summary；導入路徑 services.research.vectorbt.adapter 為真實 adapter（非 mock）；2 tests pass (success path + fail-fast)；35+5 subtests combined pass；diff-check clean；TRN-003 endpoint 未被修改；governance advisory_only 欄位確認無直接 live 影響。 | - |
-| `PER-003` | Codex | No blocking findings. /bff/personas list and detail routes call read_store.list_personas/get_persona, and ReadSurfaceStore resolves personas through ServiceBackedReadAdapter before local fallback.<br>Verified task artifacts: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_persona_live_integration.py -q => 5 passed; PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=services/control-plane/bff:. python3 services/control-plane/persona/integration_smoke.py => 16/16 checks passed.<br>PER-003 artifacts are committed in 549270e3 and currently clean; unrelated dirty worktree files remain outside this review. | - |
 
 ## Lovable Coordination
 
@@ -224,23 +220,23 @@ Last updated: 2026-05-17 09:36:37
 
 ## Latest Checkpoints
 
-- 2026-05-17 09:35:41 Orchestrator: PreToolUse: Bash
-- 2026-05-17 09:35:41 Orchestrator: PostToolUse: Bash
-- 2026-05-17 09:35:44 Orchestrator: PostToolUse: Bash
-- 2026-05-17 09:35:44 Orchestrator: PreToolUse: Bash
-- 2026-05-17 09:35:44 Orchestrator: PostToolUse: Bash
-- 2026-05-17 09:35:49 Orchestrator: PreToolUse: Bash
-- 2026-05-17 09:35:49 Orchestrator: PostToolUse: Bash
-- 2026-05-17 09:35:51 Orchestrator: PreToolUse: Bash
-- 2026-05-17 09:35:51 Orchestrator: PostToolUse: Bash
-- 2026-05-17 09:36:03 Orchestrator: PreToolUse: Bash
-- 2026-05-17 09:36:04 Claude: `OSS-QLIB-002` Review approved: all acceptance criteria met. run() produces schema-valid ExperimentRun with producer_run_id/lineage/evaluation_summary; evaluate() returns sharpe/sortino/max_dd/ic; 2 tests pass (happy-path + fail-fast); 35 total qlib tests pass; no trailing whitespace; deployment_stage=none; no side effects. Returning to Codex for finalization.
-- 2026-05-17 09:36:12 Orchestrator: PreToolUse: Bash
-- 2026-05-17 09:36:13 Claude2: `TRN-006` Review approved: rapid_eval_integration.py meets all acceptance criteria — real vectorbt backend, correct eval_summary shape, 2 isolated tests pass, combined 35+5 subtests pass, diff-check clean. Returning to owner Codex for finalization.
-- 2026-05-17 09:36:25 Orchestrator: PostToolUse: Bash
-- 2026-05-17 09:36:32 Orchestrator: PreToolUse: Bash
-- 2026-05-17 09:36:32 Orchestrator: PostToolUse: Bash
-- 2026-05-17 09:36:32 Orchestrator: PostToolUse: Bash
-- 2026-05-17 09:36:36 Orchestrator: Stop: Stop
-- 2026-05-17 09:36:37 Orchestrator: PreToolUse: Bash
-- 2026-05-17 09:36:37 Orchestrator: SessionEnd: SessionEnd
+- 2026-05-17 09:38:13 Orchestrator: PreToolUse: Bash
+- 2026-05-17 09:38:14 Orchestrator: PreToolUse: Bash
+- 2026-05-17 09:38:14 Orchestrator: PostToolUse: Bash
+- 2026-05-17 09:38:15 Orchestrator: PostToolUse: Bash
+- 2026-05-17 09:38:29 Orchestrator: PreToolUse: Bash
+- 2026-05-17 09:38:30 Orchestrator: PostToolUse: Bash
+- 2026-05-17 09:38:38 Orchestrator: PreToolUse: Bash
+- 2026-05-17 09:38:41 Orchestrator: PostToolUse: Bash
+- 2026-05-17 09:38:49 Orchestrator: PreToolUse: Bash
+- 2026-05-17 09:38:55 Orchestrator: PreToolUse: Bash
+- 2026-05-17 09:38:55 Orchestrator: PostToolUse: Bash
+- 2026-05-17 09:38:59 Orchestrator: PreToolUse: Bash
+- 2026-05-17 09:39:05 Orchestrator: PreToolUse: Bash
+- 2026-05-17 09:39:05 Orchestrator: PostToolUse: Bash
+- 2026-05-17 09:39:06 Orchestrator: PreToolUse: Bash
+- 2026-05-17 09:39:06 Orchestrator: PostToolUse: Bash
+- 2026-05-17 09:39:12 Orchestrator: PreToolUse: Bash
+- 2026-05-17 09:39:13 Orchestrator: PostToolUse: Bash
+- 2026-05-17 09:39:19 Orchestrator: PreToolUse: Bash
+- 2026-05-17 09:39:19 Claude2: `PER-003` PER-003 closeout complete: artifacts committed at 549270e3; pytest 5/5 passed; smoke 16/16 checks passed. /bff/personas reads from live PersonaRegistry (service_store), strict mode verified no fixture fallback. Review approved by Codex; finalized and closed by Claude2.

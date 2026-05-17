@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "task_id": "PER-003",
+  "archived_at": "2026-05-17T01:39:19Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PER-003",
+    "title": "Persona registry live integration acceptance",
+    "summary_zh": "把 execute-plans Persona 頁面從 fixture-backed 切換到 live persona_registry service。確認 /bff/personas 與 /bff/personas/{id} read path 走 services/control-plane/persona/persona_registry.py。獨立 acceptance。",
+    "phase": "Sprint 7 / EPIC-TRAINER-ADVANCED",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "PER-001",
+      "PER-002"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/test_persona_live_integration.py",
+      "services/control-plane/persona/integration_smoke.py"
+    ],
+    "acceptance": [
+      "test_persona_live_integration.py asserts /bff/personas returns service-backed data with source.kind=service_backed not fixture_backed",
+      "test covers list pagination and detail readback",
+      "integration_smoke.py replays seed -> registry write -> BFF read for 3 personas",
+      "strict mode (VITE_BFF_FALLBACK=strict equivalent) does not fallback to fixture",
+      "test passes pytest -q exit 0"
+    ],
+    "next": "PER-003 closeout complete: artifacts committed at 549270e3; pytest 5/5 passed; smoke 16/16 checks passed. /bff/personas reads from live PersonaRegistry (service_store), strict mode verified no fixture fallback. Review approved by Codex; finalized and closed by Claude2.",
+    "last_update": "2026-05-17T01:39:19Z",
+    "review_notes_zh": [
+      "No blocking findings. /bff/personas list and detail routes call read_store.list_personas/get_persona, and ReadSurfaceStore resolves personas through ServiceBackedReadAdapter before local fallback.",
+      "Verified task artifacts: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_persona_live_integration.py -q => 5 passed; PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=services/control-plane/bff:. python3 services/control-plane/persona/integration_smoke.py => 16/16 checks passed.",
+      "PER-003 artifacts are committed in 549270e3 and currently clean; unrelated dirty worktree files remain outside this review."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-17T01:39:19Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "9723d684863869f427cc1b5d7a9b0b8c7b208046",
+      "commit_subject": "PER-003: closeout — persona registry live integration acceptance",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "- PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=services/control-plane/bff": ". python3 services/control-plane/persona/integration_smoke.py => 16/16 checks passed",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "PER-003",
+        "Reviewer": "Codex",
+        "Wave": "2026-W20",
+        "Verified": "persona registry live integration 5 passed; smoke 16/16 checks passed",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 44,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PER-003",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Implementation complete. 5 pytest tests pass (pytest -q). Smoke script 16/16 checks pass. /bff/personas reads from live PersonaRegistry JSON (source=service_store). Strict mode verified to not fallback to fixture. Task commit: 549270e3.",
+      "status": "done",
+      "created_at": "2026-05-16T23:34:11Z",
+      "resolved_at": "2026-05-17T00:12:26Z"
+    },
+    {
+      "task_id": "PER-003",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Chair reassigned review from Codex2 to Codex: Codex2 pause would stall review; Codex integration/schema lane is suitable for this Claude2-owned control-plane integration task.",
+      "status": "done",
+      "created_at": "2026-05-17T00:12:26Z",
+      "resolved_at": "2026-05-17T00:15:12Z"
+    },
+    {
+      "task_id": "PER-003",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review approved by Codex. Acceptance verifies service_store persona list/detail paths, pagination, strict no-fixture fallback, and PersonaRegistry seed -> BFF read smoke. Owner Claude2 should finalize to done per closeout checklist.",
+      "status": "done",
+      "created_at": "2026-05-17T00:15:12Z",
+      "resolved_at": "2026-05-17T01:39:19Z"
+    }
+  ],
+  "blockers": []
+}
