@@ -380,6 +380,18 @@ class DetectWorkerFailureTests(unittest.TestCase):
 
         self.assertEqual(hint, datetime(2026, 5, 8, 20, 40, 0, tzinfo=timezone.utc))
 
+    def test_parse_quota_retry_hint_codex_full_date(self) -> None:
+        from datetime import datetime, timezone
+
+        now = datetime(2026, 5, 16, 10, 5, 36, tzinfo=timezone.utc)
+        hint = supervisor.parse_quota_retry_hint(
+            "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage "
+            "to purchase more credits or try again at May 19th, 2026 12:40 AM.",
+            now=now,
+        )
+
+        self.assertEqual(hint, datetime(2026, 5, 18, 16, 40, 0, tzinfo=timezone.utc))
+
     def test_parse_quota_retry_hint_returns_none_when_absent(self) -> None:
         self.assertIsNone(supervisor.parse_quota_retry_hint("Credit balance is too low"))
         self.assertIsNone(supervisor.parse_quota_retry_hint(None))
@@ -418,6 +430,40 @@ class DetectWorkerFailureTests(unittest.TestCase):
         # reset_after_seconds should reflect the actual hint window, not the default
         self.assertGreater(entry["reset_after_seconds"], 900)
         self.assertEqual(entry["reset_after_seconds"], int((11 - 3) * 3600 - 5 * 60))
+
+    def test_mark_provider_dispatch_paused_honors_codex_full_date_retry_at(self) -> None:
+        from datetime import datetime, timezone
+
+        config = {
+            "provider_guardrails": {"capacity_pause_seconds": 900, "quota_terminal_pause_seconds": 900},
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+            "providers": {"codex2-3": {"quota_group": "codex2"}},
+        }
+        state: dict = {}
+
+        fake_now = datetime(2026, 5, 16, 10, 5, 36, tzinfo=timezone.utc)
+        with (
+            mock.patch.object(supervisor, "datetime") as datetime_mock,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            datetime_mock.now.return_value = fake_now
+            datetime_mock.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            supervisor.mark_provider_dispatch_paused(
+                config,
+                state,
+                "codex2-3",
+                "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage "
+                "to purchase more credits or try again at May 19th, 2026 12:40 AM.",
+                task_id="TRN-002",
+                worker_run_id="codex-run-1",
+                failure_kind="quota_terminal",
+                pause_kind="quota_terminal",
+            )
+
+        entry = state["provider_guardrails"]["dispatch_pauses"]["codex2"]
+        self.assertEqual(entry["trigger_provider"], "codex2_3")
+        self.assertEqual(entry["blocked_until"], "2026-05-18T16:40:00Z")
+        self.assertEqual(entry["reset_after_seconds"], 196464)
 
     def test_mark_provider_dispatch_paused_uses_default_when_no_hint(self) -> None:
         from datetime import datetime, timezone
