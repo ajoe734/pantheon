@@ -34,7 +34,11 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          ref: master
+          # Check out dev because scripts/git/publish_promote.py lives there;
+          # master only catches up after the first promote merges. The
+          # discover step operates on remote refs so it does not depend on
+          # the local HEAD being master.
+          ref: dev
 
       - uses: actions/setup-python@v6
         with:
