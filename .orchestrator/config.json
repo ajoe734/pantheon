@@ -854,7 +854,7 @@
     "main_branch": "master",
     "promote": {
       "trigger": "publish_soak",
-      "soak_days": 0,
+      "soak_days": 3,
       "regression_label_prefix": "regression/",
       "promote_pr_label": "auto-promote",
       "block_labels": [

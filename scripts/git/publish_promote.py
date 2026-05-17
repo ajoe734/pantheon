@@ -128,6 +128,19 @@ def fetch_blocking_labels(version: str, prefix: str, block_labels: list[str]) ->
 def discover(input_version: str | None, soak_days: int, prefix: str, block_labels: list[str], publish_prefix: str) -> list[dict]:
     now = datetime.now(timezone.utc)
     candidates: list[dict] = []
+
+    # Ensure origin/master and all release tags are fetched. Without this
+    # the `is-ancestor` check below silently fails on the CI runner (which
+    # only fetches the workflow's checkout ref) and every already-merged
+    # publish gets re-proposed for promote — observed after the master
+    # bootstrap of 2026-05-17.
+    subprocess.run(
+        ["git", "fetch", "origin", "master", "--tags", "--quiet"],
+        capture_output=True,
+        cwd=ROOT,
+        check=False,
+    )
+
     tags = list_release_tags()
     if input_version:
         tags = [t for t in tags if t[0] == input_version.lstrip("v") or t[0] == input_version]
@@ -143,6 +156,15 @@ def discover(input_version: str | None, soak_days: int, prefix: str, block_label
             cwd=ROOT,
         )
         if merged_check.returncode == 0:
+            continue
+        # Defensive second check on the publish branch tip itself (covers
+        # the case where master moved past the release tag via hotfix).
+        publish_merged = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", f"origin/{publish_prefix}{version}", "origin/master"],
+            capture_output=True,
+            cwd=ROOT,
+        )
+        if publish_merged.returncode == 0:
             continue
         # Skip if a promote PR already exists.
         existing = subprocess.run(
