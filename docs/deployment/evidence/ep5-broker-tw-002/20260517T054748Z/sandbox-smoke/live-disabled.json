@@ -1,0 +1,9 @@
+{
+  "status": "rejected",
+  "response": {
+    "status": "broker_error",
+    "error_code": "SHIOAJI_LIVE_DISABLED",
+    "message": "Live broker execution is permanently disabled. The Shioaji adapter operates in sandbox (simulation) mode only.",
+    "status_code": 403
+  }
+}

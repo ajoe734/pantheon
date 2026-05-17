@@ -6,6 +6,7 @@ from .statsmodels_adapter import (
     StatsmodelsWorkflowError,
     run_statsmodels_workflow,
 )
+from .cointegration import cointegration_test
 
 __all__ = [
     "GovernedDataset",
@@ -14,4 +15,5 @@ __all__ = [
     "StatsmodelsBackend",
     "StatsmodelsWorkflowError",
     "run_statsmodels_workflow",
+    "cointegration_test",
 ]

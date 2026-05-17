@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "OSS-QLIB-002",
+  "archived_at": "2026-05-17T01:42:51Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-QLIB-002",
+    "title": "Qlib rolling-window OOS pipeline + eval",
+    "summary_zh": "在 services/research/qlib/ 之上實作 rolling-window / OOS pipeline。建在已 archived 的 QLIB-001 dataset manifest 基礎上，產出 OOS metrics 並寫回 ExperimentRun。",
+    "phase": "Sprint 7 / EPIC-OSS-RESEARCH",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/research/qlib/rolling_pipeline.py",
+      "services/research/qlib/oos_eval.py",
+      "services/research/qlib/test_rolling_pipeline.py",
+      "services/research/qlib/contract.md"
+    ],
+    "acceptance": [
+      "rolling_pipeline.py exposes run(strategy_spec_ref window_days) returning ExperimentRun dict with producer_run_id and lineage",
+      "oos_eval.py exposes evaluate(experiment_run) returning oos_metrics dict (sharpe sortino max_dd ic)",
+      "test_rolling_pipeline.py covers 1 happy-path and 1 fail-fast scenario (insufficient data) with pytest -q exit 0",
+      "smoke run produces evaluation_summary linked back to a strategy_spec artifact id"
+    ],
+    "next": "Finalized OSS-QLIB-002 after Claude review approval. Task commit 935fcb4c adds rolling_pipeline.py, oos_eval.py, test_rolling_pipeline.py, and contract.md. Verified: PYTHONDONTWRITEBYTECODE=1 pytest -q services/research/qlib/test_rolling_pipeline.py -> 2 passed; PYTHONDONTWRITEBYTECODE=1 pytest -q services/research/qlib -> 35 passed; git diff --cached --check -> clean.",
+    "last_update": "2026-05-17T01:42:51Z",
+    "review_notes_zh": [
+      "驗證通過。run() 回傳 schema-valid ExperimentRun，metadata 含 producer_run_id / lineage / evaluation_summary / safety_assertions。",
+      "evaluate() 回傳 sharpe / sortino / max_dd / ic，IC 使用觀測層 prediction vs actual_return，sharpe/sortino/max_dd 使用截面平均報酬。",
+      "2 個測試 (happy-path + insufficient-data fail-fast) pytest -q exit 0；全 qlib suite 35 passed。",
+      "diff --check 無 trailing whitespace。deployment_stage=none 有斷言，無 registry/broker/order side effect。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-17T01:42:51Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "935fcb4c0f369fd618e669e8f61380a19964d038",
+      "commit_subject": "OSS-QLIB-002: add rolling OOS pipeline",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "OSS-QLIB-002",
+        "Reviewer": "Claude",
+        "Wave": "2026-W20",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 pytest -q services/research/qlib/test_rolling_pipeline.py (2 passed); PYTHONDONTWRITEBYTECODE=1 pytest -q services/research/qlib (35 passed); git diff --cached --check (clean)"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 42,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 3,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-QLIB-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review: added Qlib rolling-window OOS ExperimentRun pipeline, OOS evaluator, tests, and contract. New artifacts: services/research/qlib/rolling_pipeline.py, services/research/qlib/oos_eval.py, services/research/qlib/test_rolling_pipeline.py, services/research/qlib/contract.md. Output is schema-valid ExperimentRun with producer_run_id/lineage/evaluation_summary in metadata, strategy_spec_artifact_id linked to qlib-tw-cross-sectional-alpha-spec-v1, deployment_stage=none, no registry/runtime/broker/order side effects. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/research/qlib/test_rolling_pipeline.py -q => 2 passed; py_compile rolling/oos/test => passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/research/qlib -q => 35 passed; CLI smoke wrote /tmp/oss_qlib_002_smoke.json with 13950 OOS samples, 279 OOS periods, sharpe/sortino/max_dd/ic present.",
+      "status": "done",
+      "created_at": "2026-05-16T23:35:17Z",
+      "resolved_at": "2026-05-17T01:27:44Z"
+    },
+    {
+      "task_id": "OSS-QLIB-002",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Chair reassigned review from Codex2 to Claude: Codex2 pause blocks an older review item; Claude is an available non-owner reviewer after stale OSS-STAT approval is denied.",
+      "status": "done",
+      "created_at": "2026-05-17T01:27:44Z",
+      "resolved_at": "2026-05-17T01:36:04Z"
+    },
+    {
+      "task_id": "OSS-QLIB-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all acceptance criteria met. run() produces schema-valid ExperimentRun with producer_run_id/lineage/evaluation_summary; evaluate() returns sharpe/sortino/max_dd/ic; 2 tests pass (happy-path + fail-fast); 35 total qlib tests pass; no trailing whitespace; deployment_stage=none; no side effects. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-17T01:36:04Z",
+      "resolved_at": "2026-05-17T01:42:52Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,4 +1,6 @@
-finrl==0.3.6
-gymnasium
-pandas
-numpy
+finrl==0.3.7
+matplotlib==3.10.9
+gymnasium==1.2.3
+pandas==3.0.3
+numpy==2.4.5
+pytest==9.0.3

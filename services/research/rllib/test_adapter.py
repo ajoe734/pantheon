@@ -25,6 +25,7 @@ from adapter.rllib_adapter import (
     StubRLlibBackend,
     run_rllib_workflow,
 )
+from adapter import train_ppo
 from smoke_test import main as smoke_main
 from worker import main as worker_main
 
@@ -138,6 +139,26 @@ class TestRLlibPPOBackend(unittest.TestCase):
         self.assertEqual(result.backend, "rllib_ppo")
 
 
+class TestPublicCartPolePPOAdapter(unittest.TestCase):
+    def test_train_ppo_returns_model_artifact_experiment_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = train_ppo(num_iters=2, output_dir=tmpdir, eval_episodes=3)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["adapter"], "rllib_ppo")
+        self.assertEqual(result["artifact_type"], "model_artifact")
+        self.assertIn("model_artifact_ref", result)
+        self.assertEqual(result["registry_entry"]["artifact_type"], "model_artifact")
+        self.assertLessEqual(result["metrics"]["training_iterations"], 20)
+        self.assertGreater(
+            result["metrics"]["mean_reward"],
+            result["metrics"]["random_baseline_mean_reward"],
+        )
+
+    def test_train_ppo_rejects_more_than_twenty_iterations(self) -> None:
+        with self.assertRaises(ValueError):
+            train_ppo(num_iters=21)
+
+
 class TestDeferredPrepGate(unittest.TestCase):
     def test_cli_gate_requires_explicit_flag(self) -> None:
         with self.assertRaises(EnvironmentError):
@@ -155,9 +176,12 @@ class TestDeferredPrepGate(unittest.TestCase):
 
 
 class TestRLlibEntrypointGates(unittest.TestCase):
-    def test_smoke_entrypoint_requires_cli_flag(self) -> None:
-        with patch("sys.stderr", new=io.StringIO()):
-            self.assertEqual(smoke_main([]), 2)
+    def test_smoke_entrypoint_runs_cartpole_ppo_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.assertEqual(
+                smoke_main(["--num-iters", "2", "--eval-episodes", "3", "--output-dir", tmpdir]),
+                0,
+            )
 
     def test_worker_entrypoint_requires_env_gate(self) -> None:
         with patch.dict(os.environ, {}, clear=False):

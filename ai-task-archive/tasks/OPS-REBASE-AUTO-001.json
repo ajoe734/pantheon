@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "OPS-REBASE-AUTO-001",
+  "archived_at": "2026-05-17T00:43:51Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OPS-REBASE-AUTO-001",
+    "title": "Auto-handle empty commits in worker rebase flow",
+    "summary_zh": "修正 worker 跑 git pull --rebase 遇到 # empty pick 會卡 approval queue 的問題。設計 rebase_helper module 自動帶 --allow-empty 或 --skip 策略，supervisor.py 改用 helper 1 行替換。獨立 helper module 與 OPS-REFACTOR-001 不衝突。",
+    "phase": "Sprint 7 / EPIC-OPS-BACKLOG",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".orchestrator/rebase_helper.py",
+      ".orchestrator/test_rebase_helper.py",
+      ".orchestrator/rebase_helper_contract.md"
+    ],
+    "acceptance": [
+      "rebase_helper.py exposes continue_or_skip_empty(repo_path) returning RebaseResult dict with action in {continued skipped aborted_with_conflict}",
+      "implementation auto-skips empty commits and re-runs continue until rebase finishes or hits non-empty conflict",
+      "test covers 3 cases: clean continue all-empty skip and real conflict bail-out",
+      "supervisor.py change is exactly 1 import + 1 call site",
+      "test passes pytest -q exit 0"
+    ],
+    "next": "Finalized after task commit c9f61449; verified PYTHONDONTWRITEBYTECODE=1 python3 -m pytest .orchestrator/test_rebase_helper.py -q => 4 passed and git diff --cached --check => clean. Unrelated dirty worktree entries remain outside this task.",
+    "last_update": "2026-05-17T00:43:51Z",
+    "review_notes_zh": [
+      "審查通過；所有 acceptance criteria 驗證 pass。supervisor 整合精確 1 import + 1 call site，rebase_helper 安全機制完備（200 步上限、GIT_EDITOR=true、衝突偵測涵蓋 UU/AA/DD）。無 blocking 問題。"
+    ],
+    "review_file": "support/sidecars/OPS-REBASE-AUTO-001/review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-17T00:43:51Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "c9f61449ee70296a510090658fd4f6d189acb01e",
+      "commit_subject": "OPS-REBASE-AUTO-001: auto-handle empty rebase picks",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "OPS-REBASE-AUTO-001",
+        "Reviewer": "Claude",
+        "Wave": "2026-W20",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest .orchestrator/test_rebase_helper.py -q => 4 passed; git diff --cached --check => clean"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 37,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OPS-REBASE-AUTO-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: added .orchestrator/rebase_helper.py with continue_or_skip_empty(repo_path) RebaseResult API; auto-skips empty rebase picks until completion, aborts on real conflicts or failed skip/continue, and handles worktree/.git-file git dirs. Added .orchestrator/test_rebase_helper.py covering clean continue, all-empty skip, conflict bail-out, and no-rebase no-op. Updated .orchestrator/rebase_helper_contract.md. Supervisor integration is exactly one import plus one call site in run_once before dispatch. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest .orchestrator/test_rebase_helper.py -q => 4 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile .orchestrator/rebase_helper.py .orchestrator/supervisor.py => passed.",
+      "status": "done",
+      "created_at": "2026-05-17T00:30:23Z",
+      "resolved_at": "2026-05-17T00:34:46Z"
+    },
+    {
+      "task_id": "OPS-REBASE-AUTO-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all acceptance criteria verified, 4 tests pass, supervisor integration is exactly 1 import + 1 call site. Returned to Codex for closeout finalization.",
+      "status": "done",
+      "created_at": "2026-05-17T00:34:46Z",
+      "resolved_at": "2026-05-17T00:43:51Z"
+    }
+  ],
+  "blockers": []
+}

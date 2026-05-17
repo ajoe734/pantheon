@@ -349,6 +349,14 @@ def test_replay_commit_records_persona_route_policy_lineage_refs() -> None:
     event_refs = committed.json()["events"][-1]["artifact_refs"]
     assert event_refs["lineage_ref"] == artifacts["lineage_ref"]
     assert event_refs["route_policy_ref"] == artifacts["route_policy_ref"]
+    assert event_refs["policy_lineage_edge_ids"] == artifacts["policy_lineage_edge_ids"]
+    assert artifacts["policy_lineage_store_ref"] == "lineage-read:training-session-policy-lineage"
+    lineage_edges = module.build_lineage_read_store(module.store.data_dir).list_edges()
+    assert [edge["edge_id"] for edge in lineage_edges] == artifacts["policy_lineage_edge_ids"]
+    assert lineage_edges[0]["source"] == "trainer_session"
+    assert lineage_edges[0]["producer"] == session_id
+    assert lineage_edges[0]["target"] == "persona_policy_artifact"
+    assert lineage_edges[0]["target_id"] == artifacts["persona_policy_ref"]
 
 
 def test_replay_discard_idempotency_keeps_after_artifact_empty() -> None:

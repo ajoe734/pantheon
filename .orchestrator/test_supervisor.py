@@ -2774,6 +2774,7 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
             with contextlib.ExitStack() as stack:
                 stack.enter_context(mock.patch.object(supervisor, "write_supervisor_pid"))
                 stack.enter_context(mock.patch.object(supervisor, "load_runtime_state", return_value=dict(initial_state)))
+                stack.enter_context(mock.patch.object(supervisor, "continue_or_skip_empty"))
                 stack.enter_context(mock.patch.object(supervisor, "prune_stale_approvals", return_value=False))
                 stack.enter_context(mock.patch.object(supervisor, "load_provider_report", return_value={}))
                 stack.enter_context(mock.patch.object(supervisor, "sync_coordination_files", return_value=False))

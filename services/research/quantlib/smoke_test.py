@@ -1,8 +1,12 @@
-"""Governed QuantLib smoke test for the Pantheon research baseline."""
+"""Smoke test for the QuantLib option pricing adapter.
+
+Run: pytest -q services/research/quantlib/smoke_test.py
+"""
 
 from __future__ import annotations
 
-import argparse
+import hashlib
+import json
 import sys
 from pathlib import Path
 
@@ -10,88 +14,114 @@ SERVICE_DIR = Path(__file__).resolve().parent
 if str(SERVICE_DIR) not in sys.path:
     sys.path.insert(0, str(SERVICE_DIR))
 
-from adapter import (
-    GovernedBondSpec,
-    GovernedMarketSnapshot,
-    GovernedOptionSpec,
-    QuantLibBackend,
-    StubQuantLibBackend,
-    run_quantlib_workflow,
-)
+from adapter import price_american_binomial, price_european
 
 
-def _build_snapshot() -> GovernedMarketSnapshot:
-    return GovernedMarketSnapshot(
-        dataset_id="dataset:quantlib-smoke-001",
-        source_dataset_refs=("dataset:rates-options-smoke-001",),
-        valuation_date="2026-04-17",
-        option_specs=(
-            GovernedOptionSpec(
-                option_id="opt-eur-call-001",
-                style="european",
-                option_type="call",
-                spot=102.0,
-                strike=100.0,
-                volatility=0.22,
-                risk_free_rate=0.03,
-                dividend_yield=0.01,
-                maturity_days=90,
-                quantity=10,
-            ),
-        ),
-        bond_specs=(
-            GovernedBondSpec(
-                instrument_id="bond-ust-2y-001",
-                face_value=1000.0,
-                coupon_rate=0.04,
-                market_rate=0.035,
-                maturity_years=2,
-                payment_frequency=2,
-            ),
-        ),
-        metadata={"source": "smoke_test", "governed": True},
+_ITM_CALL = {
+    "spot": 105.0,
+    "strike": 100.0,
+    "rate": 0.03,
+    "vol": 0.2,
+    "tenor": 0.5,
+    "option_type": "call",
+    "expected_price": 9.553210963345876,
+    "expected_delta": 0.6990865896301867,
+    "expected_gamma": 0.02344701489334269,
+    "expected_vega": 25.85033391991032,
+}
+_OTM_PUT = {
+    "spot": 105.0,
+    "strike": 95.0,
+    "rate": 0.03,
+    "vol": 0.2,
+    "tenor": 0.5,
+    "option_type": "put",
+    "expected_price": 1.6422446904051533,
+    "expected_delta": -0.1882202990311166,
+    "expected_gamma": 0.0181690774564163,
+    "expected_vega": 20.031407895698973,
+}
+_TOLERANCE = 1e-3
+
+
+def _assert_close(actual: float, expected: float, *, label: str) -> None:
+    assert abs(actual - expected) <= _TOLERANCE, (
+        f"{label} expected {expected:.10f}, got {actual:.10f}"
     )
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run the governed QuantLib smoke test.")
-    parser.add_argument(
-        "--backend",
-        choices=("stub", "real"),
-        default="stub",
-        help="Select stub (default) or real QuantLib backend.",
+def _assert_european_case(case: dict[str, float | str]) -> dict[str, float]:
+    result = price_european(
+        float(case["spot"]),
+        float(case["strike"]),
+        float(case["rate"]),
+        float(case["vol"]),
+        float(case["tenor"]),
+        str(case["option_type"]),
     )
-    args = parser.parse_args(argv)
+    _assert_close(result["price"], float(case["expected_price"]), label="price")
+    _assert_close(result["delta"], float(case["expected_delta"]), label="delta")
+    _assert_close(result["gamma"], float(case["expected_gamma"]), label="gamma")
+    _assert_close(result["vega"], float(case["expected_vega"]), label="vega")
+    return result
 
-    backend = StubQuantLibBackend() if args.backend == "stub" else QuantLibBackend()
-    bundle = run_quantlib_workflow(_build_snapshot(), backend=backend)
 
-    reg = bundle["registry_entry"]
-    gov = bundle["governance"]
-    results = bundle["results_summary"]
+def build_pricing_snapshot() -> dict[str, object]:
+    itm_call = _assert_european_case(_ITM_CALL)
+    otm_put = _assert_european_case(_OTM_PUT)
+    american_call = price_american_binomial(
+        105.0, 100.0, 0.03, 0.2, 0.5, "call", steps=512
+    )
+    american_put = price_american_binomial(
+        105.0, 95.0, 0.03, 0.2, 0.5, "put", steps=512
+    )
 
-    print("QuantLib smoke test complete")
-    print(f"  artifact_id:        {bundle['artifact_id']}")
-    print(f"  artifact_family:    {bundle['artifact_family']}")
-    print(f"  framework:          {bundle['framework']}")
-    print(f"  artifact_state:     {reg['artifact_state']}")
-    print(f"  deployment_stage:   {reg['deployment_summary']['current_stage']}")
-    print(f"  direct_influence:   {gov['direct_live_influence']}")
-    print(f"  lean_consumption:   {gov['lean_consumption']}")
-    print(f"  option_count:       {len(results['options_pricing'])}")
-    print(f"  bond_count:         {len(results['fixed_income'])}")
+    # Non-dividend-paying American calls should converge to European calls.
+    _assert_close(
+        american_call["price"],
+        float(_ITM_CALL["expected_price"]),
+        label="american_call_price",
+    )
+    assert american_put["price"] >= otm_put["price"]
 
-    assert bundle["artifact_family"] == "pricing_report"
-    assert bundle["framework"] == "quantlib"
-    assert gov["direct_live_influence"] is False
-    assert gov["lean_consumption"] == "research_only_not_direct_action"
-    assert reg["artifact_type"] == "research_report"
-    assert reg["artifact_state"] == "draft"
-    assert reg["deployment_summary"]["current_stage"] == "none"
+    pricing_snapshot = {
+        "artifact_type": "pricing_snapshot",
+        "framework": "quantlib",
+        "model_suite": ["black_scholes", "crr_binomial"],
+        "cases": {
+            "itm_call": {
+                "european": _rounded(itm_call),
+                "american_binomial": _rounded(american_call),
+            },
+            "otm_put": {
+                "european": _rounded(otm_put),
+                "american_binomial": _rounded(american_put),
+            },
+        },
+        "registry_entry": {
+            "artifact_type": "pricing_snapshot",
+            "artifact_state": "draft",
+            "deployment_stage": "none",
+        },
+    }
+    checksum_payload = json.dumps(pricing_snapshot, sort_keys=True).encode()
+    pricing_snapshot["checksum"] = hashlib.sha256(checksum_payload).hexdigest()
 
-    print("  assertions: OK")
-    return 0
+    assert pricing_snapshot["artifact_type"] == "pricing_snapshot"
+    assert pricing_snapshot["registry_entry"]["artifact_type"] == "pricing_snapshot"
+    assert len(pricing_snapshot["checksum"]) == 64
+    return pricing_snapshot
+
+
+def test_quantlib_option_pricing_smoke() -> None:
+    build_pricing_snapshot()
+
+
+def _rounded(result: dict[str, float]) -> dict[str, float]:
+    return {key: round(value, 8) for key, value in result.items()}
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    snapshot = build_pricing_snapshot()
+    print("SMOKE TEST PASSED")
+    print(json.dumps(snapshot, indent=2, sort_keys=True))

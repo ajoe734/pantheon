@@ -19648,6 +19648,7 @@ SSE_ASK_EVENT_TYPES = {
     "ask.message.completed",
     "ask.session.completed",
     "ask.session.failed",
+    "consult_memo_published",
 }
 
 _SSE_RESYNC_ROUTES: Dict[str, tuple[str, ...]] = {
@@ -24974,11 +24975,48 @@ async def sem_agora_committee_publish_memo(
             precondition_failed="memo_id",
         )
     if not was_published:
+        correlation_id = str(
+            payload.get("correlation_id")
+            or payload.get("correlationId")
+            or memo.get("correlation_id")
+            or memo.get("correlationId")
+            or memo.get("linked_request_id")
+            or sessionId
+        ).strip()
+        handoff = read_store.create_agora_handoff(
+            handoff_id=f"handoff-consult-{uuid.uuid4().hex[:12]}",
+            handoff_type="consult_memo_to_management_review",
+            source_route=f"/agora/committee/sessions/{sessionId}/memos/{memoId}",
+            source_entity={"type": "consult_memo", "id": memoId, "sessionId": sessionId},
+            destination_route=f"/consultation/memos/{memoId}/management-review",
+            destination_queue="consult_memo_review",
+            priority=str(payload.get("priority") or "normal"),
+            payload={
+                "memoId": memoId,
+                "sessionId": sessionId,
+                "linkedRequestId": memo.get("linked_request_id"),
+                "publishedAt": memo.get("published_at"),
+                "correlationId": correlation_id,
+            },
+            actor_id=identity.operator_id,
+            created_at=now,
+        )
         _publish_event(
             _sse_buffers["ask"],
             _sse_subscribers["ask"],
             "ask.memo.published",
             {"sessionId": sessionId, "memoId": memoId},
+        )
+        _publish_event(
+            _sse_buffers["ask"],
+            _sse_subscribers["ask"],
+            "consult_memo_published",
+            {
+                "session_id": sessionId,
+                "memo_id": memoId,
+                "handoff_id": handoff["handoffId"],
+                "correlation_id": correlation_id,
+            },
         )
     result = {
         "data": memo,

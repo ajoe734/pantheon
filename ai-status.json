@@ -3,7 +3,7 @@
   "sprint": "2026-05-16-pantheon-bff-p0-foundation",
   "sprint_started_at": "2026-05-16T00:00:00Z",
   "objective": "跨進開發團隊 GAP master rebaseline (docs/04/pantheon_sa_supplemental_2026-05-15/GAP_dev_team_master_rebaseline_2026-05-15.md)，以 pantheon@master + execute-plans@main 為基準。並行 6 條 EPIC，按 P0→P3 階梯推進：(I) EPIC-BFF-P0 (P0 10 task / Sprint 1) — session trio (/bff/me, auth/refresh, logout) + /openapi.json + canonical action endpoint + approval decide + registry reads (strategies/personas/capital-pools/audit)，讓 execute-plans@main 在 VITE_BFF_FALLBACK=strict 下可 bootstrap 核心 Management flow 不再 fallback mock；(II) EPIC-GOV-DEPLOY (P1 5 task / Sprint 2) — ApprovalDecision first-class + DeploymentPlan contract/service + stage planner + deployment projection + pool/runtime compatibility 檢查；(III) EPIC-RUNTIME (P1 6 task / Sprint 3) — RuntimeBinding schema + Runtime Manager skeleton + /bff/runtimes + deploy/pause/replace/rollback actions + loader metadata migration (promotion_state → artifact_state + deployment_stage) + LEAN algorithm-level smoke；(IV) EPIC-TELEMETRY (P2 7 task / Sprint 4) — TelemetryEvent canonical schema + RuntimeHeartbeat ingest + AuditAction backend + /bff/alerts + /bff/incidents + reconciliation record + Postmortem schema/endpoint；(V) EPIC-RESEARCH (P3 28 task / Sprint 5) — Source Ingest (SRC) + StrategySpec (STRAT) + Experiment orchestrator (EXP) + Qlib/vectorbt adapters + Persona/Trainer (PER/TRN) + Imitation dataset (IMT) + Consult/Committee (ASK)；(VI) EPIC-EVOLUTION (P3 3 task / Sprint 6) — EvolutionDecision service + /bff/v5/loop-runs + /bff/v5/sentinel/findings。GAP § 10 最大阻塞：BFF live endpoints 不足 → EPIC-BFF-P0 必須最先收斂；Registry/Promotion canonical 已 implemented，DeploymentPlan/RuntimeBinding 是 governance→execution 缺口；Artifact Loader 仍寫 legacy promotion_state，EX-002 metadata migration 是 execution-side 技術債。fail-closed 鐵律延續：broker production live、capital binding live 仍禁止；canary 需 risk-owner + operator 雙閘；evidence 走 support/evidence/<epic>-<task>/。Track E 收尾備註：46 個 MGMT-* task 中 45 個 done+archive，僅 MGMT-BROKER-002 仍 blocked 等 Shioaji credentials (commit 22e5ca3b 已備 sidecar acceptance packet)；M7 canary readiness 因此未閉合；Track E objective 不在本 sprint 推進範圍，僅 carry-over 記錄。",
-  "updated_at": "2026-05-16T23:29:09Z",
+  "updated_at": "2026-05-17T05:55:44Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -94,16 +94,11 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "ready",
-      "current_task_ids": [
-        "OSS-STAT-001",
-        "OSS-RLLIB-001",
-        "ASK-008",
-        "OPS-REFACTOR-001"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/claude-execution-control",
-      "next": "Auto-reassigned ownership from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota. Task returned to todo until Claude starts a fresh run.",
-      "last_update": "2026-05-16T23:28:05Z"
+      "next": "",
+      "last_update": "2026-05-17T03:31:43Z"
     },
     {
       "name": "Gemini",
@@ -113,14 +108,11 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "ready",
-      "current_task_ids": [
-        "LEAN-ALGO-001",
-        "OPS-WORKER-PUSH-CRED-001"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/gemini-research-runtime",
-      "next": "Assignment created",
-      "last_update": "2026-05-16T23:26:26Z"
+      "next": "",
+      "last_update": "2026-05-17T03:45:00Z"
     },
     {
       "name": "Codex",
@@ -130,16 +122,11 @@
         "schema",
         "acceptance"
       ],
-      "status": "working",
-      "current_task_ids": [
-        "OSS-QLIB-002",
-        "IMT-005",
-        "IMT-006",
-        "TRN-005"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/codex-collab-system",
-      "next": "Implementing qlib rolling-window OOS ExperimentRun pipeline, OOS evaluator, tests, and contract artifacts.",
-      "last_update": "2026-05-16T23:29:09Z"
+      "next": "",
+      "last_update": "2026-05-17T03:41:58Z"
     },
     {
       "name": "Codex2",
@@ -149,14 +136,11 @@
         "schema",
         "acceptance"
       ],
-      "status": "ready",
-      "current_task_ids": [
-        "TRN-006",
-        "ASK-007"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "bff-luv-fe-006-dev-deploy",
-      "next": "Assignment created",
-      "last_update": "2026-05-16T23:23:50Z"
+      "next": "",
+      "last_update": "2026-05-16T23:25:17Z"
     },
     {
       "name": "Copilot",
@@ -166,15 +150,11 @@
         "spec-review",
         "critique"
       ],
-      "status": "ready",
-      "current_task_ids": [
-        "OSS-QUANTLIB-001",
-        "IMT-008",
-        "TRN-007"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/grok-research-critique",
-      "next": "Assignment created",
-      "last_update": "2026-05-16T23:20:58Z"
+      "next": "",
+      "last_update": "2026-05-17T03:05:18Z"
     },
     {
       "name": "Claude2",
@@ -183,13 +163,11 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "working",
-      "current_task_ids": [
-        "PER-003"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/claude2-execution-control",
-      "next": "Supervisor auto-started PER-003 after successful dispatch.",
-      "last_update": "2026-05-16T23:25:10Z"
+      "next": "",
+      "last_update": "2026-05-17T01:57:55Z"
     },
     {
       "name": "Gemini2",
@@ -199,576 +177,43 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "blocked",
-      "current_task_ids": [
-        "MGMT-BROKER-002",
-        "OSS-FINRL-001"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "bff-luv-fe-006-dev-deploy",
-      "next": "Implementation done. Ready for review.",
-      "last_update": "2026-05-16T23:29:09Z"
+      "next": "",
+      "last_update": "2026-05-17T05:50:10Z"
     }
   ],
   "tasks": [
     {
-      "id": "MGMT-BROKER-002",
-      "title": "Shioaji account readiness check",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-05 Shioaji Sandbox",
-      "owner": "Gemini2",
-      "reviewer": "Gemini",
-      "status": "blocked",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check.",
-      "last_update": "2026-05-15T15:15:06Z",
-      "waiting_for": "Gemini"
-    },
-    {
-      "id": "OSS-QLIB-002",
-      "title": "Qlib rolling-window OOS pipeline + eval",
-      "summary_zh": "在 services/research/qlib/ 之上實作 rolling-window / OOS pipeline。建在已 archived 的 QLIB-001 dataset manifest 基礎上，產出 OOS metrics 並寫回 ExperimentRun。",
+      "id": "OSS-STAT-001-SIDECAR-ACCEPTANCE",
+      "title": "Prepare OSS-STAT-001 acceptance packet and dependency map",
+      "summary_zh": "平行支援 OSS-STAT-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
       "phase": "Sprint 7 / EPIC-OSS-RESEARCH",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "in_progress",
-      "depends_on": [],
-      "artifacts": [
-        "services/research/qlib/rolling_pipeline.py",
-        "services/research/qlib/oos_eval.py",
-        "services/research/qlib/test_rolling_pipeline.py",
-        "services/research/qlib/contract.md"
-      ],
-      "acceptance": [
-        "rolling_pipeline.py exposes run(strategy_spec_ref window_days) returning ExperimentRun dict with producer_run_id and lineage",
-        "oos_eval.py exposes evaluate(experiment_run) returning oos_metrics dict (sharpe sortino max_dd ic)",
-        "test_rolling_pipeline.py covers 1 happy-path and 1 fail-fast scenario (insufficient data) with pytest -q exit 0",
-        "smoke run produces evaluation_summary linked back to a strategy_spec artifact id"
-      ],
-      "next": "Implementing qlib rolling-window OOS ExperimentRun pipeline, OOS evaluator, tests, and contract artifacts.",
-      "last_update": "2026-05-16T23:29:09Z"
-    },
-    {
-      "id": "OSS-STAT-001",
-      "title": "statsmodels cointegration adapter skeleton",
-      "summary_zh": "新增 services/research/statsmodels/ adapter，落實 stat-arb 風格 cointegration / Engle-Granger 檢定，產生 signal_snapshot artifact。獨立於其他 research adapter，無共用檔案。",
-      "phase": "Sprint 7 / EPIC-OSS-RESEARCH",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [
-        "services/research/statsmodels/__init__.py",
-        "services/research/statsmodels/adapter.py",
-        "services/research/statsmodels/contract.md",
-        "services/research/statsmodels/smoke_test.py",
-        "services/research/statsmodels/requirements.txt",
-        "services/research/statsmodels/Dockerfile"
-      ],
-      "acceptance": [
-        "adapter.py exposes cointegration_test(prices_a prices_b) returning dict with p_value spread half_life",
-        "smoke_test.py runs cointegration on a deterministic synthetic series and asserts p_value < 0.05",
-        "smoke_test produces signal_snapshot artifact with deterministic checksum",
-        "requirements.txt pins statsmodels version explicitly",
-        "no other services/research/ subdir is modified"
-      ],
-      "next": "Auto-reassigned ownership from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota. Task returned to todo until Claude starts a fresh run.",
-      "last_update": "2026-05-16T23:28:05Z"
-    },
-    {
-      "id": "OSS-QUANTLIB-001",
-      "title": "QuantLib option pricing adapter skeleton",
-      "summary_zh": "新增 services/research/quantlib/ adapter，落實 vanilla European/American option Black-Scholes 與 Binomial 定價，產生 pricing_snapshot artifact。獨立於其他 research adapter。",
-      "phase": "Sprint 7 / EPIC-OSS-RESEARCH",
-      "owner": "Copilot",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [
-        "services/research/quantlib/__init__.py",
-        "services/research/quantlib/adapter.py",
-        "services/research/quantlib/contract.md",
-        "services/research/quantlib/smoke_test.py",
-        "services/research/quantlib/requirements.txt",
-        "services/research/quantlib/Dockerfile"
-      ],
-      "acceptance": [
-        "adapter.py exposes price_european(spot strike rate vol tenor option_type) returning dict with price delta gamma vega",
-        "adapter.py exposes price_american_binomial(...) with same shape",
-        "smoke_test.py covers 1 ITM call and 1 OTM put against analytic reference values within 1e-3 tolerance",
-        "smoke_test produces pricing_snapshot artifact registered as artifact_type=pricing_snapshot",
-        "requirements.txt pins QuantLib-Python version explicitly"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-16T23:20:58Z"
-    },
-    {
-      "id": "OSS-RLLIB-001",
-      "title": "RLlib PPO adapter skeleton",
-      "summary_zh": "新增 services/research/rllib/ adapter skeleton，落實 Ray RLlib PPO 訓練 mini-loop，輸出 model_artifact。CPU-only smoke (no GPU)，獨立於其他 research adapter。",
-      "phase": "Sprint 7 / EPIC-OSS-RESEARCH",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [
-        "services/research/rllib/__init__.py",
-        "services/research/rllib/adapter.py",
-        "services/research/rllib/contract.md",
-        "services/research/rllib/smoke_test.py",
-        "services/research/rllib/requirements.txt",
-        "services/research/rllib/Dockerfile"
-      ],
-      "acceptance": [
-        "adapter.py exposes train_ppo(env_id num_iters) returning ExperimentRun dict including model_artifact_ref",
-        "smoke_test.py runs CartPole-v1 PPO for <= 20 iterations CPU-only and asserts mean_reward improves vs random baseline",
-        "smoke_test produces model_artifact registered as artifact_type=model_artifact",
-        "Dockerfile uses python:3.11-slim base no nvidia images",
-        "requirements.txt pins ray[rllib] and gymnasium versions"
-      ],
-      "next": "Auto-reassigned ownership from Gemini to Claude after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Claude starts a fresh run.",
-      "last_update": "2026-05-16T23:27:46Z"
-    },
-    {
-      "id": "OSS-FINRL-001",
-      "title": "FinRL DQN/PPO adapter skeleton",
-      "summary_zh": "新增 services/research/finrl/ adapter skeleton，落實 FinRL DQN/PPO 在歷史 OHLCV 上 mini-training，輸出 model_artifact。CPU-only smoke。獨立於其他 research adapter。",
-      "phase": "Sprint 7 / EPIC-OSS-RESEARCH",
-      "owner": "Gemini2",
-      "reviewer": "Codex2",
-      "status": "review",
-      "depends_on": [],
-      "artifacts": [
-        "services/research/finrl/__init__.py",
-        "services/research/finrl/adapter.py",
-        "services/research/finrl/contract.md",
-        "services/research/finrl/smoke_test.py",
-        "services/research/finrl/requirements.txt",
-        "services/research/finrl/Dockerfile"
-      ],
-      "acceptance": [
-        "adapter.py exposes train(strategy_spec_ref backend) returning ExperimentRun dict including model_artifact_ref",
-        "smoke_test.py trains on 60 days deterministic synthetic OHLCV for <= 1k steps and asserts sharpe > 0",
-        "smoke_test produces model_artifact registered as artifact_type=model_artifact",
-        "Dockerfile CPU-only no nvidia images",
-        "requirements.txt pins finrl version explicitly"
-      ],
-      "next": "Implementation done. Ready for review.",
-      "last_update": "2026-05-16T23:29:09Z"
-    },
-    {
-      "id": "IMT-005",
-      "title": "BC baseline trainer on imitation dataset",
-      "summary_zh": "新增 BC (Behavior Cloning) baseline trainer，吃 IMT-003 dataset builder 產出的 dataset，輸出 behavior_policy artifact (IMT-004 type)。獨立檔案，無共用 module。",
-      "phase": "Sprint 7 / EPIC-IMITATION-TRAINING",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "in_progress",
-      "depends_on": [
-        "IMT-003",
-        "IMT-004"
-      ],
-      "artifacts": [
-        "services/research/imitation/bc_trainer.py",
-        "services/research/imitation/test_bc_trainer.py",
-        "services/research/imitation/bc_contract.md"
-      ],
-      "acceptance": [
-        "bc_trainer.py exposes train(dataset_ref model_config) returning behavior_policy artifact dict with checksum",
-        "test_bc_trainer.py trains on deterministic synthetic trajectory (50 steps 4 actions) and asserts train loss decreases over epochs",
-        "test passes with pytest -q exit 0",
-        "produced behavior_policy artifact carries lineage referencing source dataset_ref",
-        "no GPU required CPU-only"
-      ],
-      "next": "Supervisor auto-started IMT-005 after successful dispatch.",
-      "last_update": "2026-05-16T23:27:02Z"
-    },
-    {
-      "id": "IMT-006",
-      "title": "Imitation evaluation metrics: action-match + return-gap + KL",
-      "summary_zh": "新增 imitation evaluation metrics module：action-match accuracy, return-gap vs expert baseline, KL divergence。獨立於 bc_trainer.py。",
-      "phase": "Sprint 7 / EPIC-IMITATION-TRAINING",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "in_progress",
-      "depends_on": [
-        "IMT-001",
-        "IMT-004"
-      ],
-      "artifacts": [
-        "services/research/imitation/eval_metrics.py",
-        "services/research/imitation/test_eval_metrics.py"
-      ],
-      "acceptance": [
-        "eval_metrics.py exposes evaluate(behavior_policy_ref eval_trajectories) returning dict with action_match_rate return_gap kl_divergence",
-        "test_eval_metrics.py covers 1 perfect-match scenario (rate=1.0) and 1 random-policy scenario (rate ~ 1/n_actions)",
-        "test passes pytest -q exit 0",
-        "output dict is JSON-serializable and stored as evaluation_result artifact type"
-      ],
-      "next": "Supervisor auto-started IMT-006 after successful dispatch.",
-      "last_update": "2026-05-16T23:25:28Z"
-    },
-    {
-      "id": "IMT-007",
-      "title": "Behavior-policy artifact validation gate",
-      "summary_zh": "behavior_policy artifact 進入 registry / governance 前的驗證閘門：metadata 完整、checksum 一致、IMT-006 eval metrics 達門檻、policy 不出現 deploy/canary/live 觸發詞。獨立 module。",
-      "phase": "Sprint 7 / EPIC-IMITATION-TRAINING",
-      "owner": "Claude",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [
-        "IMT-004",
-        "IMT-006"
-      ],
-      "artifacts": [
-        "services/research/imitation/policy_validation_gate.py",
-        "services/research/imitation/test_policy_validation_gate.py",
-        "services/research/imitation/validation_gate_contract.md"
-      ],
-      "acceptance": [
-        "policy_validation_gate.py exposes validate(behavior_policy_ref threshold) returning ValidationResult dict with passed bool and rejection_reasons list",
-        "gate rejects if action_match_rate < threshold (default 0.6)",
-        "gate rejects if checksum mismatch with registered artifact",
-        "gate rejects if metadata missing producer_run_id or dataset_ref or training_config",
-        "test covers 1 pass and 3 fail scenarios pytest -q exit 0"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-16T23:22:33Z"
-    },
-    {
-      "id": "IMT-008",
-      "title": "TRL preference-pair dataset bridge",
-      "summary_zh": "新增 TRL (Transformer Reinforcement Learning) preference-pair dataset bridge：把 IMT-002 PreferenceExample / CorrectionTrace 轉成 TRL 期望的 chosen/rejected 對。獨立 module。",
-      "phase": "Sprint 7 / EPIC-IMITATION-TRAINING",
-      "owner": "Copilot",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [
-        "IMT-002",
-        "IMT-003"
-      ],
-      "artifacts": [
-        "services/research/imitation/trl_bridge.py",
-        "services/research/imitation/test_trl_bridge.py",
-        "services/research/imitation/trl_bridge_contract.md"
-      ],
-      "acceptance": [
-        "trl_bridge.py exposes to_trl_pairs(preference_examples) returning list of dict with chosen rejected prompt fields",
-        "trl_bridge.py exposes from_correction_traces(correction_traces) returning the same shape",
-        "test_trl_bridge.py covers 5+ deterministic samples for each conversion direction",
-        "test passes pytest -q exit 0",
-        "output schema matches trl.DPOTrainer expected input format documented in contract.md"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-16T23:22:46Z"
-    },
-    {
-      "id": "TRN-005",
-      "title": "Trainer commit -> persona policy lineage edge",
-      "summary_zh": "把 TRN-004 commit 動作的副作用接到 persona policy 的 lineage：每次 commit 在 persona policy artifact 上產生 lineage edge 指向 trainer session id 與 teaching event ids。獨立 module。",
-      "phase": "Sprint 7 / EPIC-TRAINER-ADVANCED",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "in_progress",
-      "depends_on": [
-        "TRN-004"
-      ],
-      "artifacts": [
-        "services/training-session/policy_lineage.py",
-        "services/training-session/test_policy_lineage.py",
-        "services/training-session/policy_lineage_contract.md"
-      ],
-      "acceptance": [
-        "policy_lineage.py exposes record_commit(session_id event_ids persona_id) writing a lineage edge to lineage-read store",
-        "edge contains commit_at timestamp source=trainer_session producer=session_id and target=persona_policy_artifact",
-        "test_policy_lineage.py covers 1 commit with N events asserting N edges + 1 fail-fast for unknown persona",
-        "test passes pytest -q exit 0"
-      ],
-      "next": "Implementing independent trainer commit persona-policy lineage edge module and focused tests.",
-      "last_update": "2026-05-16T23:28:23Z"
-    },
-    {
-      "id": "TRN-006",
-      "title": "Rapid-eval -> vectorbt backend integration",
-      "summary_zh": "把 TRN-003 rapid-eval skeleton 接到實際 backend（vectorbt VBT-001 via adapter facade）。獨立檔案，不修 TRN-003 既有 endpoint signature。",
-      "phase": "Sprint 7 / EPIC-TRAINER-ADVANCED",
-      "owner": "Codex2",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [
-        "TRN-003",
-        "VBT-001"
-      ],
-      "artifacts": [
-        "services/training-session/rapid_eval_integration.py",
-        "services/training-session/test_rapid_eval_integration.py"
-      ],
-      "acceptance": [
-        "rapid_eval_integration.py exposes run_rapid_eval(persona_patch_ref strategy_ref) returning eval_summary dict with sharpe sortino max_dd",
-        "calls vectorbt adapter at services/research/vectorbt/ as the eval engine (not a mock)",
-        "test covers 1 success path against deterministic synthetic prices and 1 fail-fast for missing persona_patch_ref",
-        "test passes pytest -q exit 0"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-16T23:23:50Z"
-    },
-    {
-      "id": "TRN-007",
-      "title": "Trainer trace -> imitation dataset export",
-      "summary_zh": "把 trainer teaching_event stream 匯出成 imitation dataset 可消化的格式。獨立 module，不修 TRN-001 schema。",
-      "phase": "Sprint 7 / EPIC-TRAINER-ADVANCED",
-      "owner": "Copilot",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [
-        "TRN-001",
-        "IMT-002"
-      ],
-      "artifacts": [
-        "services/training-session/trace_export.py",
-        "services/training-session/test_trace_export.py",
-        "services/training-session/trace_export_contract.md"
-      ],
-      "acceptance": [
-        "trace_export.py exposes export_session(session_id target_format) supporting target_format in {bc trl preference}",
-        "BC output matches services/research/imitation expected trajectory schema",
-        "TRL output matches IMT-008 chosen/rejected pair shape",
-        "test covers 1 export per format using fixture teaching session",
-        "test passes pytest -q exit 0"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-16T23:24:02Z"
-    },
-    {
-      "id": "PER-003",
-      "title": "Persona registry live integration acceptance",
-      "summary_zh": "把 execute-plans Persona 頁面從 fixture-backed 切換到 live persona_registry service。確認 /bff/personas 與 /bff/personas/{id} read path 走 services/control-plane/persona/persona_registry.py。獨立 acceptance。",
-      "phase": "Sprint 7 / EPIC-TRAINER-ADVANCED",
-      "owner": "Claude2",
-      "reviewer": "Codex2",
-      "status": "in_progress",
-      "depends_on": [
-        "PER-001",
-        "PER-002"
-      ],
-      "artifacts": [
-        "services/control-plane/bff/test_persona_live_integration.py",
-        "services/control-plane/persona/integration_smoke.py"
-      ],
-      "acceptance": [
-        "test_persona_live_integration.py asserts /bff/personas returns service-backed data with source.kind=service_backed not fixture_backed",
-        "test covers list pagination and detail readback",
-        "integration_smoke.py replays seed -> registry write -> BFF read for 3 personas",
-        "strict mode (VITE_BFF_FALLBACK=strict equivalent) does not fallback to fixture",
-        "test passes pytest -q exit 0"
-      ],
-      "next": "Supervisor auto-started PER-003 after successful dispatch.",
-      "last_update": "2026-05-16T23:25:10Z"
-    },
-    {
-      "id": "ASK-006",
-      "title": "Consult -> Committee -> Memo -> Review e2e test",
-      "summary_zh": "ASK-001..005 已落地 consult/committee flow，這個 task 寫一條 e2e integration test：ask session create -> committee invoke -> memo publish -> Management review queue 接到 handoff。獨立 test 檔。",
-      "phase": "Sprint 7 / EPIC-CONSULT-ADVANCED",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [
-        "ASK-001",
-        "ASK-002",
-        "ASK-003",
-        "ASK-004",
-        "ASK-005"
-      ],
-      "artifacts": [
-        "services/consultation/test_e2e_consult_review.py",
-        "services/consultation/e2e_fixtures.py"
-      ],
-      "acceptance": [
-        "test exercises POST /bff/agora/ask/sessions then committee invoke then memo publish then handoff queue arrival",
-        "test verifies SSE event 'consult_memo_published' is emitted with correct correlation_id",
-        "test uses pytest -q -x and exits 0",
-        "no other services/consultation files are modified"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-16T23:24:59Z"
-    },
-    {
-      "id": "ASK-007",
-      "title": "Consult memo evidence redaction regression",
-      "summary_zh": "驗證 consult memo publish 流程的 evidence redaction：persona-internal 機密欄位（policy_internals memory_trace internal_score）不能洩漏到 review-facing memo。獨立 test 檔。",
-      "phase": "Sprint 7 / EPIC-CONSULT-ADVANCED",
-      "owner": "Codex2",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [
-        "ASK-004"
-      ],
-      "artifacts": [
-        "services/consultation/test_evidence_redaction.py"
-      ],
-      "acceptance": [
-        "test asserts memo body does not contain redacted fields when published to review queue",
-        "test covers 3 redaction categories: persona internal state secret credentials capability map internals",
-        "test uses pytest -q -x exit 0",
-        "test fixture mirrors a real persona consult session"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-16T23:25:17Z"
-    },
-    {
-      "id": "ASK-008",
-      "title": "Committee sponsor decision -> governance action bridge",
-      "summary_zh": "committee 結出 sponsor decision 後，提供把 sponsor decision bridge 到 governance action (例如觸發 ApprovalDecision proposal 或 EvolutionDecision proposal) 的 module。獨立 module，不直接改 governance service。",
-      "phase": "Sprint 7 / EPIC-CONSULT-ADVANCED",
-      "owner": "Claude",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [
-        "ASK-003",
-        "GOV-001",
-        "EVO-001"
-      ],
-      "artifacts": [
-        "services/consultation/sponsor_decision_bridge.py",
-        "services/consultation/test_sponsor_decision_bridge.py",
-        "services/consultation/sponsor_decision_bridge_contract.md"
-      ],
-      "acceptance": [
-        "sponsor_decision_bridge.py exposes bridge(sponsor_decision) returning either ApprovalDecisionProposal or EvolutionDecisionProposal based on decision.type",
-        "test covers approval-route and evolution-route mappings and 1 reject for missing sponsor_persona_id",
-        "bridge never directly writes to governance store only emits proposal payload",
-        "test passes pytest -q exit 0"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-16T23:25:38Z"
-    },
-    {
-      "id": "LEAN-ALGO-001",
-      "title": "LEAN algorithm-level smoke via artifact loader",
-      "summary_zh": "EX-003 已完成 smoke path 但 LEAN algorithm-level coverage 還 deferred。這個 task 寫一個最小 LEAN Python algorithm，從 artifact loader 載入 approved artifact 跑一段 paper backtest，驗證 RuntimeBinding 串到 LEAN runtime 的 actual run path。CPU-only smoke。",
-      "phase": "Sprint 7 / EPIC-LEAN-RUNTIME",
       "owner": "Gemini",
-      "reviewer": "Gemini2",
-      "status": "todo",
-      "depends_on": [
-        "EX-002-RB",
-        "EX-003",
-        "RT-002"
-      ],
-      "artifacts": [
-        "services/execution/lean_runtime/test_algorithm_smoke.py",
-        "services/execution/lean_runtime/smoke_algorithm.py",
-        "services/execution/lean_runtime/lean_smoke_contract.md",
-        "lean/Algorithm.Python/pantheon_algo/smoke_loader_test.py"
-      ],
-      "acceptance": [
-        "smoke_algorithm.py loads artifact via services/execution/artifact-loader using artifact_state=approved and deployment_stage=paper",
-        "smoke runs against 5 trading days of deterministic synthetic OHLCV (no live broker no network)",
-        "test asserts 1 OnData callback fires and 1 fill is recorded with the loaded artifact's signal",
-        "test passes pytest -q exit 0",
-        "no broker credentials accessed (BROKER_PRODUCTION_LIVE_ENABLED stays false)"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-16T23:26:26Z"
-    },
-    {
-      "id": "OPS-REFACTOR-001",
-      "title": "Re-apply dispatch policy refactor on current master",
-      "summary_zh": "把 archive/codex-orchestrator-dispatch-policy-cleanup-2026-04-28 tag 內的 dispatch_policy 抽取重新套用到當前 supervisor.py。原 cherry-pick 因 supervisor.py 1776 commit drift 衝突；本任務以 current master 為基準重做。獨立新增 .orchestrator/dispatch_policy.py + test。",
-      "phase": "Sprint 7 / EPIC-OPS-BACKLOG",
-      "owner": "Claude",
-      "reviewer": "Claude2",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [
-        ".orchestrator/dispatch_policy.py",
-        ".orchestrator/test_dispatch_policy.py",
-        ".orchestrator/dispatch_policy_contract.md"
-      ],
-      "acceptance": [
-        "dispatch_policy.py exposes dispatch_reason_priority(reason) is_execution_dispatch_reason(reason) normalized_status_set(values default) ready_dispatch_settings(config)",
-        "supervisor.py is modified minimally to call these helpers (do not change supervisor public API)",
-        "test_dispatch_policy.py covers 5+ cases per helper with pytest -q exit 0",
-        "reference tag archive/codex-orchestrator-dispatch-policy-cleanup-2026-04-28 in contract.md for original intent",
-        "existing supervisor tests still pass"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-16T23:27:36Z"
-    },
-    {
-      "id": "OPS-WORKER-PUSH-CRED-001",
-      "title": "Background worker git push credentials provisioning",
-      "summary_zh": "解決 background worker 跑 git push 必失敗的根因。設計選項：SSH key per worker 或 GitHub PAT via env。產出 setup 腳本與 .orchestrator/ runtime 環境讀取邏輯，不直接 commit credential 本身。獨立檔案。",
-      "phase": "Sprint 7 / EPIC-OPS-BACKLOG",
-      "owner": "Gemini",
-      "reviewer": "Gemini2",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [
-        ".orchestrator/worker_push_auth.md",
-        "scripts/setup_worker_credentials.sh",
-        ".orchestrator/auth_loader.py",
-        ".orchestrator/test_auth_loader.py"
-      ],
-      "acceptance": [
-        "worker_push_auth.md documents the chosen mechanism (SSH key or PAT) with rotation policy",
-        "setup_worker_credentials.sh is idempotent and does not echo secrets",
-        "auth_loader.py exposes load_git_credentials() returning the env vars or path needed for git push to succeed never logs the secret",
-        "test_auth_loader.py covers missing-credential fail-fast and present-credential success exit 0",
-        "no credential value committed only references"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-16T23:28:01Z"
-    },
-    {
-      "id": "OPS-REBASE-AUTO-001",
-      "title": "Auto-handle empty commits in worker rebase flow",
-      "summary_zh": "修正 worker 跑 git pull --rebase 遇到 # empty pick 會卡 approval queue 的問題。設計 rebase_helper module 自動帶 --allow-empty 或 --skip 策略，supervisor.py 改用 helper 1 行替換。獨立 helper module 與 OPS-REFACTOR-001 不衝突。",
-      "phase": "Sprint 7 / EPIC-OPS-BACKLOG",
-      "owner": "Claude2",
       "reviewer": "Claude",
-      "status": "todo",
+      "status": "done",
       "depends_on": [],
       "artifacts": [
-        ".orchestrator/rebase_helper.py",
-        ".orchestrator/test_rebase_helper.py",
-        ".orchestrator/rebase_helper_contract.md"
+        "support/sidecars/OSS-STAT-001/OSS-STAT-001-SIDECAR-ACCEPTANCE.md"
       ],
       "acceptance": [
-        "rebase_helper.py exposes continue_or_skip_empty(repo_path) returning RebaseResult dict with action in {continued skipped aborted_with_conflict}",
-        "implementation auto-skips empty commits and re-runs continue until rebase finishes or hits non-empty conflict",
-        "test covers 3 cases: clean continue all-empty skip and real conflict bail-out",
-        "supervisor.py change is exactly 1 import + 1 call site",
-        "test passes pytest -q exit 0"
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Assignment created",
-      "last_update": "2026-05-16T23:28:23Z"
-    },
-    {
-      "id": "OPS-SIDECAR-CLEANUP-001",
-      "title": "Sidecar packet retention and cleanup policy",
-      "summary_zh": "support/sidecars/ 持續累積 packets 但缺退場機制。設計 retention/cleanup module：parent task done 後 N 天，sidecar packet 移至 support/sidecars/archived/，超過 M 天直接刪。獨立 module，可由 cron / chair-review 觸發。",
-      "phase": "Sprint 7 / EPIC-OPS-BACKLOG",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [
-        ".orchestrator/sidecar_cleanup.py",
-        ".orchestrator/test_sidecar_cleanup.py",
-        ".orchestrator/sidecar_cleanup_contract.md"
+      "next": "Owner finalized task and closed it. Sidecar acceptance packet is durable in support/sidecars/OSS-STAT-001/.",
+      "last_update": "2026-05-17T03:45:00Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "OSS-STAT-001",
+      "helper_kind": "acceptance_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization",
+      "review_notes_zh": [
+        "審查通過：sidecar acceptance packet 文件完整，正確記錄 shadowing 問題解決與最終 artifact 形狀"
       ],
-      "acceptance": [
-        "sidecar_cleanup.py exposes scan() classify(sidecar_path) and execute(plan dry_run) functions",
-        "classify identifies sidecar packets whose parent task is archived as done over 14 days ago",
-        "execute(dry_run=True) returns plan without filesystem changes",
-        "execute(dry_run=False) moves stale packets to support/sidecars/archived/ and deletes packets older than 60 days",
-        "test covers 3 ages: fresh stale-but-archivable beyond-deletion exit 0"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-16T23:28:52Z"
+      "review_file": "support/sidecars/OSS-STAT-001/OSS-STAT-001-SIDECAR-ACCEPTANCE.md"
     }
   ],
   "handoffs": [
@@ -782,33 +227,25 @@
       "resolved_at": "2026-04-17T12:39:53Z"
     },
     {
-      "task_id": "IMT-005",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Helper-claimed by Codex while Codex2 is dispatch-paused.",
+      "task_id": "OSS-STAT-001-SIDECAR-ACCEPTANCE",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Acceptance packet drafted and ready for review in support/sidecars/OSS-STAT-001/OSS-STAT-001-SIDECAR-ACCEPTANCE.md. The packet documents the resolved shadowing issue and the final artifact shapes.",
       "status": "done",
-      "created_at": "2026-05-16T23:24:40Z",
-      "resolved_at": "2026-05-16T23:27:02Z"
+      "created_at": "2026-05-17T01:05:00Z",
+      "resolved_at": "2026-05-17T02:06:16Z"
     },
     {
-      "task_id": "OSS-FINRL-001",
-      "from": "Gemini2",
-      "to": "Codex2",
-      "message": "Implementation done. Ready for review.",
-      "status": "pending",
-      "created_at": "2026-05-16T23:29:09Z"
+      "task_id": "OSS-STAT-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Sidecar acceptance packet reviewed and approved. Documents the resolved adapter shadowing issue and verified artifact shapes accurately.",
+      "status": "done",
+      "created_at": "2026-05-17T02:06:16Z",
+      "resolved_at": "2026-05-17T03:33:14Z"
     }
   ],
-  "blockers": [
-    {
-      "task_id": "MGMT-BROKER-002",
-      "owner": "Gemini2",
-      "waiting_for": "Gemini",
-      "message": "Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check.",
-      "status": "open",
-      "created_at": "2026-05-15T15:15:06Z"
-    }
-  ],
+  "blockers": [],
   "workload": {
     "Claude": 5,
     "Claude2": 5,
@@ -820,76 +257,103 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 5,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 5
+      "todo": 0
     },
     "Claude2": {
-      "total": 2,
-      "active": 1,
-      "blocked": 0,
-      "done": 0,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 2
-    },
-    "Gemini": {
-      "total": 2,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 2
+      "todo": 0
+    },
+    "Gemini": {
+      "total": 1,
+      "active": 0,
+      "blocked": 0,
+      "done": 1,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 0
     },
     "Gemini2": {
-      "total": 2,
-      "active": 2,
-      "blocked": 1,
+      "total": 0,
+      "active": 0,
+      "blocked": 0,
       "done": 0,
-      "review": 1,
+      "review": 0,
       "review_approved": 0,
       "todo": 0
     },
     "Codex": {
-      "total": 6,
-      "active": 4,
+      "total": 0,
+      "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 6
+      "todo": 0
     },
     "Codex2": {
-      "total": 2,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 2
+      "todo": 0
     },
     "Copilot": {
-      "total": 3,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 3
+      "todo": 0
     }
   },
   "wave_state": {
     "current_wave_id": null,
-    "status": null,
-    "opened_at": null,
+    "status": "closed",
+    "opened_at": "2026-05-17T05:46:59Z",
     "frozen_at": null,
-    "closed_at": null,
-    "branch": null,
-    "history": []
+    "closed_at": "2026-05-17T05:47:39Z",
+    "branch": "wave/2026-W22",
+    "history": [
+      {
+        "ts": "2026-05-17T05:23:05Z",
+        "event": "open",
+        "wave_id": "2026-W21",
+        "actor": "Codex",
+        "branch": "wave/2026-W21"
+      },
+      {
+        "ts": "2026-05-17T05:42:47Z",
+        "event": "close",
+        "wave_id": "2026-W21",
+        "actor": "Codex"
+      },
+      {
+        "ts": "2026-05-17T05:46:59Z",
+        "event": "open",
+        "wave_id": "2026-W22",
+        "actor": "Codex",
+        "branch": "wave/2026-W22"
+      },
+      {
+        "ts": "2026-05-17T05:47:39Z",
+        "event": "close",
+        "wave_id": "2026-W22",
+        "actor": "Codex"
+      }
+    ]
   }
 }

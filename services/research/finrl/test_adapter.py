@@ -7,7 +7,6 @@ import json
 import os
 import sys
 import tempfile
-import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -16,8 +15,9 @@ SERVICE_DIR = Path(__file__).resolve().parent
 if str(SERVICE_DIR) not in sys.path:
     sys.path.insert(0, str(SERVICE_DIR))
 
-from adapter.finrl_adapter import (
+from engine.finrl_adapter import (
     DeferredPrepGate,
+    FinRLDQNBackend,
     FinRLDeferredPrepError,
     FinRLPPOBackend,
     GovernedFinRLPolicyAdapter,
@@ -98,23 +98,34 @@ class TestStubFinRLBackend(unittest.TestCase):
 
 
 class TestFinRLPPOBackend(unittest.TestCase):
-    def test_real_backend_uses_finrl_import_path(self) -> None:
-        fake_finrl = types.SimpleNamespace(__name__="finrl", __version__="0.3.6")
+    def test_real_backend_uses_finrl_package_metadata(self) -> None:
         prepared = GovernedFinRLPolicyAdapter().prepare(MINIMAL_DATASET)
-        with patch.dict(sys.modules, {"finrl": fake_finrl}, clear=False):
+        with patch("engine.finrl_adapter._finrl_package_info", return_value=("0.3.7", True)):
             result = FinRLPPOBackend().train(prepared, PolicyTrainingConfig())
         self.assertEqual(result.backend, "finrl_ppo")
         self.assertTrue(result.metrics["framework_import_ready"])
         self.assertEqual(result.policy_payload["framework_import"], "finrl")
+        self.assertEqual(result.policy_payload["framework_version"], "0.3.7")
         self.assertEqual(result.policy_payload["fit_mode"], "bounded_offline_finrl_adapter")
 
     def test_real_backend_does_not_delegate_to_stub(self) -> None:
-        fake_finrl = types.SimpleNamespace(__name__="finrl", __version__="0.3.6")
         prepared = GovernedFinRLPolicyAdapter().prepare(MINIMAL_DATASET)
-        with patch.dict(sys.modules, {"finrl": fake_finrl}, clear=False):
+        with patch("engine.finrl_adapter._finrl_package_info", return_value=("0.3.7", True)):
             with patch.object(StubFinRLBackend, "train", side_effect=AssertionError("stub called")):
                 result = FinRLPPOBackend().train(prepared, PolicyTrainingConfig())
         self.assertEqual(result.backend, "finrl_ppo")
+
+
+class TestFinRLDQNBackend(unittest.TestCase):
+    def test_dqn_backend_produces_value_policy(self) -> None:
+        prepared = GovernedFinRLPolicyAdapter().prepare(MINIMAL_DATASET)
+        with patch("engine.finrl_adapter._finrl_package_info", return_value=("0.3.7", True)):
+            result = FinRLDQNBackend().train(prepared, PolicyTrainingConfig(algorithm="dqn"))
+        self.assertEqual(result.backend, "finrl_dqn")
+        self.assertEqual(result.policy_payload["algorithm"], "dqn")
+        self.assertIn("q_values", result.policy_payload)
+        self.assertGreater(result.metrics["sharpe"], 0)
+        self.assertLessEqual(result.metrics["num_steps"], 1000)
 
 
 class TestDeferredPrepGate(unittest.TestCase):

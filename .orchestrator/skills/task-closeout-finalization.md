@@ -24,6 +24,49 @@ Only the task owner may move a `review_approved` task to `done`. The owner is re
 
 Auto workers run without a human-attended terminal. Do not use interactive git commands such as `git add -p`, `git add -i`, `git commit --interactive`, or `git rebase -i` during closeout. Use explicit file/path staging plus `git diff --cached` review, or skip the isolated commit with a clear exception note when task-owned hunks cannot be separated non-interactively.
 
+### Shared-Index Footgun (mandatory)
+
+All auto workers share a single worktree, hence a single `.git/index`. If a
+previous worker left files staged (interrupted commit, crash, etc.) and you
+run `git commit`, your commit silently absorbs the leftover files. This is
+the **2026-05-16 sweep-in incident** (commit `e06f5cf2`): a FinRL worker's
+narrow `git add` was followed by a `git commit` that swept in 8 unrelated
+files from a foreground worker whose commit had stalled.
+
+To prevent recurrence, every worker's task commit must use one of these
+**safe paths**:
+
+1. **Preferred — `scripts/git/worker_commit.py` wrapper** (does all of the
+   below atomically):
+
+   ```bash
+   python3 scripts/git/worker_commit.py \
+       --task-id "$TASK_ID" \
+       --message-file /tmp/${TASK_ID}-msg.txt \
+       --scope path/one path/two ... \
+       --index-file "/tmp/git-index-${WORKER_RUN_ID}"
+   ```
+
+   The wrapper resets staging, stages only `--scope`, refuses if anything
+   leaks outside scope, and (with `--index-file`) uses a private index so
+   you cannot collide with another worker even on concurrent edits.
+
+2. **Acceptable fallback — explicit reset before staging**:
+
+   ```bash
+   git restore --staged --                       # CLEAR ALL EXISTING STAGING
+   git add <explicit list of task files>         # never `git add .` or `-A`
+   git diff --cached --name-only                 # verify what will commit
+   git commit -F /tmp/${TASK_ID}-msg.txt
+   ```
+
+   The `git restore --staged --` step is **mandatory** even if you believe
+   the worktree is clean. The pre-commit hook will reject commits that span
+   more than three top-level directories without a `Cross-Dir: yes` trailer
+   exactly because of this footgun.
+
+3. **For chair-review or human integration commits**: same rules apply.
+
 ## Commit Requirements
 
 Task closeout commits must be narrow and traceable.

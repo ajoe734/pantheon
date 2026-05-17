@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "ASK-008",
+  "archived_at": "2026-05-17T02:41:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASK-008",
+    "title": "Committee sponsor decision -> governance action bridge",
+    "summary_zh": "committee 結出 sponsor decision 後，提供把 sponsor decision bridge 到 governance action (例如觸發 ApprovalDecision proposal 或 EvolutionDecision proposal) 的 module。獨立 module，不直接改 governance service。",
+    "phase": "Sprint 7 / EPIC-CONSULT-ADVANCED",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "ASK-003",
+      "GOV-001",
+      "EVO-001"
+    ],
+    "artifacts": [
+      "services/consultation/sponsor_decision_bridge.py",
+      "services/consultation/test_sponsor_decision_bridge.py",
+      "services/consultation/sponsor_decision_bridge_contract.md"
+    ],
+    "acceptance": [
+      "sponsor_decision_bridge.py exposes bridge(sponsor_decision) returning either ApprovalDecisionProposal or EvolutionDecisionProposal based on decision.type",
+      "test covers approval-route and evolution-route mappings and 1 reject for missing sponsor_persona_id",
+      "bridge never directly writes to governance store only emits proposal payload",
+      "test passes pytest -q exit 0"
+    ],
+    "next": "Owner closeout complete: committed cc17194a; verified pytest -q services/consultation/test_sponsor_decision_bridge.py -> 4 passed and pytest -q services/consultation -> 19 passed.",
+    "last_update": "2026-05-17T02:41:04Z",
+    "review_notes_zh": [
+      "審查通過：bridge() 正確路由 approval/evolution，proposal payload 純淨無 side-effect，decision_state 強制為 proposed，4 tests pass，19 consultation tests pass。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-17T02:41:04Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "cc17194a8fd99209e3d1c0be95caedd624aabd84",
+      "commit_subject": "ASK-008: Bridge sponsor decisions to governance proposals",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "ASK-008",
+        "Reviewer": "Claude",
+        "Wave": "2026-W20",
+        "Verified": "pytest -q services/consultation/test_sponsor_decision_bridge.py -> 4 passed; pytest -q services/consultation -> 19 passed"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 36,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 2,
+      "behind": 1,
+      "push_status": "diverged"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASK-008",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-17T02:20:56Z",
+      "resolved_at": "2026-05-17T02:21:47Z"
+    },
+    {
+      "task_id": "ASK-008",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: added independent sponsor decision bridge module, focused tests, and contract doc. Artifacts: services/consultation/sponsor_decision_bridge.py; services/consultation/test_sponsor_decision_bridge.py; services/consultation/sponsor_decision_bridge_contract.md. Verification: pytest -q services/consultation/test_sponsor_decision_bridge.py -> 4 passed; pytest -q services/consultation -> 19 passed. Bridge emits proposed ApprovalDecision/EvolutionDecision payloads only and does not write governance stores.",
+      "status": "done",
+      "created_at": "2026-05-17T02:30:04Z",
+      "resolved_at": "2026-05-17T02:35:08Z"
+    },
+    {
+      "task_id": "ASK-008",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: bridge emits correct ApprovalDecisionProposal/EvolutionDecisionProposal, is side-effect free, enforces decision_state=proposed, all 4 focused tests pass, full consultation suite 19/19 pass. Returning to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-05-17T02:35:08Z",
+      "resolved_at": "2026-05-17T02:41:04Z"
+    }
+  ],
+  "blockers": []
+}

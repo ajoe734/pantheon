@@ -20,9 +20,9 @@ from datetime import datetime, timezone
 from typing import Any, Mapping, Protocol, Sequence
 
 RLLIB_PACKAGE = "ray[rllib]"
-RLLIB_VERSION_PIN = ">=2.9.0,<3.0.0"
+RLLIB_VERSION_PIN = "==2.9.3"
 RAY_TUNE_PACKAGE = "ray[tune]"
-RAY_TUNE_VERSION_PIN = ">=2.9.0,<3.0.0"
+RAY_TUNE_VERSION_PIN = "==2.9.3"
 PRIMARY_BACKEND = "rllib_ppo"
 STUB_BACKEND = "stub_rllib"
 DEFAULT_ACTION_LABELS = (

@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "ASK-006-SIDECAR-REVIEW",
+  "archived_at": "2026-05-17T02:57:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASK-006-SIDECAR-REVIEW",
+    "title": "Prepare ASK-006 review packet and evidence summary",
+    "summary_zh": "平行支援 ASK-006，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Sprint 7 / EPIC-CONSULT-ADVANCED",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "ASK-001",
+      "ASK-002",
+      "ASK-003",
+      "ASK-004",
+      "ASK-005"
+    ],
+    "artifacts": [
+      "support/sidecars/ASK-006/ASK-006-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner closeout: review packet at support/sidecars/ASK-006/ASK-006-SIDECAR-REVIEW.md committed at c22a6c05. Codex approval recorded; all 4 acceptance criteria PASS; pytest e2e 1 passed, consultation suite 15 passed, ASK-004/005 regression 43 passed. Support-only scope; no canonical changes.",
+    "last_update": "2026-05-17T02:57:18Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "ASK-006",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：sidecar review packet 準確對齊已歸檔 ASK-006 parent task、delivery commit 014ee6e1、acceptance criteria 與 Claude2 parent review approval。",
+      "Reviewer spot-check 通過：PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/consultation/test_e2e_consult_review.py -q -x => 1 passed；scoped git diff --check clean；support-only boundary respected。"
+    ],
+    "review_file": "support/sidecars/ASK-006/ASK-006-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-17T02:57:18Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "c22a6c052c5ce2a64f9e9d03610edc1caae29f00",
+      "commit_subject": "ASK-006-SIDECAR-REVIEW: add review packet for ASK-006 consult e2e",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "ASK-006-SIDECAR-REVIEW",
+        "Reviewer": "Codex",
+        "Wave": "2026-W20",
+        "Verification": "packet documents all 4 acceptance criteria PASS for parent",
+        "passed, diff-check clean. Claude2 review decision": "APPROVED."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 33,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASK-006-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review packet complete at support/sidecars/ASK-006/ASK-006-SIDECAR-REVIEW.md. Parent task ASK-006 is done+archived (commit 014ee6e1). Packet documents: all 4 acceptance criteria PASS, e2e test 1 passed, consultation suite 15 passed, ASK-004/ASK-005 regression 43 passed, diff-check clean. Claude2 review decision: APPROVED. Please confirm the packet is accurate and complete.",
+      "status": "done",
+      "created_at": "2026-05-17T02:46:27Z",
+      "resolved_at": "2026-05-17T02:51:18Z"
+    },
+    {
+      "task_id": "ASK-006-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: ASK-006 sidecar packet is accurate and complete. Verified parent archive/commit metadata, SSE+handoff assertions, support-only scope, focused e2e spot-check 1 passed, and scoped diff-check clean. Returning to owner Claude for closeout finalization.",
+      "status": "done",
+      "created_at": "2026-05-17T02:51:18Z",
+      "resolved_at": "2026-05-17T02:57:19Z"
+    }
+  ],
+  "blockers": []
+}

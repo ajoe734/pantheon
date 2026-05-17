@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "task_id": "ASK-007",
+  "archived_at": "2026-05-17T01:52:54Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASK-007",
+    "title": "Consult memo evidence redaction regression",
+    "summary_zh": "驗證 consult memo publish 流程的 evidence redaction：persona-internal 機密欄位（policy_internals memory_trace internal_score）不能洩漏到 review-facing memo。獨立 test 檔。",
+    "phase": "Sprint 7 / EPIC-CONSULT-ADVANCED",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "ASK-004"
+    ],
+    "artifacts": [
+      "services/consultation/test_evidence_redaction.py"
+    ],
+    "acceptance": [
+      "test asserts memo body does not contain redacted fields when published to review queue",
+      "test covers 3 redaction categories: persona internal state secret credentials capability map internals",
+      "test uses pytest -q -x exit 0",
+      "test fixture mirrors a real persona consult session"
+    ],
+    "next": "Done: finalized ASK-007 with task-scoped commit 80b170fa after Claude2 review approval. Verified redaction coverage with PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/consultation/test_evidence_redaction.py -q -x (1 passed), PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_ask_004_memo_publish_contract.py -q (31 passed), PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/consultation/test_e2e_consult_review.py -q (1 passed), and git diff --cached --check clean before commit.",
+    "last_update": "2026-05-17T01:52:54Z",
+    "review_notes_zh": [
+      "ASK-007 驗證通過。test_evidence_redaction.py 覆蓋 3 個 redaction 類別：(1) persona internal state (policy_internals / memory_trace / internal_score / persona_internal_state)；(2) secret credentials (secret_credentials / api_key / secretRef / secret_ref)；(3) capability map internals (capability_map_internals / effective_tools / effective_skills)。",
+      "authorRef 在 memo create 時已正確刪去敏感欄位，保留 {type, id, role}；read_store._redact_consult_memo_review_payload 同時保護 create (draft) 與 get (memo_detail) 路徑。",
+      "_assert_review_payload_redacted 對 draft_memo、published_memo、memo_detail、handoffs[0] 四個 review-facing payload 均驗證無洩漏。",
+      "pytest -q -x services/consultation/test_evidence_redaction.py => 1 passed；diff --check => clean。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-17T01:52:54Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "80b170fa0ca4864b6a857cff26c2a25e11b4a00d",
+      "commit_subject": "ASK-007: redact consult memo review evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "ASK-007",
+        "Reviewer": "Claude2",
+        "Wave": "2026-W20",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/consultation/test_evidence_redaction.py -q -x => 1 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_ask_004_memo_publish_contract.py -q => 31 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/consultation/test_e2e_consult_review.py -q => 1 passed; git diff --cached --check => clean."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 36,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASK-007",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-17T01:05:06Z",
+      "resolved_at": "2026-05-17T01:05:22Z"
+    },
+    {
+      "task_id": "ASK-007",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review: added review-facing consult memo redaction for persona internal state, secret credentials, and capability map internals in services/control-plane/bff/read_store.py, plus independent ASK-007 regression test at services/consultation/test_evidence_redaction.py. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/consultation/test_evidence_redaction.py -q -x => 1 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_ask_004_memo_publish_contract.py -q => 31 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/consultation/test_e2e_consult_review.py -q => 1 passed.",
+      "status": "done",
+      "created_at": "2026-05-17T01:13:02Z",
+      "resolved_at": "2026-05-17T01:27:18Z"
+    },
+    {
+      "task_id": "ASK-007",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Chair reassigned review from Codex2 to Claude2: Codex2 pause blocks this fresh review; Claude2 can review Codex-owned BFF/consultation work after closeout.",
+      "status": "done",
+      "created_at": "2026-05-17T01:27:18Z",
+      "resolved_at": "2026-05-17T01:45:13Z"
+    },
+    {
+      "task_id": "ASK-007",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved: all 3 redaction categories verified; returning to owner Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-17T01:45:13Z",
+      "resolved_at": "2026-05-17T01:52:54Z"
+    }
+  ],
+  "blockers": []
+}

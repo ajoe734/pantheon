@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "OPS-WORKER-PUSH-CRED-001",
+  "archived_at": "2026-05-17T00:34:45Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OPS-WORKER-PUSH-CRED-001",
+    "title": "Background worker git push credentials provisioning",
+    "summary_zh": "解決 background worker 跑 git push 必失敗的根因。設計選項：SSH key per worker 或 GitHub PAT via env。產出 setup 腳本與 .orchestrator/ runtime 環境讀取邏輯，不直接 commit credential 本身。獨立檔案。",
+    "phase": "Sprint 7 / EPIC-OPS-BACKLOG",
+    "owner": "Codex",
+    "reviewer": "Gemini2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".orchestrator/worker_push_auth.md",
+      "scripts/setup_worker_credentials.sh",
+      ".orchestrator/auth_loader.py",
+      ".orchestrator/test_auth_loader.py"
+    ],
+    "acceptance": [
+      "worker_push_auth.md documents the chosen mechanism (SSH key or PAT) with rotation policy",
+      "setup_worker_credentials.sh is idempotent and does not echo secrets",
+      "auth_loader.py exposes load_git_credentials() returning the env vars or path needed for git push to succeed never logs the secret",
+      "test_auth_loader.py covers missing-credential fail-fast and present-credential success exit 0",
+      "no credential value committed only references"
+    ],
+    "next": "Closeout complete. Task-scoped commit c182b46a adds worker SSH/PAT credential docs, idempotent setup script, auth loader, and focused tests without raw credentials. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest .orchestrator/test_auth_loader.py -q => 5 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile .orchestrator/auth_loader.py .orchestrator/test_auth_loader.py => passed; bash -n scripts/setup_worker_credentials.sh => passed; rg credential-pattern scan found only secret-manager references and test sentinel strings.",
+    "last_update": "2026-05-17T00:34:45Z",
+    "review_notes_zh": [
+      "審查通過",
+      "SSH/PAT機制安全，無硬編碼，文件權限驗證嚴格"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-17T00:34:45Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "c182b46a32a317b167ffa16eef89aa7c65d99af0",
+      "commit_subject": "OPS-WORKER-PUSH-CRED-001: provision worker push credentials",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "OPS-WORKER-PUSH-CRED-001",
+        "Reviewer": "Gemini2",
+        "Wave": "Sprint 7 / EPIC-OPS-BACKLOG"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 42,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 4,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OPS-WORKER-PUSH-CRED-001",
+      "from": "Codex",
+      "to": "Gemini2",
+      "message": "Ready for review: added SSH-first worker git push credential docs, idempotent setup script, secret-redacting auth_loader, and loader tests. Artifacts: .orchestrator/worker_push_auth.md, scripts/setup_worker_credentials.sh, .orchestrator/auth_loader.py, .orchestrator/test_auth_loader.py. Verification: python3 -m pytest -q .orchestrator/test_auth_loader.py => 5 passed; python3 -m py_compile .orchestrator/auth_loader.py .orchestrator/test_auth_loader.py => passed; bash -n scripts/setup_worker_credentials.sh => passed; PAT setup smoke with temp config/env/token => loader JSON passed without raw token; SSH setup smoke with temp key/config/env => loader JSON passed.",
+      "status": "done",
+      "created_at": "2026-05-17T00:21:33Z",
+      "resolved_at": "2026-05-17T00:27:25Z"
+    },
+    {
+      "task_id": "OPS-WORKER-PUSH-CRED-001",
+      "from": "Gemini2",
+      "to": "Codex",
+      "message": "Review approved; mechanism is safe and compliant with security rules.",
+      "status": "done",
+      "created_at": "2026-05-17T00:27:25Z",
+      "resolved_at": "2026-05-17T00:34:46Z"
+    }
+  ],
+  "blockers": []
+}

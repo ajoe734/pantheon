@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "task_id": "OSS-FINRL-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-05-17T03:44:36Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-FINRL-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare OSS-FINRL-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 OSS-FINRL-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Sprint 7 / EPIC-OSS-RESEARCH",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/OSS-FINRL-001/OSS-FINRL-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner closeout complete: support packet review-approved by Claude, scoped commit a5198a87 created for support/sidecars/OSS-FINRL-001/OSS-FINRL-001-SIDECAR-ACCEPTANCE.md. Verification rerun: py_compile passed; pytest finrl smoke/unit 20 passed; CUDA/NVIDIA/stable-baselines/torch scan had no matches; sidecar diff check passed.",
+    "last_update": "2026-05-17T03:44:36Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "OSS-FINRL-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：sidecar acceptance packet 範圍正確限定於 support/sidecars/OSS-FINRL-001/，所有被引用的 parent 檔案均存在，關鍵聲明（train() 簽名、CPU-only Dockerfile、finrl==0.3.7 pin、無 CUDA/NVIDIA 依賴）均獨立驗證通過，artifact_state=draft、gate_state=closed、direct_live_influence=false 均正確標記，文件未修改任何 canonical truth"
+    ],
+    "review_file": "support/sidecars/OSS-FINRL-001/OSS-FINRL-001-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-17T03:44:36Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "a5198a87355f433052861dcf3ba7052f91d1752a",
+      "commit_subject": "OSS-FINRL-001-SIDECAR-ACCEPTANCE: closeout acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "OSS-FINRL-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude",
+        "Wave": "2026-W20",
+        "Verified": "py_compile passed; pytest finrl smoke/unit 20 passed; dependency scan found no CUDA/NVIDIA/stable-baselines/torch matches; sidecar diff check passed."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 24,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 4,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-FINRL-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Acceptance packet ready for review: support/sidecars/OSS-FINRL-001/OSS-FINRL-001-SIDECAR-ACCEPTANCE.md. Scope is support-only; no canonical/runtime/registry edits. Verification: py_compile passed; pytest smoke+unit 20 passed; Dockerfile/requirements CUDA/NVIDIA/stable-baselines/torch scan had no matches; sidecar diff check had no whitespace warnings.",
+      "status": "done",
+      "created_at": "2026-05-17T03:30:52Z",
+      "resolved_at": "2026-05-17T03:37:45Z"
+    },
+    {
+      "task_id": "OSS-FINRL-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar acceptance packet reviewed and approved; scope confirmed support-only, all key claims independently verified",
+      "status": "done",
+      "created_at": "2026-05-17T03:37:45Z",
+      "resolved_at": "2026-05-17T03:44:36Z"
+    }
+  ],
+  "blockers": []
+}
