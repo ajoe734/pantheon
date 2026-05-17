@@ -26,7 +26,7 @@ The generated task brief was present in the shared status root at `/home/lupin/c
 
 ## Owner Closeout Verification
 
-Commands run from `task/EXP-V2-002`:
+Commands run from `task/EXP-V2-002` before opening the PR:
 
 ```bash
 pytest -q services/lineage-read/test_multi_artifact_tree.py
@@ -37,5 +37,19 @@ Results:
 
 - `services/lineage-read/test_multi_artifact_tree.py`: 6 passed in 3.24s.
 - `services/lineage-read`: 15 passed in 9.45s.
+
+After PR #84 was opened, the branch reported `mergeStateStatus=BEHIND`.
+The task branch was updated with `origin/dev`, and the focused verification
+was rerun:
+
+```bash
+pytest -q services/lineage-read/test_multi_artifact_tree.py
+pytest -q services/lineage-read
+```
+
+Post-merge results:
+
+- `services/lineage-read/test_multi_artifact_tree.py`: 6 passed in 3.92s.
+- `services/lineage-read`: 15 passed in 16.25s.
 
 The reviewer approval records a prior bounded full-suite attempt: `pytest -q` timed out after 300 seconds with no output, so no repo-wide exit-0 result was produced.
