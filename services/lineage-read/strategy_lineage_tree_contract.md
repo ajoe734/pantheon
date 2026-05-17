@@ -138,6 +138,9 @@ structure.
 ```
 pytest services/lineage-read/test_strategy_lineage_tree.py -q
 13 passed
+
+pytest services/lineage-read -q
+22 passed
 ```
 
 Test coverage:
