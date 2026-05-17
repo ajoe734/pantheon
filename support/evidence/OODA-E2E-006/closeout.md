@@ -20,6 +20,7 @@ Reviewer: Claude2
 PR #72 merged the e2e test artifacts into `dev`.
 PR #92 publishes the task closeout state/archive after rebasing the closeout
 state onto the current `dev` branch.
+The branch was refreshed again after #93 advanced `dev`.
 
 The e2e test verifies the paper telemetry to IncidentCase to Postmortem to
 EvolutionDecisionProposal path, including proposal-only invariants:
