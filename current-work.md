@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-17 10:58:42
+Last updated: 2026-05-17 11:01:27
 
 ## Objective
 
@@ -37,7 +37,7 @@ Last updated: 2026-05-17 10:58:42
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Auto-reassigned ownership from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota. Task returned to todo until Claude starts a fresh run.
+- `Claude`: execution, control-plane, governance-review; next: Review packet ready at support/sidecars/IMT-006/IMT-006-SIDECAR-REVIEW.md. Summarizes parent IMT-006 implementation (eval_metrics.py + test_eval_metrics.py), maps all 5 acceptance criteria with PASS/FAIL evidence, and documents pytest 4/4 passed. Sidecar scope only — no canonical truth or runtime changes. Please confirm packet accuracy and handoff to IMT-006 reviewer Codex2.
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: Sidecar acceptance packet reviewed and approved. Documents the resolved adapter shadowing issue and verified artifact shapes accurately.
 - `Codex`: integration, status-system, schema, acceptance; next: Ready for review. Added .orchestrator/sidecar_cleanup.py with scan/classify/execute retention API, CLI dry-run/apply mode, 14-day archive and 60-day delete policy; added contract doc and focused tests covering fresh, archivable, delete-eligible, dry-run no-op, real execute, and CLI exit 0. Verification: python3 -m pytest .orchestrator/test_sidecar_cleanup.py; python3 .orchestrator/test_sidecar_cleanup.py; python3 -m py_compile .orchestrator/sidecar_cleanup.py .orchestrator/test_sidecar_cleanup.py.
 - `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
@@ -56,7 +56,7 @@ Last updated: 2026-05-17 10:58:42
 | `IMT-007` | Sprint 7 / EPIC-IMITATION-TRAINING | Behavior-policy artifact validation gate | Claude | todo | `IMT-004`, `IMT-006` | behavior_policy artifact 進入 registry / governance 前的驗證閘門：metadata 完整、checksum 一致、IMT-006 eval metrics 達門檻、policy 不出現 deploy/canary/live 觸發詞。獨立 module。 |
 | `OPS-SIDECAR-CLEANUP-001` | Sprint 7 / EPIC-OPS-BACKLOG | Sidecar packet retention and cleanup policy | Codex | review | - | support/sidecars/ 持續累積 packets 但缺退場機制。設計 retention/cleanup module：parent task done 後 N 天，sidecar packet 移至 support/sidecars/archived/，超過 M 天直接刪。獨立 module，可由 cron / chair-review 觸發。 |
 | `ASK-007-SIDECAR-REVIEW` | Sprint 7 / EPIC-CONSULT-ADVANCED | [Sidecar] [Auto] [Parent ASK-007] Prepare ASK-007 review packet and evidence summary | Codex | review_approved | `ASK-004` | 平行支援 ASK-007，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 |
-| `IMT-006-SIDECAR-REVIEW` | Sprint 7 / EPIC-IMITATION-TRAINING | [Sidecar] [Auto] [Parent IMT-006] Prepare IMT-006 review packet and evidence summary | Claude | todo | `IMT-001`, `IMT-004` | 平行支援 IMT-006，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 |
+| `IMT-006-SIDECAR-REVIEW` | Sprint 7 / EPIC-IMITATION-TRAINING | [Sidecar] [Auto] [Parent IMT-006] Prepare IMT-006 review packet and evidence summary | Claude | review | `IMT-001`, `IMT-004` | 平行支援 IMT-006，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 |
 
 ### External / Upstream Integration Work
 
@@ -103,8 +103,8 @@ Last updated: 2026-05-17 10:58:42
 | `IMT-007` | Sprint 7 / EPIC-IMITATION-TRAINING | Behavior-policy artifact validation gate | behavior_policy artifact 進入 registry / governance 前的驗證閘門：metadata 完整、checksum 一致、IMT-006 eval metrics 達門檻、policy 不出現 deploy/canary/live 觸發詞。獨立 module。 | Claude | Codex2 | todo | `IMT-004`, `IMT-006` | 2026-05-17 07:22:33 | Assignment created |
 | `OPS-SIDECAR-CLEANUP-001` | Sprint 7 / EPIC-OPS-BACKLOG | Sidecar packet retention and cleanup policy | support/sidecars/ 持續累積 packets 但缺退場機制。設計 retention/cleanup module：parent task done 後 N 天，sidecar packet 移至 support/sidecars/archived/，超過 M 天直接刪。獨立 module，可由 cron / chair-review 觸發。 | Codex | Codex2 | review | - | 2026-05-17 07:46:46 | Ready for review. Added .orchestrator/sidecar_cleanup.py with scan/classify/execute retention API, CLI dry-run/apply mode, 14-day archive and 60-day delete policy; added contract doc and focused tests covering fresh, archivable, delete-eligible, dry-run no-op, real execute, and CLI exit 0. Verification: python3 -m pytest .orchestrator/test_sidecar_cleanup.py; python3 .orchestrator/test_sidecar_cleanup.py; python3 -m py_compile .orchestrator/sidecar_cleanup.py .orchestrator/test_sidecar_cleanup.py. |
 | `OSS-STAT-001-SIDECAR-ACCEPTANCE` | Sprint 7 / EPIC-OSS-RESEARCH | [Sidecar] [Auto] [Parent OSS-STAT-001] Prepare OSS-STAT-001 acceptance packet and dependency map | 平行支援 OSS-STAT-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Gemini | Claude | review_approved | - | 2026-05-17 10:06:16 | Sidecar acceptance packet reviewed and approved. Documents the resolved adapter shadowing issue and verified artifact shapes accurately. |
-| `ASK-007-SIDECAR-REVIEW` | Sprint 7 / EPIC-CONSULT-ADVANCED | [Sidecar] [Auto] [Parent ASK-007] Prepare ASK-007 review packet and evidence summary | 平行支援 ASK-007，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Codex | Claude | review_approved | `ASK-004` | 2026-05-17 10:55:54 | Review approved: ASK-007 sidecar packet is accurate and complete. Confirmed parent archive done+completed at commit 80b170fa, Claude2 approval on record, all 4 acceptance criteria PASS, pytest re-run 1 passed. Support-only boundary confirmed; no canonical truth or runtime changes by this sidecar. Returning to owner Codex for closeout. |
-| `IMT-006-SIDECAR-REVIEW` | Sprint 7 / EPIC-IMITATION-TRAINING | [Sidecar] [Auto] [Parent IMT-006] Prepare IMT-006 review packet and evidence summary | 平行支援 IMT-006，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Claude | Codex | todo | `IMT-001`, `IMT-004` | 2026-05-17 09:51:13 | Auto-reassigned ownership from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota. Task returned to todo until Claude starts a fresh run. |
+| `ASK-007-SIDECAR-REVIEW` | Sprint 7 / EPIC-CONSULT-ADVANCED | [Sidecar] [Auto] [Parent ASK-007] Prepare ASK-007 review packet and evidence summary | 平行支援 ASK-007，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Codex | Claude | review_approved | `ASK-004` | 2026-05-17 10:59:49 | Supervisor resumed ASK-007-SIDECAR-REVIEW for finalize after successful dispatch. |
+| `IMT-006-SIDECAR-REVIEW` | Sprint 7 / EPIC-IMITATION-TRAINING | [Sidecar] [Auto] [Parent IMT-006] Prepare IMT-006 review packet and evidence summary | 平行支援 IMT-006，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Claude | Codex | review | `IMT-001`, `IMT-004` | 2026-05-17 11:01:27 | Review packet ready at support/sidecars/IMT-006/IMT-006-SIDECAR-REVIEW.md. Summarizes parent IMT-006 implementation (eval_metrics.py + test_eval_metrics.py), maps all 5 acceptance criteria with PASS/FAIL evidence, and documents pytest 4/4 passed. Sidecar scope only — no canonical truth or runtime changes. Please confirm packet accuracy and handoff to IMT-006 reviewer Codex2. |
 
 ## Handoff Queue
 
@@ -114,6 +114,7 @@ Last updated: 2026-05-17 10:58:42
 | `OPS-SIDECAR-CLEANUP-001` | Codex | Codex2 | Ready for review. Added .orchestrator/sidecar_cleanup.py with scan/classify/execute retention API, CLI dry-run/apply mode, 14-day archive and 60-day delete policy; added contract doc and focused tests covering fresh, archivable, delete-eligible, dry-run no-op, real execute, and CLI exit 0. Verification: python3 -m pytest .orchestrator/test_sidecar_cleanup.py; python3 .orchestrator/test_sidecar_cleanup.py; python3 -m py_compile .orchestrator/sidecar_cleanup.py .orchestrator/test_sidecar_cleanup.py. | pending | 2026-05-17 07:46:46 |
 | `OSS-STAT-001-SIDECAR-ACCEPTANCE` | Claude | Gemini | Sidecar acceptance packet reviewed and approved. Documents the resolved adapter shadowing issue and verified artifact shapes accurately. | pending | 2026-05-17 10:06:16 |
 | `ASK-007-SIDECAR-REVIEW` | Claude | Codex | Review approved: ASK-007 sidecar packet is accurate and complete. Confirmed parent archive done+completed at commit 80b170fa, Claude2 approval on record, all 4 acceptance criteria PASS, pytest re-run 1 passed. Support-only boundary confirmed; no canonical truth or runtime changes by this sidecar. Returning to owner Codex for closeout. | pending | 2026-05-17 10:55:54 |
+| `IMT-006-SIDECAR-REVIEW` | Claude | Codex | Review packet ready at support/sidecars/IMT-006/IMT-006-SIDECAR-REVIEW.md. Summarizes parent IMT-006 implementation (eval_metrics.py + test_eval_metrics.py), maps all 5 acceptance criteria with PASS/FAIL evidence, and documents pytest 4/4 passed. Sidecar scope only — no canonical truth or runtime changes. Please confirm packet accuracy and handoff to IMT-006 reviewer Codex2. | pending | 2026-05-17 11:01:27 |
 
 ## Blockers
 
@@ -197,23 +198,23 @@ Last updated: 2026-05-17 10:58:42
 
 ## Latest Checkpoints
 
-- 2026-05-17 10:57:29 Orchestrator: PreToolUse: Bash
-- 2026-05-17 10:57:30 Orchestrator: PostToolUse: Bash
-- 2026-05-17 10:57:30 Orchestrator: PreToolUse: Bash
-- 2026-05-17 10:57:30 Orchestrator: PostToolUse: Bash
-- 2026-05-17 10:57:40 Orchestrator: PreToolUse: Bash
-- 2026-05-17 10:57:40 Orchestrator: PostToolUse: Bash
-- 2026-05-17 10:57:48 Orchestrator: PreToolUse: Bash
-- 2026-05-17 10:57:48 Orchestrator: PostToolUse: Bash
-- 2026-05-17 10:58:04 Orchestrator: PreToolUse: Bash
-- 2026-05-17 10:58:05 Orchestrator: PostToolUse: Bash
-- 2026-05-17 10:58:08 Orchestrator: PreToolUse: Bash
-- 2026-05-17 10:58:09 Orchestrator: PostToolUse: Bash
-- 2026-05-17 10:58:15 Orchestrator: PreToolUse: Bash
-- 2026-05-17 10:58:21 Orchestrator: PreToolUse: Bash
-- 2026-05-17 10:58:21 Orchestrator: PostToolUse: Bash
-- 2026-05-17 10:58:27 Orchestrator: PreToolUse: Bash
-- 2026-05-17 10:58:32 Orchestrator: PreToolUse: Bash
-- 2026-05-17 10:58:32 Orchestrator: PostToolUse: Bash
-- 2026-05-17 10:58:42 Orchestrator: PreToolUse: Bash
-- 2026-05-17 10:58:42 Claude: `OPS-REBASE-AUTO-001-SIDECAR-REVIEW` Owner closeout: deliverable at support/sidecars/OPS-REBASE-AUTO-001/OPS-REBASE-AUTO-001-SIDECAR-REVIEW.md committed at 40f7088e; state closeout commit 4b7d5173. Codex approval recorded; all 4 acceptance criteria PASS; pytest 4 passed. Support-only scope; no canonical changes.
+- 2026-05-17 11:00:03 Orchestrator: PostToolUse: Read
+- 2026-05-17 11:00:04 Orchestrator: PostToolUse: Read
+- 2026-05-17 11:00:04 Orchestrator: PostToolUse: Read
+- 2026-05-17 11:00:15 Orchestrator: PreToolUse: Glob
+- 2026-05-17 11:00:16 Orchestrator: PostToolUse: Glob
+- 2026-05-17 11:00:16 Orchestrator: PreToolUse: Read
+- 2026-05-17 11:00:16 Orchestrator: PreToolUse: Read
+- 2026-05-17 11:00:16 Orchestrator: PostToolUse: Read
+- 2026-05-17 11:00:16 Orchestrator: PostToolUse: Read
+- 2026-05-17 11:00:29 Orchestrator: PreToolUse: Bash
+- 2026-05-17 11:00:34 Orchestrator: PostToolUse: Bash
+- 2026-05-17 11:00:38 Orchestrator: PreToolUse: Bash
+- 2026-05-17 11:00:39 Orchestrator: PostToolUse: Bash
+- 2026-05-17 11:01:12 Orchestrator: PreToolUse: Write
+- 2026-05-17 11:01:12 Orchestrator: PostToolUse: Write
+- 2026-05-17 11:01:18 Orchestrator: PreToolUse: Bash
+- 2026-05-17 11:01:18 Claude: `IMT-006-SIDECAR-REVIEW` Review packet created at support/sidecars/IMT-006/IMT-006-SIDECAR-REVIEW.md. pytest 4/4 passed; all 5 acceptance criteria verified.
+- 2026-05-17 11:01:21 Orchestrator: PostToolUse: Bash
+- 2026-05-17 11:01:26 Orchestrator: PreToolUse: Bash
+- 2026-05-17 11:01:27 Claude: `IMT-006-SIDECAR-REVIEW` Handoff to Codex: Review packet ready at support/sidecars/IMT-006/IMT-006-SIDECAR-REVIEW.md. Summarizes parent IMT-006 implementation (eval_metrics.py + test_eval_metrics.py), maps all 5 acceptance criteria with PASS/FAIL evidence, and documents pytest 4/4 passed. Sidecar scope only — no canonical truth or runtime changes. Please confirm packet accuracy and handoff to IMT-006 reviewer Codex2.
