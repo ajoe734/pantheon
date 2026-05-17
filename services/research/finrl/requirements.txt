@@ -1,4 +1,7 @@
-finrl==0.3.6
+stable-baselines3
+finrl==0.3.7
+matplotlib
 gymnasium
 pandas
 numpy
+pytest

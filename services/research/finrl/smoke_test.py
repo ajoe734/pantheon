@@ -1,11 +1,19 @@
 import sys
 from pathlib import Path
-# When running in container, /app is already in PYTHONPATH
-sys.path.append("/app")
 
-from services.research.finrl.adapter import train
+_SERVICE_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _SERVICE_DIR.parent.parent.parent
+for _p in (str(_REPO_ROOT), str(_SERVICE_DIR)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
-def test_train_smoke():
+try:
+    from services.research.finrl.adapter import train
+except ImportError:
+    from adapter import train  # service-local fallback for flat tmpdir / direct container run
+
+
+def run_test(backend):
     # 60 days deterministic synthetic OHLCV
     records = []
     for i in range(60):
@@ -30,12 +38,10 @@ def test_train_smoke():
 
     strategy_spec_ref = {"records": records}
 
-    # Use 'stub' backend to avoid FinRL package requirement during smoke test
-    result = train(strategy_spec_ref, backend="stub")
+    result = train(strategy_spec_ref, backend=backend)
 
     assert result["status"] == "completed"
     assert "model_artifact_ref" in result
-    assert "artifact_type" in result
     assert result["artifact_type"] == "model_artifact"
     assert "run_id" in result
     assert "metrics" in result
@@ -45,10 +51,22 @@ def test_train_smoke():
     assert result["metrics"].get("sharpe", 0) > 0
     assert result["metrics"].get("num_steps", 0) <= 1000
 
-    # Check for ExperimentRun-shaped dict
-    assert "model_artifact_ref" in result
+    print(f"Smoke test passed for {backend}: {result}")
 
-    print(f"Smoke test passed: {result}")
+
+def test_train_smoke_stub():
+    run_test("stub")
+
+
+def test_train_smoke_dqn():
+    run_test("finrl_dqn")
+
+
+def test_train_smoke_ppo():
+    run_test("finrl_ppo")
+
 
 if __name__ == "__main__":
-    test_train_smoke()
+    test_train_smoke_stub()
+    test_train_smoke_dqn()
+    test_train_smoke_ppo()
