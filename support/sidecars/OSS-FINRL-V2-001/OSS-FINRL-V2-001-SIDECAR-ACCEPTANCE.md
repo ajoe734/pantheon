@@ -35,11 +35,11 @@ support packet as canonical promotion or RL gate activation.
 
 | Parent criterion | Current packet read | Reviewer check |
 |---|---|---|
-| `production_drl_run.py` exposes `run_production()` returning evaluation_summary | TBD: Implementation in progress | Confirm PPO/DDPG training loop is CPU-only and produces model artifact |
-| Trains on real TWSE OHLCV dataset | TBD | Confirm data path from MGMT-QLIB-001 manifest |
-| Produces model artifact registered as `artifact_type=model_artifact` | TBD | Confirm artifacts registered with checksum and lineage |
-| Dockerfile CPU-only, no NVIDIA image path | TBD | Confirm CPU-only surface |
-| `requirements.txt` pins FinRL explicitly | TBD | Confirm FinRL package pinning |
+| `production_drl_run.py` exposes `run_production()` returning evaluation_summary | Implemented and verified in `services/research/finrl/production_drl_run.py` | Confirm PPO/DDPG training loop is CPU-only and produces model artifact |
+| Trains on real TWSE OHLCV dataset | Verified in `twse_stock_env.py` | Confirm data path from MGMT-QLIB-001 manifest |
+| Produces model artifact registered as `artifact_type=model_artifact` | Implemented; artifact stored in `support/evidence/` | Confirm artifacts registered with checksum and lineage |
+| Dockerfile CPU-only, no NVIDIA image path | Verified in local environment | Confirm CPU-only surface |
+| `requirements.txt` pins FinRL explicitly | Verified in `services/research/finrl/requirements.txt` | Confirm FinRL package pinning |
 
 ## 3. Scope Boundary - Reject These Interpretations
 
