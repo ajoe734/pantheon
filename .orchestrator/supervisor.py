@@ -50,6 +50,7 @@ from common import (
 from coordination_file_watcher import sync_coordination_files
 from github_bus import sync_github_bus
 from provider_permissions import provider_capabilities as build_provider_capabilities, write_provider_capabilities
+from rebase_helper import continue_or_skip_empty
 from runtime_state import load_approval_state, load_event_queue, load_runtime_state, prune_worker_records, queue_event_record, save_runtime_state
 from runtime_state import enqueue_event
 from task_archive import TaskResolver
@@ -6717,6 +6718,7 @@ def run_once(
     save_runtime_state(config, state)
     changed = False
     try:
+        continue_or_skip_empty(THIS_DIR.parent)
         changed = expire_provider_dispatch_pauses(config, state) or changed
         pruned = prune_stale_approvals(config)
         if pruned:
