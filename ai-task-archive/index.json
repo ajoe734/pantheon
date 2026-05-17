@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-05-17T03:44:36Z",
+  "updated_at": "2026-05-17T05:51:55Z",
   "counts": {
-    "total": 1184,
-    "completed": 1164,
+    "total": 1185,
+    "completed": 1165,
     "superseded": 20
   },
   "recent_terminal_ids": [
+    "MGMT-BROKER-002",
     "OSS-FINRL-001-SIDECAR-ACCEPTANCE",
     "OSS-FINRL-001",
     "IMT-007",
@@ -25,7 +26,6 @@
     "ASK-007",
     "TRN-006",
     "OSS-QLIB-002",
-    "PER-003",
-    "TRN-007"
+    "PER-003"
   ]
 }

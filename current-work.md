@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-17 11:44:36
+Last updated: 2026-05-17 13:55:44
 
 ## Objective
 
@@ -35,6 +35,20 @@ Last updated: 2026-05-17 11:44:36
 - Ready for human: `True`
 - Ready to materialize execution: `True`
 
+## Wave Workflow
+
+- Current wave: `-`
+- Status: `closed`
+- Branch: `wave/2026-W22`
+- Opened at: 2026-05-17 13:46:59
+- Frozen at: -
+- Closed at: 2026-05-17 13:47:39
+- Recent events:
+  - 2026-05-17 13:47:39 · `close` · `2026-W22` by `Codex`
+  - 2026-05-17 13:46:59 · `open` · `2026-W22` by `Codex`
+  - 2026-05-17 13:42:47 · `close` · `2026-W21` by `Codex`
+  - 2026-05-17 13:23:05 · `open` · `2026-W21` by `Codex`
+
 ## Active Slices
 
 - `Claude`: execution, control-plane, governance-review; next: No active assignment
@@ -43,7 +57,7 @@ Last updated: 2026-05-17 11:44:36
 - `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
 - `Claude2`: execution, control-plane, governance-review; next: No active assignment
-- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check.
+- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 
 ## Delivery Layers
 
@@ -51,7 +65,7 @@ Last updated: 2026-05-17 11:44:36
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | Gemini2 | blocked | - | - |
+| _(none)_ | - | - | - | - | - | - |
 
 ### External / Upstream Integration Work
 
@@ -61,11 +75,12 @@ Last updated: 2026-05-17 11:44:36
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-17 11:44:36
-- Terminal tasks archived: `1184` total, `1164` completed, `20` superseded
+- Archive updated: 2026-05-17 13:51:55
+- Terminal tasks archived: `1185` total, `1165` completed, `20` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | Gemini2 | completed | 2026-05-17 13:51:55 | `ai-task-archive/tasks/MGMT-BROKER-002.json` |
 | `OSS-FINRL-001-SIDECAR-ACCEPTANCE` | Sprint 7 / EPIC-OSS-RESEARCH | Prepare OSS-FINRL-001 acceptance packet and dependency map | Codex | completed | 2026-05-17 11:44:36 | `ai-task-archive/tasks/OSS-FINRL-001-SIDECAR-ACCEPTANCE.json` |
 | `OSS-FINRL-001` | Sprint 7 / EPIC-OSS-RESEARCH | FinRL DQN/PPO adapter skeleton | Codex | completed | 2026-05-17 11:35:33 | `ai-task-archive/tasks/OSS-FINRL-001.json` |
 | `IMT-007` | Sprint 7 / EPIC-IMITATION-TRAINING | Behavior-policy artifact validation gate | Claude | completed | 2026-05-17 11:33:13 | `ai-task-archive/tasks/IMT-007.json` |
@@ -85,13 +100,11 @@ Last updated: 2026-05-17 11:44:36
 | `TRN-006` | Sprint 7 / EPIC-TRAINER-ADVANCED | Rapid-eval -> vectorbt backend integration | Codex | completed | 2026-05-17 09:44:24 | `ai-task-archive/tasks/TRN-006.json` |
 | `OSS-QLIB-002` | Sprint 7 / EPIC-OSS-RESEARCH | Qlib rolling-window OOS pipeline + eval | Codex | completed | 2026-05-17 09:42:51 | `ai-task-archive/tasks/OSS-QLIB-002.json` |
 | `PER-003` | Sprint 7 / EPIC-TRAINER-ADVANCED | Persona registry live integration acceptance | Claude2 | completed | 2026-05-17 09:39:19 | `ai-task-archive/tasks/PER-003.json` |
-| `TRN-007` | Sprint 7 / EPIC-TRAINER-ADVANCED | Trainer trace -> imitation dataset export | Codex | completed | 2026-05-17 09:01:47 | `ai-task-archive/tasks/TRN-007.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | - | Gemini2 | Gemini | blocked | - | 2026-05-15 23:15:06 | Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check. |
 | `OSS-STAT-001-SIDECAR-ACCEPTANCE` | Sprint 7 / EPIC-OSS-RESEARCH | [Sidecar] [Auto] [Parent OSS-STAT-001] Prepare OSS-STAT-001 acceptance packet and dependency map | 平行支援 OSS-STAT-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Gemini | Claude | done | - | 2026-05-17 11:45:00 | Owner finalized task and closed it. Sidecar acceptance packet is durable in support/sidecars/OSS-STAT-001/. |
 
 ## Handoff Queue
@@ -104,7 +117,7 @@ Last updated: 2026-05-17 11:44:36
 
 | Task | Owner | Waiting For | Message | Status |
 |---|---|---|---|---|
-| `MGMT-BROKER-002` | Gemini2 | Gemini | Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check. | open |
+| _(none)_ | - | - | - | - |
 
 ## Review Notes
 
@@ -181,23 +194,23 @@ Last updated: 2026-05-17 11:44:36
 
 ## Latest Checkpoints
 
-- 2026-05-17 11:37:16 Orchestrator: PostToolUse: Glob
-- 2026-05-17 11:37:22 Orchestrator: PreToolUse: Bash
-- 2026-05-17 11:37:22 Orchestrator: PostToolUse: Bash
-- 2026-05-17 11:37:23 Orchestrator: PreToolUse: Bash
-- 2026-05-17 11:37:24 Orchestrator: PostToolUse: Bash
-- 2026-05-17 11:37:24 Orchestrator: PreToolUse: Bash
-- 2026-05-17 11:37:24 Orchestrator: PostToolUse: Bash
-- 2026-05-17 11:37:45 Orchestrator: PreToolUse: Bash
-- 2026-05-17 11:37:45 Claude: `OSS-FINRL-001-SIDECAR-ACCEPTANCE` Sidecar acceptance packet reviewed and approved; scope confirmed support-only, all key claims independently verified
-- 2026-05-17 11:37:49 Orchestrator: PostToolUse: Bash
-- 2026-05-17 11:37:54 Orchestrator: PreToolUse: Bash
-- 2026-05-17 11:37:54 Orchestrator: PostToolUse: Bash
-- 2026-05-17 11:38:01 Orchestrator: Stop: Stop
-- 2026-05-17 11:38:02 Orchestrator: SessionEnd: SessionEnd
-- 2026-05-17 11:41:57 Orchestrator: `OSS-FINRL-001-SIDECAR-ACCEPTANCE` Worker superseded after task responsibility moved to another agent.
-- 2026-05-17 11:41:57 Orchestrator: `OSS-FINRL-001-SIDECAR-ACCEPTANCE` Wake-up queued for supervisor: owned_finalize_dispatch
-- 2026-05-17 11:41:58 Orchestrator: `OSS-FINRL-001-SIDECAR-ACCEPTANCE` Worker started via codex: owned_finalize_dispatch
-- 2026-05-17 11:41:58 Codex: `OSS-FINRL-001-SIDECAR-ACCEPTANCE` Supervisor resumed OSS-FINRL-001-SIDECAR-ACCEPTANCE for finalize after successful dispatch.
-- 2026-05-17 11:42:02 Orchestrator: `OSS-FINRL-001-SIDECAR-ACCEPTANCE` Supervisor resumed OSS-FINRL-001-SIDECAR-ACCEPTANCE for finalize after successful dispatch.
-- 2026-05-17 11:44:36 Codex: `OSS-FINRL-001-SIDECAR-ACCEPTANCE` Owner closeout complete: support packet review-approved by Claude, scoped commit a5198a87 created for support/sidecars/OSS-FINRL-001/OSS-FINRL-001-SIDECAR-ACCEPTANCE.md. Verification rerun: py_compile passed; pytest finrl smoke/unit 20 passed; CUDA/NVIDIA/stable-baselines/torch scan had no matches; sidecar diff check passed.
+- 2026-05-17 13:54:01 Orchestrator: PreToolUse: Bash
+- 2026-05-17 13:54:02 Orchestrator: PreToolUse: Bash
+- 2026-05-17 13:54:02 Orchestrator: PostToolUse: Bash
+- 2026-05-17 13:54:04 Orchestrator: PostToolUse: Bash
+- 2026-05-17 13:54:10 Orchestrator: PreToolUse: Bash
+- 2026-05-17 13:54:10 Orchestrator: PostToolUse: Bash
+- 2026-05-17 13:54:13 Orchestrator: PreToolUse: Bash
+- 2026-05-17 13:54:13 Orchestrator: PostToolUse: Bash
+- 2026-05-17 13:54:17 Orchestrator: PreToolUse: Bash
+- 2026-05-17 13:54:19 Orchestrator: PostToolUse: Bash
+- 2026-05-17 13:54:25 Orchestrator: PreToolUse: Bash
+- 2026-05-17 13:54:27 Orchestrator: PostToolUse: Bash
+- 2026-05-17 13:54:36 Orchestrator: PreToolUse: Bash
+- 2026-05-17 13:54:37 Orchestrator: PostToolUse: Bash
+- 2026-05-17 13:54:47 Orchestrator: PreToolUse: Bash
+- 2026-05-17 13:54:55 Orchestrator: PostToolUse: Bash
+- 2026-05-17 13:55:13 Orchestrator: PreToolUse: Bash
+- 2026-05-17 13:55:16 Orchestrator: Stop: Stop
+- 2026-05-17 13:55:18 Orchestrator: PostToolUse: Bash
+- 2026-05-17 13:55:41 Orchestrator: PreToolUse: Bash
