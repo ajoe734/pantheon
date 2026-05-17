@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
-# Reject staged runtime artifacts that should never enter git history.
-# Centralized here so every clone gets the same protection once
-# `git config core.hooksPath .githooks` is set.
+# Pantheon pre-commit gate: reject staged runtime mirrors that should never
+# enter git history (orchestrator-regenerated artifacts).
+#
+# The shared-index scope check lives in commit-msg (it needs the message
+# file path argv[1] to read the Task-ID trailer).
+#
+# Bypass:
+#   PANTHEON_GENERATED_FILES_CHECK_DISABLED=1
 
 set -euo pipefail
 
@@ -12,4 +17,6 @@ if [ "${#staged_paths[@]}" -eq 0 ]; then
   exit 0
 fi
 
-exec python3 "$ROOT_DIR/scripts/check_staged_generated_files.py" "${staged_paths[@]}"
+if [[ "${PANTHEON_GENERATED_FILES_CHECK_DISABLED:-0}" != "1" ]]; then
+  exec python3 "$ROOT_DIR/scripts/check_staged_generated_files.py" "${staged_paths[@]}"
+fi
