@@ -267,6 +267,12 @@ Publication rule:
 section is the short pointer; if anything below conflicts with that document,
 the document wins.
 
+**AI / Claude session ops notes:** `docs/conventions/CLAUDE_SESSION_NOTES.md`
+documents the bash-tool transport workarounds that every Claude / Codex
+session needs (use `-F` for commit messages, batch `git add` in 3–4 paths,
+avoid jq pipelines, prefer `scripts/git/safe_pr.sh` over hand-rolled
+multi-step closeouts). Read it once at start of session.
+
 Topology (2026-05-17 redesign, per-task PR model):
 
 - `master`: canonical / production source. PR-only with branch protection
