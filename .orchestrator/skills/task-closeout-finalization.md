@@ -1,86 +1,141 @@
 # Task Closeout Finalization Spec
 
 Status: active operating rule for execution tasks
-Last updated: 2026-04-29
+Last updated: 2026-05-17 (per-task PR model)
 
-This spec applies when a task is in `review_approved` or a worker is dispatched with `owned_finalize_dispatch`.
+This spec applies when a task is in `review_approved` or a worker is
+dispatched with `owned_finalize_dispatch`.
 
 ## Closeout Owner Rule
 
-Only the task owner may move a `review_approved` task to `done`. The owner is responsible for making the approved state durable, auditable, and publish-ready before running `scripts/ai-status.sh done`.
+Only the task owner may move a `review_approved` task to `done`. The
+owner is responsible for making the approved state durable, auditable,
+and publish-ready before running `scripts/ai-status.sh done`.
 
 ## Required Closeout Checklist
 
 1. Re-read the task brief, reviewer approval, and touched artifacts.
 2. Confirm the approved scope is still true in the current worktree.
-3. Update task-specific records when needed: review notes, acceptance packet, handoff packet, evidence note, or narrow docs that describe the delivered behavior.
-4. Do not broaden canonical architecture docs unless the task explicitly changes canonical truth.
-5. Run focused verification appropriate to the task and record the exact commands in the finalization message or task artifact.
-6. Inspect `git status --short` and separate task-owned changes from unrelated dirty worktree changes.
-7. Create a task-scoped commit before finalizing whenever the task changed repo files and an isolated commit is possible.
-8. Run `AI_NAME=<Owner> ./scripts/ai-status.sh done <task-id> "<checkpoint message>"` only after the above is complete.
+3. Update task-specific records when needed: review notes, acceptance
+   packet, handoff packet, evidence note, or narrow docs that describe
+   the delivered behavior.
+4. Do not broaden canonical architecture docs unless the task
+   explicitly changes canonical truth.
+5. Run focused verification appropriate to the task and record the
+   exact commands in the finalization message or task artifact.
+6. Inspect `git status --short` and separate task-owned changes from
+   unrelated dirty worktree changes.
+7. Create the task PR (see § Per-Task PR Flow below) before finalizing
+   whenever the task changed repo files.
+8. Run `AI_NAME=<Owner> ./scripts/ai-status.sh done <task-id> "<checkpoint message>"`
+   only after the PR is open with `--auto --merge` enabled (or merged).
 
-## Background Worker Git Rule
+## Per-Task PR Flow (mandatory)
 
-Auto workers run without a human-attended terminal. Do not use interactive git commands such as `git add -p`, `git add -i`, `git commit --interactive`, or `git rebase -i` during closeout. Use explicit file/path staging plus `git diff --cached` review, or skip the isolated commit with a clear exception note when task-owned hunks cannot be separated non-interactively.
+Pantheon's branch model is **per-task ephemeral branches** with PR
+auto-merge into `dev`. Permanent `worker/<name>` branches are retired.
 
-### Shared-Index Footgun (mandatory)
+The full safe sequence for any task that produces commits:
 
-All auto workers share a single worktree, hence a single `.git/index`. If a
-previous worker left files staged (interrupted commit, crash, etc.) and you
-run `git commit`, your commit silently absorbs the leftover files. This is
-the **2026-05-16 sweep-in incident** (commit `e06f5cf2`): a FinRL worker's
-narrow `git add` was followed by a `git commit` that swept in 8 unrelated
-files from a foreground worker whose commit had stalled.
+```bash
+TASK=<task-id>
 
-To prevent recurrence, every worker's task commit must use one of these
-**safe paths**:
+# 1. Open a fresh task branch from dev tip.
+./scripts/git/task_start.sh "$TASK"
 
-1. **Preferred — `scripts/git/worker_commit.py` wrapper** (does all of the
-   below atomically):
+# 2. Edit files. Stage and commit via worker_commit.py — never raw
+#    `git add` / `git commit` for task work.
+python3 scripts/git/worker_commit.py \
+  --task-id "$TASK" \
+  --message-file /tmp/${TASK}-msg.txt \
+  --scope <path1> <path2> ... \
+  --index-file /tmp/git-index-task-$TASK
 
-   ```bash
-   python3 scripts/git/worker_commit.py \
-       --task-id "$TASK_ID" \
-       --message-file /tmp/${TASK_ID}-msg.txt \
-       --scope path/one path/two ... \
-       --index-file "/tmp/git-index-${WORKER_RUN_ID}"
-   ```
+# 3. Push and open PR with auto-merge.
+./scripts/git/task_finalize.sh "$TASK"
 
-   The wrapper resets staging, stages only `--scope`, refuses if anything
-   leaks outside scope, and (with `--index-file`) uses a private index so
-   you cannot collide with another worker even on concurrent edits.
+# 4. Run done. PR will auto-merge once branch-ci status checks pass.
+AI_NAME=<Owner> ./scripts/ai-status.sh done "$TASK" "<checkpoint message>"
+```
 
-2. **Acceptable fallback — explicit reset before staging**:
+### Background Worker Restrictions
 
-   ```bash
-   git restore --staged --                       # CLEAR ALL EXISTING STAGING
-   git add <explicit list of task files>         # never `git add .` or `-A`
-   git diff --cached --name-only                 # verify what will commit
-   git commit -F /tmp/${TASK_ID}-msg.txt
-   ```
+Auto workers run without a human-attended terminal. Forbidden:
 
-   The `git restore --staged --` step is **mandatory** even if you believe
-   the worktree is clean. The pre-commit hook will reject commits that span
-   more than three top-level directories without a `Cross-Dir: yes` trailer
-   exactly because of this footgun.
+- Interactive git commands (`git add -p`, `git add -i`,
+  `git commit --interactive`, `git rebase -i`).
+- Direct push to `dev` or `master` — both are branch-protected, push
+  will be rejected.
+- Raw `git add .` or `git add -A` — `check_commit_scope.py` will reject
+  any commit whose staged files leak outside the declared task scope.
 
-3. **For chair-review or human integration commits**: same rules apply.
+## Shared-Index Footgun (Why worker_commit.py is mandatory)
+
+All workers share one worktree, hence one `.git/index`. If a previous
+worker left files staged (interrupted commit, crash) and you run
+`git commit`, your commit silently absorbs the leftover. This is the
+2026-05-16 sweep-in incident (commit `e06f5cf2`) where a FinRL worker's
+narrow `git add` was followed by a `git commit` that captured 8
+unrelated foreground files left in the index.
+
+`scripts/git/worker_commit.py` mitigates this in three layers:
+
+1. `git restore --staged --` clears any stale staging before adding.
+2. Stages only what was passed via `--scope`; aborts if the resulting
+   set leaks outside scope.
+3. With `--index-file <path>` uses a private `GIT_INDEX_FILE` so a
+   concurrent worker's staging cannot leak into yours even if both run
+   simultaneously.
+
+If you must commit outside `worker_commit.py` (foreground human flow):
+
+```bash
+git restore --staged --                       # MANDATORY: clear stale staging
+git add <explicit list of task files>         # never `git add .` or `-A`
+git diff --cached --name-only                 # eyeball the staged set
+git commit -F /tmp/${TASK}-msg.txt            # use -F (heredoc is fragile)
+```
 
 ## Commit Requirements
 
 Task closeout commits must be narrow and traceable.
 
-- Commit subject must include the task id.
-- Commit body must include:
-  - `LLM-Agent: <owner>`
-  - `Task-ID: <task-id>`
-  - `Reviewer: <reviewer>`
-- The body should also include a short verification summary.
-- Stage only files that belong to this task.
-- Never commit unrelated user or worker changes just to make the worktree clean.
+Subject:
 
-If unrelated dirty files prevent an isolated task commit, the owner may still finalize only when the reviewed deliverable is already durable and the `done` message clearly states why no isolated commit was created. This is an exception, not the default.
+```
+<TASK-ID>: <imperative summary>
+```
+
+≤ 70 chars. Subjects starting with `Merge `, `Revert `, `promote:`,
+`hotfix:`, `publish:`, `OPS-GIT-{WORKFLOW,REDESIGN}-` or
+`OPS-{DOC,REBASE}-` skip the trailer check.
+
+Required trailers (enforced by `.githooks/commit-msg`):
+
+```
+LLM-Agent: <Owner>
+Task-ID: <task-id>
+Reviewer: <reviewer, != owner>
+```
+
+Optional:
+
+- `Verified: <command summary>` — required when tests / checks ran.
+- `Hotfix: yes` — required on hotfix-path commits.
+- `Cross-Dir: yes` — required when the commit intentionally spans
+  more than 3 top-level directories.
+
+Forbidden:
+
+- Stage files outside the declared task scope.
+- Commit unrelated user or worker changes to "clean the worktree".
+- `--amend` a commit that has been pushed.
+- Empty commits (they jam the rebase loop).
+
+If unrelated dirty files prevent an isolated task commit, the owner may
+still finalize **only when** the reviewed deliverable is already
+durable and the `done` message clearly states why no isolated commit
+was created. This is an exception, not the default.
 
 ## Status And Archive Effects
 
@@ -90,19 +145,28 @@ If unrelated dirty files prevent an isolated task commit, the owner may still fi
 - `current-work.md`
 - `docs-site/*` mirrors
 - `ai-task-archive/tasks/<task-id>.json`
-- delivery metadata, including branch, HEAD commit, worktree dirtiness, remote/upstream, and push status
+- delivery metadata, including branch, HEAD commit, worktree dirtiness,
+  remote/upstream, and push status.
 
 Do not edit these generated state files by hand during closeout.
 
-## Push Policy
+## Push and Merge Policy
 
-Closeout is not complete until the finished work is published to the configured upstream whenever that is safely possible.
+Closeout is not complete until the finished work has a PR open with
+`--auto --merge` enabled, or has already merged into `dev`.
 
-- Default: after the task-scoped commit, `done` transition, generated state/archive update, and any required state/archive commit, run a normal non-force `git push` to the configured upstream.
-- If delivery metadata shows `push_status: ahead`, treat the task as publish-incomplete until the branch is pushed or an explicit human hold says not to publish.
-- Chair man must approve a pending normal non-force `git push` when the branch/upstream are clear, the commit metadata matches the task or closeout batch, and no human hold is present.
-- Never approve or run `git push --force`, `--mirror`, `--delete`, `--all`, `--tags`, or broad ambiguous push commands as routine closeout.
-- If there is no upstream, leave `push_status: no_upstream`, record the publication gap, and escalate for a remote/upstream decision instead of inventing a remote target.
+- Default: after the task-scoped commit, push the `task/<TASK-ID>`
+  branch and open a PR via `task_finalize.sh`. Run
+  `scripts/ai-status.sh done` only once that PR exists.
+- `dev` and `master` are branch-protected: a direct `git push` to
+  either will be rejected by GitHub. Workers must always go through PR
+  + auto-merge.
+- `task/<TASK-ID>` branches are auto-deleted by GitHub when the PR
+  merges. If a PR fails CI, the task branch stays for the worker (or
+  chair-review) to push a fix commit; do **not** force-push to recover
+  unless explicitly authorized.
+- Never use `--force`, `--mirror`, `--delete`, `--all`, or `--tags`
+  pushes as routine closeout.
 
 ## Chair Man Oversight
 
@@ -110,7 +174,12 @@ Chair man should flag any completed task with one of these closeout gaps:
 
 - `review_approved` remains idle while its owner is available.
 - `done` was recorded without a task-scoped commit and no exception note.
-- `push_status: ahead` remains after task finalization on a branch with a configured upstream.
-- finalization skipped required review, acceptance, or evidence artifacts.
+- A `task/<id>` PR is open > 24 h without merging (status check failing,
+  unresolved review conversation, or stale base).
+- `task/<id>` branches that exist on origin without a corresponding
+  open PR (zombie task branch — recommend deletion).
+- finalization that skipped required review, acceptance, or evidence
+  artifacts.
 
-Chair man should recommend owner re-dispatch, a small closeout follow-up, or approve the scoped normal push depending on the gap.
+Chair man should recommend owner re-dispatch, a small closeout
+follow-up, or approve the scoped normal push depending on the gap.

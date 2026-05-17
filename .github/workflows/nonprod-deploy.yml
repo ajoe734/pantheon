@@ -36,25 +36,38 @@ on:
         required: false
         default: false
         type: boolean
+  push:
+    branches:
+      - "publish/v*"
 
 permissions:
   contents: read
   id-token: write
 
 concurrency:
-  group: pantheon-nonprod-deploy
-  cancel-in-progress: false
+  # Allow dev (push-driven) and staging (manual) to run independently.
+  # Multiple publish/v* pushes coalesce — latest wins.
+  group: pantheon-nonprod-deploy-${{ github.event_name == 'push' && 'dev-auto' || inputs.environment }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
   deploy-manual:
-    name: Manual nonprod deploy
+    name: Nonprod deploy
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
+    environment: ${{ github.event_name == 'push' && 'dev' || inputs.environment }}
+    env:
+      # For push events we hard-pin dev/auto and use the pushed publish
+      # branch ref. For workflow_dispatch we honour the operator inputs.
+      TARGET_ENV: ${{ github.event_name == 'push' && 'dev' || inputs.environment }}
+      TARGET_COMPONENT: ${{ github.event_name == 'push' && 'auto' || inputs.component }}
+      TARGET_REF: ${{ github.event_name == 'push' && github.ref_name || inputs.ref || github.sha }}
+      ALLOW_DIRTY: ${{ github.event_name == 'push' && 'false' || inputs.allow_dirty }}
+      ALLOW_EXAMPLE_ENV: ${{ github.event_name == 'push' && 'false' || inputs.allow_example_env }}
     steps:
       - name: Checkout requested ref
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.sha }}
+          ref: ${{ env.TARGET_REF }}
           submodules: recursive
 
       - name: Resolve commit SHA
@@ -63,7 +76,7 @@ jobs:
 
       - name: Validate target and compose contract
         run: |
-          case "${{ inputs.environment }}:${{ inputs.component }}" in
+          case "${TARGET_ENV}:${TARGET_COMPONENT}" in
             dev:auto|dev:root)
               docker compose -f docker-compose.yml config --quiet
               ;;
@@ -71,7 +84,7 @@ jobs:
               bash scripts/validate_split_topology.sh
               ;;
             *)
-              echo "Invalid deployment target: ${{ inputs.environment }}/${{ inputs.component }}" >&2
+              echo "Invalid deployment target: ${TARGET_ENV}/${TARGET_COMPONENT}" >&2
               exit 1
               ;;
           esac
@@ -102,17 +115,17 @@ jobs:
           STAGING_EXEC_HEALTH_URL: ${{ vars.STAGING_EXEC_HEALTH_URL || 'http://10.140.0.5:28081' }}
         run: |
           args=(
-            --environment "${{ inputs.environment }}"
-            --component "${{ inputs.component }}"
+            --environment "${TARGET_ENV}"
+            --component "${TARGET_COMPONENT}"
             --sha "${{ steps.sha.outputs.sha }}"
             --project-id "${{ vars.GCP_DEPLOY_PROJECT_ID || 'pantheon-493602' }}"
           )
 
-          if [[ "${{ inputs.allow_dirty }}" == "true" ]]; then
+          if [[ "${ALLOW_DIRTY}" == "true" ]]; then
             args+=(--allow-dirty)
           fi
 
-          if [[ "${{ inputs.allow_example_env }}" == "true" ]]; then
+          if [[ "${ALLOW_EXAMPLE_ENV}" == "true" ]]; then
             args+=(--allow-example-env)
           fi
 
@@ -125,7 +138,7 @@ jobs:
           STAGING_BFF_URL: ${{ vars.STAGING_BFF_URL || 'https://pantheon-staging-bff.34.81.225.122.sslip.io' }}
           STAGING_BFF_CORS_ORIGIN: ${{ vars.STAGING_BFF_CORS_ORIGIN || 'https://pantheon-ai-system-front-staging-live.lovable.app' }}
         run: |
-          case "${{ inputs.environment }}:${{ inputs.component }}" in
+          case "${TARGET_ENV}:${TARGET_COMPONENT}" in
             dev:* )
               curl -fsS "${DEV_BFF_URL}/health"
               curl -sS -D - -o /tmp/dev-cors-body \
@@ -146,3 +159,13 @@ jobs:
               echo "Execution-only deploy has no public BFF smoke."
               ;;
           esac
+
+      - name: Summarize auto-deploy
+        if: github.event_name == 'push'
+        run: |
+          {
+            echo "## Auto dev redeploy"
+            echo "- Trigger: push on \`${{ github.ref_name }}\`"
+            echo "- Deployed ref: \`${{ steps.sha.outputs.sha }}\`"
+            echo "- Target: \`${TARGET_ENV}/${TARGET_COMPONENT}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
