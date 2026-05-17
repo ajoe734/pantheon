@@ -57,6 +57,7 @@ from services.execution.lean_runtime.smoke_algorithm import (  # noqa: E402
     SMOKE_STRATEGY_ID,
     SMOKE_VERSION,
     run_algorithm_smoke,
+    run_algorithm_smoke_from_binding,
 )
 
 
@@ -148,3 +149,49 @@ def test_deployment_plan_artifact_matches_smoke_algorithm_registry_id() -> None:
     assert plan["artifact_id"] == expected_registry_id
     assert plan["strategy_id"] == SMOKE_STRATEGY_ID
     assert plan["artifact_version"] == SMOKE_VERSION
+
+
+def test_e2e_fixture_binding_runtime_context_identity() -> None:
+    """E2E: fixture DeploymentPlan -> RuntimeManager binding -> ArtifactLoader -> LEAN smoke.
+
+    Verifies that runtime_context returned by the algorithm carries the
+    fixture-derived plan_id and RuntimeManager-created binding_id — proving the
+    paper run is composed from the fixture, not from SMOKE_* constants.
+    """
+    plan = _load_fixture()
+
+    store = RuntimeBindingStore()
+    manager = RuntimeManager(store)
+
+    request = DeployRuntimeRequest(
+        plan_id=plan["plan_id"],
+        persona_capital_binding_id=SMOKE_PERSONA_CAPITAL_BINDING_ID,
+        runtime_id="rt-ooda-e2e-005-identity-001",
+        capital_pool_id=plan["capital_pool_id"],
+        artifact_id=plan["artifact_id"],
+        artifact_version=plan["artifact_version"],
+        deployment_mode=plan["target_stage"],
+        plan_status=plan["status"],
+    )
+    outcome = manager.deploy(request)
+    binding = outcome.binding
+
+    result = run_algorithm_smoke_from_binding(plan, binding)
+
+    ctx = result.runtime_context
+    assert ctx["deployment_plan_id"] == plan["plan_id"], (
+        f"Expected deployment_plan_id={plan['plan_id']!r}, got {ctx['deployment_plan_id']!r}"
+    )
+    assert ctx["runtime_binding_id"] == binding.binding_id, (
+        f"Expected runtime_binding_id={binding.binding_id!r}, got {ctx['runtime_binding_id']!r}"
+    )
+    assert ctx["artifact_id"] == plan["artifact_id"], (
+        f"Expected artifact_id={plan['artifact_id']!r}, got {ctx['artifact_id']!r}"
+    )
+    assert ctx["artifact_version"] == plan["artifact_version"]
+    assert ctx["deployment_stage"] == plan["target_stage"]
+    assert ctx["strategy_id"] == plan["strategy_id"]
+
+    assert result.fill_count >= 1, "E2E fixture binding run must record at least 1 fill"
+    assert result.loaded_metadata["deployment_plan_id"] == plan["plan_id"]
+    assert result.loaded_metadata["runtime_binding_id"] == binding.binding_id
