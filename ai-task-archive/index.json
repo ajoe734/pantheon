@@ -1,12 +1,22 @@
 {
   "version": 1,
-  "updated_at": "2026-05-17T01:39:19Z",
+  "updated_at": "2026-05-17T02:57:18Z",
   "counts": {
-    "total": 1166,
-    "completed": 1146,
+    "total": 1176,
+    "completed": 1156,
     "superseded": 20
   },
   "recent_terminal_ids": [
+    "ASK-006-SIDECAR-REVIEW",
+    "OPS-REFACTOR-001",
+    "ASK-008",
+    "IMT-008",
+    "OSS-RLLIB-001",
+    "OSS-STAT-001",
+    "ASK-006",
+    "ASK-007",
+    "TRN-006",
+    "OSS-QLIB-002",
     "PER-003",
     "TRN-007",
     "OPS-REBASE-AUTO-001",
@@ -16,16 +26,6 @@
     "LEAN-ALGO-001",
     "TRN-005",
     "EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE",
-    "ASK-005",
-    "ASK-005-SIDECAR-REVIEW",
-    "EVO-001",
-    "EVO-001-SIDECAR-REVIEW",
-    "SENT-001",
-    "ASK-004",
-    "ASK-002",
-    "IMT-004",
-    "ASK-002-SIDECAR-REVIEW",
-    "TRN-004",
-    "LOOP-001-RB"
+    "ASK-005"
   ]
 }

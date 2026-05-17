@@ -3,7 +3,7 @@
   "sprint": "2026-05-16-pantheon-bff-p0-foundation",
   "sprint_started_at": "2026-05-16T00:00:00Z",
   "objective": "跨進開發團隊 GAP master rebaseline (docs/04/pantheon_sa_supplemental_2026-05-15/GAP_dev_team_master_rebaseline_2026-05-15.md)，以 pantheon@master + execute-plans@main 為基準。並行 6 條 EPIC，按 P0→P3 階梯推進：(I) EPIC-BFF-P0 (P0 10 task / Sprint 1) — session trio (/bff/me, auth/refresh, logout) + /openapi.json + canonical action endpoint + approval decide + registry reads (strategies/personas/capital-pools/audit)，讓 execute-plans@main 在 VITE_BFF_FALLBACK=strict 下可 bootstrap 核心 Management flow 不再 fallback mock；(II) EPIC-GOV-DEPLOY (P1 5 task / Sprint 2) — ApprovalDecision first-class + DeploymentPlan contract/service + stage planner + deployment projection + pool/runtime compatibility 檢查；(III) EPIC-RUNTIME (P1 6 task / Sprint 3) — RuntimeBinding schema + Runtime Manager skeleton + /bff/runtimes + deploy/pause/replace/rollback actions + loader metadata migration (promotion_state → artifact_state + deployment_stage) + LEAN algorithm-level smoke；(IV) EPIC-TELEMETRY (P2 7 task / Sprint 4) — TelemetryEvent canonical schema + RuntimeHeartbeat ingest + AuditAction backend + /bff/alerts + /bff/incidents + reconciliation record + Postmortem schema/endpoint；(V) EPIC-RESEARCH (P3 28 task / Sprint 5) — Source Ingest (SRC) + StrategySpec (STRAT) + Experiment orchestrator (EXP) + Qlib/vectorbt adapters + Persona/Trainer (PER/TRN) + Imitation dataset (IMT) + Consult/Committee (ASK)；(VI) EPIC-EVOLUTION (P3 3 task / Sprint 6) — EvolutionDecision service + /bff/v5/loop-runs + /bff/v5/sentinel/findings。GAP § 10 最大阻塞：BFF live endpoints 不足 → EPIC-BFF-P0 必須最先收斂；Registry/Promotion canonical 已 implemented，DeploymentPlan/RuntimeBinding 是 governance→execution 缺口；Artifact Loader 仍寫 legacy promotion_state，EX-002 metadata migration 是 execution-side 技術債。fail-closed 鐵律延續：broker production live、capital binding live 仍禁止；canary 需 risk-owner + operator 雙閘；evidence 走 support/evidence/<epic>-<task>/。Track E 收尾備註：46 個 MGMT-* task 中 45 個 done+archive，僅 MGMT-BROKER-002 仍 blocked 等 Shioaji credentials (commit 22e5ca3b 已備 sidecar acceptance packet)；M7 canary readiness 因此未閉合；Track E objective 不在本 sprint 推進範圍，僅 carry-over 記錄。",
-  "updated_at": "2026-05-17T02:46:27Z",
+  "updated_at": "2026-05-17T02:57:19Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -94,14 +94,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "reviewing",
+      "status": "finalize",
       "current_task_ids": [
-        "OPS-REBASE-AUTO-001-SIDECAR-REVIEW",
-        "ASK-006-SIDECAR-REVIEW"
+        "OPS-REBASE-AUTO-001-SIDECAR-REVIEW"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Review packet complete at support/sidecars/ASK-006/ASK-006-SIDECAR-REVIEW.md. Parent task ASK-006 is done+archived (commit 014ee6e1). Packet documents: all 4 acceptance criteria PASS, e2e test 1 passed, consultation suite 15 passed, ASK-004/ASK-005 regression 43 passed, diff-check clean. Claude2 review decision: APPROVED. Please confirm the packet is accurate and complete.",
-      "last_update": "2026-05-17T02:46:27Z"
+      "next": "Codex review approved: packet accurately summarizes archived parent task OPS-REBASE-AUTO-001, Claude approval, acceptance evidence, and focused pytest verification (4 passed). Claude may perform owner closeout for the sidecar.",
+      "last_update": "2026-05-17T02:51:26Z"
     },
     {
       "name": "Gemini",
@@ -292,33 +291,6 @@
       "last_update": "2026-05-16T23:22:33Z"
     },
     {
-      "id": "OPS-REFACTOR-001",
-      "title": "Re-apply dispatch policy refactor on current master",
-      "summary_zh": "把 archive/codex-orchestrator-dispatch-policy-cleanup-2026-04-28 tag 內的 dispatch_policy 抽取重新套用到當前 supervisor.py。原 cherry-pick 因 supervisor.py 1776 commit drift 衝突；本任務以 current master 為基準重做。獨立新增 .orchestrator/dispatch_policy.py + test。",
-      "phase": "Sprint 7 / EPIC-OPS-BACKLOG",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "review_approved",
-      "depends_on": [],
-      "artifacts": [
-        ".orchestrator/dispatch_policy.py",
-        ".orchestrator/test_dispatch_policy.py",
-        ".orchestrator/dispatch_policy_contract.md"
-      ],
-      "acceptance": [
-        "dispatch_policy.py exposes dispatch_reason_priority(reason) is_execution_dispatch_reason(reason) normalized_status_set(values default) ready_dispatch_settings(config)",
-        "supervisor.py is modified minimally to call these helpers (do not change supervisor public API)",
-        "test_dispatch_policy.py covers 5+ cases per helper with pytest -q exit 0",
-        "reference tag archive/codex-orchestrator-dispatch-policy-cleanup-2026-04-28 in contract.md for original intent",
-        "existing supervisor tests still pass"
-      ],
-      "next": "Supervisor resumed OPS-REFACTOR-001 for finalize after successful dispatch.",
-      "last_update": "2026-05-17T02:44:13Z",
-      "review_notes_zh": [
-        "審查通過：dispatch_policy.py 正確抽出四個 helper（dispatch_reason_priority / is_execution_dispatch_reason / normalized_status_set / ready_dispatch_settings），supervisor.py import 方式最小化且未改 public API，25 focused tests pass，141 supervisor tests pass，contract.md 正確引用 archive tag。"
-      ]
-    },
-    {
       "id": "OPS-SIDECAR-CLEANUP-001",
       "title": "Sidecar packet retention and cleanup policy",
       "summary_zh": "support/sidecars/ 持續累積 packets 但缺退場機制。設計 retention/cleanup module：parent task done 後 N 天，sidecar packet 移至 support/sidecars/archived/，超過 M 天直接刪。獨立 module，可由 cron / chair-review 觸發。",
@@ -349,7 +321,7 @@
       "phase": "Sprint 7 / EPIC-OPS-BACKLOG",
       "owner": "Claude",
       "reviewer": "Codex",
-      "status": "review",
+      "status": "review_approved",
       "depends_on": [],
       "artifacts": [
         "support/sidecars/OPS-REBASE-AUTO-001/OPS-REBASE-AUTO-001-SIDECAR-REVIEW.md"
@@ -359,14 +331,18 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Review packet complete. Parent task OPS-REBASE-AUTO-001 is already done+archived (commit c9f61449). Packet documents: all 5 acceptance criteria PASS, delivery metadata, 4 tests pass, code quality notes, review approval by Claude. Please confirm the packet is accurate and complete.",
-      "last_update": "2026-05-17T02:30:09Z",
+      "next": "Codex review approved: packet accurately summarizes archived parent task OPS-REBASE-AUTO-001, Claude approval, acceptance evidence, and focused pytest verification (4 passed). Claude may perform owner closeout for the sidecar.",
+      "last_update": "2026-05-17T02:51:26Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "OPS-REBASE-AUTO-001",
       "helper_kind": "review_packet",
       "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
+      "auto_created_by": "supervisor-underutilization",
+      "review_notes_zh": [
+        "確認 sidecar packet 準確且完整：support artifact 只記錄 review/evidence，不改 canonical truth；parent archive 顯示 OPS-REBASE-AUTO-001 已 done+archived，delivery commit c9f61449 存在且為目前 HEAD 祖先；Claude 原 review 與 packet acceptance/evidence 一致；聚焦驗證 PYTHONDONTWRITEBYTECODE=1 python3 -m pytest .orchestrator/test_rebase_helper.py -q => 4 passed。"
+      ],
+      "review_file": "support/sidecars/OPS-REBASE-AUTO-001/OPS-REBASE-AUTO-001-SIDECAR-REVIEW.md"
     },
     {
       "id": "OSS-STAT-001-SIDECAR-ACCEPTANCE",
@@ -399,45 +375,13 @@
       "review_file": "support/sidecars/OSS-STAT-001/OSS-STAT-001-SIDECAR-ACCEPTANCE.md"
     },
     {
-      "id": "ASK-006-SIDECAR-REVIEW",
-      "title": "Prepare ASK-006 review packet and evidence summary",
-      "summary_zh": "平行支援 ASK-006，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
-      "phase": "Sprint 7 / EPIC-CONSULT-ADVANCED",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "review",
-      "depends_on": [
-        "ASK-001",
-        "ASK-002",
-        "ASK-003",
-        "ASK-004",
-        "ASK-005"
-      ],
-      "artifacts": [
-        "support/sidecars/ASK-006/ASK-006-SIDECAR-REVIEW.md"
-      ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "Review packet complete at support/sidecars/ASK-006/ASK-006-SIDECAR-REVIEW.md. Parent task ASK-006 is done+archived (commit 014ee6e1). Packet documents: all 4 acceptance criteria PASS, e2e test 1 passed, consultation suite 15 passed, ASK-004/ASK-005 regression 43 passed, diff-check clean. Claude2 review decision: APPROVED. Please confirm the packet is accurate and complete.",
-      "last_update": "2026-05-17T02:46:27Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "ASK-006",
-      "helper_kind": "review_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
-    },
-    {
       "id": "ASK-007-SIDECAR-REVIEW",
       "title": "Prepare ASK-007 review packet and evidence summary",
       "summary_zh": "平行支援 ASK-007，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
       "phase": "Sprint 7 / EPIC-CONSULT-ADVANCED",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "todo",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "review_approved",
       "depends_on": [
         "ASK-004"
       ],
@@ -449,14 +393,19 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Auto-reassigned ownership from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota. Task returned to todo until Claude starts a fresh run.",
-      "last_update": "2026-05-17T01:28:48Z",
+      "next": "Review approved: ASK-007 sidecar packet is accurate and complete. Confirmed parent archive done+completed at commit 80b170fa, Claude2 approval on record, all 4 acceptance criteria PASS, pytest re-run 1 passed. Support-only boundary confirmed; no canonical truth or runtime changes by this sidecar. Returning to owner Codex for closeout.",
+      "last_update": "2026-05-17T02:55:54Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "ASK-007",
       "helper_kind": "review_packet",
       "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
+      "auto_created_by": "supervisor-underutilization",
+      "review_notes_zh": [
+        "審查通過：sidecar review packet 準確對齊已歸檔 ASK-007 parent task（commit 80b170fa、terminal_status=done completed）、Claude2 reviewer approval 與全部 acceptance criteria。",
+        "Spot-check 通過：PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/consultation/test_evidence_redaction.py -q -x => 1 passed；sidecar 僅新增 support/sidecars/ASK-007/ 未觸及 canonical truth 或 runtime 實作。"
+      ],
+      "review_file": "support/sidecars/ASK-007/ASK-007-SIDECAR-REVIEW.md"
     },
     {
       "id": "IMT-006-SIDECAR-REVIEW",
@@ -676,46 +625,47 @@
       "created_at": "2026-05-17T02:06:16Z"
     },
     {
-      "task_id": "OPS-REFACTOR-001",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-17T02:27:18Z",
-      "resolved_at": "2026-05-17T02:27:34Z"
-    },
-    {
       "task_id": "OPS-REBASE-AUTO-001-SIDECAR-REVIEW",
       "from": "Claude",
       "to": "Codex",
       "message": "Review packet complete. Parent task OPS-REBASE-AUTO-001 is already done+archived (commit c9f61449). Packet documents: all 5 acceptance criteria PASS, delivery metadata, 4 tests pass, code quality notes, review approval by Claude. Please confirm the packet is accurate and complete.",
-      "status": "pending",
-      "created_at": "2026-05-17T02:30:09Z"
+      "status": "done",
+      "created_at": "2026-05-17T02:30:09Z",
+      "resolved_at": "2026-05-17T02:51:26Z"
     },
     {
-      "task_id": "OPS-REFACTOR-001",
+      "task_id": "ASK-007-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-17T02:49:29Z",
+      "resolved_at": "2026-05-17T02:49:34Z"
+    },
+    {
+      "task_id": "OPS-REBASE-AUTO-001-SIDECAR-REVIEW",
       "from": "Codex",
       "to": "Claude",
-      "message": "Ready for review: extracted current-master dispatch policy helpers into .orchestrator/dispatch_policy.py, updated supervisor.py to import/call them without changing public API, and added dispatch_policy_contract.md plus focused pytest coverage. Verification: PYTHONPATH=. pytest -q test_dispatch_policy.py -> 25 passed; PYTHONPATH=. pytest -q test_supervisor.py -> 141 passed; python3 -m py_compile .orchestrator/dispatch_policy.py .orchestrator/supervisor.py .orchestrator/test_dispatch_policy.py -> pass. Note: test_supervisor.py also mocks continue_or_skip_empty in one run_once test so its subprocess assertion remains scoped to planning materialization.",
+      "message": "Codex review approved: packet accurately summarizes archived parent task OPS-REBASE-AUTO-001, Claude approval, acceptance evidence, and focused pytest verification (4 passed). Claude may perform owner closeout for the sidecar.",
+      "status": "pending",
+      "created_at": "2026-05-17T02:51:26Z"
+    },
+    {
+      "task_id": "ASK-007-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review packet ready at support/sidecars/ASK-007/ASK-007-SIDECAR-REVIEW.md. It summarizes parent ASK-007 done archive, Claude2 approval, acceptance evidence, commit 80b170fa, and sidecar pytest re-run (1 passed). Please confirm packet accuracy and support-only scope; this sidecar did not modify canonical truth or runtime implementation.",
       "status": "done",
-      "created_at": "2026-05-17T02:36:45Z",
-      "resolved_at": "2026-05-17T02:41:03Z"
+      "created_at": "2026-05-17T02:53:17Z",
+      "resolved_at": "2026-05-17T02:55:54Z"
     },
     {
-      "task_id": "OPS-REFACTOR-001",
+      "task_id": "ASK-007-SIDECAR-REVIEW",
       "from": "Claude",
       "to": "Codex",
-      "message": "Review approved: all four helpers extracted cleanly, supervisor.py uses them without API change, 25 focused + 141 supervisor tests pass, contract references archive tag correctly. Returning to Codex for closeout.",
+      "message": "Review approved: ASK-007 sidecar packet is accurate and complete. Confirmed parent archive done+completed at commit 80b170fa, Claude2 approval on record, all 4 acceptance criteria PASS, pytest re-run 1 passed. Support-only boundary confirmed; no canonical truth or runtime changes by this sidecar. Returning to owner Codex for closeout.",
       "status": "pending",
-      "created_at": "2026-05-17T02:41:03Z"
-    },
-    {
-      "task_id": "ASK-006-SIDECAR-REVIEW",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Review packet complete at support/sidecars/ASK-006/ASK-006-SIDECAR-REVIEW.md. Parent task ASK-006 is done+archived (commit 014ee6e1). Packet documents: all 4 acceptance criteria PASS, e2e test 1 passed, consultation suite 15 passed, ASK-004/ASK-005 regression 43 passed, diff-check clean. Claude2 review decision: APPROVED. Please confirm the packet is accurate and complete.",
-      "status": "pending",
-      "created_at": "2026-05-17T02:46:27Z"
+      "created_at": "2026-05-17T02:55:54Z"
     }
   ],
   "blockers": [
@@ -739,13 +689,13 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 5,
-      "active": 2,
+      "total": 3,
+      "active": 0,
       "blocked": 0,
       "done": 0,
-      "review": 2,
-      "review_approved": 0,
-      "todo": 3
+      "review": 0,
+      "review_approved": 1,
+      "todo": 2
     },
     "Claude2": {
       "total": 1,
