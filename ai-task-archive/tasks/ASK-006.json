@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "task_id": "ASK-006",
+  "archived_at": "2026-05-17T01:53:14Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASK-006",
+    "title": "Consult -> Committee -> Memo -> Review e2e test",
+    "summary_zh": "ASK-001..005 已落地 consult/committee flow，這個 task 寫一條 e2e integration test：ask session create -> committee invoke -> memo publish -> Management review queue 接到 handoff。獨立 test 檔。",
+    "phase": "Sprint 7 / EPIC-CONSULT-ADVANCED",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "ASK-001",
+      "ASK-002",
+      "ASK-003",
+      "ASK-004",
+      "ASK-005"
+    ],
+    "artifacts": [
+      "services/consultation/test_e2e_consult_review.py",
+      "services/consultation/e2e_fixtures.py"
+    ],
+    "acceptance": [
+      "test exercises POST /bff/agora/ask/sessions then committee invoke then memo publish then handoff queue arrival",
+      "test verifies SSE event 'consult_memo_published' is emitted with correct correlation_id",
+      "test uses pytest -q -x and exits 0",
+      "no other services/consultation files are modified"
+    ],
+    "next": "ASK-006 finalized after Claude2 approval. Task commit 014ee6e1 adds consult review e2e and BFF consult_memo_published handoff event. Verification: ASK-006 e2e 1 passed; ASK-004/ASK-005 regression 43 passed.",
+    "last_update": "2026-05-17T01:53:14Z",
+    "review_notes_zh": [
+      "ASK-006 驗證通過。e2e test 覆蓋完整流程：POST /bff/agora/ask/sessions → committee invoke → memo publish → management handoff queue。",
+      "SSE event consult_memo_published 正確攜帶 correlation_id、memo_id、session_id、handoff_id；handoff 驗證 handoffType=consult_memo_to_management_review、destination.app=management、destination.queue=consult_memo_review、payload 欄位齊全。",
+      "pytest -q -x services/consultation/test_e2e_consult_review.py => 1 passed；consultation suite => 15 passed；ASK-004/ASK-005 regression => 43 passed。",
+      "diff --check scoped files => clean；無額外 services/consultation 檔案被修改。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-17T01:53:14Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "014ee6e121eaa44e3d947774e2a25c5c08f23df8",
+      "commit_subject": "ASK-006: add consult review e2e",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "ASK-006",
+        "Reviewer": "Claude2",
+        "Wave": "2026-W20",
+        "Verified": "ASK-006 e2e 1 passed; ASK-004/ASK-005 regression 43 passed; git diff --cached --check clean"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 34,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASK-006",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review: added ASK-006 e2e fixture/test for ask session -> committee session -> memo publish -> management handoff queue, and BFF publish now emits consult_memo_published with correlation_id while preserving ask.memo.published. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/consultation/test_e2e_consult_review.py -q -x => 1 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_ask_004_memo_publish_contract.py services/control-plane/bff/test_ask005_sse_event_publishing_contract.py -q -x => 43 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/consultation -q -x => 14 passed; git diff --check scoped files => clean.",
+      "status": "done",
+      "created_at": "2026-05-16T23:56:11Z",
+      "resolved_at": "2026-05-17T01:27:31Z"
+    },
+    {
+      "task_id": "ASK-006",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Chair reassigned review from Codex2 to Claude2: Codex2 pause blocks this review and ASK-006 is on the current consultation path.",
+      "status": "done",
+      "created_at": "2026-05-17T01:27:31Z",
+      "resolved_at": "2026-05-17T01:43:48Z"
+    },
+    {
+      "task_id": "ASK-006",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved: all acceptance criteria met; returning to owner Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-17T01:43:48Z",
+      "resolved_at": "2026-05-17T01:53:15Z"
+    }
+  ],
+  "blockers": []
+}
