@@ -1,12 +1,17 @@
 {
   "algorithm": "ppo",
+  "annual_return": 1.197964,
   "bounded_epochs": 12,
   "framework_import_ready": false,
-  "max_action_prior": 0.960901,
-  "mean_exposure_proxy": 0.20469195,
-  "mean_reward_proxy": 0.00588276,
+  "max_action_prior": 0.974255,
+  "max_drawdown": 0.0,
+  "mean_exposure_proxy": 0.20450864,
+  "mean_reward_proxy": 0.0056406,
   "num_instruments": 5,
-  "num_steps": 45,
-  "reward_proxy_stddev": 0.00216365,
-  "sharpe": 43.1613
+  "num_steps": 87,
+  "portfolio_value_final": 1.31243725,
+  "portfolio_value_initial": 1.0,
+  "reward_proxy_stddev": 0.00207091,
+  "sharpe": 43.2379,
+  "total_training_steps": 1044
 }

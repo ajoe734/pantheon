@@ -427,6 +427,10 @@ class FinRLPPOBackend:
         exposure_trace: list[float] = []
         bounded_epochs = min(max(dataset.num_steps, 1), 12)
 
+        # Simulated portfolio value for annual_return / max_drawdown computation.
+        portfolio_value = 1.0
+        portfolio_trace: list[float] = [portfolio_value]
+
         for epoch in range(bounded_epochs):
             epoch_scale = 1.0 / float(epoch + 1)
             for obs in dataset.observations:
@@ -444,6 +448,10 @@ class FinRLPPOBackend:
                 for label, update in zip(dataset.action_labels, ordered_updates):
                     action_weights[label] = action_weights.get(label, 1.0) + epoch_scale * update
 
+                portfolio_delta = reward_proxy * exposure * epoch_scale
+                portfolio_value = max(1e-6, portfolio_value + portfolio_delta)
+                portfolio_trace.append(portfolio_value)
+
         total_weight = sum(action_weights.values()) or 1.0
         action_priors = {
             label: round(weight / total_weight, 6) for label, weight in action_weights.items()
@@ -453,6 +461,24 @@ class FinRLPPOBackend:
             sum((value - mean_reward) ** 2 for value in reward_trace) / max(len(reward_trace), 1)
         )
         sharpe = (mean_reward / (reward_std + 1e-9)) * math.sqrt(252)  # Annualized
+
+        # Derive annual_return and max_drawdown from portfolio_trace.
+        num_years = max(dataset.num_steps, 1) / 252.0
+        total_return = portfolio_trace[-1] - portfolio_trace[0]
+        if total_return > -1.0:
+            annual_return = (1.0 + total_return) ** (1.0 / max(num_years, 1e-6)) - 1.0
+        else:
+            annual_return = -0.99
+        portfolio_peak = portfolio_trace[0]
+        max_drawdown = 0.0
+        for pv in portfolio_trace:
+            if pv > portfolio_peak:
+                portfolio_peak = pv
+            drawdown = (portfolio_peak - pv) / max(portfolio_peak, 1e-9)
+            if drawdown > max_drawdown:
+                max_drawdown = drawdown
+
+        total_training_steps = bounded_epochs * dataset.num_steps
         payload = {
             "algorithm": config.algorithm,
             "action_priors": action_priors,
@@ -461,6 +487,7 @@ class FinRLPPOBackend:
             "lookback_window": dataset.lookback_window,
             "decision_focus": dataset.decision_focus,
             "bounded_epochs": bounded_epochs,
+            "total_training_steps": total_training_steps,
             "fit_mode": "bounded_offline_finrl_adapter",
         }
         payload["framework_import"] = "finrl"
@@ -468,15 +495,20 @@ class FinRLPPOBackend:
         payload["deferred_mode"] = "prep_only"
         metrics = {
             "num_steps": dataset.num_steps,
+            "total_training_steps": total_training_steps,
             "num_instruments": len(dataset.instruments),
             "mean_reward_proxy": round(mean_reward, 8),
             "reward_proxy_stddev": round(reward_std, 8),
             "sharpe": round(sharpe, 4),
+            "annual_return": round(annual_return, 6),
+            "max_drawdown": round(max_drawdown, 6),
             "mean_exposure_proxy": round(sum(exposure_trace) / len(exposure_trace), 8),
             "max_action_prior": max(action_priors.values()),
             "bounded_epochs": bounded_epochs,
             "framework_import_ready": package_ready,
             "algorithm": "ppo",
+            "portfolio_value_initial": round(portfolio_trace[0], 8),
+            "portfolio_value_final": round(portfolio_trace[-1], 8),
         }
         readiness_note = (
             "FinRL package metadata resolved; bounded offline PPO policy fit completed."
@@ -705,6 +737,7 @@ def _build_registry_entry(
             "path": storage_path,
         },
         "checksum": f"sha256:{_sha256_json(artifact_bundle)}",
+        "trained_policy_ref": storage_path,
         "producer_run_id": result.run_id,
         "evaluation_summary": copy.deepcopy(result.metrics),
         "metadata": {

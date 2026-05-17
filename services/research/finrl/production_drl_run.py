@@ -79,11 +79,11 @@ def main(output_dir: str | Path = DEFAULT_OUTPUT_DIR):
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    records = load_twse_data()
+    records = load_twse_data(periods=90)
     dataset_config = build_dataset_config(records)
     config = PolicyTrainingConfig(
         algorithm="ppo",
-        requested_by="Codex",
+        requested_by="Codex2",
         storage_path_template="research/finrl/offline/{strategy_id}/{version}/artifact.json",
     )
     result = run_finrl_workflow(dataset_config, backend=FinRLPPOBackend(), config=config)

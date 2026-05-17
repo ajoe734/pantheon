@@ -1,8 +1,8 @@
 {
   "artifact_family": "rl_policy",
-  "created_at": "2026-05-17T16:23:11Z",
-  "created_by": "Codex",
-  "dataset_checksum": "sha256:657a9d33f03a74e0784e7f6f9ad1812e9122b5b799a80f88933a4b1c18269b32",
+  "created_at": "2026-05-17T18:59:25Z",
+  "created_by": "Codex2",
+  "dataset_checksum": "sha256:b4bb73907b08561dd8a3d7d4f3dbecd340e9b4bc5aacfc9621e2f3434e2bf04a",
   "dataset_schema": {
     "min_instruments": 2,
     "min_lookback": 3,
@@ -37,7 +37,7 @@
     ],
     "lookback_window": 3,
     "num_instruments": 5,
-    "num_steps": 45,
+    "num_steps": 87,
     "observation_dim": 7,
     "position_ratio": 0.2,
     "source_dataset_refs": [
@@ -70,15 +70,20 @@
   },
   "evaluation_summary": {
     "algorithm": "ppo",
+    "annual_return": 1.197964,
     "bounded_epochs": 12,
     "framework_import_ready": false,
-    "max_action_prior": 0.960901,
-    "mean_exposure_proxy": 0.20469195,
-    "mean_reward_proxy": 0.00588276,
+    "max_action_prior": 0.974255,
+    "max_drawdown": 0.0,
+    "mean_exposure_proxy": 0.20450864,
+    "mean_reward_proxy": 0.0056406,
     "num_instruments": 5,
-    "num_steps": 45,
-    "reward_proxy_stddev": 0.00216365,
-    "sharpe": 43.1613
+    "num_steps": 87,
+    "portfolio_value_final": 1.31243725,
+    "portfolio_value_initial": 1.0,
+    "reward_proxy_stddev": 0.00207091,
+    "sharpe": 43.2379,
+    "total_training_steps": 1044
   },
   "framework": "finrl",
   "framework_version": "0.3.7",
@@ -110,11 +115,11 @@
       "sell_large"
     ],
     "action_priors": {
-      "buy_large": 0.013809,
-      "buy_small": 0.011504,
-      "hold": 0.960901,
-      "sell_large": 0.006893,
-      "sell_small": 0.006893
+      "buy_large": 0.01037,
+      "buy_small": 0.008122,
+      "hold": 0.974255,
+      "sell_large": 0.003626,
+      "sell_small": 0.003626
     },
     "algorithm": "ppo",
     "bounded_epochs": 12,
@@ -124,7 +129,8 @@
     "framework_import": "finrl",
     "framework_version": "0.3.7",
     "lookback_window": 3,
-    "observation_dim": 7
+    "observation_dim": 7,
+    "total_training_steps": 1044
   },
   "registry_hints": {
     "artifact_state": "draft",
@@ -140,7 +146,7 @@
     "algorithm": "ppo",
     "gamma": 0.99,
     "learning_rate": 0.0003,
-    "requested_by": "Codex",
+    "requested_by": "Codex2",
     "reward_scale": 1.0,
     "risk_aversion": 0.25,
     "seed": 42,
