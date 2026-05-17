@@ -6,6 +6,7 @@ reopen the RL approval gate or authorize production training.
 
 from .finrl_adapter import (
     DeferredPrepGate,
+    FinRLDQNBackend,
     FinRLDeferredPrepError,
     FinRLPPOBackend,
     GovernedFinRLPolicyAdapter,
@@ -17,6 +18,7 @@ from .finrl_adapter import (
 
 __all__ = [
     "DeferredPrepGate",
+    "FinRLDQNBackend",
     "FinRLDeferredPrepError",
     "FinRLPPOBackend",
     "GovernedFinRLPolicyAdapter",

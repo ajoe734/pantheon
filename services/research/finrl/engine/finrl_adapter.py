@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import importlib.metadata
 import json
 import math
 import os
@@ -18,8 +19,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping, Protocol, Sequence
 
-FINRL_VERSION_PIN = "0.3.6"
+FINRL_VERSION_PIN = "0.3.7"
 PRIMARY_BACKEND = "finrl_ppo"
+DQN_BACKEND = "finrl_dqn"
 STUB_BACKEND = "stub_finrl"
 DEFAULT_ACTION_LABELS = (
     "hold",
@@ -59,6 +61,13 @@ def _prepared_dataset_payload(dataset: "PreparedFinRLDataset") -> dict[str, Any]
 
 def prepared_finrl_dataset_checksum(dataset: "PreparedFinRLDataset") -> str:
     return f"sha256:{_sha256_json(_prepared_dataset_payload(dataset))}"
+
+
+def _finrl_package_info() -> tuple[str, bool]:
+    try:
+        return importlib.metadata.version("FinRL"), True
+    except importlib.metadata.PackageNotFoundError:
+        return FINRL_VERSION_PIN, False
 
 
 class FinRLDeferredPrepError(ValueError):
@@ -369,6 +378,7 @@ class StubFinRLBackend:
         reward_std = math.sqrt(
             sum((value - mean_reward) ** 2 for value in reward_trace) / max(len(reward_trace), 1)
         )
+        sharpe = (mean_reward / (reward_std + 1e-9)) * math.sqrt(252)  # Annualized
         policy_payload = {
             "algorithm": config.algorithm,
             "action_priors": action_priors,
@@ -382,6 +392,7 @@ class StubFinRLBackend:
             "num_instruments": len(dataset.instruments),
             "mean_reward_proxy": round(mean_reward, 8),
             "reward_proxy_stddev": round(reward_std, 8),
+            "sharpe": round(sharpe, 4),
             "buy_bias_total": round(buy_bias_total, 8),
             "sell_bias_total": round(sell_bias_total, 8),
             "max_action_prior": max(action_priors.values()),
@@ -409,13 +420,7 @@ class FinRLPPOBackend:
     def train(
         self, dataset: PreparedFinRLDataset, config: PolicyTrainingConfig
     ) -> PolicyTrainingResult:
-        try:
-            import finrl  # type: ignore
-        except ImportError as exc:
-            raise FinRLDeferredPrepError(
-                "FinRL backend requested but package import failed; install services/research/finrl requirements first"
-            ) from exc
-
+        framework_version, package_ready = _finrl_package_info()
         run_id = f"finrl-ppo-{uuid.uuid4().hex[:12]}"
         action_weights = {label: 1.0 for label in dataset.action_labels}
         reward_trace: list[float] = []
@@ -447,6 +452,7 @@ class FinRLPPOBackend:
         reward_std = math.sqrt(
             sum((value - mean_reward) ** 2 for value in reward_trace) / max(len(reward_trace), 1)
         )
+        sharpe = (mean_reward / (reward_std + 1e-9)) * math.sqrt(252)  # Annualized
         payload = {
             "algorithm": config.algorithm,
             "action_priors": action_priors,
@@ -457,26 +463,118 @@ class FinRLPPOBackend:
             "bounded_epochs": bounded_epochs,
             "fit_mode": "bounded_offline_finrl_adapter",
         }
-        payload["framework_import"] = getattr(finrl, "__name__", "finrl")
-        payload["framework_version"] = getattr(finrl, "__version__", FINRL_VERSION_PIN)
+        payload["framework_import"] = "finrl"
+        payload["framework_version"] = framework_version
         payload["deferred_mode"] = "prep_only"
         metrics = {
             "num_steps": dataset.num_steps,
             "num_instruments": len(dataset.instruments),
             "mean_reward_proxy": round(mean_reward, 8),
             "reward_proxy_stddev": round(reward_std, 8),
+            "sharpe": round(sharpe, 4),
             "mean_exposure_proxy": round(sum(exposure_trace) / len(exposure_trace), 8),
             "max_action_prior": max(action_priors.values()),
             "bounded_epochs": bounded_epochs,
-            "framework_import_ready": True,
+            "framework_import_ready": package_ready,
+            "algorithm": "ppo",
         }
+        readiness_note = (
+            "FinRL package metadata resolved; bounded offline PPO policy fit completed."
+            if package_ready
+            else "FinRL package is not installed locally; bounded offline PPO skeleton fit completed."
+        )
         return PolicyTrainingResult(
             backend=PRIMARY_BACKEND,
             run_id=run_id,
             policy_payload=payload,
             metrics=metrics,
             notes=(
-                "FinRL import path resolved; bounded offline policy fit completed without stub delegation.",
+                readiness_note,
+                "Production/live FinRL execution remains blocked until the RL approval gate reopens.",
+            ),
+        )
+
+
+class FinRLDQNBackend:
+    """Bounded offline FinRL DQN backend for activation-ready prep."""
+
+    def train(
+        self, dataset: PreparedFinRLDataset, config: PolicyTrainingConfig
+    ) -> PolicyTrainingResult:
+        framework_version, package_ready = _finrl_package_info()
+        run_id = f"finrl-dqn-{uuid.uuid4().hex[:12]}"
+        q_values = {label: 0.0 for label in dataset.action_labels}
+        reward_trace: list[float] = []
+        bounded_epochs = min(max(dataset.num_steps, 1), 10)
+        learning_rate = min(max(config.learning_rate * 100.0, 0.01), 0.2)
+
+        for _epoch in range(bounded_epochs):
+            for obs in dataset.observations:
+                momentum_1, momentum_window, volatility, volume_change, position_ratio, cash_ratio, dispersion = obs
+                risk_penalty = config.risk_aversion * (volatility + dispersion)
+                reward_proxy = (
+                    momentum_window
+                    + 0.2 * momentum_1
+                    + 0.05 * volume_change
+                    - risk_penalty
+                ) * config.reward_scale
+                reward_trace.append(reward_proxy)
+
+                if reward_proxy > volatility and cash_ratio > 0.05:
+                    action_idx = 3 if len(dataset.action_labels) > 3 else 1
+                elif reward_proxy < -volatility and position_ratio > 0.05:
+                    action_idx = 4 if len(dataset.action_labels) > 4 else 2
+                else:
+                    action_idx = 0
+                label = dataset.action_labels[action_idx]
+                future_value = max(q_values.values()) if q_values else 0.0
+                target = reward_proxy + config.gamma * future_value
+                q_values[label] = q_values.get(label, 0.0) + learning_rate * (
+                    target - q_values.get(label, 0.0)
+                )
+
+        mean_reward = sum(reward_trace) / len(reward_trace)
+        reward_std = math.sqrt(
+            sum((value - mean_reward) ** 2 for value in reward_trace) / max(len(reward_trace), 1)
+        )
+        sharpe = (mean_reward / (reward_std + 1e-9)) * math.sqrt(252)  # Annualized
+        rounded_q_values = {label: round(value, 8) for label, value in q_values.items()}
+        policy_payload = {
+            "algorithm": "dqn",
+            "q_values": rounded_q_values,
+            "action_labels": list(dataset.action_labels),
+            "observation_dim": dataset.observation_dim,
+            "lookback_window": dataset.lookback_window,
+            "decision_focus": dataset.decision_focus,
+            "bounded_epochs": bounded_epochs,
+            "fit_mode": "bounded_offline_finrl_adapter",
+            "framework_import": "finrl",
+            "framework_version": framework_version,
+            "deferred_mode": "prep_only",
+        }
+        metrics = {
+            "num_steps": dataset.num_steps,
+            "num_instruments": len(dataset.instruments),
+            "mean_reward_proxy": round(mean_reward, 8),
+            "reward_proxy_stddev": round(reward_std, 8),
+            "sharpe": round(sharpe, 4),
+            "max_q_value": max(rounded_q_values.values()) if rounded_q_values else 0.0,
+            "bounded_epochs": bounded_epochs,
+            "framework_import_ready": package_ready,
+            "algorithm": "dqn",
+        }
+        readiness_note = (
+            "FinRL package metadata resolved; bounded offline DQN value fit completed."
+            if package_ready
+            else "FinRL package is not installed locally; bounded offline DQN skeleton fit completed."
+        )
+        return PolicyTrainingResult(
+            backend=DQN_BACKEND,
+            run_id=run_id,
+            policy_payload=policy_payload,
+            metrics=metrics,
+            notes=(
+                readiness_note,
                 "Production/live FinRL execution remains blocked until the RL approval gate reopens.",
             ),
         )
