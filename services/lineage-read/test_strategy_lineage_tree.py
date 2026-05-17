@@ -310,3 +310,33 @@ def test_load_corpus_populates_store():
     plan = tree["experiment_runs"][0]["candidate_artifacts"][0]["deployment_plans"][0]
     assert plan["id"] == "plan-c"
     assert plan["runtime_bindings"][0]["id"] == "rb-c"
+
+
+def test_load_corpus_prefers_domain_id_over_generic_row_id():
+    corpus = {
+        "node_sets": {
+            "strategy_specs": [
+                {
+                    "id": "row-123",
+                    "strategy_id": "strat-domain-id",
+                    "created_at": "2026-01-01T00:00:00Z",
+                }
+            ],
+            "experiment_runs": [
+                {
+                    "id": "row-456",
+                    "run_id": "run-domain-id",
+                    "strategy_id": "strat-domain-id",
+                    "created_at": "2026-01-02T00:00:00Z",
+                }
+            ],
+        }
+    }
+    store = StrategyLineageStore()
+    store.load_corpus(corpus)
+
+    result = get_tree("strat-domain-id", depth=2, store=store)
+
+    assert result["status"] == 200
+    assert result["tree"]["id"] == "strat-domain-id"
+    assert result["tree"]["experiment_runs"][0]["id"] == "run-domain-id"

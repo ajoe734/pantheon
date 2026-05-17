@@ -40,8 +40,9 @@ class StrategyLineageStore:
     def add_node(self, node_type: str, node_id: str, data: Dict[str, Any]) -> None:
         if node_type not in self._nodes:
             self._nodes[node_type] = {}
-        # Ensure canonical "id" field is always present
-        self._nodes[node_type][node_id] = {"id": node_id, **data}
+        # Preserve the canonical node id selected by the caller/loader even
+        # when a source record also carries a generic row-level "id".
+        self._nodes[node_type][node_id] = {**data, "id": node_id}
 
     def get_node(self, node_type: str, node_id: str) -> Optional[Dict[str, Any]]:
         return self._nodes.get(node_type, {}).get(node_id)

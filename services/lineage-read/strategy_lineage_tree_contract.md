@@ -113,6 +113,10 @@ The `StrategyLineageStore` class is a standalone in-memory indexed store.
 | `find_by_field(node_type, field, value)` | Find all nodes of a type where `data[field] == value` |
 | `load_corpus(corpus)` | Bulk-load from LIN-001A-compatible corpus dict |
 
+`add_node` preserves the canonical `node_id` supplied by the caller/loader as
+the output `id`, even when the source payload also contains a generic row-level
+`id` field.
+
 The corpus format expected by `load_corpus` uses `node_sets` with keys
 `source_records`, `strategy_specs`, `experiment_runs`, `candidate_artifacts`,
 `deployment_plans`, `runtime_bindings`, matching the LIN-001A benchmark corpus
@@ -133,7 +137,7 @@ structure.
 
 ```
 pytest services/lineage-read/test_strategy_lineage_tree.py -q
-12 passed in 1.26s
+13 passed
 ```
 
 Test coverage:
@@ -145,3 +149,4 @@ Test coverage:
 - multiple experiment runs under one strategy_spec
 - missing source_record does not raise
 - `load_corpus` bulk-load round-trip
+- `load_corpus` preserves domain IDs when generic row IDs are also present
