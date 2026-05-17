@@ -69,6 +69,24 @@ Auto workers run without a human-attended terminal. Forbidden:
 - Raw `git add .` or `git add -A` — `check_commit_scope.py` will reject
   any commit whose staged files leak outside the declared task scope.
 
+### Preemption Anchor Rule
+
+Before a background worker is reassigned, suspended, or dispatched to a
+different task, any non-trivial design diff must be made durable:
+
+1. stay on the current `task/<TASK-ID>` branch
+2. write a narrow commit message that says which layer is owned and what
+   boundary is intentionally left alone
+3. run `worker_commit.py` with explicit `--scope` and the private
+   `--index-file`
+4. only then allow reassignment or task switching
+
+This rule is mandatory for docs, `.orchestrator/skills/*`,
+config/workflow files, and supervisor dispatch or routing contact
+points. These surfaces go through task PRs, not session-only diffs. If a
+remaining diff is genuinely disposable, record that explicitly in the
+handoff note; otherwise, do not rely on stash as the preservation path.
+
 ## Shared-Index Footgun (Why worker_commit.py is mandatory)
 
 All workers share one worktree, hence one `.git/index`. If a previous

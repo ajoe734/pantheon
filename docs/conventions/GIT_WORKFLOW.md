@@ -126,6 +126,44 @@ A `task/<TASK-ID>` PR should reach merge within 24 h. A task PR that
 lingers > 24 h with no merge is a process violation and chair-review
 surfaces it as a Finding.
 
+### 2.5 Preemption anchors
+
+Uncommitted worktree diffs are not durable collaboration state. Before a
+worker is reassigned, interrupted, or asked to switch tasks, any
+non-trivial diff must either be committed on its `task/<TASK-ID>` branch
+or explicitly marked disposable in the handoff / activity note.
+
+High-fragility surfaces must not live as session-only work:
+
+- docs that change canonical process or product truth
+- `.orchestrator/skills/*` and other skill instructions
+- config and workflow files
+- supervisor dispatch / routing contact points, especially
+  `.orchestrator/supervisor.py`
+
+For these surfaces, open a task branch first and create an anchor commit
+as soon as the design intent is clear, even if a follow-up commit will
+polish the wording or finish tests. The anchor commit must still obey
+the normal subject, trailer, scope, and generated-file gates. Its commit
+message should name the owned layer and any boundary it intentionally
+does not change, for example:
+
+```text
+<TASK-ID>: anchor supervisor routing boundary
+
+Touches .orchestrator/supervisor.py dispatch-slot routing only.
+Does not change chair-review reassignment semantics.
+
+LLM-Agent: Codex
+Task-ID: <TASK-ID>
+Reviewer: Claude
+```
+
+If `dev` advances before the work is ready to merge, rebase or merge the
+task branch as a committed patch. `git stash pop` is a last-resort
+recovery tool for disposable local state, not the normal path for
+preserving design work across mainline movement.
+
 ---
 
 ## 3. Nightly Publish
