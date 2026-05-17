@@ -83,3 +83,69 @@ When reviewing the board, explicitly call out:
 - finalization that skipped required review notes, evidence, acceptance packet, or task-specific docs.
 
 Do not directly mark tasks `done`. Recommend owner re-dispatch, a closeout follow-up, or approve the scoped normal push when it is safe.
+
+## Wave / Publish Oversight
+
+Operational source of truth for the multi-branch workflow lives in
+`docs/conventions/GIT_WORKFLOW.md`. The chair holds these specific
+responsibilities (no other actor will run them):
+
+1. **Wave-merge** worker pushes into the current wave. Trigger
+   `scripts/git/wave_merge_worker.sh <Agent>` when `origin/worker/<name>`
+   is ahead of `origin/wave/<current>` after a task closeout. Each
+   wave-merge commit must start with `wave-merge:`; it is exempt from
+   the trailer hook.
+
+2. **Wave cadence enforcement.**
+   - Default cycle: open Monday 09:00, freeze Friday 12:00, close Friday
+     17:00 (ISO week). Wave id is `<YYYY>-W<NN>`.
+   - A wave open for > 7 days, or a `worker/<name>` ahead of `wave/<id>`
+     by > 1 cycle without a wave-merge, is a process violation. Surface
+     it as a Finding and recommend a wave_close.sh run.
+   - To open the next wave use `scripts/git/wave_open.sh <YYYY>-W<NN>`
+     (this also `--force-with-lease` resets every `worker/*` to the new
+     wave tip, intentional and documented).
+   - To close: `scripts/git/wave_close.sh <YYYY>-W<NN>` cuts
+     `publish/v<YYYY>.<WW>.0`, pushes `release/v…` and
+     `archive/wave-…` tags, deletes the remote wave branch. After it
+     succeeds, also run `scripts/ai-status.sh wave close <id>` to mark
+     the wave state.
+
+3. **Publish snapshots are immutable.** Never push commits onto an
+   existing `publish/v…` branch. To patch, cut a new `publish/v….P+1`
+   from the patched dev/master via hotfix flow.
+
+4. **Promote PRs are auto-handled.** `publish-promote.yml` runs hourly
+   and on every `release/v*` push. It opens `promote/<v…>` PRs into
+   `master` with `--auto --merge`; branch protection holds them until
+   `Commit trailers`, `Runtime mirror guard`, and `Smoke acceptance`
+   status checks turn green. Do NOT manually merge a promote PR before
+   those checks pass — the chair only intervenes if the PR is stuck
+   (failing CI, regression label, soak overdue), in which case put it
+   in `blocked_by` and recommend a follow-up task.
+
+5. **Hotfix path.** Cut `hotfix/<YYYY>-W<NN>-<topic>` from `origin/master`,
+   commit with `Hotfix: yes` trailer, open a PR into master (branch
+   protection enforces PR for master). Once merged, also direct-merge
+   the same `hotfix/<...>` into `dev`. Bump publish patch via a fresh
+   `publish/v….P+1` cut from master.
+
+6. **Branch retirement.** Tag
+   `archive/<branch>-<YYYY-MM-DD>` then `git push origin --delete
+   <branch>`. Refuse to delete any branch that is still ahead of `dev`
+   without explicit chair sign-off in the review markdown.
+
+## Recommended Repair Patterns
+
+When you spot one of these conditions, propose the matching action in
+`recommended_focus` or a new follow-up task. Do NOT execute these
+yourself; chair role is operational review, not implementation.
+
+| Condition                                          | Recommendation                                    |
+|----------------------------------------------------|---------------------------------------------------|
+| `worker/<name>` ahead of `wave/<id>` no wave-merge | Recommend `wave_merge_worker.sh <Agent>`          |
+| Open wave > 7 days                                 | Recommend `wave_close.sh <id>`                    |
+| No open wave but `ai-status.sh wave status` says open | Recommend `ai-status.sh wave close <id>` sync  |
+| Stale `promote/<v…>` PR (CI failing > 3 cycles)     | Recommend creating a follow-up triage task        |
+| `release/v…` aged ≥ soak_days but no promote PR     | Recommend manual `publish-promote.yml workflow_dispatch` |
+| Old branch ahead of `dev` not in active workflow    | Recommend explicit archive+delete vs integration  |
