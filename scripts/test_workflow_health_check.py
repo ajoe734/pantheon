@@ -58,6 +58,8 @@ class TaskPrStaleTests(unittest.TestCase):
 
         self.assertEqual(len(findings), 1)
         self.assertEqual(calls[0][0], "/repos/ajoe734/pantheon/pulls")
+        self.assertIn("--method", calls[0])
+        self.assertEqual(calls[0][calls[0].index("--method") + 1], "GET")
         self.assertIn("--paginate", calls[0])
         assert_finding_shape(self, findings[0], "task_pr_stale")
         self.assertEqual(findings[0]["evidence"]["number"], 101)

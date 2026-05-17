@@ -148,6 +148,8 @@ def gh_list_open_pull_requests(
     payload = gh(
         [
             f"/repos/{repo}/pulls",
+            "--method",
+            "GET",
             "--paginate",
             "-f",
             "state=open",
