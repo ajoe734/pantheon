@@ -4,7 +4,7 @@ import {
   logicalAgents,
   planningHighSignalTypes,
   workerStatusIcon,
-} from "./dashboard-config.js?v=20260513-claim";
+} from "./dashboard-config.js?v=20260517-audit";
 import {
   buildTruthMismatches,
   actorLabel,
@@ -29,7 +29,7 @@ import {
   titleCase,
   truncate,
   workerLifecycleBadge,
-} from "./dashboard-core.js?v=20260513-claim";
+} from "./dashboard-core.js?v=20260517-audit";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -118,23 +118,28 @@ export function renderWorkload(status, orchState = null) {
     const providerKey = normalizedProviderKey(name);
     const pauseEntry = pauseMap.get(providerKey);
     const agentBlocked = agentBlockedMap.get(providerKey) === "blocked";
-    const paused = Boolean(pauseEntry) || agentBlocked;
+    const providerPaused = Boolean(pauseEntry);
+    const impaired = providerPaused || agentBlocked;
     const pauseReason = pauseEntry
       ? summarizePausedReason(pauseEntry.summary || pauseEntry.reason, pauseEntry.provider)
       : null;
-    const pauseLabel = pauseReason?.kind === "quota" ? "Quota 暫停" : (paused ? "暫停派工" : "");
+    const pauseLabel = providerPaused
+      ? (pauseReason?.kind === "quota" ? "Quota 暫停" : "暫停派工")
+      : agentBlocked
+        ? "任務阻塞"
+        : "";
     const pauseHint = pauseEntry?.blocked_until ? ` (until ${formatTime(pauseEntry.blocked_until)})` : "";
     const card = document.createElement("article");
-    card.className = `workload-card${paused ? " workload-card-paused" : ""}`;
+    card.className = `workload-card${impaired ? " workload-card-paused" : ""}`;
     card.innerHTML = `
       <div class="lane-head">
         <strong>${name}</strong>
-        <span class="status-pill ${paused ? "status-blocked" : ""}">${paused ? `${pauseLabel}${pauseHint}` : `目標 ${target}%`}</span>
+        <span class="status-pill ${impaired ? "status-blocked" : ""}">${impaired ? `${pauseLabel}${pauseHint}` : `目標 ${target}%`}</span>
       </div>
       <div class="workload-bar"><div class="workload-fill" style="width:${fill}%"></div></div>
       <div class="lane-meta">
         <span class="chip">總數 ${summary.total}</span>
-        <span class="chip">活躍 ${paused ? `${summary.active} (暫停)` : summary.active}</span>
+        <span class="chip">活躍 ${providerPaused ? `${summary.active} (暫停)` : agentBlocked ? `${summary.active} (阻塞)` : summary.active}</span>
         <span class="chip">阻塞 ${summary.blocked}</span>
         <span class="chip">完成 ${summary.done}</span>
       </div>
@@ -1974,12 +1979,11 @@ export function renderProgressBreakdown(status, planningState, dashboardBundle =
 
   const localTasks = status.tasks || [];
   const localDone = localTasks.filter((t) => String(t.status || "").toLowerCase() === "done").length;
-  const currentWaveTotal = proposalStats.total > 0 ? proposalStats.total : localTasks.length;
-  const currentWaveDone = proposalStats.total > 0 ? proposalStats.done : localDone;
-  const executionPercent = currentWaveTotal ? Math.round((currentWaveDone / currentWaveTotal) * 100) : 0;
-  const executionNote = proposalStats.total > 0
-    ? `${currentWaveDone}/${currentWaveTotal} 本輪 planning 切片完成 · 當前看板 ${localDone}/${localTasks.length} done`
-    : `${currentWaveDone}/${currentWaveTotal} 當前看板正式完成`;
+  const localOpen = localTasks.filter((t) => String(t.status || "").toLowerCase() !== "done").length;
+  const executionPercent = localTasks.length ? Math.round((localDone / localTasks.length) * 100) : 0;
+  const executionNote = localTasks.length
+    ? `${localDone}/${localTasks.length} 當前看板完成 · open ${localOpen}`
+    : "目前 active board 沒有任務";
 
   const items = [
     {
@@ -1995,7 +1999,7 @@ export function renderProgressBreakdown(status, planningState, dashboardBundle =
       tone: proposalStats.total && proposalStats.materialized < proposalStats.total ? "status-review" : "status-ready",
     },
     {
-      label: "Execution 完成度",
+      label: "當前看板完成度",
       value: `${executionPercent}%`,
       note: executionNote,
       tone: executionCounts.blocked ? "status-review" : "status-ready",

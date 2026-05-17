@@ -4,7 +4,7 @@ import {
   laneLabelMap,
   scheduleOpenTaskStatuses,
   statusLabelMap,
-} from "./dashboard-config.js?v=20260513-claim";
+} from "./dashboard-config.js?v=20260517-audit";
 
 export const DISPLAY_TIME_ZONE = "Asia/Taipei";
 export const DISPLAY_TIME_ZONE_LABEL = "台灣時間 (UTC+8)";
@@ -423,7 +423,8 @@ export function normalizeQueueEvents(orchState) {
         task_id: event?.task_id || worker.task_id || null,
         agent_id: event?.agent_id || worker.agent_id || null,
         provider: event?.provider || worker.provider || worker.agent_id || null,
-        reason: event?.reason || worker.reason || worker.status || null,
+        reason: event?.reason || worker.reason || worker.request_snapshot?.reason || worker.status || null,
+        metadata: event?.metadata || worker.metadata || worker.request_snapshot?.metadata || null,
         last_event_at: event?.last_event_at || event?.processed_at || worker.last_event_at || event?.last_attempt_at || null,
       };
     });
@@ -476,9 +477,13 @@ function runtimeDispatchMode(payload) {
   if (metadata?.coordination && typeof metadata.coordination === "object" && Object.keys(metadata.coordination).length) {
     return "coordination";
   }
+  if (metadata?.chair && typeof metadata.chair === "object" && Object.keys(metadata.chair).length) {
+    return "chair_review";
+  }
   const reason = String(payload?.reason || requestSnapshot.reason || "").trim();
   if (reason.startsWith("discussion_planning_")) return "discussion_planning";
   if (reason.startsWith("coordination:")) return "coordination";
+  if (reason.startsWith("chair_review:")) return "chair_review";
   return "execution";
 }
 
@@ -493,6 +498,12 @@ export function buildTruthMismatches(status, orchState, approvalQueue = null) {
   const workers = normalizeWorkerRecords(orchState, status);
   const queueEvents = normalizeDispatchQueue(orchState, status);
   const approvals = approvalQueue?.pending || [];
+  const pendingApprovalTaskIds = new Set(
+    approvals.map((approval) => String(approval?.task_id || "").trim()).filter(Boolean)
+  );
+  const pendingApprovalRunIds = new Set(
+    approvals.map((approval) => String(approval?.worker_run_id || "").trim()).filter(Boolean)
+  );
   const liveWorkers = workers.filter((worker) => ["running", "pending"].includes(worker.bucket));
   const liveWorkersByTask = new Map();
   const mismatches = [];
@@ -505,6 +516,30 @@ export function buildTruthMismatches(status, orchState, approvalQueue = null) {
     mismatches.push(payload);
   };
 
+  const workerMatchesExpectedActor = (worker, expectedActor) => {
+    const expected = normalizedActorName(expectedActor);
+    const actual = normalizedActorName(agentLabel(worker.logical_agent_id));
+    return Boolean(expected && actual && expected === actual);
+  };
+
+  const relatedLiveWorkerCoversTask = (task) => {
+    const expectedActor = expectedTaskActor(task);
+    if (!expectedActor) return false;
+    const taskId = String(task?.id || "").trim();
+    if (!taskId) return false;
+    const parentId = String(task?.helper_parent || "").trim();
+    if (parentId) {
+      const parentWorkers = liveWorkersByTask.get(parentId) || [];
+      if (parentWorkers.some((worker) => workerMatchesExpectedActor(worker, expectedActor))) return true;
+    }
+    for (const [relatedTaskId, relatedTask] of taskMap.entries()) {
+      if (String(relatedTask?.helper_parent || "").trim() !== taskId) continue;
+      const relatedWorkers = liveWorkersByTask.get(relatedTaskId) || [];
+      if (relatedWorkers.some((worker) => workerMatchesExpectedActor(worker, expectedActor))) return true;
+    }
+    return false;
+  };
+
   for (const worker of liveWorkers) {
     if (worker.task_id) {
       if (!liveWorkersByTask.has(worker.task_id)) liveWorkersByTask.set(worker.task_id, []);
@@ -512,6 +547,9 @@ export function buildTruthMismatches(status, orchState, approvalQueue = null) {
     }
 
     if (!worker.task_id) {
+      if (runtimeDispatchMode(worker) === "chair_review") {
+        continue;
+      }
       pushMismatch({
         id: `worker-without-task:${worker.run_id}`,
         type: "worker_without_task",
@@ -526,7 +564,7 @@ export function buildTruthMismatches(status, orchState, approvalQueue = null) {
 
     const task = taskMap.get(worker.task_id);
     if (!task) {
-      if (["discussion_planning", "coordination"].includes(runtimeDispatchMode(worker))) {
+      if (["discussion_planning", "coordination", "chair_review"].includes(runtimeDispatchMode(worker))) {
         continue;
       }
       pushMismatch({
@@ -592,7 +630,13 @@ export function buildTruthMismatches(status, orchState, approvalQueue = null) {
   for (const task of status?.tasks || []) {
     const taskStatus = String(task.status || "").toLowerCase();
     const live = liveWorkersByTask.get(task.id) || [];
+    if (pendingApprovalTaskIds.has(String(task.id || "").trim())) {
+      continue;
+    }
     if (taskStatus === "in_progress" && live.length === 0) {
+      if (relatedLiveWorkerCoversTask(task)) {
+        continue;
+      }
       pushMismatch({
         id: `active-task-without-worker:${task.id}`,
         type: "active_task_without_worker",
@@ -608,7 +652,13 @@ export function buildTruthMismatches(status, orchState, approvalQueue = null) {
 
   for (const event of queueEvents) {
     const hasLiveWorker = liveWorkers.some((worker) => worker.queue_event_id === event.id);
-    if (["discussion_planning", "coordination"].includes(runtimeDispatchMode(event))) {
+    if (["discussion_planning", "coordination", "chair_review"].includes(runtimeDispatchMode(event))) {
+      continue;
+    }
+    if (
+      pendingApprovalRunIds.has(String(event.run_id || "").trim())
+      || pendingApprovalTaskIds.has(String(event.task_id || "").trim())
+    ) {
       continue;
     }
     if (["started", "manual_pending"].includes(String(event.status || "").toLowerCase()) && !hasLiveWorker) {
