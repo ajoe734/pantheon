@@ -391,6 +391,50 @@ class SidecarTaskTests(unittest.TestCase):
         self.assertEqual(title, "[Sidecar] [Auto] [Parent APP-001] Prepare APP-001 BFF handoff packet")
 
 
+class RuntimeWorkerLivenessTests(unittest.TestCase):
+    def test_pid_is_alive_rejects_zombie_processes(self) -> None:
+        with mock.patch.object(ai_status, "proc_pid_state", return_value="Z"):
+            self.assertFalse(ai_status.pid_is_alive(1234))
+
+    def test_normalize_runtime_workers_marks_zombie_running_worker_stale(self) -> None:
+        state = {
+            "tasks": [
+                {
+                    "id": "TASK-001",
+                    "title": "Review stale runtime",
+                    "summary_zh": "確認 zombie worker 不會被 dashboard 當成 live。",
+                    "owner": "Codex",
+                    "reviewer": "Gemini2",
+                    "status": "review_approved",
+                    "depends_on": [],
+                    "next": "Owner finalize",
+                    "last_update": "2026-05-17T11:00:00Z",
+                }
+            ]
+        }
+        orchestrator_state = {
+            "workers": {
+                "gemini2-run": {
+                    "task_id": "TASK-001",
+                    "provider": "gemini2",
+                    "logical_agent_id": "gemini2",
+                    "status": "running",
+                    "pid": 1234,
+                    "last_event_at": "2026-05-17T11:03:15Z",
+                    "request_snapshot": {"reason": "review_ready_dispatch"},
+                }
+            }
+        }
+
+        with mock.patch.object(ai_status, "proc_pid_state", return_value="Z"):
+            workers = ai_status.normalize_runtime_workers(state, orchestrator_state)
+
+        self.assertEqual(workers[0]["bucket"], "stale")
+        self.assertFalse(workers[0]["is_live_runtime"])
+        self.assertFalse(workers[0]["pid_alive"])
+        self.assertEqual(workers[0]["pid_state"], "Z")
+
+
 class PortableStateRenderingTests(unittest.TestCase):
     def test_default_canonical_document_layers_exclude_review_and_session_records(self) -> None:
         layers = ai_status.default_canonical_document_layers()

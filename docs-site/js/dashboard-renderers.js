@@ -2596,6 +2596,7 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
     const running = pw.filter((w) => w.bucket === "running").length;
     const waiting = pw.filter((w) => w.bucket === "pending").length;
     const transition = pw.filter((w) => w.bucket === "transition").length;
+    const stale = pw.filter((w) => w.bucket === "stale").length;
     const failed = pw.filter((w) => w.status === "failed").length;
     const completed = pw.filter((w) => w.bucket === "completed").length;
     const agent = agentStateMap.get(agentId);
@@ -2617,6 +2618,7 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
         <span class="chip">執行中 ${running}</span>
         <span class="chip">等待 ${waiting}</span>
         ${transition ? `<span class="chip">改派 ${transition}</span>` : ""}
+        ${stale ? `<span class="chip status-review">stale ${stale}</span>` : ""}
         <span class="chip">失敗 ${failed}</span>
         <span class="chip">完成 ${completed}</span>
         ${runningTasks.length ? `<span class="chip">任務 ${runningTasks.join(", ")}</span>` : ""}
@@ -2637,18 +2639,19 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
       running: groupWorkers.filter((worker) => worker.bucket === "running"),
       pending: groupWorkers.filter((worker) => worker.bucket === "pending"),
       transition: groupWorkers.filter((worker) => worker.bucket === "transition"),
+      stale: groupWorkers.filter((worker) => worker.bucket === "stale"),
       completed: groupWorkers.filter((worker) => worker.bucket === "completed"),
     };
   });
 
-  if (!workerGroups.some((group) => group.running.length || group.pending.length || group.transition.length || group.completed.length)) {
+  if (!workerGroups.some((group) => group.running.length || group.pending.length || group.transition.length || group.stale.length || group.completed.length)) {
     historyEl.innerHTML = '<p class="empty">尚無 Worker 記錄。</p>';
     return;
   }
 
   historyEl.innerHTML = workerGroups
     .map((group) => {
-      const total = group.running.length + group.pending.length + group.transition.length + group.completed.length;
+      const total = group.running.length + group.pending.length + group.transition.length + group.stale.length + group.completed.length;
       if (!total) return "";
       const renderBucket = (label, items, open = true, options = {}) => {
         const { hideWhenEmpty = false } = options;
@@ -2694,6 +2697,7 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
             ${renderBucket("進行中", group.running, true)}
             ${renderBucket("等待處理", group.pending, true)}
             ${renderBucket("已改派 / 已接手", group.transition, false, { hideWhenEmpty: true })}
+            ${renderBucket("已結束 / 狀態待回收", group.stale, false, { hideWhenEmpty: true })}
             ${renderBucket("已完成", group.completed, false, { hideWhenEmpty: true })}
           </div>
         </section>
