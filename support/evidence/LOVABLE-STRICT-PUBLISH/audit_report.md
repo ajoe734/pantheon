@@ -73,6 +73,7 @@ Codex2 resumed ownership after chair reassignment from Gemini because Gemini
 hit repeated terminal quota failures on this task.
 
 Task PR: https://github.com/ajoe734/pantheon/pull/62
+Review handoff PR: https://github.com/ajoe734/pantheon/pull/80
 
 ## Codex2 Verification
 
