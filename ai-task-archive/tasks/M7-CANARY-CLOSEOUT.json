@@ -31,7 +31,7 @@
       "test_m7_canary_closeout.py asserts packet validates and that live broker activation flags (BROKER_PRODUCTION_LIVE_ENABLED CAPITAL_BINDING_LIVE_ENABLED) remain false in env probe",
       "test passes pytest -q exit 0"
     ],
-    "next": "Claude2 finalized M7-CANARY-CLOSEOUT (owned_ready_dispatch): all 5 evidence artifacts durable in dev via PR #60 (commit 25c0e2fb); closeout commit 866c9ff3 includes ai_status.py bug fix and state sync; reviewer Claude2 approved 11/11 tests pass, PromotionReadinessPacket.v1 schema valid, fail-closed posture confirmed (can_proceed=false, BROKER_PRODUCTION_LIVE_ENABLED=false, CAPITAL_BINDING_LIVE_ENABLED=false). Push pending: gh auth not configured in background worker; push_status=ahead; requires normal non-force git push by chair-review when auth available.",
+    "next": "Claude2 finalized M7-CANARY-CLOSEOUT (owned_ready_dispatch): all 5 evidence artifacts durable in dev via PR #60 (commit 25c0e2fb); closeout commits 866c9ff3 and 655e338e pushed to PR #85; PR #85 is open with auto-merge enabled after merge reconciliation 3d62500e; reviewer Claude2 approved 11/11 tests pass, PromotionReadinessPacket.v1 schema valid, fail-closed posture confirmed (can_proceed=false, BROKER_PRODUCTION_LIVE_ENABLED=false, CAPITAL_BINDING_LIVE_ENABLED=false).",
     "last_update": "2026-05-17T19:05:08Z",
     "review_notes_zh": [
       "審查通過：5 個 artifact 完整（promotion_readiness_packet.json、risk_owner_approval_template.md、operator_approval_template.md、closeout_summary.md、test_m7_canary_closeout.py）；pytest -q scripts/test_m7_canary_closeout.py → 11/11 pass；packet 符合 PromotionReadinessPacket.v1 schema（target_type=deployment environment=canary can_proceed=false）；三條 evidence ref 檔案存在；BROKER_PRODUCTION_LIVE_ENABLED=false CAPITAL_BINDING_LIVE_ENABLED=false fail-closed 確認；雙閘 approval template 備妥但未簽署（正確）。",
@@ -73,9 +73,11 @@
         "origin"
       ],
       "upstream": "origin/task/M7-CANARY-CLOSEOUT",
-      "ahead": 1,
+      "ahead": 0,
       "behind": 0,
-      "push_status": "ahead"
+      "push_status": "pr_open_auto_merge",
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/85",
+      "publication_reconcile_commit": "3d62500e15d212184889d531331db4c940114485"
     }
   },
   "handoffs": [
