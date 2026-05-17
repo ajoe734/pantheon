@@ -388,6 +388,79 @@ class TestCronOrchestrator(unittest.TestCase):
                 },
             )
 
+    def test_deploy_refuses_failed_pool_runtime_compatibility(self):
+        with self.assertRaisesRegex(PromotionError, "pool_admissibility_status_not_active"):
+            self.orchestrator.run(
+                "pantheon.deploy",
+                {
+                    "target_stage": "paper",
+                    "capital_pool_id": "pool-001",
+                    "approval_decision": approved_decision(),
+                    "registry_entry": approved_registry_entry(),
+                    "metadata": {
+                        "target_size": 0,
+                        "persona_capital_binding_id": "pcb-001",
+                    },
+                    "pool_runtime_compat": {
+                        "capital_pool": {
+                            "pool_id": "pool-001",
+                            "status": "suspended",
+                            "risk_budget": 100_000,
+                            "metadata": {"jurisdiction": "US"},
+                        },
+                        "runtime_requirements": {
+                            "runtime_mode": "paper",
+                            "broker_jurisdiction": "US",
+                            "persona_capital_binding_id": "pcb-001",
+                        },
+                        "persona_capital_binding": {
+                            "binding_id": "pcb-001",
+                            "persona_id": "persona-ops",
+                            "capital_pool_id": "pool-001",
+                            "status": "active",
+                        },
+                    },
+                },
+            )
+
+    def test_deploy_records_passed_pool_runtime_compatibility(self):
+        result = self.orchestrator.run(
+            "pantheon.deploy",
+            {
+                "target_stage": "paper",
+                "capital_pool_id": "pool-001",
+                "approval_decision": approved_decision(),
+                "registry_entry": approved_registry_entry(),
+                "metadata": {
+                    "target_size": 0,
+                    "persona_capital_binding_id": "pcb-001",
+                },
+                "pool_runtime_compat": {
+                    "capital_pool": {
+                        "pool_id": "pool-001",
+                        "status": "active",
+                        "risk_budget": 100_000,
+                        "metadata": {"jurisdiction": "US"},
+                    },
+                    "runtime_requirements": {
+                        "runtime_mode": "paper",
+                        "broker_jurisdiction": "US",
+                        "persona_capital_binding_id": "pcb-001",
+                    },
+                    "persona_capital_binding": {
+                        "binding_id": "pcb-001",
+                        "persona_id": "persona-ops",
+                        "capital_pool_id": "pool-001",
+                        "status": "active",
+                    },
+                },
+            },
+        )
+
+        compatibility = result.deployment_request["pool_runtime_compatibility"]
+        self.assertTrue(compatibility["passed"])
+        self.assertEqual(compatibility["rejection_reasons"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

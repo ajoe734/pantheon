@@ -2,14 +2,16 @@
 """Verify that commit messages on a branch carry required Pantheon trailers.
 
 Used by:
-  - .githooks/commit-msg     (one commit, the staged message)
-  - .github/workflows/wave-ci.yml (range of commits in a PR)
+  - .githooks/commit-msg          (one commit, the staged message)
+  - .github/workflows/branch-ci.yml (range of commits in a PR)
 
 Reads required trailers from .orchestrator/config.json:
-  wave_workflow.wave_merge.require_commit_trailers
-  wave_workflow.wave_merge.subject_prefix_required
+  branch_workflow.task_pr.require_commit_trailers   (preferred, post-2026-05-17)
+  wave_workflow.wave_merge.require_commit_trailers  (legacy fallback)
 
-Default required trailers: LLM-Agent, Task-ID, Reviewer, Wave.
+Default required trailers: LLM-Agent, Task-ID, Reviewer.
+(The legacy `Wave:` trailer was dropped in OPS-GIT-REDESIGN-001; it is
+still tolerated when present but no longer required.)
 
 CLI:
   check_commit_trailers.py --message-file <path>
@@ -30,7 +32,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
 
-DEFAULT_REQUIRED = ("LLM-Agent", "Task-ID", "Reviewer", "Wave")
+DEFAULT_REQUIRED = ("LLM-Agent", "Task-ID", "Reviewer")
 SUBJECT_PATTERN = re.compile(r"^[A-Z][A-Z0-9-]*[A-Z0-9]:\s+\S")
 
 # Subjects that legitimately bypass the task-id prefix rule.
@@ -42,6 +44,7 @@ EXEMPT_SUBJECT_PREFIXES = (
     "wave-open:",
     "promote:",
     "hotfix:",
+    "publish:",
     "fixup!",
     "squash!",
     "Initial commit",
@@ -55,12 +58,16 @@ def load_settings() -> tuple[tuple[str, ...], bool]:
         payload = json.loads(CONFIG_FILE.read_text())
     except json.JSONDecodeError:
         return DEFAULT_REQUIRED, True
-    wm = (payload.get("wave_workflow") or {}).get("wave_merge") or {}
-    trailers = wm.get("require_commit_trailers")
+    # Prefer the new branch_workflow location; fall back to the legacy
+    # wave_workflow path so commits made during the migration window
+    # do not blow up.
+    bw = (payload.get("branch_workflow") or {}).get("task_pr") or {}
+    legacy = (payload.get("wave_workflow") or {}).get("wave_merge") or {}
+    trailers = bw.get("require_commit_trailers") or legacy.get("require_commit_trailers")
     if not isinstance(trailers, list) or not trailers:
         trailers = list(DEFAULT_REQUIRED)
-    prefix_required = bool(wm.get("subject_prefix_required", True))
-    return tuple(str(t) for t in trailers), prefix_required
+    prefix_required = bw.get("subject_prefix_required", legacy.get("subject_prefix_required", True))
+    return tuple(str(t) for t in trailers), bool(prefix_required)
 
 
 def parse_trailers(body: str) -> dict[str, str]:

@@ -533,6 +533,102 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         }
         self.provider_report: dict[str, object] = {}
 
+    def test_worker_tree_guard_warns_without_blocking(self) -> None:
+        config = {
+            **self.config,
+            "worker_tree_guard": {
+                "enabled": True,
+                "mode": "warn",
+                "blocking_globs": [".orchestrator/skills/**"],
+            },
+        }
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "_git_dirty_entries",
+                return_value=[{"status": " M", "path": ".orchestrator/skills/worker-anchor-commit.md"}],
+            ),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            ok, message = supervisor.check_worker_tree_clean(
+                config,
+                run_id="evt-1",
+                task_id="OPS-WORKER-ANCHOR-001",
+                target_agent="Codex",
+                queue_event_id="evt-1",
+            )
+
+        self.assertTrue(ok)
+        self.assertIn("anchor or close out", message or "")
+        write_activity_log.assert_called_once()
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "dispatch_dirty_tree_warning")
+
+    def test_worker_tree_guard_blocks_in_block_mode(self) -> None:
+        config = {
+            **self.config,
+            "worker_tree_guard": {
+                "enabled": True,
+                "mode": "block",
+                "blocking_globs": ["docs/**"],
+            },
+        }
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "_git_dirty_entries",
+                return_value=[{"status": " M", "path": "docs/conventions/GIT_WORKFLOW.md"}],
+            ),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            ok, message = supervisor.check_worker_tree_clean(
+                config,
+                run_id="evt-1",
+                task_id="OPS-WORKER-ANCHOR-001",
+                target_agent="Codex",
+                queue_event_id="evt-1",
+            )
+
+        self.assertFalse(ok)
+        self.assertIn("docs/conventions/GIT_WORKFLOW.md", message or "")
+        write_activity_log.assert_called_once()
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "dispatch_blocked_dirty_tree")
+
+    def test_worker_tree_guard_ignores_runtime_state_only(self) -> None:
+        config = {
+            **self.config,
+            "worker_tree_guard": {
+                "enabled": True,
+                "mode": "block",
+                "blocking_globs": [".orchestrator/skills/**"],
+                "auto_restore_globs": ["ai-status.json", "docs-site/**"],
+            },
+        }
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "_git_dirty_entries",
+                return_value=[
+                    {"status": " M", "path": "ai-status.json"},
+                    {"status": " M", "path": "docs-site/current-work.md"},
+                ],
+            ),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            ok, message = supervisor.check_worker_tree_clean(
+                config,
+                run_id="evt-1",
+                task_id="OPS-WORKER-ANCHOR-001",
+                target_agent="Codex",
+                queue_event_id="evt-1",
+            )
+
+        self.assertTrue(ok)
+        self.assertIsNone(message)
+        write_activity_log.assert_not_called()
+
     def test_build_request_uses_provider_model_preference_for_qwen_agent(self) -> None:
         config = {
             "schema": {

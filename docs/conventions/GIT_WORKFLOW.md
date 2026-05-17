@@ -126,6 +126,61 @@ A `task/<TASK-ID>` PR should reach merge within 24 h. A task PR that
 lingers > 24 h with no merge is a process violation and chair-review
 surfaces it as a Finding.
 
+### 2.5 Preemption anchors
+
+Uncommitted worktree diffs are not durable collaboration state. Before a
+worker is reassigned, interrupted, or asked to switch tasks, any
+non-trivial diff must either be committed on its `task/<TASK-ID>` branch
+or explicitly marked disposable in the handoff / activity note.
+
+High-fragility surfaces must not live as session-only work:
+
+- docs that change canonical process or product truth
+- `.orchestrator/skills/*` and other skill instructions
+- config and workflow files
+- supervisor dispatch / routing contact points, especially
+  `.orchestrator/supervisor.py`
+
+For these surfaces, open a task branch first and create an anchor commit
+as soon as the design intent is clear, even if a follow-up commit will
+polish the wording or finish tests. The anchor commit must still obey
+the normal subject, trailer, scope, and generated-file gates. Its commit
+message should name the owned layer and any boundary it intentionally
+does not change, for example:
+
+```text
+<TASK-ID>: anchor supervisor routing boundary
+
+Touches .orchestrator/supervisor.py dispatch-slot routing only.
+Does not change chair-review reassignment semantics.
+
+LLM-Agent: Codex
+Task-ID: <TASK-ID>
+Reviewer: Claude
+```
+
+If `dev` advances before the work is ready to merge, rebase or merge the
+task branch as a committed patch. `git stash pop` is a last-resort
+recovery tool for disposable local state, not the normal path for
+preserving design work across mainline movement.
+
+Pantheon implementation:
+
+- worker wakeup messages render the expected branch from
+  `branch_workflow.task_branch_prefix` and `branch_workflow.dev_branch`
+  rather than hard-coding lane-owned branch names
+- `.orchestrator/skills/worker-anchor-commit.md` defines the mid-task
+  anchor procedure and commit message shape
+- `.orchestrator/skills/task-closeout-finalization.md` defines how
+  final closeout handles prior anchor commits and unrelated dirty files
+- `worker_tree_guard` may be enabled in warn or block mode to detect
+  dirty high-fragility surfaces before dispatch; it is disabled by
+  default and does not auto-restore state files
+
+If a downstream repo keeps a separate `branch-strategy.md`, mirror this
+section there. In Pantheon, this document is the canonical branch
+strategy.
+
 ---
 
 ## 3. Nightly Publish
@@ -351,12 +406,15 @@ This is intentional: gating discipline is in CI, not in human review
 | Environment      | Tracks ref                              | Auto-deploy trigger                          | Operator role |
 |------------------|------------------------------------------|----------------------------------------------|---------------|
 | **dev**          | latest `publish/v<latest>`               | push on `publish/v*`                          | observe       |
-| **staging-live** | `master` HEAD (post-promote)             | (not yet wired — manual workflow_dispatch)    | smoke / sign-off |
+| **staging-live** | `master` HEAD (post-promote)             | push on `master` (every promote / hotfix merge) | smoke / sign-off |
 | **production**   | a chosen `prod/v<...>` tag (locked)      | never auto                                    | sign + manual workflow_dispatch |
 
-dev is the **soak environment** — the 1-day soak gate before promote
-runs on the dev VM. staging-live is the post-promote pre-production
-rehearsal. Production is operator-locked.
+dev is the **CI-gate environment** — every nightly publish snapshot
+auto-deploys here and `publish-promote.yml` only opens a promote PR
+once branch-ci is green. staging-live is the post-promote
+pre-production rehearsal — `master` push automatically redeploys both
+`pantheon-lupin-staging-{control,exec}` VMs. Production is
+operator-locked.
 
 ---
 
@@ -493,6 +551,8 @@ is retired by OPS-GIT-REDESIGN-001:
 - `scripts/git/worker_commit.py`
 - `scripts/git/check_commit_trailers.py`, `scripts/git/check_commit_scope.py`
 - `scripts/git/publish_promote.py`, `scripts/git/notify_orchestrator.py`
+- `.orchestrator/templates/wakeup.txt`
+- `.orchestrator/skills/worker-anchor-commit.md`
 - `.orchestrator/skills/task-closeout-finalization.md`
 - `.orchestrator/skills/chairman-review.md`
 - `AI_COLLABORATION_GUIDE.md` § 2 Multi-Branch Integration Policy

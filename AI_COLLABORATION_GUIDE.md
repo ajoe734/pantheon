@@ -1,6 +1,6 @@
 # AI Collaboration Guide
 
-Last updated: 2026-04-29
+Last updated: 2026-05-17
 Status: canonical collaboration rules for the Pantheon project
 
 ## 0. Repository Architecture (2026-04-04 — migration complete)
@@ -60,6 +60,8 @@ Canonical truth now uses five layers:
 - `AI_COLLABORATION_GUIDE.md`: stable collaboration rules and command usage
 - `ai-status.json`: machine-readable live task state, ownership, blockers, handoffs
 - `ai-activity-log.jsonl`: append-only activity history
+- `.orchestrator/skills/worker-anchor-commit.md`: mid-task anchor
+  commit rules for fragile shared worktree surfaces
 - `.orchestrator/skills/task-closeout-finalization.md`: owner finalization, commit, and publication rules for `review_approved -> done`
 
 ### L0.5 Derived Narrative
@@ -301,6 +303,22 @@ Branch retirement:
   push origin --delete <branch>` (non-force, non-mirror).
 - Do not delete a branch still ahead of its target without explicit
   acceptance from chair-review.
+
+Working tree durability:
+
+- uncommitted worktree diffs are fragile and must not be treated as
+  durable handoff state
+- before reassignment, interruption, or task switching, commit any
+  non-trivial design work on its `task/<TASK-ID>` branch or state that
+  the remaining diff is disposable
+- docs, `.orchestrator/skills/*`, config/workflow files, and supervisor
+  dispatch or routing contact points must use task branch + anchor
+  commit + PR; do not leave them as session-only diffs
+- when parallel workers touch the same file at different layers, the
+  anchor commit message must identify the owned layer and any boundary
+  it intentionally leaves unchanged
+- if `dev` advances, rebase or merge the task branch as committed work;
+  do not make `git stash pop` the normal preservation path
 
 ### Discussion Planning Mode
 

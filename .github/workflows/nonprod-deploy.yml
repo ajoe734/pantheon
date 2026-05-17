@@ -38,27 +38,34 @@ on:
         type: boolean
   push:
     branches:
+      # publish/v* push  → auto-redeploy DEV VM with the publish snapshot.
       - "publish/v*"
+      # master push      → auto-redeploy STAGING-LIVE VMs with master HEAD.
+      #                    Triggered after promote PR / hotfix PR merges.
+      - "master"
 
 permissions:
   contents: read
   id-token: write
 
 concurrency:
-  # Allow dev (push-driven) and staging (manual) to run independently.
-  # Multiple publish/v* pushes coalesce — latest wins.
-  group: pantheon-nonprod-deploy-${{ github.event_name == 'push' && 'dev-auto' || inputs.environment }}
+  # dev (publish push) and staging-live (master push) run in independent
+  # groups so they do not cancel each other. Within each group, newer
+  # pushes cancel older runs (latest source-of-truth wins).
+  group: pantheon-nonprod-deploy-${{ github.event_name == 'push' && (startsWith(github.ref_name, 'publish/') && 'dev-auto' || 'staging-auto') || inputs.environment }}
   cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
   deploy-manual:
     name: Nonprod deploy
     runs-on: ubuntu-latest
-    environment: ${{ github.event_name == 'push' && 'dev' || inputs.environment }}
+    environment: ${{ github.event_name == 'push' && (startsWith(github.ref_name, 'publish/') && 'dev' || 'staging-live') || inputs.environment }}
     env:
-      # For push events we hard-pin dev/auto and use the pushed publish
-      # branch ref. For workflow_dispatch we honour the operator inputs.
-      TARGET_ENV: ${{ github.event_name == 'push' && 'dev' || inputs.environment }}
+      # Trigger → env mapping:
+      #   workflow_dispatch       → operator inputs
+      #   push on publish/v*      → dev / auto / pushed publish branch
+      #   push on master          → staging-live / auto / master HEAD
+      TARGET_ENV: ${{ github.event_name == 'push' && (startsWith(github.ref_name, 'publish/') && 'dev' || 'staging-live') || inputs.environment }}
       TARGET_COMPONENT: ${{ github.event_name == 'push' && 'auto' || inputs.component }}
       TARGET_REF: ${{ github.event_name == 'push' && github.ref_name || inputs.ref || github.sha }}
       ALLOW_DIRTY: ${{ github.event_name == 'push' && 'false' || inputs.allow_dirty }}

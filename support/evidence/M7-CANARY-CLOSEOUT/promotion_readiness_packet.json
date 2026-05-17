@@ -1,0 +1,88 @@
+{
+  "packet_id": "prp-m7-canary-closeout-20260517",
+  "schema_version": "PromotionReadinessPacket.v1",
+  "target_type": "deployment",
+  "target_id": "m7-canary-deployment",
+  "environment": "canary",
+  "generated_at": "2026-05-17T10:44:16Z",
+  "generated_by": "Claude / M7-CANARY-CLOSEOUT",
+  "source_task_id": "M7-CANARY-CLOSEOUT",
+  "depends_on_tasks": [
+    "MGMT-BROKER-002",
+    "MGMT-BROKER-006"
+  ],
+  "required_evidence": [
+    "broker_sandbox_smoke_consumed",
+    "shioaji_sandbox_evidence_packet_consumed",
+    "canary_activation_gate_refs_present"
+  ],
+  "provided_evidence": [
+    {
+      "key": "broker_sandbox_smoke_consumed",
+      "source_task_id": "MGMT-BROKER-002",
+      "path": "docs/deployment/evidence/ep5-broker-tw-002/20260517T054748Z/sandbox-smoke/summary.json",
+      "ref_type": "broker_sandbox_smoke_summary",
+      "run_mode": "shioaji_simulation_sdk",
+      "status": "passed",
+      "description": "Shioaji sandbox order smoke: place/cancel/readback/reconcile all passed; live gate rejected with SHIOAJI_LIVE_DISABLED; no real capital used."
+    },
+    {
+      "key": "shioaji_sandbox_evidence_packet_consumed",
+      "source_task_id": "MGMT-BROKER-002",
+      "path": "docs/deployment/evidence/ep5-broker-tw-002/20260517T054748Z/evidence-packet/shioaji-sandbox-evidence-packet.json",
+      "ref_type": "broker_sandbox_evidence_packet",
+      "run_mode": "shioaji_simulation_sdk",
+      "status": "passed",
+      "description": "Full shioaji sandbox evidence packet (MGMT-OODA-M3 milestone), all acceptance checks passed, fail-closed posture confirmed."
+    },
+    {
+      "key": "canary_activation_gate_refs_present",
+      "source_task_id": "MGMT-BROKER-006",
+      "path": "docs/deployment/evidence/execution-sandbox-canary-activation-ready/20260504T045936Z/README.md",
+      "ref_type": "canary_activation_gate_refs",
+      "status": "present",
+      "description": "Execution sandbox canary activation-ready evidence (IBKR, Shioaji, Kraken) confirming production_live.enabled=false and no real-capital side effects."
+    }
+  ],
+  "missing_evidence": [],
+  "gate_results": [
+    {
+      "gate": "broker_sandbox_smoke",
+      "status": "passed",
+      "source_ref": "docs/deployment/evidence/ep5-broker-tw-002/20260517T054748Z/sandbox-smoke/summary.json"
+    },
+    {
+      "gate": "shioaji_sandbox_evidence_packet",
+      "status": "passed",
+      "source_ref": "docs/deployment/evidence/ep5-broker-tw-002/20260517T054748Z/evidence-packet/shioaji-sandbox-evidence-packet.json"
+    },
+    {
+      "gate": "canary_activation_gate_refs",
+      "status": "present",
+      "source_ref": "docs/deployment/evidence/execution-sandbox-canary-activation-ready/20260504T045936Z/README.md"
+    },
+    {
+      "gate": "risk_owner_approval",
+      "status": "pending",
+      "source_ref": "support/evidence/M7-CANARY-CLOSEOUT/risk_owner_approval_template.md",
+      "note": "Template provided; approval signature not yet recorded."
+    },
+    {
+      "gate": "operator_approval",
+      "status": "pending",
+      "source_ref": "support/evidence/M7-CANARY-CLOSEOUT/operator_approval_template.md",
+      "note": "Template provided; approval signature not yet recorded."
+    }
+  ],
+  "risk_owner_required": true,
+  "risk_owner_approval_recorded": false,
+  "operator_required": true,
+  "operator_approval_recorded": false,
+  "can_proceed": false,
+  "reason": "Evidence gates all passed; awaiting risk_owner and operator dual-approval before canary activation. BROKER_PRODUCTION_LIVE_ENABLED and CAPITAL_BINDING_LIVE_ENABLED must remain false until both approvals are signed.",
+  "fail_closed_assertions": {
+    "BROKER_PRODUCTION_LIVE_ENABLED": false,
+    "CAPITAL_BINDING_LIVE_ENABLED": false,
+    "note": "These flags must not be set true until risk-owner and operator have both signed the approval templates."
+  }
+}
