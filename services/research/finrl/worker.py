@@ -12,6 +12,7 @@ if str(SERVICE_DIR) not in sys.path:
 
 from adapter import (
     DeferredPrepGate,
+    FinRLDQNBackend,
     FinRLPPOBackend,
     PolicyTrainingConfig,
     StubFinRLBackend,
@@ -53,13 +54,22 @@ def main() -> int:
 
     dataset = json.loads(Path(dataset_path).read_text(encoding="utf-8"))
     backend_name = selected_backend()
-    backend = StubFinRLBackend() if backend_name == "stub" else FinRLPPOBackend()
+    if backend_name == "stub":
+        backend = StubFinRLBackend()
+        algorithm = "stub"
+    elif backend_name == "finrl_dqn":
+        backend = FinRLDQNBackend()
+        algorithm = "dqn"
+    else:
+        backend = FinRLPPOBackend()
+        algorithm = "ppo"
     result = run_finrl_workflow(
         dataset,
         backend=backend,
         config=PolicyTrainingConfig(
             version=os.environ.get("FINRL_ARTIFACT_VERSION", "1.0.0"),
             requested_by=os.environ.get("FINRL_REQUESTED_BY", "worker"),
+            algorithm=algorithm,
         ),
     )
     output = {

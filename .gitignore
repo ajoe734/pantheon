@@ -21,7 +21,7 @@ __pycache__/
 .orchestrator/provider_capabilities.json
 .orchestrator/state.json
 .orchestrator/supervisor.pid
-.orchestrator/task-briefs/
+#.orchestrator/task-briefs/
 docs-site/planning-state.json
 docs-site/ai-activity-log.jsonl
 ai-activity-log.jsonl

@@ -1,0 +1,32 @@
+{
+  "id": "OSS-STAT-001-SIDECAR-ACCEPTANCE",
+  "title": "Prepare OSS-STAT-001 acceptance packet and dependency map",
+  "summary_zh": "平行支援 OSS-STAT-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+  "phase": "Sprint 7 / EPIC-OSS-RESEARCH",
+  "owner": "Gemini",
+  "reviewer": "Claude",
+  "status": "done",
+  "depends_on": [],
+  "artifacts": [
+    "support/sidecars/OSS-STAT-001/OSS-STAT-001-SIDECAR-ACCEPTANCE.md"
+  ],
+  "acceptance": [
+    "Create support artifacts only",
+    "Do not edit canonical truth",
+    "Hand off the packet to the assigned reviewer"
+  ],
+  "next": "Owner finalized task and closed it. Sidecar acceptance packet is durable in support/sidecars/OSS-STAT-001/.",
+  "last_update": "2026-05-17T03:45:00Z",
+  "terminal_outcome": "completed",
+  "archived_at": "2026-05-17T03:45:00Z",
+  "task_class": "sidecar",
+  "auto_generated": true,
+  "helper_parent": "OSS-STAT-001",
+  "helper_kind": "acceptance_packet",
+  "mutates_canonical": false,
+  "auto_created_by": "supervisor-underutilization",
+  "review_notes_zh": [
+    "審查通過：sidecar acceptance packet 文件完整，正確記錄 shadowing 問題解決與最終 artifact 形狀"
+  ],
+  "review_file": "support/sidecars/OSS-STAT-001/OSS-STAT-001-SIDECAR-ACCEPTANCE.md"
+}

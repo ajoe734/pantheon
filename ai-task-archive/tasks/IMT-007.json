@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "task_id": "IMT-007",
+  "archived_at": "2026-05-17T03:33:13Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "IMT-007",
+    "title": "Behavior-policy artifact validation gate",
+    "summary_zh": "behavior_policy artifact 進入 registry / governance 前的驗證閘門：metadata 完整、checksum 一致、IMT-006 eval metrics 達門檻、policy 不出現 deploy/canary/live 觸發詞。獨立 module。",
+    "phase": "Sprint 7 / EPIC-IMITATION-TRAINING",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "IMT-004",
+      "IMT-006"
+    ],
+    "artifacts": [
+      "services/research/imitation/policy_validation_gate.py",
+      "services/research/imitation/test_policy_validation_gate.py",
+      "services/research/imitation/validation_gate_contract.md"
+    ],
+    "acceptance": [
+      "policy_validation_gate.py exposes validate(behavior_policy_ref threshold) returning ValidationResult dict with passed bool and rejection_reasons list",
+      "gate rejects if action_match_rate < threshold (default 0.6)",
+      "gate rejects if checksum mismatch with registered artifact",
+      "gate rejects if metadata missing producer_run_id or dataset_ref or training_config",
+      "test covers 1 pass and 3 fail scenarios pytest -q exit 0"
+    ],
+    "next": "Closeout complete: 10 tests pass (1 pass + 3 required-fail + 6 additional), all 4 acceptance criteria verified. Task-scoped commit a614ae99 on branch bff-luv-fe-006-dev-deploy. Reviewer: Claude2 (reassigned from Codex2 by chair).",
+    "last_update": "2026-05-17T03:33:13Z",
+    "review_notes_zh": [
+      "審查通過：validate() 正確實作，4 項 acceptance 全符合；pytest -q 10 passed (1 pass + 3 required fail + 6 additional)；contract 文件清晰，governance boundary 完整；模組無 registry/runtime 依賴",
+      "注意：contract 的 Reviewer 欄位仍記 Codex2（原指派），已由 Chair 改派 Claude2 執行審查，不影響 done 結案"
+    ],
+    "review_file": "services/research/imitation/validation_gate_contract.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-17T03:33:13Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "a614ae99f622bd467a0672d29ce69f10bcc2ac74",
+      "commit_subject": "IMT-007: add behavior-policy artifact validation gate",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "IMT-007",
+        "Reviewer": "Claude2",
+        "Wave": "2026-W20",
+        "Verified": "python3 -m pytest -q services/research/imitation/test_policy_validation_gate.py — 10 passed in 3.08s"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 33,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "IMT-007",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Implementation complete. validate(behavior_policy_ref, threshold=0.6) returns ValidationResult. Checks: metadata completeness (producer_run_id/dataset_ref/training_config), checksum integrity, action_match_rate >= threshold from eval_result, and forbidden trigger words (deploy/canary/live) in string values. pytest -q: 10 passed (1 pass + 3 required fail scenarios covered).",
+      "status": "done",
+      "created_at": "2026-05-17T03:19:47Z",
+      "resolved_at": "2026-05-17T03:26:16Z"
+    },
+    {
+      "task_id": "IMT-007",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Chair reassigned review from Codex2 to Claude2: Codex2 is quota-terminal until 2026-05-18T23:40 (~44 hours). Claude2 shares the same capability lane (execution, control-plane, governance-review) and its auth pause expires at ~03:25 today. Reassigning unblocks the IMT-007 review without owner conflict.",
+      "status": "done",
+      "created_at": "2026-05-17T03:26:16Z",
+      "resolved_at": "2026-05-17T03:27:39Z"
+    },
+    {
+      "task_id": "IMT-007",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved: all 4 acceptance criteria met, 10 tests pass (1 pass + 3 required fail + 6 additional). validate() interface, checksum, metadata, trigger-word checks all correct. Returning to owner Claude for finalization.",
+      "status": "done",
+      "created_at": "2026-05-17T03:27:39Z",
+      "resolved_at": "2026-05-17T03:33:14Z"
+    }
+  ],
+  "blockers": []
+}
