@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-17 19:06:02
+Last updated: 2026-05-18 00:26:36
 
 ## Objective
 
@@ -27,7 +27,7 @@ Last updated: 2026-05-17 19:06:02
 
 - `Claude`: execution, control-plane, governance-review; next: Assignment created
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: Assignment created
-- `Codex`: integration, status-system, schema, acceptance; next: Assignment created
+- `Codex`: integration, status-system, schema, acceptance; next: Ready for review: production Qlib rolling runner, registry admission packet emitter, tests, and admission_packet.json are merged via PR #70. Please review services/research/qlib/production_rolling_run.py, services/research/qlib/registry_admission_packet.py, services/research/qlib/test_production_rolling_run.py, and support/evidence/OSS-QLIB-V2-001/admission_packet.json.
 - `Codex2`: integration, status-system, schema, acceptance; next: Assignment created
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: Assignment created
 - `Claude2`: execution, control-plane, governance-review; next: Assignment created
@@ -59,7 +59,7 @@ Last updated: 2026-05-17 19:06:02
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `OSS-QLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | Qlib production-scale rolling + registry admission | Codex | todo | `OSS-QLIB-002`, `MGMT-QLIB-001` | 把 OSS-QLIB-002 的 rolling pipeline 升級到 production scale：使用 MGMT-QLIB-001 已建好的 TWSE OHLCV dataset（≥50 instruments × ≥2 years），跑完整 rolling-window 訓練，產 model_artifact 並提交 registry admission packet。獨立檔案路徑。 |
+| `OSS-QLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | Qlib production-scale rolling + registry admission | Codex | review | `OSS-QLIB-002`, `MGMT-QLIB-001` | 把 OSS-QLIB-002 的 rolling pipeline 升級到 production scale：使用 MGMT-QLIB-001 已建好的 TWSE OHLCV dataset（≥50 instruments × ≥2 years），跑完整 rolling-window 訓練，產 model_artifact 並提交 registry admission packet。獨立檔案路徑。 |
 | `OSS-STAT-V2-001` | Sprint 8 / EPIC-OSS-V2 | statsmodels production cointegration on TWSE pairs | Copilot | todo | `OSS-STAT-001`, `MGMT-QLIB-001` | 把 OSS-STAT-001 cointegration adapter 升級到 production：對 10 個 TWSE 大型股配對跑 2-year rolling Engle-Granger 檢定，輸出 signal_snapshot artifact 含 top-N cointegrated pairs，提交 registry admission packet。獨立檔案。 |
 | `OSS-QUANTLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | QuantLib production option chain pricer + greeks | Copilot | todo | `OSS-QUANTLIB-001` | 把 OSS-QUANTLIB-001 option pricer 升級為 production：對台指選擇權(TXO)鏈跨多檔履約價與多個到期日定價，輸出含 greeks 的 pricing_snapshot artifact，提交 registry admission packet。獨立檔案。 |
 | `OSS-RLLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | RLlib production PPO on TWSE trading env | Claude | todo | `OSS-RLLIB-001`, `MGMT-QLIB-001` | 把 OSS-RLLIB-001 PPO skeleton 升級到 production：用 TWSE OHLCV 作為環境的 observation/action space，跑 ≥100 iter PPO，輸出 model_artifact 含 trained_policy 與 evaluation_summary，提交 registry admission packet。CPU-only。獨立檔案。 |
@@ -103,7 +103,7 @@ Last updated: 2026-05-17 19:06:02
 | `M7-CANARY-CLOSEOUT` | Track E / EPIC-05 M7 Canary Readiness | M7 canary readiness packet final closure | Track E EPIC-05 全部子任務已完成；MGMT-BROKER-002 Shioaji simulation SDK smoke 也通過。本任務組裝完整 M7 PromotionReadinessPacket：含 broker_sandbox_smoke / shioaji_sandbox_evidence_packet / canary_activation_gate_refs 三項證據引用，加上 risk-owner + operator 雙閘 approval 預留欄位（未實際開啟 live），最終產出 packet JSON 與簽核表。獨立檔案，不修 broker live flag。 | Claude | Codex | todo | `MGMT-BROKER-002`, `MGMT-BROKER-006` | 2026-05-17 18:44:16 | Assignment created |
 | `POST-EVO-BRIDGE` | Sprint 7 / EPIC-EVOLUTION-FOLLOWUP | Postmortem -> EvolutionDecisionProposal auto-trigger bridge | POST-001 + EVO-001 已落地為 schema/service，但 incident/postmortem publish → EvolutionDecisionProposal 自動觸發的 bridge 還沒實際 wire。本任務新增 postmortem_bridge module：訂閱 postmortem published 事件，按 severity 與 corrective_action_required 判斷是否產出 EvolutionDecisionProposal payload（不直接寫 governance store，僅 emit proposal）。獨立 module，不改 POST-001 / EVO-001 公開 API。 | Claude2 | Codex2 | todo | `POST-001`, `EVO-001` | 2026-05-17 18:44:31 | Assignment created |
 | `LOVABLE-STRICT-PUBLISH` | Sprint 7 / EPIC-LOVABLE-INFRA | Lovable build-time strict env publish audit script | SA § 2.2 列為 non-blocking follow-up：execute-plans@main build-time 應使用 strict env (VITE_BFF_MODE=live VITE_BFF_FALLBACK=strict VITE_BFF_REAL_WRITES=false) 重新發佈一次，並驗證發佈後的 bundle 不再含 seed fallback assets。本任務不直接動 execute-plans repo，而是寫一個 pantheon 端的 audit script + evidence packet，記錄 publish 條件、build env、bundle hash、verification probe 結果。 | Gemini | Gemini2 | todo | - | 2026-05-17 18:44:50 | Assignment created |
-| `OSS-QLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | Qlib production-scale rolling + registry admission | 把 OSS-QLIB-002 的 rolling pipeline 升級到 production scale：使用 MGMT-QLIB-001 已建好的 TWSE OHLCV dataset（≥50 instruments × ≥2 years），跑完整 rolling-window 訓練，產 model_artifact 並提交 registry admission packet。獨立檔案路徑。 | Codex | Codex2 | todo | `OSS-QLIB-002`, `MGMT-QLIB-001` | 2026-05-17 19:01:23 | Assignment created |
+| `OSS-QLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | Qlib production-scale rolling + registry admission | 把 OSS-QLIB-002 的 rolling pipeline 升級到 production scale：使用 MGMT-QLIB-001 已建好的 TWSE OHLCV dataset（≥50 instruments × ≥2 years），跑完整 rolling-window 訓練，產 model_artifact 並提交 registry admission packet。獨立檔案路徑。 | Codex | Codex2 | review | `OSS-QLIB-002`, `MGMT-QLIB-001` | 2026-05-18 00:26:36 | Ready for review: production Qlib rolling runner, registry admission packet emitter, tests, and admission_packet.json are merged via PR #70. Please review services/research/qlib/production_rolling_run.py, services/research/qlib/registry_admission_packet.py, services/research/qlib/test_production_rolling_run.py, and support/evidence/OSS-QLIB-V2-001/admission_packet.json. |
 | `OSS-STAT-V2-001` | Sprint 8 / EPIC-OSS-V2 | statsmodels production cointegration on TWSE pairs | 把 OSS-STAT-001 cointegration adapter 升級到 production：對 10 個 TWSE 大型股配對跑 2-year rolling Engle-Granger 檢定，輸出 signal_snapshot artifact 含 top-N cointegrated pairs，提交 registry admission packet。獨立檔案。 | Copilot | Codex | todo | `OSS-STAT-001`, `MGMT-QLIB-001` | 2026-05-17 19:01:29 | Assignment created |
 | `OSS-QUANTLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | QuantLib production option chain pricer + greeks | 把 OSS-QUANTLIB-001 option pricer 升級為 production：對台指選擇權(TXO)鏈跨多檔履約價與多個到期日定價，輸出含 greeks 的 pricing_snapshot artifact，提交 registry admission packet。獨立檔案。 | Copilot | Codex2 | todo | `OSS-QUANTLIB-001` | 2026-05-17 19:01:36 | Assignment created |
 | `OSS-RLLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | RLlib production PPO on TWSE trading env | 把 OSS-RLLIB-001 PPO skeleton 升級到 production：用 TWSE OHLCV 作為環境的 observation/action space，跑 ≥100 iter PPO，輸出 model_artifact 含 trained_policy 與 evaluation_summary，提交 registry admission packet。CPU-only。獨立檔案。 | Claude | Codex | todo | `OSS-RLLIB-001`, `MGMT-QLIB-001` | 2026-05-17 19:01:43 | Assignment created |
@@ -125,7 +125,7 @@ Last updated: 2026-05-17 19:06:02
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| _(none)_ | - | - | - | - | - |
+| `OSS-QLIB-V2-001` | Codex | Codex2 | Ready for review: production Qlib rolling runner, registry admission packet emitter, tests, and admission_packet.json are merged via PR #70. Please review services/research/qlib/production_rolling_run.py, services/research/qlib/registry_admission_packet.py, services/research/qlib/test_production_rolling_run.py, and support/evidence/OSS-QLIB-V2-001/admission_packet.json. | pending | 2026-05-18 00:26:36 |
 
 ## Blockers
 
@@ -167,23 +167,23 @@ Do not read those omitted modules as open Pantheon backlog purely because they a
 
 ## Latest Checkpoints
 
+- 2026-05-16 01:52:57 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:52:57 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:53:02 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:53:02 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:53:08 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:53:08 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:53:13 Orchestrator: PreToolUse: Bash
-- 2026-05-17 19:01:23 Codex: `OSS-QLIB-V2-001` Assigned OSS-QLIB-V2-001 to Codex with reviewer Codex2
-- 2026-05-17 19:01:29 Codex: `OSS-STAT-V2-001` Assigned OSS-STAT-V2-001 to Copilot with reviewer Codex
-- 2026-05-17 19:01:36 Codex: `OSS-QUANTLIB-V2-001` Assigned OSS-QUANTLIB-V2-001 to Copilot with reviewer Codex2
-- 2026-05-17 19:01:43 Codex: `OSS-RLLIB-V2-001` Assigned OSS-RLLIB-V2-001 to Claude with reviewer Codex
-- 2026-05-17 19:01:50 Codex: `OSS-FINRL-V2-001` Assigned OSS-FINRL-V2-001 to Gemini2 with reviewer Codex2
-- 2026-05-17 19:02:55 Codex: `OODA-E2E-001` Assigned OODA-E2E-001 to Codex with reviewer Codex2
-- 2026-05-17 19:03:09 Codex: `OODA-E2E-002` Assigned OODA-E2E-002 to Codex2 with reviewer Codex
-- 2026-05-17 19:03:27 Codex: `OODA-E2E-003` Assigned OODA-E2E-003 to Claude with reviewer Codex
-- 2026-05-17 19:03:39 Codex: `OODA-E2E-004` Assigned OODA-E2E-004 to Claude with reviewer Codex2
-- 2026-05-17 19:03:49 Codex: `OODA-E2E-005` Assigned OODA-E2E-005 to Claude2 with reviewer Codex
-- 2026-05-17 19:04:00 Codex: `OODA-E2E-006` Assigned OODA-E2E-006 to Claude with reviewer Claude2
-- 2026-05-17 19:04:11 Codex: `OODA-E2E-007` Assigned OODA-E2E-007 to Codex with reviewer Claude
-- 2026-05-17 19:05:16 Codex: `STRAT-V2-001` Assigned STRAT-V2-001 to Copilot with reviewer Codex2
-- 2026-05-17 19:05:29 Codex: `STRAT-V2-002` Assigned STRAT-V2-002 to Claude2 with reviewer Codex
-- 2026-05-17 19:05:38 Codex: `EXP-V2-001` Assigned EXP-V2-001 to Codex with reviewer Codex2
-- 2026-05-17 19:05:48 Codex: `EXP-V2-002` Assigned EXP-V2-002 to Codex2 with reviewer Copilot
-- 2026-05-17 19:06:02 Codex: `SPRINT-8-CLOSEOUT` Assigned SPRINT-8-CLOSEOUT to Claude with reviewer Codex
+- 2026-05-17 19:39:50 Codex: `OSS-QLIB-V2-001` worker_commit d41fd04223a6cb2fd1afb72968a78fb5d18f665b
+- 2026-05-18 00:19:24 Codex: `OSS-QLIB-V2-001` Picked up OSS-QLIB-V2-001; task artifacts already committed, running focused Qlib verification before reviewer handoff.
+- 2026-05-18 00:21:27 Codex: `OSS-QLIB-V2-001` Picked up OSS-QLIB-V2-001 on task branch; implementation PR #70 is already merged, running status handoff after focused verification.
+- 2026-05-18 00:22:12 Claude: `REG-002` Review passed. Owner should finalize.
+- 2026-05-18 00:22:12 Codex: `REG-002` Owner finalized approved task
+- 2026-05-18 00:22:13 Codex: `REG-002` Handoff to Claude: Ready for review
+- 2026-05-18 00:22:13 Claude: `REG-002` Please address the requested changes
+- 2026-05-18 00:22:13 Codex: `REG-002` Superseded by REG-010 after accepted consensus.
+- 2026-05-18 00:22:14 Codex: Archived 1 terminal tasks from ai-status.json.
+- 2026-05-18 00:22:15 Codex: `APP-001-SIDECAR-BFF-HANDOFF` Assigned APP-001-SIDECAR-BFF-HANDOFF to Gemini with reviewer Copilot
+- 2026-05-18 00:25:24 Codex: `OSS-QLIB-V2-001` Picked up OSS-QLIB-V2-001 on task branch; implementation PR #70 is merged, recording verification and reviewer handoff.
+- 2026-05-18 00:26:00 Codex: `OSS-QLIB-V2-001` Implementation artifacts are merged in PR #70 (commit 5b1abb73). Focused verification rerun: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/research/qlib -q -> 40 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest scripts/test_ai_status.py -q -> 44 passed after status-log compatibility fix.
+- 2026-05-18 00:26:36 Codex: `OSS-QLIB-V2-001` Handoff to Codex2: Ready for review: production Qlib rolling runner, registry admission packet emitter, tests, and admission_packet.json are merged via PR #70. Please review services/research/qlib/production_rolling_run.py, services/research/qlib/registry_admission_packet.py, services/research/qlib/test_production_rolling_run.py, and support/evidence/OSS-QLIB-V2-001/admission_packet.json.
