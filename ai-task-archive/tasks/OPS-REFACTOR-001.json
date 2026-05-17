@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "OPS-REFACTOR-001",
+  "archived_at": "2026-05-17T02:46:36Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OPS-REFACTOR-001",
+    "title": "Re-apply dispatch policy refactor on current master",
+    "summary_zh": "把 archive/codex-orchestrator-dispatch-policy-cleanup-2026-04-28 tag 內的 dispatch_policy 抽取重新套用到當前 supervisor.py。原 cherry-pick 因 supervisor.py 1776 commit drift 衝突；本任務以 current master 為基準重做。獨立新增 .orchestrator/dispatch_policy.py + test。",
+    "phase": "Sprint 7 / EPIC-OPS-BACKLOG",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".orchestrator/dispatch_policy.py",
+      ".orchestrator/test_dispatch_policy.py",
+      ".orchestrator/dispatch_policy_contract.md"
+    ],
+    "acceptance": [
+      "dispatch_policy.py exposes dispatch_reason_priority(reason) is_execution_dispatch_reason(reason) normalized_status_set(values default) ready_dispatch_settings(config)",
+      "supervisor.py is modified minimally to call these helpers (do not change supervisor public API)",
+      "test_dispatch_policy.py covers 5+ cases per helper with pytest -q exit 0",
+      "reference tag archive/codex-orchestrator-dispatch-policy-cleanup-2026-04-28 in contract.md for original intent",
+      "existing supervisor tests still pass"
+    ],
+    "next": "Closeout complete: task-scoped commit b3f94281 created; verified PYTHONPATH=. pytest -q test_dispatch_policy.py (25 passed), PYTHONPATH=. pytest -q test_supervisor.py (141 passed), and py_compile for dispatch_policy/supervisor/test_dispatch_policy.",
+    "last_update": "2026-05-17T02:46:36Z",
+    "review_notes_zh": [
+      "審查通過：dispatch_policy.py 正確抽出四個 helper（dispatch_reason_priority / is_execution_dispatch_reason / normalized_status_set / ready_dispatch_settings），supervisor.py import 方式最小化且未改 public API，25 focused tests pass，141 supervisor tests pass，contract.md 正確引用 archive tag。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-17T02:46:36Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "b3f942819064277f4a00d2ef768fff94cad82432",
+      "commit_subject": "OPS-REFACTOR-001: extract dispatch policy",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "OPS-REFACTOR-001",
+        "Reviewer": "Claude",
+        "Wave": "2026-W20",
+        "Verified": "25 dispatch policy tests, 141 supervisor tests, and py_compile passed"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 32,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 4,
+      "behind": 1,
+      "push_status": "diverged"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OPS-REFACTOR-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-17T02:27:18Z",
+      "resolved_at": "2026-05-17T02:27:34Z"
+    },
+    {
+      "task_id": "OPS-REFACTOR-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: extracted current-master dispatch policy helpers into .orchestrator/dispatch_policy.py, updated supervisor.py to import/call them without changing public API, and added dispatch_policy_contract.md plus focused pytest coverage. Verification: PYTHONPATH=. pytest -q test_dispatch_policy.py -> 25 passed; PYTHONPATH=. pytest -q test_supervisor.py -> 141 passed; python3 -m py_compile .orchestrator/dispatch_policy.py .orchestrator/supervisor.py .orchestrator/test_dispatch_policy.py -> pass. Note: test_supervisor.py also mocks continue_or_skip_empty in one run_once test so its subprocess assertion remains scoped to planning materialization.",
+      "status": "done",
+      "created_at": "2026-05-17T02:36:45Z",
+      "resolved_at": "2026-05-17T02:41:03Z"
+    },
+    {
+      "task_id": "OPS-REFACTOR-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all four helpers extracted cleanly, supervisor.py uses them without API change, 25 focused + 141 supervisor tests pass, contract references archive tag correctly. Returning to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-05-17T02:41:03Z",
+      "resolved_at": "2026-05-17T02:46:36Z"
+    }
+  ],
+  "blockers": []
+}

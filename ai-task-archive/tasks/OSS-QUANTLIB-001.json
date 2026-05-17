@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "task_id": "OSS-QUANTLIB-001",
+  "archived_at": "2026-05-17T00:29:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-QUANTLIB-001",
+    "title": "QuantLib option pricing adapter skeleton",
+    "summary_zh": "新增 services/research/quantlib/ adapter，落實 vanilla European/American option Black-Scholes 與 Binomial 定價，產生 pricing_snapshot artifact。獨立於其他 research adapter。",
+    "phase": "Sprint 7 / EPIC-OSS-RESEARCH",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/research/quantlib/__init__.py",
+      "services/research/quantlib/adapter.py",
+      "services/research/quantlib/contract.md",
+      "services/research/quantlib/smoke_test.py",
+      "services/research/quantlib/requirements.txt",
+      "services/research/quantlib/Dockerfile"
+    ],
+    "acceptance": [
+      "adapter.py exposes price_european(spot strike rate vol tenor option_type) returning dict with price delta gamma vega",
+      "adapter.py exposes price_american_binomial(...) with same shape",
+      "smoke_test.py covers 1 ITM call and 1 OTM put against analytic reference values within 1e-3 tolerance",
+      "smoke_test produces pricing_snapshot artifact registered as artifact_type=pricing_snapshot",
+      "requirements.txt pins QuantLib-Python version explicitly"
+    ],
+    "next": "Finalized OSS-QUANTLIB-001 with task-scoped commit 1ecf06c6. Verification: py_compile quantlib adapter/smoke exports passed; pytest services/research/quantlib/smoke_test.py -q => 1 passed; python3 services/research/quantlib/smoke_test.py => SMOKE TEST PASSED with pricing_snapshot checksum 040c0f03dec72be8eb09c0d7f29f7b2813fa6b65042c69ab688aadc7ed072f97; pytest services/research/quantlib -q => 17 passed, 1 skipped.",
+    "last_update": "2026-05-17T00:29:57Z",
+    "review_notes_zh": [
+      "所有驗收條件通過。price_european 和 price_american_binomial 均返回 {price, delta, gamma, vega}，Black-Scholes 與 CRR binomial 實作正確。",
+      "smoke_test.py 覆蓋 1 ITM call 和 1 OTM put，誤差 <= 1e-3 通過，pricing_snapshot artifact_type=pricing_snapshot 確認。",
+      "pytest services/research/quantlib -q => 17 passed, 1 skipped。requirements.txt 明確釘死 QuantLib-Python==1.18。Dockerfile 使用 python:3.11-slim，無 nvidia。無其他 services/research/ 子目錄被修改。",
+      "adapter/__init__.py 正確保留既有 governed 匯出，無 import 衝突。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-17T00:29:57Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "1ecf06c656cc9a3f375125a616369d18b0f00a2e",
+      "commit_subject": "OSS-QUANTLIB-001: add option pricing adapter",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "OSS-QUANTLIB-001",
+        "Reviewer": "Claude",
+        "Wave": "2026-W20",
+        "Verified": "py_compile quantlib adapter/smoke exports; pytest quantlib smoke; pytest services/research/quantlib -q"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 47,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-QUANTLIB-001",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Copilot is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-16T23:39:40Z",
+      "resolved_at": "2026-05-16T23:40:53Z"
+    },
+    {
+      "task_id": "OSS-QUANTLIB-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Ready for review: added root QuantLib option pricing adapter with price_european and price_american_binomial returning price/delta/gamma/vega, pricing_snapshot smoke artifact, contract, Dockerfile, and pinned QuantLib-Python requirement. Preserved existing quantlib adapter package imports via adapter/__init__.py re-export. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/research/quantlib/adapter.py services/research/quantlib/smoke_test.py services/research/quantlib/__init__.py services/research/quantlib/adapter/__init__.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/research/quantlib/smoke_test.py -q => 1 passed; PYTHONDONTWRITEBYTECODE=1 python3 services/research/quantlib/smoke_test.py => SMOKE TEST PASSED with artifact_type=pricing_snapshot checksum 040c0f03dec72be8eb09c0d7f29f7b2813fa6b65042c69ab688aadc7ed072f97; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/research/quantlib/test_adapter.py -q => 17 passed, 1 skipped; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/research/quantlib -q => 17 passed, 1 skipped.",
+      "status": "done",
+      "created_at": "2026-05-16T23:49:40Z",
+      "resolved_at": "2026-05-17T00:11:59Z"
+    },
+    {
+      "task_id": "OSS-QUANTLIB-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-05-17T00:11:59Z",
+      "resolved_at": "2026-05-17T00:21:21Z"
+    },
+    {
+      "task_id": "OSS-QUANTLIB-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all acceptance criteria met — price_european/price_american_binomial return correct shapes, BS/CRR implementation verified, smoke passes with pricing_snapshot artifact, requirements pinned, no side effects. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-17T00:21:21Z",
+      "resolved_at": "2026-05-17T00:29:58Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "OPS-SIDECAR-CLEANUP-001",
+  "archived_at": "2026-05-17T03:14:11Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OPS-SIDECAR-CLEANUP-001",
+    "title": "Sidecar packet retention and cleanup policy",
+    "summary_zh": "support/sidecars/ 持續累積 packets 但缺退場機制。設計 retention/cleanup module：parent task done 後 N 天，sidecar packet 移至 support/sidecars/archived/，超過 M 天直接刪。獨立 module，可由 cron / chair-review 觸發。",
+    "phase": "Sprint 7 / EPIC-OPS-BACKLOG",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".orchestrator/sidecar_cleanup.py",
+      ".orchestrator/test_sidecar_cleanup.py",
+      ".orchestrator/sidecar_cleanup_contract.md"
+    ],
+    "acceptance": [
+      "sidecar_cleanup.py exposes scan() classify(sidecar_path) and execute(plan dry_run) functions",
+      "classify identifies sidecar packets whose parent task is archived as done over 14 days ago",
+      "execute(dry_run=True) returns plan without filesystem changes",
+      "execute(dry_run=False) moves stale packets to support/sidecars/archived/ and deletes packets older than 60 days",
+      "test covers 3 ages: fresh stale-but-archivable beyond-deletion exit 0"
+    ],
+    "next": "Closeout finalized: task-scoped commit a33472f7; verified python3 -m pytest .orchestrator/test_sidecar_cleanup.py (3 passed).",
+    "last_update": "2026-05-17T03:14:11Z",
+    "review_notes_zh": [
+      "審查通過：sidecar_cleanup.py 完整實作 scan() / classify(sidecar_path) / execute(plan, dry_run) 三個 API；classify 以 archive_after_days=14 正確識別超過門檻的 packet；execute(dry_run=True) 直接回傳 plan 無 FS 寫入；execute(dry_run=False) 移動至 archived/ 並刪除超過 60 天的 packet；test 覆蓋 fresh / stale-but-archivable / beyond-deletion 三個 age 場景加 CLI dry-run exit 0；pytest -q 3/3 通過。"
+    ],
+    "review_file": ".orchestrator/sidecar_cleanup_contract.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-17T03:14:11Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "a33472f715b6a9a4a05b7b3ea739fb8c48b2c166",
+      "commit_subject": "OPS-SIDECAR-CLEANUP-001: add sidecar cleanup retention",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "OPS-SIDECAR-CLEANUP-001",
+        "Reviewer": "Claude",
+        "Wave": "2026-W20",
+        "Verified": "python3 -m pytest .orchestrator/test_sidecar_cleanup.py (3 passed)"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 29,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OPS-SIDECAR-CLEANUP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review. Added .orchestrator/sidecar_cleanup.py with scan/classify/execute retention API, CLI dry-run/apply mode, 14-day archive and 60-day delete policy; added contract doc and focused tests covering fresh, archivable, delete-eligible, dry-run no-op, real execute, and CLI exit 0. Verification: python3 -m pytest .orchestrator/test_sidecar_cleanup.py; python3 .orchestrator/test_sidecar_cleanup.py; python3 -m py_compile .orchestrator/sidecar_cleanup.py .orchestrator/test_sidecar_cleanup.py.",
+      "status": "done",
+      "created_at": "2026-05-16T23:46:46Z",
+      "resolved_at": "2026-05-17T03:05:06Z"
+    },
+    {
+      "task_id": "OPS-SIDECAR-CLEANUP-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Chair reassigned review from Codex2 to Claude: Codex2 is paused for quota until 2026-05-18T23:40:00Z and the review has been pending since 2026-05-16T23:46:46Z.",
+      "status": "done",
+      "created_at": "2026-05-17T03:05:06Z",
+      "resolved_at": "2026-05-17T03:08:01Z"
+    },
+    {
+      "task_id": "OPS-SIDECAR-CLEANUP-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 5 acceptance criteria verified. scan/classify/execute API correct, 3-age test scenarios pass, dry-run no-op confirmed. pytest -q 3/3 passed. Returned to Codex for closeout finalization.",
+      "status": "done",
+      "created_at": "2026-05-17T03:08:01Z",
+      "resolved_at": "2026-05-17T03:14:12Z"
+    }
+  ],
+  "blockers": []
+}
