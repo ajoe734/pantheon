@@ -1,0 +1,28 @@
+{
+  "plan_id": "dp-ooda-e2e-005-paper-001",
+  "approval_decision_id": "appr-ooda-e2e-005-001",
+  "artifact_id": "reg-lean-smoke-alpha-1.0.0",
+  "artifact_version": "1.0.0",
+  "artifact_type": "execution_bundle",
+  "strategy_id": "lean-smoke-alpha",
+  "capital_pool_id": "pool-lean-smoke-001",
+  "current_stage": "none",
+  "target_stage": "paper",
+  "transition_type": "activate",
+  "runtime_action": "deploy_new_binding",
+  "status": "approved",
+  "created_at": "2026-05-17T00:00:00Z",
+  "created_by": "OODA-E2E-005",
+  "scale": {
+    "capital_scale_pct": 0.0,
+    "gross_scale_pct": 100.0,
+    "ramp_schedule": []
+  },
+  "rollback": {
+    "target_artifact_id": "reg-lean-smoke-alpha-0.9.0",
+    "target_version": "0.9.0",
+    "action_type": "replace"
+  },
+  "pre_checks": [],
+  "post_checks": []
+}
