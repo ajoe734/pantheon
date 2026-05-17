@@ -389,12 +389,15 @@ This is intentional: gating discipline is in CI, not in human review
 | Environment      | Tracks ref                              | Auto-deploy trigger                          | Operator role |
 |------------------|------------------------------------------|----------------------------------------------|---------------|
 | **dev**          | latest `publish/v<latest>`               | push on `publish/v*`                          | observe       |
-| **staging-live** | `master` HEAD (post-promote)             | (not yet wired — manual workflow_dispatch)    | smoke / sign-off |
+| **staging-live** | `master` HEAD (post-promote)             | push on `master` (every promote / hotfix merge) | smoke / sign-off |
 | **production**   | a chosen `prod/v<...>` tag (locked)      | never auto                                    | sign + manual workflow_dispatch |
 
-dev is the **soak environment** — the 1-day soak gate before promote
-runs on the dev VM. staging-live is the post-promote pre-production
-rehearsal. Production is operator-locked.
+dev is the **CI-gate environment** — every nightly publish snapshot
+auto-deploys here and `publish-promote.yml` only opens a promote PR
+once branch-ci is green. staging-live is the post-promote
+pre-production rehearsal — `master` push automatically redeploys both
+`pantheon-lupin-staging-{control,exec}` VMs. Production is
+operator-locked.
 
 ---
 
