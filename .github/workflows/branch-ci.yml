@@ -1,29 +1,29 @@
-name: Wave CI Gate
+name: Branch CI Gate
 
-# Gate every push and PR that participates in the wave / publish / master
-# pipeline. Runs commit-trailer checks, lint, and a fast smoke acceptance.
-# Full acceptance runs separately on `wave/*` close.
+# Gate every push and PR that participates in the task / publish / master
+# pipeline. Runs commit-trailer checks, runtime-mirror guard, and a fast
+# smoke acceptance. The three jobs below ("Commit trailers", "Runtime
+# mirror guard", "Smoke acceptance") are the required status checks on
+# the dev and master branch protections.
 
 on:
   push:
     branches:
-      - "worker/**"
-      - "wave/**"
+      - "task/**"
+      - "hotfix/**"
       - "dev"
       - "publish/**"
       - "master"
-      - "hotfix/**"
   pull_request:
     branches:
       - "dev"
       - "master"
-      - "wave/**"
 
 permissions:
   contents: read
 
 concurrency:
-  group: wave-ci-${{ github.workflow }}-${{ github.ref }}
+  group: branch-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
