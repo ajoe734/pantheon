@@ -6,7 +6,7 @@
 **Reviewer (Sidecar):** Codex
 **Phase:** Sprint 7 / EPIC-IMITATION-TRAINING
 **Date:** 2026-05-17
-**Status:** ready_for_handoff
+**Status:** sidecar_review_approved
 
 ---
 
@@ -25,8 +25,9 @@ IMT-006 adds an imitation evaluation metrics module (`eval_metrics.py`) that is 
 - `kl_divergence` — mean D_KL(delta_expert_action ‖ policy_distribution)
 
 **Owner:** Codex
-**Reviewer:** Codex2
-**Status at packet creation:** `review` (pending Codex2 review)
+**Reviewer at packet creation:** Codex2
+**Current reviewer route at sidecar review:** Claude (chair reassigned IMT-006 review from Codex2 on 2026-05-17T03:05:03Z because Codex2 is quota-paused)
+**Status at packet creation:** `review`
 
 **Artifacts delivered:**
 - `services/research/imitation/eval_metrics.py`
@@ -66,11 +67,20 @@ PASSED  test_missing_prediction_source_raises
 4 passed in 2.63s
 ```
 
+Reviewer verification:
+
+```
+Command: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/research/imitation/test_eval_metrics.py -q
+Date: 2026-05-17
+
+4 passed in 1.01s
+```
+
 ### 4.2 Acceptance Criterion Spot-checks
 
 **Criterion 1 — `evaluate()` signature and return dict:**
 `eval_metrics.py:39` exposes `evaluate(behavior_policy_ref, eval_trajectories) -> dict[str, Any]`.
-Return dict includes `action_match_rate`, `return_gap`, `kl_divergence` as top-level keys (lines 97–101).
+Return dict includes `action_match_rate`, `return_gap`, `kl_divergence` as top-level keys (lines 99–101).
 
 **Criterion 2 — Perfect-match scenario (rate=1.0):**
 `test_perfect_match_policy_returns_zero_gap_and_zero_kl` at line 94 uses a keyed-prediction policy where every step resolves to the expert action. Asserts `action_match_rate == 1.0`, `return_gap == 0.0`, `kl_divergence == 0.0`, `expert_return == 6.0`, `policy_return == 6.0`.
@@ -81,7 +91,7 @@ Return dict includes `action_match_rate`, `return_gap`, `kl_divergence` as top-l
 **Criterion 4 — pytest exit 0:** confirmed by run above.
 
 **Criterion 5 — JSON-serializable + artifact_type:**
-`eval_metrics.py:122` explicitly calls `json.dumps(result, sort_keys=True)` before returning (raises if not serializable). `result["artifact_type"] = "evaluation_result"` at line 88. `registry_hints["artifact_type"] = "evaluation_result"` at line 121. Confirmed by `test_perfect_match_policy_returns_zero_gap_and_zero_kl` which also calls `json.dumps(result, sort_keys=True)` at line 121 of the test.
+`eval_metrics.py:122` explicitly calls `json.dumps(result, sort_keys=True)` before returning (raises if not serializable). `result["artifact_type"] = "evaluation_result"` at line 93. `registry_hints["artifact_type"] = "evaluation_result"` at line 118. Confirmed by `test_perfect_match_policy_returns_zero_gap_and_zero_kl` which also calls `json.dumps(result, sort_keys=True)` at line 121 of the test.
 
 ---
 
@@ -117,13 +127,18 @@ When `reward_by_action` (counterfactual rewards) are present in trajectory steps
 - Only `services/research/imitation/eval_metrics.py` and `services/research/imitation/test_eval_metrics.py` are new files.
 - No changes to canonical truth, L1 policy documents, or runtime/registry/governance implementations.
 - This sidecar packet adds only `support/sidecars/IMT-006/IMT-006-SIDECAR-REVIEW.md`.
+- Handoff target should follow the current parent task state: as of sidecar review, IMT-006 is assigned to reviewer Claude, not Codex2.
 
 ---
 
 ## 7. Reviewer Checklist (for Codex as sidecar reviewer)
 
-- [ ] Acceptance criteria 1–5 correctly mapped from task brief
-- [ ] Evidence (pytest 4 passed) matches the artifacts listed
-- [ ] Implementation notes accurately describe the delivered behavior
-- [ ] Scope boundary confirmed: support artifact only, no canonical mutations
-- [ ] Packet is accurate and complete for handoff to IMT-006 parent reviewer (Codex2)
+- [x] Acceptance criteria 1–5 correctly mapped from task brief
+- [x] Evidence (pytest 4 passed) matches the artifacts listed
+- [x] Implementation notes accurately describe the delivered behavior
+- [x] Scope boundary confirmed: support artifact only, no canonical mutations
+- [x] Packet is accurate and complete for handoff to the current IMT-006 parent reviewer (Claude)
+
+## 8. Sidecar Review Disposition
+
+Codex reviewed the packet against the parent IMT-006 artifacts and reran the focused pytest command on 2026-05-17. The packet is approved as a support artifact. Current parent-task routing should follow `ai-status.json`: IMT-006 review is assigned to Claude after the Codex2 quota-pause reassignment.
