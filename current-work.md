@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-17 13:55:44
+Last updated: 2026-05-17 18:44:50
 
 ## Objective
 
@@ -35,28 +35,14 @@ Last updated: 2026-05-17 13:55:44
 - Ready for human: `True`
 - Ready to materialize execution: `True`
 
-## Wave Workflow
-
-- Current wave: `-`
-- Status: `closed`
-- Branch: `wave/2026-W22`
-- Opened at: 2026-05-17 13:46:59
-- Frozen at: -
-- Closed at: 2026-05-17 13:47:39
-- Recent events:
-  - 2026-05-17 13:47:39 · `close` · `2026-W22` by `Codex`
-  - 2026-05-17 13:46:59 · `open` · `2026-W22` by `Codex`
-  - 2026-05-17 13:42:47 · `close` · `2026-W21` by `Codex`
-  - 2026-05-17 13:23:05 · `open` · `2026-W21` by `Codex`
-
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: No active assignment
-- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: No active assignment
+- `Claude`: execution, control-plane, governance-review; next: Assignment created
+- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: Assignment created
+- `Codex`: integration, status-system, schema, acceptance; next: Assignment created
 - `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
-- `Claude2`: execution, control-plane, governance-review; next: No active assignment
+- `Claude2`: execution, control-plane, governance-review; next: Assignment created
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 
 ## Delivery Layers
@@ -65,7 +51,10 @@ Last updated: 2026-05-17 13:55:44
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| _(none)_ | - | - | - | - | - | - |
+| `DEP-004` | Sprint 7 / EPIC-GOV-DEPLOY | Pool x runtime compatibility check before deployment advance | Codex | todo | `DEP-001`, `DEP-002`, `CAP-001`, `RT-001` | GAP P1 列為 DEP-004 但 sprint 7 沒派；grep 確認 services 與 governance 樹下沒有 pool/runtime compat check 實作。本任務在 DeploymentPlan 進入 RuntimeBinding 前增加 capital_pool 能力 × runtime 要求的相容性檢查，不通過則阻擋 advance。獨立 module，不修 DEP-001..003 公開 API。 |
+| `M7-CANARY-CLOSEOUT` | Track E / EPIC-05 M7 Canary Readiness | M7 canary readiness packet final closure | Claude | todo | `MGMT-BROKER-002`, `MGMT-BROKER-006` | Track E EPIC-05 全部子任務已完成；MGMT-BROKER-002 Shioaji simulation SDK smoke 也通過。本任務組裝完整 M7 PromotionReadinessPacket：含 broker_sandbox_smoke / shioaji_sandbox_evidence_packet / canary_activation_gate_refs 三項證據引用，加上 risk-owner + operator 雙閘 approval 預留欄位（未實際開啟 live），最終產出 packet JSON 與簽核表。獨立檔案，不修 broker live flag。 |
+| `POST-EVO-BRIDGE` | Sprint 7 / EPIC-EVOLUTION-FOLLOWUP | Postmortem -> EvolutionDecisionProposal auto-trigger bridge | Claude2 | todo | `POST-001`, `EVO-001` | POST-001 + EVO-001 已落地為 schema/service，但 incident/postmortem publish → EvolutionDecisionProposal 自動觸發的 bridge 還沒實際 wire。本任務新增 postmortem_bridge module：訂閱 postmortem published 事件，按 severity 與 corrective_action_required 判斷是否產出 EvolutionDecisionProposal payload（不直接寫 governance store，僅 emit proposal）。獨立 module，不改 POST-001 / EVO-001 公開 API。 |
+| `LOVABLE-STRICT-PUBLISH` | Sprint 7 / EPIC-LOVABLE-INFRA | Lovable build-time strict env publish audit script | Gemini | todo | - | SA § 2.2 列為 non-blocking follow-up：execute-plans@main build-time 應使用 strict env (VITE_BFF_MODE=live VITE_BFF_FALLBACK=strict VITE_BFF_REAL_WRITES=false) 重新發佈一次，並驗證發佈後的 bundle 不再含 seed fallback assets。本任務不直接動 execute-plans repo，而是寫一個 pantheon 端的 audit script + evidence packet，記錄 publish 條件、build env、bundle hash、verification probe 結果。 |
 
 ### External / Upstream Integration Work
 
@@ -106,6 +95,10 @@ Last updated: 2026-05-17 13:55:44
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
 | `OSS-STAT-001-SIDECAR-ACCEPTANCE` | Sprint 7 / EPIC-OSS-RESEARCH | [Sidecar] [Auto] [Parent OSS-STAT-001] Prepare OSS-STAT-001 acceptance packet and dependency map | 平行支援 OSS-STAT-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Gemini | Claude | done | - | 2026-05-17 11:45:00 | Owner finalized task and closed it. Sidecar acceptance packet is durable in support/sidecars/OSS-STAT-001/. |
+| `DEP-004` | Sprint 7 / EPIC-GOV-DEPLOY | Pool x runtime compatibility check before deployment advance | GAP P1 列為 DEP-004 但 sprint 7 沒派；grep 確認 services 與 governance 樹下沒有 pool/runtime compat check 實作。本任務在 DeploymentPlan 進入 RuntimeBinding 前增加 capital_pool 能力 × runtime 要求的相容性檢查，不通過則阻擋 advance。獨立 module，不修 DEP-001..003 公開 API。 | Codex | Codex2 | todo | `DEP-001`, `DEP-002`, `CAP-001`, `RT-001` | 2026-05-17 18:43:57 | Assignment created |
+| `M7-CANARY-CLOSEOUT` | Track E / EPIC-05 M7 Canary Readiness | M7 canary readiness packet final closure | Track E EPIC-05 全部子任務已完成；MGMT-BROKER-002 Shioaji simulation SDK smoke 也通過。本任務組裝完整 M7 PromotionReadinessPacket：含 broker_sandbox_smoke / shioaji_sandbox_evidence_packet / canary_activation_gate_refs 三項證據引用，加上 risk-owner + operator 雙閘 approval 預留欄位（未實際開啟 live），最終產出 packet JSON 與簽核表。獨立檔案，不修 broker live flag。 | Claude | Codex | todo | `MGMT-BROKER-002`, `MGMT-BROKER-006` | 2026-05-17 18:44:16 | Assignment created |
+| `POST-EVO-BRIDGE` | Sprint 7 / EPIC-EVOLUTION-FOLLOWUP | Postmortem -> EvolutionDecisionProposal auto-trigger bridge | POST-001 + EVO-001 已落地為 schema/service，但 incident/postmortem publish → EvolutionDecisionProposal 自動觸發的 bridge 還沒實際 wire。本任務新增 postmortem_bridge module：訂閱 postmortem published 事件，按 severity 與 corrective_action_required 判斷是否產出 EvolutionDecisionProposal payload（不直接寫 governance store，僅 emit proposal）。獨立 module，不改 POST-001 / EVO-001 公開 API。 | Claude2 | Codex2 | todo | `POST-001`, `EVO-001` | 2026-05-17 18:44:31 | Assignment created |
+| `LOVABLE-STRICT-PUBLISH` | Sprint 7 / EPIC-LOVABLE-INFRA | Lovable build-time strict env publish audit script | SA § 2.2 列為 non-blocking follow-up：execute-plans@main build-time 應使用 strict env (VITE_BFF_MODE=live VITE_BFF_FALLBACK=strict VITE_BFF_REAL_WRITES=false) 重新發佈一次，並驗證發佈後的 bundle 不再含 seed fallback assets。本任務不直接動 execute-plans repo，而是寫一個 pantheon 端的 audit script + evidence packet，記錄 publish 條件、build env、bundle hash、verification probe 結果。 | Gemini | Gemini2 | todo | - | 2026-05-17 18:44:50 | Assignment created |
 
 ## Handoff Queue
 
@@ -194,23 +187,23 @@ Last updated: 2026-05-17 13:55:44
 
 ## Latest Checkpoints
 
-- 2026-05-17 13:54:01 Orchestrator: PreToolUse: Bash
-- 2026-05-17 13:54:02 Orchestrator: PreToolUse: Bash
-- 2026-05-17 13:54:02 Orchestrator: PostToolUse: Bash
-- 2026-05-17 13:54:04 Orchestrator: PostToolUse: Bash
-- 2026-05-17 13:54:10 Orchestrator: PreToolUse: Bash
-- 2026-05-17 13:54:10 Orchestrator: PostToolUse: Bash
-- 2026-05-17 13:54:13 Orchestrator: PreToolUse: Bash
-- 2026-05-17 13:54:13 Orchestrator: PostToolUse: Bash
-- 2026-05-17 13:54:17 Orchestrator: PreToolUse: Bash
-- 2026-05-17 13:54:19 Orchestrator: PostToolUse: Bash
-- 2026-05-17 13:54:25 Orchestrator: PreToolUse: Bash
-- 2026-05-17 13:54:27 Orchestrator: PostToolUse: Bash
-- 2026-05-17 13:54:36 Orchestrator: PreToolUse: Bash
-- 2026-05-17 13:54:37 Orchestrator: PostToolUse: Bash
-- 2026-05-17 13:54:47 Orchestrator: PreToolUse: Bash
-- 2026-05-17 13:54:55 Orchestrator: PostToolUse: Bash
-- 2026-05-17 13:55:13 Orchestrator: PreToolUse: Bash
-- 2026-05-17 13:55:16 Orchestrator: Stop: Stop
-- 2026-05-17 13:55:18 Orchestrator: PostToolUse: Bash
-- 2026-05-17 13:55:41 Orchestrator: PreToolUse: Bash
+- 2026-05-17 18:42:24 Orchestrator: `OPS-CHAIR-REVIEW` Chair review queued for Codex: chair_review:approval_triage
+- 2026-05-17 18:42:24 Orchestrator: Worker started via codex: chair_review:approval_triage
+- 2026-05-17 18:43:08 Orchestrator: PreToolUse: TodoWrite
+- 2026-05-17 18:43:09 Orchestrator: PostToolUse: TodoWrite
+- 2026-05-17 18:43:56 Orchestrator: PreToolUse: Bash
+- 2026-05-17 18:43:57 Codex: `DEP-004` Assigned DEP-004 to Codex with reviewer Codex2
+- 2026-05-17 18:44:07 Orchestrator: PreToolUse: Bash
+- 2026-05-17 18:44:07 Orchestrator: PostToolUse: Bash
+- 2026-05-17 18:44:13 Orchestrator: PreToolUse: Bash
+- 2026-05-17 18:44:14 Orchestrator: PostToolUse: Bash
+- 2026-05-17 18:44:16 Codex: `M7-CANARY-CLOSEOUT` Assigned M7-CANARY-CLOSEOUT to Claude with reviewer Codex
+- 2026-05-17 18:44:19 Orchestrator: PreToolUse: Bash
+- 2026-05-17 18:44:19 Orchestrator: PostToolUse: Bash
+- 2026-05-17 18:44:31 Codex: `POST-EVO-BRIDGE` Assigned POST-EVO-BRIDGE to Claude2 with reviewer Codex2
+- 2026-05-17 18:44:32 Orchestrator: PreToolUse: Bash
+- 2026-05-17 18:44:33 Orchestrator: PostToolUse: Bash
+- 2026-05-17 18:44:40 Orchestrator: PreToolUse: Bash
+- 2026-05-17 18:44:41 Orchestrator: PostToolUse: Bash
+- 2026-05-17 18:44:50 Orchestrator: PreToolUse: Bash
+- 2026-05-17 18:44:50 Codex: `LOVABLE-STRICT-PUBLISH` Assigned LOVABLE-STRICT-PUBLISH to Gemini with reviewer Gemini2
