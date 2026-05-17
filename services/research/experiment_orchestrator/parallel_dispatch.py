@@ -364,6 +364,38 @@ def _run_vectorbt_backend(task: ExperimentTask, backend_id: str) -> ExperimentRu
     aggregate_metrics = dict(result.backtest_result.aggregate_metrics)
     sharpe = _number_or_none(aggregate_metrics.get("mean_sharpe_ratio"))
     registry_entry = result.registry_entry
+    registry_lineage = _mapping(registry_entry.get("lineage"))
+    source_strategy_spec_id = _first_text(
+        registry_lineage.get("source_strategy_spec_id"),
+        payload.get("source_strategy_spec_id"),
+        _mapping(task.metadata).get("source_strategy_spec_id"),
+        f"{task.strategy_id}@{task.strategy_spec_version}",
+    )
+    source_dataset_refs = _text_list(
+        registry_lineage.get("source_dataset_refs"),
+        payload.get("source_dataset_refs"),
+        task.dataset_version_id,
+    )
+    lineage = {
+        "source_run_ids": _text_list(registry_lineage.get("source_run_ids"), result.backtest_result.run_id),
+        "source_dataset_refs": source_dataset_refs,
+        "source_strategy_spec_id": source_strategy_spec_id,
+    }
+    evaluation_summary = {
+        "evaluation_kind": "vectorbt_backtest",
+        "producer_run_id": result.backtest_result.run_id,
+        "source_strategy_spec_id": source_strategy_spec_id,
+        "dataset_version_id": task.dataset_version_id,
+        "backtest_backend": result.backtest_result.backend,
+        "aggregate_metrics": aggregate_metrics,
+        "registry_hints": {
+            "artifact_type": registry_entry.get("artifact_type"),
+            "artifact_state": registry_entry.get("artifact_state"),
+            "deployment_stage": _mapping(registry_entry.get("deployment_summary")).get("current_stage"),
+            "source_strategy_spec_id": source_strategy_spec_id,
+            "source_dataset_refs": source_dataset_refs,
+        },
+    }
     artifact_ref = str(registry_entry.get("registry_id") or f"artifact://vectorbt/{result.backtest_result.run_id}")
     output_ref = _storage_ref(registry_entry) or f"inline://research/vectorbt/{result.backtest_result.run_id}/output"
     return _completed_experiment_run(
@@ -376,6 +408,9 @@ def _run_vectorbt_backend(task: ExperimentTask, backend_id: str) -> ExperimentRu
         metrics={"sharpe": sharpe, "sharpe_ratio": sharpe, "ic": _number_or_none(payload.get("ic"))},
         metadata={
             "adapter_backend": "vectorbt",
+            "producer_run_id": result.backtest_result.run_id,
+            "lineage": lineage,
+            "evaluation_summary": evaluation_summary,
             "aggregate_metrics": aggregate_metrics,
             "registry_entry": copy.deepcopy(registry_entry),
         },
@@ -520,6 +555,29 @@ def _number_or_none(value: Any) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return float(value)
+
+
+def _first_text(*values: Any) -> str | None:
+    for value in values:
+        if value in (None, ""):
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
+def _text_list(*values: Any) -> list[str]:
+    refs: list[str] = []
+    for value in values:
+        if value in (None, ""):
+            continue
+        items = value if isinstance(value, Sequence) and not isinstance(value, (str, bytes)) else [value]
+        for item in items:
+            text = str(item or "").strip()
+            if text and text not in refs:
+                refs.append(text)
+    return refs
 
 
 def _mapping(value: Any) -> dict[str, Any]:

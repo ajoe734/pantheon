@@ -765,6 +765,56 @@ class PortableStateRenderingTests(unittest.TestCase):
         self.assertIn("Reviewer checked the handoff at 2026-04-10 10:30:00.", content)
         self.assertIn("- 2026-04-10 10:10:00 Codex: `DEMO-002` Paused until 2026-04-10 10:40:00.", content)
 
+    def test_write_current_work_tolerates_structured_log_entries_without_message(self) -> None:
+        state = {
+            "updated_at": "2026-05-17T16:24:00Z",
+            "objective": "Keep generated status views robust.",
+            "sprint": "2026-05-17-status-sync",
+            "canonical_document_layers": {
+                "L0 Collaboration & State": [
+                    "AI_COLLABORATION_GUIDE.md",
+                    "ai-status.json",
+                    "ai-activity-log.jsonl",
+                ],
+            },
+            "agents": [],
+            "tasks": [],
+            "handoffs": [],
+            "blockers": [],
+            "workload": {},
+            "workload_summary": {},
+        }
+        logs = [
+            {
+                "ts": "2026-05-17T16:24:21Z",
+                "agent": "Codex2",
+                "type": "worker_commit",
+                "task_id": "OODA-E2E-002",
+                "commit": "abc123",
+            }
+        ]
+
+        with tempfile.TemporaryDirectory(prefix="ai-status-current-work-structured-log-") as temp_dir:
+            output_path = Path(temp_dir) / "current-work.md"
+            with (
+                mock.patch.object(ai_status, "CURRENT_WORK_FILE", output_path),
+                mock.patch.object(
+                    ai_status,
+                    "load_archive_index",
+                    return_value={
+                        "updated_at": None,
+                        "counts": {"total": 0, "completed": 0, "superseded": 0},
+                        "recent_terminal_ids": [],
+                    },
+                ),
+                mock.patch.object(ai_status, "recent_terminal_summaries", return_value=[]),
+            ):
+                ai_status.write_current_work(state, logs)
+
+            content = output_path.read_text(encoding="utf-8")
+
+        self.assertIn("- 2026-05-18 00:24:21 Codex2: `OODA-E2E-002` worker_commit", content)
+
     def test_build_onboarding_prompt_mentions_active_planning(self) -> None:
         state = {
             "canonical_document_layers": {
