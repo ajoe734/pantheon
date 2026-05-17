@@ -1,0 +1,142 @@
+{
+  "version": 1,
+  "task_id": "OSS-STAT-001",
+  "archived_at": "2026-05-17T02:17:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-STAT-001",
+    "title": "statsmodels cointegration adapter skeleton",
+    "summary_zh": "新增 services/research/statsmodels/ adapter，落實 stat-arb 風格 cointegration / Engle-Granger 檢定，產生 signal_snapshot artifact。獨立於其他 research adapter，無共用檔案。",
+    "phase": "Sprint 7 / EPIC-OSS-RESEARCH",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/research/statsmodels/__init__.py",
+      "services/research/statsmodels/adapter/__init__.py",
+      "services/research/statsmodels/adapter/cointegration.py",
+      "services/research/statsmodels/contract.md",
+      "services/research/statsmodels/smoke_test.py",
+      "services/research/statsmodels/requirements.txt",
+      "services/research/statsmodels/Dockerfile"
+    ],
+    "acceptance": [
+      "adapter package exposes cointegration_test(prices_a, prices_b) returning dict with p_value spread half_life",
+      "smoke_test.py runs cointegration on a deterministic synthetic series and asserts p_value < 0.05",
+      "smoke_test produces signal_snapshot artifact with deterministic checksum",
+      "requirements.txt pins statsmodels version explicitly",
+      "no other services/research/ subdir is modified"
+    ],
+    "next": "Closeout complete: task-scoped commit 9fe06e55; verified py_compile/import/diff-check and Docker build/run passed with signal_snapshot checksum 016252267637129889b5611ddaa371b47c5d7b14d32c26417b89b379b4ae9fb4. Host direct smoke requires numpy; container smoke is the service-local verification path.",
+    "last_update": "2026-05-17T02:17:33Z",
+    "review_notes_zh": [
+      "審查通過：所有接受標準驗證完成",
+      "adapter/cointegration.py 正確實作 Engle-Granger test",
+      "smoke_test.py 斷言 p_value < 0.05 並產生 SHA-256 signal_snapshot",
+      "requirements.txt 明確鎖定 statsmodels==0.14.2",
+      "Dockerfile CMD 已修正為 python smoke_test.py"
+    ],
+    "review_file": "support/sidecars/OSS-STAT-001/OSS-STAT-001-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-17T02:17:33Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "9fe06e5538dd0b30af52ca28eb2d9ff014458a61",
+      "commit_subject": "OSS-STAT-001: finalize statsmodels smoke",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "OSS-STAT-001",
+        "Reviewer": "Claude",
+        "Wave": "2026-W20",
+        "- docker build -t pantheon-statsmodels-smoke": "oss-stat-001 services/research/statsmodels",
+        "- docker run --rm pantheon-statsmodels-smoke": "oss-stat-001 (checksum 016252267637129889b5611ddaa371b47c5d7b14d32c26417b89b379b4ae9fb4)"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 49,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-STAT-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implemented statsmodels cointegration adapter skeleton. Artifacts: adapter.py (cointegration_test → {p_value, spread, half_life}), smoke_test.py (deterministic synthetic series, p_value < 0.05 assertion, signal_snapshot with SHA-256 checksum), __init__.py, contract.md, Dockerfile. Syntax check passes. Full smoke test requires Docker (statsmodels==0.14.2). Commit: 8814c15d.",
+      "status": "done",
+      "created_at": "2026-05-16T23:37:54Z",
+      "resolved_at": "2026-05-16T23:41:33Z"
+    },
+    {
+      "task_id": "OSS-STAT-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review failed: smoke test does not run. PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q services/research/statsmodels/smoke_test.py fails during collection because services/research/statsmodels/__init__.py imports .adapter, but existing services/research/statsmodels/adapter/ package shadows the new adapter.py; direct python services/research/statsmodels/smoke_test.py fails with the same missing cointegration_test import. Please move cointegration_test into the existing adapter package or otherwise remove the adapter.py/package name collision, then rerun py_compile and smoke test.",
+      "status": "done",
+      "created_at": "2026-05-16T23:41:33Z",
+      "resolved_at": "2026-05-16T23:41:33Z"
+    },
+    {
+      "task_id": "OSS-STAT-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Shadowing fix implemented and committed (a7ba196e). adapter.py deleted; cointegration_test moved to adapter/cointegration.py and re-exported via adapter/__init__.py. Syntax check: py_compile OK for all Python files. diff --check clean. Full smoke requires statsmodels in Docker (statsmodels==0.14.2). Acceptance: cointegration_test(prices_a, prices_b) returns {p_value, spread, half_life}; smoke_test.py asserts p_value < 0.05 on deterministic seed-42 series; signal_snapshot artifact with SHA-256 checksum; requirements.txt pins statsmodels==0.14.2; no other services/research/ subdir modified.",
+      "status": "done",
+      "created_at": "2026-05-17T01:45:21Z",
+      "resolved_at": "2026-05-17T01:55:11Z"
+    },
+    {
+      "task_id": "OSS-STAT-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review requested changes: Docker image builds, and docker run --rm pantheon-statsmodels-smoke:oss-stat-001 python smoke_test.py passes with signal_snapshot checksum 016252267637129889b5611ddaa371b47c5d7b14d32c26417b89b379b4ae9fb4; however default docker run --rm pantheon-statsmodels-smoke:oss-stat-001 fails with /usr/local/bin/python: No module named pytest because Dockerfile CMD uses python -m pytest -q smoke_test.py while requirements.txt does not install pytest. Please either install pytest in the task-scoped image requirements or change Dockerfile CMD to python smoke_test.py, then re-run docker build and default docker run. py_compile and from adapter import cointegration_test passed; adapter exports adapter.cointegration.",
+      "status": "done",
+      "created_at": "2026-05-17T01:55:11Z",
+      "resolved_at": "2026-05-17T01:55:11Z"
+    },
+    {
+      "task_id": "OSS-STAT-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-17T01:56:59Z",
+      "resolved_at": "2026-05-17T01:56:59Z"
+    },
+    {
+      "task_id": "OSS-STAT-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Statsmodels Dockerfile default CMD now runs python smoke_test.py without pytest. Verified: python3 -m py_compile smoke_test.py adapter/cointegration.py adapter/__init__.py; docker build -t pantheon-statsmodels-smoke:oss-stat-001 services/research/statsmodels; docker run --rm pantheon-statsmodels-smoke:oss-stat-001 passed with signal_snapshot checksum 016252267637129889b5611ddaa371b47c5d7b14d32c26417b89b379b4ae9fb4.",
+      "status": "done",
+      "created_at": "2026-05-17T02:00:22Z",
+      "resolved_at": "2026-05-17T02:05:49Z"
+    },
+    {
+      "task_id": "OSS-STAT-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 5 acceptance criteria pass. py_compile OK, import OK, diff-check clean, Dockerfile CMD fixed. Returned to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-05-17T02:05:49Z",
+      "resolved_at": "2026-05-17T02:17:34Z"
+    }
+  ],
+  "blockers": []
+}
