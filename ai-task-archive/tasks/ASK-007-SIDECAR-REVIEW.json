@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "task_id": "ASK-007-SIDECAR-REVIEW",
+  "archived_at": "2026-05-17T03:01:54Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASK-007-SIDECAR-REVIEW",
+    "title": "Prepare ASK-007 review packet and evidence summary",
+    "summary_zh": "平行支援 ASK-007，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Sprint 7 / EPIC-CONSULT-ADVANCED",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "ASK-004"
+    ],
+    "artifacts": [
+      "support/sidecars/ASK-007/ASK-007-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Done: finalized ASK-007-SIDECAR-REVIEW support-only review packet with task-scoped commit 764c2b4b. Claude approved packet accuracy and support-only scope at 2026-05-17T02:55:54Z. Verification: AI_NAME=Codex ./scripts/ai-status.sh show ASK-007 => archive done/completed; AI_NAME=Codex ./scripts/ai-status.sh show ASK-007-SIDECAR-REVIEW => review_approved before closeout; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/consultation/test_evidence_redaction.py -q -x => 1 passed; git diff --cached --check => clean before commit. Unrelated dirty worktree entries were left unstaged.",
+    "last_update": "2026-05-17T03:01:54Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "ASK-007",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：sidecar review packet 準確對齊已歸檔 ASK-007 parent task（commit 80b170fa、terminal_status=done completed）、Claude2 reviewer approval 與全部 acceptance criteria。",
+      "Spot-check 通過：PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/consultation/test_evidence_redaction.py -q -x => 1 passed；sidecar 僅新增 support/sidecars/ASK-007/ 未觸及 canonical truth 或 runtime 實作。"
+    ],
+    "review_file": "support/sidecars/ASK-007/ASK-007-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-17T03:01:54Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "764c2b4b6ae31000f7e9a9835441549938555021",
+      "commit_subject": "ASK-007-SIDECAR-REVIEW: finalize review packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "ASK-007-SIDECAR-REVIEW",
+        "Reviewer": "Claude",
+        "Wave": "2026-W20",
+        "Verified": "AI_NAME=Codex ./scripts/ai-status.sh show ASK-007 => archive done/completed; AI_NAME=Codex ./scripts/ai-status.sh show ASK-007-SIDECAR-REVIEW => review_approved; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/consultation/test_evidence_redaction.py -q -x => 1 passed; git diff --cached --check => clean."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 32,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASK-007-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-17T02:49:29Z",
+      "resolved_at": "2026-05-17T02:49:34Z"
+    },
+    {
+      "task_id": "ASK-007-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review packet ready at support/sidecars/ASK-007/ASK-007-SIDECAR-REVIEW.md. It summarizes parent ASK-007 done archive, Claude2 approval, acceptance evidence, commit 80b170fa, and sidecar pytest re-run (1 passed). Please confirm packet accuracy and support-only scope; this sidecar did not modify canonical truth or runtime implementation.",
+      "status": "done",
+      "created_at": "2026-05-17T02:53:17Z",
+      "resolved_at": "2026-05-17T02:55:54Z"
+    },
+    {
+      "task_id": "ASK-007-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: ASK-007 sidecar packet is accurate and complete. Confirmed parent archive done+completed at commit 80b170fa, Claude2 approval on record, all 4 acceptance criteria PASS, pytest re-run 1 passed. Support-only boundary confirmed; no canonical truth or runtime changes by this sidecar. Returning to owner Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-05-17T02:55:54Z",
+      "resolved_at": "2026-05-17T03:01:54Z"
+    }
+  ],
+  "blockers": []
+}
