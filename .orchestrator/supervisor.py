@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import fnmatch
 import importlib
 import json
 import math
@@ -849,6 +850,135 @@ def request_from_snapshot(snapshot: dict[str, Any]) -> DeliveryRequest:
     )
 
 
+def worker_tree_guard_settings(config: dict[str, Any]) -> dict[str, Any]:
+    raw = config.get("worker_tree_guard")
+    settings = raw if isinstance(raw, dict) else {}
+    blocking_globs = settings.get("blocking_globs")
+    auto_restore_globs = settings.get("auto_restore_globs")
+    return {
+        "enabled": bool(settings.get("enabled", False)),
+        "mode": str(settings.get("mode") or "warn").strip().lower(),
+        "blocking_globs": list(blocking_globs)
+        if isinstance(blocking_globs, list)
+        else [
+            ".orchestrator/supervisor.py",
+            "supervisor.py",
+            ".orchestrator/skills/**",
+            "branch-strategy.md",
+            "docs/conventions/GIT_WORKFLOW.md",
+            "config*.json",
+            ".orchestrator/config*.json",
+            "docs/**",
+        ],
+        "auto_restore_globs": list(auto_restore_globs)
+        if isinstance(auto_restore_globs, list)
+        else [
+            "ai-activity-log.jsonl",
+            "ai-status.json",
+            "current-work.md",
+            "dashboard-bundle.json",
+            "docs-site/**",
+        ],
+        "auto_restore_enabled": bool(settings.get("auto_restore_enabled", False)),
+    }
+
+
+def _git_dirty_entries() -> list[dict[str, str]]:
+    proc = subprocess.run(
+        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        cwd=THIS_DIR.parent,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return []
+    entries: list[dict[str, str]] = []
+    parts = proc.stdout.split("\0")
+    index = 0
+    while index < len(parts):
+        raw = parts[index]
+        index += 1
+        if not raw:
+            continue
+        status = raw[:2]
+        path = raw[3:] if len(raw) > 3 else ""
+        if not path:
+            continue
+        entries.append({"status": status, "path": path.replace("\\", "/")})
+        if status[:1] in {"R", "C"} and index < len(parts):
+            index += 1
+    return entries
+
+
+def _path_matches_any_glob(path: str, patterns: list[Any]) -> bool:
+    normalized = path.replace("\\", "/")
+    basename = Path(normalized).name
+    for raw_pattern in patterns:
+        pattern = str(raw_pattern or "").strip().replace("\\", "/")
+        if not pattern:
+            continue
+        if fnmatch.fnmatchcase(normalized, pattern):
+            return True
+        if "/" not in pattern and fnmatch.fnmatchcase(basename, pattern):
+            return True
+    return False
+
+
+def check_worker_tree_clean(
+    config: dict[str, Any],
+    *,
+    run_id: str | None,
+    task_id: str | None,
+    target_agent: str | None,
+    queue_event_id: str | None,
+) -> tuple[bool, str | None]:
+    settings = worker_tree_guard_settings(config)
+    if not settings.get("enabled"):
+        return True, None
+    mode = str(settings.get("mode") or "warn").lower()
+    if mode in {"off", "disabled", "false"}:
+        return True, None
+
+    dirty_entries = _git_dirty_entries()
+    if not dirty_entries:
+        return True, None
+
+    blocking_globs = settings.get("blocking_globs") or []
+    blocking_entries = [
+        entry
+        for entry in dirty_entries
+        if _path_matches_any_glob(entry["path"], blocking_globs)
+    ]
+    if not blocking_entries:
+        return True, None
+
+    display_entries = [f"{entry['status']} {entry['path']}" for entry in blocking_entries[:20]]
+    remaining = max(0, len(blocking_entries) - len(display_entries))
+    suffix = f" (+{remaining} more)" if remaining else ""
+    message = (
+        "Worker tree guard found dirty high-fragility files before dispatch; "
+        "anchor or close out the existing task-owned diff before yielding: "
+        + "; ".join(display_entries)
+        + suffix
+    )
+    activity_type = "dispatch_blocked_dirty_tree" if mode == "block" else "dispatch_dirty_tree_warning"
+    write_activity_log(
+        config,
+        {
+            "type": activity_type,
+            "task_id": task_id,
+            "target_agent": target_agent,
+            "message": message,
+            "queue_event_id": queue_event_id,
+            "worker_run_id": run_id,
+            "blocking_paths": [entry["path"] for entry in blocking_entries],
+            "mode": mode,
+        },
+    )
+    return mode != "block", message
+
+
 def start_worker_for_request(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -1062,6 +1192,19 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             continue
         if dispatch_agent_id != request_agent_id:
             request = build_request(config, event, agent_id_override=dispatch_agent_id)
+        guard_ok, guard_message = check_worker_tree_clean(
+            config,
+            run_id=str(event_id or ""),
+            task_id=str(event.get("task_id") or ""),
+            target_agent=str(event.get("target_display_name") or event.get("target_agent") or ""),
+            queue_event_id=str(event_id or ""),
+        )
+        if not guard_ok:
+            record["status"] = "pending"
+            record["last_wait_reason"] = guard_message
+            record["dirty_tree_guard_at"] = utc_now()
+            changed = True
+            continue
         record["attempt_count"] = int(record.get("attempt_count", 0)) + 1
         record["last_attempt_at"] = utc_now()
         ok, outcome, delivery = start_worker_for_request(

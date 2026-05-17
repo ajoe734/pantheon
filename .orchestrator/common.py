@@ -26,6 +26,7 @@ ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 TASK_BRIEFS_DIR = ORCHESTRATOR_DIR / "task-briefs"
 EVIDENCE_DIR = ORCHESTRATOR_DIR / "evidence"
 CLOSEOUT_SPEC_PATH = ORCHESTRATOR_DIR / "skills" / "task-closeout-finalization.md"
+WORKER_ANCHOR_SPEC_PATH = ORCHESTRATOR_DIR / "skills" / "worker-anchor-commit.md"
 DEFAULT_CONFIG_PATH = ORCHESTRATOR_DIR / "config.json"
 LOCAL_CONFIG_PATH = ORCHESTRATOR_DIR / "config.local.json"
 PLANNING_STATE_PATH = ORCHESTRATOR_DIR / "planning-state.json"
@@ -782,6 +783,8 @@ def execution_context_files(config: dict[str, Any], task_id: str | None) -> list
         return unique_strings(files)
     if brief is not None:
         files.append(relpath(brief))
+    if WORKER_ANCHOR_SPEC_PATH.exists():
+        files.append(relpath(WORKER_ANCHOR_SPEC_PATH))
     if CLOSEOUT_SPEC_PATH.exists():
         files.append(relpath(CLOSEOUT_SPEC_PATH))
     files.append("ai-status.json")
