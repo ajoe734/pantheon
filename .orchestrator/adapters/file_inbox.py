@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 
 from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
-from common import agent_config_for, command_exists, config_path, ensure_parent, new_runtime_id, normalize_agent_id, relpath
+from common import agent_config_for, command_exists, delivery_workspace_root, ensure_parent, new_runtime_id, normalize_agent_id, relpath
 
 
 class FileInboxAdapter(BaseAdapter):
@@ -30,8 +30,9 @@ class FileInboxAdapter(BaseAdapter):
         inbox_map = inbox_settings.get("agent_paths", {}) or {}
         inbox_value = agent.get("file_inbox_path") or inbox_map.get(agent.get("id")) or inbox_settings.get("path")
         inbox_path = Path(inbox_value or f".llm-inbox/{normalize_agent_id(request.agent_id)}.md")
+        workspace_root = delivery_workspace_root(self.config, request.metadata)
         if not inbox_path.is_absolute():
-            inbox_path = config_path(self.config, "status_file").parents[0] / inbox_path
+            inbox_path = workspace_root / inbox_path
         ensure_parent(inbox_path)
         body = "\n".join(
             [
@@ -51,7 +52,7 @@ class FileInboxAdapter(BaseAdapter):
             command = ["code", "-r", str(inbox_path)]
             subprocess.Popen(
                 command,
-                cwd=str(config_path(self.config, "status_file").parents[0]),
+                cwd=str(workspace_root),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )

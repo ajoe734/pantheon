@@ -15,6 +15,44 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ai_status
 
 
+class StatusRootRoutingTests(unittest.TestCase):
+    def test_load_config_routes_runtime_paths_to_status_root(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-routing-") as temp_dir:
+            root = Path(temp_dir)
+            code_root = root / "code"
+            status_root = root / "status"
+            config_file = code_root / ".orchestrator" / "config.json"
+            config_file.parent.mkdir(parents=True)
+            config_file.write_text(
+                json.dumps(
+                    {
+                        "paths": {
+                            "status_file": "ai-status.json",
+                            "activity_log": "ai-activity-log.jsonl",
+                            "state_file": ".orchestrator/state.json",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(ai_status, "CONFIG_FILE", config_file),
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.object(ai_status, "STATUS_FILE", status_root / "ai-status.json"),
+                mock.patch.object(ai_status, "LOG_FILE", status_root / "ai-activity-log.jsonl"),
+                mock.patch.object(ai_status, "CURRENT_WORK_FILE", status_root / "current-work.md"),
+                mock.patch.object(ai_status, "DOCS_SITE_DIR", status_root / "docs-site"),
+                mock.patch.object(ai_status, "ORCHESTRATOR_STATE_FILE", status_root / ".orchestrator" / "state.json"),
+                mock.patch.object(ai_status, "APPROVAL_QUEUE_FILE", status_root / ".orchestrator" / "approval-queue.json"),
+            ):
+                config = ai_status.load_config()
+
+        self.assertEqual(config["paths"]["status_file"], str(status_root / "ai-status.json"))
+        self.assertEqual(config["paths"]["activity_log"], str(status_root / "ai-activity-log.jsonl"))
+        self.assertEqual(config["paths"]["state_file"], str(status_root / ".orchestrator" / "state.json"))
+        self.assertEqual(config["paths"]["event_queue"], str(status_root / ".orchestrator" / "event-queue.jsonl"))
+
+
 class ReviewApprovedWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
         self.state = {

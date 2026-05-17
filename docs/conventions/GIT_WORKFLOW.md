@@ -173,9 +173,14 @@ Pantheon implementation:
   anchor procedure and commit message shape
 - `.orchestrator/skills/task-closeout-finalization.md` defines how
   final closeout handles prior anchor commits and unrelated dirty files
+- `worker_worktrees` leases a separate git worktree per execution task
+  and launches auto workers from that isolated cwd while routing
+  `ai-status.sh` updates back to the supervisor root with
+  `PANTHEON_STATUS_ROOT`
 - `worker_tree_guard` may be enabled in warn or block mode to detect
-  dirty high-fragility surfaces before dispatch; it is disabled by
-  default and does not auto-restore state files
+  dirty high-fragility surfaces inside the task worktree before
+  dispatch; it is disabled by default and does not auto-restore state
+  files
 
 If a downstream repo keeps a separate `branch-strategy.md`, mirror this
 section there. In Pantheon, this document is the canonical branch
