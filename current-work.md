@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-18 02:16:26
+Last updated: 2026-05-18 02:19:07
 
 ## Objective
 
@@ -30,7 +30,7 @@ Last updated: 2026-05-18 02:16:26
 - `Codex`: integration, status-system, schema, acceptance; next: Assignment created
 - `Codex2`: integration, status-system, schema, acceptance; next: Assignment created
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: Assignment created
-- `Claude2`: execution, control-plane, governance-review; next: Implementation complete. get_tree(strategy_spec_id, depth) returns nested dict with all 6 node types (source_record, strategy_spec, experiment_run, candidate_artifact, deployment_plan, runtime_binding). Each node has id/artifact_type/lineage_refs/created_at. Depth limits traversal (tested at 0-4). Unknown ID returns 404-equivalent dict. All 12 pytest -q tests pass. Contract doc at services/lineage-read/strategy_lineage_tree_contract.md. Code in 8a75b152.
+- `Claude2`: execution, control-plane, governance-review; next: State committed (bca5e1cb). Branch task/STRAT-V2-002 awaits push + PR (needs GitHub auth). Awaiting Codex review. Local verification: pytest -q -> 12 passed.
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Assignment created
 
 ## Delivery Layers
@@ -116,7 +116,7 @@ Last updated: 2026-05-18 02:16:26
 | `OODA-E2E-006` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #6: telemetry → Incident → Postmortem → EvolutionDecisionProposal test | OODA Learn 階段：證明「paper run telemetry → IncidentCase → Postmortem → EvolutionDecisionProposal」transition 可端到端走完。注入 1 條合成 incident-trigger telemetry，跑 POST-EVO-BRIDGE。獨立 test 檔，無 live mutation。 | Claude | Claude2 | todo | `TEL-001`, `INC-001-RB`, `POST-001`, `POST-EVO-BRIDGE` | 2026-05-17 19:04:00 | Assignment created |
 | `OODA-E2E-007` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #7: full OodaLoopPacket closure + evidence chain | OODA 全環收尾：把上述 6 個 transition test 串成單一 OodaLoopPacket 並驗證所有欄位齊全（observe/orient/decide/act/learn refs）。產出 evidence packet 與 closeout summary。獨立 test 檔。 | Codex | Claude | todo | `OODA-E2E-001`, `OODA-E2E-002`, `OODA-E2E-003`, `OODA-E2E-004`, `OODA-E2E-005`, `OODA-E2E-006` | 2026-05-17 19:04:11 | Assignment created |
 | `STRAT-V2-001` | Sprint 8 / EPIC-STRAT-EXP-DEEP | Strategy spec distillation production smoke (real research note) | 把 STRAT-003 source converter 升級到 production：吃真實 internal research note (docs/research/notes/*.md 或 fixture)，產出可進 registry 的 StrategySpec，含 evidence_refs + code_refs 完整 binding。獨立 module，不改 STRAT-001..004 公開 API。 | Copilot | Codex2 | todo | `STRAT-003`, `STRAT-004`, `SRC-001` | 2026-05-17 19:05:16 | Assignment created |
-| `STRAT-V2-002` | Sprint 8 / EPIC-STRAT-EXP-DEEP | Strategy lineage tree backend read API | 新增 lineage backend API：給定 strategy_spec_id 回傳完整 lineage tree（source_record → strategy_spec → experiment_runs → candidate_artifacts → deployment_plans → runtime_bindings）。獨立 module，不改 LIN-001 既有 read-model。 | Claude2 | Codex | review | `LIN-001`, `STRAT-001`, `EXP-001` | 2026-05-18 02:16:26 | Implementation complete. get_tree(strategy_spec_id, depth) returns nested dict with all 6 node types (source_record, strategy_spec, experiment_run, candidate_artifact, deployment_plan, runtime_binding). Each node has id/artifact_type/lineage_refs/created_at. Depth limits traversal (tested at 0-4). Unknown ID returns 404-equivalent dict. All 12 pytest -q tests pass. Contract doc at services/lineage-read/strategy_lineage_tree_contract.md. Code in 8a75b152. |
+| `STRAT-V2-002` | Sprint 8 / EPIC-STRAT-EXP-DEEP | Strategy lineage tree backend read API | 新增 lineage backend API：給定 strategy_spec_id 回傳完整 lineage tree（source_record → strategy_spec → experiment_runs → candidate_artifacts → deployment_plans → runtime_bindings）。獨立 module，不改 LIN-001 既有 read-model。 | Claude2 | Codex | review | `LIN-001`, `STRAT-001`, `EXP-001` | 2026-05-18 02:19:07 | State committed (bca5e1cb). Branch task/STRAT-V2-002 awaits push + PR (needs GitHub auth). Awaiting Codex review. Local verification: pytest -q -> 12 passed. |
 | `EXP-V2-001` | Sprint 8 / EPIC-STRAT-EXP-DEEP | Experiment orchestrator parallel multi-backend dispatch | 升級 experiment orchestrator 支援平行多 backend：同一個 ExperimentTask 可以同時派給 vectorbt + Qlib + statsmodels 跑，回傳 N 個獨立 ExperimentRun 加上比較摘要。獨立 module，不改 EXP-001 公開 schema。 | Codex | Codex2 | todo | `EXP-001`, `EXP-002`, `VBT-001`, `OSS-QLIB-002`, `OSS-STAT-001` | 2026-05-17 19:05:38 | Assignment created |
 | `EXP-V2-002` | Sprint 8 / EPIC-STRAT-EXP-DEEP | ExperimentRun multi-artifact lineage tree | 新增多 artifact-type lineage tree：ExperimentRun 可同時產 model_artifact + feature_set + signal_snapshot + optimizer_result，本任務確保 lineage edges 正確連接 N 個 artifact 而非單一。獨立 module。 | Codex2 | Copilot | todo | `EXP-005`, `LIN-001` | 2026-05-17 19:05:48 | Assignment created |
 | `SPRINT-8-CLOSEOUT` | Sprint 8 / EPIC-CLOSEOUT | Sprint 8 retrospective + closeout + Sprint 9 candidate topics | Sprint 8 收尾：彙整 16 條子任務 evidence、產 sprint retrospective + 統計報告（哪些 EPIC 過、哪些 EPIC 殘留缺口）、產 sprint 9 候選議題 raw list（供下一輪 planning 用）。獨立 evidence packet。 | Claude | Codex | todo | `OSS-QLIB-V2-001`, `OSS-STAT-V2-001`, `OSS-QUANTLIB-V2-001`, `OSS-RLLIB-V2-001`, `OSS-FINRL-V2-001`, `OODA-E2E-007`, `STRAT-V2-001`, `STRAT-V2-002`, `EXP-V2-001`, `EXP-V2-002` | 2026-05-17 19:06:02 | Assignment created |
@@ -167,9 +167,6 @@ Do not read those omitted modules as open Pantheon backlog purely because they a
 
 ## Latest Checkpoints
 
-- 2026-05-16 01:52:37 Orchestrator: PreToolUse: Bash
-- 2026-05-16 01:52:38 Orchestrator: PostToolUse: Bash
-- 2026-05-16 01:52:42 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:52:43 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:52:47 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:52:48 Orchestrator: PostToolUse: Bash
@@ -187,3 +184,6 @@ Do not read those omitted modules as open Pantheon backlog purely because they a
 - 2026-05-18 02:15:09 Claude2: `STRAT-V2-002` Resuming from owned_ready_dispatch; implementation already complete in 8a75b152.
 - 2026-05-18 02:15:53 Claude2: `STRAT-V2-002` Implementation complete. pytest services/lineage-read/test_strategy_lineage_tree.py -q -> 12 passed. All 6 acceptance criteria met: get_tree(strategy_spec_id, depth) returns 6 node types, 404-dict for unknown ID, depth limits work.
 - 2026-05-18 02:16:26 Claude2: `STRAT-V2-002` Handoff to Codex: Implementation complete. get_tree(strategy_spec_id, depth) returns nested dict with all 6 node types (source_record, strategy_spec, experiment_run, candidate_artifact, deployment_plan, runtime_binding). Each node has id/artifact_type/lineage_refs/created_at. Depth limits traversal (tested at 0-4). Unknown ID returns 404-equivalent dict. All 12 pytest -q tests pass. Contract doc at services/lineage-read/strategy_lineage_tree_contract.md. Code in 8a75b152.
+- 2026-05-18 02:17:19 unknown: `STRAT-V2-002` -
+- 2026-05-18 02:18:22 Claude2: `STRAT-V2-002` State committed (bca5e1cb). Implementation in 8a75b152. Branch task/STRAT-V2-002 is ahead of origin/dev by 2 commits. Awaiting: (1) git push + PR open (needs GitHub auth), (2) Codex review. Local verification: pytest -q -> 12 passed.
+- 2026-05-18 02:19:07 Claude2: `STRAT-V2-002` State committed (bca5e1cb). Branch task/STRAT-V2-002 awaits push + PR (needs GitHub auth). Awaiting Codex review. Local verification: pytest -q -> 12 passed.
