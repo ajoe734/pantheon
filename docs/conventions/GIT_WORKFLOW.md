@@ -164,6 +164,28 @@ task branch as a committed patch. `git stash pop` is a last-resort
 recovery tool for disposable local state, not the normal path for
 preserving design work across mainline movement.
 
+Pantheon implementation:
+
+- worker wakeup messages render the expected branch from
+  `branch_workflow.task_branch_prefix` and `branch_workflow.dev_branch`
+  rather than hard-coding lane-owned branch names
+- `.orchestrator/skills/worker-anchor-commit.md` defines the mid-task
+  anchor procedure and commit message shape
+- `.orchestrator/skills/task-closeout-finalization.md` defines how
+  final closeout handles prior anchor commits and unrelated dirty files
+- `worker_worktrees` leases a separate git worktree per execution task
+  and launches auto workers from that isolated cwd while routing
+  `ai-status.sh` updates back to the supervisor root with
+  `PANTHEON_STATUS_ROOT`
+- `worker_tree_guard` may be enabled in warn or block mode to detect
+  dirty high-fragility surfaces inside the task worktree before
+  dispatch; it is disabled by default and does not auto-restore state
+  files
+
+If a downstream repo keeps a separate `branch-strategy.md`, mirror this
+section there. In Pantheon, this document is the canonical branch
+strategy.
+
 ---
 
 ## 3. Nightly Publish
@@ -534,6 +556,8 @@ is retired by OPS-GIT-REDESIGN-001:
 - `scripts/git/worker_commit.py`
 - `scripts/git/check_commit_trailers.py`, `scripts/git/check_commit_scope.py`
 - `scripts/git/publish_promote.py`, `scripts/git/notify_orchestrator.py`
+- `.orchestrator/templates/wakeup.txt`
+- `.orchestrator/skills/worker-anchor-commit.md`
 - `.orchestrator/skills/task-closeout-finalization.md`
 - `.orchestrator/skills/chairman-review.md`
 - `AI_COLLABORATION_GUIDE.md` § 2 Multi-Branch Integration Policy

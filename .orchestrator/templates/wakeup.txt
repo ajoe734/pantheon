@@ -8,6 +8,13 @@
 
 不要先掃描 `current-work.md` 或整份 `ai-activity-log.jsonl`。只有在 task brief 明確需要時，才回頭查全域摘要或歷史。
 
+進入 task 工作前，先確認你在正確的 branch 上：
+- 預期 branch 名稱：`{{branch_name}}`（從 `{{base_branch}}` 開出的 per-task branch；task id kebab: `{{task_id_kebab}}`）。
+- 如果目前 branch 不對，優先使用 `{{branch_start_command}}`，不要手寫臨時 branch 規則。
+- 如果 working tree 有未 commit diff 且不屬於這個 task，這代表前一個 task 沒收尾乾淨：回報 blocker，不要 stash、不要繼續。
+- 你的 working tree 不是暫存區。任何跨檔案 / doc / skill / config / supervisor.py / routing 接點的改動，到一個可描述的中間狀態就先依 `.orchestrator/skills/worker-anchor-commit.md` 做 anchor commit。
+- Anchor commit subject 建議：`{{anchor_commit_subject}}`；commit body 要寫清楚 owned layer、not changing layer、預計跟誰 compose，並保留正常 trailers。
+
 找出目前分配給你、等待你回應、剛交接給你的 task，或已進入 `review_approved` 並等待你正式收尾為 `done` 的 task，然後直接繼續工作。
 
 如果原因是 `owned_finalize_dispatch`，或 task 已是 `review_approved`，請先依 `.orchestrator/skills/task-closeout-finalization.md` 做 closeout：整理必要 task artifact / docs、建立 task-scoped commit、再用 `scripts/ai-status.sh done` 收尾。不要把 `done` 當成單純改狀態。

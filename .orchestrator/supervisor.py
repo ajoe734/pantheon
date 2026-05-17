@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import fnmatch
 import importlib
 import json
 import math
@@ -849,6 +850,378 @@ def request_from_snapshot(snapshot: dict[str, Any]) -> DeliveryRequest:
     )
 
 
+WORKER_WORKTREE_EXECUTION_REASONS = [
+    REASON_OWNED_READY,
+    REASON_OWNED_IN_PROGRESS,
+    REASON_OWNED_FINALIZE,
+    REASON_REVIEW_READY,
+]
+
+
+def worker_worktree_settings(config: dict[str, Any]) -> dict[str, Any]:
+    raw = config.get("worker_worktrees")
+    settings = raw if isinstance(raw, dict) else {}
+    branch_workflow = config.get("branch_workflow") if isinstance(config.get("branch_workflow"), dict) else {}
+    return {
+        "enabled": bool(settings.get("enabled", False)),
+        "root": str(settings.get("root") or "/tmp/pantheon-worker-worktrees"),
+        "base_ref": str(settings.get("base_ref") or f"origin/{branch_workflow.get('dev_branch') or 'dev'}"),
+        "reuse_existing": bool(settings.get("reuse_existing", True)),
+        "execution_reasons": list(settings.get("execution_reasons") or WORKER_WORKTREE_EXECUTION_REASONS),
+    }
+
+
+def _task_id_slug(task_id: str | None) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", str(task_id or "").lower()).strip("-")
+    return slug or "unknown-task"
+
+
+def worker_task_branch(config: dict[str, Any], task_id: str | None) -> str:
+    branch_workflow = config.get("branch_workflow") if isinstance(config.get("branch_workflow"), dict) else {}
+    prefix = str(branch_workflow.get("task_branch_prefix") or "task/")
+    normalized_task_id = str(task_id or "").strip()
+    return f"{prefix}{normalized_task_id}" if normalized_task_id else f"{prefix}unknown-task"
+
+
+def _worker_worktree_base_root(config: dict[str, Any], settings: dict[str, Any]) -> Path:
+    repo_root = config_path(config, "status_file").parents[0]
+    configured = Path(os.path.expanduser(str(settings.get("root") or "")))
+    if not configured.is_absolute():
+        configured = repo_root / configured
+    return configured.resolve()
+
+
+def worker_task_worktree_path(config: dict[str, Any], task_id: str | None, settings: dict[str, Any] | None = None) -> Path:
+    active_settings = settings or worker_worktree_settings(config)
+    repo_root = config_path(config, "status_file").parents[0]
+    repo_slug = re.sub(r"[^a-z0-9]+", "-", repo_root.name.lower()).strip("-") or "repo"
+    return _worker_worktree_base_root(config, active_settings) / repo_slug / _task_id_slug(task_id)
+
+
+def _git_worktree_records(repo_root: Path) -> list[dict[str, str]]:
+    proc = subprocess.run(
+        ["git", "worktree", "list", "--porcelain"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return []
+    records: list[dict[str, str]] = []
+    current: dict[str, str] = {}
+    for line in proc.stdout.splitlines():
+        if not line.strip():
+            if current:
+                records.append(current)
+                current = {}
+            continue
+        key, _, value = line.partition(" ")
+        current[key] = value.strip()
+    if current:
+        records.append(current)
+    return records
+
+
+def _worktree_record_branch(record: dict[str, str]) -> str:
+    branch = str(record.get("branch") or "").strip()
+    if branch.startswith("refs/heads/"):
+        return branch[len("refs/heads/") :]
+    return branch
+
+
+def _existing_worktree_for_branch(repo_root: Path, branch: str, *, exclude_root: bool) -> Path | None:
+    resolved_repo_root = repo_root.resolve()
+    for record in _git_worktree_records(repo_root):
+        if _worktree_record_branch(record) != branch:
+            continue
+        path_value = record.get("worktree")
+        if not path_value:
+            continue
+        path = Path(path_value).resolve()
+        if exclude_root and path == resolved_repo_root:
+            continue
+        return path
+    return None
+
+
+def _branch_checked_out_in_root(repo_root: Path, branch: str) -> bool:
+    for record in _git_worktree_records(repo_root):
+        path_value = record.get("worktree")
+        if not path_value:
+            continue
+        if Path(path_value).resolve() == repo_root.resolve():
+            return _worktree_record_branch(record) == branch
+    return False
+
+
+def _git_ref_exists(repo_root: Path, ref: str) -> bool:
+    proc = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", ref],
+        cwd=repo_root,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return proc.returncode == 0
+
+
+def _create_worker_worktree(repo_root: Path, path: Path, branch: str, base_ref: str) -> tuple[bool, str | None]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() and (not path.is_dir() or any(path.iterdir())):
+        return False, f"Worker worktree path already exists and is not empty: {path}"
+
+    remote_ref = f"refs/remotes/origin/{branch}"
+    if _git_ref_exists(repo_root, f"refs/heads/{branch}"):
+        command = ["git", "worktree", "add", str(path), branch]
+    elif _git_ref_exists(repo_root, remote_ref):
+        command = ["git", "worktree", "add", "-b", branch, str(path), f"origin/{branch}"]
+    else:
+        command = ["git", "worktree", "add", "-b", branch, str(path), base_ref]
+
+    proc = subprocess.run(
+        command,
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        details = (proc.stderr or proc.stdout or "").strip()
+        return False, f"Failed to create worker worktree {path} for {branch}: {details}"
+    return True, None
+
+
+def prepare_worker_workspace(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    request: DeliveryRequest,
+    *,
+    queue_event_id: str | None,
+    target_agent: str | None,
+) -> tuple[bool, str | None]:
+    settings = worker_worktree_settings(config)
+    if not settings.get("enabled"):
+        return True, None
+    if str(request.reason or "") not in {str(reason) for reason in settings.get("execution_reasons", [])}:
+        return True, None
+    if not request.task_id:
+        return True, None
+    if request.metadata.get("workspace_path"):
+        return True, None
+
+    repo_root = config_path(config, "status_file").parents[0].resolve()
+    branch = worker_task_branch(config, request.task_id)
+    worktree_path = worker_task_worktree_path(config, request.task_id, settings)
+    reused = False
+
+    if settings.get("reuse_existing", True):
+        existing = _existing_worktree_for_branch(repo_root, branch, exclude_root=True)
+        if existing:
+            worktree_path = existing
+            reused = True
+
+    if not reused:
+        if _branch_checked_out_in_root(repo_root, branch):
+            message = (
+                f"Cannot lease isolated worker worktree for {request.task_id}: "
+                f"branch {branch} is currently checked out in supervisor root {repo_root}. "
+                "Move the supervisor root back to dev or finish that root task branch first."
+            )
+            write_activity_log(
+                config,
+                {
+                    "type": "dispatch_blocked_worktree_lease",
+                    "task_id": request.task_id,
+                    "target_agent": target_agent,
+                    "queue_event_id": queue_event_id,
+                    "message": message,
+                    "workspace_branch": branch,
+                    "workspace_path": str(worktree_path),
+                },
+            )
+            return False, message
+        created, error = _create_worker_worktree(repo_root, worktree_path, branch, str(settings.get("base_ref") or "origin/dev"))
+        if not created:
+            message = error or f"Failed to create worker worktree for {request.task_id}."
+            write_activity_log(
+                config,
+                {
+                    "type": "dispatch_blocked_worktree_lease",
+                    "task_id": request.task_id,
+                    "target_agent": target_agent,
+                    "queue_event_id": queue_event_id,
+                    "message": message,
+                    "workspace_branch": branch,
+                    "workspace_path": str(worktree_path),
+                },
+            )
+            return False, message
+
+    request.metadata.update(
+        {
+            "workspace_mode": "isolated_worktree",
+            "workspace_path": str(worktree_path),
+            "workspace_branch": branch,
+            "status_root": str(repo_root),
+        }
+    )
+    leases = state.setdefault("worker_worktrees", {}).setdefault("leases", {})
+    leases[str(request.task_id)] = {
+        "task_id": request.task_id,
+        "branch": branch,
+        "path": str(worktree_path),
+        "status_root": str(repo_root),
+        "last_queue_event_id": queue_event_id,
+        "last_target_agent": target_agent,
+        "last_used_at": utc_now(),
+    }
+    write_activity_log(
+        config,
+        {
+            "type": "worker_worktree_reused" if reused else "worker_worktree_allocated",
+            "task_id": request.task_id,
+            "target_agent": target_agent,
+            "queue_event_id": queue_event_id,
+            "workspace_branch": branch,
+            "workspace_path": str(worktree_path),
+            "status_root": str(repo_root),
+        },
+    )
+    return True, None
+
+
+def worker_tree_guard_settings(config: dict[str, Any]) -> dict[str, Any]:
+    raw = config.get("worker_tree_guard")
+    settings = raw if isinstance(raw, dict) else {}
+    blocking_globs = settings.get("blocking_globs")
+    auto_restore_globs = settings.get("auto_restore_globs")
+    return {
+        "enabled": bool(settings.get("enabled", False)),
+        "mode": str(settings.get("mode") or "warn").strip().lower(),
+        "blocking_globs": list(blocking_globs)
+        if isinstance(blocking_globs, list)
+        else [
+            ".orchestrator/supervisor.py",
+            "supervisor.py",
+            ".orchestrator/skills/**",
+            "branch-strategy.md",
+            "docs/conventions/GIT_WORKFLOW.md",
+            "config*.json",
+            ".orchestrator/config*.json",
+            "docs/**",
+        ],
+        "auto_restore_globs": list(auto_restore_globs)
+        if isinstance(auto_restore_globs, list)
+        else [
+            "ai-activity-log.jsonl",
+            "ai-status.json",
+            "current-work.md",
+            "dashboard-bundle.json",
+            "docs-site/**",
+        ],
+        "auto_restore_enabled": bool(settings.get("auto_restore_enabled", False)),
+    }
+
+
+def _git_dirty_entries(cwd: Path | None = None) -> list[dict[str, str]]:
+    proc = subprocess.run(
+        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        cwd=cwd or THIS_DIR.parent,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return []
+    entries: list[dict[str, str]] = []
+    parts = proc.stdout.split("\0")
+    index = 0
+    while index < len(parts):
+        raw = parts[index]
+        index += 1
+        if not raw:
+            continue
+        status = raw[:2]
+        path = raw[3:] if len(raw) > 3 else ""
+        if not path:
+            continue
+        entries.append({"status": status, "path": path.replace("\\", "/")})
+        if status[:1] in {"R", "C"} and index < len(parts):
+            index += 1
+    return entries
+
+
+def _path_matches_any_glob(path: str, patterns: list[Any]) -> bool:
+    normalized = path.replace("\\", "/")
+    basename = Path(normalized).name
+    for raw_pattern in patterns:
+        pattern = str(raw_pattern or "").strip().replace("\\", "/")
+        if not pattern:
+            continue
+        if fnmatch.fnmatchcase(normalized, pattern):
+            return True
+        if "/" not in pattern and fnmatch.fnmatchcase(basename, pattern):
+            return True
+    return False
+
+
+def check_worker_tree_clean(
+    config: dict[str, Any],
+    *,
+    run_id: str | None,
+    task_id: str | None,
+    target_agent: str | None,
+    queue_event_id: str | None,
+    cwd: Path | None = None,
+) -> tuple[bool, str | None]:
+    settings = worker_tree_guard_settings(config)
+    if not settings.get("enabled"):
+        return True, None
+    mode = str(settings.get("mode") or "warn").lower()
+    if mode in {"off", "disabled", "false"}:
+        return True, None
+
+    dirty_entries = _git_dirty_entries(cwd)
+    if not dirty_entries:
+        return True, None
+
+    blocking_globs = settings.get("blocking_globs") or []
+    blocking_entries = [
+        entry
+        for entry in dirty_entries
+        if _path_matches_any_glob(entry["path"], blocking_globs)
+    ]
+    if not blocking_entries:
+        return True, None
+
+    display_entries = [f"{entry['status']} {entry['path']}" for entry in blocking_entries[:20]]
+    remaining = max(0, len(blocking_entries) - len(display_entries))
+    suffix = f" (+{remaining} more)" if remaining else ""
+    message = (
+        "Worker tree guard found dirty high-fragility files before dispatch; "
+        "anchor or close out the existing task-owned diff before yielding: "
+        + "; ".join(display_entries)
+        + suffix
+    )
+    activity_type = "dispatch_blocked_dirty_tree" if mode == "block" else "dispatch_dirty_tree_warning"
+    write_activity_log(
+        config,
+        {
+            "type": activity_type,
+            "task_id": task_id,
+            "target_agent": target_agent,
+            "message": message,
+            "queue_event_id": queue_event_id,
+            "worker_run_id": run_id,
+            "blocking_paths": [entry["path"] for entry in blocking_entries],
+            "mode": mode,
+            "workspace_path": str(cwd) if cwd else None,
+        },
+    )
+    return mode != "block", message
+
+
 def start_worker_for_request(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -923,6 +1296,10 @@ def start_worker_for_request(
         "command": result.command,
         "log_path": result.log_path,
         "payload_path": result.payload_path,
+        "workspace_mode": request.metadata.get("workspace_mode"),
+        "workspace_path": request.metadata.get("workspace_path"),
+        "workspace_branch": request.metadata.get("workspace_branch"),
+        "status_root": request.metadata.get("status_root"),
         "pid": result.pid,
         "notes": result.notes,
         "metadata": result.metadata,
@@ -950,6 +1327,10 @@ def start_worker_for_request(
             "command": result.command,
             "log_path": result.log_path,
             "payload_path": result.payload_path,
+            "workspace_mode": request.metadata.get("workspace_mode"),
+            "workspace_path": request.metadata.get("workspace_path"),
+            "workspace_branch": request.metadata.get("workspace_branch"),
+            "status_root": request.metadata.get("status_root"),
         },
     )
     return True, worker_run_id, result.as_dict()
@@ -1062,6 +1443,35 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             continue
         if dispatch_agent_id != request_agent_id:
             request = build_request(config, event, agent_id_override=dispatch_agent_id)
+        workspace_ok, workspace_message = prepare_worker_workspace(
+            config,
+            state,
+            request,
+            queue_event_id=str(event_id or ""),
+            target_agent=str(event.get("target_display_name") or event.get("target_agent") or ""),
+        )
+        if not workspace_ok:
+            record["status"] = "pending"
+            record["last_wait_reason"] = workspace_message
+            record["worktree_lease_blocked_at"] = utc_now()
+            changed = True
+            continue
+        request_metadata = getattr(request, "metadata", {}) if hasattr(request, "metadata") else {}
+        workspace_path = request_metadata.get("workspace_path") if isinstance(request_metadata, dict) else None
+        guard_ok, guard_message = check_worker_tree_clean(
+            config,
+            run_id=str(event_id or ""),
+            task_id=str(event.get("task_id") or ""),
+            target_agent=str(event.get("target_display_name") or event.get("target_agent") or ""),
+            queue_event_id=str(event_id or ""),
+            cwd=Path(str(workspace_path)) if workspace_path else None,
+        )
+        if not guard_ok:
+            record["status"] = "pending"
+            record["last_wait_reason"] = guard_message
+            record["dirty_tree_guard_at"] = utc_now()
+            changed = True
+            continue
         record["attempt_count"] = int(record.get("attempt_count", 0)) + 1
         record["last_attempt_at"] = utc_now()
         ok, outcome, delivery = start_worker_for_request(
@@ -2816,10 +3226,44 @@ _QUOTA_RETRY_AT_PATTERN = re.compile(
     r"\btry again at\s+(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<meridiem>[ap]\.?m\.?)?",
     re.IGNORECASE,
 )
+_QUOTA_RETRY_AT_DATE_PATTERN = re.compile(
+    r"\btry again at\s+"
+    r"(?P<month>jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|"
+    r"sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+"
+    r"(?P<day>\d{1,2})(?:st|nd|rd|th)?(?:,\s*|\s+)"
+    r"(?P<year>\d{4})\s+"
+    r"(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<meridiem>[ap]\.?m\.?)?",
+    re.IGNORECASE,
+)
 _QUOTA_RESETS_AT_PATTERN = re.compile(
     r"\bresets\s+(?:at\s+)?(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<meridiem>[ap]\.?m\.?)?",
     re.IGNORECASE,
 )
+_MONTH_NAME_TO_NUMBER = {
+    "jan": 1,
+    "january": 1,
+    "feb": 2,
+    "february": 2,
+    "mar": 3,
+    "march": 3,
+    "apr": 4,
+    "april": 4,
+    "may": 5,
+    "jun": 6,
+    "june": 6,
+    "jul": 7,
+    "july": 7,
+    "aug": 8,
+    "august": 8,
+    "sep": 9,
+    "september": 9,
+    "oct": 10,
+    "october": 10,
+    "nov": 11,
+    "november": 11,
+    "dec": 12,
+    "december": 12,
+}
 
 
 def parse_quota_retry_hint(reason: str | None, *, now: datetime | None = None) -> datetime | None:
@@ -2832,6 +3276,33 @@ def parse_quota_retry_hint(reason: str | None, *, now: datetime | None = None) -
     """
     if not reason:
         return None
+    hint_tz = timezone.utc if re.search(r"\(\s*UTC\s*\)|\bUTC\b", reason, re.IGNORECASE) else LOCAL_TZ
+    date_match = _QUOTA_RETRY_AT_DATE_PATTERN.search(reason)
+    if date_match:
+        month = _MONTH_NAME_TO_NUMBER.get(date_match.group("month").lower())
+        if not month:
+            return None
+        hour = int(date_match.group("hour"))
+        minute = int(date_match.group("minute") or 0)
+        meridiem = (date_match.group("meridiem") or "").replace(".", "").lower()
+        if meridiem == "pm" and hour < 12:
+            hour += 12
+        elif meridiem == "am" and hour == 12:
+            hour = 0
+        if not (0 <= hour < 24 and 0 <= minute < 60):
+            return None
+        try:
+            return datetime(
+                int(date_match.group("year")),
+                month,
+                int(date_match.group("day")),
+                hour,
+                minute,
+                tzinfo=hint_tz,
+            ).astimezone(timezone.utc)
+        except ValueError:
+            return None
+
     match = _QUOTA_RETRY_AT_PATTERN.search(reason) or _QUOTA_RESETS_AT_PATTERN.search(reason)
     if not match:
         return None
@@ -2844,7 +3315,6 @@ def parse_quota_retry_hint(reason: str | None, *, now: datetime | None = None) -
         hour = 0
     if not (0 <= hour < 24 and 0 <= minute < 60):
         return None
-    hint_tz = timezone.utc if re.search(r"\(\s*UTC\s*\)|\bUTC\b", reason, re.IGNORECASE) else LOCAL_TZ
     base = (now.astimezone(hint_tz) if now else datetime.now(hint_tz))
     candidate = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if candidate <= base:
@@ -4037,6 +4507,10 @@ def resume_claude_worker(
         command.extend(["--mcp-config", str(config_path(config, "claude_mcp_config"))])
     log_path = config_path(config, "state_file").parent / "logs" / f"{new_runtime_id(f'{provider_id}-resume')}.log"
     env = _claude_runtime_env(config, provider_id)
+    repo_root = config_path(config, "status_file").parents[0]
+    request_metadata = (worker.get("request_snapshot") or {}).get("metadata", {}) if isinstance(worker.get("request_snapshot"), dict) else {}
+    workspace_root = Path(str(worker.get("workspace_path") or request_metadata.get("workspace_path") or repo_root)).expanduser().resolve()
+    status_root = Path(str(worker.get("status_root") or request_metadata.get("status_root") or repo_root)).expanduser().resolve()
     env.update(
         {
             "ORCH_RUN_ID": worker["run_id"],
@@ -4044,11 +4518,14 @@ def resume_claude_worker(
             "ORCH_AGENT_ID": worker.get("agent_id") or "",
             "ORCH_PROVIDER": provider_id,
             "ORCH_SESSION_ID": str(session_id),
+            "PANTHEON_WORKTREE_ROOT": str(workspace_root),
+            "PANTHEON_STATUS_ROOT": str(status_root),
+            "ORCH_WORKSPACE_PATH": str(workspace_root),
         }
     )
     process, _ = spawn_background_process(
         command,
-        cwd=config_path(config, "status_file").parents[0],
+        cwd=workspace_root,
         log_path=log_path,
         env=env,
     )

@@ -10,6 +10,8 @@ from common import (
     apply_claude_oauth_token_file,
     claude_auth_ready as shared_claude_auth_ready,
     config_path,
+    delivery_runtime_env,
+    delivery_workspace_root,
     new_runtime_id,
     runtime_log_path,
     shell_quote,
@@ -150,6 +152,7 @@ class ClaudeCLIAdapter(ClaudeCodeAdapter):
 
         provider = _provider_settings(self.config, provider_id)
         runtime = provider.get("runtime", {})
+        workspace_root = delivery_workspace_root(self.config, request.metadata)
         output_format = runtime.get("output_format", "stream-json")
         command = [
             runtime.get("cli") or cli,
@@ -178,6 +181,7 @@ class ClaudeCLIAdapter(ClaudeCodeAdapter):
 
         run_id = new_runtime_id(provider_id)
         log_path = runtime_log_path(provider_id, request.agent_id)
+        env.update(delivery_runtime_env(self.config, request.metadata))
         env.update(
             {
                 "ORCH_RUN_ID": run_id,
@@ -191,7 +195,7 @@ class ClaudeCLIAdapter(ClaudeCodeAdapter):
         )
         process, _ = spawn_background_process(
             command,
-            cwd=config_path(self.config, "status_file").parents[0],
+            cwd=workspace_root,
             log_path=log_path,
             env=env,
         )

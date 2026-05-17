@@ -185,6 +185,64 @@ def run_algorithm_smoke() -> AlgorithmSmokeResult:
     )
 
 
+def run_algorithm_smoke_from_binding(
+    plan_dict: dict,
+    binding: Any,
+) -> AlgorithmSmokeResult:
+    """Run algorithm smoke using fixture-derived plan and RuntimeManager-created binding.
+
+    This is the end-to-end variant: runtime_context returned by the algorithm
+    will carry plan_dict['plan_id'] and binding.binding_id, proving the paper
+    run is composed from the fixture identities rather than SMOKE_* constants.
+    """
+    artifact_payload = _artifact_payload()
+    artifact_bytes = json.dumps(artifact_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    checksum = _checksum(artifact_bytes)
+    metadata = _artifact_metadata_from_binding(checksum, plan_dict, binding)
+
+    store = InMemoryLeanObjectStore()
+    projection = ArtifactLoader.build_projection(SMOKE_STRATEGY_ID, SMOKE_VERSION)
+    materialize_execution_projection(
+        store,
+        SimpleNamespace(
+            metadata_key=projection.metadata_key,
+            artifact_key=projection.artifact_key,
+            metadata=metadata,
+        ),
+        artifact_bytes,
+    )
+
+    bootstrap_env = _bootstrap_env_from_binding(checksum, plan_dict, binding)
+    algorithm_class = _load_algorithm_class()
+    synthetic_bars = build_synthetic_ohlcv()
+
+    with _patched_env(bootstrap_env, {"BROKER_PRODUCTION_LIVE_ENABLED": "false"}):
+        algorithm = algorithm_class()
+        algorithm.object_store = store
+        algorithm.ObjectStore = store
+        algorithm.Initialize()
+        for bar in synthetic_bars:
+            algorithm.OnData(SyntheticSlice({SMOKE_TICKER: SyntheticLeanBar(bar)}))
+        observations = algorithm.get_smoke_observations()
+        broker_flag = os.environ.get("BROKER_PRODUCTION_LIVE_ENABLED")
+
+    fill_events = list(observations["fill_events"])
+    return AlgorithmSmokeResult(
+        synthetic_bar_count=len(synthetic_bars),
+        raw_on_data_callbacks=int(observations["raw_on_data_callbacks"]),
+        executed_on_data_callbacks=int(observations["executed_on_data_callbacks"]),
+        fill_count=len(fill_events),
+        fill_events=fill_events,
+        loaded_metadata=dict(observations["loaded_metadata"]),
+        loaded_signal=dict(observations["loaded_signal"]),
+        runtime_context=dict(observations["runtime_context"]),
+        bootstrap_env=dict(bootstrap_env),
+        broker_production_live_enabled=broker_flag,
+        object_store_keys=store.keys(),
+        synthetic_ohlcv=[bar.to_dict() for bar in synthetic_bars],
+    )
+
+
 def build_synthetic_ohlcv() -> list[SyntheticOhlcvBar]:
     return [
         SyntheticOhlcvBar(date(2026, 1, 5), SMOKE_TICKER, 100.0, 101.5, 99.5, 101.0, 1000),
@@ -215,6 +273,65 @@ def _artifact_payload() -> dict[str, Any]:
             },
         },
     }
+
+
+def _artifact_metadata_from_binding(checksum: str, plan: dict, binding: Any) -> dict[str, Any]:
+    return {
+        "registry_id": plan["artifact_id"],
+        "strategy_id": plan.get("strategy_id", SMOKE_STRATEGY_ID),
+        "version": plan["artifact_version"],
+        "artifact_type": plan.get("artifact_type", "execution_bundle"),
+        "artifact_state": "approved",
+        "deployment_stage": plan["target_stage"],
+        "promotion_state": plan["target_stage"],
+        "checksum": checksum,
+        "lineage": {
+            "source_run_ids": ["train-lean-smoke-001"],
+            "source_dataset_refs": ["synthetic-ohlcv-five-days"],
+        },
+        "created_at": "2026-01-05T00:00:00Z",
+        "runtime_binding_id": binding.binding_id,
+        "deployment_plan_id": plan["plan_id"],
+    }
+
+
+def _bootstrap_env_from_binding(checksum: str, plan: dict, binding: Any) -> dict[str, str]:
+    deployment_plan = {
+        "plan_id": plan["plan_id"],
+        "approval_decision_id": plan.get("approval_decision_id", "appr-ooda-e2e-005-001"),
+        "artifact_id": plan["artifact_id"],
+        "artifact_version": plan["artifact_version"],
+        "artifact_checksum": checksum,
+        "strategy_id": plan.get("strategy_id", SMOKE_STRATEGY_ID),
+        "capital_pool_id": plan["capital_pool_id"],
+        "target_stage": plan["target_stage"],
+        "runtime_role": plan["target_stage"],
+        "persona_capital_binding_id": binding.persona_capital_binding_id,
+    }
+    runtime_binding = {
+        "binding_id": binding.binding_id,
+        "runtime_id": binding.runtime_id,
+        "plan_id": binding.plan_id,
+        "artifact_id": binding.artifact_id,
+        "artifact_version": binding.artifact_version,
+        "capital_pool_id": binding.capital_pool_id,
+        "deployment_mode": binding.deployment_mode,
+        "persona_capital_binding_id": binding.persona_capital_binding_id,
+        "metadata": {
+            "engine_bridge_repo": PANTHEON_LEAN_REMOTE,
+            "engine_bridge_path": PANTHEON_LEAN_SOURCE_PATH,
+            "engine_bridge_commit": SMOKE_BRIDGE_COMMIT,
+        },
+    }
+    request = materialize_runtime_bootstrap_request(
+        deployment_plan=deployment_plan,
+        runtime_binding=runtime_binding,
+        request_id=f"rbr-e2e-005-{binding.binding_id}",
+        trace_id=f"trace-e2e-005-{binding.binding_id}",
+    )
+    env = request.to_runtime_env()
+    env["PANTHEON_ARTIFACT_TYPE"] = "execution_bundle"
+    return env
 
 
 def _artifact_metadata(checksum: str) -> dict[str, Any]:

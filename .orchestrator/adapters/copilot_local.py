@@ -8,7 +8,8 @@ from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, Deli
 from adapters.file_inbox import FileInboxAdapter
 from common import (
     command_exists,
-    config_path,
+    delivery_runtime_env,
+    delivery_workspace_root,
     new_runtime_id,
     run_command,
     runtime_log_path,
@@ -140,6 +141,7 @@ class CopilotLocalAdapter(BaseAdapter):
 
         provider = self.config.get("providers", {}).get("copilot", {})
         local = provider.get("local", {})
+        workspace_root = delivery_workspace_root(self.config, request.metadata)
         command = [local.get("cli") or cli]
         if local.get("autopilot", True):
             command.append("--autopilot")
@@ -150,7 +152,7 @@ class CopilotLocalAdapter(BaseAdapter):
         if local.get("allow_all_tools", False):
             command.append("--allow-all-tools")
         if local.get("add_workspace_dir", True):
-            command.extend(["--add-dir", str(config_path(self.config, "status_file").parents[0])])
+            command.extend(["--add-dir", str(workspace_root)])
         if local.get("no_ask_user", True):
             command.append("--no-ask-user")
         for tool in local.get("allow_tools", []) or []:
@@ -166,6 +168,7 @@ class CopilotLocalAdapter(BaseAdapter):
         run_id = new_runtime_id("copilot")
         log_path = runtime_log_path("copilot", request.agent_id)
         env = os.environ.copy()
+        env.update(delivery_runtime_env(self.config, request.metadata))
         if not any(env.get(name) for name in ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")):
             gh_token = _gh_auth_token(self.config)
             if gh_token:
@@ -180,7 +183,7 @@ class CopilotLocalAdapter(BaseAdapter):
         )
         process, _ = spawn_background_process(
             command,
-            cwd=config_path(self.config, "status_file").parents[0],
+            cwd=workspace_root,
             log_path=log_path,
             env=env,
         )

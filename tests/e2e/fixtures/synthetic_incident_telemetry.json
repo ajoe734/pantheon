@@ -1,0 +1,22 @@
+{
+  "event_id": "tel-ooda-e2e-006-001",
+  "event_type": "paper_runtime_anomaly",
+  "severity": "high",
+  "runtime_binding_id": "rb-ooda-e2e-006-paper-001",
+  "artifact_id": "reg-smoke-strategy-v1",
+  "artifact_version": "v1",
+  "deployment_stage": "paper",
+  "deployment_plan_id": "plan-ooda-e2e-006-001",
+  "capital_pool_id": "pool-ooda-e2e-006-001",
+  "persona_capital_binding_id": "pcb-ooda-e2e-006-001",
+  "runtime_id": "rt-ooda-e2e-006-paper-001",
+  "trace_id": "trace-ooda-e2e-006-001",
+  "timestamp": "2026-05-17T00:00:00Z",
+  "metrics": {
+    "sharpe_ratio": 0.08,
+    "max_drawdown_pct": 0.32,
+    "fill_count": 5,
+    "anomaly_score": 0.91
+  },
+  "description": "Paper run detected high-severity drawdown anomaly exceeding governance threshold"
+}

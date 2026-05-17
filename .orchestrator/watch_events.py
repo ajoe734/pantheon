@@ -252,9 +252,22 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
             "- 盡量把輸出限制在上面列出的相關檔案；若需新增檔案，只能新增 support artifact。\n"
             "- 完成後請交接給指定 reviewer，由 parent owner 決定是否吸收進主線。\n"
         )
+    task_id = str(event.get("task_id") or "").strip()
+    branch_workflow = config.get("branch_workflow") if isinstance(config.get("branch_workflow"), dict) else {}
+    base_branch = str(branch_workflow.get("dev_branch") or "dev")
+    task_branch_prefix = str(branch_workflow.get("task_branch_prefix") or "task/")
+    task_id_kebab = re.sub(r"[^a-z0-9]+", "-", task_id.lower()).strip("-") if task_id else "none"
+    branch_name = f"{task_branch_prefix}{task_id}" if task_id else f"{task_branch_prefix}(none)"
+    lane = re.sub(r"[^a-z0-9]+", "-", str(target_agent or "").lower()).strip("-") or "unknown"
     variables = {
         "context_files": "\n".join(f"- {path}" for path in context_files) if context_files else "- AI_COLLABORATION_GUIDE.md",
-        "task_id": event.get("task_id") or "(none)",
+        "task_id": task_id or "(none)",
+        "task_id_kebab": task_id_kebab,
+        "lane": lane,
+        "base_branch": base_branch,
+        "branch_name": branch_name,
+        "branch_start_command": f"./scripts/git/task_start.sh \"{task_id}\"" if task_id else "./scripts/git/task_start.sh <TASK-ID>",
+        "anchor_commit_subject": f"{task_id}: anchor <scope>" if task_id else "<TASK-ID>: anchor <scope>",
         "reason": event.get("reason") or "wakeup",
         "target_files": "\n".join(f"- {path}" for path in target_files) if target_files else "- (none inferred)",
         "sidecar_guardrails": sidecar_guardrails.rstrip(),

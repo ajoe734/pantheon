@@ -53,6 +53,40 @@
     "capacity_pause_seconds": 900,
     "auth_pause_seconds": 900
   },
+  "worker_tree_guard": {
+    "enabled": false,
+    "mode": "warn",
+    "blocking_globs": [
+      ".orchestrator/supervisor.py",
+      "supervisor.py",
+      ".orchestrator/skills/**",
+      "branch-strategy.md",
+      "docs/conventions/GIT_WORKFLOW.md",
+      "config*.json",
+      ".orchestrator/config*.json",
+      "docs/**"
+    ],
+    "auto_restore_globs": [
+      "ai-activity-log.jsonl",
+      "ai-status.json",
+      "current-work.md",
+      "dashboard-bundle.json",
+      "docs-site/**"
+    ],
+    "auto_restore_enabled": false
+  },
+  "worker_worktrees": {
+    "enabled": true,
+    "root": "/tmp/pantheon-worker-worktrees",
+    "base_ref": "origin/dev",
+    "reuse_existing": true,
+    "execution_reasons": [
+      "owned_ready_dispatch",
+      "owned_in_progress_dispatch",
+      "owned_finalize_dispatch",
+      "review_ready_dispatch"
+    ]
+  },
   "worker_retry": {
     "enabled": true,
     "max_attempts": 5,
