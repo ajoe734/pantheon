@@ -380,6 +380,18 @@ class DetectWorkerFailureTests(unittest.TestCase):
 
         self.assertEqual(hint, datetime(2026, 5, 8, 20, 40, 0, tzinfo=timezone.utc))
 
+    def test_parse_quota_retry_hint_codex_full_date(self) -> None:
+        from datetime import datetime, timezone
+
+        now = datetime(2026, 5, 16, 10, 5, 36, tzinfo=timezone.utc)
+        hint = supervisor.parse_quota_retry_hint(
+            "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage "
+            "to purchase more credits or try again at May 19th, 2026 12:40 AM.",
+            now=now,
+        )
+
+        self.assertEqual(hint, datetime(2026, 5, 18, 16, 40, 0, tzinfo=timezone.utc))
+
     def test_parse_quota_retry_hint_returns_none_when_absent(self) -> None:
         self.assertIsNone(supervisor.parse_quota_retry_hint("Credit balance is too low"))
         self.assertIsNone(supervisor.parse_quota_retry_hint(None))
@@ -418,6 +430,40 @@ class DetectWorkerFailureTests(unittest.TestCase):
         # reset_after_seconds should reflect the actual hint window, not the default
         self.assertGreater(entry["reset_after_seconds"], 900)
         self.assertEqual(entry["reset_after_seconds"], int((11 - 3) * 3600 - 5 * 60))
+
+    def test_mark_provider_dispatch_paused_honors_codex_full_date_retry_at(self) -> None:
+        from datetime import datetime, timezone
+
+        config = {
+            "provider_guardrails": {"capacity_pause_seconds": 900, "quota_terminal_pause_seconds": 900},
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+            "providers": {"codex2-3": {"quota_group": "codex2"}},
+        }
+        state: dict = {}
+
+        fake_now = datetime(2026, 5, 16, 10, 5, 36, tzinfo=timezone.utc)
+        with (
+            mock.patch.object(supervisor, "datetime") as datetime_mock,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            datetime_mock.now.return_value = fake_now
+            datetime_mock.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            supervisor.mark_provider_dispatch_paused(
+                config,
+                state,
+                "codex2-3",
+                "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage "
+                "to purchase more credits or try again at May 19th, 2026 12:40 AM.",
+                task_id="TRN-002",
+                worker_run_id="codex-run-1",
+                failure_kind="quota_terminal",
+                pause_kind="quota_terminal",
+            )
+
+        entry = state["provider_guardrails"]["dispatch_pauses"]["codex2"]
+        self.assertEqual(entry["trigger_provider"], "codex2_3")
+        self.assertEqual(entry["blocked_until"], "2026-05-18T16:40:00Z")
+        self.assertEqual(entry["reset_after_seconds"], 196464)
 
     def test_mark_provider_dispatch_paused_uses_default_when_no_hint(self) -> None:
         from datetime import datetime, timezone
@@ -628,6 +674,120 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertTrue(ok)
         self.assertIsNone(message)
         write_activity_log.assert_not_called()
+
+    def test_prepare_worker_workspace_allocates_task_worktree_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            worktree_root = Path(tmpdir) / "workers"
+            config = {
+                **self.config,
+                "paths": {"status_file": str(repo_root / "ai-status.json")},
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(worktree_root),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            state: dict[str, object] = {}
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id="OPS-WORKTREE-001",
+                reason="owned_in_progress_dispatch",
+            )
+
+            with (
+                mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=None),
+                mock.patch.object(supervisor, "_branch_checked_out_in_root", return_value=False),
+                mock.patch.object(supervisor, "_create_worker_worktree", return_value=(True, None)) as create_worktree,
+                mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            ):
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    request,
+                    queue_event_id="evt-1",
+                    target_agent="Codex",
+                )
+
+        expected_path = worktree_root / "pantheon" / "ops-worktree-001"
+        self.assertTrue(ok)
+        self.assertIsNone(message)
+        self.assertEqual(request.metadata["workspace_mode"], "isolated_worktree")
+        self.assertEqual(request.metadata["workspace_path"], str(expected_path))
+        self.assertEqual(request.metadata["workspace_branch"], "task/OPS-WORKTREE-001")
+        self.assertEqual(request.metadata["status_root"], str(repo_root.resolve()))
+        self.assertEqual(state["worker_worktrees"]["leases"]["OPS-WORKTREE-001"]["path"], str(expected_path))
+        create_worktree.assert_called_once_with(repo_root.resolve(), expected_path, "task/OPS-WORKTREE-001", "origin/dev")
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_worktree_allocated")
+
+    def test_process_queue_checks_worker_guard_inside_isolated_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            workspace = Path(tmpdir) / "workers" / "pantheon" / "bus-val-004"
+            repo_root.mkdir()
+            workspace.mkdir(parents=True)
+            config = {
+                **self.config,
+                "paths": {"status_file": str(repo_root / "ai-status.json")},
+                "worker_worktrees": {"enabled": True, "root": str(workspace.parent.parent)},
+            }
+            current_task = {
+                "id": "BUS-VAL-004",
+                "status": "in_progress",
+                "owner": "Codex",
+                "reviewer": "Gemini",
+                "depends_on": [],
+                "last_update": "2026-04-05T14:54:01Z",
+            }
+            queue_payload = {
+                "event_id": "evt-current",
+                "task_id": "BUS-VAL-004",
+                "target_agent": "codex",
+                "target_display_name": "Codex",
+                "provider": "codex",
+                "reason": "owned_in_progress_dispatch",
+                "message": "wake",
+            }
+            state = {"queue": {"events": {}}, "workers": {}}
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id="BUS-VAL-004",
+                reason="owned_in_progress_dispatch",
+            )
+
+            def prepare_workspace(_config, _state, prepared_request, **_kwargs):
+                prepared_request.metadata.update(
+                    {
+                        "workspace_path": str(workspace),
+                        "workspace_branch": "task/BUS-VAL-004",
+                        "workspace_mode": "isolated_worktree",
+                        "status_root": str(repo_root.resolve()),
+                    }
+                )
+                return True, None
+
+            with (
+                mock.patch.object(supervisor, "load_event_queue", return_value=[queue_payload]),
+                mock.patch.object(supervisor, "load_status", return_value={"tasks": [current_task]}),
+                mock.patch.object(supervisor, "build_request", return_value=request),
+                mock.patch.object(supervisor, "prepare_worker_workspace", side_effect=prepare_workspace),
+                mock.patch.object(supervisor, "check_worker_tree_clean", return_value=(True, None)) as guard,
+                mock.patch.object(supervisor, "start_worker_for_request", return_value=(True, "run-123", {"manual_confirmation_required": False, "auto_delivered": True})),
+                mock.patch.object(supervisor, "sync_dispatched_task_status", return_value=True),
+            ):
+                changed = supervisor.process_queue(config, state, self.provider_report)
+
+        self.assertTrue(changed)
+        self.assertEqual(guard.call_args.kwargs["cwd"], workspace)
 
     def test_build_request_uses_provider_model_preference_for_qwen_agent(self) -> None:
         config = {

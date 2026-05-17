@@ -183,6 +183,43 @@ def config_path(config: dict[str, Any], key: str, default: str | None = None) ->
     return path
 
 
+def repo_root_for_config(config: dict[str, Any]) -> Path:
+    return config_path(config, "status_file").parents[0]
+
+
+def _expand_workspace_path(value: Any, *, base: Path) -> Path:
+    path = Path(os.path.expanduser(str(value)))
+    if not path.is_absolute():
+        path = base / path
+    return path.resolve()
+
+
+def delivery_workspace_root(config: dict[str, Any], metadata: dict[str, Any] | None = None) -> Path:
+    repo_root = repo_root_for_config(config)
+    raw_path = (metadata or {}).get("workspace_path")
+    if raw_path:
+        return _expand_workspace_path(raw_path, base=repo_root)
+    return repo_root
+
+
+def delivery_status_root(config: dict[str, Any], metadata: dict[str, Any] | None = None) -> Path:
+    repo_root = repo_root_for_config(config)
+    raw_path = (metadata or {}).get("status_root")
+    if raw_path:
+        return _expand_workspace_path(raw_path, base=repo_root)
+    return repo_root
+
+
+def delivery_runtime_env(config: dict[str, Any], metadata: dict[str, Any] | None = None) -> dict[str, str]:
+    workspace_root = delivery_workspace_root(config, metadata)
+    status_root = delivery_status_root(config, metadata)
+    return {
+        "PANTHEON_WORKTREE_ROOT": str(workspace_root),
+        "PANTHEON_STATUS_ROOT": str(status_root),
+        "ORCH_WORKSPACE_PATH": str(workspace_root),
+    }
+
+
 def run_command(
     command: list[str],
     *,

@@ -323,6 +323,9 @@ Working tree durability:
 - when parallel workers touch the same file at different layers, the
   anchor commit message must identify the owned layer and any boundary
   it intentionally leaves unchanged
+- auto workers execute inside task-specific git worktree leases; the
+  supervisor/dashboard root is not a shared execution cwd, and
+  `PANTHEON_STATUS_ROOT` keeps state updates centralized
 - if `dev` advances, rebase or merge the task branch as committed work;
   do not make `git stash pop` the normal preservation path
 
