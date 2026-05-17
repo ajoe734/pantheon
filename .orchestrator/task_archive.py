@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,7 +10,17 @@ from typing import Any, Iterable
 from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parents[1]
-ARCHIVE_DIR = ROOT / "ai-task-archive"
+
+
+def status_root() -> Path:
+    raw = str(os.environ.get("PANTHEON_STATUS_ROOT") or "").strip()
+    if not raw:
+        return ROOT
+    return Path(os.path.expanduser(raw)).resolve()
+
+
+STATUS_ROOT = status_root()
+ARCHIVE_DIR = STATUS_ROOT / "ai-task-archive"
 ARCHIVE_TASKS_DIR = ARCHIVE_DIR / "tasks"
 ARCHIVE_INDEX_FILE = ARCHIVE_DIR / "index.json"
 
@@ -77,6 +88,15 @@ def archive_task_path(task_id: str | None) -> Path:
         raise ValueError("task_id is required for archive lookup")
     slug = quote(normalized, safe="-_.")
     return ARCHIVE_TASKS_DIR / f"{slug}.json"
+
+
+def archive_display_path(path: Path) -> str:
+    for root in (STATUS_ROOT, ROOT):
+        try:
+            return str(path.relative_to(root))
+        except ValueError:
+            continue
+    return str(path)
 
 
 def default_archive_index() -> dict[str, Any]:
@@ -148,7 +168,7 @@ def compact_terminal_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
         "last_update": task.get("last_update"),
         "archived_at": snapshot.get("archived_at"),
         "next": task.get("next"),
-        "snapshot_path": str(archive_task_path(task_id).relative_to(ROOT)),
+        "snapshot_path": archive_display_path(archive_task_path(task_id)),
     }
 
 

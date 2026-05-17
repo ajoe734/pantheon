@@ -1,21 +1,14 @@
 {
   "version": 1,
-  "updated_at": "2026-05-17T15:35:04Z",
+  "updated_at": "2026-05-17T19:05:08Z",
   "counts": {
-    "total": 1194,
-    "completed": 1174,
+    "total": 1197,
+    "completed": 1177,
     "superseded": 20
   },
   "recent_terminal_ids": [
+    "M7-CANARY-CLOSEOUT",
     "OODA-E2E-006",
-    "LOVABLE-STRICT-PUBLISH",
-    "DEP-004",
-    "POST-EVO-BRIDGE",
-    "OSS-QLIB-V2-001",
-    "EXP-V2-001",
-    "STRAT-V2-002",
-    "OODA-E2E-005",
-    "OODA-E2E-001",
     "MGMT-BROKER-002",
     "OSS-FINRL-001-SIDECAR-ACCEPTANCE",
     "OSS-FINRL-001",
@@ -26,6 +19,13 @@
     "ASK-007-SIDECAR-REVIEW",
     "OPS-REBASE-AUTO-001-SIDECAR-REVIEW",
     "ASK-006-SIDECAR-REVIEW",
-    "OPS-REFACTOR-001"
+    "OPS-REFACTOR-001",
+    "ASK-008",
+    "IMT-008",
+    "OSS-RLLIB-001",
+    "OSS-STAT-001",
+    "ASK-006",
+    "ASK-007",
+    "TRN-006"
   ]
 }

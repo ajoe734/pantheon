@@ -15,6 +15,44 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ai_status
 
 
+class StatusRootRoutingTests(unittest.TestCase):
+    def test_load_config_routes_runtime_paths_to_status_root(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-routing-") as temp_dir:
+            root = Path(temp_dir)
+            code_root = root / "code"
+            status_root = root / "status"
+            config_file = code_root / ".orchestrator" / "config.json"
+            config_file.parent.mkdir(parents=True)
+            config_file.write_text(
+                json.dumps(
+                    {
+                        "paths": {
+                            "status_file": "ai-status.json",
+                            "activity_log": "ai-activity-log.jsonl",
+                            "state_file": ".orchestrator/state.json",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(ai_status, "CONFIG_FILE", config_file),
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.object(ai_status, "STATUS_FILE", status_root / "ai-status.json"),
+                mock.patch.object(ai_status, "LOG_FILE", status_root / "ai-activity-log.jsonl"),
+                mock.patch.object(ai_status, "CURRENT_WORK_FILE", status_root / "current-work.md"),
+                mock.patch.object(ai_status, "DOCS_SITE_DIR", status_root / "docs-site"),
+                mock.patch.object(ai_status, "ORCHESTRATOR_STATE_FILE", status_root / ".orchestrator" / "state.json"),
+                mock.patch.object(ai_status, "APPROVAL_QUEUE_FILE", status_root / ".orchestrator" / "approval-queue.json"),
+            ):
+                config = ai_status.load_config()
+
+        self.assertEqual(config["paths"]["status_file"], str(status_root / "ai-status.json"))
+        self.assertEqual(config["paths"]["activity_log"], str(status_root / "ai-activity-log.jsonl"))
+        self.assertEqual(config["paths"]["state_file"], str(status_root / ".orchestrator" / "state.json"))
+        self.assertEqual(config["paths"]["event_queue"], str(status_root / ".orchestrator" / "event-queue.jsonl"))
+
+
 class ReviewApprovedWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
         self.state = {
@@ -726,6 +764,56 @@ class PortableStateRenderingTests(unittest.TestCase):
         self.assertIn("| `DEMO-002` | Codex | Claude | Please review before 2026-04-10 10:20:00. | pending | 2026-04-10 10:05:00 |", content)
         self.assertIn("Reviewer checked the handoff at 2026-04-10 10:30:00.", content)
         self.assertIn("- 2026-04-10 10:10:00 Codex: `DEMO-002` Paused until 2026-04-10 10:40:00.", content)
+
+    def test_write_current_work_tolerates_structured_log_entries_without_message(self) -> None:
+        state = {
+            "updated_at": "2026-05-17T16:24:00Z",
+            "objective": "Keep generated status views robust.",
+            "sprint": "2026-05-17-status-sync",
+            "canonical_document_layers": {
+                "L0 Collaboration & State": [
+                    "AI_COLLABORATION_GUIDE.md",
+                    "ai-status.json",
+                    "ai-activity-log.jsonl",
+                ],
+            },
+            "agents": [],
+            "tasks": [],
+            "handoffs": [],
+            "blockers": [],
+            "workload": {},
+            "workload_summary": {},
+        }
+        logs = [
+            {
+                "ts": "2026-05-17T16:24:21Z",
+                "agent": "Codex2",
+                "type": "worker_commit",
+                "task_id": "OODA-E2E-002",
+                "commit": "abc123",
+            }
+        ]
+
+        with tempfile.TemporaryDirectory(prefix="ai-status-current-work-structured-log-") as temp_dir:
+            output_path = Path(temp_dir) / "current-work.md"
+            with (
+                mock.patch.object(ai_status, "CURRENT_WORK_FILE", output_path),
+                mock.patch.object(
+                    ai_status,
+                    "load_archive_index",
+                    return_value={
+                        "updated_at": None,
+                        "counts": {"total": 0, "completed": 0, "superseded": 0},
+                        "recent_terminal_ids": [],
+                    },
+                ),
+                mock.patch.object(ai_status, "recent_terminal_summaries", return_value=[]),
+            ):
+                ai_status.write_current_work(state, logs)
+
+            content = output_path.read_text(encoding="utf-8")
+
+        self.assertIn("- 2026-05-18 00:24:21 Codex2: `OODA-E2E-002` worker_commit", content)
 
     def test_build_onboarding_prompt_mentions_active_planning(self) -> None:
         state = {
