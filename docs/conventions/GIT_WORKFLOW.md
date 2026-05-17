@@ -320,6 +320,8 @@ Optional trailers:
 
 - `Verified: <command-or-summary>` — required when tests/checks were run
 - `Hotfix: yes` — required on hotfix-path commits
+- `Cross-Dir: yes` — required when a single commit intentionally spans more
+  than 3 top-level directories (see §7.1 below)
 
 Forbidden:
 
@@ -329,6 +331,63 @@ Forbidden:
 - staging runtime mirrors (see §6.3)
 - `--force` / `--mirror` / `--all` / `--delete` pushes outside the workflows
   declared in §1 (wave-open `worker/*` reset is the only routine exception)
+
+### 7.1 Shared-Index Footgun (mandatory discipline)
+
+All workers — auto and foreground — share a single worktree, hence a single
+`.git/index`. If a previous commit attempt was interrupted (e.g. tool
+transport drop), its staged files **stay staged**. The next `git commit`
+silently absorbs them, producing a commit that conflates two tasks.
+
+This is exactly what happened in the **2026-05-16 sweep-in incident**
+(commit `e06f5cf2`): a foreground commit stalled mid-execution with 8 files
+staged; 16 minutes later a `OSS-FINRL-001` worker ran a narrow `git add`
+followed by `git commit`, and the commit captured both sets.
+
+Every task commit must use one of these safe paths:
+
+**Path A — `scripts/git/worker_commit.py` wrapper (preferred for bg workers)**
+
+```bash
+python3 scripts/git/worker_commit.py \
+    --task-id "$TASK_ID" \
+    --message-file /tmp/${TASK_ID}-msg.txt \
+    --scope <path1> <path2> ... \
+    --index-file "/tmp/git-index-${WORKER_RUN_ID}"
+```
+
+The wrapper:
+1. `git restore --staged --` clears any stale staging
+2. `git add <scope>` re-stages only declared paths
+3. Verifies staged set ⊆ scope; aborts on leak
+4. `git commit -F` with the message file
+5. `--index-file` uses a private `GIT_INDEX_FILE` so other workers' staging
+   cannot leak into yours even concurrently
+
+**Path B — explicit reset before staging (foreground / human flow)**
+
+```bash
+git restore --staged --                    # MANDATORY: clear stale staging
+git add <explicit list of task files>      # never `git add .` or `-A`
+git diff --cached --name-only              # eyeball the staged set
+git commit -F /tmp/${TASK_ID}-msg.txt      # or `-m` for short messages
+```
+
+**Pre-commit guards**
+
+`.githooks/commit-msg` (NOT pre-commit — needs the message file) runs
+`scripts/git/check_commit_scope.py` which:
+
+- Reads `Task-ID:` from `.git/COMMIT_EDITMSG`
+- If `.orchestrator/task-briefs/<id>.md` has a `scope:` block, verifies
+  every staged file is within scope; aborts otherwise
+- Heuristic fallback: rejects commits spanning > 3 top-level directories
+  unless the body carries `Cross-Dir: yes`
+- Exempts merges, reverts, wave-*, promote:, hotfix:, OPS-GIT-WORKFLOW-*,
+  OPS-DOC-*, OPS-REBASE-* subjects
+
+Bypass in emergencies with `PANTHEON_SCOPE_CHECK_DISABLED=1`; do not bypass
+routinely.
 
 ---
 
