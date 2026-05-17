@@ -625,6 +625,9 @@ def run_finrl_workflow(
     trainer = backend or StubFinRLBackend()
     training_result = trainer.train(prepared, training_config)
     artifact_bundle = _build_artifact_bundle(prepared, training_result, training_config)
+    environment_metadata = dataset.get("twse_stock_env")
+    if isinstance(environment_metadata, Mapping):
+        artifact_bundle["twse_stock_env"] = copy.deepcopy(dict(environment_metadata))
     registry_entry = _build_registry_entry(prepared, training_result, artifact_bundle, training_config)
     candidate_packet = _build_candidate_packet(registry_entry, prepared, training_result)
     return FinRLRunResult(

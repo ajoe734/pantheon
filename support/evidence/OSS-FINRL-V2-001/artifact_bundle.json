@@ -1,6 +1,6 @@
 {
   "artifact_family": "rl_policy",
-  "created_at": "2026-05-17T18:59:25Z",
+  "created_at": "2026-05-17T19:26:26Z",
   "created_by": "Codex2",
   "dataset_checksum": "sha256:b4bb73907b08561dd8a3d7d4f3dbecd340e9b4bc5aacfc9621e2f3434e2bf04a",
   "dataset_schema": {
@@ -151,5 +151,19 @@
     "risk_aversion": 0.25,
     "seed": 42,
     "version": "1.0.0"
+  },
+  "twse_stock_env": {
+    "action_space": 5,
+    "cpu_only": true,
+    "finrl_available": false,
+    "num_instruments": 5,
+    "num_periods": 90,
+    "state_space": 21,
+    "tech_indicator_list": [
+      "daily_return",
+      "volume_change"
+    ],
+    "upstream_env": "finrl.meta.env_stock_trading.env_stocktrading.StockTradingEnv",
+    "wrapper": "TWSESerialEnv"
   }
 }

@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from production_drl_run import build_dataset_config, load_twse_data, main
-from registry_admission_packet import generate_admission_packet
+from registry_admission_packet import generate_admission_packet, validate_admission_packet
 from twse_stock_env import TWSESerialEnv
 
 
@@ -15,11 +15,19 @@ def test_twse_records_are_governed_ohlcv():
     assert dataset["dataset_id"] == "twse-offline-dataset-001"
     assert len({record["instrument"] for record in records}) >= 5
     assert {"open", "high", "low", "close", "volume"}.issubset(records[0])
+    assert dataset["twse_stock_env"]["num_instruments"] >= 5
+    assert dataset["twse_stock_env"]["upstream_env"].endswith("StockTradingEnv")
 
 
 def test_twse_env_import_safe_without_finrl():
-    env = TWSESerialEnv([{"instrument": "2330"}])
-    assert "records" in env.reset()
+    env = TWSESerialEnv(load_twse_data(periods=6))
+    reset_state = env.reset()
+    assert reset_state["records"] == 30
+    assert reset_state["stock_dim"] == 5
+    assert env.environment_summary()["action_space"] == 5
+    _, reward, _, info = env.step([0.2, 0.1, 0.0, -0.1, 0.3])
+    assert isinstance(reward, float)
+    assert info["portfolio_value"] != reset_state["portfolio_value"]
 
 
 def test_production_drl_training_writes_offline_artifacts(tmp_path: Path):
@@ -49,16 +57,28 @@ def test_production_drl_training_writes_offline_artifacts(tmp_path: Path):
     assert (tmp_path / "registry_entry.json").exists()
     assert (tmp_path / "candidate_packet.json").exists()
     admission_packet = json.loads((tmp_path / "admission_packet.json").read_text(encoding="utf-8"))
-    assert admission_packet["environment"] == "offline_review"
-    assert admission_packet["can_proceed"] is False
-    assert admission_packet["allowed_next_action"] == "offline_registry_review_only"
+    assert validate_admission_packet(admission_packet) == []
+    assert admission_packet["schema_version"] == "PromotionReadinessPacket.v1"
+    assert admission_packet["environment"] == "paper"
+    assert admission_packet["can_proceed"] is True
+    assert admission_packet["registry_request"]["requested_transition"] == "draft_to_candidate"
+    assert admission_packet["legacy_review_fields"]["allowed_next_action"] == "offline_registry_review_only"
     assert "annual_return" in admission_packet["evaluation_summary"]
     assert "max_drawdown" in admission_packet["evaluation_summary"]
+    assert admission_packet["candidate_artifact"]["trained_policy_ref"]
+    assert admission_packet["model_artifact_ref"]["checksum"].startswith("sha256:")
 
 
 def test_admission_packet_generation(tmp_path: Path):
     run_id = "test-run"
-    summary = {"sharpe": 1.0}
+    summary = {
+        "algorithm": "ppo",
+        "num_steps": 100,
+        "total_training_steps": 1200,
+        "sharpe": 1.0,
+        "annual_return": 0.12,
+        "max_drawdown": 0.03,
+    }
     packet = generate_admission_packet(
         run_id,
         summary,
@@ -66,7 +86,7 @@ def test_admission_packet_generation(tmp_path: Path):
         output_path=tmp_path / "admission_packet.json",
         created_at="2026-05-17T00:00:00Z",
     )
-    assert packet["packet_id"].startswith("finrl-admission-test-run")
-    assert packet["environment"] == "offline_review"
-    assert packet["gate_state"] == "closed"
-    assert packet["can_proceed"] is False
+    assert packet["packet_id"].startswith("prp-oss-finrl-v2-001-test-artifact")
+    assert packet["environment"] == "paper"
+    assert packet["can_proceed"] is True
+    assert validate_admission_packet(packet) == []

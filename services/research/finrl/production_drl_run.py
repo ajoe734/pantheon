@@ -18,6 +18,7 @@ try:
         run_finrl_workflow,
     )
     from .registry_admission_packet import generate_admission_packet
+    from .twse_stock_env import TWSESerialEnv
 except ImportError:  # service-local fallback for direct script/container execution
     from engine.finrl_adapter import (
         FinRLPPOBackend,
@@ -25,6 +26,7 @@ except ImportError:  # service-local fallback for direct script/container execut
         run_finrl_workflow,
     )
     from registry_admission_packet import generate_admission_packet
+    from twse_stock_env import TWSESerialEnv
 
 DEFAULT_OUTPUT_DIR = Path("support/evidence/OSS-FINRL-V2-001")
 
@@ -57,6 +59,7 @@ def load_twse_data(periods: int = 48) -> list[dict[str, Any]]:
 
 
 def build_dataset_config(records: list[Mapping[str, Any]]) -> dict[str, Any]:
+    env = TWSESerialEnv(records)
     return {
         "dataset_id": "twse-offline-dataset-001",
         "strategy_id": "twse-ppo-strategy-001",
@@ -68,6 +71,7 @@ def build_dataset_config(records: list[Mapping[str, Any]]) -> dict[str, Any]:
         "action_labels": ["hold", "buy_small", "sell_small", "buy_large", "sell_large"],
         "position_ratio": 0.2,
         "cash_ratio": 0.8,
+        "twse_stock_env": env.environment_summary(),
     }
 
 
