@@ -82,6 +82,10 @@ jobs:
             echo "no orchestrator sync url configured; skipping notify"
             exit 0
           fi
+          if [[ ! -f scripts/git/notify_orchestrator.py ]]; then
+            echo "notify_orchestrator.py not present on this ref; skipping (master pre-bootstrap)"
+            exit 0
+          fi
           python3 scripts/git/notify_orchestrator.py \
             --event "${KIND}_merged" \
             --payload-json "{\"version\":\"${VER}\",\"sha\":\"${SHA}\",\"subject\":${SUBJECT@Q}}"
