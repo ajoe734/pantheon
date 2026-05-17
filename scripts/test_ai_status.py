@@ -745,7 +745,13 @@ class PortableStateRenderingTests(unittest.TestCase):
                 "agent": "Codex",
                 "task_id": "DEMO-002",
                 "message": "Paused until 2026-04-10T02:40:00Z.",
-            }
+            },
+            {
+                "ts": "2026-04-10T02:11:00Z",
+                "agent": "Orchestrator",
+                "type": "worker_started",
+                "task_id": "DEMO-002",
+            },
         ]
 
         with tempfile.TemporaryDirectory(prefix="ai-status-current-work-taipei-") as temp_dir:
@@ -764,6 +770,7 @@ class PortableStateRenderingTests(unittest.TestCase):
         self.assertIn("| `DEMO-002` | Codex | Claude | Please review before 2026-04-10 10:20:00. | pending | 2026-04-10 10:05:00 |", content)
         self.assertIn("Reviewer checked the handoff at 2026-04-10 10:30:00.", content)
         self.assertIn("- 2026-04-10 10:10:00 Codex: `DEMO-002` Paused until 2026-04-10 10:40:00.", content)
+        self.assertIn("- 2026-04-10 10:11:00 Orchestrator: `DEMO-002` worker_started", content)
 
     def test_build_onboarding_prompt_mentions_active_planning(self) -> None:
         state = {
