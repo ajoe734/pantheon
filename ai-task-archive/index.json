@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-05-17T05:51:55Z",
+  "updated_at": "2026-05-17T19:05:08Z",
   "counts": {
-    "total": 1185,
-    "completed": 1165,
+    "total": 1186,
+    "completed": 1166,
     "superseded": 20
   },
   "recent_terminal_ids": [
+    "M7-CANARY-CLOSEOUT",
     "MGMT-BROKER-002",
     "OSS-FINRL-001-SIDECAR-ACCEPTANCE",
     "OSS-FINRL-001",
@@ -25,7 +26,6 @@
     "ASK-006",
     "ASK-007",
     "TRN-006",
-    "OSS-QLIB-002",
-    "PER-003"
+    "OSS-QLIB-002"
   ]
 }
