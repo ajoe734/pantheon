@@ -25,12 +25,29 @@ from deployment_plan import (  # noqa: E402
     StagePlanner,
 )
 from deployment_saga import DeploymentSagaOrchestrator  # noqa: E402
+from pool_runtime_compat import enforce_compatibility  # noqa: E402
 
 PromotionError = DeploymentPlanError
 
 
 def _compact_dict(payload: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in payload.items() if value is not None}
+
+
+def _compatibility_context(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    explicit = payload.get("pool_runtime_compat") or payload.get("pool_runtime_compatibility")
+    if isinstance(explicit, Mapping):
+        return explicit
+
+    keys = {
+        "capital_pool",
+        "runtime_requirements",
+        "persona_capital_binding",
+        "capital_pool_store",
+        "persona_capital_binding_store",
+    }
+    context = {key: payload.get(key) for key in keys if payload.get(key) is not None}
+    return context
 
 
 class CronOrchestrator:
@@ -247,6 +264,20 @@ class CronOrchestrator:
             metadata=payload.get("metadata"),
             supersedes_plan_id=payload.get("supersedes_plan_id"),
         )
+        compatibility_result = None
+        compat_context = _compatibility_context(payload)
+        if compat_context:
+            compatibility_result = enforce_compatibility(
+                payload["capital_pool_id"],
+                plan.plan_id,
+                deployment_plan=plan,
+                capital_pool=compat_context.get("capital_pool"),
+                runtime_requirements=compat_context.get("runtime_requirements"),
+                persona_capital_binding=compat_context.get("persona_capital_binding"),
+                capital_pool_store=compat_context.get("capital_pool_store"),
+                persona_capital_binding_store=compat_context.get("persona_capital_binding_store"),
+                error_factory=DeploymentPlanError,
+            )
         projection = planner.build_execution_projection(plan, entry)
         saga_bootstrap = self.saga_orchestrator_factory().bootstrap(
             plan,
@@ -280,6 +311,8 @@ class CronOrchestrator:
             "execution_projection": execution_projection,
             "deployment_saga": saga_bootstrap.to_dict(),
         }
+        if compatibility_result is not None:
+            deployment_request["pool_runtime_compatibility"] = compatibility_result
 
         return WorkflowRunResult(
             workflow_id=workflow.workflow_id,
