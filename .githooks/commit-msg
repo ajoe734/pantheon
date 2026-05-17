@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Enforce Pantheon commit-message conventions documented in
+# docs/conventions/GIT_WORKFLOW.md §7.
+#
+# To bypass intentionally (e.g. one-off chore commit on a private branch):
+#   PANTHEON_TRAILER_CHECK_DISABLED=1 git commit ...
+
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec python3 "$ROOT_DIR/scripts/git/check_commit_trailers.py" --message-file "$1"
