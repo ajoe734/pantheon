@@ -264,6 +264,21 @@ def cmd_open_prs(_args: argparse.Namespace) -> int:
             check=True,
             cwd=ROOT,
         )
+        # Enable auto-merge so the PR auto-completes once branch-protection
+        # status checks (Commit trailers / Runtime mirror guard / Smoke
+        # acceptance) come back green. Non-fatal if auto-merge is unavailable.
+        subprocess.run(
+            [
+                "gh",
+                "pr",
+                "merge",
+                promote_branch,
+                "--auto",
+                "--merge",
+            ],
+            check=False,
+            cwd=ROOT,
+        )
     return 0
 
 
