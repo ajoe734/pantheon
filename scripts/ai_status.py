@@ -16,6 +16,11 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
+STATUS_ROOT = (
+    Path(os.path.expanduser(os.environ["PANTHEON_STATUS_ROOT"])).resolve()
+    if os.environ.get("PANTHEON_STATUS_ROOT")
+    else ROOT
+)
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
@@ -24,6 +29,7 @@ from task_archive import (
     ARCHIVE_TASKS_DIR,
     DEFAULT_RECENT_LIMIT as DEFAULT_ARCHIVE_RECENT_LIMIT,
     TaskResolver,
+    archive_display_path,
     archive_task_path,
     archive_task_snapshot,
     is_terminal_task,
@@ -42,15 +48,15 @@ from multi_repo_registry import (
 )
 from runtime_state import load_runtime_state
 
-STATUS_FILE = ROOT / "ai-status.json"
-LOG_FILE = ROOT / "ai-activity-log.jsonl"
-CURRENT_WORK_FILE = ROOT / "current-work.md"
-DOCS_SITE_DIR = ROOT / "docs-site"
+STATUS_FILE = STATUS_ROOT / "ai-status.json"
+LOG_FILE = STATUS_ROOT / "ai-activity-log.jsonl"
+CURRENT_WORK_FILE = STATUS_ROOT / "current-work.md"
+DOCS_SITE_DIR = STATUS_ROOT / "docs-site"
 CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
-PLANNING_STATE_FILE = ROOT / ".orchestrator" / "planning-state.json"
-ORCHESTRATOR_STATE_FILE = ROOT / ".orchestrator" / "state.json"
-APPROVAL_QUEUE_FILE = ROOT / ".orchestrator" / "approval-queue.json"
-DASHBOARD_BUNDLE_FILE = ROOT / "dashboard-bundle.json"
+PLANNING_STATE_FILE = STATUS_ROOT / ".orchestrator" / "planning-state.json"
+ORCHESTRATOR_STATE_FILE = STATUS_ROOT / ".orchestrator" / "state.json"
+APPROVAL_QUEUE_FILE = STATUS_ROOT / ".orchestrator" / "approval-queue.json"
+DASHBOARD_BUNDLE_FILE = STATUS_ROOT / "dashboard-bundle.json"
 DEFAULT_PLANNING_README = "docs/02-architecture/consensus/phase1/README.md"
 DEFAULT_PLANNING_SESSION_FILE = "docs/02-architecture/consensus/phase1/planning-session.json"
 DEFAULT_PLANNING_CHECKLIST_FILE = "docs/02-architecture/consensus/phase1/pantheon-backend-completion-checklist.md"
@@ -617,7 +623,26 @@ def load_json_file(path: Path, default: Any) -> Any:
 
 def load_config() -> dict[str, Any]:
     payload = load_json_file(CONFIG_FILE, {})
-    return payload if isinstance(payload, dict) else {}
+    if not isinstance(payload, dict):
+        return {}
+    paths = payload.setdefault("paths", {})
+    if isinstance(paths, dict):
+        paths.update(
+            {
+                "status_file": str(STATUS_FILE),
+                "activity_log": str(LOG_FILE),
+                "current_work": str(CURRENT_WORK_FILE),
+                "dashboard": str(DOCS_SITE_DIR / "index.html"),
+                "state_file": str(ORCHESTRATOR_STATE_FILE),
+                "event_queue": str(STATUS_ROOT / ".orchestrator" / "event-queue.jsonl"),
+                "approval_queue": str(APPROVAL_QUEUE_FILE),
+                "github_bus_state": str(STATUS_ROOT / ".orchestrator" / "github-bus-state.json"),
+                "github_webhook_events": str(STATUS_ROOT / ".orchestrator" / "github-webhook-events.jsonl"),
+                "github_relay_state": str(STATUS_ROOT / ".orchestrator" / "github-relay-state.json"),
+                "provider_capabilities": str(STATUS_ROOT / ".orchestrator" / "provider_capabilities.json"),
+            }
+        )
+    return payload
 
 
 def bool_config_setting(settings: dict[str, Any], key: str, default: bool = False) -> bool:
@@ -3043,9 +3068,9 @@ def sync_docs_site(state: dict[str, Any]) -> None:
         STATUS_FILE,
         CURRENT_WORK_FILE,
         DASHBOARD_BUNDLE_FILE,
-        ROOT / ".orchestrator" / "state.json",
-        ROOT / ".orchestrator" / "approval-queue.json",
-        ROOT / ".orchestrator" / "planning-state.json",
+        ORCHESTRATOR_STATE_FILE,
+        APPROVAL_QUEUE_FILE,
+        PLANNING_STATE_FILE,
     ]
     rename_map = {
         "state.json": "orchestrator-state.json",
@@ -3586,7 +3611,7 @@ def command_show(state: dict[str, Any], args: list[str]) -> None:
         json.dumps(
             {
                 "source": "archive",
-                "snapshot_path": str(archive_task_path(task_id).relative_to(ROOT)),
+                "snapshot_path": archive_display_path(archive_task_path(task_id)),
                 "snapshot": snapshot,
             },
             indent=2,
