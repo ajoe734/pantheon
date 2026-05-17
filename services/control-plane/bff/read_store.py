@@ -250,6 +250,91 @@ def redact_evidence_refs(
     return processed, redacted_count
 
 
+_CONSULT_MEMO_REVIEW_REDACTED_KEYS = {
+    # Persona-internal state.
+    "policyinternals",
+    "memorytrace",
+    "internalscore",
+    "personainternalstate",
+    "internalstate",
+    "reasoningtrace",
+    "scratchpad",
+    "privatecontext",
+    # Secret or credential material.
+    "secretcredentials",
+    "credential",
+    "credentials",
+    "secret",
+    "secretref",
+    "secretrefs",
+    "apikey",
+    "apitoken",
+    "accesstoken",
+    "refreshtoken",
+    "clientsecret",
+    "privatekey",
+    "password",
+    # Capability-map internals.
+    "capabilitymapinternals",
+    "capabilitymap",
+    "capabilitysnapshot",
+    "effectivecapabilities",
+    "effectivetools",
+    "effectiveskills",
+    "toolgrants",
+    "envgrants",
+    "permissionmap",
+}
+
+_CONSULT_MEMO_REVIEW_REDACTED_TEXT_TOKENS = (
+    "policy_internals",
+    "memory_trace",
+    "internal_score",
+    "persona_internal_state",
+    "secret_credentials",
+    "secretRef",
+    "secret_ref",
+    "capability_map_internals",
+    "capabilityMap",
+    "capability_map",
+    "effective_tools",
+    "effective_skills",
+)
+
+
+def _consult_memo_review_redaction_key(key: Any) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(key or "").lower())
+
+
+def _redact_consult_memo_review_text(value: str) -> str:
+    redacted = value
+    for token in _CONSULT_MEMO_REVIEW_REDACTED_TEXT_TOKENS:
+        redacted = re.sub(
+            rf"(?i)(?<![A-Za-z0-9_]){re.escape(token)}(?![A-Za-z0-9_])",
+            "[redacted]",
+            redacted,
+        )
+    return redacted
+
+
+def _redact_consult_memo_review_payload(value: Any) -> Any:
+    """Remove persona-internal material from review-facing consult memo payloads."""
+    if isinstance(value, dict):
+        redacted: Dict[str, Any] = {}
+        for key, item in value.items():
+            if _consult_memo_review_redaction_key(key) in _CONSULT_MEMO_REVIEW_REDACTED_KEYS:
+                continue
+            redacted[key] = _redact_consult_memo_review_payload(item)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_consult_memo_review_payload(item) for item in value]
+    if isinstance(value, tuple):
+        return [_redact_consult_memo_review_payload(item) for item in value]
+    if isinstance(value, str):
+        return _redact_consult_memo_review_text(value)
+    return value
+
+
 _CONSULTATION_DATA_DIR_ENVS = (
     "PANTHEON_BFF_CONSULTATION_DATA_DIR",
     "PANTHEON_CONSULTATION_DATA_DIR",
@@ -7746,6 +7831,7 @@ class ReadSurfaceStore:
         session = self.get_agora_session(session_id)
         if session is None or str(session.get("mode") or "").strip() != "committee":
             return None
+        payload = _redact_consult_memo_review_payload(payload)
         timestamp = created_at or _utc_now_rfc3339()
         memo_type = str(payload.get("memoType") or payload.get("memo_type") or "committee_summary").strip() or "committee_summary"
         author_ref = json.loads(
@@ -15054,6 +15140,7 @@ class ReadSurfaceStore:
 
     @classmethod
     def _project_consult_memo_detail(cls, memo: Dict[str, Any]) -> Dict[str, Any]:
+        memo = _redact_consult_memo_review_payload(memo)
         memo_id = str(memo.get("memo_id") or memo.get("id") or "").strip()
         mapping = memo.get("session_to_memo_mapping") if isinstance(memo.get("session_to_memo_mapping"), dict) else {}
         governance_target = memo.get("governance_target") if isinstance(memo.get("governance_target"), dict) else {}
