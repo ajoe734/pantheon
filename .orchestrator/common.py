@@ -26,6 +26,7 @@ ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 TASK_BRIEFS_DIR = ORCHESTRATOR_DIR / "task-briefs"
 EVIDENCE_DIR = ORCHESTRATOR_DIR / "evidence"
 CLOSEOUT_SPEC_PATH = ORCHESTRATOR_DIR / "skills" / "task-closeout-finalization.md"
+WORKER_ANCHOR_SPEC_PATH = ORCHESTRATOR_DIR / "skills" / "worker-anchor-commit.md"
 DEFAULT_CONFIG_PATH = ORCHESTRATOR_DIR / "config.json"
 LOCAL_CONFIG_PATH = ORCHESTRATOR_DIR / "config.local.json"
 PLANNING_STATE_PATH = ORCHESTRATOR_DIR / "planning-state.json"
@@ -180,6 +181,43 @@ def config_path(config: dict[str, Any], key: str, default: str | None = None) ->
     if path is None:
         raise KeyError(f"Missing config path for {key}")
     return path
+
+
+def repo_root_for_config(config: dict[str, Any]) -> Path:
+    return config_path(config, "status_file").parents[0]
+
+
+def _expand_workspace_path(value: Any, *, base: Path) -> Path:
+    path = Path(os.path.expanduser(str(value)))
+    if not path.is_absolute():
+        path = base / path
+    return path.resolve()
+
+
+def delivery_workspace_root(config: dict[str, Any], metadata: dict[str, Any] | None = None) -> Path:
+    repo_root = repo_root_for_config(config)
+    raw_path = (metadata or {}).get("workspace_path")
+    if raw_path:
+        return _expand_workspace_path(raw_path, base=repo_root)
+    return repo_root
+
+
+def delivery_status_root(config: dict[str, Any], metadata: dict[str, Any] | None = None) -> Path:
+    repo_root = repo_root_for_config(config)
+    raw_path = (metadata or {}).get("status_root")
+    if raw_path:
+        return _expand_workspace_path(raw_path, base=repo_root)
+    return repo_root
+
+
+def delivery_runtime_env(config: dict[str, Any], metadata: dict[str, Any] | None = None) -> dict[str, str]:
+    workspace_root = delivery_workspace_root(config, metadata)
+    status_root = delivery_status_root(config, metadata)
+    return {
+        "PANTHEON_WORKTREE_ROOT": str(workspace_root),
+        "PANTHEON_STATUS_ROOT": str(status_root),
+        "ORCH_WORKSPACE_PATH": str(workspace_root),
+    }
 
 
 def run_command(
@@ -782,6 +820,8 @@ def execution_context_files(config: dict[str, Any], task_id: str | None) -> list
         return unique_strings(files)
     if brief is not None:
         files.append(relpath(brief))
+    if WORKER_ANCHOR_SPEC_PATH.exists():
+        files.append(relpath(WORKER_ANCHOR_SPEC_PATH))
     if CLOSEOUT_SPEC_PATH.exists():
         files.append(relpath(CLOSEOUT_SPEC_PATH))
     files.append("ai-status.json")

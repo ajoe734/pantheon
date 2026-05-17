@@ -16,6 +16,11 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
+STATUS_ROOT = (
+    Path(os.path.expanduser(os.environ["PANTHEON_STATUS_ROOT"])).resolve()
+    if os.environ.get("PANTHEON_STATUS_ROOT")
+    else ROOT
+)
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
@@ -24,6 +29,7 @@ from task_archive import (
     ARCHIVE_TASKS_DIR,
     DEFAULT_RECENT_LIMIT as DEFAULT_ARCHIVE_RECENT_LIMIT,
     TaskResolver,
+    archive_display_path,
     archive_task_path,
     archive_task_snapshot,
     is_terminal_task,
@@ -42,15 +48,15 @@ from multi_repo_registry import (
 )
 from runtime_state import load_runtime_state
 
-STATUS_FILE = ROOT / "ai-status.json"
-LOG_FILE = ROOT / "ai-activity-log.jsonl"
-CURRENT_WORK_FILE = ROOT / "current-work.md"
-DOCS_SITE_DIR = ROOT / "docs-site"
+STATUS_FILE = STATUS_ROOT / "ai-status.json"
+LOG_FILE = STATUS_ROOT / "ai-activity-log.jsonl"
+CURRENT_WORK_FILE = STATUS_ROOT / "current-work.md"
+DOCS_SITE_DIR = STATUS_ROOT / "docs-site"
 CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
-PLANNING_STATE_FILE = ROOT / ".orchestrator" / "planning-state.json"
-ORCHESTRATOR_STATE_FILE = ROOT / ".orchestrator" / "state.json"
-APPROVAL_QUEUE_FILE = ROOT / ".orchestrator" / "approval-queue.json"
-DASHBOARD_BUNDLE_FILE = ROOT / "dashboard-bundle.json"
+PLANNING_STATE_FILE = STATUS_ROOT / ".orchestrator" / "planning-state.json"
+ORCHESTRATOR_STATE_FILE = STATUS_ROOT / ".orchestrator" / "state.json"
+APPROVAL_QUEUE_FILE = STATUS_ROOT / ".orchestrator" / "approval-queue.json"
+DASHBOARD_BUNDLE_FILE = STATUS_ROOT / "dashboard-bundle.json"
 DEFAULT_PLANNING_README = "docs/02-architecture/consensus/phase1/README.md"
 DEFAULT_PLANNING_SESSION_FILE = "docs/02-architecture/consensus/phase1/planning-session.json"
 DEFAULT_PLANNING_CHECKLIST_FILE = "docs/02-architecture/consensus/phase1/pantheon-backend-completion-checklist.md"
@@ -617,7 +623,26 @@ def load_json_file(path: Path, default: Any) -> Any:
 
 def load_config() -> dict[str, Any]:
     payload = load_json_file(CONFIG_FILE, {})
-    return payload if isinstance(payload, dict) else {}
+    if not isinstance(payload, dict):
+        return {}
+    paths = payload.setdefault("paths", {})
+    if isinstance(paths, dict):
+        paths.update(
+            {
+                "status_file": str(STATUS_FILE),
+                "activity_log": str(LOG_FILE),
+                "current_work": str(CURRENT_WORK_FILE),
+                "dashboard": str(DOCS_SITE_DIR / "index.html"),
+                "state_file": str(ORCHESTRATOR_STATE_FILE),
+                "event_queue": str(STATUS_ROOT / ".orchestrator" / "event-queue.jsonl"),
+                "approval_queue": str(APPROVAL_QUEUE_FILE),
+                "github_bus_state": str(STATUS_ROOT / ".orchestrator" / "github-bus-state.json"),
+                "github_webhook_events": str(STATUS_ROOT / ".orchestrator" / "github-webhook-events.jsonl"),
+                "github_relay_state": str(STATUS_ROOT / ".orchestrator" / "github-relay-state.json"),
+                "provider_capabilities": str(STATUS_ROOT / ".orchestrator" / "provider_capabilities.json"),
+            }
+        )
+    return payload
 
 
 def bool_config_setting(settings: dict[str, Any], key: str, default: bool = False) -> bool:
@@ -1634,8 +1659,15 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
         for entry in current_logs:
             task_id = f" `{entry['task_id']}`" if entry.get("task_id") else ""
             timestamp = entry.get("ts") or entry.get("timestamp")
+            message = entry.get("message")
+            if not message:
+                event_type = entry.get("type") or "event"
+                if event_type == "worker_commit" and entry.get("commit"):
+                    message = f"worker_commit {entry['commit']}"
+                else:
+                    message = event_type
             lines.append(
-                f"- {format_display_timestamp(timestamp)} {entry['agent']}:{task_id} {localize_embedded_timestamps(entry.get('message') or '')}"
+                f"- {format_display_timestamp(timestamp)} {entry.get('agent', 'Unknown')}:{task_id} {localize_embedded_timestamps(str(message))}"
             )
     else:
         lines.append("- No checkpoints yet.")
@@ -1742,7 +1774,27 @@ def pid_is_alive(pid: Any) -> bool:
         return False
     if value <= 0:
         return False
-    return os.path.exists(f"/proc/{value}")
+    state = proc_pid_state(value)
+    if not state:
+        return False
+    return state.upper() not in {"Z", "X"}
+
+
+def proc_pid_state(pid: Any) -> str | None:
+    try:
+        value = int(pid)
+    except (TypeError, ValueError):
+        return None
+    if value <= 0:
+        return None
+    try:
+        stat = Path(f"/proc/{value}/stat").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        return stat.rsplit(")", 1)[1].strip().split()[0]
+    except IndexError:
+        return None
 
 
 def worker_has_live_runtime(worker: dict[str, Any], *, pid_alive: bool | None = None) -> bool:
@@ -1780,12 +1832,15 @@ def normalize_runtime_workers(state: dict[str, Any], orchestrator_state: dict[st
             task_status = str(handoff.get("status") or "pending")
             task_source = "handoff"
         pid = worker.get("pid")
-        pid_alive = pid_is_alive(pid) if pid not in {None, "", 0, "0"} else None
+        pid_state = proc_pid_state(pid) if pid not in {None, "", 0, "0"} else None
+        pid_alive = bool(pid_state and pid_state.upper() not in {"Z", "X"}) if pid_state is not None else None
         live_runtime = worker_has_live_runtime(worker, pid_alive=pid_alive)
         if worker_status in {"superseded", "reassigned"}:
             bucket = "transition"
         elif task_status == "done" or worker_status in {"completed", "failed"}:
             bucket = "completed"
+        elif not live_runtime and worker_status in {"running", "started"} and pid not in {None, "", 0, "0"}:
+            bucket = "stale"
         elif live_runtime and worker_status in {"running", "started"}:
             bucket = "running"
         else:
@@ -1814,6 +1869,7 @@ def normalize_runtime_workers(state: dict[str, Any], orchestrator_state: dict[st
                 "last_error": worker.get("last_error"),
                 "pid": pid,
                 "pid_alive": pid_alive,
+                "pid_state": pid_state,
                 "is_live_runtime": live_runtime,
             }
         )
@@ -2834,17 +2890,6 @@ def build_dashboard_bundle(
             continue
         computed_mode_occupancy[mode_name]["queued"] += 1
     mode_occupancy = computed_mode_occupancy
-    raw_mode_occupancy = supervisor_state.get("mode_occupancy") if isinstance(supervisor_state.get("mode_occupancy"), dict) else {}
-    if raw_mode_occupancy:
-        normalized_occupancy = {}
-        for key in ("planning", "execution", "coordination", "chair_review"):
-            bucket = raw_mode_occupancy.get(key) if isinstance(raw_mode_occupancy.get(key), dict) else {}
-            normalized_occupancy[key] = {
-                "running": int(bucket.get("running") or 0),
-                "pending": int(bucket.get("pending") or 0),
-                "queued": int(bucket.get("queued") or 0),
-            }
-        mode_occupancy = normalized_occupancy
 
     chair_rotation = orchestrator.get("chair_rotation") if isinstance(orchestrator.get("chair_rotation"), dict) else {}
     chair_summary = {
@@ -3004,15 +3049,35 @@ def _mirror_log_tail(source: Path, target: Path, max_lines: int) -> None:
         return
 
 
-def sync_docs_site() -> None:
+def dashboard_orchestrator_state(state: dict[str, Any], orchestrator_state: dict[str, Any]) -> dict[str, Any]:
+    dashboard_state = deepcopy(orchestrator_state)
+    dashboard_workers = dashboard_state.setdefault("workers", {})
+    for worker in normalize_runtime_workers(state, orchestrator_state):
+        run_id = str(worker.get("run_id") or "").strip()
+        if not run_id or run_id not in dashboard_workers:
+            continue
+        dashboard_workers[run_id]["pid_alive"] = worker.get("pid_alive")
+        dashboard_workers[run_id]["pid_state"] = worker.get("pid_state")
+        dashboard_workers[run_id]["is_live_runtime"] = worker.get("is_live_runtime")
+        dashboard_workers[run_id]["runtime_bucket"] = worker.get("bucket")
+        dashboard_workers[run_id]["dispatch_mode"] = worker.get("dispatch_mode")
+    return dashboard_state
+
+
+def sync_docs_site(state: dict[str, Any]) -> None:
     DOCS_SITE_DIR.mkdir(parents=True, exist_ok=True)
+    config = load_config()
+    try:
+        runtime_state = load_runtime_state(config)
+    except KeyError:
+        runtime_state = {}
     mirror_files = [
         STATUS_FILE,
         CURRENT_WORK_FILE,
         DASHBOARD_BUNDLE_FILE,
-        ROOT / ".orchestrator" / "state.json",
-        ROOT / ".orchestrator" / "approval-queue.json",
-        ROOT / ".orchestrator" / "planning-state.json",
+        ORCHESTRATOR_STATE_FILE,
+        APPROVAL_QUEUE_FILE,
+        PLANNING_STATE_FILE,
     ]
     rename_map = {
         "state.json": "orchestrator-state.json",
@@ -3021,7 +3086,14 @@ def sync_docs_site() -> None:
     for path in mirror_files:
         if path.exists():
             target_name = rename_map.get(path.name, path.name)
-            shutil.copy2(path, DOCS_SITE_DIR / target_name)
+            if path.name == "state.json":
+                dashboard_state = dashboard_orchestrator_state(state, runtime_state)
+                (DOCS_SITE_DIR / target_name).write_text(
+                    json.dumps(dashboard_state, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+            else:
+                shutil.copy2(path, DOCS_SITE_DIR / target_name)
     _mirror_log_tail(LOG_FILE, DOCS_SITE_DIR / LOG_FILE.name, DASHBOARD_LOG_TAIL_LINES)
 
 
@@ -3038,7 +3110,7 @@ def sync_all(state: dict[str, Any]) -> None:
     logs = load_logs()
     write_current_work(state, logs)
     write_dashboard_bundle(state)
-    sync_docs_site()
+    sync_docs_site(state)
 
 
 def mark_blockers_resolved(state: dict[str, Any], task_id: str) -> None:
@@ -3546,7 +3618,7 @@ def command_show(state: dict[str, Any], args: list[str]) -> None:
         json.dumps(
             {
                 "source": "archive",
-                "snapshot_path": str(archive_task_path(task_id).relative_to(ROOT)),
+                "snapshot_path": archive_display_path(archive_task_path(task_id)),
                 "snapshot": snapshot,
             },
             indent=2,
