@@ -1,471 +1,498 @@
 # Pantheon Git Workflow
 
-Status: canonical · Owner: chair-review · Last reviewed: 2026-05-16
+Status: canonical · Owner: chair-review · Last reviewed: 2026-05-17
 
-This document is the **operational** source of truth for branching, waves,
-publish versioning, promotion to master, and CI gates. It replaces ad-hoc
-guidance previously scattered across `AI_COLLABORATION_GUIDE.md` and the
-2026-05-16 backlog post-mortem.
+Operational source of truth for Pantheon branching, per-task PR flow,
+nightly publish, promote to master, hotfixes, and CI gates. If anything
+here conflicts with `AI_COLLABORATION_GUIDE.md`, this file wins.
 
-If something here conflicts with `AI_COLLABORATION_GUIDE.md`, this file wins
-and the guide must be updated.
+This document supersedes the wave-based design (2026-05-16) after a
+peer review flagged that wave + permanent worker-branch does not fit
+Pantheon's 24/7 multi-AI / multi-sub-lane parallel execution.
 
 ---
 
 ## 1. Branch Topology
 
 ```
-master      ──A─────────────────────M─────────────H────  prod canonical
-                  \                /  \
-dev         ───────B──W20──W21──W22────H'──────────────  integration line
-                       \    \    \
-wave/W22                \    \    └── current wave (short-lived)
-                         \    └─ wave/W21 (archive tag + delete)
-                          \
-worker/claude    ──c─c─c   ← rebased onto wave/<id> at every wave open
-worker/codex     ──c─c
-worker/gemini    ──c
-worker/copilot   ──c─c
-worker/qwen      ──c
-(... one branch per autoworker)
-
-publish/v2026.20.0   ← snapshot cut from dev at wave-close
-hotfix/<topic>       ← cut from master, merged back to master + dev
+master   ── PR-only ── canonical / production source
+   ▲
+   │ promote/<v> PR  (auto-merged after soak + CI)
+   │
+publish/v<YYYY>.<MM>.<DD>.N   ── immutable snapshots from dev
+   ▲
+   │ nightly-publish-cut.yml  (cron 03:00 UTC)
+   │
+dev      ── PR-only ── integration line, every task PR auto-merges here
+   ▲                       ↑
+   │ PR (auto-merge)   hotfix/<topic> ── dual-PR back to dev + master
+   │
+task/<TASK-ID>  ── ephemeral, auto-deleted by GitHub when PR merges
 ```
 
-### 1.1 Branch types
+### 1.1 Branch types (5 total)
 
-| Type           | Naming                                | Lifetime    | Writer                                   |
-|----------------|---------------------------------------|-------------|------------------------------------------|
-| canonical      | `master`                              | permanent   | merge-only (release / hotfix)            |
-| integration    | `dev`                                 | permanent   | merge-only (wave-close / hotfix)         |
-| wave           | `wave/<YYYY>-W<NN>`                   | 5–7 days    | chair-review (wave-merge worker PRs)     |
-| worker         | `worker/<name>`                       | permanent   | one per autoworker (see §1.2)            |
-| publish        | `publish/v<YYYY>.<WW>.<P>`            | permanent   | cut from dev at wave-close, not written  |
-| hotfix         | `hotfix/<YYYY>-W<NN>-<topic>`         | < 24h       | one engineer; merged to master + dev     |
-| archive tag    | `archive/<branch>-<YYYY-MM-DD>`       | permanent   | retirement marker                        |
-| recovery tag   | `recovery/<timestamp>`                | permanent   | rebase backup tag (see §6.1)             |
+| Type        | Naming                                | Lifetime          | Writer                                |
+|-------------|---------------------------------------|-------------------|---------------------------------------|
+| canonical   | `master`                              | permanent         | PR auto-merge only (promote / hotfix) |
+| integration | `dev`                                 | permanent         | PR auto-merge only (task / hotfix)    |
+| task        | `task/<TASK-ID>`                      | minutes to hours  | one autoworker / human; PR + auto-delete |
+| publish     | `publish/v<YYYY>.<MM>.<DD>.<N>`       | permanent (snapshot) | nightly cron; immutable after cut  |
+| hotfix      | `hotfix/<topic>`                      | < 24 h            | one author; dual-PR (master + dev)    |
 
-### 1.2 Worker branches (one per autoworker)
+### 1.2 Tag types
 
-Long-lived; reset to the current wave at every wave open.
+| Tag                              | When set                                          | What it marks                                   |
+|----------------------------------|---------------------------------------------------|-------------------------------------------------|
+| `release/v<YYYY>.<MM>.<DD>.N`    | At publish snapshot creation                      | Immutable snapshot ref                          |
+| `prod/v<YYYY>.<MM>.<DD>.N`       | When promote PR merges into master                | Production release marker                       |
+| `archive/<branch>-<YYYY-MM-DD>`  | Before retiring any branch                        | Snapshot of branch tip prior to deletion        |
+| `recovery/<timestamp>`           | Before destructive ops that may go wrong          | Manual backup point (used for rebase rescue)    |
 
-```
-worker/claude       worker/claude2
-worker/codex        worker/codex2
-worker/gemini       worker/gemini2
-worker/copilot
-worker/qwen
-```
+### 1.3 Why per-task branches, not per-worker
 
-The orchestrator config keys (`autoworkers.<name>.git_branch`) must match
-exactly. Adding a new worker means: add the branch, add the config entry, push
-the empty branch from `dev`, archive on retirement.
+Earlier design used one permanent `worker/<name>` branch per autoworker
+(8 branches). That assumed each AI runs one task at a time. Pantheon's
+reality:
+
+- Codex / Codex2 lanes split into parallel sub-lanes.
+- Sidecar dispatch spawns concurrent helper workers on the same lane.
+- Multiple tasks per agent can run in parallel through the orchestrator.
+
+A single permanent `worker/codex` cannot serve N concurrent sub-lanes
+without serializing them (loses throughput) or fanning out into
+`worker/codex-a/b/c` (loses simplicity). Ephemeral `task/<TASK-ID>`
+branches scale naturally: one branch per task, deleted on merge, no
+collision between parallel workers.
 
 ---
 
-## 2. Wave Lifecycle (5 working days)
+## 2. Task Branch Lifecycle (the main loop)
 
-Default cadence: **Mon 09:00 open · Fri 12:00 freeze · Fri 17:00 close**, ISO
-week-aligned. Wave id is `<YYYY>-W<NN>` (e.g. `2026-W20`).
-
-### 2.1 T0 — Wave Open (chair-review)
+### 2.1 Open a task branch
 
 ```bash
-WAVE=2026-W20
-git fetch origin
-git checkout -B wave/$WAVE origin/dev
-git push -u origin wave/$WAVE
-
-./scripts/ai-status.sh wave open $WAVE
+./scripts/git/task_start.sh <TASK-ID>
 ```
 
-Each worker resyncs:
+Equivalent to:
 
 ```bash
-git fetch origin
-git checkout worker/claude
-git reset --hard origin/wave/$WAVE
-git push --force-with-lease origin worker/claude
+git fetch origin dev
+git checkout -B task/<TASK-ID> origin/dev
 ```
 
-> `--force-with-lease` is only permitted on `worker/*` branches at wave-open.
-> Anywhere else it requires explicit chair-review authorisation.
+The helper also echoes the recommended `--index-file` path
+(`/tmp/git-index-task-<TASK-ID>`) for `worker_commit.py` to use.
 
-### 2.2 T1–T3 — Execution (per task closeout)
+### 2.2 Commit task work
 
-Worker commit:
-
-```
-EP5-FOO-001: <imperative subject>
-
-LLM-Agent: Claude
-Task-ID: EP5-FOO-001
-Reviewer: Codex
-Wave: 2026-W20
-Verified: <one-line summary of tests/checks>
-```
-
-Push to its own branch only:
+Workers must use `scripts/git/worker_commit.py` so staging discipline is
+enforced (see § 5.4):
 
 ```bash
-git push origin worker/claude
+python3 scripts/git/worker_commit.py \
+  --task-id "$TASK" \
+  --message-file /tmp/$TASK-msg.txt \
+  --scope <path1> <path2> ... \
+  --index-file /tmp/git-index-task-$TASK
 ```
 
-Chair-review merges into the wave (auto-driven by the orchestrator wave-merge
-loop, or manually):
+`--scope` is mandatory. The wrapper resets staging, stages only the
+declared scope, verifies, then `git commit -F <message-file>`.
+
+### 2.3 Open the PR
 
 ```bash
-git fetch origin
-git checkout wave/$WAVE
-git merge --no-ff origin/worker/claude \
-  -m "wave-merge: claude EP5-FOO-001"
-git push origin wave/$WAVE
+./scripts/git/task_finalize.sh <TASK-ID>
 ```
 
-If the merge conflicts, chair-review resolves; the worker does **not** touch
-the wave branch. Before the worker starts the next task it rebases its branch
-onto the wave so subsequent commits stay current:
+Equivalent to:
 
 ```bash
-git pull --rebase origin wave/$WAVE
+git push -u origin task/<TASK-ID>
+gh pr create --base dev --head task/<TASK-ID> --label auto-merge \
+  --title "<TASK-ID>: <subject>" --body-file /tmp/<TASK-ID>-pr-body.md
+gh pr merge task/<TASK-ID> --auto --merge
 ```
 
-### 2.3 T4 — Freeze (Friday 12:00)
+Auto-merge holds until `dev` branch protection's required status checks
+(see § 7) turn green; then GitHub merges and **auto-deletes the
+`task/<TASK-ID>` branch**.
 
-```bash
-./scripts/run-acceptance.sh wave/$WAVE
-./scripts/ai-status.sh wave freeze $WAVE
-```
+### 2.4 Lifetime guarantee
 
-After freeze the wave accepts bugfix commits only; feature work moves to the
-next wave.
-
-### 2.4 T5 — Wave Close (Friday 17:00)
-
-```bash
-git checkout dev
-git pull
-git merge --no-ff origin/wave/$WAVE -m "wave-close: $WAVE"
-git push origin dev
-
-DATE=$(date +%F)
-git tag archive/wave-$WAVE-$DATE
-git push origin archive/wave-$WAVE-$DATE
-git push origin --delete wave/$WAVE
-```
-
-Then immediately cut the publish snapshot (§3).
+A `task/<TASK-ID>` PR should reach merge within 24 h. A task PR that
+lingers > 24 h with no merge is a process violation and chair-review
+surfaces it as a Finding.
 
 ---
 
-## 3. Publish Versioning
+## 3. Nightly Publish
 
-Cut a permanent snapshot from `dev` at every wave-close.
+`nightly-publish-cut.yml` runs every UTC day at 03:00 and:
 
-### 3.1 Version format `vYYYY.WW.P`
+1. Compares `origin/dev` HEAD against the latest `release/v*` tag.
+2. If `dev` advanced (new task PRs merged since last cut):
+   - Creates `publish/v<YYYY>.<MM>.<DD>.0` from `origin/dev` HEAD.
+   - Pushes the branch.
+   - Tags `release/v<YYYY>.<MM>.<DD>.0` (annotated).
+   - Triggers `nonprod-deploy.yml` (publish/* push → dev VM redeploy).
+3. If `dev` has not advanced, no-op.
 
-| Segment | Meaning                                | Example |
-|---------|----------------------------------------|---------|
-| `YYYY`  | calendar year                          | `2026`  |
-| `WW`    | ISO week (= wave number)               | `20`    |
-| `P`     | patch counter (0 = wave-close release) | `0`     |
+### 3.1 Version format `vYYYY.MM.DD.N`
 
-Hotfixes within the same week bump `P` (`v2026.20.0` → `v2026.20.1`).
+| Segment | Meaning                                 | Example       |
+|---------|-----------------------------------------|---------------|
+| `YYYY`  | Calendar year                           | `2026`        |
+| `MM`    | Month (zero-padded)                     | `05`          |
+| `DD`    | Day of month (zero-padded)              | `17`          |
+| `N`     | Counter for same-day hotfix patches     | `0` initially |
 
-### 3.2 Cut command
+Examples:
+- `v2026.05.17.0` — nightly cut on 2026-05-17
+- `v2026.05.17.1` — same-day hotfix patch
+- `v2026.05.18.0` — next-day nightly cut
+
+### 3.2 Manual cut
 
 ```bash
-VER=v2026.20.0
-git checkout -B publish/$VER origin/dev
-git push -u origin publish/$VER
-git tag release/$VER -m "dev publish: wave 2026-W20"
-git push origin release/$VER
+./scripts/git/nightly_publish.sh now
 ```
 
-Publish branches are immutable snapshots. **Never** push commits onto them
-after the initial cut. Deploy automation reads `publish/<VER>` by tag or
-branch ref and pushes to staging.
+Use only when a publish must happen between cron runs (e.g. hotfix
+landed and you want a fresh release tag immediately).
+
+### 3.3 Publish snapshots are immutable
+
+After cut, **never push commits onto a `publish/v*` branch**. To patch,
+cut a fresh `publish/v….N+1` from updated dev/master via the hotfix
+path (§ 6).
 
 ---
 
-## 4. Promotion to Master
+## 4. Promote to Master
 
-Default trigger: **publish promote after 3 days clean in staging.** The
-GitHub Action `publish-promote.yml` opens a PR `publish/<VER> → master`
-when:
+The existing `publish-promote.yml` workflow runs hourly and on every
+`release/v*` push. It:
 
-1. `release/<VER>` tag age ≥ 3 days
-2. No `regression/<VER>` label exists on any open issue
-3. The CI gate is green on `publish/<VER>`
+1. Discovers `release/v*` tags older than `promote.soak_days` (default
+   `1`) and not yet on master (via `merge-base --is-ancestor`).
+2. For each eligible candidate, opens `promote/<v>` PR into master.
+3. Calls `gh pr merge promote/<v> --auto --merge`.
+4. Branch protection holds the PR until status checks (§ 7.1) turn
+   green; GitHub auto-merges and tags `prod/<v>` via `master-release.yml`.
 
-Manual promote (when automation is unavailable):
+### 4.1 Soak window
 
-```bash
-VER=v2026.20.0
-git checkout -B promote/$VER origin/master
-git merge --no-ff origin/publish/$VER -m "promote: $VER"
-git push origin promote/$VER
-gh pr create --base master --head promote/$VER \
-  --title "Promote $VER to master" \
-  --body "Promotion of publish snapshot $VER after staging soak."
-```
+`soak_days = 1`: each publish snapshot lives on the dev VM for at least
+24 hours before its promote PR opens. This is the window in which
+`regression/<v>` issue labels can block promotion.
 
-On merge, the same workflow tags `prod/<VER>` on master.
+If a release was cut at 03:00 UTC Monday, its promote PR opens earliest
+03:00 UTC Tuesday (next hourly cron pickup after the soak passes).
 
-### 4.1 No more Codex direct-to-master
+### 4.2 Blocking a promote
 
-Codex / Codex2 integration contracts now flow through `worker/codex(2)` like
-every other lane. The only path that bypasses dev is **hotfix** (§5).
+Open a GitHub issue with label `regression/v<YYYY>.<MM>.<DD>.N` (or any
+configured `block_labels`). `publish-promote.yml` skips that candidate
+until the label is removed.
+
+### 4.3 No direct push to master
+
+Branch protection enforces PR + 3 required status checks. There is no
+operator path that bypasses this — all master entries are PR merges.
 
 ---
 
-## 5. Hotfix Path
+## 5. Commit Conventions
+
+### 5.1 Subject
+
+Format: `<TASK-ID>: <imperative summary>`, ≤ 70 chars.
+
+Examples:
+- `EP5-FOO-001: implement adapter for foo service`
+- `MGMT-BROKER-002: use Shioaji venv for supervisor restart`
+
+Exempt subjects (trailer check skipped):
+- `Merge ` / `Revert ` / `fixup!` / `squash!` / `Initial commit`
+- `promote:` / `hotfix:` / `publish:` (system actors)
+- `OPS-GIT-WORKFLOW-` / `OPS-GIT-REDESIGN-` / `OPS-DOC-` / `OPS-REBASE-`
+
+### 5.2 Required trailers
+
+Enforced by `.githooks/commit-msg` via `scripts/git/check_commit_trailers.py`:
+
+```
+LLM-Agent: <Claude | Claude2 | Codex | Codex2 | Gemini | Gemini2 | Copilot | Qwen>
+Task-ID: <task-id>
+Reviewer: <name, must differ from LLM-Agent>
+```
+
+(The legacy `Wave:` trailer is **dropped** in the new model. The
+trailer check tolerates legacy commits that carry it but does not
+require it on new commits.)
+
+### 5.3 Optional trailers
+
+- `Verified: <command summary>` — required when tests / checks ran.
+- `Hotfix: yes` — required on hotfix-path commits.
+- `Cross-Dir: yes` — required when a single commit intentionally spans
+  more than 3 top-level directories. (See § 5.4 scope guard.)
+
+### 5.4 Staging discipline (Shared-Index footgun)
+
+Pantheon's autoworkers and chair share one worktree, hence one
+`.git/index`. The 2026-05-16 sweep-in incident (`e06f5cf2`) showed that
+a stalled `git commit` leaves files staged for the next process to
+absorb. Defenses:
+
+1. **`scripts/git/worker_commit.py`** is the mandatory commit path for
+   autoworkers. It `git restore --staged --` first, stages only the
+   declared `--scope`, verifies, then commits. With `--index-file` it
+   uses a private staging index so workers cannot collide even on
+   concurrent edits.
+2. **`scripts/git/check_commit_scope.py`** runs from the `commit-msg`
+   hook. It reads the `Task-ID` trailer, looks up
+   `.orchestrator/task-briefs/<id>.md` for a `scope:` block, and aborts
+   if any staged file is outside the declared scope. If no manifest
+   exists it falls back to a heuristic: > 3 top-level directories
+   without a `Cross-Dir: yes` trailer is rejected.
+
+### 5.5 Forbidden
+
+- `--amend` on a commit that has been pushed.
+- `--no-verify` / `--no-gpg-sign` (unless explicit chair-review note).
+- empty commits — they jam Pantheon's rebase loop.
+- staging `ai-activity-log.jsonl`, `dashboard-bundle.json`, or
+  `docs-site/*` — `.githooks/pre-commit` rejects them.
+- routine `--force` / `--mirror` / `--all` / `--delete` push.
+
+---
+
+## 6. Hotfix Path
+
+```
+master      ← PR (auto-merge after CI) ←┐
+                                         hotfix/<topic>
+dev         ← PR (auto-merge after CI) ←┘
+```
 
 ```bash
 TOPIC=login-redirect
-HOTFIX=hotfix/2026-W20-$TOPIC
+HOTFIX=hotfix/$TOPIC
 
+git fetch origin master
 git checkout -B $HOTFIX origin/master
-# fix → commit with `Hotfix: yes` trailer + Task-ID
+# … fix … commit with `Hotfix: yes` trailer (use worker_commit.py)
 git push -u origin $HOTFIX
 
-# Dual merge
-git checkout master && git merge --no-ff $HOTFIX && git push origin master
-git checkout dev    && git merge --no-ff $HOTFIX && git push origin dev
+# Open two PRs — one to master, one to dev
+gh pr create --base master --head $HOTFIX --label auto-merge,hotfix \
+  --title "hotfix: $TOPIC" --body-file /tmp/hotfix-body.md
+gh pr merge $HOTFIX --auto --merge
 
-# Patch publish
-VER=v2026.20.1
-git checkout -B publish/$VER origin/master
-git push -u origin publish/$VER
-git tag release/$VER && git tag prod/$VER
-git push origin release/$VER prod/$VER
-
-git tag archive/$HOTFIX-$(date +%F)
-git push origin --delete $HOTFIX
+gh pr create --base dev --head $HOTFIX --label auto-merge,hotfix \
+  --title "hotfix: $TOPIC (dev sync)" --body-file /tmp/hotfix-dev-body.md
+gh pr merge $HOTFIX --auto --merge
 ```
 
-Hotfixes always land on both master **and** dev so the next wave-close merge
-sees them already integrated.
+Once both PRs merge, the `hotfix/<topic>` branch is auto-deleted. The
+next nightly publish cut picks up the dev side; if the hotfix must ship
+immediately, manually `./scripts/git/nightly_publish.sh now` after the
+master merge.
 
 ---
 
-## 6. Recovery Recipes
+## 7. CI Gates and Branch Protection
 
-### 6.1 Rebase stuck mid-pick
+### 7.1 Required status checks
+
+Provided by `.github/workflows/branch-ci.yml`:
+
+| Status check name      | Source job in branch-ci.yml | What it does                                              |
+|------------------------|------------------------------|-----------------------------------------------------------|
+| `Commit trailers`      | trailers                     | Enforce subject prefix + LLM-Agent / Task-ID / Reviewer   |
+| `Runtime mirror guard` | generated-files              | Reject `ai-activity-log.jsonl` etc. from the diff         |
+| `Smoke acceptance`     | smoke                        | Run `scripts/run-acceptance.sh smoke`                     |
+
+### 7.2 Branch protection on origin
+
+| Branch     | Require PR | Required status checks            | Force push | Delete |
+|------------|------------|------------------------------------|------------|--------|
+| `master`   | ✅          | 3 (above) + base up-to-date        | blocked    | blocked|
+| `dev`      | ✅          | 3 (above) + base up-to-date        | blocked    | blocked|
+| `task/*`   | n/a        | runs but not required              | allowed    | allowed (auto-deleted on merge) |
+| `publish/*`| n/a        | runs                               | blocked    | blocked|
+| `hotfix/*` | n/a        | runs (required by the PR itself)   | allowed    | allowed (auto-deleted on merge) |
+
+Approvals required: **0**. Bots auto-merge after status checks pass.
+This is intentional: gating discipline is in CI, not in human review
+(which doesn't scale to dozens of AI-generated PRs/day).
+
+---
+
+## 8. Workflow Files
+
+| File                                       | Trigger                                                                 | Purpose                                                  |
+|--------------------------------------------|--------------------------------------------------------------------------|----------------------------------------------------------|
+| `.github/workflows/branch-ci.yml`          | push/PR on `task/**`, `hotfix/**`, `dev`, `publish/**`, `master`         | Trailer check + mirror guard + smoke acceptance gate     |
+| `.github/workflows/nightly-publish-cut.yml`| cron `0 3 * * *` + `workflow_dispatch`                                    | Cut `publish/v<date>.N` from `dev` if it advanced        |
+| `.github/workflows/publish-promote.yml`    | cron hourly + `release/v*` push + `workflow_dispatch`                    | Open `promote/<v>` PR after soak; auto-merge             |
+| `.github/workflows/master-release.yml`     | push on `master`                                                         | Tag `prod/<v>` on promote merges; tag hotfix merges      |
+| `.github/workflows/nonprod-deploy.yml`     | push on `publish/v*` + `workflow_dispatch`                               | Auto-deploy dev VM from latest publish; manual staging   |
+| `.github/workflows/orchestrator-sync.yml`  | push/tag/PR labeled                                                      | POST git event to orchestrator webhook (no-op without SYNC_URL) |
+
+---
+
+## 9. Environment ↔ Ref Bindings
+
+| Environment      | Tracks ref                              | Auto-deploy trigger                          | Operator role |
+|------------------|------------------------------------------|----------------------------------------------|---------------|
+| **dev**          | latest `publish/v<latest>`               | push on `publish/v*`                          | observe       |
+| **staging-live** | `master` HEAD (post-promote)             | (not yet wired — manual workflow_dispatch)    | smoke / sign-off |
+| **production**   | a chosen `prod/v<...>` tag (locked)      | never auto                                    | sign + manual workflow_dispatch |
+
+dev is the **soak environment** — the 1-day soak gate before promote
+runs on the dev VM. staging-live is the post-promote pre-production
+rehearsal. Production is operator-locked.
+
+---
+
+## 10. Recovery Recipes
+
+### 10.1 Rebase stuck mid-pick
 
 ```bash
 git tag recovery/$(date +%Y%m%d-%H%M%S)
 git rebase --abort
 git checkout -B <branch> recovery/<tag>
-# re-apply commits one-by-one or via cherry-pick
 ```
 
-### 6.2 Empty commit jamming rebase
+### 10.2 Empty commits jamming rebase
 
-Empty commits jam the rebase loop because workers don't pass `--allow-empty`
-or `--skip`. Pre-check with:
+Pre-check:
 
 ```bash
 git diff --cached --quiet && { echo "empty commit; aborting"; exit 1; }
 ```
 
-If already jammed, see §6.1.
+### 10.3 Runtime mirrors stuck `M`
 
-### 6.3 Runtime mirrors stuck `M`
-
-The following files are orchestrator-regenerated and are blocked from commits
-by `.githooks/pre-commit`:
+These files are orchestrator-regenerated and never committed:
 
 - `ai-activity-log.jsonl`
+- `ai-status.json`
 - `dashboard-bundle.json`
+- `current-work.md`
 - `docs-site/{ai-status.json, current-work.md, dashboard-bundle.json}`
 
-They live permanently in `git status` as modified. Never stage them. To reset
-the working tree, run the orchestrator regenerate (`scripts/ai_status.py
-sync`) or `git checkout -- <file>`.
+`.githooks/pre-commit` blocks them. To reset, regenerate via
+`scripts/ai_status.py sync` or `git checkout -- <file>`.
 
-### 6.4 Cross-branch checkout fights orchestrator
+### 10.4 Cross-branch checkout fights orchestrator
 
 Use an isolated worktree:
 
 ```bash
-git worktree add ../pantheon-integration <ref>
-cd ../pantheon-integration
-# … perform merge …
+git worktree add ../pantheon-isolated <ref>
+cd ../pantheon-isolated
+# … perform operation …
 cd -
-git worktree remove ../pantheon-integration
+git worktree remove --force ../pantheon-isolated
 ```
 
 ---
 
-## 7. Commit Conventions
+## 11. Configuration
 
-Subject line ≤ 70 chars, format:
-
-```
-<TASK-ID>: <imperative summary>
-```
-
-Required body trailers (enforced by `.githooks/commit-msg`):
-
-```
-LLM-Agent: <Owner>
-Task-ID: <task-id>
-Reviewer: <reviewer>
-Wave: <YYYY>-W<NN>
-```
-
-Optional trailers:
-
-- `Verified: <command-or-summary>` — required when tests/checks were run
-- `Hotfix: yes` — required on hotfix-path commits
-- `Cross-Dir: yes` — required when a single commit intentionally spans more
-  than 3 top-level directories (see §7.1 below)
-
-Forbidden:
-
-- `--amend` on already-pushed commits
-- `--no-verify`, `--no-gpg-sign`
-- empty commits (see §6.2)
-- staging runtime mirrors (see §6.3)
-- `--force` / `--mirror` / `--all` / `--delete` pushes outside the workflows
-  declared in §1 (wave-open `worker/*` reset is the only routine exception)
-
-### 7.1 Shared-Index Footgun (mandatory discipline)
-
-All workers — auto and foreground — share a single worktree, hence a single
-`.git/index`. If a previous commit attempt was interrupted (e.g. tool
-transport drop), its staged files **stay staged**. The next `git commit`
-silently absorbs them, producing a commit that conflates two tasks.
-
-This is exactly what happened in the **2026-05-16 sweep-in incident**
-(commit `e06f5cf2`): a foreground commit stalled mid-execution with 8 files
-staged; 16 minutes later a `OSS-FINRL-001` worker ran a narrow `git add`
-followed by `git commit`, and the commit captured both sets.
-
-Every task commit must use one of these safe paths:
-
-**Path A — `scripts/git/worker_commit.py` wrapper (preferred for bg workers)**
-
-```bash
-python3 scripts/git/worker_commit.py \
-    --task-id "$TASK_ID" \
-    --message-file /tmp/${TASK_ID}-msg.txt \
-    --scope <path1> <path2> ... \
-    --index-file "/tmp/git-index-${WORKER_RUN_ID}"
-```
-
-The wrapper:
-1. `git restore --staged --` clears any stale staging
-2. `git add <scope>` re-stages only declared paths
-3. Verifies staged set ⊆ scope; aborts on leak
-4. `git commit -F` with the message file
-5. `--index-file` uses a private `GIT_INDEX_FILE` so other workers' staging
-   cannot leak into yours even concurrently
-
-**Path B — explicit reset before staging (foreground / human flow)**
-
-```bash
-git restore --staged --                    # MANDATORY: clear stale staging
-git add <explicit list of task files>      # never `git add .` or `-A`
-git diff --cached --name-only              # eyeball the staged set
-git commit -F /tmp/${TASK_ID}-msg.txt      # or `-m` for short messages
-```
-
-**Pre-commit guards**
-
-`.githooks/commit-msg` (NOT pre-commit — needs the message file) runs
-`scripts/git/check_commit_scope.py` which:
-
-- Reads `Task-ID:` from `.git/COMMIT_EDITMSG`
-- If `.orchestrator/task-briefs/<id>.md` has a `scope:` block, verifies
-  every staged file is within scope; aborts otherwise
-- Heuristic fallback: rejects commits spanning > 3 top-level directories
-  unless the body carries `Cross-Dir: yes`
-- Exempts merges, reverts, wave-*, promote:, hotfix:, OPS-GIT-WORKFLOW-*,
-  OPS-DOC-*, OPS-REBASE-* subjects
-
-Bypass in emergencies with `PANTHEON_SCOPE_CHECK_DISABLED=1`; do not bypass
-routinely.
-
----
-
-## 8. CI Gates
-
-| Workflow file                          | Trigger                                             | Purpose                                          |
-|----------------------------------------|-----------------------------------------------------|--------------------------------------------------|
-| `.github/workflows/wave-ci.yml`        | push / PR on `worker/*`, `wave/*`, `dev`            | Lint, type, test, acceptance subset              |
-| `.github/workflows/publish-promote.yml`| schedule (hourly) + `release/v*` tag push           | Open promote PR after staging soak               |
-| `.github/workflows/master-release.yml` | merge of promote PR into `master`                   | Tag `prod/<VER>`, archive publish branch         |
-| `.github/workflows/orchestrator-sync.yml` | push on `dev`, `wave/*`, tags `release/*`, `prod/*` | POST events to orchestrator status webhook       |
-
-All four gate on the commit-message trailer check (`scripts/git/check_commit_trailers.py`).
-
----
-
-## 9. Migration from current state (2026-05-16 cutover)
-
-| # | Action |
-|---|--------|
-| 1 | `git checkout -B dev origin/merge/backend-dev-into-master && git push -u origin dev` |
-| 2 | Tag `archive/merge-backend-dev-into-master-2026-05-16` then `git push origin --delete merge/backend-dev-into-master` |
-| 3 | For each autoworker, `git push origin dev:refs/heads/worker/<name>` to create the long-lived branch |
-| 4 | Merge `bff-luv-fe-006-dev-deploy` into `dev` (via integration worktree), then archive and delete |
-| 5 | Triage `codex/*` branches: merge into dev or `archive/`-tag and delete |
-| 6 | Open the first wave: `./scripts/ai-status.sh wave open 2026-W21` |
-| 7 | Enable hooks repo-wide: `git config core.hooksPath .githooks` |
-| 8 | Update orchestrator config (see `.orchestrator/config.example.json` `wave_workflow` block) |
-
----
-
-## 10. Open settings (live in `.orchestrator/config.json`)
+All workflow parameters live in `.orchestrator/config.json`:
 
 ```json
-"wave_workflow": {
+"branch_workflow": {
   "enabled": true,
-  "wave_length_days": 5,
-  "wave_open_dow": "monday",
-  "wave_close_dow": "friday",
-  "freeze_hour_local": 12,
-  "close_hour_local": 17,
-  "current_wave_id": null,
-  "wave_branch_prefix": "wave/",
-  "worker_branch_prefix": "worker/",
+  "task_branch_prefix": "task/",
   "publish_branch_prefix": "publish/",
   "release_tag_prefix": "release/",
   "prod_tag_prefix": "prod/",
+  "archive_tag_prefix": "archive/",
   "dev_branch": "dev",
   "main_branch": "master",
+  "nightly_publish": {
+    "enabled": true,
+    "cron_utc": "0 3 * * *",
+    "version_format": "vYYYY.MM.DD.N",
+    "skip_if_no_new_commits": true
+  },
   "promote": {
     "trigger": "publish_soak",
-    "soak_days": 3,
-    "regression_label_prefix": "regression/"
+    "soak_days": 1,
+    "regression_label_prefix": "regression/",
+    "block_labels": ["hold-promote", "regression"],
+    "promote_pr_label": "auto-promote",
+    "auto_merge": true
   },
-  "worker_branches": {
-    "Claude":   "worker/claude",
-    "Claude2":  "worker/claude2",
-    "Codex":    "worker/codex",
-    "Codex2":   "worker/codex2",
-    "Gemini":   "worker/gemini",
-    "Gemini2":  "worker/gemini2",
-    "Copilot":  "worker/copilot",
-    "Qwen":     "worker/qwen"
+  "task_pr": {
+    "auto_merge": true,
+    "required_status_checks": [
+      "Commit trailers",
+      "Runtime mirror guard",
+      "Smoke acceptance"
+    ],
+    "max_open_hours": 24
+  },
+  "drift_alarms": {
+    "task_pr_must_merge_within_hours": 24,
+    "publish_must_promote_within_days": 7,
+    "dev_must_not_diverge_from_master_more_than_days": 14
+  },
+  "orchestrator_sync_webhook": {
+    "enabled": false,
+    "url_env": "PANTHEON_ORCHESTRATOR_SYNC_URL",
+    "secret_env": "PANTHEON_ORCHESTRATOR_SYNC_SECRET"
   }
 }
 ```
 
-These keys are the contract between scripts, CI workflows, and the orchestrator.
+---
+
+## 12. Migration From the Wave Model (2026-05-17)
+
+The wave-based model (`wave/<id>` + 8 permanent `worker/<name>` branches)
+is retired by OPS-GIT-REDESIGN-001:
+
+1. All wave_*, worker/*, and promote/* artifacts on `worker/claude`
+   landed in `dev` via the final wave-close on 2026-05-17.
+2. `worker/{claude,claude2,codex,codex2,gemini,gemini2,copilot,qwen}`
+   on origin are tagged `archive/worker-<name>-2026-05-17` and deleted.
+3. `wave_open.sh`, `wave_close.sh`, `wave_merge_worker.sh` removed.
+4. `ai_status.py wave` subcommand removed; the `wave_state` field stays
+   in `ai-status.json` as a legacy read-only record but is no longer
+   written.
+5. `.orchestrator/config.json wave_workflow` renamed to
+   `branch_workflow` with the new nightly publish + task_pr keys.
+6. Branch protection on `dev` upgraded from "block force/delete only"
+   to "PR required + 3 required status checks + 0 approvals".
+7. `wave-ci.yml` renamed to `branch-ci.yml`; triggers updated from
+   `wave/**` / `worker/**` to `task/**` / `hotfix/**`.
 
 ---
 
-## 11. References
+## 13. References
 
-- `.github/workflows/wave-ci.yml`
+- `.github/workflows/branch-ci.yml`
+- `.github/workflows/nightly-publish-cut.yml`
 - `.github/workflows/publish-promote.yml`
 - `.github/workflows/master-release.yml`
+- `.github/workflows/nonprod-deploy.yml`
 - `.github/workflows/orchestrator-sync.yml`
 - `.githooks/pre-commit`, `.githooks/commit-msg`
-- `scripts/ai-status.sh wave <subcommand>`
-- `scripts/git/check_commit_trailers.py`
+- `scripts/git/task_start.sh`, `scripts/git/task_finalize.sh`
+- `scripts/git/nightly_publish.sh`
+- `scripts/git/worker_commit.py`
+- `scripts/git/check_commit_trailers.py`, `scripts/git/check_commit_scope.py`
+- `scripts/git/publish_promote.py`, `scripts/git/notify_orchestrator.py`
+- `.orchestrator/skills/task-closeout-finalization.md`
+- `.orchestrator/skills/chairman-review.md`
 - `AI_COLLABORATION_GUIDE.md` § 2 Multi-Branch Integration Policy

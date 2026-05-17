@@ -265,40 +265,40 @@ Publication rule:
 section is the short pointer; if anything below conflicts with that document,
 the document wins.
 
-Topology (2026-05-16 cutover):
+Topology (2026-05-17 redesign, per-task PR model):
 
-- `master`: canonical line. Merge-only (release / hotfix). Codex direct
-  commits are retired — Codex / Codex2 now flow through `worker/codex(2)`.
-- `dev`: integration line. Merge-only. Wave-close pushes here.
-- `wave/<YYYY>-W<NN>`: short-lived per-wave collection branch. chair-review
-  merges worker PRs in; closes Friday.
-- `worker/<name>`: long-lived per-autoworker branch. Reset to the current
-  wave at every wave-open. One per autoworker (claude, claude2, codex,
-  codex2, gemini, gemini2, copilot, qwen).
-- `publish/v<YYYY>.<WW>.<P>`: immutable snapshot cut from `dev` at every
-  wave-close. Staging deploy reads this.
-- `hotfix/<YYYY>-W<NN>-<topic>`: cut from `master`, merged back into both
-  `master` and `dev`.
-- `archive/<branch>-<YYYY-MM-DD>` tags: retirement markers.
+- `master`: canonical / production source. PR-only with branch protection
+  (3 required status checks: Commit trailers / Runtime mirror guard /
+  Smoke acceptance). Receives `promote/<v>` and `hotfix/<topic>` PRs.
+- `dev`: integration line. PR-only (same 3 status checks). Every
+  `task/<TASK-ID>` PR auto-merges into `dev` once CI is green.
+- `task/<TASK-ID>`: ephemeral per-task branch. One branch per task,
+  pushed by one worker, auto-deleted by GitHub when its PR merges.
+  Replaces the retired `worker/<name>` permanent branches.
+- `publish/v<YYYY>.<MM>.<DD>.<N>`: immutable snapshot cut from `dev` by
+  the daily `nightly-publish-cut.yml` workflow (cron 03:00 UTC).
+- `hotfix/<topic>`: cut from `master`, dual-PR back into both `master`
+  and `dev`. Auto-deleted when both PRs merge.
 
 Cadence:
 
-- Waves are 5 working days. Open Monday 09:00, freeze Friday 12:00, close
-  Friday 17:00. Wave id = `<YYYY>-W<NN>` (ISO week).
-- Each wave-close cuts a publish snapshot `publish/v<YYYY>.<WW>.0`.
-- Publish snapshots auto-promote to `master` after 3 days of staging soak
-  via `.github/workflows/publish-promote.yml`. Manual promote follows the
-  same PR-then-merge shape.
-- A wave that does not close within 7 days, or a worker branch that drifts
-  more than one wave behind its lane wave-merge, is a process violation and
-  chair-review must surface it.
+- **Continuous** per-task PR → `dev` auto-merge (no weekly wave gate).
+- **Nightly** publish cut from `dev` if `dev` advanced since the last
+  `release/v*` tag.
+- Publish snapshots auto-promote to `master` after **1-day soak** via
+  `.github/workflows/publish-promote.yml`, gated by the `regression/<v>`
+  issue label.
+- A `task/<id>` PR open > 24 h without merging is a process violation
+  and chair-review must surface it.
 
 Branch retirement:
 
-- Tag `archive/<branch>-<YYYY-MM-DD>` with a message stating where the work
-  landed.
-- After the archive tag is pushed, delete the remote branch with `git push
-  origin --delete <branch>` (non-force, non-mirror).
+- `task/*` and `hotfix/*` are auto-deleted by GitHub on PR merge; no
+  manual retirement needed.
+- For any other branch, tag `archive/<branch>-<YYYY-MM-DD>` with a
+  message stating where the work landed.
+- After the archive tag is pushed, delete the remote branch with `git
+  push origin --delete <branch>` (non-force, non-mirror).
 - Do not delete a branch still ahead of its target without explicit
   acceptance from chair-review.
 

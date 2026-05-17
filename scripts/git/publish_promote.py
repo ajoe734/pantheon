@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Discover publish snapshots ready for promotion to master and open PRs.
 
-Reads policy from .orchestrator/config.json `wave_workflow.promote`:
+Reads policy from .orchestrator/config.json `branch_workflow.promote`
+(falls back to legacy `wave_workflow.promote` if a migration hasn't run):
 
   soak_days                 — minimum days since the release/<VER> tag
   regression_label_prefix   — any open issue with this label prefix blocks promote
@@ -30,7 +31,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
 
-RELEASE_TAG_RE = re.compile(r"^refs/tags/release/(v\d{4}\.\d{2}\.\d+)$")
+# Accept both YYYY.WW.P (legacy wave) and YYYY.MM.DD.N (per-task) formats.
+RELEASE_TAG_RE = re.compile(r"^refs/tags/release/(v\d{4}\.\d{2}(?:\.\d+){1,2})$")
 
 
 def load_promote_settings() -> dict:
@@ -40,13 +42,14 @@ def load_promote_settings() -> dict:
             cfg = json.loads(CONFIG_FILE.read_text())
         except json.JSONDecodeError:
             cfg = {}
-    wf = cfg.get("wave_workflow") or {}
+    # Prefer new key, fall back to legacy for transition window.
+    wf = cfg.get("branch_workflow") or cfg.get("wave_workflow") or {}
     promote = wf.get("promote") or {}
     return {
         "main_branch": wf.get("main_branch", "master"),
         "publish_branch_prefix": wf.get("publish_branch_prefix", "publish/"),
         "release_tag_prefix": wf.get("release_tag_prefix", "release/"),
-        "soak_days": int(promote.get("soak_days", 3)),
+        "soak_days": int(promote.get("soak_days", 1)),
         "regression_label_prefix": promote.get("regression_label_prefix", "regression/"),
         "block_labels": list(promote.get("block_labels") or []),
         "promote_pr_label": promote.get("promote_pr_label", "auto-promote"),

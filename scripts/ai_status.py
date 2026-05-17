@@ -1461,33 +1461,6 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
                 "",
             ]
         )
-
-    wave_state = state.get("wave_state")
-    if isinstance(wave_state, dict) and (wave_state.get("current_wave_id") or wave_state.get("history")):
-        history_tail = list(wave_state.get("history", []))[-5:]
-        history_lines: list[str] = []
-        for entry in reversed(history_tail):
-            history_lines.append(
-                f"  - {format_display_timestamp(entry.get('ts'))} · "
-                f"`{entry.get('event', '-')}` · `{entry.get('wave_id', '-')}`"
-                f" by `{entry.get('actor', '-')}`"
-            )
-        lines.extend(
-            [
-                "## Wave Workflow",
-                "",
-                f"- Current wave: `{wave_state.get('current_wave_id') or '-'}`",
-                f"- Status: `{wave_state.get('status') or '-'}`",
-                f"- Branch: `{wave_state.get('branch') or '-'}`",
-                f"- Opened at: {format_display_timestamp(wave_state.get('opened_at'))}",
-                f"- Frozen at: {format_display_timestamp(wave_state.get('frozen_at'))}",
-                f"- Closed at: {format_display_timestamp(wave_state.get('closed_at'))}",
-                "- Recent events:",
-                *(history_lines or ["  - _(no wave activity yet)_"]),
-                "",
-            ]
-        )
-
     lines.extend(
         [
         "## Active Slices",
@@ -3529,156 +3502,6 @@ def command_sync(state: dict[str, Any], _args: list[str]) -> None:
     return None
 
 
-_VALID_WAVE_STATUSES = ("open", "frozen", "closed")
-
-
-def _wave_settings() -> dict[str, Any]:
-    cfg = load_config()
-    value = cfg.get("wave_workflow")
-    return value if isinstance(value, dict) else {}
-
-
-def _validate_wave_id(wave_id: str) -> str:
-    import re
-
-    wave_id = wave_id.strip()
-    if not re.fullmatch(r"\d{4}-W\d{2}", wave_id):
-        raise SystemExit(
-            f"Invalid wave id '{wave_id}'. Expected format <YYYY>-W<NN> (e.g. 2026-W21)."
-        )
-    return wave_id
-
-
-def _wave_state(state: dict[str, Any]) -> dict[str, Any]:
-    wave = state.get("wave_state")
-    if not isinstance(wave, dict):
-        wave = {
-            "current_wave_id": None,
-            "status": None,
-            "opened_at": None,
-            "frozen_at": None,
-            "closed_at": None,
-            "branch": None,
-            "history": [],
-        }
-        state["wave_state"] = wave
-    wave.setdefault("history", [])
-    return wave
-
-
-def _wave_branch_name(wave_id: str) -> str:
-    prefix = _wave_settings().get("wave_branch_prefix", "wave/")
-    return f"{prefix}{wave_id}"
-
-
-def _record_wave_event(state: dict[str, Any], event: str, wave_id: str, extra: dict[str, Any] | None = None) -> None:
-    actor = current_actor()
-    ts = iso_now()
-    entry = {
-        "ts": ts,
-        "event": event,
-        "wave_id": wave_id,
-        "actor": actor,
-    }
-    if extra:
-        entry.update(extra)
-    wave = _wave_state(state)
-    wave["history"].append(entry)
-    wave["history"] = wave["history"][-50:]
-    append_log(
-        {
-            "ts": ts,
-            "agent": actor,
-            "type": f"wave_{event}",
-            "wave_id": wave_id,
-            "message": f"wave {event}: {wave_id}",
-        }
-    )
-
-
-def command_wave(state: dict[str, Any], args: list[str]) -> None:
-    if not args:
-        raise SystemExit(
-            "Usage: ai-status.sh wave <open|freeze|close|status> [wave-id]"
-        )
-    sub = args[0]
-    rest = args[1:]
-    settings = _wave_settings()
-    enabled = bool_config_setting(settings, "enabled", default=True)
-    if not enabled and sub != "status":
-        raise SystemExit("wave_workflow.enabled is false in .orchestrator/config.json")
-
-    wave = _wave_state(state)
-
-    if sub == "status":
-        print(
-            json.dumps(
-                {
-                    "current_wave_id": wave.get("current_wave_id"),
-                    "status": wave.get("status"),
-                    "opened_at": wave.get("opened_at"),
-                    "frozen_at": wave.get("frozen_at"),
-                    "closed_at": wave.get("closed_at"),
-                    "branch": wave.get("branch"),
-                    "history_tail": wave.get("history", [])[-5:],
-                },
-                indent=2,
-                ensure_ascii=False,
-            )
-        )
-        return
-
-    if not rest:
-        raise SystemExit(f"wave {sub} requires a wave id (e.g. 2026-W21)")
-    wave_id = _validate_wave_id(rest[0])
-    branch = _wave_branch_name(wave_id)
-
-    if sub == "open":
-        if wave.get("status") in {"open", "frozen"}:
-            current = wave.get("current_wave_id")
-            raise SystemExit(
-                f"Cannot open {wave_id}: wave {current} is still {wave.get('status')}. "
-                "Close or abandon the current wave first."
-            )
-        wave["current_wave_id"] = wave_id
-        wave["status"] = "open"
-        wave["opened_at"] = iso_now()
-        wave["frozen_at"] = None
-        wave["closed_at"] = None
-        wave["branch"] = branch
-        _record_wave_event(state, "open", wave_id, {"branch": branch})
-        print(json.dumps({"wave_id": wave_id, "status": "open", "branch": branch}, indent=2))
-        return
-
-    if sub == "freeze":
-        if wave.get("current_wave_id") != wave_id:
-            raise SystemExit(
-                f"Wave {wave_id} is not the current wave (current: {wave.get('current_wave_id')})"
-            )
-        if wave.get("status") != "open":
-            raise SystemExit(f"Wave {wave_id} is in status {wave.get('status')}, expected 'open'")
-        wave["status"] = "frozen"
-        wave["frozen_at"] = iso_now()
-        _record_wave_event(state, "freeze", wave_id)
-        print(json.dumps({"wave_id": wave_id, "status": "frozen"}, indent=2))
-        return
-
-    if sub == "close":
-        if wave.get("current_wave_id") != wave_id:
-            raise SystemExit(
-                f"Wave {wave_id} is not the current wave (current: {wave.get('current_wave_id')})"
-            )
-        if wave.get("status") not in {"open", "frozen"}:
-            raise SystemExit(f"Wave {wave_id} is in status {wave.get('status')}, expected 'open' or 'frozen'")
-        wave["status"] = "closed"
-        wave["closed_at"] = iso_now()
-        _record_wave_event(state, "close", wave_id)
-        wave["current_wave_id"] = None
-        print(json.dumps({"wave_id": wave_id, "status": "closed"}, indent=2))
-        return
-
-    raise SystemExit(f"Unknown wave subcommand: {sub}")
-
 
 def command_archive_migrate(state: dict[str, Any], _args: list[str]) -> None:
     archived_at = iso_now()
@@ -3756,7 +3579,6 @@ def main(argv: list[str]) -> int:
         "approve": command_approve,
         "archive_migrate": command_archive_migrate,
         "sync": command_sync,
-        "wave": command_wave,
     }
 
     if command in read_only_commands:
