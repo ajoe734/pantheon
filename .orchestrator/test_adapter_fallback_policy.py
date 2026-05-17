@@ -70,6 +70,43 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         self.assertEqual(env["OPENAI_API_KEY"], "codex2-key")
         self.assertEqual(env["CODEX_HOME"], os.path.expanduser("~/.codex2"))
 
+    def test_codex_uses_request_workspace_and_status_root_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            workspace = root / "worktree"
+            status_root = root / "status-root"
+            config = {
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "agents": {"codex": {"id": "codex", "display_name": "Codex", "provider": "codex", "adapter": "codex"}},
+                "providers": {"codex": {"codex": {"cli": "codex"}}},
+            }
+            request = DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                metadata={
+                    "workspace_path": str(workspace),
+                    "status_root": str(status_root),
+                },
+            )
+            adapter = CodexAdapter(config=config, provider_capabilities={})
+            fake_process = mock.Mock(pid=1234)
+
+            with (
+                mock.patch("adapters.codex.command_exists", return_value="codex"),
+                mock.patch("adapters.codex.spawn_background_process", return_value=(fake_process, root / "codex.log")) as spawn,
+            ):
+                result = adapter.deliver(request)
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.command[result.command.index("-C") + 1], str(workspace))
+        self.assertEqual(spawn.call_args.kwargs["cwd"], workspace)
+        env = spawn.call_args.kwargs["env"]
+        self.assertEqual(env["PANTHEON_WORKTREE_ROOT"], str(workspace))
+        self.assertEqual(env["PANTHEON_STATUS_ROOT"], str(status_root))
+        self.assertEqual(env["ORCH_WORKSPACE_PATH"], str(workspace))
+
     def test_claude_can_disable_inbox_fallback(self) -> None:
         config = {
             "providers": {
@@ -217,6 +254,10 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
                 message="wake",
                 task_id="T-GEMINI2",
                 reason="owned_ready_dispatch",
+                metadata={
+                    "workspace_path": str(root / "task-worktree"),
+                    "status_root": str(root / "supervisor-root"),
+                },
             )
             adapter = GeminiAdapter(config=config, provider_capabilities={})
             fake_process = mock.Mock(pid=1234)
@@ -237,6 +278,8 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         self.assertIn("--approval-mode", result.command)
         self.assertEqual(result.command[result.command.index("--approval-mode") + 1], "yolo")
         self.assertIn("--include-directories", result.command)
+        self.assertEqual(result.command[result.command.index("--include-directories") + 1], str(root / "task-worktree"))
+        self.assertEqual(spawn.call_args.kwargs["cwd"], root / "task-worktree")
         env = spawn.call_args.kwargs["env"]
         self.assertEqual(env["AI_NAME"], "Gemini2")
         self.assertEqual(env["ORCH_AGENT_ID"], "gemini2")
@@ -246,6 +289,7 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         self.assertEqual(env["GEMINI_CLI_TRUST_WORKSPACE"], "true")
         self.assertEqual(env["ORCH_TASK_ID"], "T-GEMINI2")
         self.assertEqual(env["ORCH_REASON"], "owned_ready_dispatch")
+        self.assertEqual(env["PANTHEON_STATUS_ROOT"], str(root / "supervisor-root"))
 
     def test_copilot_can_disable_inbox_fallback(self) -> None:
         config = {
