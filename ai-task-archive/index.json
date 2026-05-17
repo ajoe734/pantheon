@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-05-17T02:57:18Z",
+  "updated_at": "2026-05-17T02:58:42Z",
   "counts": {
-    "total": 1176,
-    "completed": 1156,
+    "total": 1177,
+    "completed": 1157,
     "superseded": 20
   },
   "recent_terminal_ids": [
+    "OPS-REBASE-AUTO-001-SIDECAR-REVIEW",
     "ASK-006-SIDECAR-REVIEW",
     "OPS-REFACTOR-001",
     "ASK-008",
@@ -25,7 +26,6 @@
     "OSS-QUANTLIB-001",
     "LEAN-ALGO-001",
     "TRN-005",
-    "EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE",
-    "ASK-005"
+    "EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE"
   ]
 }
