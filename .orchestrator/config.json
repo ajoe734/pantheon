@@ -836,71 +836,51 @@
     "max_tasks_per_agent": 1,
     "max_dispatches_per_tick": 8
   },
-  "wave_workflow": {
+  "branch_workflow": {
     "enabled": true,
-    "wave_length_days": 5,
-    "wave_open_dow": "monday",
-    "wave_close_dow": "friday",
-    "freeze_hour_local": 12,
-    "close_hour_local": 17,
-    "current_wave_id": null,
-    "wave_branch_prefix": "wave/",
-    "worker_branch_prefix": "worker/",
+    "task_branch_prefix": "task/",
     "publish_branch_prefix": "publish/",
     "release_tag_prefix": "release/",
     "prod_tag_prefix": "prod/",
     "archive_tag_prefix": "archive/",
     "dev_branch": "dev",
     "main_branch": "master",
+    "nightly_publish": {
+      "enabled": true,
+      "cron_utc": "0 3 * * *",
+      "version_format": "vYYYY.MM.DD.N",
+      "skip_if_no_new_commits": true
+    },
     "promote": {
-      "trigger": "publish_soak",
-      "soak_days": 3,
+      "trigger": "ci_green",
+      "soak_days": 0,
       "regression_label_prefix": "regression/",
-      "promote_pr_label": "auto-promote",
       "block_labels": [
         "hold-promote",
         "regression"
-      ]
-    },
-    "wave_merge": {
-      "mode": "no-ff",
-      "auto_merge_on_push": true,
-      "require_commit_trailers": [
-        "LLM-Agent",
-        "Task-ID",
-        "Reviewer",
-        "Wave"
       ],
-      "subject_prefix_required": true
+      "promote_pr_label": "auto-promote",
+      "auto_merge": true,
+      "auto_revert_on_red_master_ci": true
     },
-    "worker_branches": {
-      "Claude": "worker/claude",
-      "Claude2": "worker/claude2",
-      "Codex": "worker/codex",
-      "Codex2": "worker/codex2",
-      "Gemini": "worker/gemini",
-      "Gemini2": "worker/gemini2",
-      "Copilot": "worker/copilot",
-      "Qwen": "worker/qwen"
+    "task_pr": {
+      "auto_merge": true,
+      "required_status_checks": [
+        "Commit trailers",
+        "Runtime mirror guard",
+        "Smoke acceptance"
+      ],
+      "max_open_hours": 24
     },
     "drift_alarms": {
-      "wave_must_close_within_days": 7,
-      "worker_must_merge_within_waves": 1,
-      "publish_must_promote_within_days": 14
+      "task_pr_must_merge_within_minutes": 120,
+      "publish_must_promote_within_minutes": 30,
+      "dev_must_not_diverge_from_master_more_than_minutes": 60
     },
     "orchestrator_sync_webhook": {
       "enabled": false,
       "url_env": "PANTHEON_ORCHESTRATOR_SYNC_URL",
-      "secret_env": "PANTHEON_ORCHESTRATOR_SYNC_SECRET",
-      "events": [
-        "wave_open",
-        "wave_freeze",
-        "wave_close",
-        "publish_cut",
-        "promote_pr_opened",
-        "promote_merged",
-        "hotfix_landed"
-      ]
+      "secret_env": "PANTHEON_ORCHESTRATOR_SYNC_SECRET"
     }
   }
 }
