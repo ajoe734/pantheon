@@ -727,6 +727,47 @@ class PortableStateRenderingTests(unittest.TestCase):
         self.assertIn("Reviewer checked the handoff at 2026-04-10 10:30:00.", content)
         self.assertIn("- 2026-04-10 10:10:00 Codex: `DEMO-002` Paused until 2026-04-10 10:40:00.", content)
 
+    def test_write_current_work_tolerates_worker_commit_logs_without_message(self) -> None:
+        state = {
+            "updated_at": "2026-04-10T00:00:00Z",
+            "objective": "Track worker commit audit entries.",
+            "sprint": "2026-04-10-bootstrap",
+            "canonical_document_layers": {
+                "L0 Collaboration & State": [
+                    "AI_COLLABORATION_GUIDE.md",
+                    "ai-status.json",
+                    "ai-activity-log.jsonl",
+                ],
+            },
+            "agents": [
+                {"name": "Codex", "capability_lane": ["integration"], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
+            ],
+            "tasks": [],
+            "handoffs": [],
+            "blockers": [],
+            "workload": {},
+            "workload_summary": {},
+        }
+        logs = [
+            {
+                "ts": "2026-04-10T02:10:00Z",
+                "agent": "Codex",
+                "type": "worker_commit",
+                "task_id": "DEMO-003",
+                "commit": "abcdef1234567890",
+                "scope": ["services/demo.py", "services/test_demo.py"],
+            }
+        ]
+
+        with tempfile.TemporaryDirectory(prefix="ai-status-current-work-audit-") as temp_dir:
+            output_path = Path(temp_dir) / "current-work.md"
+            with mock.patch.object(ai_status, "CURRENT_WORK_FILE", output_path):
+                ai_status.write_current_work(state, logs)
+
+            content = output_path.read_text(encoding="utf-8")
+
+        self.assertIn("Codex: `DEMO-003` Worker commit abcdef12 recorded for 2 scoped paths.", content)
+
     def test_build_onboarding_prompt_mentions_active_planning(self) -> None:
         state = {
             "canonical_document_layers": {

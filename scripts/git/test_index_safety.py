@@ -242,6 +242,9 @@ class WorkerCommitWrapperTests(unittest.TestCase):
             last_files = _git(root, "show", "--name-only", "--format=", "HEAD").stdout.split()
             self.assertIn("kept.py", last_files)
             self.assertNotIn("leaked.py", last_files)
+            audit_lines = (root / "ai-activity-log.jsonl").read_text(encoding="utf-8").splitlines()
+            self.assertTrue(audit_lines)
+            self.assertIn('"message": "Worker commit ', audit_lines[-1])
         finally:
             import shutil; shutil.rmtree(root)
 

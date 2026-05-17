@@ -219,6 +219,7 @@ def main() -> int:
         "agent": args.llm_agent or "unknown",
         "type": "worker_commit",
         "task_id": args.task_id,
+        "message": f"Worker commit {head_sha[:8]} recorded for {len(staged)} scoped paths.",
         "commit": head_sha,
         "scope": scope,
         "staged": staged,

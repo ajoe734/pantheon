@@ -1376,6 +1376,19 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
         text = "-" if value is None or value == "" else str(value)
         return text.replace("|", "\\|").replace("\n", "<br>")
 
+    def log_message(entry: dict[str, Any]) -> str:
+        message = entry.get("message")
+        if isinstance(message, str) and message:
+            return message
+        event_type = str(entry.get("type") or "activity")
+        if event_type == "worker_commit":
+            commit = str(entry.get("commit") or "")
+            short_commit = commit[:8] if commit else "unknown"
+            scope = entry.get("scope")
+            scope_count = len(scope) if isinstance(scope, list) else 0
+            return f"Worker commit {short_commit} recorded for {scope_count} scoped paths."
+        return f"{event_type} event recorded."
+
     def append_layer_table(lines: list[str], tasks: list[dict[str, Any]]) -> None:
         lines.extend(
             [
@@ -1635,7 +1648,7 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
             task_id = f" `{entry['task_id']}`" if entry.get("task_id") else ""
             timestamp = entry.get("ts") or entry.get("timestamp")
             lines.append(
-                f"- {format_display_timestamp(timestamp)} {entry['agent']}:{task_id} {localize_embedded_timestamps(entry['message'])}"
+                f"- {format_display_timestamp(timestamp)} {entry.get('agent', 'unknown')}:{task_id} {localize_embedded_timestamps(log_message(entry))}"
             )
     else:
         lines.append("- No checkpoints yet.")
