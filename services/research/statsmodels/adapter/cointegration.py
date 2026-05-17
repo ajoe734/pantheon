@@ -1,5 +1,5 @@
 """
-Statsmodels cointegration adapter for the Pantheon research plane.
+Statsmodels Engle-Granger cointegration test for the Pantheon research plane.
 
 Provides cointegration_test(prices_a, prices_b) implementing the
 Engle-Granger two-step test and spread/half-life estimation for
