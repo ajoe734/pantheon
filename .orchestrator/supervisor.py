@@ -2959,10 +2959,44 @@ _QUOTA_RETRY_AT_PATTERN = re.compile(
     r"\btry again at\s+(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<meridiem>[ap]\.?m\.?)?",
     re.IGNORECASE,
 )
+_QUOTA_RETRY_AT_DATE_PATTERN = re.compile(
+    r"\btry again at\s+"
+    r"(?P<month>jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|"
+    r"sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+"
+    r"(?P<day>\d{1,2})(?:st|nd|rd|th)?(?:,\s*|\s+)"
+    r"(?P<year>\d{4})\s+"
+    r"(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<meridiem>[ap]\.?m\.?)?",
+    re.IGNORECASE,
+)
 _QUOTA_RESETS_AT_PATTERN = re.compile(
     r"\bresets\s+(?:at\s+)?(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<meridiem>[ap]\.?m\.?)?",
     re.IGNORECASE,
 )
+_MONTH_NAME_TO_NUMBER = {
+    "jan": 1,
+    "january": 1,
+    "feb": 2,
+    "february": 2,
+    "mar": 3,
+    "march": 3,
+    "apr": 4,
+    "april": 4,
+    "may": 5,
+    "jun": 6,
+    "june": 6,
+    "jul": 7,
+    "july": 7,
+    "aug": 8,
+    "august": 8,
+    "sep": 9,
+    "september": 9,
+    "oct": 10,
+    "october": 10,
+    "nov": 11,
+    "november": 11,
+    "dec": 12,
+    "december": 12,
+}
 
 
 def parse_quota_retry_hint(reason: str | None, *, now: datetime | None = None) -> datetime | None:
@@ -2975,6 +3009,33 @@ def parse_quota_retry_hint(reason: str | None, *, now: datetime | None = None) -
     """
     if not reason:
         return None
+    hint_tz = timezone.utc if re.search(r"\(\s*UTC\s*\)|\bUTC\b", reason, re.IGNORECASE) else LOCAL_TZ
+    date_match = _QUOTA_RETRY_AT_DATE_PATTERN.search(reason)
+    if date_match:
+        month = _MONTH_NAME_TO_NUMBER.get(date_match.group("month").lower())
+        if not month:
+            return None
+        hour = int(date_match.group("hour"))
+        minute = int(date_match.group("minute") or 0)
+        meridiem = (date_match.group("meridiem") or "").replace(".", "").lower()
+        if meridiem == "pm" and hour < 12:
+            hour += 12
+        elif meridiem == "am" and hour == 12:
+            hour = 0
+        if not (0 <= hour < 24 and 0 <= minute < 60):
+            return None
+        try:
+            return datetime(
+                int(date_match.group("year")),
+                month,
+                int(date_match.group("day")),
+                hour,
+                minute,
+                tzinfo=hint_tz,
+            ).astimezone(timezone.utc)
+        except ValueError:
+            return None
+
     match = _QUOTA_RETRY_AT_PATTERN.search(reason) or _QUOTA_RESETS_AT_PATTERN.search(reason)
     if not match:
         return None
@@ -2987,7 +3048,6 @@ def parse_quota_retry_hint(reason: str | None, *, now: datetime | None = None) -
         hour = 0
     if not (0 <= hour < 24 and 0 <= minute < 60):
         return None
-    hint_tz = timezone.utc if re.search(r"\(\s*UTC\s*\)|\bUTC\b", reason, re.IGNORECASE) else LOCAL_TZ
     base = (now.astimezone(hint_tz) if now else datetime.now(hint_tz))
     candidate = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if candidate <= base:
