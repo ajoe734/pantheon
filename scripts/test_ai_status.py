@@ -790,7 +790,8 @@ class PortableStateRenderingTests(unittest.TestCase):
                 "agent": "Codex2",
                 "type": "worker_commit",
                 "task_id": "OODA-E2E-002",
-                "commit": "abc123",
+                "commit": "abcdef1234567890",
+                "scope": ["tests/e2e/test_demo.py"],
             }
         ]
 
@@ -813,7 +814,11 @@ class PortableStateRenderingTests(unittest.TestCase):
 
             content = output_path.read_text(encoding="utf-8")
 
-        self.assertIn("- 2026-05-18 00:24:21 Codex2: `OODA-E2E-002` worker_commit", content)
+        self.assertIn(
+            "- 2026-05-18 00:24:21 Codex2: `OODA-E2E-002` "
+            "worker_commit: commit abcdef123456; scope `tests/e2e/test_demo.py`",
+            content,
+        )
 
     def test_build_onboarding_prompt_mentions_active_planning(self) -> None:
         state = {
