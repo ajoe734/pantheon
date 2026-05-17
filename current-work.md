@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-17 09:39:19
+Last updated: 2026-05-17 10:46:27
 
 ## Objective
 
@@ -37,13 +37,13 @@ Last updated: 2026-05-17 09:39:19
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Supervisor preempted OSS-STAT-001 to free Claude for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.
-- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: Acceptance packet drafted and ready for review in support/sidecars/OSS-STAT-001/OSS-STAT-001-SIDECAR-ACCEPTANCE.md. The packet documents the resolved shadowing issue and the final artifact shapes.
-- `Codex`: integration, status-system, schema, acceptance; next: Chair reassigned review from Codex2 to Claude2: Codex2 pause blocks this review and ASK-006 is on the current consultation path.
+- `Claude`: execution, control-plane, governance-review; next: Review packet complete at support/sidecars/ASK-006/ASK-006-SIDECAR-REVIEW.md. Parent task ASK-006 is done+archived (commit 014ee6e1). Packet documents: all 4 acceptance criteria PASS, e2e test 1 passed, consultation suite 15 passed, ASK-004/ASK-005 regression 43 passed, diff-check clean. Claude2 review decision: APPROVED. Please confirm the packet is accurate and complete.
+- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: Sidecar acceptance packet reviewed and approved. Documents the resolved adapter shadowing issue and verified artifact shapes accurately.
+- `Codex`: integration, status-system, schema, acceptance; next: Ready for review. Added .orchestrator/sidecar_cleanup.py with scan/classify/execute retention API, CLI dry-run/apply mode, 14-day archive and 60-day delete policy; added contract doc and focused tests covering fresh, archivable, delete-eligible, dry-run no-op, real execute, and CLI exit 0. Verification: python3 -m pytest .orchestrator/test_sidecar_cleanup.py; python3 .orchestrator/test_sidecar_cleanup.py; python3 -m py_compile .orchestrator/sidecar_cleanup.py .orchestrator/test_sidecar_cleanup.py.
 - `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
-- `Claude2`: execution, control-plane, governance-review; next: No active assignment
-- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Supervisor re-dispatched OSS-FINRL-001; task remains in progress.
+- `Claude2`: execution, control-plane, governance-review; next: Fixed PPO import resilience (non-fatal on finrl dep chain failure), pinned all requirements, fixed service-local import for container/tmpdir smoke. pytest -q 19/19 pass; diff-check clean; tmpdir direct smoke passes all 3 backends.
+- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check.
 
 ## Delivery Layers
 
@@ -54,34 +54,35 @@ Last updated: 2026-05-17 09:39:19
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | Gemini2 | blocked | - | - |
 | `IMT-006` | Sprint 7 / EPIC-IMITATION-TRAINING | Imitation evaluation metrics: action-match + return-gap + KL | Codex | review | `IMT-001`, `IMT-004` | 新增 imitation evaluation metrics module：action-match accuracy, return-gap vs expert baseline, KL divergence。獨立於 bc_trainer.py。 |
 | `IMT-007` | Sprint 7 / EPIC-IMITATION-TRAINING | Behavior-policy artifact validation gate | Claude | todo | `IMT-004`, `IMT-006` | behavior_policy artifact 進入 registry / governance 前的驗證閘門：metadata 完整、checksum 一致、IMT-006 eval metrics 達門檻、policy 不出現 deploy/canary/live 觸發詞。獨立 module。 |
-| `IMT-008` | Sprint 7 / EPIC-IMITATION-TRAINING | TRL preference-pair dataset bridge | Claude | todo | `IMT-002`, `IMT-003` | 新增 TRL (Transformer Reinforcement Learning) preference-pair dataset bridge：把 IMT-002 PreferenceExample / CorrectionTrace 轉成 TRL 期望的 chosen/rejected 對。獨立 module。 |
-| `TRN-006` | Sprint 7 / EPIC-TRAINER-ADVANCED | Rapid-eval -> vectorbt backend integration | Codex | review_approved | `TRN-003`, `VBT-001` | 把 TRN-003 rapid-eval skeleton 接到實際 backend（vectorbt VBT-001 via adapter facade）。獨立檔案，不修 TRN-003 既有 endpoint signature。 |
-| `ASK-006` | Sprint 7 / EPIC-CONSULT-ADVANCED | Consult -> Committee -> Memo -> Review e2e test | Codex | review | `ASK-001`, `ASK-002`, `ASK-003`, `ASK-004`, `ASK-005` | ASK-001..005 已落地 consult/committee flow，這個 task 寫一條 e2e integration test：ask session create -> committee invoke -> memo publish -> Management review queue 接到 handoff。獨立 test 檔。 |
-| `ASK-007` | Sprint 7 / EPIC-CONSULT-ADVANCED | Consult memo evidence redaction regression | Codex | review | `ASK-004` | 驗證 consult memo publish 流程的 evidence redaction：persona-internal 機密欄位（policy_internals memory_trace internal_score）不能洩漏到 review-facing memo。獨立 test 檔。 |
-| `ASK-008` | Sprint 7 / EPIC-CONSULT-ADVANCED | Committee sponsor decision -> governance action bridge | Claude | todo | `ASK-003`, `GOV-001`, `EVO-001` | committee 結出 sponsor decision 後，提供把 sponsor decision bridge 到 governance action (例如觸發 ApprovalDecision proposal 或 EvolutionDecision proposal) 的 module。獨立 module，不直接改 governance service。 |
-| `OPS-REFACTOR-001` | Sprint 7 / EPIC-OPS-BACKLOG | Re-apply dispatch policy refactor on current master | Claude | todo | - | 把 archive/codex-orchestrator-dispatch-policy-cleanup-2026-04-28 tag 內的 dispatch_policy 抽取重新套用到當前 supervisor.py。原 cherry-pick 因 supervisor.py 1776 commit drift 衝突；本任務以 current master 為基準重做。獨立新增 .orchestrator/dispatch_policy.py + test。 |
+| `OPS-REFACTOR-001` | Sprint 7 / EPIC-OPS-BACKLOG | Re-apply dispatch policy refactor on current master | Codex | review_approved | - | 把 archive/codex-orchestrator-dispatch-policy-cleanup-2026-04-28 tag 內的 dispatch_policy 抽取重新套用到當前 supervisor.py。原 cherry-pick 因 supervisor.py 1776 commit drift 衝突；本任務以 current master 為基準重做。獨立新增 .orchestrator/dispatch_policy.py + test。 |
 | `OPS-SIDECAR-CLEANUP-001` | Sprint 7 / EPIC-OPS-BACKLOG | Sidecar packet retention and cleanup policy | Codex | review | - | support/sidecars/ 持續累積 packets 但缺退場機制。設計 retention/cleanup module：parent task done 後 N 天，sidecar packet 移至 support/sidecars/archived/，超過 M 天直接刪。獨立 module，可由 cron / chair-review 觸發。 |
-| `OPS-REBASE-AUTO-001-SIDECAR-REVIEW` | Sprint 7 / EPIC-OPS-BACKLOG | [Sidecar] [Auto] [Parent OPS-REBASE-AUTO-001] Prepare OPS-REBASE-AUTO-001 review packet and evidence summary | Claude | todo | - | 平行支援 OPS-REBASE-AUTO-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 |
-| `ASK-006-SIDECAR-REVIEW` | Sprint 7 / EPIC-CONSULT-ADVANCED | [Sidecar] [Auto] [Parent ASK-006] Prepare ASK-006 review packet and evidence summary | Claude | todo | `ASK-001`, `ASK-002`, `ASK-003`, `ASK-004`, `ASK-005` | 平行支援 ASK-006，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 |
+| `OPS-REBASE-AUTO-001-SIDECAR-REVIEW` | Sprint 7 / EPIC-OPS-BACKLOG | [Sidecar] [Auto] [Parent OPS-REBASE-AUTO-001] Prepare OPS-REBASE-AUTO-001 review packet and evidence summary | Claude | review | - | 平行支援 OPS-REBASE-AUTO-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 |
+| `ASK-006-SIDECAR-REVIEW` | Sprint 7 / EPIC-CONSULT-ADVANCED | [Sidecar] [Auto] [Parent ASK-006] Prepare ASK-006 review packet and evidence summary | Claude | review | `ASK-001`, `ASK-002`, `ASK-003`, `ASK-004`, `ASK-005` | 平行支援 ASK-006，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 |
 | `ASK-007-SIDECAR-REVIEW` | Sprint 7 / EPIC-CONSULT-ADVANCED | [Sidecar] [Auto] [Parent ASK-007] Prepare ASK-007 review packet and evidence summary | Claude | todo | `ASK-004` | 平行支援 ASK-007，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 |
+| `IMT-006-SIDECAR-REVIEW` | Sprint 7 / EPIC-IMITATION-TRAINING | [Sidecar] [Auto] [Parent IMT-006] Prepare IMT-006 review packet and evidence summary | Claude | todo | `IMT-001`, `IMT-004` | 平行支援 IMT-006，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 |
 
 ### External / Upstream Integration Work
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `OSS-QLIB-002` | Sprint 7 / EPIC-OSS-RESEARCH | Qlib rolling-window OOS pipeline + eval | Codex | review_approved | - | 在 services/research/qlib/ 之上實作 rolling-window / OOS pipeline。建在已 archived 的 QLIB-001 dataset manifest 基礎上，產出 OOS metrics 並寫回 ExperimentRun。 |
-| `OSS-STAT-001` | Sprint 7 / EPIC-OSS-RESEARCH | statsmodels cointegration adapter skeleton | Claude | todo | - | 新增 services/research/statsmodels/ adapter，落實 stat-arb 風格 cointegration / Engle-Granger 檢定，產生 signal_snapshot artifact。獨立於其他 research adapter，無共用檔案。 |
-| `OSS-RLLIB-001` | Sprint 7 / EPIC-OSS-RESEARCH | RLlib PPO adapter skeleton | Claude | todo | - | 新增 services/research/rllib/ adapter skeleton，落實 Ray RLlib PPO 訓練 mini-loop，輸出 model_artifact。CPU-only smoke (no GPU)，獨立於其他 research adapter。 |
-| `OSS-FINRL-001` | Sprint 7 / EPIC-OSS-RESEARCH | FinRL DQN/PPO adapter skeleton | Gemini2 | in_progress | - | 新增 services/research/finrl/ adapter skeleton，落實 FinRL DQN/PPO 在歷史 OHLCV 上 mini-training，輸出 model_artifact。CPU-only smoke。獨立於其他 research adapter。 |
-| `OSS-STAT-001-SIDECAR-ACCEPTANCE` | Sprint 7 / EPIC-OSS-RESEARCH | [Sidecar] [Auto] [Parent OSS-STAT-001] Prepare OSS-STAT-001 acceptance packet and dependency map | Gemini | review | - | 平行支援 OSS-STAT-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
+| `OSS-FINRL-001` | Sprint 7 / EPIC-OSS-RESEARCH | FinRL DQN/PPO adapter skeleton | Claude2 | in_progress | - | 新增 services/research/finrl/ adapter skeleton，落實 FinRL DQN/PPO 在歷史 OHLCV 上 mini-training，輸出 model_artifact。CPU-only smoke。獨立於其他 research adapter。 |
+| `OSS-STAT-001-SIDECAR-ACCEPTANCE` | Sprint 7 / EPIC-OSS-RESEARCH | [Sidecar] [Auto] [Parent OSS-STAT-001] Prepare OSS-STAT-001 acceptance packet and dependency map | Gemini | review_approved | - | 平行支援 OSS-STAT-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-17 09:39:19
-- Terminal tasks archived: `1166` total, `1146` completed, `20` superseded
+- Archive updated: 2026-05-17 10:41:04
+- Terminal tasks archived: `1174` total, `1154` completed, `20` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `ASK-008` | Sprint 7 / EPIC-CONSULT-ADVANCED | Committee sponsor decision -> governance action bridge | Codex | completed | 2026-05-17 10:41:04 | `ai-task-archive/tasks/ASK-008.json` |
+| `IMT-008` | Sprint 7 / EPIC-IMITATION-TRAINING | TRL preference-pair dataset bridge | Codex | completed | 2026-05-17 10:24:08 | `ai-task-archive/tasks/IMT-008.json` |
+| `OSS-RLLIB-001` | Sprint 7 / EPIC-OSS-RESEARCH | RLlib PPO adapter skeleton | Codex | completed | 2026-05-17 10:19:40 | `ai-task-archive/tasks/OSS-RLLIB-001.json` |
+| `OSS-STAT-001` | Sprint 7 / EPIC-OSS-RESEARCH | statsmodels cointegration adapter skeleton | Codex | completed | 2026-05-17 10:17:33 | `ai-task-archive/tasks/OSS-STAT-001.json` |
+| `ASK-006` | Sprint 7 / EPIC-CONSULT-ADVANCED | Consult -> Committee -> Memo -> Review e2e test | Codex | completed | 2026-05-17 09:53:14 | `ai-task-archive/tasks/ASK-006.json` |
+| `ASK-007` | Sprint 7 / EPIC-CONSULT-ADVANCED | Consult memo evidence redaction regression | Codex | completed | 2026-05-17 09:52:54 | `ai-task-archive/tasks/ASK-007.json` |
+| `TRN-006` | Sprint 7 / EPIC-TRAINER-ADVANCED | Rapid-eval -> vectorbt backend integration | Codex | completed | 2026-05-17 09:44:24 | `ai-task-archive/tasks/TRN-006.json` |
+| `OSS-QLIB-002` | Sprint 7 / EPIC-OSS-RESEARCH | Qlib rolling-window OOS pipeline + eval | Codex | completed | 2026-05-17 09:42:51 | `ai-task-archive/tasks/OSS-QLIB-002.json` |
 | `PER-003` | Sprint 7 / EPIC-TRAINER-ADVANCED | Persona registry live integration acceptance | Claude2 | completed | 2026-05-17 09:39:19 | `ai-task-archive/tasks/PER-003.json` |
 | `TRN-007` | Sprint 7 / EPIC-TRAINER-ADVANCED | Trainer trace -> imitation dataset export | Codex | completed | 2026-05-17 09:01:47 | `ai-task-archive/tasks/TRN-007.json` |
 | `OPS-REBASE-AUTO-001` | Sprint 7 / EPIC-OPS-BACKLOG | Auto-handle empty commits in worker rebase flow | Codex | completed | 2026-05-17 08:43:51 | `ai-task-archive/tasks/OPS-REBASE-AUTO-001.json` |
@@ -94,37 +95,22 @@ Last updated: 2026-05-17 09:39:19
 | `ASK-005` | Sprint 5 / EPIC-RESEARCH | approval / ask SSE event publishing | Claude | completed | 2026-05-16 22:25:26 | `ai-task-archive/tasks/ASK-005.json` |
 | `ASK-005-SIDECAR-REVIEW` | Sprint 5 / EPIC-RESEARCH | Prepare ASK-005 review packet and evidence summary | Codex | completed | 2026-05-16 22:13:36 | `ai-task-archive/tasks/ASK-005-SIDECAR-REVIEW.json` |
 | `EVO-001` | Sprint 6 / EPIC-EVOLUTION | EvolutionDecision service | Claude | completed | 2026-05-16 20:05:30 | `ai-task-archive/tasks/EVO-001.json` |
-| `EVO-001-SIDECAR-REVIEW` | Sprint 6 / EPIC-EVOLUTION | Prepare EVO-001 review packet and evidence summary | Codex | superseded | 2026-05-16 20:00:55 | `ai-task-archive/tasks/EVO-001-SIDECAR-REVIEW.json` |
-| `SENT-001` | Sprint 6 / EPIC-EVOLUTION | /bff/v5/sentinel/findings endpoint | Claude2 | completed | 2026-05-16 19:08:06 | `ai-task-archive/tasks/SENT-001.json` |
-| `ASK-004` | Sprint 5 / EPIC-RESEARCH | memo publish to registry / review | Codex | completed | 2026-05-16 19:07:24 | `ai-task-archive/tasks/ASK-004.json` |
-| `ASK-002` | Sprint 5 / EPIC-RESEARCH | ConsultRequest / ConsultMemo schema | Codex | completed | 2026-05-16 18:53:03 | `ai-task-archive/tasks/ASK-002.json` |
-| `IMT-004` | Sprint 5 / EPIC-RESEARCH | behavior policy artifact type registration | Codex | completed | 2026-05-16 18:48:08 | `ai-task-archive/tasks/IMT-004.json` |
-| `ASK-002-SIDECAR-REVIEW` | Sprint 5 / EPIC-RESEARCH | Prepare ASK-002 review packet and evidence summary | Claude | superseded | 2026-05-16 18:47:58 | `ai-task-archive/tasks/ASK-002-SIDECAR-REVIEW.json` |
-| `TRN-004` | Sprint 5 / EPIC-RESEARCH | trainer commit / discard / replay | Codex | completed | 2026-05-16 18:47:33 | `ai-task-archive/tasks/TRN-004.json` |
-| `LOOP-001-RB` | Sprint 6 / EPIC-EVOLUTION | /bff/v5/loop-runs endpoint (rebaseline) | Claude2 | completed | 2026-05-16 18:46:09 | `ai-task-archive/tasks/LOOP-001-RB.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | - | Gemini2 | Gemini | blocked | - | 2026-05-15 23:15:06 | Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check. |
-| `OSS-QLIB-002` | Sprint 7 / EPIC-OSS-RESEARCH | Qlib rolling-window OOS pipeline + eval | 在 services/research/qlib/ 之上實作 rolling-window / OOS pipeline。建在已 archived 的 QLIB-001 dataset manifest 基礎上，產出 OOS metrics 並寫回 ExperimentRun。 | Codex | Claude | review_approved | - | 2026-05-17 09:36:04 | Review approved: all acceptance criteria met. run() produces schema-valid ExperimentRun with producer_run_id/lineage/evaluation_summary; evaluate() returns sharpe/sortino/max_dd/ic; 2 tests pass (happy-path + fail-fast); 35 total qlib tests pass; no trailing whitespace; deployment_stage=none; no side effects. Returning to Codex for finalization. |
-| `OSS-STAT-001` | Sprint 7 / EPIC-OSS-RESEARCH | statsmodels cointegration adapter skeleton | 新增 services/research/statsmodels/ adapter，落實 stat-arb 風格 cointegration / Engle-Granger 檢定，產生 signal_snapshot artifact。獨立於其他 research adapter，無共用檔案。 | Claude | Codex | todo | - | 2026-05-17 08:32:34 | Supervisor preempted OSS-STAT-001 to free Claude for higher-priority review/finalize work; task returned to todo until a fresh run restarts it. |
-| `OSS-RLLIB-001` | Sprint 7 / EPIC-OSS-RESEARCH | RLlib PPO adapter skeleton | 新增 services/research/rllib/ adapter skeleton，落實 Ray RLlib PPO 訓練 mini-loop，輸出 model_artifact。CPU-only smoke (no GPU)，獨立於其他 research adapter。 | Claude | Codex | todo | - | 2026-05-17 07:27:46 | Auto-reassigned ownership from Gemini to Claude after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Claude starts a fresh run. |
-| `OSS-FINRL-001` | Sprint 7 / EPIC-OSS-RESEARCH | FinRL DQN/PPO adapter skeleton | 新增 services/research/finrl/ adapter skeleton，落實 FinRL DQN/PPO 在歷史 OHLCV 上 mini-training，輸出 model_artifact。CPU-only smoke。獨立於其他 research adapter。 | Gemini2 | Codex | in_progress | - | 2026-05-17 09:34:41 | Supervisor re-dispatched OSS-FINRL-001; task remains in progress. |
+| `OSS-FINRL-001` | Sprint 7 / EPIC-OSS-RESEARCH | FinRL DQN/PPO adapter skeleton | 新增 services/research/finrl/ adapter skeleton，落實 FinRL DQN/PPO 在歷史 OHLCV 上 mini-training，輸出 model_artifact。CPU-only smoke。獨立於其他 research adapter。 | Claude2 | Gemini2 | in_progress | - | 2026-05-17 09:57:55 | Fixed PPO import resilience (non-fatal on finrl dep chain failure), pinned all requirements, fixed service-local import for container/tmpdir smoke. pytest -q 19/19 pass; diff-check clean; tmpdir direct smoke passes all 3 backends. |
 | `IMT-006` | Sprint 7 / EPIC-IMITATION-TRAINING | Imitation evaluation metrics: action-match + return-gap + KL | 新增 imitation evaluation metrics module：action-match accuracy, return-gap vs expert baseline, KL divergence。獨立於 bc_trainer.py。 | Codex | Codex2 | review | `IMT-001`, `IMT-004` | 2026-05-17 07:31:55 | Implemented services/research/imitation/eval_metrics.py and test_eval_metrics.py. evaluate() returns JSON-serializable evaluation_result payload with action_match_rate, return_gap, kl_divergence for behavior_policy refs; supports deterministic, stochastic/uniform, keyed predictions, nearest-centroid policies, and counterfactual rewards. Verification: pytest -q services/research/imitation/test_eval_metrics.py; pytest -q services/research/imitation |
 | `IMT-007` | Sprint 7 / EPIC-IMITATION-TRAINING | Behavior-policy artifact validation gate | behavior_policy artifact 進入 registry / governance 前的驗證閘門：metadata 完整、checksum 一致、IMT-006 eval metrics 達門檻、policy 不出現 deploy/canary/live 觸發詞。獨立 module。 | Claude | Codex2 | todo | `IMT-004`, `IMT-006` | 2026-05-17 07:22:33 | Assignment created |
-| `IMT-008` | Sprint 7 / EPIC-IMITATION-TRAINING | TRL preference-pair dataset bridge | 新增 TRL (Transformer Reinforcement Learning) preference-pair dataset bridge：把 IMT-002 PreferenceExample / CorrectionTrace 轉成 TRL 期望的 chosen/rejected 對。獨立 module。 | Claude | Codex | todo | `IMT-002`, `IMT-003` | 2026-05-17 07:48:59 | Auto-reassigned ownership from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota. Task returned to todo until Claude starts a fresh run. |
-| `TRN-006` | Sprint 7 / EPIC-TRAINER-ADVANCED | Rapid-eval -> vectorbt backend integration | 把 TRN-003 rapid-eval skeleton 接到實際 backend（vectorbt VBT-001 via adapter facade）。獨立檔案，不修 TRN-003 既有 endpoint signature。 | Codex | Claude2 | review_approved | `TRN-003`, `VBT-001` | 2026-05-17 09:36:13 | Review approved: rapid_eval_integration.py meets all acceptance criteria — real vectorbt backend, correct eval_summary shape, 2 isolated tests pass, combined 35+5 subtests pass, diff-check clean. Returning to owner Codex for finalization. |
-| `ASK-006` | Sprint 7 / EPIC-CONSULT-ADVANCED | Consult -> Committee -> Memo -> Review e2e test | ASK-001..005 已落地 consult/committee flow，這個 task 寫一條 e2e integration test：ask session create -> committee invoke -> memo publish -> Management review queue 接到 handoff。獨立 test 檔。 | Codex | Claude2 | review | `ASK-001`, `ASK-002`, `ASK-003`, `ASK-004`, `ASK-005` | 2026-05-17 09:27:31 | Chair reassigned review from Codex2 to Claude2: Codex2 pause blocks this review and ASK-006 is on the current consultation path. |
-| `ASK-007` | Sprint 7 / EPIC-CONSULT-ADVANCED | Consult memo evidence redaction regression | 驗證 consult memo publish 流程的 evidence redaction：persona-internal 機密欄位（policy_internals memory_trace internal_score）不能洩漏到 review-facing memo。獨立 test 檔。 | Codex | Claude2 | review | `ASK-004` | 2026-05-17 09:27:18 | Chair reassigned review from Codex2 to Claude2: Codex2 pause blocks this fresh review; Claude2 can review Codex-owned BFF/consultation work after closeout. |
-| `ASK-008` | Sprint 7 / EPIC-CONSULT-ADVANCED | Committee sponsor decision -> governance action bridge | committee 結出 sponsor decision 後，提供把 sponsor decision bridge 到 governance action (例如觸發 ApprovalDecision proposal 或 EvolutionDecision proposal) 的 module。獨立 module，不直接改 governance service。 | Claude | Codex2 | todo | `ASK-003`, `GOV-001`, `EVO-001` | 2026-05-17 07:25:38 | Assignment created |
-| `OPS-REFACTOR-001` | Sprint 7 / EPIC-OPS-BACKLOG | Re-apply dispatch policy refactor on current master | 把 archive/codex-orchestrator-dispatch-policy-cleanup-2026-04-28 tag 內的 dispatch_policy 抽取重新套用到當前 supervisor.py。原 cherry-pick 因 supervisor.py 1776 commit drift 衝突；本任務以 current master 為基準重做。獨立新增 .orchestrator/dispatch_policy.py + test。 | Claude | Claude2 | todo | - | 2026-05-17 07:27:36 | Assignment created |
+| `OPS-REFACTOR-001` | Sprint 7 / EPIC-OPS-BACKLOG | Re-apply dispatch policy refactor on current master | 把 archive/codex-orchestrator-dispatch-policy-cleanup-2026-04-28 tag 內的 dispatch_policy 抽取重新套用到當前 supervisor.py。原 cherry-pick 因 supervisor.py 1776 commit drift 衝突；本任務以 current master 為基準重做。獨立新增 .orchestrator/dispatch_policy.py + test。 | Codex | Claude | review_approved | - | 2026-05-17 10:44:13 | Supervisor resumed OPS-REFACTOR-001 for finalize after successful dispatch. |
 | `OPS-SIDECAR-CLEANUP-001` | Sprint 7 / EPIC-OPS-BACKLOG | Sidecar packet retention and cleanup policy | support/sidecars/ 持續累積 packets 但缺退場機制。設計 retention/cleanup module：parent task done 後 N 天，sidecar packet 移至 support/sidecars/archived/，超過 M 天直接刪。獨立 module，可由 cron / chair-review 觸發。 | Codex | Codex2 | review | - | 2026-05-17 07:46:46 | Ready for review. Added .orchestrator/sidecar_cleanup.py with scan/classify/execute retention API, CLI dry-run/apply mode, 14-day archive and 60-day delete policy; added contract doc and focused tests covering fresh, archivable, delete-eligible, dry-run no-op, real execute, and CLI exit 0. Verification: python3 -m pytest .orchestrator/test_sidecar_cleanup.py; python3 .orchestrator/test_sidecar_cleanup.py; python3 -m py_compile .orchestrator/sidecar_cleanup.py .orchestrator/test_sidecar_cleanup.py. |
-| `OPS-REBASE-AUTO-001-SIDECAR-REVIEW` | Sprint 7 / EPIC-OPS-BACKLOG | [Sidecar] [Auto] [Parent OPS-REBASE-AUTO-001] Prepare OPS-REBASE-AUTO-001 review packet and evidence summary | 平行支援 OPS-REBASE-AUTO-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Claude | Codex | todo | - | 2026-05-17 08:34:36 | Auto-reassigned ownership from Gemini to Claude after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Claude starts a fresh run. |
-| `OSS-STAT-001-SIDECAR-ACCEPTANCE` | Sprint 7 / EPIC-OSS-RESEARCH | [Sidecar] [Auto] [Parent OSS-STAT-001] Prepare OSS-STAT-001 acceptance packet and dependency map | 平行支援 OSS-STAT-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Gemini | Claude | review | - | 2026-05-17 09:05:00 | Acceptance packet drafted and ready for review in support/sidecars/OSS-STAT-001/OSS-STAT-001-SIDECAR-ACCEPTANCE.md. The packet documents the resolved shadowing issue and the final artifact shapes. |
-| `ASK-006-SIDECAR-REVIEW` | Sprint 7 / EPIC-CONSULT-ADVANCED | [Sidecar] [Auto] [Parent ASK-006] Prepare ASK-006 review packet and evidence summary | 平行支援 ASK-006，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Claude | Codex | todo | `ASK-001`, `ASK-002`, `ASK-003`, `ASK-004`, `ASK-005` | 2026-05-17 08:58:31 | Auto-reassigned ownership from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota. Task returned to todo until Claude starts a fresh run. |
+| `OPS-REBASE-AUTO-001-SIDECAR-REVIEW` | Sprint 7 / EPIC-OPS-BACKLOG | [Sidecar] [Auto] [Parent OPS-REBASE-AUTO-001] Prepare OPS-REBASE-AUTO-001 review packet and evidence summary | 平行支援 OPS-REBASE-AUTO-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Claude | Codex | review | - | 2026-05-17 10:30:09 | Review packet complete. Parent task OPS-REBASE-AUTO-001 is already done+archived (commit c9f61449). Packet documents: all 5 acceptance criteria PASS, delivery metadata, 4 tests pass, code quality notes, review approval by Claude. Please confirm the packet is accurate and complete. |
+| `OSS-STAT-001-SIDECAR-ACCEPTANCE` | Sprint 7 / EPIC-OSS-RESEARCH | [Sidecar] [Auto] [Parent OSS-STAT-001] Prepare OSS-STAT-001 acceptance packet and dependency map | 平行支援 OSS-STAT-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Gemini | Claude | review_approved | - | 2026-05-17 10:06:16 | Sidecar acceptance packet reviewed and approved. Documents the resolved adapter shadowing issue and verified artifact shapes accurately. |
+| `ASK-006-SIDECAR-REVIEW` | Sprint 7 / EPIC-CONSULT-ADVANCED | [Sidecar] [Auto] [Parent ASK-006] Prepare ASK-006 review packet and evidence summary | 平行支援 ASK-006，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Claude | Codex | review | `ASK-001`, `ASK-002`, `ASK-003`, `ASK-004`, `ASK-005` | 2026-05-17 10:46:27 | Review packet complete at support/sidecars/ASK-006/ASK-006-SIDECAR-REVIEW.md. Parent task ASK-006 is done+archived (commit 014ee6e1). Packet documents: all 4 acceptance criteria PASS, e2e test 1 passed, consultation suite 15 passed, ASK-004/ASK-005 regression 43 passed, diff-check clean. Claude2 review decision: APPROVED. Please confirm the packet is accurate and complete. |
 | `ASK-007-SIDECAR-REVIEW` | Sprint 7 / EPIC-CONSULT-ADVANCED | [Sidecar] [Auto] [Parent ASK-007] Prepare ASK-007 review packet and evidence summary | 平行支援 ASK-007，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Claude | Codex | todo | `ASK-004` | 2026-05-17 09:28:48 | Auto-reassigned ownership from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota. Task returned to todo until Claude starts a fresh run. |
+| `IMT-006-SIDECAR-REVIEW` | Sprint 7 / EPIC-IMITATION-TRAINING | [Sidecar] [Auto] [Parent IMT-006] Prepare IMT-006 review packet and evidence summary | 平行支援 IMT-006，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Claude | Codex | todo | `IMT-001`, `IMT-004` | 2026-05-17 09:51:13 | Auto-reassigned ownership from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota. Task returned to todo until Claude starts a fresh run. |
 
 ## Handoff Queue
 
@@ -132,11 +118,10 @@ Last updated: 2026-05-17 09:39:19
 |---|---|---|---|---|---|
 | `IMT-006` | Codex | Codex2 | Implemented services/research/imitation/eval_metrics.py and test_eval_metrics.py. evaluate() returns JSON-serializable evaluation_result payload with action_match_rate, return_gap, kl_divergence for behavior_policy refs; supports deterministic, stochastic/uniform, keyed predictions, nearest-centroid policies, and counterfactual rewards. Verification: pytest -q services/research/imitation/test_eval_metrics.py; pytest -q services/research/imitation | pending | 2026-05-17 07:31:55 |
 | `OPS-SIDECAR-CLEANUP-001` | Codex | Codex2 | Ready for review. Added .orchestrator/sidecar_cleanup.py with scan/classify/execute retention API, CLI dry-run/apply mode, 14-day archive and 60-day delete policy; added contract doc and focused tests covering fresh, archivable, delete-eligible, dry-run no-op, real execute, and CLI exit 0. Verification: python3 -m pytest .orchestrator/test_sidecar_cleanup.py; python3 .orchestrator/test_sidecar_cleanup.py; python3 -m py_compile .orchestrator/sidecar_cleanup.py .orchestrator/test_sidecar_cleanup.py. | pending | 2026-05-17 07:46:46 |
-| `OSS-STAT-001-SIDECAR-ACCEPTANCE` | Gemini | Claude | Acceptance packet drafted and ready for review in support/sidecars/OSS-STAT-001/OSS-STAT-001-SIDECAR-ACCEPTANCE.md. The packet documents the resolved shadowing issue and the final artifact shapes. | pending | 2026-05-17 09:05:00 |
-| `ASK-007` | Codex2 | Claude2 | Chair reassigned review from Codex2 to Claude2: Codex2 pause blocks this fresh review; Claude2 can review Codex-owned BFF/consultation work after closeout. | pending | 2026-05-17 09:27:18 |
-| `ASK-006` | Codex2 | Claude2 | Chair reassigned review from Codex2 to Claude2: Codex2 pause blocks this review and ASK-006 is on the current consultation path. | pending | 2026-05-17 09:27:31 |
-| `OSS-QLIB-002` | Claude | Codex | Review approved: all acceptance criteria met. run() produces schema-valid ExperimentRun with producer_run_id/lineage/evaluation_summary; evaluate() returns sharpe/sortino/max_dd/ic; 2 tests pass (happy-path + fail-fast); 35 total qlib tests pass; no trailing whitespace; deployment_stage=none; no side effects. Returning to Codex for finalization. | pending | 2026-05-17 09:36:04 |
-| `TRN-006` | Claude2 | Codex | Review approved: rapid_eval_integration.py meets all acceptance criteria — real vectorbt backend, correct eval_summary shape, 2 isolated tests pass, combined 35+5 subtests pass, diff-check clean. Returning to owner Codex for finalization. | pending | 2026-05-17 09:36:13 |
+| `OSS-STAT-001-SIDECAR-ACCEPTANCE` | Claude | Gemini | Sidecar acceptance packet reviewed and approved. Documents the resolved adapter shadowing issue and verified artifact shapes accurately. | pending | 2026-05-17 10:06:16 |
+| `OPS-REBASE-AUTO-001-SIDECAR-REVIEW` | Claude | Codex | Review packet complete. Parent task OPS-REBASE-AUTO-001 is already done+archived (commit c9f61449). Packet documents: all 5 acceptance criteria PASS, delivery metadata, 4 tests pass, code quality notes, review approval by Claude. Please confirm the packet is accurate and complete. | pending | 2026-05-17 10:30:09 |
+| `OPS-REFACTOR-001` | Claude | Codex | Review approved: all four helpers extracted cleanly, supervisor.py uses them without API change, 25 focused + 141 supervisor tests pass, contract references archive tag correctly. Returning to Codex for closeout. | pending | 2026-05-17 10:41:03 |
+| `ASK-006-SIDECAR-REVIEW` | Claude | Codex | Review packet complete at support/sidecars/ASK-006/ASK-006-SIDECAR-REVIEW.md. Parent task ASK-006 is done+archived (commit 014ee6e1). Packet documents: all 4 acceptance criteria PASS, e2e test 1 passed, consultation suite 15 passed, ASK-004/ASK-005 regression 43 passed, diff-check clean. Claude2 review decision: APPROVED. Please confirm the packet is accurate and complete. | pending | 2026-05-17 10:46:27 |
 
 ## Blockers
 
@@ -148,8 +133,8 @@ Last updated: 2026-05-17 09:39:19
 
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
-| `OSS-QLIB-002` | Claude | 驗證通過。run() 回傳 schema-valid ExperimentRun，metadata 含 producer_run_id / lineage / evaluation_summary / safety_assertions。<br>evaluate() 回傳 sharpe / sortino / max_dd / ic，IC 使用觀測層 prediction vs actual_return，sharpe/sortino/max_dd 使用截面平均報酬。<br>2 個測試 (happy-path + insufficient-data fail-fast) pytest -q exit 0；全 qlib suite 35 passed。<br>diff --check 無 trailing whitespace。deployment_stage=none 有斷言，無 registry/broker/order side effect。 | - |
-| `TRN-006` | Claude2 | TRN-006 review passed. run_rapid_eval 正確暴露 sharpe/sortino/max_dd eval_summary；導入路徑 services.research.vectorbt.adapter 為真實 adapter（非 mock）；2 tests pass (success path + fail-fast)；35+5 subtests combined pass；diff-check clean；TRN-003 endpoint 未被修改；governance advisory_only 欄位確認無直接 live 影響。 | - |
+| `OPS-REFACTOR-001` | Claude | 審查通過：dispatch_policy.py 正確抽出四個 helper（dispatch_reason_priority / is_execution_dispatch_reason / normalized_status_set / ready_dispatch_settings），supervisor.py import 方式最小化且未改 public API，25 focused tests pass，141 supervisor tests pass，contract.md 正確引用 archive tag。 | - |
+| `OSS-STAT-001-SIDECAR-ACCEPTANCE` | Claude | 審查通過：sidecar acceptance packet 文件完整，正確記錄 shadowing 問題解決與最終 artifact 形狀 | support/sidecars/OSS-STAT-001/OSS-STAT-001-SIDECAR-ACCEPTANCE.md |
 
 ## Lovable Coordination
 
@@ -220,23 +205,23 @@ Last updated: 2026-05-17 09:39:19
 
 ## Latest Checkpoints
 
-- 2026-05-17 09:38:13 Orchestrator: PreToolUse: Bash
-- 2026-05-17 09:38:14 Orchestrator: PreToolUse: Bash
-- 2026-05-17 09:38:14 Orchestrator: PostToolUse: Bash
-- 2026-05-17 09:38:15 Orchestrator: PostToolUse: Bash
-- 2026-05-17 09:38:29 Orchestrator: PreToolUse: Bash
-- 2026-05-17 09:38:30 Orchestrator: PostToolUse: Bash
-- 2026-05-17 09:38:38 Orchestrator: PreToolUse: Bash
-- 2026-05-17 09:38:41 Orchestrator: PostToolUse: Bash
-- 2026-05-17 09:38:49 Orchestrator: PreToolUse: Bash
-- 2026-05-17 09:38:55 Orchestrator: PreToolUse: Bash
-- 2026-05-17 09:38:55 Orchestrator: PostToolUse: Bash
-- 2026-05-17 09:38:59 Orchestrator: PreToolUse: Bash
-- 2026-05-17 09:39:05 Orchestrator: PreToolUse: Bash
-- 2026-05-17 09:39:05 Orchestrator: PostToolUse: Bash
-- 2026-05-17 09:39:06 Orchestrator: PreToolUse: Bash
-- 2026-05-17 09:39:06 Orchestrator: PostToolUse: Bash
-- 2026-05-17 09:39:12 Orchestrator: PreToolUse: Bash
-- 2026-05-17 09:39:13 Orchestrator: PostToolUse: Bash
-- 2026-05-17 09:39:19 Orchestrator: PreToolUse: Bash
-- 2026-05-17 09:39:19 Claude2: `PER-003` PER-003 closeout complete: artifacts committed at 549270e3; pytest 5/5 passed; smoke 16/16 checks passed. /bff/personas reads from live PersonaRegistry (service_store), strict mode verified no fixture fallback. Review approved by Codex; finalized and closed by Claude2.
+- 2026-05-17 10:44:42 Orchestrator: PostToolUse: Glob
+- 2026-05-17 10:44:54 Orchestrator: PreToolUse: Read
+- 2026-05-17 10:44:54 Orchestrator: PreToolUse: Read
+- 2026-05-17 10:44:54 Orchestrator: PostToolUse: Read
+- 2026-05-17 10:44:54 Orchestrator: PostToolUse: Read
+- 2026-05-17 10:44:59 Orchestrator: PreToolUse: Read
+- 2026-05-17 10:45:00 Orchestrator: PostToolUse: Read
+- 2026-05-17 10:45:19 Orchestrator: PreToolUse: Bash
+- 2026-05-17 10:45:19 Orchestrator: PreToolUse: Glob
+- 2026-05-17 10:45:20 Orchestrator: PostToolUse: Bash
+- 2026-05-17 10:45:20 Orchestrator: PostToolUse: Glob
+- 2026-05-17 10:45:29 Orchestrator: PreToolUse: Bash
+- 2026-05-17 10:45:30 Orchestrator: PostToolUse: Bash
+- 2026-05-17 10:46:12 Orchestrator: PreToolUse: Write
+- 2026-05-17 10:46:12 Orchestrator: PostToolUse: Write
+- 2026-05-17 10:46:18 Orchestrator: PreToolUse: Bash
+- 2026-05-17 10:46:18 Claude: `ASK-006-SIDECAR-REVIEW` Review packet created at support/sidecars/ASK-006/ASK-006-SIDECAR-REVIEW.md. Documents all 4 acceptance criteria PASS, delivery metadata, code quality notes, and Claude2 review decision for parent task ASK-006 (done+archived commit 014ee6e1).
+- 2026-05-17 10:46:22 Orchestrator: PostToolUse: Bash
+- 2026-05-17 10:46:27 Orchestrator: PreToolUse: Bash
+- 2026-05-17 10:46:27 Claude: `ASK-006-SIDECAR-REVIEW` Handoff to Codex: Review packet complete at support/sidecars/ASK-006/ASK-006-SIDECAR-REVIEW.md. Parent task ASK-006 is done+archived (commit 014ee6e1). Packet documents: all 4 acceptance criteria PASS, e2e test 1 passed, consultation suite 15 passed, ASK-004/ASK-005 regression 43 passed, diff-check clean. Claude2 review decision: APPROVED. Please confirm the packet is accurate and complete.
