@@ -25,6 +25,14 @@ and publish-ready before running `scripts/ai-status.sh done`.
    exact commands in the finalization message or task artifact.
 6. Inspect `git status --short` and separate task-owned changes from
    unrelated dirty worktree changes.
+   - If this task produced anchor commits, either keep or squash them
+     according to review needs; the final task commit still needs the
+     required `LLM-Agent`, `Task-ID`, `Reviewer`, and verification
+     trailers.
+   - If `git status --short` shows files from another task or lane
+     (for example generated state mirrors, cross-sidecar docs, or
+     unrelated task artifacts), record a blocker and stop. Do not fold
+     those files into the closeout commit.
 7. Create the task PR (see § Per-Task PR Flow below) before finalizing
    whenever the task changed repo files.
 8. Run `AI_NAME=<Owner> ./scripts/ai-status.sh done <task-id> "<checkpoint message>"`

@@ -60,6 +60,8 @@ Canonical truth now uses five layers:
 - `AI_COLLABORATION_GUIDE.md`: stable collaboration rules and command usage
 - `ai-status.json`: machine-readable live task state, ownership, blockers, handoffs
 - `ai-activity-log.jsonl`: append-only activity history
+- `.orchestrator/skills/worker-anchor-commit.md`: mid-task anchor
+  commit rules for fragile shared worktree surfaces
 - `.orchestrator/skills/task-closeout-finalization.md`: owner finalization, commit, and publication rules for `review_approved -> done`
 
 ### L0.5 Derived Narrative
