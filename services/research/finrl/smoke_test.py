@@ -1,4 +1,8 @@
-import pytest
+import sys
+from pathlib import Path
+# When running in container, /app is already in PYTHONPATH
+sys.path.append("/app")
+
 from services.research.finrl.adapter import train
 
 def test_train_smoke():
@@ -23,14 +27,28 @@ def test_train_smoke():
             "close": 202.0 + i,
             "volume": 2000.0 + i
         })
-    
+
     strategy_spec_ref = {"records": records}
-    
-    result = train(strategy_spec_ref)
-    
+
+    # Use 'stub' backend to avoid FinRL package requirement during smoke test
+    result = train(strategy_spec_ref, backend="stub")
+
     assert result["status"] == "completed"
     assert "model_artifact_ref" in result
+    assert "artifact_type" in result
+    assert result["artifact_type"] == "model_artifact"
     assert "run_id" in result
     assert "metrics" in result
-    assert result["metrics"]["mean_reward_proxy"] > 0
+
+    # Acceptance criteria
+    assert result["metrics"].get("mean_reward_proxy", 0) > 0
+    assert result["metrics"].get("sharpe", 0) > 0
+    assert result["metrics"].get("num_steps", 0) <= 1000
+
+    # Check for ExperimentRun-shaped dict
+    assert "model_artifact_ref" in result
+
     print(f"Smoke test passed: {result}")
+
+if __name__ == "__main__":
+    test_train_smoke()
