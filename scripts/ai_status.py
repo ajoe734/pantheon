@@ -1659,8 +1659,15 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
         for entry in current_logs:
             task_id = f" `{entry['task_id']}`" if entry.get("task_id") else ""
             timestamp = entry.get("ts") or entry.get("timestamp")
+            message = entry.get("message")
+            if not message:
+                event_type = entry.get("type") or "event"
+                if event_type == "worker_commit" and entry.get("commit"):
+                    message = f"worker_commit {entry['commit']}"
+                else:
+                    message = event_type
             lines.append(
-                f"- {format_display_timestamp(timestamp)} {entry['agent']}:{task_id} {localize_embedded_timestamps(entry['message'])}"
+                f"- {format_display_timestamp(timestamp)} {entry.get('agent', 'Unknown')}:{task_id} {localize_embedded_timestamps(str(message))}"
             )
     else:
         lines.append("- No checkpoints yet.")
