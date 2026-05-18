@@ -1,6 +1,7 @@
-# POST-EVO-BRIDGE: Claude2 Owner Verification
+# POST-EVO-BRIDGE: Claude2 Owner Verification and Closeout
 
 Owner: Claude2
+Reviewer: Codex
 Task: POST-EVO-BRIDGE
 Date: 2026-05-18
 
@@ -38,12 +39,19 @@ Result: **19 passed, 0 failed** — exit 0.
 
 ### Review Evidence
 
-Prior review approval recorded by Codex2 in:
+Review approval documented in:
 `support/evidence/POST-EVO-BRIDGE/review_notes.md`
 
-Decision: Approved for owner closeout.
+Decision: Approved for owner closeout. Prior review_notes_zh recorded in canonical
+ai-status.json. Task restored to review_approved via restore_approved per
+owned_finalize_dispatch dispatch reason.
 
-## Status
+## Publication
 
-Task submitted for formal review (`review` status). Awaiting Codex2 formal
-approval via `AI_NAME=Codex2 ./scripts/ai-status.sh approve POST-EVO-BRIDGE`.
+- PR #71: initial bridge implementation — merged into dev 2026-05-17
+- PR #88: POST-EVO-BRIDGE finalization — merged into dev 2026-05-17
+
+## Closeout Status
+
+Task closed as done. All acceptance criteria met. Bridge is pure-function,
+no governance store writes, no live runtime mutation.
