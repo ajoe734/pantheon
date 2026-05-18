@@ -51,6 +51,11 @@ Review verdict: Approved — no blocking findings. All acceptance criteria satis
 
 ## Push Status
 
-Implementation commits already on `origin/task/OODA-E2E-005`. Closeout and
-state-sync commits pending operator push (GitHub auth unavailable in worker env).
-PR creation and auto-merge into `dev` pending operator action.
+Implementation, review, closeout, and state-sync commits are on
+`origin/task/OODA-E2E-005`.
+
+PR: https://github.com/ajoe734/pantheon/pull/101
+
+Auto-merge is enabled. The branch was updated with `origin/dev` after the
+initial PR reported merge conflicts; required checks are expected to run on
+the updated task branch.

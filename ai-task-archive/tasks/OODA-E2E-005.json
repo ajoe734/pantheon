@@ -31,7 +31,7 @@
       "asserts no broker credentials accessed and BROKER_PRODUCTION_LIVE_ENABLED stays false",
       "pytest -q -x exit 0"
     ],
-    "next": "Owner finalized OODA-E2E-005. Verification: 8 passed in 1.09s (PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/e2e/test_deployment_plan_to_paper_run.py services/execution/lean_runtime/test_algorithm_smoke.py -q -x). Closeout commit: 5d320c37. Implementation durable on origin. Push pending operator action (GitHub auth unavailable in worker).",
+    "next": "Owner finalized OODA-E2E-005. Verification: 8 passed in 1.09s (PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/e2e/test_deployment_plan_to_paper_run.py services/execution/lean_runtime/test_algorithm_smoke.py -q -x). Closeout commit: 5d320c37. PR #101 is open with auto-merge enabled after updating the task branch with origin/dev.",
     "last_update": "2026-05-18T00:45:22Z",
     "review_notes_zh": [
       "審查通過：focused pytest 8 passed；DeploymentPlan fixture -> RuntimeBinding -> ArtifactLoader -> LEAN paper smoke identity 與 no-live-broker assertions 均已覆蓋。"
