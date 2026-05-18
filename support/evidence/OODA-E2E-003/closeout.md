@@ -1,9 +1,9 @@
 # OODA-E2E-003 Closeout Evidence
 
 Task: OODA-E2E-003
-Owner in local ai-status: Claude
-Reviewer in local ai-status: Codex
-Closeout worker: Codex2
+Owner: Codex2
+Reviewer: Claude
+Status at closeout pickup: review_approved
 Closeout date: 2026-05-18
 
 ## Delivered Scope
@@ -20,6 +20,14 @@ Closeout date: 2026-05-18
 - Implementation commit: `7a683986` (`OODA-E2E-003: add ExperimentRun to CandidateArtifact admission E2E test`).
 - PR: <https://github.com/ajoe734/pantheon/pull/78>.
 - PR #78 merged into `dev` on 2026-05-17 with required GitHub checks passing.
+- Closeout PR #107 carried the initial closeout evidence and merged on 2026-05-18.
+- A follow-up closeout commit records the reviewer evidence referenced by the central task status.
+
+## Reviewer Approval
+
+Claude approved the task on 2026-05-18. The review evidence is recorded at
+`support/evidence/OODA-E2E-003/review_claude.md` and states that all four
+E2E acceptance criteria pass with no required follow-up.
 
 ## Closeout Verification
 
@@ -39,8 +47,11 @@ Result: `7 passed in 0.98s`.
 
 ## Lifecycle Note
 
-The task-scoped implementation is already merged, but the local `ai-status.json` still records
-OODA-E2E-003 as `todo` with owner `Claude` and reviewer `Codex`. Because this closeout worker is
-`Codex2`, `AI_NAME=Codex2 ./scripts/ai-status.sh done OODA-E2E-003 ...` is expected to be rejected
-by the owner/status guards until the central task lifecycle is restored to `review_approved` for
-the authorized owner.
+The task-scoped implementation is already merged. Finalization should run:
+
+```bash
+AI_NAME=Codex2 ./scripts/ai-status.sh done OODA-E2E-003 "<checkpoint message>"
+```
+
+after the latest task-branch commit carries the required `LLM-Agent`, `Task-ID`, and `Reviewer`
+trailers expected by the central task lifecycle state.
