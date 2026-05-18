@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-18 10:49:17
+Last updated: 2026-05-18 13:36:45
 
 ## Objective
 
@@ -47,7 +47,7 @@ Last updated: 2026-05-18 10:49:17
 | `OODA-E2E-004` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #4: Admission → ApprovalDecision → DeploymentPlan(paper) test | Claude | todo | `GOV-001`, `DEP-001`, `DEP-002`, `DEP-004` | OODA Decide 階段：證明「CandidateArtifact → ApprovalDecision → DeploymentPlan(paper)」transition 可端到端走完。使用 GOV-001 ApprovalDecision + DEP-001 DeploymentPlan service。獨立 test 檔。 |
 | `OODA-E2E-007` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #7: full OodaLoopPacket closure + evidence chain | Codex | todo | `OODA-E2E-001`, `OODA-E2E-002`, `OODA-E2E-003`, `OODA-E2E-004`, `OODA-E2E-005`, `OODA-E2E-006` | OODA 全環收尾：把上述 6 個 transition test 串成單一 OodaLoopPacket 並驗證所有欄位齊全（observe/orient/decide/act/learn refs）。產出 evidence packet 與 closeout summary。獨立 test 檔。 |
 | `STRAT-V2-001` | Sprint 8 / EPIC-STRAT-EXP-DEEP | Strategy spec distillation production smoke (real research note) | Copilot | todo | `STRAT-003`, `STRAT-004`, `SRC-001` | 把 STRAT-003 source converter 升級到 production：吃真實 internal research note (docs/research/notes/*.md 或 fixture)，產出可進 registry 的 StrategySpec，含 evidence_refs + code_refs 完整 binding。獨立 module，不改 STRAT-001..004 公開 API。 |
-| `EXP-V2-001` | Sprint 8 / EPIC-STRAT-EXP-DEEP | Experiment orchestrator parallel multi-backend dispatch | Codex | todo | `EXP-001`, `EXP-002`, `VBT-001`, `OSS-QLIB-002`, `OSS-STAT-001` | 升級 experiment orchestrator 支援平行多 backend：同一個 ExperimentTask 可以同時派給 vectorbt + Qlib + statsmodels 跑，回傳 N 個獨立 ExperimentRun 加上比較摘要。獨立 module，不改 EXP-001 公開 schema。 |
+| `EXP-V2-001` | Sprint 8 / EPIC-STRAT-EXP-DEEP | Experiment orchestrator parallel multi-backend dispatch | Codex | review_approved | `EXP-001`, `EXP-002`, `VBT-001`, `OSS-QLIB-002`, `OSS-STAT-001` | 升級 experiment orchestrator 支援平行多 backend：同一個 ExperimentTask 可以同時派給 vectorbt + Qlib + statsmodels 跑，回傳 N 個獨立 ExperimentRun 加上比較摘要。獨立 module，不改 EXP-001 公開 schema。 |
 | `EXP-V2-002` | Sprint 8 / EPIC-STRAT-EXP-DEEP | ExperimentRun multi-artifact lineage tree | Codex2 | todo | `EXP-005`, `LIN-001` | 新增多 artifact-type lineage tree：ExperimentRun 可同時產 model_artifact + feature_set + signal_snapshot + optimizer_result，本任務確保 lineage edges 正確連接 N 個 artifact 而非單一。獨立 module。 |
 | `SPRINT-8-CLOSEOUT` | Sprint 8 / EPIC-CLOSEOUT | Sprint 8 retrospective + closeout + Sprint 9 candidate topics | Claude | todo | `OSS-QLIB-V2-001`, `OSS-STAT-V2-001`, `OSS-QUANTLIB-V2-001`, `OSS-RLLIB-V2-001`, `OSS-FINRL-V2-001`, `OODA-E2E-007`, `STRAT-V2-001`, `STRAT-V2-002`, `EXP-V2-001`, `EXP-V2-002` | Sprint 8 收尾：彙整 16 條子任務 evidence、產 sprint retrospective + 統計報告（哪些 EPIC 過、哪些 EPIC 殘留缺口）、產 sprint 9 候選議題 raw list（供下一輪 planning 用）。獨立 evidence packet。 |
 
@@ -107,7 +107,7 @@ Last updated: 2026-05-18 10:49:17
 | `OODA-E2E-004` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #4: Admission → ApprovalDecision → DeploymentPlan(paper) test | OODA Decide 階段：證明「CandidateArtifact → ApprovalDecision → DeploymentPlan(paper)」transition 可端到端走完。使用 GOV-001 ApprovalDecision + DEP-001 DeploymentPlan service。獨立 test 檔。 | Claude | Codex2 | todo | `GOV-001`, `DEP-001`, `DEP-002`, `DEP-004` | 2026-05-17 19:03:39 | Assignment created |
 | `OODA-E2E-007` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #7: full OodaLoopPacket closure + evidence chain | OODA 全環收尾：把上述 6 個 transition test 串成單一 OodaLoopPacket 並驗證所有欄位齊全（observe/orient/decide/act/learn refs）。產出 evidence packet 與 closeout summary。獨立 test 檔。 | Codex | Claude | todo | `OODA-E2E-001`, `OODA-E2E-002`, `OODA-E2E-003`, `OODA-E2E-004`, `OODA-E2E-005`, `OODA-E2E-006` | 2026-05-17 19:04:11 | Assignment created |
 | `STRAT-V2-001` | Sprint 8 / EPIC-STRAT-EXP-DEEP | Strategy spec distillation production smoke (real research note) | 把 STRAT-003 source converter 升級到 production：吃真實 internal research note (docs/research/notes/*.md 或 fixture)，產出可進 registry 的 StrategySpec，含 evidence_refs + code_refs 完整 binding。獨立 module，不改 STRAT-001..004 公開 API。 | Copilot | Codex2 | todo | `STRAT-003`, `STRAT-004`, `SRC-001` | 2026-05-17 19:05:16 | Assignment created |
-| `EXP-V2-001` | Sprint 8 / EPIC-STRAT-EXP-DEEP | Experiment orchestrator parallel multi-backend dispatch | 升級 experiment orchestrator 支援平行多 backend：同一個 ExperimentTask 可以同時派給 vectorbt + Qlib + statsmodels 跑，回傳 N 個獨立 ExperimentRun 加上比較摘要。獨立 module，不改 EXP-001 公開 schema。 | Codex | Codex2 | todo | `EXP-001`, `EXP-002`, `VBT-001`, `OSS-QLIB-002`, `OSS-STAT-001` | 2026-05-17 19:05:38 | Assignment created |
+| `EXP-V2-001` | Sprint 8 / EPIC-STRAT-EXP-DEEP | Experiment orchestrator parallel multi-backend dispatch | 升級 experiment orchestrator 支援平行多 backend：同一個 ExperimentTask 可以同時派給 vectorbt + Qlib + statsmodels 跑，回傳 N 個獨立 ExperimentRun 加上比較摘要。獨立 module，不改 EXP-001 公開 schema。 | Codex | Codex2 | review_approved | `EXP-001`, `EXP-002`, `VBT-001`, `OSS-QLIB-002`, `OSS-STAT-001` | 2026-05-18 13:36:45 | Restored review_approved for closeout from existing completed archive and review evidence; PRs #69, #96, and #111 are merged. |
 | `EXP-V2-002` | Sprint 8 / EPIC-STRAT-EXP-DEEP | ExperimentRun multi-artifact lineage tree | 新增多 artifact-type lineage tree：ExperimentRun 可同時產 model_artifact + feature_set + signal_snapshot + optimizer_result，本任務確保 lineage edges 正確連接 N 個 artifact 而非單一。獨立 module。 | Codex2 | Copilot | todo | `EXP-005`, `LIN-001` | 2026-05-17 19:05:48 | Assignment created |
 | `SPRINT-8-CLOSEOUT` | Sprint 8 / EPIC-CLOSEOUT | Sprint 8 retrospective + closeout + Sprint 9 candidate topics | Sprint 8 收尾：彙整 16 條子任務 evidence、產 sprint retrospective + 統計報告（哪些 EPIC 過、哪些 EPIC 殘留缺口）、產 sprint 9 候選議題 raw list（供下一輪 planning 用）。獨立 evidence packet。 | Claude | Codex | todo | `OSS-QLIB-V2-001`, `OSS-STAT-V2-001`, `OSS-QUANTLIB-V2-001`, `OSS-RLLIB-V2-001`, `OSS-FINRL-V2-001`, `OODA-E2E-007`, `STRAT-V2-001`, `STRAT-V2-002`, `EXP-V2-001`, `EXP-V2-002` | 2026-05-17 19:06:02 | Assignment created |
 
@@ -116,6 +116,7 @@ Last updated: 2026-05-18 10:49:17
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
 | `OSS-QLIB-V2-001` | Codex | Codex2 | Ready for review: production Qlib rolling runner, registry admission packet emitter, tests, and admission_packet.json are merged via PR #70. Please review services/research/qlib/production_rolling_run.py, services/research/qlib/registry_admission_packet.py, services/research/qlib/test_production_rolling_run.py, and support/evidence/OSS-QLIB-V2-001/admission_packet.json. | pending | 2026-05-18 00:26:36 |
+| `EXP-V2-001` | Codex2 | Codex | Restored review_approved for closeout from existing completed archive and review evidence; PRs #69, #96, and #111 are merged. | pending | 2026-05-18 13:36:45 |
 
 ## Blockers
 
@@ -128,6 +129,7 @@ Last updated: 2026-05-18 10:49:17
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
 | `OSS-STAT-001-SIDECAR-ACCEPTANCE` | Claude | 審查通過：sidecar acceptance packet 文件完整，正確記錄 shadowing 問題解決與最終 artifact 形狀 | support/sidecars/OSS-STAT-001/OSS-STAT-001-SIDECAR-ACCEPTANCE.md |
+| `EXP-V2-001` | Codex2 | Closeout reconciliation: EXP-V2-001 already has completed archive and merged implementation/closeout PRs; prior review approval is recorded in support/evidence/EXP-V2-001/review_note.md and Codex2 review approval is recorded in the task brief at 2026-05-18 13:20:00. | support/evidence/EXP-V2-001/review_note.md |
 
 ## Lovable Coordination
 
@@ -157,8 +159,6 @@ Do not read those omitted modules as open Pantheon backlog purely because they a
 
 ## Latest Checkpoints
 
-- 2026-05-16 01:52:26 Orchestrator: PostToolUse: Bash
-- 2026-05-16 01:52:28 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:52:31 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:52:32 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:52:37 Orchestrator: PreToolUse: Bash
@@ -176,4 +176,6 @@ Do not read those omitted modules as open Pantheon backlog purely because they a
 - 2026-05-16 01:53:08 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:53:08 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:53:13 Orchestrator: PreToolUse: Bash
-- 2026-05-18 10:49:17 Codex: `OSS-STAT-V2-001` Owner closeout complete: PR #76 merged implementation, PR #112 publishes review and closeout evidence, statsmodels verification passed, no live broker or registry write.
+- 2026-05-18 13:36:23 Codex: `EXP-V2-001` Assigned EXP-V2-001 to Codex with reviewer Codex2
+- 2026-05-18 13:36:38 Codex: `EXP-V2-001` Closeout reconciliation started: active task record duplicated existing completed archive; focused verification re-ran successfully.
+- 2026-05-18 13:36:45 Codex: `EXP-V2-001` Restored review_approved for closeout from existing completed archive and review evidence; PRs #69, #96, and #111 are merged.
