@@ -6308,5 +6308,109 @@ class PruneOrphanWorktreesTests(unittest.TestCase):
         self.assertFalse(result)
 
 
+class ResolvePollIntervalTests(unittest.TestCase):
+    def test_default_uses_config_value(self) -> None:
+        config = {"supervisor": {"poll_interval_seconds": 300}}
+        value, source = supervisor.resolve_poll_interval(
+            config, cli_value=None, allow_fast_poll=False
+        )
+        self.assertEqual(value, 300.0)
+        self.assertEqual(source, "config")
+
+    def test_cli_value_at_or_above_config_does_not_require_authorization(self) -> None:
+        config = {"supervisor": {"poll_interval_seconds": 300}}
+        value, source = supervisor.resolve_poll_interval(
+            config, cli_value=600.0, allow_fast_poll=False
+        )
+        self.assertEqual(value, 600.0)
+        self.assertEqual(source, "cli")
+
+    def test_cli_value_below_config_requires_allow_fast_poll(self) -> None:
+        config = {"supervisor": {"poll_interval_seconds": 300}}
+        with self.assertRaises(SystemExit) as ctx:
+            supervisor.resolve_poll_interval(
+                config, cli_value=60.0, allow_fast_poll=False
+            )
+        self.assertIn("--allow-fast-poll", str(ctx.exception))
+
+    def test_cli_value_below_config_allowed_when_authorized(self) -> None:
+        config = {"supervisor": {"poll_interval_seconds": 300}}
+        value, source = supervisor.resolve_poll_interval(
+            config, cli_value=60.0, allow_fast_poll=True
+        )
+        self.assertEqual(value, 60.0)
+        self.assertEqual(source, "cli")
+
+    def test_zero_or_negative_cli_value_rejected(self) -> None:
+        config = {"supervisor": {"poll_interval_seconds": 300}}
+        with self.assertRaises(SystemExit):
+            supervisor.resolve_poll_interval(
+                config, cli_value=0.0, allow_fast_poll=True
+            )
+        with self.assertRaises(SystemExit):
+            supervisor.resolve_poll_interval(
+                config, cli_value=-5.0, allow_fast_poll=True
+            )
+
+    def test_missing_config_falls_back_to_default(self) -> None:
+        value, source = supervisor.resolve_poll_interval(
+            {}, cli_value=None, allow_fast_poll=False
+        )
+        self.assertEqual(value, supervisor.CONFIG_DEFAULT_POLL_INTERVAL_SECONDS)
+        self.assertEqual(source, "config")
+
+
+class RunSupervisorShellGuardTests(unittest.TestCase):
+    def _script(self) -> Path:
+        return Path(supervisor.__file__).resolve().parent.parent / "scripts" / "run-supervisor.sh"
+
+    def _run(self, args: list[str], stub_body: str) -> subprocess.CompletedProcess:
+        with tempfile.TemporaryDirectory() as tmp:
+            stub = Path(tmp) / "python3"
+            stub.write_text(stub_body)
+            stub.chmod(0o755)
+            env = os.environ.copy()
+            env["PATH"] = f"{tmp}:{env.get('PATH', '')}"
+            return subprocess.run(
+                ["bash", str(self._script()), *args],
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+
+    def test_poll_interval_without_allow_fast_poll_is_rejected(self) -> None:
+        script = self._script()
+        if not script.exists():
+            self.skipTest("run-supervisor.sh not present")
+        proc = self._run(["--poll-interval", "60"], "#!/bin/sh\necho 'should not run' >&2\nexit 99\n")
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("--allow-fast-poll", proc.stderr)
+
+    def test_poll_interval_equals_form_also_rejected(self) -> None:
+        script = self._script()
+        if not script.exists():
+            self.skipTest("run-supervisor.sh not present")
+        proc = self._run(["--poll-interval=60"], "#!/bin/sh\necho 'should not run' >&2\nexit 99\n")
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("--allow-fast-poll", proc.stderr)
+
+    def test_poll_interval_with_allow_fast_poll_passes_through(self) -> None:
+        script = self._script()
+        if not script.exists():
+            self.skipTest("run-supervisor.sh not present")
+        proc = self._run(
+            ["--poll-interval", "60", "--allow-fast-poll"], '#!/bin/sh\nexit 7\n'
+        )
+        self.assertEqual(proc.returncode, 7, proc.stderr)
+
+    def test_no_poll_interval_passes_through(self) -> None:
+        script = self._script()
+        if not script.exists():
+            self.skipTest("run-supervisor.sh not present")
+        proc = self._run(["--verbose"], '#!/bin/sh\nexit 11\n')
+        self.assertEqual(proc.returncode, 11, proc.stderr)
+
+
+
 if __name__ == "__main__":
     unittest.main()
