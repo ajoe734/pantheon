@@ -249,13 +249,62 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--no-watch", action="store_true", help="Process the event queue without running watch_events first.")
     parser.add_argument("--replay", action="store_true", help="Pass replay through to watch_events for the first scan.")
-    parser.add_argument("--poll-interval", type=float, default=None)
+    parser.add_argument(
+        "--poll-interval",
+        type=float,
+        default=None,
+        help=(
+            "Override supervisor poll interval in seconds. Values below "
+            "config.supervisor.poll_interval_seconds require --allow-fast-poll."
+        ),
+    )
+    parser.add_argument(
+        "--allow-fast-poll",
+        action="store_true",
+        help=(
+            "Authorize --poll-interval below the configured value. Reserved for "
+            "ad-hoc incident debugging; do not use for steady-state runs."
+        ),
+    )
     parser.add_argument("--quiet", action="store_true", help="Suppress terminal heartbeat output.")
     parser.add_argument("--verbose", action="store_true", help="Print active worker and queue details each tick.")
     parser.add_argument("--claim-agent", default=None, help="Let one idle agent claim and start one ready task.")
     parser.add_argument("--release-task", default=None, help="Release this agent's completed worker slot before claiming more work.")
     parser.add_argument("--clear-provider-pause", default=None, help="Manually clear one provider dispatch pause.")
     return parser.parse_args()
+
+
+CONFIG_DEFAULT_POLL_INTERVAL_SECONDS = 300.0
+
+
+class FastPollNotAllowedError(SystemExit):
+    """Raised when --poll-interval is below config without --allow-fast-poll."""
+
+
+def resolve_poll_interval(
+    config: dict[str, Any],
+    *,
+    cli_value: float | None,
+    allow_fast_poll: bool,
+) -> tuple[float, str]:
+    configured = float(
+        config.get("supervisor", {}).get(
+            "poll_interval_seconds", CONFIG_DEFAULT_POLL_INTERVAL_SECONDS
+        )
+    )
+    if cli_value is None:
+        return configured, "config"
+    if cli_value <= 0:
+        raise FastPollNotAllowedError(
+            f"--poll-interval must be positive (got {cli_value})."
+        )
+    if cli_value < configured and not allow_fast_poll:
+        raise FastPollNotAllowedError(
+            f"--poll-interval={cli_value}s is below config.supervisor.poll_interval_seconds={configured}s. "
+            "Pass --allow-fast-poll to authorize an ad-hoc fast cadence, or update config.json "
+            "if this is a steady-state change."
+        )
+    return cli_value, "cli"
 
 
 def console_log(message: str, *, quiet: bool = False) -> None:
@@ -1647,6 +1696,33 @@ def scan_live_worker_pids_by_agent(proc_root: Path | None = None) -> dict[str, l
         agent = match.group(1)
         result.setdefault(agent, []).append(pid)
     return result
+
+
+def active_worker_refs_for_agent_id(
+    state: dict[str, Any],
+    agent_id: str | None,
+    active_statuses: set[str],
+) -> list[str]:
+    normalized_agent = normalize_agent_id(agent_id or "")
+    if not normalized_agent:
+        return []
+    normalized_statuses = {str(status or "").strip().lower() for status in active_statuses}
+    refs: list[str] = []
+    for worker in (state.get("workers", {}) or {}).values():
+        worker_agent_id = normalize_agent_id(str(worker.get("agent_id") or ""))
+        if worker_agent_id != normalized_agent:
+            continue
+        worker_status = str(worker.get("status") or "").strip().lower()
+        if worker_status not in normalized_statuses:
+            continue
+        pid = worker.get("pid")
+        if pid:
+            refs.append(str(pid))
+            continue
+        run_id = str(worker.get("run_id") or "").strip()
+        if run_id:
+            refs.append(run_id)
+    return sorted(set(refs))
 
 
 def terminate_worker_pid(pid: int | None) -> bool:
@@ -3868,7 +3944,37 @@ def agent_auto_dispatch_block_reason(
         if provider_capability.get("auth_ready") is False:
             return f"{provider_id} authentication is not ready"
 
-    if ready_dispatch_settings(config).get("worker_os_duplicate_guard", True):
+    settings = ready_dispatch_settings(config)
+    if settings.get("worker_os_duplicate_guard", True):
+        active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
+        slot_ids = logical_worker_slot_ids(config, normalized_agent)
+        if slot_ids:
+            occupied_slots = {
+                slot_id: refs
+                for slot_id in slot_ids
+                if (refs := active_worker_refs_for_agent_id(state, slot_id, active_statuses))
+            }
+            if len(occupied_slots) >= len(slot_ids):
+                slot_summary = ", ".join(
+                    f"{slot_id}=PID:{'/'.join(refs)}" for slot_id, refs in sorted(occupied_slots.items())
+                )
+                display_name = display_name_for(config, normalized_agent) or normalized_agent
+                return (
+                    f"{display_name} all dispatch slots already have live worker process(es) "
+                    f"{slot_summary}; skipping dispatch to avoid duplicate workers"
+                )
+            return None
+
+        if agent and agent_is_dispatch_slot(agent):
+            slot_refs = active_worker_refs_for_agent_id(state, normalized_agent, active_statuses)
+            if slot_refs:
+                display_name = display_name_for(config, normalized_agent) or normalized_agent
+                return (
+                    f"{display_name} slot {normalized_agent} already has live worker process(es) "
+                    f"PID={','.join(slot_refs)}; skipping dispatch to avoid duplicate workers"
+                )
+            return None
+
         display_name = display_name_for(config, normalized_agent) or normalized_agent
         live_pids = scan_live_worker_pids_by_agent().get(display_name, [])
         if live_pids:
@@ -7598,9 +7704,14 @@ def main() -> int:
     atexit.register(clear_supervisor_pid, config)
     write_supervisor_pid(config)
     bootstrap_supervisor_runtime_state(config, lifecycle="starting")
-    poll_interval = args.poll_interval or float(config.get("supervisor", {}).get("poll_interval_seconds", 300.0))
+    poll_interval, poll_source = resolve_poll_interval(
+        config,
+        cli_value=args.poll_interval,
+        allow_fast_poll=args.allow_fast_poll,
+    )
     console_log(
-        f"starting supervisor pid={os.getpid()} poll_interval={poll_interval:.1f}s config={args.config}",
+        f"starting supervisor pid={os.getpid()} poll_interval={poll_interval:.1f}s "
+        f"source={poll_source} config={args.config}",
         quiet=args.quiet,
     )
     if args.once:

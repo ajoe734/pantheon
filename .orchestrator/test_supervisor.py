@@ -5989,6 +5989,140 @@ class WorkerOsDuplicateGuardTests(unittest.TestCase):
             )
         self.assertIsNone(reason)
 
+    def test_block_reason_allows_slotted_logical_agent_with_free_slot(self) -> None:
+        config = {
+            "agents": {
+                "codex": {
+                    "provider": "codex",
+                    "display_name": "Codex",
+                    "worker_slots": ["codex1_1", "codex1_2"],
+                },
+                "codex1_1": {
+                    "id": "codex1_1",
+                    "provider": "codex1-1",
+                    "display_name": "Codex",
+                    "dispatch_slot_for": "codex",
+                },
+                "codex1_2": {
+                    "id": "codex1_2",
+                    "provider": "codex1-2",
+                    "display_name": "Codex",
+                    "dispatch_slot_for": "codex",
+                },
+            },
+            "ready_dispatcher": {"worker_os_duplicate_guard": True},
+        }
+        state = {
+            "workers": {
+                "run-1": {
+                    "run_id": "run-1",
+                    "agent_id": "codex1_1",
+                    "status": "running",
+                    "pid": 42,
+                }
+            }
+        }
+        provider_report = {"providers": {"codex": {"auth_ready": True}}}
+        with mock.patch.object(
+            supervisor,
+            "scan_live_worker_pids_by_agent",
+            return_value={"Codex": [42]},
+        ) as scan:
+            reason = supervisor.agent_auto_dispatch_block_reason(
+                config, state, "codex", provider_report
+            )
+        self.assertIsNone(reason)
+        scan.assert_not_called()
+
+    def test_block_reason_blocks_exact_slot_with_active_worker(self) -> None:
+        config = {
+            "agents": {
+                "codex": {
+                    "provider": "codex",
+                    "display_name": "Codex",
+                    "worker_slots": ["codex1_1", "codex1_2"],
+                },
+                "codex1_1": {
+                    "id": "codex1_1",
+                    "provider": "codex1-1",
+                    "display_name": "Codex",
+                    "dispatch_slot_for": "codex",
+                },
+                "codex1_2": {
+                    "id": "codex1_2",
+                    "provider": "codex1-2",
+                    "display_name": "Codex",
+                    "dispatch_slot_for": "codex",
+                },
+            },
+            "ready_dispatcher": {"worker_os_duplicate_guard": True},
+        }
+        state = {
+            "workers": {
+                "run-1": {
+                    "run_id": "run-1",
+                    "agent_id": "codex1_1",
+                    "status": "running",
+                    "pid": 42,
+                }
+            }
+        }
+        provider_report = {"providers": {"codex1-1": {"auth_ready": True}, "codex1-2": {"auth_ready": True}}}
+        with mock.patch.object(supervisor, "scan_live_worker_pids_by_agent") as scan:
+            blocked = supervisor.agent_auto_dispatch_block_reason(
+                config, state, "codex1_1", provider_report
+            )
+            available = supervisor.agent_auto_dispatch_block_reason(
+                config, state, "codex1_2", provider_report
+            )
+        self.assertIsNotNone(blocked)
+        assert blocked is not None
+        self.assertIn("codex1_1", blocked)
+        self.assertIn("42", blocked)
+        self.assertIsNone(available)
+        scan.assert_not_called()
+
+    def test_block_reason_blocks_slotted_logical_agent_when_all_slots_busy(self) -> None:
+        config = {
+            "agents": {
+                "codex": {
+                    "provider": "codex",
+                    "display_name": "Codex",
+                    "worker_slots": ["codex1_1", "codex1_2"],
+                },
+                "codex1_1": {
+                    "id": "codex1_1",
+                    "provider": "codex1-1",
+                    "display_name": "Codex",
+                    "dispatch_slot_for": "codex",
+                },
+                "codex1_2": {
+                    "id": "codex1_2",
+                    "provider": "codex1-2",
+                    "display_name": "Codex",
+                    "dispatch_slot_for": "codex",
+                },
+            },
+            "ready_dispatcher": {"worker_os_duplicate_guard": True},
+        }
+        state = {
+            "workers": {
+                "run-1": {"run_id": "run-1", "agent_id": "codex1_1", "status": "running", "pid": 42},
+                "run-2": {"run_id": "run-2", "agent_id": "codex1_2", "status": "running", "pid": 99},
+            }
+        }
+        provider_report = {"providers": {"codex": {"auth_ready": True}}}
+        with mock.patch.object(supervisor, "scan_live_worker_pids_by_agent") as scan:
+            reason = supervisor.agent_auto_dispatch_block_reason(
+                config, state, "codex", provider_report
+            )
+        self.assertIsNotNone(reason)
+        assert reason is not None
+        self.assertIn("all dispatch slots", reason)
+        self.assertIn("codex1_1", reason)
+        self.assertIn("codex1_2", reason)
+        scan.assert_not_called()
+
 
 class MaxConcurrentWorkersCapTests(unittest.TestCase):
     def _base_config(self) -> dict:
@@ -6172,6 +6306,110 @@ class PruneOrphanWorktreesTests(unittest.TestCase):
         ):
             result = supervisor.prune_orphan_worktrees(config, state)
         self.assertFalse(result)
+
+
+class ResolvePollIntervalTests(unittest.TestCase):
+    def test_default_uses_config_value(self) -> None:
+        config = {"supervisor": {"poll_interval_seconds": 300}}
+        value, source = supervisor.resolve_poll_interval(
+            config, cli_value=None, allow_fast_poll=False
+        )
+        self.assertEqual(value, 300.0)
+        self.assertEqual(source, "config")
+
+    def test_cli_value_at_or_above_config_does_not_require_authorization(self) -> None:
+        config = {"supervisor": {"poll_interval_seconds": 300}}
+        value, source = supervisor.resolve_poll_interval(
+            config, cli_value=600.0, allow_fast_poll=False
+        )
+        self.assertEqual(value, 600.0)
+        self.assertEqual(source, "cli")
+
+    def test_cli_value_below_config_requires_allow_fast_poll(self) -> None:
+        config = {"supervisor": {"poll_interval_seconds": 300}}
+        with self.assertRaises(SystemExit) as ctx:
+            supervisor.resolve_poll_interval(
+                config, cli_value=60.0, allow_fast_poll=False
+            )
+        self.assertIn("--allow-fast-poll", str(ctx.exception))
+
+    def test_cli_value_below_config_allowed_when_authorized(self) -> None:
+        config = {"supervisor": {"poll_interval_seconds": 300}}
+        value, source = supervisor.resolve_poll_interval(
+            config, cli_value=60.0, allow_fast_poll=True
+        )
+        self.assertEqual(value, 60.0)
+        self.assertEqual(source, "cli")
+
+    def test_zero_or_negative_cli_value_rejected(self) -> None:
+        config = {"supervisor": {"poll_interval_seconds": 300}}
+        with self.assertRaises(SystemExit):
+            supervisor.resolve_poll_interval(
+                config, cli_value=0.0, allow_fast_poll=True
+            )
+        with self.assertRaises(SystemExit):
+            supervisor.resolve_poll_interval(
+                config, cli_value=-5.0, allow_fast_poll=True
+            )
+
+    def test_missing_config_falls_back_to_default(self) -> None:
+        value, source = supervisor.resolve_poll_interval(
+            {}, cli_value=None, allow_fast_poll=False
+        )
+        self.assertEqual(value, supervisor.CONFIG_DEFAULT_POLL_INTERVAL_SECONDS)
+        self.assertEqual(source, "config")
+
+
+class RunSupervisorShellGuardTests(unittest.TestCase):
+    def _script(self) -> Path:
+        return Path(supervisor.__file__).resolve().parent.parent / "scripts" / "run-supervisor.sh"
+
+    def _run(self, args: list[str], stub_body: str) -> subprocess.CompletedProcess:
+        with tempfile.TemporaryDirectory() as tmp:
+            stub = Path(tmp) / "python3"
+            stub.write_text(stub_body)
+            stub.chmod(0o755)
+            env = os.environ.copy()
+            env["PATH"] = f"{tmp}:{env.get('PATH', '')}"
+            return subprocess.run(
+                ["bash", str(self._script()), *args],
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+
+    def test_poll_interval_without_allow_fast_poll_is_rejected(self) -> None:
+        script = self._script()
+        if not script.exists():
+            self.skipTest("run-supervisor.sh not present")
+        proc = self._run(["--poll-interval", "60"], "#!/bin/sh\necho 'should not run' >&2\nexit 99\n")
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("--allow-fast-poll", proc.stderr)
+
+    def test_poll_interval_equals_form_also_rejected(self) -> None:
+        script = self._script()
+        if not script.exists():
+            self.skipTest("run-supervisor.sh not present")
+        proc = self._run(["--poll-interval=60"], "#!/bin/sh\necho 'should not run' >&2\nexit 99\n")
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("--allow-fast-poll", proc.stderr)
+
+    def test_poll_interval_with_allow_fast_poll_passes_through(self) -> None:
+        script = self._script()
+        if not script.exists():
+            self.skipTest("run-supervisor.sh not present")
+        proc = self._run(
+            ["--poll-interval", "60", "--allow-fast-poll"], '#!/bin/sh\nexit 7\n'
+        )
+        self.assertEqual(proc.returncode, 7, proc.stderr)
+
+    def test_no_poll_interval_passes_through(self) -> None:
+        script = self._script()
+        if not script.exists():
+            self.skipTest("run-supervisor.sh not present")
+        proc = self._run(["--verbose"], '#!/bin/sh\nexit 11\n')
+        self.assertEqual(proc.returncode, 11, proc.stderr)
+
 
 
 if __name__ == "__main__":

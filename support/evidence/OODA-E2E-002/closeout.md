@@ -52,3 +52,17 @@ python3 -m pytest -q -x tests/e2e/test_strategy_spec_to_experiment_run.py
 ```
 
 Result: `1 passed in 0.60s`.
+
+## 2026-05-18 Owner Finalization
+
+- Canonical task brief in `PANTHEON_STATUS_ROOT` shows `review_approved` with Codex review approval.
+- PR #79 (`task/OODA-E2E-002` -> `dev`) is already merged.
+- Fresh owner verification:
+
+```bash
+python3 -m pytest -q -x tests/e2e/test_strategy_spec_to_experiment_run.py services/research/experiment_orchestrator/test_parallel_dispatch.py services/research/vectorbt/test_adapter.py services/research/experiments/test_models.py services/research/strategy_spec/test_models.py
+```
+
+Result: `57 passed, 5 subtests passed in 8.72s`.
+
+- The `done` transition is being retried after adding this task-scoped closeout commit, because the prior branch HEAD was a dev merge commit without task trailers.
