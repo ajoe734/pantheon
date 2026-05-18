@@ -46,6 +46,8 @@ DEFAULT_MAX_DISPATCHES_PER_TICK = 4
 DEFAULT_ORPHANED_QUEUE_EVENT_GRACE_SECONDS = 300
 DEFAULT_MAX_CONCURRENT_WORKERS: int | None = None
 DEFAULT_WORKER_OS_DUPLICATE_GUARD = True
+DEFAULT_MAX_CONCURRENT_PER_QUOTA_GROUP: dict[str, int] = {}
+DEFAULT_MAX_ACTIVE_WORKERS_PER_TASK = 1
 
 
 def dispatch_reason_priority(reason: str | None) -> int | None:
@@ -81,4 +83,6 @@ def ready_dispatch_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("orphaned_queue_event_grace_seconds", DEFAULT_ORPHANED_QUEUE_EVENT_GRACE_SECONDS)
     settings.setdefault("max_concurrent_workers", DEFAULT_MAX_CONCURRENT_WORKERS)
     settings.setdefault("worker_os_duplicate_guard", DEFAULT_WORKER_OS_DUPLICATE_GUARD)
+    settings.setdefault("max_concurrent_per_quota_group", dict(DEFAULT_MAX_CONCURRENT_PER_QUOTA_GROUP))
+    settings.setdefault("max_active_workers_per_task", DEFAULT_MAX_ACTIVE_WORKERS_PER_TASK)
     return settings
