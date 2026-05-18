@@ -249,13 +249,62 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--no-watch", action="store_true", help="Process the event queue without running watch_events first.")
     parser.add_argument("--replay", action="store_true", help="Pass replay through to watch_events for the first scan.")
-    parser.add_argument("--poll-interval", type=float, default=None)
+    parser.add_argument(
+        "--poll-interval",
+        type=float,
+        default=None,
+        help=(
+            "Override supervisor poll interval in seconds. Values below "
+            "config.supervisor.poll_interval_seconds require --allow-fast-poll."
+        ),
+    )
+    parser.add_argument(
+        "--allow-fast-poll",
+        action="store_true",
+        help=(
+            "Authorize --poll-interval below the configured value. Reserved for "
+            "ad-hoc incident debugging; do not use for steady-state runs."
+        ),
+    )
     parser.add_argument("--quiet", action="store_true", help="Suppress terminal heartbeat output.")
     parser.add_argument("--verbose", action="store_true", help="Print active worker and queue details each tick.")
     parser.add_argument("--claim-agent", default=None, help="Let one idle agent claim and start one ready task.")
     parser.add_argument("--release-task", default=None, help="Release this agent's completed worker slot before claiming more work.")
     parser.add_argument("--clear-provider-pause", default=None, help="Manually clear one provider dispatch pause.")
     return parser.parse_args()
+
+
+CONFIG_DEFAULT_POLL_INTERVAL_SECONDS = 300.0
+
+
+class FastPollNotAllowedError(SystemExit):
+    """Raised when --poll-interval is below config without --allow-fast-poll."""
+
+
+def resolve_poll_interval(
+    config: dict[str, Any],
+    *,
+    cli_value: float | None,
+    allow_fast_poll: bool,
+) -> tuple[float, str]:
+    configured = float(
+        config.get("supervisor", {}).get(
+            "poll_interval_seconds", CONFIG_DEFAULT_POLL_INTERVAL_SECONDS
+        )
+    )
+    if cli_value is None:
+        return configured, "config"
+    if cli_value <= 0:
+        raise FastPollNotAllowedError(
+            f"--poll-interval must be positive (got {cli_value})."
+        )
+    if cli_value < configured and not allow_fast_poll:
+        raise FastPollNotAllowedError(
+            f"--poll-interval={cli_value}s is below config.supervisor.poll_interval_seconds={configured}s. "
+            "Pass --allow-fast-poll to authorize an ad-hoc fast cadence, or update config.json "
+            "if this is a steady-state change."
+        )
+    return cli_value, "cli"
 
 
 def console_log(message: str, *, quiet: bool = False) -> None:
@@ -7655,9 +7704,14 @@ def main() -> int:
     atexit.register(clear_supervisor_pid, config)
     write_supervisor_pid(config)
     bootstrap_supervisor_runtime_state(config, lifecycle="starting")
-    poll_interval = args.poll_interval or float(config.get("supervisor", {}).get("poll_interval_seconds", 300.0))
+    poll_interval, poll_source = resolve_poll_interval(
+        config,
+        cli_value=args.poll_interval,
+        allow_fast_poll=args.allow_fast_poll,
+    )
     console_log(
-        f"starting supervisor pid={os.getpid()} poll_interval={poll_interval:.1f}s config={args.config}",
+        f"starting supervisor pid={os.getpid()} poll_interval={poll_interval:.1f}s "
+        f"source={poll_source} config={args.config}",
         quiet=args.quiet,
     )
     if args.once:
