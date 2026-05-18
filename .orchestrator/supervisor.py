@@ -333,6 +333,35 @@ def heartbeat_lag_seconds(previous_heartbeat: str | None, current_heartbeat: str
     return max(0.0, (current_dt - previous_dt).total_seconds())
 
 
+def watchdog_safe_mode_active(state: dict[str, Any], now: datetime | None = None) -> bool:
+    watchdog = state.get("watchdog", {}) if isinstance(state.get("watchdog"), dict) else {}
+    safe_mode_until = parse_runtime_timestamp(str(watchdog.get("safe_mode_until") or ""))
+    if safe_mode_until is None:
+        return False
+    now_dt = now or datetime.now(timezone.utc)
+    return now_dt.astimezone(timezone.utc) < safe_mode_until.astimezone(timezone.utc)
+
+
+def record_watchdog_safe_mode_observed(config: dict[str, Any], state: dict[str, Any], now: str) -> bool:
+    watchdog = state.setdefault("watchdog", {})
+    safe_mode_until = str(watchdog.get("safe_mode_until") or "").strip()
+    if not safe_mode_until:
+        return False
+    if watchdog.get("last_safe_mode_observed_until") == safe_mode_until:
+        return False
+    watchdog["last_safe_mode_observed_until"] = safe_mode_until
+    write_activity_log(
+        config,
+        {
+            "type": "watchdog_safe_mode_dispatch_suppressed",
+            "message": f"Watchdog safe mode suppresses new supervisor dispatch until {safe_mode_until}.",
+            "safe_mode_until": safe_mode_until,
+            "reason": watchdog.get("safe_mode_reason"),
+        },
+    )
+    return True
+
+
 def format_runtime_timestamp_local(ts: str | None) -> str:
     dt = parse_runtime_timestamp(ts)
     if dt is None:
@@ -8249,7 +8278,10 @@ def run_once(
         planning_state = load_discussion_planning_state()
         changed = auto_materialize_discussion_planning(config, planning_state) or changed
         planning_state = load_discussion_planning_state()
-        if discussion_planning_is_active(planning_state):
+        dispatch_suppressed_by_watchdog = watchdog_safe_mode_active(state)
+        if dispatch_suppressed_by_watchdog:
+            changed = record_watchdog_safe_mode_observed(config, state, loop_started_at) or changed
+        elif discussion_planning_is_active(planning_state):
             changed = dispatch_discussion_planning(config, state, planning_state, provider_report=provider_report) or changed
         else:
             if chair_review_failure_loop_details(config, state):
@@ -8261,7 +8293,8 @@ def run_once(
                 changed = dispatch_ready_tasks(config, state, provider_report=provider_report) or changed
                 changed = dispatch_chair_review(config, state, planning_state, provider_report=provider_report) or changed
             changed = dispatch_underutilization_sidecars(config, state, provider_report=provider_report) or changed
-        changed = process_queue(config, state, provider_report) or changed
+        if not dispatch_suppressed_by_watchdog:
+            changed = process_queue(config, state, provider_report) or changed
         changed = poll_workers(config, state, provider_report=provider_report) or changed
         changed = reconcile_queue_records(config, state) or changed
         changed = prune_event_queue(config, state) or changed

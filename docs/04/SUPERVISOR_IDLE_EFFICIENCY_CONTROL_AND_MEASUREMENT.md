@@ -332,6 +332,14 @@ After implementation, compare:
 - Add disk/log growth preflight.
 - Enter degraded/resource-pressure mode instead of restart or dispatch loops when resources are tight.
 
+### P5: Supervisor Watchdog Fuse
+
+- Run `scripts/run-supervisor-watchdog.sh --restart` from an external timer or operator shell.
+- The watchdog must remain non-LLM and non-dispatching: it probes PID, heartbeat, state I/O, resource pressure, restart budget, and circuit breaker state.
+- If restart is allowed, the watchdog writes `watchdog.safe_mode_until` into `.orchestrator/state.json` before launching `.orchestrator/supervisor.py`.
+- While `watchdog.safe_mode_until` is active, supervisor may reconcile queue/worker/runtime state but must not dispatch execution, planning, chair-review, sidecar, or queued worker work.
+- Watchdog decisions are recorded in `.orchestrator/watchdog-state.json`, `.orchestrator/metrics/supervisor-watchdog.jsonl`, and `ai-activity-log.jsonl`.
+
 ## 10. Test Plan
 
 Required local tests:
@@ -347,6 +355,11 @@ Required local tests:
 9. No-op LLM budget exceeded -> `budget_fuse_open`.
 10. Disk critical threshold -> `resource_pressure`, no non-repair dispatch.
 11. Real work present while budget fuse is open for chair review -> execution dispatch still allowed.
+12. Watchdog sees healthy supervisor -> `observe_only`, no restart.
+13. Watchdog sees resource pressure -> suppress restart and open circuit.
+14. Watchdog sees dead/stale supervisor with budget available -> write safe mode and restart.
+15. Watchdog restart budget exhausted -> suppress restart and open circuit.
+16. Supervisor sees active watchdog safe mode -> skip all new dispatch and queue processing.
 
 Replay tests should use captured 2026-05-18 state summaries to prove the new gate would have emitted `no_op_idle` instead of launching repeated chair reviews after the backlog emptied.
 
