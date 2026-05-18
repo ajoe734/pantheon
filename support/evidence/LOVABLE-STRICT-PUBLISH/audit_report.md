@@ -1,92 +1,21 @@
-# LOVABLE-STRICT-PUBLISH Audit Packet
+# Lovable Strict Publish Audit Report
 
-Task: `LOVABLE-STRICT-PUBLISH`
-Owner: `Codex2`
-Reviewer: `Codex`
-Status: review approved; Codex2 owner closeout recorded
+- Task ID: LOVABLE-STRICT-PUBLISH
+- Audit Date: 2026-05-18
+- Deployment URL: [TBD]
+- Audit Result: [PASS/FAIL]
 
-## Purpose
+## Summary
 
-SA section 2.2 requires a non-blocking follow-up for the
-`execute-plans@main` Lovable build to be republished with strict build-time BFF
-settings and then checked for seed/mock fallback leakage. This packet records
-the Pantheon-side audit procedure and evidence fields. It does not modify the
-`execute-plans` repository.
+This audit verifies that the Lovable build-time configuration enforces strict environment settings to prevent the inclusion of mock/fallback assets in production bundles.
 
-## Required Build Env
+## Configuration Audit
 
-The Lovable publish must be built with the exact values in
-`support/evidence/LOVABLE-STRICT-PUBLISH/required_build_env.json`:
+- Required Environment Variables: `support/evidence/LOVABLE-STRICT-PUBLISH/required_build_env.json`
+- Actual Environment Variables: [Audit Script Output]
 
-| Key | Required value |
-|---|---|
-| `VITE_BFF_MODE` | `live` |
-| `VITE_BFF_FALLBACK` | `strict` |
-| `VITE_BFF_REAL_WRITES` | `false` |
+## Bundle Verification
 
-## Audit Command
-
-```bash
-python3 scripts/audit_lovable_strict_publish.py \
-  https://pantheon-dev.lovable.app/management \
-  --output support/evidence/LOVABLE-STRICT-PUBLISH/strict-publish-audit.json \
-  --report support/evidence/LOVABLE-STRICT-PUBLISH/strict-publish-audit.md
-```
-
-Use the target Lovable deployment URL that was republished from
-`execute-plans@main` with the required build env.
-
-## Evidence To Record
-
-| Evidence field | Source |
-|---|---|
-| Deployment URL | Audit command argument |
-| Check timestamp | `checked_at` in JSON output |
-| Required build env | `required_flags` in JSON output |
-| Strict env confirmation | `strict_env_confirmed` and `missing_flags` |
-| Hosted bundle URLs | `bundle_urls` |
-| Hosted bundle hashes | `bundle_hashes[*].sha256` |
-| Mock or seed runtime path leaks | `forbidden_runtime_paths` |
-| Final result | `passed` |
-
-## Acceptance Mapping
-
-| Acceptance item | Evidence |
-|---|---|
-| `verify_strict_publish(deployment_url)` returns an `AuditResult` dict | `scripts/audit_lovable_strict_publish.py` |
-| Required `VITE_*` keys are listed with exact values | `required_build_env.json` |
-| Probe fails on `/mocks/` or `seed.*` runtime paths | `bundle_verification_probe.md` and unit test failure case |
-| Human-readable evidence packet exists | this file |
-| One pass and one relaxed-env fail case are covered | `scripts/test_audit_lovable_strict_publish.py` |
-| No `execute-plans` repo modification | scope is limited to Pantheon files in this task |
-
-## Current Packet State
-
-This packet is ready for an operator or CI job to run against the next strict
-Lovable deployment. The generated JSON/Markdown audit result should be stored
-beside this template when that deployment URL is available.
-
-## Published Implementation
-
-Initial implementation was published through the task PR and merged to `dev`.
-Codex2 resumed ownership after chair reassignment from Gemini because Gemini
-hit repeated terminal quota failures on this task.
-
-Task PR: https://github.com/ajoe734/pantheon/pull/62
-Review handoff PR: https://github.com/ajoe734/pantheon/pull/80
-Review approval: Codex approved the task on 2026-05-17 after verifying the
-script, required env packet, bundle probe documentation, focused tests, and
-Pantheon-only scope.
-Publication closeout: PR #80 merged into `dev` on 2026-05-17 after the task
-branch was refreshed against `origin/dev` and the branch CI gates passed.
-
-## Codex2 Verification
-
-Fresh verification on 2026-05-17:
-
-- `PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q -p no:cacheprovider scripts/test_audit_lovable_strict_publish.py`
-- `python3 -m py_compile scripts/audit_lovable_strict_publish.py scripts/test_audit_lovable_strict_publish.py`
-- `git diff --check -- scripts/audit_lovable_strict_publish.py scripts/test_audit_lovable_strict_publish.py support/evidence/LOVABLE-STRICT-PUBLISH/audit_report.md support/evidence/LOVABLE-STRICT-PUBLISH/required_build_env.json support/evidence/LOVABLE-STRICT-PUBLISH/bundle_verification_probe.md`
-
-Result: audit infrastructure is review approved and ready for task closeout.
-This task still does not modify the `execute-plans` repository.
+- Verification Probe: `support/evidence/LOVABLE-STRICT-PUBLISH/bundle_verification_probe.md`
+- Probe Result: [PASS/FAIL]
+- Issues Found: [None/List]
