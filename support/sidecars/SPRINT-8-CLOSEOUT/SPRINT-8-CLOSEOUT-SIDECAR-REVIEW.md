@@ -179,3 +179,36 @@ Recommended reviewer disposition:
 3. If the newer dependency completion state should be reflected before parent
    finalization, route that as a parent closeout/delta decision for Claude and
    Codex rather than as a sidecar canonical change.
+
+---
+
+## 8. Owner Closeout Record
+
+Codex2 performed owner finalization after Claude approved the sidecar review.
+The reviewed deliverable remains support-only:
+
+- task-owned packet: this file
+- reviewer record: `support/reviews/SPRINT-8-CLOSEOUT-SIDECAR-REVIEW-review-claude.md`
+- PR: `#155`, open against `dev` with auto-merge enabled
+- branch state: task branch refreshed with `origin/dev` before closeout
+- canonical/runtime changes: none
+
+Focused closeout checks:
+
+```bash
+AI_NAME=Codex2 ./scripts/ai-status.sh show SPRINT-8-CLOSEOUT-SIDECAR-REVIEW
+AI_NAME=Codex2 ./scripts/ai-status.sh show SPRINT-8-CLOSEOUT
+gh pr view 155 --json number,state,isDraft,reviewDecision,autoMergeRequest,mergeStateStatus,url,headRefName,baseRefName
+gh pr checks 155
+git diff --name-status origin/dev...HEAD
+git diff --check origin/dev...HEAD -- support/sidecars/SPRINT-8-CLOSEOUT/SPRINT-8-CLOSEOUT-SIDECAR-REVIEW.md support/reviews/SPRINT-8-CLOSEOUT-SIDECAR-REVIEW-review-claude.md
+```
+
+Closeout observations:
+
+- sidecar live state is `review_approved`, owner `Codex2`, reviewer `Claude`
+- Claude review file is attached to the sidecar status record
+- visible PR checks were passing before this final closeout update
+- PR diff remains scoped to support sidecar/review material
+- parent `SPRINT-8-CLOSEOUT` live lifecycle is separate and must be finalized by
+  its owner/reviewer; this sidecar does not move the parent task
