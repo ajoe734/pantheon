@@ -3203,6 +3203,83 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
         dispatch_chair_review.assert_not_called()
         dispatch_underutilization_sidecars.assert_not_called()
 
+    def test_run_once_watchdog_safe_mode_suppresses_new_dispatch(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "supervisor": {},
+            "watcher": {},
+            "ready_dispatcher": {},
+            "providers": {},
+            "agents": {},
+        }
+        initial_state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "approvals": {},
+            "watchdog": {
+                "safe_mode_until": "2999-01-01T00:00:00Z",
+                "safe_mode_reason": "stale_heartbeat",
+            },
+            "supervisor": {
+                "pid": 61209,
+                "started_at": "2026-04-05T12:44:57Z",
+                "last_heartbeat_at": "2026-04-06T04:17:26Z",
+            },
+        }
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(supervisor, "write_supervisor_pid"))
+            stack.enter_context(mock.patch.object(supervisor, "load_runtime_state", return_value=dict(initial_state)))
+            stack.enter_context(mock.patch.object(supervisor, "continue_or_skip_empty"))
+            stack.enter_context(mock.patch.object(supervisor, "expire_provider_dispatch_pauses", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "prune_stale_approvals", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "load_provider_report", return_value={}))
+            stack.enter_context(mock.patch.object(supervisor, "sync_coordination_files", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "poll_workers", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "reconcile_queue_records", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "prune_event_queue", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "refresh_chair_review_state", return_value=False))
+            stack.enter_context(
+                mock.patch.object(
+                    supervisor,
+                    "load_discussion_planning_state",
+                    return_value={"status": "active", "planning_mode": "discussion_planning"},
+                )
+            )
+            stack.enter_context(mock.patch.object(supervisor, "auto_materialize_discussion_planning", return_value=False))
+            dispatch_discussion_planning = stack.enter_context(
+                mock.patch.object(supervisor, "dispatch_discussion_planning", return_value=True)
+            )
+            dispatch_ready_tasks = stack.enter_context(mock.patch.object(supervisor, "dispatch_ready_tasks", return_value=True))
+            dispatch_chair_review = stack.enter_context(mock.patch.object(supervisor, "dispatch_chair_review", return_value=True))
+            dispatch_underutilization_sidecars = stack.enter_context(
+                mock.patch.object(supervisor, "dispatch_underutilization_sidecars", return_value=True)
+            )
+            process_queue = stack.enter_context(mock.patch.object(supervisor, "process_queue", return_value=True))
+            stack.enter_context(mock.patch.object(supervisor, "sync_github_bus", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "trim_worker_history"))
+            stack.enter_context(mock.patch.object(supervisor, "trim_seen_events"))
+            stack.enter_context(mock.patch.object(supervisor, "prune_orphan_worktrees", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "refresh_dashboard_runtime_artifacts"))
+            stack.enter_context(mock.patch.object(supervisor, "log_runtime_summary"))
+            stack.enter_context(mock.patch.object(supervisor, "save_runtime_state"))
+            write_activity_log = stack.enter_context(mock.patch.object(supervisor, "write_activity_log"))
+            changed = supervisor.run_once(config, watch=False, replay=False)
+
+        self.assertTrue(changed)
+        dispatch_discussion_planning.assert_not_called()
+        dispatch_ready_tasks.assert_not_called()
+        dispatch_chair_review.assert_not_called()
+        dispatch_underutilization_sidecars.assert_not_called()
+        process_queue.assert_not_called()
+        write_activity_log.assert_called_once()
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "watchdog_safe_mode_dispatch_suppressed")
+
     def test_run_supervisor_cycle_logs_and_continues_after_error(self) -> None:
         config = {"supervisor": {}}
 
