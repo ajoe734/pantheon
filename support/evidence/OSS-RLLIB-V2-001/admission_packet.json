@@ -1,14 +1,14 @@
 {
-  "can_proceed": true,
+  "can_proceed": false,
   "candidate_artifact": {
     "algorithm": "PPO",
-    "artifact_id": "model_artifact:rllib-twse-4408b915af0e",
+    "artifact_id": "model_artifact:rllib-twse-a108cabe43a8",
     "artifact_state": "draft",
     "artifact_type": "model_artifact",
     "backend": "local_bandit_ppo_skeleton",
     "backend_kind": "dependency_light_fallback",
-    "checksum": "sha256:4db60cb0a7508e2039b0e8008e626d84f59ac33325e0656138087737a1c01ea4",
-    "created_at": "2026-05-17T12:00:00Z",
+    "checksum": "sha256:b5b8a8da681e90862d3953c455ae0667df35dcea758bc960f94a6eecea6311fe",
+    "created_at": "2026-05-18T00:00:00Z",
     "deployment_summary": {
       "current_stage": "none"
     },
@@ -1233,7 +1233,7 @@
         "dataset:mgmt-qlib-001-twse-ohlcv"
       ],
       "source_run_ids": [
-        "rllib-twse-4408b915af0e",
+        "rllib-twse-a108cabe43a8",
         "OSS-RLLIB-V2-001",
         "OSS-RLLIB-001"
       ],
@@ -1260,7 +1260,7 @@
       "fit_mode": "epsilon_greedy_action_value",
       "seed": 42
     },
-    "registry_id": "rllib-ppo-twse-trading-policy-rllib-twse-4408b915af0e",
+    "registry_id": "rllib-ppo-twse-trading-policy-rllib-twse-a108cabe43a8",
     "strategy_id": "twse-5-instrument-rl-policy",
     "strategy_spec_id": "rllib-twse-ppo-spec-v1",
     "trained_policy_ref": "local_bandit_policy:best_action=1:seed=42",
@@ -1295,12 +1295,12 @@
   },
   "experiment_run_summary": {
     "artifact_refs": [
-      "artifact://rllib/rllib-twse-ppo-spec-v1/rllib-twse-4408b915af0e/model_artifact",
-      "rllib-ppo-twse-trading-policy-rllib-twse-4408b915af0e@1.0.0"
+      "artifact://rllib/rllib-twse-ppo-spec-v1/rllib-twse-a108cabe43a8/model_artifact",
+      "rllib-ppo-twse-trading-policy-rllib-twse-a108cabe43a8@1.0.0"
     ],
     "backend_id": "rllib_ppo_twse",
     "dataset_version_id": "dataset:synthetic-twse-ohlcv-5instrument",
-    "run_id": "rllib-twse-4408b915af0e",
+    "run_id": "rllib-twse-a108cabe43a8",
     "status": "completed",
     "task_id": "OSS-RLLIB-V2-001"
   },
@@ -1321,7 +1321,7 @@
     },
     {
       "artifact_state": "draft",
-      "checksum": "sha256:4db60cb0a7508e2039b0e8008e626d84f59ac33325e0656138087737a1c01ea4",
+      "checksum": "sha256:b5b8a8da681e90862d3953c455ae0667df35dcea758bc960f94a6eecea6311fe",
       "gate": "model_artifact_projection",
       "source_ref": "metadata.model_artifact",
       "status": "passed",
@@ -1346,7 +1346,7 @@
       "status": "passed"
     }
   ],
-  "generated_at": "2026-05-17T12:00:00Z",
+  "generated_at": "2026-05-18T00:00:00Z",
   "generated_by": "Claude / OSS-RLLIB-V2-001",
   "lineage": {
     "parent_registry_ids": [
@@ -1357,37 +1357,39 @@
       "dataset:mgmt-qlib-001-twse-ohlcv"
     ],
     "source_run_ids": [
-      "rllib-twse-4408b915af0e",
+      "rllib-twse-a108cabe43a8",
       "OSS-RLLIB-V2-001",
       "OSS-RLLIB-001"
     ],
     "source_strategy_spec_id": "rllib-twse-ppo-spec-v1"
   },
-  "missing_evidence": [],
+  "missing_evidence": [
+    "upstream_rllib_ppo_backend_confirmed"
+  ],
   "model_artifact_ref": {
     "artifact_name": "model_artifact",
-    "artifact_ref": "rllib-ppo-twse-trading-policy-rllib-twse-4408b915af0e@1.0.0",
+    "artifact_ref": "rllib-ppo-twse-trading-policy-rllib-twse-a108cabe43a8@1.0.0",
     "artifact_state": "draft",
     "artifact_type": "model_artifact",
-    "checksum": "sha256:4db60cb0a7508e2039b0e8008e626d84f59ac33325e0656138087737a1c01ea4",
+    "checksum": "sha256:b5b8a8da681e90862d3953c455ae0667df35dcea758bc960f94a6eecea6311fe",
     "deployment_stage": "none",
-    "registry_id": "rllib-ppo-twse-trading-policy-rllib-twse-4408b915af0e",
+    "registry_id": "rllib-ppo-twse-trading-policy-rllib-twse-a108cabe43a8",
     "source_dataset_refs": [
       "dataset:synthetic-twse-ohlcv-5instrument",
       "dataset:mgmt-qlib-001-twse-ohlcv"
     ],
-    "source_run_id": "rllib-twse-4408b915af0e",
+    "source_run_id": "rllib-twse-a108cabe43a8",
     "source_strategy_spec_id": "rllib-twse-ppo-spec-v1",
     "storage_ref": {
       "backend": "local_file",
-      "path": "/tmp/pantheon/research/rllib/twse/rllib-twse-4408b915af0e.model_artifact.json"
+      "path": "/tmp/pantheon/research/rllib/twse/rllib-twse-a108cabe43a8.model_artifact.json"
     },
     "strategy_id": "twse-5-instrument-rl-policy",
     "version": "1.0.0"
   },
   "operator_approval_recorded": false,
   "operator_required": false,
-  "packet_id": "prp-oss-rllib-v2-001-rllib-ppo-twse-trading-policy-rllib-twse-4408b915af0e",
+  "packet_id": "prp-oss-rllib-v2-001-rllib-ppo-twse-trading-policy-rllib-twse-a108cabe43a8",
   "production_dataset": {
     "data_frequency": "daily",
     "dataset_id": "dataset:synthetic-twse-ohlcv-5instrument",
@@ -1451,7 +1453,7 @@
     "artifact_type": "model_artifact",
     "current_artifact_state": "draft",
     "deployment_stage": "none",
-    "registry_id": "rllib-ppo-twse-trading-policy-rllib-twse-4408b915af0e",
+    "registry_id": "rllib-ppo-twse-trading-policy-rllib-twse-a108cabe43a8",
     "registry_write_authority": "registry_service_only",
     "registry_write_performed": false,
     "request_type": "artifact_state_transition",
@@ -1462,6 +1464,7 @@
   },
   "required_evidence": [
     "oss_rllib_001_cartpole_ppo_baseline",
+    "upstream_rllib_ppo_backend_confirmed",
     "production_ppo_run_completed",
     "model_artifact_ref_registered",
     "trained_policy_ref_present",
@@ -1483,6 +1486,6 @@
   },
   "schema_version": "PromotionReadinessPacket.v1",
   "source_task_id": "OSS-RLLIB-V2-001",
-  "target_id": "rllib-ppo-twse-trading-policy-rllib-twse-4408b915af0e",
+  "target_id": "rllib-ppo-twse-trading-policy-rllib-twse-a108cabe43a8",
   "target_type": "artifact"
 }

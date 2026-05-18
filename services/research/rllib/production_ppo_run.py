@@ -379,15 +379,21 @@ def _build_experiment_run(
     else:
         last_reward = 0.0
 
+    improved = float(last_reward) > random_baseline
     metrics = {
         "random_baseline_mean_reward": round(random_baseline, 8),
         "trained_policy_mean_reward": round(float(last_reward), 8),
         "reward_improvement": round(float(last_reward) - random_baseline, 8),
-        "improved_vs_random_baseline": float(last_reward) > random_baseline,
+        "improved_vs_random_baseline": improved,
         "training_iterations": config.num_iters,
         "eval_episodes": config.eval_episodes,
         "cpu_only": True,
     }
+    if config.num_iters >= PRODUCTION_NUM_ITERS and not improved:
+        raise ProductionPPORunError(
+            f"Production run requires trained policy to improve vs random baseline; "
+            f"trained={round(float(last_reward), 6)}, baseline={round(random_baseline, 6)}"
+        )
     registry_id = f"{_REGISTRY_ID_PREFIX}-{run_id}"
     checksum_src: Dict[str, Any] = {
         "task_id": TASK_ID,

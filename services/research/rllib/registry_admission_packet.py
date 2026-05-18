@@ -50,6 +50,7 @@ PROMOTION_READINESS_SCHEMA_VERSION = "PromotionReadinessPacket.v1"
 
 REQUIRED_EVIDENCE = [
     "oss_rllib_001_cartpole_ppo_baseline",
+    "upstream_rllib_ppo_backend_confirmed",
     "production_ppo_run_completed",
     "model_artifact_ref_registered",
     "trained_policy_ref_present",
@@ -104,6 +105,8 @@ def build_admission_packet(
         model_artifact.get("registry_id"), "metadata.model_artifact.registry_id"
     )
 
+    backend_kind = model_artifact.get("backend_kind", "")
+
     provided_evidence: List[Dict[str, Any]] = [
         {
             "key": "oss_rllib_001_cartpole_ppo_baseline",
@@ -113,6 +116,21 @@ def build_admission_packet(
             "status": "passed",
             "description": "OSS-RLLIB-001 CartPole PPO skeleton established the baseline adapter contract.",
         },
+        *(
+            [{
+                "key": "upstream_rllib_ppo_backend_confirmed",
+                "source_task_id": source_task_id,
+                "path": "services/research/rllib/production_ppo_run.py",
+                "ref_type": "backend_verification",
+                "status": "passed",
+                "description": (
+                    "Ray/RLlib upstream PPO backend confirmed; "
+                    "dependency-light fallback was not used for this run."
+                ),
+            }]
+            if backend_kind == "upstream"
+            else []
+        ),
         {
             "key": "production_ppo_run_completed",
             "source_task_id": source_task_id,
@@ -344,19 +362,21 @@ def validate_admission_packet(packet: Mapping[str, Any]) -> List[str]:
     if packet.get("environment") != "paper":
         errors.append("environment must be paper for artifact candidate review")
 
-    # Evidence completeness
+    # Evidence completeness — missing_evidence may be non-empty (e.g. fallback backend).
+    # The field must be internally consistent with provided_evidence.
     provided_keys = {
         entry.get("key")
         for entry in _sequence(packet.get("provided_evidence"))
         if isinstance(entry, Mapping)
     }
-    missing_evidence = [
+    computed_missing = [
         k for k in packet.get("required_evidence", []) if k not in provided_keys
     ]
-    if missing_evidence:
-        errors.append("provided_evidence missing keys: " + ", ".join(missing_evidence))
-    if packet.get("missing_evidence") != []:
-        errors.append("missing_evidence must be empty list")
+    if packet.get("missing_evidence") != computed_missing:
+        errors.append(
+            "missing_evidence field is inconsistent with provided_evidence "
+            f"(expected {computed_missing})"
+        )
 
     # Registry request
     request = _mapping(packet.get("registry_request"))
@@ -417,8 +437,15 @@ def validate_admission_packet(packet: Mapping[str, Any]) -> List[str]:
     if failed_gates:
         errors.append("gate_results failed: " + ", ".join(failed_gates))
 
-    if packet.get("can_proceed") is not True:
-        errors.append("can_proceed must be true for complete candidate-review packet")
+    # can_proceed must be True iff no missing evidence AND no failed gates.
+    # can_proceed=False is valid when upstream evidence is absent (e.g. fallback backend).
+    has_missing = bool(packet.get("missing_evidence"))
+    expected_can_proceed = not has_missing and not failed_gates
+    if packet.get("can_proceed") != expected_can_proceed:
+        errors.append(
+            f"can_proceed must be {expected_can_proceed} "
+            f"(missing_evidence={has_missing}, failed_gates={bool(failed_gates)})"
+        )
 
     if errors:
         raise RegistryAdmissionPacketError(

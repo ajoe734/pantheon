@@ -237,15 +237,41 @@ class TestRegistryAdmissionPacket:
         packet = build_admission_packet(run)
         assert packet["schema_version"] == "PromotionReadinessPacket.v1"
 
-    def test_packet_can_proceed(self) -> None:
-        run = self._make_run()
-        packet = build_admission_packet(run)
-        assert packet["can_proceed"] is True, "Packet can_proceed must be True"
+    def test_packet_can_proceed_reflects_backend(self) -> None:
+        """can_proceed is True only when upstream Ray/RLlib backend was used.
 
-    def test_packet_missing_evidence_empty(self) -> None:
+        Fallback (dependency_light_fallback) does not satisfy the
+        upstream_rllib_ppo_backend_confirmed evidence requirement, so
+        can_proceed must be False to be fail-closed.
+        """
         run = self._make_run()
+        backend_kind = run.get("backend_kind", "")
         packet = build_admission_packet(run)
-        assert packet["missing_evidence"] == []
+        if backend_kind == "upstream":
+            assert packet["can_proceed"] is True, "Upstream backend must produce can_proceed=True"
+        else:
+            assert packet["can_proceed"] is False, (
+                f"Fallback backend ({backend_kind!r}) must produce can_proceed=False; "
+                f"got {packet['can_proceed']}"
+            )
+
+    def test_packet_missing_evidence_consistent(self) -> None:
+        """missing_evidence must be consistent with provided_evidence.
+
+        For fallback backend runs, upstream_rllib_ppo_backend_confirmed is
+        absent, so missing_evidence will contain that key.  For upstream
+        Ray/RLlib runs it will be empty.
+        """
+        run = self._make_run()
+        backend_kind = run.get("backend_kind", "")
+        packet = build_admission_packet(run)
+        provided_keys = {e["key"] for e in packet["provided_evidence"]}
+        expected_missing = [k for k in packet["required_evidence"] if k not in provided_keys]
+        assert packet["missing_evidence"] == expected_missing
+        if backend_kind == "upstream":
+            assert packet["missing_evidence"] == []
+        else:
+            assert "upstream_rllib_ppo_backend_confirmed" in packet["missing_evidence"]
 
     def test_packet_safety_assertions(self) -> None:
         run = self._make_run()
