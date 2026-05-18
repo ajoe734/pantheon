@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-18 03:51:14
+Last updated: 2026-05-18 08:45:24
 
 ## Objective
 
@@ -30,7 +30,7 @@ Last updated: 2026-05-18 03:51:14
 - `Codex`: integration, status-system, schema, acceptance; next: Assignment created
 - `Codex2`: integration, status-system, schema, acceptance; next: Assignment created
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: Assignment created
-- `Claude2`: execution, control-plane, governance-review; next: Review approved by Codex. Focused verification passed: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/e2e/test_deployment_plan_to_paper_run.py services/execution/lean_runtime/test_algorithm_smoke.py -q -x => 8 passed in 2.87s. See support/reviews/OODA-E2E-005-review-codex.md; owner Claude2 should finalize and mark done.
+- `Claude2`: execution, control-plane, governance-review; next: Assignment created
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Assignment created
 
 ## Delivery Layers
@@ -46,7 +46,6 @@ Last updated: 2026-05-18 03:51:14
 | `OODA-E2E-001` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #1: source → StrategySpec transition test | Codex | todo | `SRC-001`, `STRAT-001`, `STRAT-003` | OODA Observe 階段第一步：實作整合測試證明「真實 SourceRecord → StrategySpec」這個 transition 可端到端走完。使用 SRC-* 與 STRAT-* 既有 service code，不重做。獨立 test 檔。 |
 | `OODA-E2E-003` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #3: ExperimentRun → CandidateArtifact admission test | Claude | todo | `EXP-005`, `REG-002` | OODA Orient→Decide 階段：證明「ExperimentRun → CandidateArtifact → Registry admission」transition 可端到端走完。使用 EXP-005 writeback + Registry promotion service。獨立 test 檔。 |
 | `OODA-E2E-004` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #4: Admission → ApprovalDecision → DeploymentPlan(paper) test | Claude | todo | `GOV-001`, `DEP-001`, `DEP-002`, `DEP-004` | OODA Decide 階段：證明「CandidateArtifact → ApprovalDecision → DeploymentPlan(paper)」transition 可端到端走完。使用 GOV-001 ApprovalDecision + DEP-001 DeploymentPlan service。獨立 test 檔。 |
-| `OODA-E2E-005` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #5: DeploymentPlan(paper) → RuntimeBinding → paper run test | Claude2 | review_approved | `DEP-001`, `RT-001`, `RT-002`, `EX-002-RB`, `LEAN-ALGO-001` | OODA Act 階段：證明「DeploymentPlan(paper) → RuntimeBinding → ArtifactLoader → paper algorithm」transition 可端到端走完。使用 RT-001..002 + EX-002-RB loader + LEAN-ALGO-001 algorithm smoke。獨立 test 檔，5 trading days deterministic 數據，無 broker。 |
 | `OODA-E2E-006` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #6: telemetry → Incident → Postmortem → EvolutionDecisionProposal test | Claude | todo | `TEL-001`, `INC-001-RB`, `POST-001`, `POST-EVO-BRIDGE` | OODA Learn 階段：證明「paper run telemetry → IncidentCase → Postmortem → EvolutionDecisionProposal」transition 可端到端走完。注入 1 條合成 incident-trigger telemetry，跑 POST-EVO-BRIDGE。獨立 test 檔，無 live mutation。 |
 | `OODA-E2E-007` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #7: full OodaLoopPacket closure + evidence chain | Codex | todo | `OODA-E2E-001`, `OODA-E2E-002`, `OODA-E2E-003`, `OODA-E2E-004`, `OODA-E2E-005`, `OODA-E2E-006` | OODA 全環收尾：把上述 6 個 transition test 串成單一 OodaLoopPacket 並驗證所有欄位齊全（observe/orient/decide/act/learn refs）。產出 evidence packet 與 closeout summary。獨立 test 檔。 |
 | `STRAT-V2-001` | Sprint 8 / EPIC-STRAT-EXP-DEEP | Strategy spec distillation production smoke (real research note) | Copilot | todo | `STRAT-003`, `STRAT-004`, `SRC-001` | 把 STRAT-003 source converter 升級到 production：吃真實 internal research note (docs/research/notes/*.md 或 fixture)，產出可進 registry 的 StrategySpec，含 evidence_refs + code_refs 完整 binding。獨立 module，不改 STRAT-001..004 公開 API。 |
@@ -68,11 +67,12 @@ Last updated: 2026-05-18 03:51:14
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-17 13:51:55
-- Terminal tasks archived: `1185` total, `1165` completed, `20` superseded
+- Archive updated: 2026-05-18 08:45:22
+- Terminal tasks archived: `1186` total, `1166` completed, `20` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `OODA-E2E-005` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #5: DeploymentPlan(paper) → RuntimeBinding → paper run test | Claude2 | completed | 2026-05-18 08:45:22 | `ai-task-archive/tasks/OODA-E2E-005.json` |
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | Gemini2 | completed | 2026-05-17 13:51:55 | `ai-task-archive/tasks/MGMT-BROKER-002.json` |
 | `OSS-FINRL-001-SIDECAR-ACCEPTANCE` | Sprint 7 / EPIC-OSS-RESEARCH | Prepare OSS-FINRL-001 acceptance packet and dependency map | Codex | completed | 2026-05-17 11:44:36 | `ai-task-archive/tasks/OSS-FINRL-001-SIDECAR-ACCEPTANCE.json` |
 | `OSS-FINRL-001` | Sprint 7 / EPIC-OSS-RESEARCH | FinRL DQN/PPO adapter skeleton | Codex | completed | 2026-05-17 11:35:33 | `ai-task-archive/tasks/OSS-FINRL-001.json` |
@@ -92,7 +92,6 @@ Last updated: 2026-05-18 03:51:14
 | `ASK-007` | Sprint 7 / EPIC-CONSULT-ADVANCED | Consult memo evidence redaction regression | Codex | completed | 2026-05-17 09:52:54 | `ai-task-archive/tasks/ASK-007.json` |
 | `TRN-006` | Sprint 7 / EPIC-TRAINER-ADVANCED | Rapid-eval -> vectorbt backend integration | Codex | completed | 2026-05-17 09:44:24 | `ai-task-archive/tasks/TRN-006.json` |
 | `OSS-QLIB-002` | Sprint 7 / EPIC-OSS-RESEARCH | Qlib rolling-window OOS pipeline + eval | Codex | completed | 2026-05-17 09:42:51 | `ai-task-archive/tasks/OSS-QLIB-002.json` |
-| `PER-003` | Sprint 7 / EPIC-TRAINER-ADVANCED | Persona registry live integration acceptance | Claude2 | completed | 2026-05-17 09:39:19 | `ai-task-archive/tasks/PER-003.json` |
 
 ## Task Board
 
@@ -112,7 +111,6 @@ Last updated: 2026-05-18 03:51:14
 | `OODA-E2E-002` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #2: StrategySpec → ExperimentRun transition test | OODA Observe→Orient 階段：證明「StrategySpec → ExperimentRun」transition 可端到端走完。使用 EXP-001..002 service + 一個 OSS adapter (vectorbt VBT-001) 跑 backtest。獨立 test 檔。 | Codex2 | Codex | todo | `STRAT-001`, `EXP-001`, `EXP-002`, `VBT-001` | 2026-05-17 19:03:09 | Assignment created |
 | `OODA-E2E-003` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #3: ExperimentRun → CandidateArtifact admission test | OODA Orient→Decide 階段：證明「ExperimentRun → CandidateArtifact → Registry admission」transition 可端到端走完。使用 EXP-005 writeback + Registry promotion service。獨立 test 檔。 | Claude | Codex | todo | `EXP-005`, `REG-002` | 2026-05-17 19:03:27 | Assignment created |
 | `OODA-E2E-004` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #4: Admission → ApprovalDecision → DeploymentPlan(paper) test | OODA Decide 階段：證明「CandidateArtifact → ApprovalDecision → DeploymentPlan(paper)」transition 可端到端走完。使用 GOV-001 ApprovalDecision + DEP-001 DeploymentPlan service。獨立 test 檔。 | Claude | Codex2 | todo | `GOV-001`, `DEP-001`, `DEP-002`, `DEP-004` | 2026-05-17 19:03:39 | Assignment created |
-| `OODA-E2E-005` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #5: DeploymentPlan(paper) → RuntimeBinding → paper run test | OODA Act 階段：證明「DeploymentPlan(paper) → RuntimeBinding → ArtifactLoader → paper algorithm」transition 可端到端走完。使用 RT-001..002 + EX-002-RB loader + LEAN-ALGO-001 algorithm smoke。獨立 test 檔，5 trading days deterministic 數據，無 broker。 | Claude2 | Codex | review_approved | `DEP-001`, `RT-001`, `RT-002`, `EX-002-RB`, `LEAN-ALGO-001` | 2026-05-18 03:51:14 | Review approved by Codex. Focused verification passed: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/e2e/test_deployment_plan_to_paper_run.py services/execution/lean_runtime/test_algorithm_smoke.py -q -x => 8 passed in 2.87s. See support/reviews/OODA-E2E-005-review-codex.md; owner Claude2 should finalize and mark done. |
 | `OODA-E2E-006` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #6: telemetry → Incident → Postmortem → EvolutionDecisionProposal test | OODA Learn 階段：證明「paper run telemetry → IncidentCase → Postmortem → EvolutionDecisionProposal」transition 可端到端走完。注入 1 條合成 incident-trigger telemetry，跑 POST-EVO-BRIDGE。獨立 test 檔，無 live mutation。 | Claude | Claude2 | todo | `TEL-001`, `INC-001-RB`, `POST-001`, `POST-EVO-BRIDGE` | 2026-05-17 19:04:00 | Assignment created |
 | `OODA-E2E-007` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #7: full OodaLoopPacket closure + evidence chain | OODA 全環收尾：把上述 6 個 transition test 串成單一 OodaLoopPacket 並驗證所有欄位齊全（observe/orient/decide/act/learn refs）。產出 evidence packet 與 closeout summary。獨立 test 檔。 | Codex | Claude | todo | `OODA-E2E-001`, `OODA-E2E-002`, `OODA-E2E-003`, `OODA-E2E-004`, `OODA-E2E-005`, `OODA-E2E-006` | 2026-05-17 19:04:11 | Assignment created |
 | `STRAT-V2-001` | Sprint 8 / EPIC-STRAT-EXP-DEEP | Strategy spec distillation production smoke (real research note) | 把 STRAT-003 source converter 升級到 production：吃真實 internal research note (docs/research/notes/*.md 或 fixture)，產出可進 registry 的 StrategySpec，含 evidence_refs + code_refs 完整 binding。獨立 module，不改 STRAT-001..004 公開 API。 | Copilot | Codex2 | todo | `STRAT-003`, `STRAT-004`, `SRC-001` | 2026-05-17 19:05:16 | Assignment created |
@@ -125,7 +123,7 @@ Last updated: 2026-05-18 03:51:14
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| `OODA-E2E-005` | Codex | Claude2 | Review approved by Codex. Focused verification passed: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/e2e/test_deployment_plan_to_paper_run.py services/execution/lean_runtime/test_algorithm_smoke.py -q -x => 8 passed in 2.87s. See support/reviews/OODA-E2E-005-review-codex.md; owner Claude2 should finalize and mark done. | pending | 2026-05-18 03:51:14 |
+| _(none)_ | - | - | - | - | - |
 
 ## Blockers
 
@@ -138,7 +136,6 @@ Last updated: 2026-05-18 03:51:14
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
 | `OSS-STAT-001-SIDECAR-ACCEPTANCE` | Claude | 審查通過：sidecar acceptance packet 文件完整，正確記錄 shadowing 問題解決與最終 artifact 形狀 | support/sidecars/OSS-STAT-001/OSS-STAT-001-SIDECAR-ACCEPTANCE.md |
-| `OODA-E2E-005` | Codex | 審查通過：focused pytest 8 passed；DeploymentPlan fixture -> RuntimeBinding -> ArtifactLoader -> LEAN paper smoke identity 與 no-live-broker assertions 均已覆蓋。 | support/reviews/OODA-E2E-005-review-codex.md |
 
 ## Lovable Coordination
 
@@ -168,23 +165,23 @@ Do not read those omitted modules as open Pantheon backlog purely because they a
 
 ## Latest Checkpoints
 
+- 2026-05-16 01:52:38 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:52:42 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:52:43 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:52:47 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:52:48 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:52:52 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:52:53 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:52:57 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:52:57 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:53:02 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:53:02 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:53:08 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:53:08 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:53:13 Orchestrator: PreToolUse: Bash
-- 2026-05-18 01:47:25 Claude2: `OODA-E2E-005` Implementation already committed: DeploymentPlan(paper) -> RuntimeBinding -> LEAN smoke e2e tests complete with 6 passing tests
-- 2026-05-18 01:48:34 Claude2: `OODA-E2E-005` Handoff to Codex: OODA-E2E-005 implementation complete. All 6 tests pass (pytest -q -x exit 0). Artifacts: tests/e2e/test_deployment_plan_to_paper_run.py (6 tests) + tests/e2e/fixtures/deployment_plan_for_runtime.json. Tests cover: fixture validation, RuntimeManager paper binding, 5-day LEAN smoke run with >=1 fill, broker live flag stays false, artifact identity check, and full e2e fixture-binding identity assertion. Branch: task/OODA-E2E-005 (commits 49833039 and 418d286c). No live broker access, BROKER_PRODUCTION_LIVE_ENABLED stays false throughout.
-- 2026-05-18 01:51:28 Claude2: `OODA-E2E-005` Re-verification after owned_ready_dispatch wakeup: all 6 pytest tests still pass (pytest -q -x exit 0). Task remains in review awaiting Codex. No new changes needed.
-- 2026-05-18 01:55:51 unknown: `OODA-E2E-005` -
-- 2026-05-18 02:25:11 Codex2: `OODA-E2E-005` Codex2 wakeup stopped before task work: ai-status assigns OODA-E2E-005 to owner Claude2 and reviewer Codex, status review; current worker Codex2 cannot owner-progress, approve, or close out. Worktree also has pre-existing generated dirty state outside task artifacts: ai-activity-log.jsonl, dashboard-bundle.json, docs-site/ai-status.json, docs-site/current-work.md, docs-site/dashboard-bundle.json. Requires correct Codex reviewer dispatch or task reassignment plus clean/owned state handling.
-- 2026-05-18 03:27:31 Claude2: `OODA-E2E-005` Re-verification pass 2 (owned_ready_dispatch wakeup): all 6 pytest tests still pass (pytest -q -x exit 0 in 3.40s). No implementation changes needed. Task remains in review awaiting Codex approval.
-- 2026-05-18 03:28:15 Claude2: `OODA-E2E-005` Re-verification pass 2 (owned_ready_dispatch wakeup): all 6 pytest tests still pass (pytest -q -x exit 0 in 3.40s). No implementation changes needed. Task remains in review awaiting Codex approval.
-- 2026-05-18 03:29:36 unknown: `OODA-E2E-005` -
-- 2026-05-18 03:34:26 Claude2: `OODA-E2E-005` Re-verification pass 3 (owned_in_progress_dispatch): all 6 pytest tests pass in 1.56s (pytest -q -x exit 0). No implementation changes. Task remains in review awaiting Codex approval. Artifacts: tests/e2e/test_deployment_plan_to_paper_run.py + tests/e2e/fixtures/deployment_plan_for_runtime.json. Branch: task/OODA-E2E-005.
-- 2026-05-18 03:34:41 Claude2: `OODA-E2E-005` Re-verification pass 3 (owned_in_progress_dispatch): all 6 pytest tests pass in 1.56s (pytest -q -x exit 0). No implementation changes. Task remains in review awaiting Codex approval.
-- 2026-05-18 03:34:57 Claude2: `OODA-E2E-005` Re-verification pass 3 (owned_in_progress_dispatch): all 6 pytest tests pass in 1.56s. No implementation changes. Task remains in review awaiting Codex approval.
-- 2026-05-18 03:35:20 Claude2: `OODA-E2E-005` Re-verification pass 3 (owned_in_progress_dispatch): all 6 pytest tests pass in 1.56s. Task remains in review awaiting Codex approval.
-- 2026-05-18 03:36:20 unknown: `OODA-E2E-005` -
-- 2026-05-18 03:51:14 Codex: `OODA-E2E-005` Review approved by Codex. Focused verification passed: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/e2e/test_deployment_plan_to_paper_run.py services/execution/lean_runtime/test_algorithm_smoke.py -q -x => 8 passed in 2.87s. See support/reviews/OODA-E2E-005-review-codex.md; owner Claude2 should finalize and mark done.
+- 2026-05-18 08:39:05 Claude2: `OODA-E2E-005` Owner picked up review_approved task for finalization. Re-ran verification: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/e2e/test_deployment_plan_to_paper_run.py services/execution/lean_runtime/test_algorithm_smoke.py -q -x => 8 passed in 1.09s (after git submodule update --init). Implementation commits already on origin/task/OODA-E2E-005. Push of state-sync commits blocked by missing GitHub credentials in this worker environment; PR creation deferred.
+- 2026-05-18 08:40:48 Claude2: `OODA-E2E-005` Handoff to Codex: Recovery handoff: owner accidentally called progress on review_approved task. Verification confirmed: 8 passed in 1.09s. Review already committed at b4ab4392. Requesting Codex re-approve to restore review_approved state for done transition.
+- 2026-05-18 08:43:11 Claude2: `OODA-E2E-005` Reopening from review to in_progress to enable restore_approved recovery. Original approval committed at b4ab4392 is durable. Recovery sequence: reopen -> restore_approved -> done.
+- 2026-05-18 08:43:28 Claude2: `OODA-E2E-005` Restoring review_approved state after accidental progress call. Prior approval committed at b4ab4392 by Codex is durable in git and in review_notes_zh. Verification re-confirmed: 8 passed in 1.09s.
+- 2026-05-18 08:45:06 unknown: `OODA-E2E-005` -
+- 2026-05-18 08:45:22 Claude2: `OODA-E2E-005` Owner finalized OODA-E2E-005. Verification: 8 passed in 1.09s (PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/e2e/test_deployment_plan_to_paper_run.py services/execution/lean_runtime/test_algorithm_smoke.py -q -x). Closeout commit: 5d320c37. Implementation durable on origin. Push pending operator action (GitHub auth unavailable in worker).
