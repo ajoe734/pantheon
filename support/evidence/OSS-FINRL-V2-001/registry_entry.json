@@ -3,8 +3,8 @@
   "approver": null,
   "artifact_state": "draft",
   "artifact_type": "model_artifact",
-  "checksum": "sha256:f3b6918f9e9e2abf1869773e4d676c192e68ffc4c876c3c97f3d7fcd77e18ad0",
-  "created_at": "2026-05-18T00:29:50Z",
+  "checksum": "sha256:a6ad1b3872c98361e120aae2e43b0abc620be2147011cf2c744848f67fe5580e",
+  "created_at": "2026-05-18T00:41:02Z",
   "deployment_summary": {
     "current_stage": "none"
   },
@@ -30,7 +30,7 @@
       "twse-ohlcv-offline-sample-2024-001"
     ],
     "source_run_ids": [
-      "finrl-ppo-96584f4822b3"
+      "finrl-ppo-16fecc7e3bab"
     ],
     "source_strategy_spec_id": "strategy-spec:twse-ppo-offline-v1"
   },
@@ -53,7 +53,7 @@
     "observation_dim": 7,
     "training_backend": "finrl_ppo"
   },
-  "producer_run_id": "finrl-ppo-96584f4822b3",
+  "producer_run_id": "finrl-ppo-16fecc7e3bab",
   "registry_id": "finrl-policy-twse-ppo-strategy-001-1.0.0",
   "rollback_target": null,
   "storage_ref": {
