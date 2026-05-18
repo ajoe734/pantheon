@@ -1,0 +1,341 @@
+{
+  "task_id": "OODA-E2E-007",
+  "generated_at": "2026-05-18T03:10:00Z",
+  "packet_id": "ooda-e2e-007-full-packet",
+  "loop_type": "paper_strategy",
+  "status": "closed",
+  "transition_test_run": [
+    {
+      "task_id": "OODA-E2E-001",
+      "stage": "observe",
+      "test_file": "tests/e2e/test_source_to_strategy_spec.py",
+      "command": "python3 -m pytest -q -x tests/e2e/test_source_to_strategy_spec.py",
+      "returncode": 0,
+      "passed": true
+    },
+    {
+      "task_id": "OODA-E2E-002",
+      "stage": "orient",
+      "test_file": "tests/e2e/test_strategy_spec_to_experiment_run.py",
+      "command": "python3 -m pytest -q -x tests/e2e/test_strategy_spec_to_experiment_run.py",
+      "returncode": 0,
+      "passed": true
+    },
+    {
+      "task_id": "OODA-E2E-003",
+      "stage": "orient",
+      "test_file": "tests/e2e/test_experiment_run_to_admission.py",
+      "command": "python3 -m pytest -q -x tests/e2e/test_experiment_run_to_admission.py",
+      "returncode": 0,
+      "passed": true
+    },
+    {
+      "task_id": "OODA-E2E-004",
+      "stage": "decide",
+      "test_file": "tests/e2e/test_admission_to_deployment_plan.py",
+      "command": "python3 -m pytest -q -x tests/e2e/test_admission_to_deployment_plan.py",
+      "returncode": 0,
+      "passed": true
+    },
+    {
+      "task_id": "OODA-E2E-005",
+      "stage": "act",
+      "test_file": "tests/e2e/test_deployment_plan_to_paper_run.py",
+      "command": "python3 -m pytest -q -x tests/e2e/test_deployment_plan_to_paper_run.py",
+      "returncode": 0,
+      "passed": true
+    },
+    {
+      "task_id": "OODA-E2E-006",
+      "stage": "learn",
+      "test_file": "tests/e2e/test_paper_run_to_evolution_decision.py",
+      "command": "python3 -m pytest -q -x tests/e2e/test_paper_run_to_evolution_decision.py",
+      "returncode": 0,
+      "passed": true
+    }
+  ],
+  "sub_test_evidence": [
+    {
+      "task_id": "OODA-E2E-001",
+      "stage": "observe",
+      "test_file": "tests/e2e/test_source_to_strategy_spec.py",
+      "evidence_path": "support/evidence/OODA-E2E-001/closeout_note.md"
+    },
+    {
+      "task_id": "OODA-E2E-002",
+      "stage": "orient",
+      "test_file": "tests/e2e/test_strategy_spec_to_experiment_run.py",
+      "evidence_path": "support/evidence/OODA-E2E-002/closeout.md"
+    },
+    {
+      "task_id": "OODA-E2E-003",
+      "stage": "orient",
+      "test_file": "tests/e2e/test_experiment_run_to_admission.py",
+      "evidence_path": "support/evidence/OODA-E2E-003/closeout.md"
+    },
+    {
+      "task_id": "OODA-E2E-004",
+      "stage": "decide",
+      "test_file": "tests/e2e/test_admission_to_deployment_plan.py",
+      "evidence_path": "support/evidence/OODA-E2E-004/closeout.md"
+    },
+    {
+      "task_id": "OODA-E2E-005",
+      "stage": "act",
+      "test_file": "tests/e2e/test_deployment_plan_to_paper_run.py",
+      "evidence_path": "support/evidence/OODA-E2E-005/closeout_summary.md"
+    },
+    {
+      "task_id": "OODA-E2E-006",
+      "stage": "learn",
+      "test_file": "tests/e2e/test_paper_run_to_evolution_decision.py",
+      "evidence_path": "ai-task-archive/tasks/OODA-E2E-006.json"
+    }
+  ],
+  "stage_transitions": [
+    {
+      "from_status": "open",
+      "to_status": "observing",
+      "advanced": true,
+      "packet_id": "ooda-e2e-007-full-packet",
+      "event": "observe",
+      "transitioned_at": "2026-05-18T03:10:00Z"
+    },
+    {
+      "from_status": "observing",
+      "to_status": "oriented",
+      "advanced": true,
+      "packet_id": "ooda-e2e-007-full-packet",
+      "event": "orient",
+      "transitioned_at": "2026-05-18T03:10:00Z"
+    },
+    {
+      "from_status": "oriented",
+      "to_status": "decided",
+      "advanced": true,
+      "packet_id": "ooda-e2e-007-full-packet",
+      "event": "decide",
+      "transitioned_at": "2026-05-18T03:10:00Z"
+    },
+    {
+      "from_status": "decided",
+      "to_status": "acted",
+      "advanced": true,
+      "packet_id": "ooda-e2e-007-full-packet",
+      "event": "act",
+      "transitioned_at": "2026-05-18T03:10:00Z"
+    },
+    {
+      "from_status": "acted",
+      "to_status": "evolving",
+      "advanced": true,
+      "packet_id": "ooda-e2e-007-full-packet",
+      "event": "learn",
+      "transitioned_at": "2026-05-18T03:10:00Z"
+    },
+    {
+      "from_status": "evolving",
+      "to_status": "closed",
+      "advanced": true,
+      "packet_id": "ooda-e2e-007-full-packet",
+      "event": "close",
+      "transitioned_at": "2026-05-18T03:10:00Z"
+    }
+  ],
+  "artifact_ids": [
+    {
+      "stage": "observe",
+      "task_id": "OODA-E2E-001",
+      "artifact_id": "source-record:ooda-e2e-001-internal-note",
+      "description": "normalized SourceRecord"
+    },
+    {
+      "stage": "orient",
+      "task_id": "OODA-E2E-002",
+      "artifact_id": "strategy-spec:strat-ooda-e2e-002-sma-cross@1.0.0",
+      "description": "StrategySpec artifact"
+    },
+    {
+      "stage": "orient",
+      "task_id": "OODA-E2E-002",
+      "artifact_id": "etask-ooda-e2e-002-vectorbt",
+      "description": "ExperimentTask"
+    },
+    {
+      "stage": "orient",
+      "task_id": "OODA-E2E-003",
+      "artifact_id": "erun-ooda-e2e-003-001",
+      "description": "ExperimentRun"
+    },
+    {
+      "stage": "orient",
+      "task_id": "OODA-E2E-003",
+      "artifact_id": "artifact-ooda-e2e-003-model-001",
+      "description": "CandidateArtifact payload"
+    },
+    {
+      "stage": "decide",
+      "task_id": "OODA-E2E-004",
+      "artifact_id": "reg-ooda-e2e-004-alpha-1.0.0",
+      "description": "candidate registry entry"
+    },
+    {
+      "stage": "decide",
+      "task_id": "OODA-E2E-004",
+      "artifact_id": "appr-ooda-e2e-004-001",
+      "description": "ApprovalDecision"
+    },
+    {
+      "stage": "decide",
+      "task_id": "OODA-E2E-004",
+      "artifact_id": "dp-ooda-e2e-004-paper-001",
+      "description": "governance paper DeploymentPlan"
+    },
+    {
+      "stage": "decide",
+      "task_id": "OODA-E2E-005",
+      "artifact_id": "dp-ooda-e2e-005-paper-001",
+      "description": "runtime-ready paper DeploymentPlan"
+    },
+    {
+      "stage": "act",
+      "task_id": "OODA-E2E-005",
+      "artifact_id": "rtb-ooda-e2e-007-paper-closure",
+      "description": "RuntimeBinding closure ref"
+    },
+    {
+      "stage": "act",
+      "task_id": "OODA-E2E-005",
+      "artifact_id": "reg-lean-smoke-alpha-1.0.0",
+      "description": "paper execution artifact"
+    },
+    {
+      "stage": "learn",
+      "task_id": "OODA-E2E-006",
+      "artifact_id": "tel-ooda-e2e-006-001",
+      "description": "paper anomaly telemetry"
+    },
+    {
+      "stage": "learn",
+      "task_id": "OODA-E2E-006",
+      "artifact_id": "inc-ooda-e2e-006-001",
+      "description": "IncidentCase"
+    },
+    {
+      "stage": "learn",
+      "task_id": "OODA-E2E-006",
+      "artifact_id": "pm-ooda-e2e-006-001",
+      "description": "Postmortem"
+    },
+    {
+      "stage": "learn",
+      "task_id": "OODA-E2E-006",
+      "artifact_id": "evolution-proposal:pm-ooda-e2e-006-001:rollback",
+      "description": "EvolutionDecisionProposal"
+    }
+  ],
+  "ooda_packet": {
+    "packet_id": "ooda-e2e-007-full-packet",
+    "loop_type": "paper_strategy",
+    "status": "closed",
+    "environment": "paper",
+    "capital_pool_id": "pool-lean-smoke-001",
+    "strategy_id": "lean-smoke-alpha",
+    "persona_ids": [
+      "persona-ooda-e2e-004-sponsor"
+    ],
+    "observe": {
+      "source_refs": [
+        "source-record:ooda-e2e-001-internal-note",
+        "file://tests/e2e/fixtures/sample_internal_research_note.md"
+      ],
+      "telemetry_refs": [
+        "tel-ooda-e2e-006-001"
+      ],
+      "signal_refs": [],
+      "market_refs": [],
+      "incident_refs": [],
+      "human_feedback_refs": []
+    },
+    "orient": {
+      "regime_state_ref": null,
+      "universe_selection_ref": null,
+      "signal_inference_refs": [
+        "strategy-spec:strat-ooda-e2e-002-sma-cross@1.0.0",
+        "erun-ooda-e2e-003-001"
+      ],
+      "allocation_proposal_refs": [
+        "allocation-proposal://OODA-E2E-002/vectorbt-sma-cross-paper",
+        "candidate-artifact:artifact-ooda-e2e-003-model-001"
+      ],
+      "risk_adjudication_ref": null,
+      "persona_proposal_refs": [],
+      "evidence_bundle_refs": [
+        "support/evidence/OODA-E2E-002/closeout.md",
+        "support/evidence/OODA-E2E-003/closeout.md"
+      ]
+    },
+    "decide": {
+      "approval_decision_id": "appr-ooda-e2e-005-001",
+      "deployment_plan_id": "dp-ooda-e2e-005-paper-001",
+      "evolution_decision_id": null,
+      "sponsor_persona_id": null,
+      "decision_rationale_ref": "support/evidence/OODA-E2E-004/closeout.md",
+      "policy_decision_refs": [
+        "appr-ooda-e2e-004-001",
+        "dp-ooda-e2e-004-paper-001"
+      ]
+    },
+    "act": {
+      "runtime_binding_id": "rtb-ooda-e2e-007-paper-closure",
+      "command_receipt_refs": [
+        "runtime-manager://deploy/dp-ooda-e2e-005-paper-001",
+        "lean-smoke://OODA-E2E-005/five-day-paper-run"
+      ],
+      "broker_evidence_refs": [
+        "paper-broker://no-live-submission/OODA-E2E-005"
+      ],
+      "rollback_refs": [],
+      "safe_mode_refs": [],
+      "live_capital_side_effects": false
+    },
+    "learn": {
+      "telemetry_refs": [
+        "tel-ooda-e2e-006-001"
+      ],
+      "postmortem_refs": [
+        "pm-ooda-e2e-006-001"
+      ],
+      "evolution_followthrough_refs": [
+        "evolution-proposal:pm-ooda-e2e-006-001:rollback",
+        "postmortem-bridge://OODA-E2E-006/high-severity-rollback"
+      ],
+      "trainer_refs": [],
+      "retrain_refs": [],
+      "observation_window": {
+        "start_at": "2026-05-17T00:00:00Z",
+        "end_at": "2026-05-18T03:10:00Z",
+        "duration_hours": 27.1667
+      }
+    },
+    "audit_refs": [
+      "support/evidence/OODA-E2E-PROOF/closure_summary.md"
+    ],
+    "created_at": "2026-05-18T03:10:00Z",
+    "updated_at": "2026-05-18T03:10:00Z",
+    "closed_at": "2026-05-18T03:10:00Z"
+  },
+  "validation_errors": [],
+  "acceptance_assertions": {
+    "all_transition_tests_passed": true,
+    "packet_closed": true,
+    "packet_loop_type_paper_strategy": true,
+    "observe_source_refs_non_null": true,
+    "orient_allocation_proposal_refs_non_null": true,
+    "decide_deployment_plan_id_non_null": true,
+    "act_runtime_binding_id_non_null": true,
+    "learn_evolution_followthrough_refs_non_null": true,
+    "act_live_capital_side_effects_false": true,
+    "validation_errors_empty": true
+  }
+}
