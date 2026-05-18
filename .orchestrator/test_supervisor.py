@@ -3941,7 +3941,6 @@ class UnderutilizationSidecarDispatchTests(unittest.TestCase):
                 "threshold_ratio": 0.5,
                 "continuous_window_seconds": 900,
                 "cooldown_seconds": 900,
-                "max_new_sidecars_per_wave": 2,
                 "max_active_sidecars_per_agent": 1,
                 "productive_worker_statuses": ["running", "waiting_approval", "suspended_approval", "retry_backoff"],
             },
@@ -4053,6 +4052,128 @@ class UnderutilizationSidecarDispatchTests(unittest.TestCase):
         activity_types = [call.args[1]["type"] for call in write_activity_log.call_args_list]
         self.assertIn("sidecar_task_created", activity_types)
         self.assertIn("sidecar_wave_started", activity_types)
+
+    def test_creates_all_assignable_sidecars_when_wave_limit_is_unset(self) -> None:
+        self.config["underutilization_dispatch"]["require_recent_chair_signal"] = True
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "underutilization": {
+                "below_threshold_since": "2026-04-10T00:00:00Z",
+                "last_sidecar_wave_at": None,
+                "last_sidecar_wave_reason": None,
+            },
+            "chair_rotation": {
+                "sidecar_approved_until": "2026-04-10T01:00:00Z",
+                "sidecar_approval_max_sidecars": 1,
+            },
+        }
+        candidates = [
+            {
+                "sidecar_id": f"APP-00{index}-SIDECAR-REVIEW",
+                "parent_task_id": f"APP-00{index}",
+                "kind": "review_packet",
+                "phase": "Phase 5",
+                "title": f"Prepare APP-00{index} review packet",
+                "summary_zh": "支援 review packet。",
+                "reviewer": "Reviewer",
+                "depends_on": [],
+                "artifacts": [f"support/sidecars/APP-00{index}/packet.md"],
+                "mutates_canonical": False,
+                "priority": index,
+            }
+            for index in range(1, 4)
+        ]
+        status_before = {"tasks": []}
+        status_after = [
+            {
+                "tasks": [
+                    {
+                        "id": candidate["sidecar_id"],
+                        "status": "todo",
+                        "owner": "Codex",
+                        "reviewer": "Reviewer",
+                        "task_class": "sidecar",
+                        "helper_parent": candidate["parent_task_id"],
+                        "helper_kind": candidate["kind"],
+                    }
+                ]
+            }
+            for candidate in candidates
+        ]
+
+        with (
+            mock.patch.object(supervisor, "load_status", side_effect=[status_before, *status_after]),
+            mock.patch.object(supervisor, "eligible_idle_agents_for_sidecars", return_value=["Codex", "Gemini", "Claude"]),
+            mock.patch.object(supervisor, "build_catalog_sidecar_candidates", return_value=candidates),
+            mock.patch.object(supervisor, "create_sidecar_task", return_value=(True, "")) as create_sidecar_task,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-04-10T00:16:05Z"),
+        ):
+            changed = supervisor.dispatch_underutilization_sidecars(self.config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(create_sidecar_task.call_count, 3)
+        self.assertEqual(queue_delivery_event.call_count, 3)
+        self.assertIn("created 3 visible sidecar", state["underutilization"]["last_sidecar_wave_reason"])
+
+    def test_explicit_sidecar_wave_limit_still_caps_for_incident_response(self) -> None:
+        self.config["underutilization_dispatch"]["max_new_sidecars_per_wave"] = 1
+        self.config["underutilization_dispatch"]["require_recent_chair_signal"] = True
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "underutilization": {
+                "below_threshold_since": "2026-04-10T00:00:00Z",
+                "last_sidecar_wave_at": None,
+                "last_sidecar_wave_reason": None,
+            },
+            "chair_rotation": {"sidecar_approved_until": "2026-04-10T01:00:00Z"},
+        }
+        candidates = [
+            {
+                "sidecar_id": f"APP-00{index}-SIDECAR-REVIEW",
+                "parent_task_id": f"APP-00{index}",
+                "kind": "review_packet",
+                "phase": "Phase 5",
+                "title": f"Prepare APP-00{index} review packet",
+                "summary_zh": "支援 review packet。",
+                "reviewer": "Reviewer",
+                "depends_on": [],
+                "artifacts": [f"support/sidecars/APP-00{index}/packet.md"],
+                "mutates_canonical": False,
+                "priority": index,
+            }
+            for index in range(1, 3)
+        ]
+        status_after = {
+            "tasks": [
+                {
+                    "id": "APP-001-SIDECAR-REVIEW",
+                    "status": "todo",
+                    "owner": "Codex",
+                    "reviewer": "Reviewer",
+                    "task_class": "sidecar",
+                    "helper_parent": "APP-001",
+                    "helper_kind": "review_packet",
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", side_effect=[{"tasks": []}, status_after]),
+            mock.patch.object(supervisor, "eligible_idle_agents_for_sidecars", return_value=["Codex", "Gemini"]),
+            mock.patch.object(supervisor, "build_catalog_sidecar_candidates", return_value=candidates),
+            mock.patch.object(supervisor, "create_sidecar_task", return_value=(True, "")) as create_sidecar_task,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-04-10T00:16:05Z"),
+        ):
+            changed = supervisor.dispatch_underutilization_sidecars(self.config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(create_sidecar_task.call_count, 1)
 
     def test_chair_blocked_parent_prevents_new_sidecar_generation_only(self) -> None:
         self.config["underutilization_dispatch"]["require_recent_chair_signal"] = True
