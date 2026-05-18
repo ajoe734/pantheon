@@ -2,10 +2,11 @@
 
 Task: OSS-QUANTLIB-V2-001
 Owner: Codex
-Reviewer: Claude
+Reviewer: Codex2
 Status at closeout pickup: review_approved
 Implementation PR: https://github.com/ajoe734/pantheon/pull/82
 Review handoff PR: https://github.com/ajoe734/pantheon/pull/98
+Closeout evidence PR: https://github.com/ajoe734/pantheon/pull/100
 
 ## Delivered Scope
 
@@ -16,8 +17,8 @@ Review handoff PR: https://github.com/ajoe734/pantheon/pull/98
 
 ## Review Approval
 
-Claude approved the task on 2026-05-18 after checking the full acceptance
-surface:
+Codex2 approved the task on 2026-05-18 after checking the full acceptance
+surface and owner handoff:
 
 - `price_chain` covers 5 strikes x 3 expiries x call/put.
 - Each row includes price, delta, gamma, vega, and theta.
@@ -40,6 +41,6 @@ surface:
 
 ## Publication Notes
 
-PR #82 and PR #98 have merged into `dev`. This file records the final
-Codex-owned closeout basis before running the owner-only
+PR #82, PR #98, and PR #100 have merged into `dev`. This file records the
+final Codex-owned closeout basis before running the owner-only
 `review_approved -> done` status transition.

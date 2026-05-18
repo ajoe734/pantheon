@@ -1,8 +1,8 @@
 # OODA-E2E-001 Closeout Note
 
 Task: OODA E2E #1: source → StrategySpec transition test
-Owner: Codex2
-Reviewer: Codex
+Owner: Codex
+Reviewer: Codex2
 Closed: 2026-05-18
 
 ## Deliverable
@@ -12,9 +12,11 @@ Closed: 2026-05-18
 - `tests/e2e/fixtures/sample_internal_research_note.md` — internal research note fixture
 
 Primary implementation merged to dev via PR #65 (commit 7af75d23, merge commit c213c21a).
-This final owner closeout preserves the follow-up status-log rendering anchor
-commit on `task/OODA-E2E-001`; it does not change source-ingest, STRAT
-conversion, registry behavior, live broker behavior, or capital-binding behavior.
+The first closeout evidence refresh merged via PR #103 (commit 95367bae, merge commit
+a9b1a1da). This owner finalization refresh records the current Codex/Codex2
+owner-reviewer state from the generated task brief and does not change
+source-ingest, STRAT conversion, registry behavior, live broker behavior, or
+capital-binding behavior.
 
 ## Verification
 
@@ -24,10 +26,13 @@ python3 -m pytest -q -x tests/e2e/test_source_to_strategy_spec.py
 
 python3 -m pytest -q -x scripts/test_ai_status.py scripts/git/test_index_safety.py
 59 passed in 81.42s (0:01:21)
+
+python3 -m pytest -q -x tests/e2e/test_source_to_strategy_spec.py
+1 passed
 ```
 
-Run during owner closeout on 2026-05-18 from branch `task/OODA-E2E-001`
-after merging `origin/dev`.
+Focused verification was rerun during Codex owner finalization on 2026-05-18
+from branch `task/OODA-E2E-001` after fast-forwarding to `origin/dev`.
 
 ## Acceptance Criteria Checklist
 
@@ -41,9 +46,11 @@ after merging `origin/dev`.
 
 ## Review Notes
 
-Codex approved: "PR #65 的 OODA-E2E-001 artifacts 已覆蓋 SourceRecord ingest、
-STRAT conversion、lineage/content_hash、draft registry registration，符合 acceptance。"
+Codex2 approved: "OODA-E2E-001 單檔 e2e 測試覆蓋 SourceRecord ingest、STRAT-003
+conversion、lineage/content_hash、registry draft artifact_state；本次複跑
+`pytest -q -x tests/e2e/test_source_to_strategy_spec.py` 為 1 passed，未觸及
+live broker 或 live capital。"
 
 The prior closeout note recorded a temporary reviewer reassignment path. The
-durable task state now records Codex2 as owner and Codex as reviewer, and this
+current generated task brief records Codex as owner and Codex2 as reviewer; this
 note is the owner finalization record for that approved state.
