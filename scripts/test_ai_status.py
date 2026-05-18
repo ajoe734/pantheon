@@ -2388,5 +2388,77 @@ class PortableStateRenderingTests(unittest.TestCase):
         self.assertFalse(any(item["type"] == "worker_task_missing" for item in bundle["truth_mismatches"]))
 
 
+class ActivityLogRotationTests(unittest.TestCase):
+    def _make_log(self, *, size_per_line: int = 200, line_count: int = 100) -> Path:
+        tmp = tempfile.TemporaryDirectory(prefix="ai-status-rotate-")
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        log_path = root / "ai-activity-log.jsonl"
+        payload = ("x" * (size_per_line - 1)) + "\n"
+        log_path.write_text(payload * line_count, encoding="utf-8")
+        return log_path
+
+    def test_does_not_rotate_when_under_threshold(self) -> None:
+        log_path = self._make_log(line_count=10)
+        with (
+            mock.patch.object(ai_status, "LOG_FILE", log_path),
+            mock.patch.object(ai_status, "LOG_ROTATE_MAX_BYTES", 1_000_000),
+            mock.patch.object(ai_status, "LOG_ROTATE_KEEP_LINES", 5),
+        ):
+            archive = ai_status.maybe_rotate_activity_log()
+        self.assertIsNone(archive)
+        self.assertEqual(len(log_path.read_bytes().splitlines()), 10)
+        archive_dir = log_path.parent / "archive" / "logs"
+        self.assertFalse(archive_dir.exists())
+
+    def test_rotates_and_keeps_tail_when_over_threshold(self) -> None:
+        log_path = self._make_log(size_per_line=200, line_count=100)  # ~20 KB
+        with (
+            mock.patch.object(ai_status, "LOG_FILE", log_path),
+            mock.patch.object(ai_status, "LOG_ROTATE_MAX_BYTES", 5_000),
+            mock.patch.object(ai_status, "LOG_ROTATE_KEEP_LINES", 8),
+        ):
+            archive = ai_status.maybe_rotate_activity_log()
+        assert archive is not None
+        self.assertTrue(archive.exists())
+        self.assertTrue(str(archive).endswith(".gz"))
+        # The active log now holds just the tail
+        active_lines = log_path.read_bytes().splitlines()
+        self.assertEqual(len(active_lines), 8)
+        # The gzip archive holds the full original
+        import gzip as _gz
+        with _gz.open(archive, "rb") as fh:
+            archived = fh.read().splitlines()
+        self.assertEqual(len(archived), 100)
+
+    def test_rotation_preserves_inode_for_concurrent_appenders(self) -> None:
+        log_path = self._make_log(line_count=80)
+        before_inode = log_path.stat().st_ino
+        with (
+            mock.patch.object(ai_status, "LOG_FILE", log_path),
+            mock.patch.object(ai_status, "LOG_ROTATE_MAX_BYTES", 1),
+            mock.patch.object(ai_status, "LOG_ROTATE_KEEP_LINES", 3),
+        ):
+            ai_status.maybe_rotate_activity_log()
+        after_inode = log_path.stat().st_ino
+        self.assertEqual(before_inode, after_inode)
+
+    def test_append_log_triggers_rotation(self) -> None:
+        log_path = self._make_log(size_per_line=200, line_count=50)  # ~10 KB
+        with (
+            mock.patch.object(ai_status, "LOG_FILE", log_path),
+            mock.patch.object(ai_status, "LOG_ROTATE_MAX_BYTES", 5_000),
+            mock.patch.object(ai_status, "LOG_ROTATE_KEEP_LINES", 4),
+        ):
+            ai_status.append_log({"ts": "2026-05-18T00:00:00Z", "msg": "new entry"})
+        active_lines = log_path.read_text(encoding="utf-8").splitlines()
+        # 4 kept tail lines + 1 new = 5
+        self.assertEqual(len(active_lines), 5)
+        self.assertIn("new entry", active_lines[-1])
+        archive_dir = log_path.parent / "archive" / "logs"
+        archives = list(archive_dir.glob("*.gz"))
+        self.assertEqual(len(archives), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
