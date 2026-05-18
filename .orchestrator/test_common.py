@@ -80,6 +80,12 @@ class FailureSummaryTests(unittest.TestCase):
         self.assertEqual(result["kind"], "quota")
         self.assertEqual(result["summary"], "Credit balance is too low")
 
+    def test_summarize_failure_reason_treats_github_cli_auth_as_tool_auth(self) -> None:
+        result = common.summarize_failure_reason("GitHub CLI is not authenticated. Run gh auth login.", "Claude2")
+
+        self.assertEqual(result["kind"], "tool_auth")
+        self.assertEqual(result["summary"], "GitHub CLI auth unavailable")
+
     def test_summarize_failure_reason_treats_codex_usage_limit_as_quota(self) -> None:
         result = common.summarize_failure_reason(
             "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 7:00 PM.",
@@ -88,6 +94,26 @@ class FailureSummaryTests(unittest.TestCase):
 
         self.assertEqual(result["kind"], "quota")
         self.assertEqual(result["summary"], "Codex usage limit reached")
+
+
+class GithubCliEnvTests(unittest.TestCase):
+    def test_preserve_github_cli_auth_env_keeps_source_config_when_home_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            gh_config = root / ".config" / "gh"
+            gh_config.mkdir(parents=True)
+            env = {"HOME": str(root / ".claude2")}
+
+            common.preserve_github_cli_auth_env(env, {"HOME": str(root)})
+
+        self.assertEqual(env["GH_CONFIG_DIR"], str(gh_config))
+
+    def test_preserve_github_cli_auth_env_respects_explicit_config_dir(self) -> None:
+        env = {"GH_CONFIG_DIR": "~/custom-gh"}
+
+        common.preserve_github_cli_auth_env(env, {"HOME": "/tmp/ignored"})
+
+        self.assertEqual(env["GH_CONFIG_DIR"], str(Path("~/custom-gh").expanduser()))
 
 
 class ClaudeAuthTests(unittest.TestCase):
