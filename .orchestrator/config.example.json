@@ -163,7 +163,7 @@
     }
   },
   "underutilization_dispatch": {
-    "enabled": true,
+    "enabled": false,
     "threshold_ratio": 0.5,
     "continuous_window_seconds": 900,
     "cooldown_seconds": 900,
@@ -568,9 +568,10 @@
       ]
     },
     "max_tasks_per_agent": 1,
-    "max_dispatches_per_tick": 4,
+    "max_dispatches_per_tick": 2,
     "max_active_workers_per_task": 1,
-    "max_concurrent_per_quota_group": {}
+    "max_concurrent_per_quota_group": {},
+    "max_concurrent_workers": 2
   },
   "branch_workflow": {
     "enabled": true,

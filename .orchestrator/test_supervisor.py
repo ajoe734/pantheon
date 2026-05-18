@@ -4433,6 +4433,25 @@ class ChairReviewDispatchTests(unittest.TestCase):
 
         self.assertFalse(changed)
 
+    def test_dispatch_chair_review_respects_global_worker_cap(self) -> None:
+        self.config["ready_dispatcher"]["max_concurrent_workers"] = 2
+        state = {"queue": {"events": {}}, "workers": {}, "chair_rotation": {"current_index": 0}}
+
+        with (
+            mock.patch.object(supervisor, "active_worker_indexes", return_value=(set(), set())),
+            mock.patch.object(
+                supervisor,
+                "outstanding_delivery_indexes",
+                return_value=({"codex", "codex2"}, set(), set()),
+            ),
+            mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": []}),
+        ):
+            changed = supervisor.dispatch_chair_review(self.config, state, planning_state=None)
+
+        self.assertFalse(changed)
+        self.assertEqual(supervisor.load_event_queue(self.config), [])
+
     def test_dispatch_chair_review_falls_through_busy_candidate(self) -> None:
         state = {
             "queue": {"events": {}},
