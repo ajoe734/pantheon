@@ -8,7 +8,7 @@
 **Prepared by:** `Codex2`
 **Reviewer:** `Claude`
 **Date:** `2026-05-18`
-**Status:** `ready for reviewer handoff`
+**Status:** `ready for reviewer handoff; refreshed after parent approval evidence`
 
 > Scope constraint: support artifact only. This packet does not modify L1
 > canonical truth, core contract truth, runtime implementation, registry
@@ -39,13 +39,16 @@ artifacts were used as the task-scoped context instead.
 
 The active task board did not contain an `OODA-E2E-007-SIDECAR-REVIEW` task
 entry at pickup, and the parent `OODA-E2E-007` entry still showed `todo`.
-Repo history, however, already contains the parent merge:
+Repo history, however, already contains the parent implementation merge and
+the follow-up parent reviewer evidence merge:
 
 | Ref | Evidence |
 |---|---|
 | Parent merge commit | `a4e323bff0fc4f964905d39405f3d27989b99d1e` |
 | Merge subject | `Merge pull request #114 from ajoe734/task/OODA-E2E-007` |
 | Parent implementation commit | `284071db OODA-E2E-007: close full OODA packet proof` |
+| Parent review evidence merge | `31813ceb Merge pull request #118 from ajoe734/task/OODA-E2E-007` |
+| Parent review evidence file | `support/evidence/OODA-E2E-007-review/review_claude.md` |
 
 This sidecar does not correct the parent lifecycle state. It records the
 review surface only.
@@ -70,6 +73,9 @@ The parent `ai-status.json` entry defines the target as:
   - pass `pytest -q -x`
 
 The repo-current parent artifacts are present on the current branch.
+Claude's parent approval evidence is also present at
+`support/evidence/OODA-E2E-007-review/review_claude.md`. This sidecar composes
+with that approval evidence; it does not replace it.
 
 ## 4. Evidence Chain
 
@@ -94,6 +100,19 @@ The packet links these six transition-test surfaces:
 | `OODA-E2E-004` | decide | `tests/e2e/test_admission_to_deployment_plan.py` | `support/evidence/OODA-E2E-004/closeout.md` |
 | `OODA-E2E-005` | act | `tests/e2e/test_deployment_plan_to_paper_run.py` | `support/evidence/OODA-E2E-005/closeout_summary.md` |
 | `OODA-E2E-006` | learn | `tests/e2e/test_paper_run_to_evolution_decision.py` | `ai-task-archive/tasks/OODA-E2E-006.json` |
+
+Claude's parent review evidence independently records `APPROVED` for the
+same parent artifacts and acceptance targets. The high-signal parent review
+points are:
+
+- all six transition tests are invoked and checked for exit code 0
+- `build_full_packet` constructs all five OODA stage bundles
+- all required refs are populated
+- `validation_errors == []`
+- `live_capital_side_effects=False` is enforced by both the packet field and
+  an explicit assertion
+- full parent scope remains three files: the closure test plus the two proof
+  artifacts
 
 The stage refs required by the parent acceptance are populated:
 
@@ -160,8 +179,9 @@ current repo state.
 Caveats to keep visible:
 
 1. The active L0 task board was stale at pickup: the sidecar task was missing,
-   and the parent still showed `todo` despite the parent PR #114 merge being in
-   the current branch history. This packet does not edit that lifecycle state.
+   and the parent still showed `todo` despite parent PR #114 and reviewer
+   evidence PR #118 being in the current branch history. This packet does not
+   edit that lifecycle state.
 2. Fresh worktrees must initialize `lean/` before rerunning the full packet
    closure test. Without the submodule, the act-stage smoke path cannot import
    `pantheon_algo`.
@@ -177,13 +197,16 @@ Caveats to keep visible:
 
 Reviewer: `Claude`
 
-Suggested review path:
+Suggested sidecar review path:
 
 1. Read this sidecar packet.
-2. Confirm the parent artifacts listed in section 3 are present.
-3. Re-run the verification command in section 5 after `lean/` is initialized.
-4. Confirm the acceptance table in section 6 still matches the evidence.
-5. If the sidecar task has been materialized in L0 state before review,
+2. Confirm it accurately references the parent approval evidence at
+   `support/evidence/OODA-E2E-007-review/review_claude.md`.
+3. Confirm the parent artifacts listed in section 3 are present.
+4. Re-run the verification command in section 5 after `lean/` is initialized,
+   if the reviewer wants fresh local proof.
+5. Confirm the acceptance table in section 6 still matches the evidence.
+6. If the sidecar task has been materialized in L0 state before review,
    approve it with `REVIEW_FILE` pointing to this packet.
 
 Example approval command, only after the L0 task exists:
