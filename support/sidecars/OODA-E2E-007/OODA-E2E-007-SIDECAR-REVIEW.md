@@ -8,7 +8,7 @@
 **Prepared by:** `Codex2`
 **Reviewer:** `Codex`
 **Date:** `2026-05-18`
-**Status:** `ready for Codex reviewer handoff; refreshed after parent approval evidence`
+**Status:** `review_approved; owner closeout finalization prepared`
 
 > Scope constraint: support artifact only. This packet does not modify L1
 > canonical truth, core contract truth, runtime implementation, registry
@@ -196,30 +196,17 @@ Caveats to keep visible:
    access, live capital mutation, production credentials, or a live-runtime
    side effect.
 
-## 8. Reviewer Handoff
+## 8. Reviewer Approval
 
 Reviewer: `Codex`
 
-Suggested sidecar review path:
+The reviewer approval is recorded in active task status with
+`review_file=support/sidecars/OODA-E2E-007/OODA-E2E-007-SIDECAR-REVIEW.md`.
+Reviewer notes:
 
-1. Read this sidecar packet.
-2. Confirm it accurately references the parent approval evidence at
-   `support/evidence/OODA-E2E-007-review/review_claude.md`.
-3. Confirm the parent artifacts listed in section 3 are present.
-4. Re-run the verification command in section 5 after `lean/` is initialized,
-   if the reviewer wants fresh local proof.
-5. Confirm the acceptance table in section 6 still matches the evidence.
-6. Approve the sidecar task with `REVIEW_FILE` pointing to this packet.
-
-Example approval command:
-
-```bash
-AI_NAME=Codex \
-REVIEW_FILE=support/sidecars/OODA-E2E-007/OODA-E2E-007-SIDECAR-REVIEW.md \
-REVIEW_NOTES_ZH="審查通過：sidecar review packet confirms OODA-E2E-007 full packet closure evidence, focused pytest passes after lean submodule init, and no canonical/runtime changes were made." \
-python3 scripts/ai_status.py approve OODA-E2E-007-SIDECAR-REVIEW \
-  "Review packet approved: OODA-E2E-007 evidence chain is complete and support-only sidecar scope is clean."
-```
+> 審查通過：sidecar review packet accurately summarizes OODA-E2E-007 parent
+> approval evidence, branch diff is support-only, and focused pytest passes
+> after lean submodule init.
 
 If review requires changes, reopen only this sidecar packet and describe the
 specific packet correction needed. Do not ask this sidecar to modify parent
@@ -235,3 +222,25 @@ This packet intentionally does not:
 - modify runtime, registry, governance, deployment, or broker behavior
 - move `OODA-E2E-007` through lifecycle states
 - claim production/live-capital readiness
+
+## 10. Owner Finalization Record
+
+Closeout trigger: `owned_finalize_dispatch` after `review_approved`.
+
+The owner finalization keeps the task scoped to this support packet. The task
+branch was refreshed from `origin/dev` before closeout so PR #119 can compose
+with current `dev`; the PR remains `task/OODA-E2E-007-SIDECAR-REVIEW` into
+`dev`.
+
+Final closeout verification:
+
+```bash
+AI_NAME=Codex2 python3 scripts/ai_status.py show OODA-E2E-007-SIDECAR-REVIEW
+PYTHONDONTWRITEBYTECODE=1 PANTHEON_VECTORBT_BACKEND=stub \
+  python3 -m pytest -q -x tests/e2e/test_full_ooda_packet_closure.py
+git diff --check -- support/sidecars/OODA-E2E-007/OODA-E2E-007-SIDECAR-REVIEW.md
+```
+
+Results: active task status was `review_approved` with reviewer `Codex`; the
+focused parent closure test passed (`1 passed in 9.17s`); and the packet-only
+diff check passed.
