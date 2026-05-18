@@ -37,3 +37,14 @@ pytest -q -x tests/e2e/test_admission_to_deployment_plan.py
 pytest -q -x tests/e2e/test_experiment_run_to_admission.py tests/e2e/test_admission_to_deployment_plan.py
 7 passed in 3.40s
 ```
+
+## Owner Finalization (Claude, 2026-05-18)
+
+Final re-verification by task owner before marking done:
+
+```text
+pytest -q -x tests/e2e/test_admission_to_deployment_plan.py
+3 passed in 0.39s
+```
+
+All 3 tests pass. PR #90 confirmed merged into dev. Task finalized.
