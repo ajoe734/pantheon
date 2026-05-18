@@ -57,6 +57,12 @@ def default_state() -> dict[str, Any]:
             "dispatch_pauses": {},
             "task_failure_streaks": {},
         },
+        "worker_runtime_metrics": {
+            "version": 1,
+            "updated_at": None,
+            "totals": {},
+            "last_measurements": {},
+        },
         "coordination": {
             "last_scan_at": None,
             "files": {},
@@ -121,6 +127,11 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state.setdefault("provider_guardrails", {})
     state["provider_guardrails"].setdefault("dispatch_pauses", {})
     state["provider_guardrails"].setdefault("task_failure_streaks", {})
+    state.setdefault("worker_runtime_metrics", {})
+    state["worker_runtime_metrics"].setdefault("version", 1)
+    state["worker_runtime_metrics"].setdefault("updated_at", None)
+    state["worker_runtime_metrics"].setdefault("totals", {})
+    state["worker_runtime_metrics"].setdefault("last_measurements", {})
     state.setdefault("coordination", {})
     state["coordination"].setdefault("last_scan_at", None)
     state["coordination"].setdefault("files", {})

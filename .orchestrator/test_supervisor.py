@@ -1330,6 +1330,58 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         write_activity_log.assert_called_once()
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "wake_skipped")
 
+    def test_process_queue_records_capacity_wait_metrics(self) -> None:
+        current_task = {
+            "id": "BUS-VAL-CAP",
+            "status": "in_progress",
+            "owner": "Codex",
+            "reviewer": "Gemini",
+            "depends_on": [],
+            "last_update": "2026-04-13T14:20:00Z",
+        }
+        queue_payload = {
+            "event_id": "evt-capacity-wait",
+            "task_id": "BUS-VAL-CAP",
+            "target_agent": "codex",
+            "target_display_name": "Codex",
+            "provider": "codex",
+            "reason": "owned_in_progress_dispatch",
+            "message": "wake",
+        }
+        state = {"queue": {"events": {}}, "workers": {}}
+        request = supervisor.DeliveryRequest(
+            agent_id="codex",
+            provider="codex",
+            delivery_mode="codex",
+            message="wake",
+            task_id="BUS-VAL-CAP",
+            reason="owned_in_progress_dispatch",
+        )
+
+        with (
+            mock.patch.object(supervisor, "load_event_queue", return_value=[queue_payload]),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [current_task]}),
+            mock.patch.object(supervisor, "build_request", return_value=request),
+            mock.patch.object(
+                supervisor,
+                "agent_auto_dispatch_block_reason",
+                return_value="quota group codex1 already has 1/1 active worker(s)",
+            ),
+            mock.patch.object(supervisor, "start_worker_for_request", side_effect=AssertionError("capacity wait should not start")),
+        ):
+            changed = supervisor.process_queue(self.config, state, self.provider_report)
+
+        self.assertTrue(changed)
+        record = state["queue"]["events"]["evt-capacity-wait"]
+        self.assertEqual(record["status"], "pending")
+        self.assertEqual(record["capacity_wait_count"], 1)
+        metrics = state["worker_runtime_metrics"]
+        self.assertEqual(metrics["totals"]["capacity_pending_queue_events"], 1)
+        self.assertEqual(
+            metrics["last_measurements"]["dispatch_capacity_wait"]["details"]["queue_event_id"],
+            "evt-capacity-wait",
+        )
+
     def test_retryable_capacity_start_failure_schedules_queue_retry(self) -> None:
         current_task = {
             "id": "BUS-VAL-006",
@@ -6253,6 +6305,12 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
                 "started queue record had no active worker during supervisor boot reconciliation",
             )
             self.assertNotIn("lease_owner", record)
+            metrics = state["worker_runtime_metrics"]
+            self.assertEqual(metrics["totals"]["started_queue_records_requeued"], 1)
+            self.assertEqual(
+                metrics["last_measurements"]["boot_reconciliation"]["counts"]["started_queue_records_requeued"],
+                1,
+            )
 
     def test_reconcile_runtime_fails_running_worker_when_pid_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -6305,7 +6363,14 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
             self.assertEqual(worker["status"], "failed")
             self.assertEqual(state["queue"]["events"]["evt-worker"]["status"], "failed")
             self.assertIn("process missing", worker["last_error"])
-            write_activity_log.assert_called_once()
+            activity_types = [call.args[1]["type"] for call in write_activity_log.call_args_list]
+            self.assertEqual(activity_types, ["worker_failed", "worker_runtime_metrics"])
+            metrics = state["worker_runtime_metrics"]
+            self.assertEqual(metrics["totals"]["missing_process_workers_failed"], 1)
+            self.assertEqual(
+                metrics["last_measurements"]["boot_reconciliation"]["counts"]["missing_process_workers_failed"],
+                1,
+            )
 
     def test_quota_group_cap_blocks_second_slot(self) -> None:
         config = {
