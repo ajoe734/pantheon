@@ -20,8 +20,8 @@ Closeout date: 2026-05-18
 - Implementation commit: `7a683986` (`OODA-E2E-003: add ExperimentRun to CandidateArtifact admission E2E test`).
 - PR: <https://github.com/ajoe734/pantheon/pull/78>.
 - PR #78 merged into `dev` on 2026-05-17 with required GitHub checks passing.
-- Closeout PR: <https://github.com/ajoe734/pantheon/pull/107>.
-- The closeout branch was refreshed with current `origin/dev` after PR #107 initially showed `BEHIND`.
+- Closeout PR #107 carried the initial closeout evidence and merged on 2026-05-18.
+- A follow-up closeout commit records the reviewer evidence referenced by the central task status.
 
 ## Reviewer Approval
 
