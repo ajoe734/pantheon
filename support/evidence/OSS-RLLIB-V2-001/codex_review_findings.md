@@ -3,7 +3,7 @@
 Reviewer: Codex
 Owner: Claude
 Date: 2026-05-18
-Status: Changes requested
+Status: Approved after follow-up fixes
 
 ## Verification Performed
 
@@ -20,6 +20,30 @@ Results:
 - `services/research/rllib/test_production_ppo_run.py`: 21 passed in 1.71s.
 - `scripts/test_ai_status.py` + RLlib focused tests: 66 passed in 45.51s.
 - Status tool reports task in `review`, owner `Claude`, reviewer `Codex`.
+
+Follow-up commands after owner fix commit `529fa6e4`:
+
+```bash
+python3 -m pytest services/research/rllib/test_production_ppo_run.py -q
+python3 -m pytest scripts/test_ai_status.py services/research/rllib/test_production_ppo_run.py -q
+python3 services/research/rllib/registry_admission_packet.py --output /tmp/oss-rllib-v2-review-admission.json --created-at 2026-05-18T00:00:00Z
+jq '{can_proceed, missing_evidence, backend: .candidate_artifact.backend, backend_kind: .candidate_artifact.backend_kind, reward_gate: (.gate_results[] | select(.gate == "reward_improves_vs_random_baseline"))}' /tmp/oss-rllib-v2-review-admission.json
+AI_NAME=Codex ./scripts/ai-status.sh show OSS-RLLIB-V2-001
+```
+
+Follow-up results:
+
+- `services/research/rllib/test_production_ppo_run.py`: 21 passed in 2.00s.
+- `scripts/test_ai_status.py` + RLlib focused tests: 66 passed in 56.05s.
+- Admission packet CLI completed and emitted a temp packet under `/tmp`.
+- Temp admission packet reports `can_proceed=false`,
+  `missing_evidence=["upstream_rllib_ppo_backend_confirmed"]`,
+  `backend_kind="dependency_light_fallback"`, and reward gate `passed`.
+- `AI_NAME=Codex ./scripts/ai-status.sh show OSS-RLLIB-V2-001` reports
+  task status `review`, owner `Claude`, reviewer `Codex`.
+- `python3 -m pytest -q` was attempted for repo-level coverage but was
+  terminated after about 3 minutes with no output. This review approval is
+  based on the focused task and status-system verification above.
 
 ## Findings
 
@@ -65,6 +89,24 @@ Results:
    to an ops/status task or document why this task intentionally owns the
    status-system change before approval.
 
+## Follow-up Resolution
+
+1. Resolved by commit `529fa6e4`: fallback-produced packets now remain
+   fail-closed (`can_proceed=false`) when upstream Ray/RLlib evidence is
+   absent. The admission packet explicitly lists
+   `upstream_rllib_ppo_backend_confirmed` in `missing_evidence`.
+
+2. Resolved by commit `529fa6e4`: production-sized runs (`num_iters >= 100`)
+   now raise `ProductionPPORunError` when the trained policy does not improve
+   over the random baseline.
+
+3. Accepted as a documented task-local operational exception: commit
+   `5c80291e` changes only one status-rendering line in `scripts/ai_status.py`
+   to tolerate activity-log entries that have no `message` field, such as
+   worker worktree allocation events. The change was required to keep the
+   task's status transitions and review handoff usable, does not change RLlib
+   product semantics, and is covered by `scripts/test_ai_status.py`.
+
 ## Coordination Notes
 
 - The requested task brief path `.orchestrator/task-briefs/oss_rllib_v2_001.md`
@@ -74,5 +116,4 @@ Results:
 
 ## Decision
 
-Changes requested. Do not move to `review_approved` until the production PPO
-evidence and fail-closed reward-improvement gate are corrected.
+Approved. The task can move to `review_approved` for owner closeout.
