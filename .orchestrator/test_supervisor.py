@@ -2608,7 +2608,57 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(queued_event["target_agent"], "Codex")
         self.assertEqual(queued_event["reason"], "owned_ready_dispatch")
 
-    def test_dispatcher_respects_chair_blocked_sidecar_parent(self) -> None:
+    def test_dispatcher_uses_spare_codex_slot_for_sidecar_after_primary_work(self) -> None:
+        config = json.loads(json.dumps(self.config))
+        config["agents"]["codex"]["worker_slots"] = ["codex1_1", "codex1_2"]
+        for index in range(1, 3):
+            config["agents"][f"codex1_{index}"] = {
+                "id": f"codex1_{index}",
+                "display_name": "Codex",
+                "provider": f"codex1-{index}",
+                "adapter": "codex",
+                "dispatch_slot_for": "codex",
+            }
+            config["providers"][f"codex1-{index}"] = {
+                "delivery_mode": "codex",
+                "quota_group": "codex1",
+            }
+        status = {
+            "tasks": [
+                {
+                    "id": "SPRINT-8-CLOSEOUT",
+                    "status": "review",
+                    "owner": "Claude",
+                    "reviewer": "Codex",
+                    "depends_on": [],
+                    "last_update": "2026-05-18T04:05:09Z",
+                },
+                {
+                    "id": "OSS-FINRL-V2-001-SIDECAR-REVIEW",
+                    "status": "todo",
+                    "owner": "Codex",
+                    "reviewer": "Gemini2",
+                    "depends_on": [],
+                    "last_update": "2026-05-18T02:55:51Z",
+                    "task_class": "sidecar",
+                    "helper_parent": "OSS-FINRL-V2-001",
+                    "helper_kind": "review_packet",
+                },
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(config, {"queue": {"events": {}}, "workers": {}})
+
+        self.assertTrue(changed)
+        queued_task_ids = [call.args[1]["task_id"] for call in queue_delivery_event.call_args_list]
+        self.assertEqual(queued_task_ids, ["SPRINT-8-CLOSEOUT", "OSS-FINRL-V2-001-SIDECAR-REVIEW"])
+
+    def test_dispatcher_dispatches_existing_sidecar_when_parent_blocks_new_sidecars(self) -> None:
         config = {
             "schema": {
                 "tasks_path": "tasks",
@@ -2646,11 +2696,15 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         with (
             mock.patch.object(supervisor, "load_status", return_value=status),
             mock.patch.object(supervisor, "load_event_queue", return_value=[]),
-            mock.patch.object(supervisor, "queue_delivery_event", side_effect=AssertionError("blocked sidecar should not dispatch")),
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
         ):
             changed = supervisor.dispatch_ready_tasks(config, state)
 
-        self.assertFalse(changed)
+        self.assertTrue(changed)
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["task_id"], "BFF-FINAL-010-SIDECAR-BFF-HANDOFF")
+        self.assertEqual(queued_event["target_agent"], "Codex2")
+        self.assertEqual(queued_event["reason"], "owned_ready_dispatch")
 
     def test_dispatcher_skips_agent_when_provider_report_says_not_auto_ready(self) -> None:
         config = {
@@ -3895,6 +3949,55 @@ class UnderutilizationSidecarDispatchTests(unittest.TestCase):
         activity_types = [call.args[1]["type"] for call in write_activity_log.call_args_list]
         self.assertIn("sidecar_task_created", activity_types)
         self.assertIn("sidecar_wave_started", activity_types)
+
+    def test_chair_blocked_parent_prevents_new_sidecar_generation_only(self) -> None:
+        self.config["underutilization_dispatch"]["require_recent_chair_signal"] = True
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "underutilization": {
+                "below_threshold_since": "2026-04-10T00:00:00Z",
+                "last_sidecar_wave_at": None,
+                "last_sidecar_wave_reason": None,
+            },
+            "chair_rotation": {
+                "sidecar_approved_until": "2026-04-10T01:00:00Z",
+                "sidecar_approval_max_sidecars": 1,
+                "sidecar_blocked_parents": ["APP-001"],
+            },
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "APP-001",
+                    "phase": "Phase 5: Persona and Application Surfaces",
+                    "status": "todo",
+                    "owner": "Claude",
+                    "reviewer": "Codex",
+                    "depends_on": [],
+                    "title": "Define BFF query surfaces",
+                    "summary_zh": "整理 operator console 與 workbench 的 BFF query contract。",
+                    "artifacts": ["services/control-plane/bff/"],
+                    "last_update": "2026-04-10T00:05:00Z",
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_sidecar_catalog", return_value=[]),
+            mock.patch.object(supervisor, "create_sidecar_task", side_effect=AssertionError("blocked parent should not create a new sidecar")),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-04-10T00:16:05Z"),
+        ):
+            changed = supervisor.dispatch_underutilization_sidecars(self.config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(state["underutilization"]["last_sidecar_wave_at"], "2026-04-10T00:16:05Z")
+        self.assertEqual(
+            state["underutilization"]["last_sidecar_wave_reason"],
+            "underutilized but no sidecar candidates matched the catalog or dynamic fallback",
+        )
 
     def test_resets_underutilization_timer_when_utilization_recovers(self) -> None:
         state = {
