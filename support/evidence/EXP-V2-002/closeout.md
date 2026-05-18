@@ -67,8 +67,8 @@ pytest -q services/lineage-read
 
 Finalization results:
 
-- `services/lineage-read/test_multi_artifact_tree.py`: 6 passed in 0.69s.
-- `services/lineage-read`: 28 passed in 6.03s.
+- `services/lineage-read/test_multi_artifact_tree.py`: 6 passed in 0.64s.
+- `services/lineage-read`: 28 passed in 6.80s.
 
 The closeout correction keeps PR #106 scoped to this evidence file only. It
 does not change the already-merged lineage module or tests.
