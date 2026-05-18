@@ -17,7 +17,7 @@ import urllib.request
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from task_archive import TaskResolver
 
@@ -218,6 +218,41 @@ def delivery_runtime_env(config: dict[str, Any], metadata: dict[str, Any] | None
         "PANTHEON_STATUS_ROOT": str(status_root),
         "ORCH_WORKSPACE_PATH": str(workspace_root),
     }
+
+
+def github_cli_config_dir(env: Mapping[str, str] | None = None) -> Path:
+    source = env or os.environ
+    configured = str(source.get("GH_CONFIG_DIR") or "").strip()
+    if configured:
+        return Path(os.path.expanduser(configured))
+    xdg_config_home = str(source.get("XDG_CONFIG_HOME") or "").strip()
+    if xdg_config_home:
+        return Path(os.path.expanduser(xdg_config_home)) / "gh"
+    home = str(source.get("HOME") or str(Path.home())).strip() or str(Path.home())
+    return Path(os.path.expanduser(home)) / ".config" / "gh"
+
+
+def preserve_github_cli_auth_env(env: dict[str, str], source_env: Mapping[str, str] | None = None) -> None:
+    if env.get("GH_CONFIG_DIR"):
+        env["GH_CONFIG_DIR"] = os.path.expanduser(str(env["GH_CONFIG_DIR"]))
+        return
+    config_dir = github_cli_config_dir(source_env)
+    if config_dir.exists():
+        env["GH_CONFIG_DIR"] = str(config_dir)
+
+
+def is_github_cli_auth_failure(reason: str | None) -> bool:
+    normalized = compact_whitespace(reason).lower()
+    if not normalized:
+        return False
+    markers = (
+        "github cli is not authenticated",
+        "gh cli is not authenticated",
+        "gh is not authenticated",
+        "you are not logged into any github hosts",
+        "to log in, run: gh auth login",
+    )
+    return any(marker in normalized for marker in markers)
 
 
 def run_command(
@@ -632,6 +667,8 @@ def summarize_failure_reason(reason: str | None, provider: str | None = None, *,
         return {"kind": "unknown", "summary": f"{provider_label} failure", "detail": ""}
 
     lowered = raw.lower()
+    if is_github_cli_auth_failure(raw):
+        return {"kind": "tool_auth", "summary": "GitHub CLI auth unavailable", "detail": raw[: max(420, limit)]}
     if "you have no quota" in lowered:
         return {"kind": "quota", "summary": "402 You have no quota", "detail": raw[: max(420, limit)]}
     if "credit balance is too low" in lowered or "billing_error" in lowered:
