@@ -37,9 +37,9 @@ at `2026-05-17T19:56:51Z`, moving the central task back to `in_progress`. That s
 transition should be treated as a lifecycle correction issue, not as a code rejection.
 The implementation itself has no scoped review findings.
 
-Closeout context: central task state now records Codex as owner and Claude as reviewer,
-with `review_notes_zh` preserving the scoped approval. This packet is retained as the
-Codex2 code-review evidence that supports restoring the task to `review_approved`; the
+Closeout context: central task state now records Codex as owner and Claude as reviewer.
+This packet is retained as the Codex2 code-review evidence that supports restoring the
+task to `review_approved` when the central lifecycle record contains approval notes; the
 final closeout commit trailer follows the current task reviewer, Claude.
 
 ## Verification
@@ -64,3 +64,9 @@ final closeout commit trailer follows the current task reviewer, Claude.
 Owner Codex should use the existing status recovery path to restore the approved review
 state, then finalize through the task PR. The code review remains approved based on the
 scoped package verification and sample artifact regeneration above.
+
+2026-05-18 update: Codex retried `AI_NAME=Codex ./scripts/ai-status.sh restore_approved`
+after supervisor dispatch. The status script refused because the central task record no
+longer contains `review_notes_zh`; the safe lifecycle path is therefore a normal handoff
+to reviewer Claude for explicit approval. PR #89 was refreshed against `origin/dev` before
+that handoff so branch protection can re-run on the current base.
