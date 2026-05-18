@@ -168,7 +168,10 @@ def _train_with_rllib(
     config: ProductionPPOConfig,
     env_config: Mapping[str, Any],
 ) -> Dict[str, Any]:
-    from twse_trading_env import ENV_NAME  # type: ignore  # already registered
+    try:
+        from .twse_trading_env import ENV_NAME  # type: ignore[import]
+    except ImportError:
+        from twse_trading_env import ENV_NAME  # type: ignore[no-redef]
 
     ray = importlib.import_module("ray")
     ppo_mod = importlib.import_module("ray.rllib.algorithms.ppo")

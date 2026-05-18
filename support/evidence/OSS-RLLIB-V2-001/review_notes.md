@@ -5,6 +5,11 @@ Owner: Claude
 Date: 2026-05-17 (initial) / 2026-05-18 (Codex follow-up approval)
 Status: Approved after follow-up fixes (see codex_review_findings.md)
 
+Current assignment note (2026-05-18): live task status was reassigned to
+`owner=Codex2`, `reviewer=Claude`. This file preserves the earlier
+Claude/Codex review record; the current owner handoff for Claude review is
+`support/evidence/OSS-RLLIB-V2-001/codex2_owner_handoff.md`.
+
 ## Note on Reviewer History
 
 Initial internal review pass was noted by Claude. Final reviewer authority was

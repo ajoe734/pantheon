@@ -1347,7 +1347,7 @@
     }
   ],
   "generated_at": "2026-05-18T00:00:00Z",
-  "generated_by": "Claude / OSS-RLLIB-V2-001",
+  "generated_by": "Codex2 / OSS-RLLIB-V2-001",
   "lineage": {
     "parent_registry_ids": [
       "rllib-cartpole-ppo-skeleton-v1"

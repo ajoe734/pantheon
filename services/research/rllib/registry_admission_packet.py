@@ -231,7 +231,7 @@ def build_admission_packet(
         "target_id": registry_id,
         "environment": "paper",
         "generated_at": timestamp,
-        "generated_by": f"Claude / {source_task_id}",
+        "generated_by": f"Codex2 / {source_task_id}",
         "source_task_id": source_task_id,
         "depends_on_tasks": ["OSS-RLLIB-001", "MGMT-QLIB-001"],
         "required_evidence": list(REQUIRED_EVIDENCE),
