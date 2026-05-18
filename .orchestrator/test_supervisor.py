@@ -477,6 +477,45 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertEqual(entry["blocked_until"], "2026-05-18T16:40:00Z")
         self.assertEqual(entry["reset_after_seconds"], 196464)
 
+    def test_mark_provider_dispatch_paused_caps_codex_retry_hint_when_configured(self) -> None:
+        from datetime import datetime, timezone
+
+        config = {
+            "provider_guardrails": {
+                "capacity_pause_seconds": 900,
+                "quota_terminal_pause_seconds": 900,
+                "quota_terminal_hint_max_seconds": 3600,
+            },
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+            "providers": {"codex2-3": {"quota_group": "codex2"}},
+        }
+        state: dict = {}
+
+        fake_now = datetime(2026, 5, 17, 20, 2, 2, tzinfo=timezone.utc)
+        with (
+            mock.patch.object(supervisor, "datetime") as datetime_mock,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            datetime_mock.now.return_value = fake_now
+            datetime_mock.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            supervisor.mark_provider_dispatch_paused(
+                config,
+                state,
+                "codex2-3",
+                "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage "
+                "to purchase more credits or try again at May 19th, 2026 12:40 AM.",
+                task_id="OODA-E2E-005",
+                worker_run_id="codex-run-1",
+                failure_kind="quota_terminal",
+                pause_kind="quota_terminal",
+            )
+
+        entry = state["provider_guardrails"]["dispatch_pauses"]["codex2"]
+        self.assertEqual(entry["blocked_until"], "2026-05-17T21:02:02Z")
+        self.assertEqual(entry["hint_blocked_until"], "2026-05-18T16:40:00Z")
+        self.assertTrue(entry["hint_capped"])
+        self.assertEqual(entry["reset_after_seconds"], 3600)
+
     def test_mark_provider_dispatch_paused_uses_default_when_no_hint(self) -> None:
         from datetime import datetime, timezone
 
@@ -561,6 +600,32 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertEqual(state["provider_guardrails"]["dispatch_pauses"], {})
         write_activity_log.assert_called_once()
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "provider_dispatch_resumed")
+
+    def test_clear_provider_dispatch_pause_removes_group_pause(self) -> None:
+        config = {
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+            "providers": {"codex2-3": {"delivery_mode": "codex", "quota_group": "codex2"}},
+        }
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex2": {
+                        "task_id": "OODA-E2E-005",
+                        "worker_run_id": "codex-run-1",
+                        "raw_ref": ".orchestrator/evidence/codex.json",
+                    }
+                }
+            }
+        }
+
+        with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
+            changed = supervisor.clear_provider_dispatch_pause(config, state, "codex2-3")
+
+        self.assertTrue(changed)
+        self.assertEqual(state["provider_guardrails"]["dispatch_pauses"], {})
+        write_activity_log.assert_called_once()
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "provider_dispatch_resumed")
+        self.assertEqual(write_activity_log.call_args.args[1]["provider"], "codex2")
 
 
 class ProcessQueueDispatchGuardTests(unittest.TestCase):
