@@ -1,0 +1,311 @@
+{
+  "can_proceed": true,
+  "candidate_artifact": {
+    "approved_at": null,
+    "approver": null,
+    "artifact_state": "draft",
+    "artifact_type": "model_artifact",
+    "checksum": "sha256:ee6e46da2779c38b7397607af7c3ab83bce5f31920bdc6ace92332fa937353c4",
+    "created_at": "2026-05-18T03:17:52Z",
+    "deployment_summary": {
+      "current_stage": "none"
+    },
+    "evaluation_summary": {
+      "algorithm": "ppo",
+      "annual_return": 0.298749,
+      "backend": "finrl_stocktradingenv_sb3_ppo",
+      "device": "cpu",
+      "fit_mode": "upstream_finrl_stocktradingenv_stable_baselines3_ppo",
+      "framework_import_ready": true,
+      "max_drawdown": 0.000794,
+      "num_instruments": 5,
+      "num_periods": 200,
+      "num_steps": 200,
+      "portfolio_value_final": 1229274.5372105,
+      "portfolio_value_initial": 1000000.0,
+      "sharpe": 16.39,
+      "stable_baselines3_version": "2.8.0",
+      "stock_trading_env_used": true,
+      "torch_cuda_available": false,
+      "torch_version": "2.12.0+cpu",
+      "total_trades": 787,
+      "total_training_steps": 1024
+    },
+    "lineage": {
+      "source_dataset_refs": [
+        "twse-ohlcv-offline-sample-2024-001"
+      ],
+      "source_run_ids": [
+        "finrl-ppo-45ee425fc508"
+      ],
+      "source_strategy_spec_id": "strategy-spec:twse-ppo-offline-v1"
+    },
+    "metadata": {
+      "action_labels": [
+        "hold",
+        "buy_small",
+        "sell_small",
+        "buy_large",
+        "sell_large"
+      ],
+      "algorithm": "ppo",
+      "data_frequency": "daily",
+      "dataset_checksum": "sha256:d48d181772c181e9464ee26091a60686819dd651834fc9e00c2652152ed31117",
+      "decision_focus": "exit_timing",
+      "framework": "finrl",
+      "framework_version": "0.3.7",
+      "model_family": "rl_policy",
+      "num_steps": 197,
+      "observation_dim": 7,
+      "training_backend": "finrl_stocktradingenv_sb3_ppo"
+    },
+    "producer_run_id": "finrl-ppo-45ee425fc508",
+    "registry_id": "finrl-policy-twse-ppo-strategy-001-1.0.0",
+    "rollback_target": null,
+    "storage_ref": {
+      "backend": "object_store",
+      "path": "research/finrl/offline/twse-ppo-strategy-001/1.0.0/artifact.json"
+    },
+    "strategy_id": "twse-ppo-strategy-001",
+    "trained_policy_ref": "research/finrl/offline/twse-ppo-strategy-001/1.0.0/artifact.json",
+    "version": "1.0.0"
+  },
+  "depends_on_tasks": [
+    "OSS-FINRL-001",
+    "MGMT-QLIB-001"
+  ],
+  "downstream_scope": {
+    "broker_session_opened": false,
+    "capital_binding": "none",
+    "cpu_only": true,
+    "deployment_stage": "none",
+    "gpu_required": false,
+    "order_route": "none",
+    "registry_admission_packet_only": true,
+    "registry_write_authority": "registry_service_only",
+    "registry_write_performed": false,
+    "training_performed_in_this_task": true
+  },
+  "environment": "paper",
+  "evaluation_summary": {
+    "algorithm": "ppo",
+    "annual_return": 0.298749,
+    "backend": "finrl_stocktradingenv_sb3_ppo",
+    "device": "cpu",
+    "fit_mode": "upstream_finrl_stocktradingenv_stable_baselines3_ppo",
+    "framework_import_ready": true,
+    "max_drawdown": 0.000794,
+    "num_instruments": 5,
+    "num_periods": 200,
+    "num_steps": 200,
+    "portfolio_value_final": 1229274.5372105,
+    "portfolio_value_initial": 1000000.0,
+    "sharpe": 16.39,
+    "stable_baselines3_version": "2.8.0",
+    "stock_trading_env_used": true,
+    "torch_cuda_available": false,
+    "torch_version": "2.12.0+cpu",
+    "total_trades": 787,
+    "total_training_steps": 1024
+  },
+  "gate_results": [
+    {
+      "action_space": 5,
+      "finrl_available": true,
+      "gate": "twse_stock_env",
+      "num_instruments": 5,
+      "source_ref": "services/research/finrl/twse_stock_env.py",
+      "state_space": 21,
+      "status": "passed",
+      "upstream_env_loader": "direct_finrl_distribution_module"
+    },
+    {
+      "algorithm": "ppo",
+      "device": "cpu",
+      "fit_mode": "upstream_finrl_stocktradingenv_stable_baselines3_ppo",
+      "gate": "production_drl_training",
+      "source_ref": "services/research/finrl/production_drl_run.py",
+      "status": "passed",
+      "stock_trading_env_used": true,
+      "total_training_steps": 1024
+    },
+    {
+      "annual_return": 0.298749,
+      "gate": "evaluation_summary",
+      "max_drawdown": 0.000794,
+      "sharpe": 16.39,
+      "source_ref": "support/evidence/OSS-FINRL-V2-001/evaluation_summary.json",
+      "status": "passed"
+    },
+    {
+      "artifact_state": "draft",
+      "checksum": "sha256:ee6e46da2779c38b7397607af7c3ab83bce5f31920bdc6ace92332fa937353c4",
+      "gate": "model_artifact_projection",
+      "source_ref": "support/evidence/OSS-FINRL-V2-001/registry_entry.json",
+      "status": "passed",
+      "trained_policy_ref": "research/finrl/offline/twse-ppo-strategy-001/1.0.0/artifact.json"
+    },
+    {
+      "gate": "lineage_refs",
+      "source_dataset_refs": [
+        "twse-ohlcv-offline-sample-2024-001"
+      ],
+      "source_ref": "registry_entry.lineage",
+      "source_strategy_spec_id": "strategy-spec:twse-ppo-offline-v1",
+      "status": "passed"
+    },
+    {
+      "deployment_stage": "none",
+      "gate": "safety_fail_closed",
+      "order_route": "none",
+      "registry_write_performed": false,
+      "source_ref": "packet.safety_assertions",
+      "status": "passed"
+    }
+  ],
+  "generated_at": "2026-05-18T03:17:52Z",
+  "generated_by": "Codex2 / OSS-FINRL-V2-001",
+  "legacy_review_fields": {
+    "allowed_next_action": "offline_registry_review_only",
+    "artifact_ref": "finrl-policy-twse-ppo-strategy-001-1.0.0",
+    "current_artifact_state": "draft",
+    "evidence_refs": {
+      "artifact_bundle": "support/evidence/OSS-FINRL-V2-001/artifact_bundle.json",
+      "candidate_packet": "support/evidence/OSS-FINRL-V2-001/candidate_packet.json",
+      "evaluation_summary": "support/evidence/OSS-FINRL-V2-001/evaluation_summary.json",
+      "registry_entry": "support/evidence/OSS-FINRL-V2-001/registry_entry.json"
+    },
+    "gate_state": "closed",
+    "requested_artifact_state": "candidate"
+  },
+  "lineage": {
+    "source_dataset_refs": [
+      "twse-ohlcv-offline-sample-2024-001"
+    ],
+    "source_run_ids": [
+      "finrl-ppo-45ee425fc508"
+    ],
+    "source_strategy_spec_id": "strategy-spec:twse-ppo-offline-v1"
+  },
+  "missing_evidence": [],
+  "model_artifact_ref": {
+    "artifact_ref": "finrl-policy-twse-ppo-strategy-001-1.0.0@1.0.0",
+    "artifact_type": "model_artifact",
+    "checksum": "sha256:ee6e46da2779c38b7397607af7c3ab83bce5f31920bdc6ace92332fa937353c4",
+    "registry_id": "finrl-policy-twse-ppo-strategy-001-1.0.0",
+    "storage_ref": {
+      "backend": "object_store",
+      "path": "research/finrl/offline/twse-ppo-strategy-001/1.0.0/artifact.json"
+    },
+    "trained_policy_ref": "research/finrl/offline/twse-ppo-strategy-001/1.0.0/artifact.json"
+  },
+  "operator_approval_recorded": false,
+  "operator_required": false,
+  "packet_id": "prp-oss-finrl-v2-001-finrl-policy-twse-ppo-strategy-001-1.0.0",
+  "provided_evidence": [
+    {
+      "description": "TWSE OHLCV records are normalized for FinRL StockTradingEnv with 5 instruments.",
+      "key": "twse_stock_env_bound",
+      "path": "services/research/finrl/twse_stock_env.py",
+      "ref_type": "environment_adapter",
+      "source_task_id": "OSS-FINRL-V2-001",
+      "status": "passed"
+    },
+    {
+      "description": "CPU-only ppo run used upstream FinRL StockTradingEnv and completed 1024 training steps.",
+      "key": "production_drl_training_completed",
+      "path": "services/research/finrl/production_drl_run.py",
+      "ref_type": "offline_training_run",
+      "source_task_id": "OSS-FINRL-V2-001",
+      "status": "passed"
+    },
+    {
+      "description": "Evaluation summary includes sharpe, annual_return, max_drawdown, and portfolio value movement.",
+      "key": "evaluation_summary_present",
+      "path": "support/evidence/OSS-FINRL-V2-001/evaluation_summary.json",
+      "ref_type": "metrics_artifact",
+      "source_task_id": "OSS-FINRL-V2-001",
+      "status": "passed"
+    },
+    {
+      "description": "Draft model_artifact projection includes checksum and trained_policy_ref.",
+      "key": "model_artifact_ref_registered",
+      "path": "services/research/finrl/engine/finrl_adapter.py",
+      "ref_type": "model_artifact_projection",
+      "source_task_id": "OSS-FINRL-V2-001",
+      "status": "passed"
+    },
+    {
+      "description": "Lineage links source run, dataset refs, and StrategySpec id.",
+      "key": "lineage_refs_present",
+      "path": "services/research/finrl/registry_admission_packet.py",
+      "ref_type": "lineage_check",
+      "source_task_id": "OSS-FINRL-V2-001",
+      "status": "passed"
+    },
+    {
+      "description": "Registry write, broker session, order route, capital binding, and deployment remain disabled.",
+      "key": "fail_closed_research_only",
+      "path": "services/research/finrl/registry_admission_packet.py",
+      "ref_type": "safety_assertions",
+      "source_task_id": "OSS-FINRL-V2-001",
+      "status": "passed"
+    }
+  ],
+  "reason": "CPU-only FinRL PPO model_artifact is ready for registry candidate review. This packet performs no registry write and grants no paper/canary/live deployment authority.",
+  "registry_request": {
+    "approval_scope": "candidate_admission_review_only",
+    "artifact_type": "model_artifact",
+    "current_artifact_state": "draft",
+    "deployment_stage": "none",
+    "registry_id": "finrl-policy-twse-ppo-strategy-001-1.0.0",
+    "registry_write_authority": "registry_service_only",
+    "registry_write_performed": false,
+    "request_type": "artifact_state_transition",
+    "requested_artifact_state": "candidate",
+    "requested_transition": "draft_to_candidate",
+    "strategy_id": "twse-ppo-strategy-001",
+    "version": "1.0.0"
+  },
+  "required_evidence": [
+    "twse_stock_env_bound",
+    "production_drl_training_completed",
+    "evaluation_summary_present",
+    "model_artifact_ref_registered",
+    "lineage_refs_present",
+    "fail_closed_research_only"
+  ],
+  "risk_owner_approval_recorded": false,
+  "risk_owner_required": false,
+  "safety_assertions": {
+    "artifact_state_request_limited_to_candidate": true,
+    "cpu_only": true,
+    "deployment_stage_remains_none": true,
+    "no_broker_session": true,
+    "no_capital_binding": true,
+    "no_gpu": true,
+    "no_order_route": true,
+    "no_registry_write": true,
+    "scoring_only_not_direct_action": true
+  },
+  "schema_version": "PromotionReadinessPacket.v1",
+  "source_run_id": "finrl-ppo-45ee425fc508",
+  "source_task_id": "OSS-FINRL-V2-001",
+  "target_id": "finrl-policy-twse-ppo-strategy-001-1.0.0",
+  "target_type": "artifact",
+  "twse_stock_env": {
+    "action_space": 5,
+    "cpu_only": true,
+    "finrl_available": true,
+    "num_instruments": 5,
+    "num_periods": 200,
+    "state_space": 21,
+    "tech_indicator_list": [
+      "daily_return",
+      "volume_change"
+    ],
+    "upstream_env": "finrl.meta.env_stock_trading.env_stocktrading.StockTradingEnv",
+    "upstream_env_loader": "direct_finrl_distribution_module",
+    "wrapper": "TWSESerialEnv"
+  }
+}
