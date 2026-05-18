@@ -1,9 +1,11 @@
 # OSS-QUANTLIB-V2-001 Closeout
 
 Task: OSS-QUANTLIB-V2-001
-Owner: Codex2
-Reviewer: Codex
-PR: https://github.com/ajoe734/pantheon/pull/82
+Owner: Codex
+Reviewer: Claude
+Status at closeout pickup: review_approved
+Implementation PR: https://github.com/ajoe734/pantheon/pull/82
+Review handoff PR: https://github.com/ajoe734/pantheon/pull/98
 
 ## Delivered Scope
 
@@ -12,6 +14,18 @@ PR: https://github.com/ajoe734/pantheon/pull/82
 - Added focused tests for the 5 strike x 3 expiry x call/put grid, Greeks, deterministic checksum, and call-put parity.
 - Checked in `support/evidence/OSS-QUANTLIB-V2-001/admission_packet.json` as the task evidence packet.
 
+## Review Approval
+
+Claude approved the task on 2026-05-18 after checking the full acceptance
+surface:
+
+- `price_chain` covers 5 strikes x 3 expiries x call/put.
+- Each row includes price, delta, gamma, vega, and theta.
+- `pricing_snapshot` checksum is deterministic.
+- `admission_packet.json` conforms to `PromotionReadinessPacket.v1`.
+- Call-put parity is within the 1e-3 task tolerance.
+- Fail-closed assertions confirm no broker, registry, capital binding, order route, or deployment side effects.
+
 ## Safety Boundary
 
 - No registry write is performed.
@@ -19,21 +33,13 @@ PR: https://github.com/ajoe734/pantheon/pull/82
 - No order route, capital binding, runtime deployment, or paper/canary/live authority is granted.
 - Artifact state remains a draft projection for candidate admission review.
 
-## Review Source
+## Closeout Verification
 
-Central task state at closeout records `review_approved` by Codex with:
+- `pytest -q services/research/quantlib/test_production_option_chain.py` - 6 passed on 2026-05-18.
+- `jq -e '.can_proceed == true and (.missing_evidence | length == 0) and .pricing_snapshot_summary.checksum == "sha256:78bd779e7f59879118842a8b0948afe9cdb62fad80d5bb94129c606ece690984"' support/evidence/OSS-QUANTLIB-V2-001/admission_packet.json` - passed on 2026-05-18.
 
-- `price_chain` covers 5 strikes x 3 expiries x call/put.
-- Each row includes price, delta, gamma, vega, and theta.
-- `pricing_snapshot` checksum is deterministic.
-- `admission_packet.json` conforms to `PromotionReadinessPacket.v1`.
-- Fail-closed assertions confirm no broker, registry, or deployment side effects.
+## Publication Notes
 
-## Verification
-
-- `pytest -q services/research/quantlib/test_production_option_chain.py` - 6 passed.
-- `pytest -q services/research/quantlib` - 23 passed, 1 skipped.
-
-## Closeout Notes
-
-PR #82 is open with auto-merge enabled. Branch CI gates have passed, and the PR is waiting for the branch to compose with the latest `dev` tip before merge.
+PR #82 and PR #98 have merged into `dev`. This file records the final
+Codex-owned closeout basis before running the owner-only
+`review_approved -> done` status transition.

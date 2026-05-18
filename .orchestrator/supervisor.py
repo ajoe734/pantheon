@@ -37,6 +37,8 @@ from common import (
     load_status,
     new_runtime_id,
     normalize_agent_id,
+    is_github_cli_auth_failure,
+    preserve_github_cli_auth_env,
     relpath,
     selected_shared_files,
     shell_quote,
@@ -333,7 +335,7 @@ def refresh_dashboard_runtime_artifacts(config: dict[str, Any]) -> None:
         ai_status = importlib.import_module("ai_status")
         status_state = ai_status.load_state()
         ai_status.write_dashboard_bundle(status_state)
-        ai_status.sync_docs_site()
+        ai_status.sync_docs_site(status_state)
     except Exception as exc:
         console_log(
             f"dashboard bundle refresh failed: {type(exc).__name__}: {exc}",
@@ -3198,6 +3200,8 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         "[object object]",
     }
 
+    if is_github_cli_auth_failure(reason):
+        return {"kind": "tool_auth", "transient": False, "label": "tool auth"}
     if any(marker in normalized for marker in auth_markers):
         return {"kind": "auth", "transient": False, "label": "auth"}
     if any(marker in normalized for marker in terminal_quota_markers):
@@ -4438,7 +4442,8 @@ def _provider_uses_claude_cli(config: dict[str, Any], provider_id: str | None) -
 def _claude_runtime_env(config: dict[str, Any], provider_id: str | None) -> dict[str, str]:
     provider = (config.get("providers", {}) or {}).get(normalize_agent_id(provider_id or ""), {}) or {}
     runtime = provider.get("runtime", {}) or {}
-    env = dict(os.environ)
+    base_env = dict(os.environ)
+    env = dict(base_env)
     home = str(runtime.get("home") or "").strip()
     if home:
         env["HOME"] = os.path.expanduser(home)
@@ -4447,6 +4452,7 @@ def _claude_runtime_env(config: dict[str, Any], provider_id: str | None) -> dict
         if value is None:
             continue
         env[str(key)] = os.path.expanduser(str(value))
+    preserve_github_cli_auth_env(env, base_env)
     return env
 
 

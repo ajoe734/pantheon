@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "task_id": "STRAT-V2-002",
+  "archived_at": "2026-05-17T20:36:15Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "STRAT-V2-002",
+    "title": "Strategy lineage tree backend read API",
+    "summary_zh": "新增 lineage backend API：給定 strategy_spec_id 回傳完整 lineage tree（source_record → strategy_spec → experiment_runs → candidate_artifacts → deployment_plans → runtime_bindings）。獨立 module，不改 LIN-001 既有 read-model。",
+    "phase": "Sprint 8 / EPIC-STRAT-EXP-DEEP",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "LIN-001",
+      "STRAT-001",
+      "EXP-001"
+    ],
+    "artifacts": [
+      "services/lineage-read/strategy_lineage_tree.py",
+      "services/lineage-read/test_strategy_lineage_tree.py",
+      "services/lineage-read/strategy_lineage_tree_contract.md"
+    ],
+    "acceptance": [
+      "strategy_lineage_tree.py exposes get_tree(strategy_spec_id depth) returning nested dict with node types source_record strategy_spec experiment_run candidate_artifact deployment_plan runtime_binding",
+      "each node has id artifact_type lineage_refs created_at",
+      "depth limits traversal to prevent runaway queries",
+      "test asserts tree returns all 6 node types for fixture chain",
+      "test asserts unknown strategy_spec_id returns 404-equivalent dict not exception",
+      "pytest -q exit 0"
+    ],
+    "next": "Closeout complete: PR #87 merged into dev, 13 acceptance criteria verified, implementation tests pass (13/13), review document at support/reviews/STRAT-V2-002-review.md, helper finalization by Claude after Claude2 unavailable for review_approved dispatch",
+    "last_update": "2026-05-17T20:36:15Z",
+    "review_notes_zh": [
+      "審查通過：get_tree 實作完整，13 tests pass，6 節點類型均正確回傳，depth 邊界測試全過，lineage_refs 外鍵完整，404 dict 回傳正確，不拋例外，LIN-001 獨立性維持",
+      "後續：Claude2 可執行 closeout，推送 PR"
+    ],
+    "review_file": "support/reviews/STRAT-V2-002-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-17T20:36:15Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/strat-v2-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/STRAT-V2-002",
+      "git_clean_required": false,
+      "commit": "4d6201d8f22d5628b8487900ddb7b0a6308d8df2",
+      "commit_subject": "STRAT-V2-002: anchor review approval state",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "review decision (reviewer reassigned to Claude, task",
+        "Not changing": "implementation files (strategy_lineage_tree.py,",
+        "Composes with": "Claude2 closeout commit (PR + done transition).",
+        "Verified": "python3 -m pytest services/lineage-read/test_strategy_lineage_tree.py -q -> 13 passed",
+        "LLM-Agent": "Claude",
+        "Task-ID": "STRAT-V2-002",
+        "Reviewer": "Claude2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 7,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/STRAT-V2-002",
+      "ahead": 1,
+      "behind": 74,
+      "push_status": "diverged"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "STRAT-V2-002",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Implementation complete. get_tree(strategy_spec_id, depth) returns nested dict with all 6 node types (source_record, strategy_spec, experiment_run, candidate_artifact, deployment_plan, runtime_binding). Each node has id/artifact_type/lineage_refs/created_at. Depth limits traversal correctly (tested at 0-4). Unknown ID returns 404-equivalent dict, not exception. All 12 pytest -q tests pass (verified: pytest services/lineage-read/test_strategy_lineage_tree.py -q -> 12 passed). Contract doc at strategy_lineage_tree_contract.md. Committed in 8a75b152 on task/STRAT-V2-002.",
+      "status": "done",
+      "created_at": "2026-05-17T18:04:11Z",
+      "resolved_at": "2026-05-17T18:15:09Z"
+    },
+    {
+      "task_id": "STRAT-V2-002",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Implementation complete. get_tree(strategy_spec_id, depth) returns nested dict with all 6 node types (source_record, strategy_spec, experiment_run, candidate_artifact, deployment_plan, runtime_binding). Each node has id/artifact_type/lineage_refs/created_at. Depth limits traversal (tested at 0-4). Unknown ID returns 404-equivalent dict. All 12 pytest -q tests pass. Contract doc at services/lineage-read/strategy_lineage_tree_contract.md. Code in 8a75b152.",
+      "status": "done",
+      "created_at": "2026-05-17T18:16:26Z",
+      "resolved_at": "2026-05-17T20:11:00Z"
+    },
+    {
+      "task_id": "STRAT-V2-002",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Implementation complete and meets all acceptance criteria; 13 tests pass; approved for owner closeout",
+      "status": "done",
+      "created_at": "2026-05-17T20:11:00Z",
+      "resolved_at": "2026-05-17T20:35:07Z"
+    },
+    {
+      "task_id": "STRAT-V2-002",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Ownership updated",
+      "status": "done",
+      "created_at": "2026-05-17T20:35:07Z",
+      "resolved_at": "2026-05-17T20:36:15Z"
+    }
+  ],
+  "blockers": []
+}
