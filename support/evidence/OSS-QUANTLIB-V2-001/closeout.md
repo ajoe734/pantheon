@@ -1,8 +1,8 @@
-# OSS-QUANTLIB-V2-001 Closeout
+# OSS-QUANTLIB-V2-001 Review Handoff
 
 Task: OSS-QUANTLIB-V2-001
-Owner: Codex2
-Reviewer: Codex
+Owner: Codex
+Reviewer: Copilot
 PR: https://github.com/ajoe734/pantheon/pull/82
 
 ## Delivered Scope
@@ -21,7 +21,7 @@ PR: https://github.com/ajoe734/pantheon/pull/82
 
 ## Review Source
 
-Central task state at closeout records `review_approved` by Codex with:
+Owner verification confirms the review packet should check:
 
 - `price_chain` covers 5 strikes x 3 expiries x call/put.
 - Each row includes price, delta, gamma, vega, and theta.
@@ -34,6 +34,8 @@ Central task state at closeout records `review_approved` by Codex with:
 - `pytest -q services/research/quantlib/test_production_option_chain.py` - 6 passed.
 - `pytest -q services/research/quantlib` - 23 passed, 1 skipped.
 
-## Closeout Notes
+## Publication Notes
 
-PR #82 is open with auto-merge enabled. Branch CI gates have passed, and the PR is waiting for the branch to compose with the latest `dev` tip before merge.
+PR #82 has merged into `dev`. This handoff note records the current
+Codex-owned review pass after the task was helper-claimed from the paused
+Copilot lane; it is not a `review_approved -> done` closeout record.
