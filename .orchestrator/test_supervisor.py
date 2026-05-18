@@ -13,6 +13,18 @@ from unittest import mock
 import supervisor
 
 
+class RuntimeConfigTests(unittest.TestCase):
+    def test_codex_quota_groups_allow_three_concurrent_slots(self) -> None:
+        config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
+
+        quota_caps = config["ready_dispatcher"]["max_concurrent_per_quota_group"]
+
+        self.assertEqual(quota_caps["codex1"], 3)
+        self.assertEqual(quota_caps["codex2"], 3)
+        self.assertGreaterEqual(len(config["agents"]["codex"]["worker_slots"]), 3)
+        self.assertGreaterEqual(len(config["agents"]["codex2"]["worker_slots"]), 3)
+
+
 class DetectWorkerFailureTests(unittest.TestCase):
     def _worker_for_log(self, content: str) -> dict[str, str]:
         handle = tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False)

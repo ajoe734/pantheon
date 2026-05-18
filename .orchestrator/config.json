@@ -885,8 +885,8 @@
       "claude2": 1,
       "gemini": 1,
       "gemini2": 1,
-      "codex1": 1,
-      "codex2": 1,
+      "codex1": 3,
+      "codex2": 3,
       "copilot": 1
     }
   },
