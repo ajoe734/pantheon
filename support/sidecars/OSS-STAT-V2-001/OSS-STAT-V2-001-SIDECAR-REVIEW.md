@@ -157,3 +157,45 @@ Parent owner Copilot should decide whether to absorb this packet and advance
 `OSS-STAT-V2-001` through the normal lifecycle. A clean parent handoff would
 include the four parent artifacts listed in Section 1 and the reproduced
 verification commands from Section 3.
+
+## 7. Owner Closeout Finalization
+
+Closeout owner: `Codex2`
+Closeout date: `2026-05-18`
+Reviewer approval file:
+`support/sidecars/OSS-STAT-V2-001/OSS-STAT-V2-001-SIDECAR-REVIEW-CODEX-NOTE.md`
+
+The sidecar packet was approved by `Codex` as support-only. During owner
+closeout, `AI_NAME=Codex2 ./scripts/ai-status.sh show
+OSS-STAT-V2-001-SIDECAR-REVIEW` resolved this sidecar as
+`review_approved`, and `AI_NAME=Codex2 ./scripts/ai-status.sh show
+OSS-STAT-V2-001` resolved the parent from archive as `done` with terminal
+outcome `completed`. The lifecycle gap recorded in Section 5 is therefore
+retained as preparation-time context, not a current closeout blocker.
+
+Focused closeout verification rerun from
+`task/OSS-STAT-V2-001-SIDECAR-REVIEW`:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/research/statsmodels/test_production_cointegration.py -q
+```
+
+Observed result: `7 passed in 5.59s`.
+
+```bash
+git diff --check origin/dev...HEAD
+```
+
+Observed result: exit code `0`.
+
+```bash
+git diff --name-only origin/dev...HEAD
+```
+
+Observed result: the branch diff is limited to:
+
+- `support/sidecars/OSS-STAT-V2-001/OSS-STAT-V2-001-SIDECAR-REVIEW.md`
+- `support/sidecars/OSS-STAT-V2-001/OSS-STAT-V2-001-SIDECAR-REVIEW-CODEX-NOTE.md`
+
+No L1 canonical truth, statsmodels runtime, registry/governance runtime, or
+parent task implementation file is changed by this sidecar closeout.
