@@ -803,6 +803,58 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         create_worktree.assert_called_once_with(repo_root.resolve(), expected_path, "task/OPS-WORKTREE-001", "origin/dev")
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_worktree_allocated")
 
+    def test_prepare_worker_workspace_materializes_task_brief_into_isolated_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            source_brief = repo_root / ".orchestrator" / "task-briefs" / "ops_brief_001.md"
+            source_brief.parent.mkdir(parents=True)
+            source_brief.write_text("# Source brief\n", encoding="utf-8")
+            worktree_root = Path(tmpdir) / "workers"
+            config = {
+                **self.config,
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "activity-log.jsonl"),
+                },
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(worktree_root),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            state: dict[str, object] = {}
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id="OPS-BRIEF-001",
+                reason="owned_in_progress_dispatch",
+                context_files=[".orchestrator/task-briefs/ops_brief_001.md"],
+            )
+
+            with (
+                mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=None),
+                mock.patch.object(supervisor, "_branch_checked_out_in_root", return_value=False),
+                mock.patch.object(supervisor, "_create_worker_worktree", return_value=(True, None)),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    request,
+                    queue_event_id="evt-brief",
+                    target_agent="Codex",
+                )
+
+            self.assertTrue(ok)
+            self.assertIsNone(message)
+            copied_brief = Path(request.metadata["workspace_path"]) / ".orchestrator" / "task-briefs" / "ops_brief_001.md"
+            self.assertEqual(copied_brief.read_text(encoding="utf-8"), "# Source brief\n")
+            self.assertEqual(request.metadata["materialized_context_files"], [".orchestrator/task-briefs/ops_brief_001.md"])
+
     def test_process_queue_checks_worker_guard_inside_isolated_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "pantheon"
@@ -1277,6 +1329,58 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(state["workers"], {})
         write_activity_log.assert_called_once()
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "wake_skipped")
+
+    def test_process_queue_records_capacity_wait_metrics(self) -> None:
+        current_task = {
+            "id": "BUS-VAL-CAP",
+            "status": "in_progress",
+            "owner": "Codex",
+            "reviewer": "Gemini",
+            "depends_on": [],
+            "last_update": "2026-04-13T14:20:00Z",
+        }
+        queue_payload = {
+            "event_id": "evt-capacity-wait",
+            "task_id": "BUS-VAL-CAP",
+            "target_agent": "codex",
+            "target_display_name": "Codex",
+            "provider": "codex",
+            "reason": "owned_in_progress_dispatch",
+            "message": "wake",
+        }
+        state = {"queue": {"events": {}}, "workers": {}}
+        request = supervisor.DeliveryRequest(
+            agent_id="codex",
+            provider="codex",
+            delivery_mode="codex",
+            message="wake",
+            task_id="BUS-VAL-CAP",
+            reason="owned_in_progress_dispatch",
+        )
+
+        with (
+            mock.patch.object(supervisor, "load_event_queue", return_value=[queue_payload]),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [current_task]}),
+            mock.patch.object(supervisor, "build_request", return_value=request),
+            mock.patch.object(
+                supervisor,
+                "agent_auto_dispatch_block_reason",
+                return_value="quota group codex1 already has 1/1 active worker(s)",
+            ),
+            mock.patch.object(supervisor, "start_worker_for_request", side_effect=AssertionError("capacity wait should not start")),
+        ):
+            changed = supervisor.process_queue(self.config, state, self.provider_report)
+
+        self.assertTrue(changed)
+        record = state["queue"]["events"]["evt-capacity-wait"]
+        self.assertEqual(record["status"], "pending")
+        self.assertEqual(record["capacity_wait_count"], 1)
+        metrics = state["worker_runtime_metrics"]
+        self.assertEqual(metrics["totals"]["capacity_pending_queue_events"], 1)
+        self.assertEqual(
+            metrics["last_measurements"]["dispatch_capacity_wait"]["details"]["queue_event_id"],
+            "evt-capacity-wait",
+        )
 
     def test_retryable_capacity_start_failure_schedules_queue_retry(self) -> None:
         current_task = {
@@ -6124,6 +6228,180 @@ class WorkerOsDuplicateGuardTests(unittest.TestCase):
         scan.assert_not_called()
 
 
+class RuntimeLeaseReconciliationTests(unittest.TestCase):
+    def _config(self, root: Path) -> dict:
+        return {
+            "paths": {
+                "status_file": str(root / "ai-status.json"),
+                "activity_log": str(root / "activity-log.jsonl"),
+                "event_queue": str(root / "event-queue.jsonl"),
+            },
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "status_field": "status",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {},
+            "providers": {"codex": {"delivery_mode": "codex", "quota_group": "codex1"}},
+            "agents": {"codex": {"id": "codex", "display_name": "Codex", "provider": "codex"}},
+        }
+
+    def test_reconcile_runtime_requeues_started_event_without_active_worker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = self._config(root)
+            (root / "ai-status.json").write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "id": "OPS-LEASE-001",
+                                "status": "in_progress",
+                                "owner": "Codex",
+                                "reviewer": "Claude",
+                                "depends_on": [],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (root / "event-queue.jsonl").write_text(
+                json.dumps(
+                    {
+                        "event_id": "evt-lease",
+                        "task_id": "OPS-LEASE-001",
+                        "target_agent": "codex",
+                        "target_display_name": "Codex",
+                        "reason": "owned_in_progress_dispatch",
+                        "message": "wake",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            state = {
+                "queue": {
+                    "events": {
+                        "evt-lease": {
+                            "status": "started",
+                            "run_id": "codex-run-missing",
+                            "lease_owner": "codex-run-missing",
+                        }
+                    }
+                },
+                "workers": {},
+            }
+
+            changed = supervisor.reconcile_runtime_on_boot(config, state)
+
+            self.assertTrue(changed)
+            record = state["queue"]["events"]["evt-lease"]
+            self.assertEqual(record["status"], "queued")
+            self.assertEqual(
+                record["requeue_reason"],
+                "started queue record had no active worker during supervisor boot reconciliation",
+            )
+            self.assertNotIn("lease_owner", record)
+            metrics = state["worker_runtime_metrics"]
+            self.assertEqual(metrics["totals"]["started_queue_records_requeued"], 1)
+            self.assertEqual(
+                metrics["last_measurements"]["boot_reconciliation"]["counts"]["started_queue_records_requeued"],
+                1,
+            )
+
+    def test_reconcile_runtime_fails_running_worker_when_pid_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = self._config(root)
+            (root / "ai-status.json").write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "id": "OPS-LEASE-002",
+                                "status": "in_progress",
+                                "owner": "Codex",
+                                "reviewer": "Claude",
+                                "depends_on": [],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (root / "event-queue.jsonl").write_text(
+                json.dumps({"event_id": "evt-worker", "task_id": "OPS-LEASE-002", "target_agent": "codex"})
+                + "\n",
+                encoding="utf-8",
+            )
+            state = {
+                "queue": {"events": {"evt-worker": {"status": "started", "run_id": "codex-run-dead"}}},
+                "workers": {
+                    "codex-run-dead": {
+                        "run_id": "codex-run-dead",
+                        "status": "running",
+                        "provider": "codex",
+                        "agent_id": "codex",
+                        "task_id": "OPS-LEASE-002",
+                        "queue_event_id": "evt-worker",
+                        "pid": 987654,
+                    }
+                },
+            }
+
+            with (
+                mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+                mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            ):
+                changed = supervisor.reconcile_runtime_on_boot(config, state)
+
+            self.assertTrue(changed)
+            worker = state["workers"]["codex-run-dead"]
+            self.assertEqual(worker["status"], "failed")
+            self.assertEqual(state["queue"]["events"]["evt-worker"]["status"], "failed")
+            self.assertIn("process missing", worker["last_error"])
+            activity_types = [call.args[1]["type"] for call in write_activity_log.call_args_list]
+            self.assertEqual(activity_types, ["worker_failed", "worker_runtime_metrics"])
+            metrics = state["worker_runtime_metrics"]
+            self.assertEqual(metrics["totals"]["missing_process_workers_failed"], 1)
+            self.assertEqual(
+                metrics["last_measurements"]["boot_reconciliation"]["counts"]["missing_process_workers_failed"],
+                1,
+            )
+
+    def test_quota_group_cap_blocks_second_slot(self) -> None:
+        config = {
+            "ready_dispatcher": {"max_concurrent_per_quota_group": {"codex1": 1}},
+            "agents": {
+                "codex1_1": {"id": "codex1_1", "display_name": "Codex", "provider": "codex1-1"},
+                "codex1_2": {"id": "codex1_2", "display_name": "Codex", "provider": "codex1-2"},
+            },
+            "providers": {
+                "codex1-1": {"quota_group": "codex1"},
+                "codex1-2": {"quota_group": "codex1"},
+            },
+        }
+        state = {
+            "workers": {
+                "run-1": {
+                    "run_id": "run-1",
+                    "status": "running",
+                    "agent_id": "codex1_1",
+                    "provider": "codex1-1",
+                    "quota_group": "codex1",
+                }
+            }
+        }
+
+        reason = supervisor.agent_auto_dispatch_block_reason(config, state, "codex1_2", provider_report={})
+
+        self.assertIsNotNone(reason)
+        self.assertIn("quota group codex1", reason or "")
+
+
 class MaxConcurrentWorkersCapTests(unittest.TestCase):
     def _base_config(self) -> dict:
         return {
@@ -6306,6 +6584,110 @@ class PruneOrphanWorktreesTests(unittest.TestCase):
         ):
             result = supervisor.prune_orphan_worktrees(config, state)
         self.assertFalse(result)
+
+
+class ResolvePollIntervalTests(unittest.TestCase):
+    def test_default_uses_config_value(self) -> None:
+        config = {"supervisor": {"poll_interval_seconds": 300}}
+        value, source = supervisor.resolve_poll_interval(
+            config, cli_value=None, allow_fast_poll=False
+        )
+        self.assertEqual(value, 300.0)
+        self.assertEqual(source, "config")
+
+    def test_cli_value_at_or_above_config_does_not_require_authorization(self) -> None:
+        config = {"supervisor": {"poll_interval_seconds": 300}}
+        value, source = supervisor.resolve_poll_interval(
+            config, cli_value=600.0, allow_fast_poll=False
+        )
+        self.assertEqual(value, 600.0)
+        self.assertEqual(source, "cli")
+
+    def test_cli_value_below_config_requires_allow_fast_poll(self) -> None:
+        config = {"supervisor": {"poll_interval_seconds": 300}}
+        with self.assertRaises(SystemExit) as ctx:
+            supervisor.resolve_poll_interval(
+                config, cli_value=60.0, allow_fast_poll=False
+            )
+        self.assertIn("--allow-fast-poll", str(ctx.exception))
+
+    def test_cli_value_below_config_allowed_when_authorized(self) -> None:
+        config = {"supervisor": {"poll_interval_seconds": 300}}
+        value, source = supervisor.resolve_poll_interval(
+            config, cli_value=60.0, allow_fast_poll=True
+        )
+        self.assertEqual(value, 60.0)
+        self.assertEqual(source, "cli")
+
+    def test_zero_or_negative_cli_value_rejected(self) -> None:
+        config = {"supervisor": {"poll_interval_seconds": 300}}
+        with self.assertRaises(SystemExit):
+            supervisor.resolve_poll_interval(
+                config, cli_value=0.0, allow_fast_poll=True
+            )
+        with self.assertRaises(SystemExit):
+            supervisor.resolve_poll_interval(
+                config, cli_value=-5.0, allow_fast_poll=True
+            )
+
+    def test_missing_config_falls_back_to_default(self) -> None:
+        value, source = supervisor.resolve_poll_interval(
+            {}, cli_value=None, allow_fast_poll=False
+        )
+        self.assertEqual(value, supervisor.CONFIG_DEFAULT_POLL_INTERVAL_SECONDS)
+        self.assertEqual(source, "config")
+
+
+class RunSupervisorShellGuardTests(unittest.TestCase):
+    def _script(self) -> Path:
+        return Path(supervisor.__file__).resolve().parent.parent / "scripts" / "run-supervisor.sh"
+
+    def _run(self, args: list[str], stub_body: str) -> subprocess.CompletedProcess:
+        with tempfile.TemporaryDirectory() as tmp:
+            stub = Path(tmp) / "python3"
+            stub.write_text(stub_body)
+            stub.chmod(0o755)
+            env = os.environ.copy()
+            env["PATH"] = f"{tmp}:{env.get('PATH', '')}"
+            return subprocess.run(
+                ["bash", str(self._script()), *args],
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+
+    def test_poll_interval_without_allow_fast_poll_is_rejected(self) -> None:
+        script = self._script()
+        if not script.exists():
+            self.skipTest("run-supervisor.sh not present")
+        proc = self._run(["--poll-interval", "60"], "#!/bin/sh\necho 'should not run' >&2\nexit 99\n")
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("--allow-fast-poll", proc.stderr)
+
+    def test_poll_interval_equals_form_also_rejected(self) -> None:
+        script = self._script()
+        if not script.exists():
+            self.skipTest("run-supervisor.sh not present")
+        proc = self._run(["--poll-interval=60"], "#!/bin/sh\necho 'should not run' >&2\nexit 99\n")
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("--allow-fast-poll", proc.stderr)
+
+    def test_poll_interval_with_allow_fast_poll_passes_through(self) -> None:
+        script = self._script()
+        if not script.exists():
+            self.skipTest("run-supervisor.sh not present")
+        proc = self._run(
+            ["--poll-interval", "60", "--allow-fast-poll"], '#!/bin/sh\nexit 7\n'
+        )
+        self.assertEqual(proc.returncode, 7, proc.stderr)
+
+    def test_no_poll_interval_passes_through(self) -> None:
+        script = self._script()
+        if not script.exists():
+            self.skipTest("run-supervisor.sh not present")
+        proc = self._run(["--verbose"], '#!/bin/sh\nexit 11\n')
+        self.assertEqual(proc.returncode, 11, proc.stderr)
+
 
 
 if __name__ == "__main__":
