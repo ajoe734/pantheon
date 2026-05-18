@@ -55,3 +55,20 @@ owned_finalize_dispatch dispatch reason.
 
 Task closed as done. All acceptance criteria met. Bridge is pure-function,
 no governance store writes, no live runtime mutation.
+
+## Codex2 Status Reconciliation
+
+2026-05-18 follow-up: Codex2 was dispatched on POST-EVO-BRIDGE after the bridge
+implementation and closeout evidence were already present. Codex2 re-verified
+the scoped bridge test suite and the paper-run-to-evolution E2E bridge coverage,
+then updated the task branch against current `origin/dev` so PR #110 could merge
+without unrelated dev diffs.
+
+Verification rerun:
+
+```bash
+python3 -m pytest services/evolution/test_postmortem_bridge.py -q
+python3 -m pytest tests/e2e/test_paper_run_to_evolution_decision.py -q
+```
+
+Result: 19 passed for the bridge suite and 8 passed for the E2E bridge suite.
