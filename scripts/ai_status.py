@@ -1402,6 +1402,29 @@ def display_task_title(task: dict[str, Any]) -> str:
     return marker_text
 
 
+def activity_log_message(entry: dict[str, Any]) -> str:
+    message = entry.get("message")
+    if message is not None and str(message).strip():
+        return str(message)
+
+    event_type = str(entry.get("type") or "event").strip() or "event"
+    details: list[str] = []
+    commit = str(entry.get("commit") or "").strip()
+    if commit:
+        details.append(f"commit {commit[:12]}")
+
+    scope = entry.get("scope")
+    if isinstance(scope, list) and scope:
+        rendered_scope = ", ".join(f"`{str(item)}`" for item in scope[:3])
+        if len(scope) > 3:
+            rendered_scope += ", ..."
+        details.append(f"scope {rendered_scope}")
+
+    if details:
+        return f"{event_type}: {'; '.join(details)}"
+    return event_type
+
+
 def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> None:
     def cell(value: Any) -> str:
         text = "-" if value is None or value == "" else str(value)
@@ -1665,15 +1688,9 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
         for entry in current_logs:
             task_id = f" `{entry['task_id']}`" if entry.get("task_id") else ""
             timestamp = entry.get("ts") or entry.get("timestamp")
-            message = entry.get("message")
-            if not message:
-                event_type = entry.get("type") or "event"
-                if event_type == "worker_commit" and entry.get("commit"):
-                    message = f"worker_commit {entry['commit']}"
-                else:
-                    message = event_type
             lines.append(
-                f"- {format_display_timestamp(timestamp)} {entry.get('agent', 'Unknown')}:{task_id} {localize_embedded_timestamps(str(message))}"
+                f"- {format_display_timestamp(timestamp)} {entry.get('agent') or 'Unknown'}:{task_id} "
+                f"{localize_embedded_timestamps(activity_log_message(entry))}"
             )
     else:
         lines.append("- No checkpoints yet.")

@@ -1,12 +1,14 @@
 {
   "version": 1,
-  "updated_at": "2026-05-18T00:42:57Z",
+  "updated_at": "2026-05-18T00:45:22Z",
   "counts": {
-    "total": 1188,
-    "completed": 1168,
+    "total": 1190,
+    "completed": 1170,
     "superseded": 20
   },
   "recent_terminal_ids": [
+    "STRAT-V2-002",
+    "OODA-E2E-005",
     "EXP-V2-001",
     "OODA-E2E-006",
     "M7-CANARY-CLOSEOUT",
@@ -25,7 +27,6 @@
     "IMT-008",
     "OSS-RLLIB-001",
     "OSS-STAT-001",
-    "ASK-006",
-    "ASK-007"
+    "ASK-006"
   ]
 }
