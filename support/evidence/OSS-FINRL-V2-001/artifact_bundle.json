@@ -1,0 +1,167 @@
+{
+  "artifact_family": "rl_policy",
+  "created_at": "2026-05-18T03:17:52Z",
+  "created_by": "Codex2",
+  "dataset_checksum": "sha256:d48d181772c181e9464ee26091a60686819dd651834fc9e00c2652152ed31117",
+  "dataset_schema": {
+    "min_instruments": 2,
+    "min_lookback": 3,
+    "min_periods": 6,
+    "observed_lookback_window": 3,
+    "required_ohlcv_fields": [
+      "open",
+      "high",
+      "low",
+      "close",
+      "volume"
+    ]
+  },
+  "dataset_summary": {
+    "action_labels": [
+      "hold",
+      "buy_small",
+      "sell_small",
+      "buy_large",
+      "sell_large"
+    ],
+    "cash_ratio": 0.8,
+    "data_frequency": "daily",
+    "dataset_id": "twse-offline-dataset-001",
+    "decision_focus": "exit_timing",
+    "instruments": [
+      "2002",
+      "2308",
+      "2317",
+      "2330",
+      "2454"
+    ],
+    "lookback_window": 3,
+    "num_instruments": 5,
+    "num_steps": 197,
+    "observation_dim": 7,
+    "position_ratio": 0.2,
+    "source_dataset_refs": [
+      "twse-ohlcv-offline-sample-2024-001"
+    ],
+    "source_strategy_spec_id": "strategy-spec:twse-ppo-offline-v1",
+    "strategy_id": "twse-ppo-strategy-001"
+  },
+  "environment_schema": {
+    "action_labels": [
+      "hold",
+      "buy_small",
+      "sell_small",
+      "buy_large",
+      "sell_large"
+    ],
+    "decision_focus": "exit_timing",
+    "observation_dim": 7,
+    "reward_inputs": [
+      "momentum_window",
+      "momentum_1",
+      "volatility",
+      "volume_change",
+      "position_ratio",
+      "cash_ratio",
+      "dispersion"
+    ],
+    "reward_scale": 1.0,
+    "risk_aversion": 0.25
+  },
+  "evaluation_summary": {
+    "algorithm": "ppo",
+    "annual_return": 0.298749,
+    "backend": "finrl_stocktradingenv_sb3_ppo",
+    "device": "cpu",
+    "fit_mode": "upstream_finrl_stocktradingenv_stable_baselines3_ppo",
+    "framework_import_ready": true,
+    "max_drawdown": 0.000794,
+    "num_instruments": 5,
+    "num_periods": 200,
+    "num_steps": 200,
+    "portfolio_value_final": 1229274.5372105,
+    "portfolio_value_initial": 1000000.0,
+    "sharpe": 16.39,
+    "stable_baselines3_version": "2.8.0",
+    "stock_trading_env_used": true,
+    "torch_cuda_available": false,
+    "torch_version": "2.12.0+cpu",
+    "total_trades": 787,
+    "total_training_steps": 1024
+  },
+  "framework": "finrl",
+  "framework_version": "0.3.7",
+  "governance": {
+    "allowed_scope": "offline_registry_admission_evidence_only",
+    "direct_live_influence": false,
+    "gate_state": "closed",
+    "lean_consumption": "scoring_only_not_direct_action",
+    "notes": [
+      "Upstream FinRL StockTradingEnv was constructed from TWSE OHLCV records.",
+      "stable-baselines3 PPO trained CPU-only with device='cpu'.",
+      "Registry write, broker session, order route, capital binding, and deployment remain disabled."
+    ],
+    "output_type": "rl_policy",
+    "required_ohlcv_fields": [
+      "open",
+      "high",
+      "low",
+      "close",
+      "volume"
+    ]
+  },
+  "model_family": "rl_policy",
+  "policy": {
+    "action_space": 5,
+    "algorithm": "ppo",
+    "backend": "finrl_stocktradingenv_sb3_ppo",
+    "device": "cpu",
+    "fit_mode": "upstream_finrl_stocktradingenv_stable_baselines3_ppo",
+    "framework_import": "finrl",
+    "framework_version": "0.3.7",
+    "model_seed": 42,
+    "policy_class": "ActorCriticPolicy",
+    "run_materialized": true,
+    "stable_baselines3_version": "2.8.0",
+    "state_space": 21,
+    "stock_dim": 5,
+    "torch_version": "2.12.0+cpu",
+    "total_training_steps": 1024,
+    "upstream_env_class": "finrl.meta.env_stock_trading.env_stocktrading.StockTradingEnv"
+  },
+  "registry_hints": {
+    "artifact_state": "draft",
+    "artifact_type": "model_artifact",
+    "deployment_stage": "none",
+    "model_family": "rl_policy",
+    "source_dataset_refs": [
+      "twse-ohlcv-offline-sample-2024-001"
+    ]
+  },
+  "schema_version": "1.0",
+  "training_config": {
+    "algorithm": "ppo",
+    "gamma": 0.99,
+    "learning_rate": 0.0003,
+    "requested_by": "Codex2",
+    "reward_scale": 1.0,
+    "risk_aversion": 0.25,
+    "seed": 42,
+    "version": "1.0.0"
+  },
+  "twse_stock_env": {
+    "action_space": 5,
+    "cpu_only": true,
+    "finrl_available": true,
+    "num_instruments": 5,
+    "num_periods": 200,
+    "state_space": 21,
+    "tech_indicator_list": [
+      "daily_return",
+      "volume_change"
+    ],
+    "upstream_env": "finrl.meta.env_stock_trading.env_stocktrading.StockTradingEnv",
+    "upstream_env_loader": "direct_finrl_distribution_module",
+    "wrapper": "TWSESerialEnv"
+  }
+}

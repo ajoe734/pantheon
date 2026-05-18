@@ -1,12 +1,18 @@
 {
   "version": 1,
-  "updated_at": "2026-05-17T05:51:55Z",
+  "updated_at": "2026-05-18T02:49:17Z",
   "counts": {
-    "total": 1185,
-    "completed": 1165,
+    "total": 1191,
+    "completed": 1171,
     "superseded": 20
   },
   "recent_terminal_ids": [
+    "OSS-STAT-V2-001",
+    "STRAT-V2-002",
+    "OODA-E2E-005",
+    "EXP-V2-001",
+    "OODA-E2E-006",
+    "M7-CANARY-CLOSEOUT",
     "MGMT-BROKER-002",
     "OSS-FINRL-001-SIDECAR-ACCEPTANCE",
     "OSS-FINRL-001",
@@ -20,12 +26,6 @@
     "OPS-REFACTOR-001",
     "ASK-008",
     "IMT-008",
-    "OSS-RLLIB-001",
-    "OSS-STAT-001",
-    "ASK-006",
-    "ASK-007",
-    "TRN-006",
-    "OSS-QLIB-002",
-    "PER-003"
+    "OSS-RLLIB-001"
   ]
 }
