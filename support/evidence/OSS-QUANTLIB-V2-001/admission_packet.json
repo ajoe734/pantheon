@@ -1,0 +1,347 @@
+{
+  "can_proceed": true,
+  "candidate_artifact": {
+    "artifact_state": "draft",
+    "artifact_type": "pricing_snapshot",
+    "checksum": "sha256:78bd779e7f59879118842a8b0948afe9cdb62fad80d5bb94129c606ece690984",
+    "deployment_summary": {
+      "current_stage": "none",
+      "last_transition_at": "2026-05-17T17:10:00Z"
+    },
+    "lineage": {
+      "parent_registry_ids": [],
+      "source_dataset_refs": [
+        "dataset:txo-option-chain-fixture-2026-05"
+      ],
+      "source_run_ids": [
+        "pricing-snapshot:quantlib_production_option_chain:2.0.0"
+      ],
+      "source_strategy_spec_id": "quantlib-txo-option-chain-pricing-spec-v1"
+    },
+    "metadata": {
+      "backend_id": "quantlib_production_option_chain",
+      "chain_summary": {
+        "call_count": 15,
+        "contract_count": 30,
+        "expiry_count": 3,
+        "first_expiry": "2026-06-17",
+        "last_expiry": "2026-08-19",
+        "max_strike": 21600.0,
+        "min_strike": 20400.0,
+        "put_count": 15,
+        "strike_count": 5
+      },
+      "code_version": "pantheon:services/research/quantlib@OSS-QUANTLIB-V2-001",
+      "cpu_only": true,
+      "gpu_required": false,
+      "task_id": "OSS-QUANTLIB-V2-001"
+    },
+    "producer_run_id": "pricing-snapshot:quantlib_production_option_chain:2.0.0",
+    "registry_id": "quantlib-production-option-chain-txo-2.0.0",
+    "storage_ref": {
+      "backend": "inline",
+      "path": "$.pricing_snapshot"
+    },
+    "strategy_id": "txo-option-chain-risk-analytics",
+    "version": "2.0.0"
+  },
+  "depends_on_tasks": [
+    "OSS-QUANTLIB-001"
+  ],
+  "downstream_scope": {
+    "broker_session_opened": false,
+    "capital_binding": "none",
+    "cpu_only": true,
+    "deployment_stage": "none",
+    "gpu_required": false,
+    "order_route": "none",
+    "registry_admission_packet_only": true,
+    "registry_write_authority": "registry_service_only",
+    "registry_write_performed": false,
+    "training_performed_in_this_task": false
+  },
+  "environment": "paper",
+  "gate_results": [
+    {
+      "contract_count": 30,
+      "expiry_count": 3,
+      "gate": "txo_chain_contract_floor",
+      "source_ref": "pricing_snapshot.chain_summary",
+      "status": "passed",
+      "strike_count": 5
+    },
+    {
+      "gate": "greeks_complete",
+      "required_fields": [
+        "price",
+        "delta",
+        "gamma",
+        "vega",
+        "theta"
+      ],
+      "source_ref": "pricing_snapshot.chain",
+      "status": "passed"
+    },
+    {
+      "artifact_state": "draft",
+      "checksum": "sha256:78bd779e7f59879118842a8b0948afe9cdb62fad80d5bb94129c606ece690984",
+      "gate": "pricing_snapshot_projection",
+      "source_ref": "pricing_snapshot.registry_entry",
+      "status": "passed"
+    },
+    {
+      "gate": "lineage_refs",
+      "source_dataset_refs": [
+        "dataset:txo-option-chain-fixture-2026-05"
+      ],
+      "source_ref": "pricing_snapshot.registry_entry.lineage",
+      "source_strategy_spec_id": "quantlib-txo-option-chain-pricing-spec-v1",
+      "status": "passed"
+    },
+    {
+      "deployment_stage": "none",
+      "gate": "safety_fail_closed",
+      "order_route": "none",
+      "registry_write_performed": false,
+      "source_ref": "pricing_snapshot.safety_assertions",
+      "status": "passed"
+    }
+  ],
+  "generated_at": "2026-05-17T17:10:00Z",
+  "generated_by": "Codex2 / OSS-QUANTLIB-V2-001",
+  "lineage": {
+    "parent_registry_ids": [],
+    "source_dataset_refs": [
+      "dataset:txo-option-chain-fixture-2026-05"
+    ],
+    "source_run_ids": [
+      "pricing-snapshot:quantlib_production_option_chain:2.0.0"
+    ],
+    "source_strategy_spec_id": "quantlib-txo-option-chain-pricing-spec-v1"
+  },
+  "missing_evidence": [],
+  "operator_approval_recorded": false,
+  "operator_required": false,
+  "packet_id": "prp-oss-quantlib-v2-001-quantlib-production-option-chain-txo-2.0.0",
+  "pricing_snapshot_ref": {
+    "artifact_name": "pricing_snapshot",
+    "artifact_ref": "quantlib-production-option-chain-txo-2.0.0@2.0.0",
+    "artifact_state": "draft",
+    "artifact_type": "pricing_snapshot",
+    "checksum": "sha256:78bd779e7f59879118842a8b0948afe9cdb62fad80d5bb94129c606ece690984",
+    "deployment_stage": "none",
+    "registry_id": "quantlib-production-option-chain-txo-2.0.0",
+    "source_dataset_refs": [
+      "dataset:txo-option-chain-fixture-2026-05"
+    ],
+    "source_run_id": "pricing-snapshot:quantlib_production_option_chain:2.0.0",
+    "source_strategy_spec_id": "quantlib-txo-option-chain-pricing-spec-v1",
+    "storage_ref": {
+      "backend": "inline",
+      "path": "$.pricing_snapshot"
+    },
+    "strategy_id": "txo-option-chain-risk-analytics",
+    "version": "2.0.0"
+  },
+  "pricing_snapshot_summary": {
+    "as_of": "2026-05-17",
+    "backend_id": "quantlib_production_option_chain",
+    "chain_summary": {
+      "call_count": 15,
+      "contract_count": 30,
+      "expiry_count": 3,
+      "first_expiry": "2026-06-17",
+      "last_expiry": "2026-08-19",
+      "max_strike": 21600.0,
+      "min_strike": 20400.0,
+      "put_count": 15,
+      "strike_count": 5
+    },
+    "checksum": "sha256:78bd779e7f59879118842a8b0948afe9cdb62fad80d5bb94129c606ece690984",
+    "snapshot_id": "pricing-snapshot:quantlib_production_option_chain:2.0.0",
+    "task_id": "OSS-QUANTLIB-V2-001",
+    "underlying": "TXO"
+  },
+  "provided_evidence": [
+    {
+      "description": "V2 chain pricer extends the approved OSS-QUANTLIB-001 offline option pricing boundary.",
+      "key": "oss_quantlib_001_adapter_bound",
+      "path": "services/research/quantlib/adapter.py",
+      "ref_type": "base_option_pricer",
+      "source_task_id": "OSS-QUANTLIB-001",
+      "status": "passed"
+    },
+    {
+      "description": "TXO-like chain priced with 5 strikes, 3 expiries, and 30 contracts.",
+      "key": "txo_chain_priced",
+      "path": "services/research/quantlib/production_option_chain.py",
+      "ref_type": "pricing_snapshot_builder",
+      "source_task_id": "OSS-QUANTLIB-V2-001",
+      "status": "passed"
+    },
+    {
+      "description": "Each option row includes price, delta, gamma, vega, and per-day theta.",
+      "key": "greeks_present",
+      "path": "services/research/quantlib/production_option_chain.py",
+      "ref_type": "greeks_gate",
+      "source_task_id": "OSS-QUANTLIB-V2-001",
+      "status": "passed"
+    },
+    {
+      "description": "Draft pricing_snapshot projection includes checksum, storage_ref, and registry id.",
+      "key": "pricing_snapshot_ref_registered",
+      "path": "services/research/quantlib/production_option_chain.py",
+      "ref_type": "pricing_snapshot_projection",
+      "source_task_id": "OSS-QUANTLIB-V2-001",
+      "status": "passed"
+    },
+    {
+      "description": "Lineage links dataset refs, StrategySpec id, source run id, and source tasks.",
+      "key": "lineage_refs_present",
+      "path": "services/research/quantlib/registry_admission_packet.py",
+      "ref_type": "lineage_check",
+      "source_task_id": "OSS-QUANTLIB-V2-001",
+      "status": "passed"
+    },
+    {
+      "description": "Registry write, broker session, order route, capital binding, and deployment remain disabled.",
+      "key": "fail_closed_research_only",
+      "path": "services/research/quantlib/registry_admission_packet.py",
+      "ref_type": "safety_assertions",
+      "source_task_id": "OSS-QUANTLIB-V2-001",
+      "status": "passed"
+    }
+  ],
+  "reason": "Production QuantLib pricing_snapshot is ready for registry candidate review. This packet performs no registry write and grants no paper/canary/live deployment authority.",
+  "registry_request": {
+    "approval_scope": "candidate_admission_review_only",
+    "artifact_type": "pricing_snapshot",
+    "current_artifact_state": "draft",
+    "deployment_stage": "none",
+    "registry_id": "quantlib-production-option-chain-txo-2.0.0",
+    "registry_write_authority": "registry_service_only",
+    "registry_write_performed": false,
+    "request_type": "artifact_state_transition",
+    "requested_artifact_state": "candidate",
+    "requested_transition": "draft_to_candidate",
+    "strategy_id": "txo-option-chain-risk-analytics",
+    "version": "2.0.0"
+  },
+  "required_evidence": [
+    "oss_quantlib_001_adapter_bound",
+    "txo_chain_priced",
+    "greeks_present",
+    "pricing_snapshot_ref_registered",
+    "lineage_refs_present",
+    "fail_closed_research_only"
+  ],
+  "risk_owner_approval_recorded": false,
+  "risk_owner_required": false,
+  "safety_assertions": {
+    "artifact_state_request_limited_to_candidate": true,
+    "cpu_only": true,
+    "deployment_stage_remains_none": true,
+    "no_broker_session": true,
+    "no_capital_binding": true,
+    "no_gpu": true,
+    "no_order_route": true,
+    "no_registry_write": true,
+    "research_only_not_direct_action": true
+  },
+  "sample_chain_rows": [
+    {
+      "call_put": "call",
+      "contract_id": "TXO-2026-06-17-20400-call",
+      "delta": 0.67521723,
+      "expiry": "2026-06-17",
+      "gamma": 0.00024656,
+      "implied_vol": 0.238,
+      "price": 924.37806279,
+      "pricing_model": "black_scholes_merton",
+      "strike": 20400.0,
+      "tenor_years": 0.08493151,
+      "theta": -8.51575307,
+      "underlying": "TXO",
+      "vega": 2197.92523467
+    },
+    {
+      "call_put": "put",
+      "contract_id": "TXO-2026-06-17-20400-put",
+      "delta": -0.32376411,
+      "expiry": "2026-06-17",
+      "gamma": 0.00024656,
+      "implied_vol": 0.238,
+      "price": 319.79740616,
+      "pricing_model": "black_scholes_merton",
+      "strike": 20400.0,
+      "tenor_years": 0.08493151,
+      "theta": -8.36817194,
+      "underlying": "TXO",
+      "vega": 2197.92523467
+    },
+    {
+      "call_put": "call",
+      "contract_id": "TXO-2026-06-17-20700-call",
+      "delta": 0.59870637,
+      "expiry": "2026-06-17",
+      "gamma": 0.00027372,
+      "implied_vol": 0.2305,
+      "price": 723.69262358,
+      "pricing_model": "black_scholes_merton",
+      "strike": 20700.0,
+      "tenor_years": 0.08493151,
+      "theta": -8.85889923,
+      "underlying": "TXO",
+      "vega": 2363.07463479
+    },
+    {
+      "call_put": "put",
+      "contract_id": "TXO-2026-06-17-20700-put",
+      "delta": -0.40027497,
+      "expiry": "2026-06-17",
+      "gamma": 0.00027372,
+      "implied_vol": 0.2305,
+      "price": 418.73001851,
+      "pricing_model": "black_scholes_merton",
+      "strike": 20700.0,
+      "tenor_years": 0.08493151,
+      "theta": -8.69900503,
+      "underlying": "TXO",
+      "vega": 2363.07463479
+    },
+    {
+      "call_put": "call",
+      "contract_id": "TXO-2026-06-17-21000-call",
+      "delta": 0.51405123,
+      "expiry": "2026-06-17",
+      "gamma": 0.00029052,
+      "implied_vol": 0.224,
+      "price": 548.85762184,
+      "pricing_model": "black_scholes_merton",
+      "strike": 21000.0,
+      "tenor_years": 0.08493151,
+      "theta": -8.87234968,
+      "underlying": "TXO",
+      "vega": 2437.42449547
+    },
+    {
+      "call_put": "put",
+      "contract_id": "TXO-2026-06-17-21000-put",
+      "delta": -0.48493011,
+      "expiry": "2026-06-17",
+      "gamma": 0.00029052,
+      "implied_vol": 0.224,
+      "price": 543.51306834,
+      "pricing_model": "black_scholes_merton",
+      "strike": 21000.0,
+      "tenor_years": 0.08493151,
+      "theta": -8.7001424,
+      "underlying": "TXO",
+      "vega": 2437.42449547
+    }
+  ],
+  "schema_version": "PromotionReadinessPacket.v1",
+  "source_task_id": "OSS-QUANTLIB-V2-001",
+  "target_id": "quantlib-production-option-chain-txo-2.0.0",
+  "target_type": "artifact"
+}

@@ -33,7 +33,7 @@ DEFAULT_OWNED_STATUSES = ["in_progress", "todo"]
 DEFAULT_SIDECAR_ONLY_AGENTS: list[str] = []
 DEFAULT_DISABLED_AGENTS: list[str] = []
 DEFAULT_DEPENDENCY_DONE_STATUSES = ["done"]
-DEFAULT_WORKER_TERMINAL_STATUSES = ["done", "review_approved"]
+DEFAULT_WORKER_TERMINAL_STATUSES = ["review", "done", "review_approved"]
 DEFAULT_ACTIVE_WORKER_STATUSES = [
     "running",
     "waiting_approval",
