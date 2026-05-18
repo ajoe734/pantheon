@@ -1649,6 +1649,33 @@ def scan_live_worker_pids_by_agent(proc_root: Path | None = None) -> dict[str, l
     return result
 
 
+def active_worker_refs_for_agent_id(
+    state: dict[str, Any],
+    agent_id: str | None,
+    active_statuses: set[str],
+) -> list[str]:
+    normalized_agent = normalize_agent_id(agent_id or "")
+    if not normalized_agent:
+        return []
+    normalized_statuses = {str(status or "").strip().lower() for status in active_statuses}
+    refs: list[str] = []
+    for worker in (state.get("workers", {}) or {}).values():
+        worker_agent_id = normalize_agent_id(str(worker.get("agent_id") or ""))
+        if worker_agent_id != normalized_agent:
+            continue
+        worker_status = str(worker.get("status") or "").strip().lower()
+        if worker_status not in normalized_statuses:
+            continue
+        pid = worker.get("pid")
+        if pid:
+            refs.append(str(pid))
+            continue
+        run_id = str(worker.get("run_id") or "").strip()
+        if run_id:
+            refs.append(run_id)
+    return sorted(set(refs))
+
+
 def terminate_worker_pid(pid: int | None) -> bool:
     if not pid:
         return False
@@ -3868,7 +3895,37 @@ def agent_auto_dispatch_block_reason(
         if provider_capability.get("auth_ready") is False:
             return f"{provider_id} authentication is not ready"
 
-    if ready_dispatch_settings(config).get("worker_os_duplicate_guard", True):
+    settings = ready_dispatch_settings(config)
+    if settings.get("worker_os_duplicate_guard", True):
+        active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
+        slot_ids = logical_worker_slot_ids(config, normalized_agent)
+        if slot_ids:
+            occupied_slots = {
+                slot_id: refs
+                for slot_id in slot_ids
+                if (refs := active_worker_refs_for_agent_id(state, slot_id, active_statuses))
+            }
+            if len(occupied_slots) >= len(slot_ids):
+                slot_summary = ", ".join(
+                    f"{slot_id}=PID:{'/'.join(refs)}" for slot_id, refs in sorted(occupied_slots.items())
+                )
+                display_name = display_name_for(config, normalized_agent) or normalized_agent
+                return (
+                    f"{display_name} all dispatch slots already have live worker process(es) "
+                    f"{slot_summary}; skipping dispatch to avoid duplicate workers"
+                )
+            return None
+
+        if agent and agent_is_dispatch_slot(agent):
+            slot_refs = active_worker_refs_for_agent_id(state, normalized_agent, active_statuses)
+            if slot_refs:
+                display_name = display_name_for(config, normalized_agent) or normalized_agent
+                return (
+                    f"{display_name} slot {normalized_agent} already has live worker process(es) "
+                    f"PID={','.join(slot_refs)}; skipping dispatch to avoid duplicate workers"
+                )
+            return None
+
         display_name = display_name_for(config, normalized_agent) or normalized_agent
         live_pids = scan_live_worker_pids_by_agent().get(display_name, [])
         if live_pids:

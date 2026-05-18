@@ -5989,6 +5989,140 @@ class WorkerOsDuplicateGuardTests(unittest.TestCase):
             )
         self.assertIsNone(reason)
 
+    def test_block_reason_allows_slotted_logical_agent_with_free_slot(self) -> None:
+        config = {
+            "agents": {
+                "codex": {
+                    "provider": "codex",
+                    "display_name": "Codex",
+                    "worker_slots": ["codex1_1", "codex1_2"],
+                },
+                "codex1_1": {
+                    "id": "codex1_1",
+                    "provider": "codex1-1",
+                    "display_name": "Codex",
+                    "dispatch_slot_for": "codex",
+                },
+                "codex1_2": {
+                    "id": "codex1_2",
+                    "provider": "codex1-2",
+                    "display_name": "Codex",
+                    "dispatch_slot_for": "codex",
+                },
+            },
+            "ready_dispatcher": {"worker_os_duplicate_guard": True},
+        }
+        state = {
+            "workers": {
+                "run-1": {
+                    "run_id": "run-1",
+                    "agent_id": "codex1_1",
+                    "status": "running",
+                    "pid": 42,
+                }
+            }
+        }
+        provider_report = {"providers": {"codex": {"auth_ready": True}}}
+        with mock.patch.object(
+            supervisor,
+            "scan_live_worker_pids_by_agent",
+            return_value={"Codex": [42]},
+        ) as scan:
+            reason = supervisor.agent_auto_dispatch_block_reason(
+                config, state, "codex", provider_report
+            )
+        self.assertIsNone(reason)
+        scan.assert_not_called()
+
+    def test_block_reason_blocks_exact_slot_with_active_worker(self) -> None:
+        config = {
+            "agents": {
+                "codex": {
+                    "provider": "codex",
+                    "display_name": "Codex",
+                    "worker_slots": ["codex1_1", "codex1_2"],
+                },
+                "codex1_1": {
+                    "id": "codex1_1",
+                    "provider": "codex1-1",
+                    "display_name": "Codex",
+                    "dispatch_slot_for": "codex",
+                },
+                "codex1_2": {
+                    "id": "codex1_2",
+                    "provider": "codex1-2",
+                    "display_name": "Codex",
+                    "dispatch_slot_for": "codex",
+                },
+            },
+            "ready_dispatcher": {"worker_os_duplicate_guard": True},
+        }
+        state = {
+            "workers": {
+                "run-1": {
+                    "run_id": "run-1",
+                    "agent_id": "codex1_1",
+                    "status": "running",
+                    "pid": 42,
+                }
+            }
+        }
+        provider_report = {"providers": {"codex1-1": {"auth_ready": True}, "codex1-2": {"auth_ready": True}}}
+        with mock.patch.object(supervisor, "scan_live_worker_pids_by_agent") as scan:
+            blocked = supervisor.agent_auto_dispatch_block_reason(
+                config, state, "codex1_1", provider_report
+            )
+            available = supervisor.agent_auto_dispatch_block_reason(
+                config, state, "codex1_2", provider_report
+            )
+        self.assertIsNotNone(blocked)
+        assert blocked is not None
+        self.assertIn("codex1_1", blocked)
+        self.assertIn("42", blocked)
+        self.assertIsNone(available)
+        scan.assert_not_called()
+
+    def test_block_reason_blocks_slotted_logical_agent_when_all_slots_busy(self) -> None:
+        config = {
+            "agents": {
+                "codex": {
+                    "provider": "codex",
+                    "display_name": "Codex",
+                    "worker_slots": ["codex1_1", "codex1_2"],
+                },
+                "codex1_1": {
+                    "id": "codex1_1",
+                    "provider": "codex1-1",
+                    "display_name": "Codex",
+                    "dispatch_slot_for": "codex",
+                },
+                "codex1_2": {
+                    "id": "codex1_2",
+                    "provider": "codex1-2",
+                    "display_name": "Codex",
+                    "dispatch_slot_for": "codex",
+                },
+            },
+            "ready_dispatcher": {"worker_os_duplicate_guard": True},
+        }
+        state = {
+            "workers": {
+                "run-1": {"run_id": "run-1", "agent_id": "codex1_1", "status": "running", "pid": 42},
+                "run-2": {"run_id": "run-2", "agent_id": "codex1_2", "status": "running", "pid": 99},
+            }
+        }
+        provider_report = {"providers": {"codex": {"auth_ready": True}}}
+        with mock.patch.object(supervisor, "scan_live_worker_pids_by_agent") as scan:
+            reason = supervisor.agent_auto_dispatch_block_reason(
+                config, state, "codex", provider_report
+            )
+        self.assertIsNotNone(reason)
+        assert reason is not None
+        self.assertIn("all dispatch slots", reason)
+        self.assertIn("codex1_1", reason)
+        self.assertIn("codex1_2", reason)
+        scan.assert_not_called()
+
 
 class MaxConcurrentWorkersCapTests(unittest.TestCase):
     def _base_config(self) -> dict:
