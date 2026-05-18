@@ -5267,6 +5267,156 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
     return changed
 
 
+def worker_worktree_housekeeping_settings(config: dict[str, Any]) -> dict[str, Any]:
+    raw = config.get("worker_worktree_housekeeping")
+    settings = raw if isinstance(raw, dict) else {}
+    return {
+        "enabled": bool(settings.get("enabled", True)),
+        "tick_interval_seconds": int(settings.get("tick_interval_seconds", 600) or 0),
+        "base_branches": [str(b).strip() for b in (settings.get("base_branches") or ["dev", "master", "main"]) if str(b).strip()],
+        "max_removals_per_tick": int(settings.get("max_removals_per_tick", 5)),
+    }
+
+
+def _scan_process_paths_in_root(base_root: Path) -> set[Path]:
+    """Return resolved paths under base_root mentioned in any live process cmdline."""
+    base_str = str(base_root)
+    referenced: set[Path] = set()
+    try:
+        entries = list(Path("/proc").iterdir())
+    except OSError:
+        return referenced
+    self_pid = os.getpid()
+    for entry in entries:
+        name = entry.name
+        if not name.isdigit():
+            continue
+        if int(name) == self_pid:
+            continue
+        try:
+            raw = (entry / "cmdline").read_bytes()
+        except OSError:
+            continue
+        if not raw:
+            continue
+        cmdline = raw.replace(b"\x00", b" ").decode("utf-8", errors="ignore")
+        if base_str not in cmdline:
+            continue
+        for tok in cmdline.split(" "):
+            if tok.startswith(base_str):
+                try:
+                    referenced.add(Path(tok).resolve())
+                except OSError:
+                    pass
+    return referenced
+
+
+def prune_orphan_worktrees(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    """Remove finished worker worktrees whose branches are merged and tree is clean."""
+    settings = worker_worktree_housekeeping_settings(config)
+    if not settings["enabled"]:
+        return False
+
+    interval = settings["tick_interval_seconds"]
+    bucket = state.setdefault("worker_worktree_housekeeping", {})
+    if interval > 0:
+        last_at = bucket.get("last_run_at")
+        last_dt = _parse_iso_utc(str(last_at or ""))
+        now = datetime.now(timezone.utc)
+        if last_dt is not None and (now - last_dt).total_seconds() < interval:
+            return False
+    bucket["last_run_at"] = utc_now()
+
+    worktree_settings = worker_worktree_settings(config)
+    if not worktree_settings.get("enabled", False):
+        return False
+    base_root = _worker_worktree_base_root(config, worktree_settings)
+    if not base_root.exists():
+        return False
+    repo_root = config_path(config, "status_file").parents[0]
+
+    claimed_paths: set[Path] = set()
+    for worker in state.get("workers", {}).values():
+        wp = worker.get("workspace_path")
+        if not wp:
+            continue
+        try:
+            claimed_paths.add(Path(str(wp)).resolve())
+        except OSError:
+            continue
+
+    live_paths = _scan_process_paths_in_root(base_root)
+
+    merged_branches: set[str] = set()
+    for ref in settings["base_branches"]:
+        for candidate in (f"origin/{ref}", ref):
+            if not _git_ref_exists(repo_root, candidate):
+                continue
+            proc = subprocess.run(
+                ["git", "branch", "--merged", candidate, "--list", "task/*"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if proc.returncode != 0:
+                continue
+            for line in proc.stdout.splitlines():
+                name = line.strip().lstrip("*").strip()
+                if name:
+                    merged_branches.add(name)
+    if not merged_branches:
+        return False
+
+    max_removals = max(0, settings["max_removals_per_tick"])
+    base_root_str = str(base_root)
+    removed: list[str] = []
+    for record in _git_worktree_records(repo_root):
+        if len(removed) >= max_removals:
+            break
+        wt_value = record.get("worktree")
+        if not wt_value or not wt_value.startswith(base_root_str):
+            continue
+        try:
+            wt_path = Path(wt_value).resolve()
+        except OSError:
+            continue
+        if wt_path in claimed_paths:
+            continue
+        if any(str(live).startswith(str(wt_path)) or str(wt_path).startswith(str(live)) for live in live_paths):
+            continue
+        branch = _worktree_record_branch(record)
+        if not branch or branch not in merged_branches:
+            continue
+        status_proc = subprocess.run(
+            ["git", "-C", str(wt_path), "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if status_proc.returncode != 0 or status_proc.stdout.strip():
+            continue
+        remove_proc = subprocess.run(
+            ["git", "-C", str(repo_root), "worktree", "remove", str(wt_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if remove_proc.returncode == 0:
+            removed.append(str(wt_path))
+
+    if removed:
+        write_activity_log(
+            config,
+            {
+                "type": "worktree_pruned",
+                "message": f"Pruned {len(removed)} orphan worker worktree(s): {', '.join(removed)}",
+            },
+        )
+        return True
+    return False
+
+
 def trim_worker_history(state: dict[str, Any], max_entries: int) -> None:
     workers = state.get("workers", {})
     if len(workers) <= max_entries:
@@ -7316,6 +7466,7 @@ def run_once(
         changed = sync_github_bus(config, state) or changed
         trim_worker_history(state, int(config.get("supervisor", {}).get("max_worker_history", 200)))
         trim_seen_events(state, int(config.get("watcher", {}).get("max_seen_events", 2000)))
+        changed = prune_orphan_worktrees(config, state) or changed
 
         loop_finished_at = utc_now()
         stamp_supervisor_runtime_state(
