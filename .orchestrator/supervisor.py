@@ -7600,11 +7600,7 @@ def dispatch_ready_tasks(
         agent_ids = agent_sequence[dispatch_cursor:] + agent_sequence[:dispatch_cursor]
     else:
         agent_ids = []
-    max_concurrent_setting = settings.get("max_concurrent_workers")
-    try:
-        max_concurrent = int(max_concurrent_setting) if max_concurrent_setting not in (None, "") else None
-    except (TypeError, ValueError):
-        max_concurrent = None
+    max_concurrent = ready_dispatch_max_concurrent_workers(config)
     if max_concurrent is not None and max_concurrent > 0:
         live_total = sum(len(pids) for pids in scan_live_worker_pids_by_agent().values())
         if live_total >= max_concurrent:
@@ -7858,6 +7854,17 @@ def dispatch_ready_tasks(
     return changed
 
 
+def ready_dispatch_max_concurrent_workers(config: dict[str, Any]) -> int | None:
+    max_concurrent_setting = ready_dispatch_settings(config).get("max_concurrent_workers")
+    try:
+        max_concurrent = int(max_concurrent_setting) if max_concurrent_setting not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+    if max_concurrent is not None and max_concurrent <= 0:
+        return None
+    return max_concurrent
+
+
 def dispatch_chair_review(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -7906,6 +7913,12 @@ def dispatch_chair_review(
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
     active_agents, _active_task_agents = active_worker_indexes(state, active_statuses)
     pending_agents, _pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
+    max_concurrent = ready_dispatch_max_concurrent_workers(config)
+    if max_concurrent is not None:
+        live_total = sum(len(pids) for pids in scan_live_worker_pids_by_agent().values())
+        reserved_total = len(set(active_agents) | set(pending_agents))
+        if max(live_total, reserved_total) >= max_concurrent:
+            return False
     seen = state.setdefault("seen_event_keys", {})
     status = load_status(config)
     task_map = task_index_from_status(config, status)
