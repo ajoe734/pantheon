@@ -1,5 +1,12 @@
 {
-  "VITE_BFF_MODE": "live",
-  "VITE_BFF_FALLBACK": "strict",
-  "VITE_BFF_REAL_WRITES": "false"
+  "task_id": "LOVABLE-STRICT-PUBLISH",
+  "source_repo": "ajoe734/execute-plans",
+  "source_branch": "main",
+  "required_build_env": {
+    "VITE_BFF_MODE": "live",
+    "VITE_BFF_FALLBACK": "strict",
+    "VITE_BFF_REAL_WRITES": "false"
+  },
+  "publish_rule": "Lovable build-time publish must use the exact VITE_* values above before bundle verification.",
+  "scope_note": "This Pantheon task provides audit infrastructure only and does not modify the execute-plans repository."
 }
