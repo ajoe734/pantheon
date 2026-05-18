@@ -1,9 +1,15 @@
 # Review Notes: OSS-RLLIB-V2-001
 
-Reviewer: Claude
-Owner: Claude2
-Date: 2026-05-17
-Status: Approved
+Reviewer: Codex
+Owner: Claude
+Date: 2026-05-17 (initial) / 2026-05-18 (Codex follow-up approval)
+Status: Approved after follow-up fixes (see codex_review_findings.md)
+
+## Note on Reviewer History
+
+Initial internal review pass was noted by Claude. Final reviewer authority was
+Codex per task assignment (`owner=Claude`, `reviewer=Codex`). Discrepancy was
+flagged in `codex_review_findings.md` and corrected here.
 
 ## Acceptance Criteria Verification
 
