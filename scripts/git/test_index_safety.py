@@ -187,6 +187,8 @@ class WorkerCommitWrapperTests(unittest.TestCase):
         # Disable both pre-commit guards for clean test isolation.
         env.setdefault("PANTHEON_GENERATED_FILES_CHECK_DISABLED", "1")
         env.setdefault("PANTHEON_SCOPE_CHECK_DISABLED", "1")
+        if not env_extra or "PANTHEON_STATUS_ROOT" not in env_extra:
+            env["PANTHEON_STATUS_ROOT"] = str(root)
         return subprocess.run(
             [sys.executable, str(HERE / "worker_commit.py"), *args],
             cwd=root,
@@ -213,6 +215,8 @@ class WorkerCommitWrapperTests(unittest.TestCase):
         env = {**os.environ, **(env_extra or {})}
         env.setdefault("PANTHEON_GENERATED_FILES_CHECK_DISABLED", "1")
         env.setdefault("PANTHEON_SCOPE_CHECK_DISABLED", "1")
+        if not env_extra or "PANTHEON_STATUS_ROOT" not in env_extra:
+            env["PANTHEON_STATUS_ROOT"] = str(root)
         return subprocess.run(
             [sys.executable, str(root / "scripts" / "git" / "worker_commit.py"), *args],
             cwd=root,
@@ -243,6 +247,9 @@ class WorkerCommitWrapperTests(unittest.TestCase):
             last_files = _git(root, "show", "--name-only", "--format=", "HEAD").stdout.split()
             self.assertIn("kept.py", last_files)
             self.assertNotIn("leaked.py", last_files)
+            audit = json.loads((root / "ai-activity-log.jsonl").read_text().splitlines()[-1])
+            self.assertIn("message", audit)
+            self.assertIn("Worker commit", audit["message"])
         finally:
             import shutil; shutil.rmtree(root)
 
