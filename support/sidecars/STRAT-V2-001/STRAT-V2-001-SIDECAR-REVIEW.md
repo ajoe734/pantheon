@@ -6,7 +6,7 @@ Helper kind: review_packet
 Owner: Codex
 Reviewer: Codex2
 Generated: 2026-05-18
-Status: Ready for Codex2 sidecar review and parent-owner use
+Status: Review approved; owner closeout record added
 
 ## Scope
 
@@ -107,6 +107,47 @@ Results:
 - Sample run diff: exit 0, no diff.
 - Sample JSON formatting check: exit 0.
 - Whitespace diff check on parent artifacts and review records: exit 0.
+
+## Owner Closeout Record
+
+Owner finalization rechecked the approved sidecar state on 2026-05-18.
+
+Closeout inputs:
+
+- `AI_NAME=Codex ./scripts/ai-status.sh show STRAT-V2-001-SIDECAR-REVIEW`
+  showed this sidecar as `review_approved`, owned by Codex and reviewed by
+  Codex2.
+- Codex2 approval notes record that this packet stayed support-only, PR #150
+  merged, Branch CI Gate passed, and Orchestrator Sync passed.
+- `AI_NAME=Codex ./scripts/ai-status.sh show STRAT-V2-001` showed the parent
+  task archived as `done`; the parent lifecycle snapshot above is therefore a
+  historical review snapshot, not a reopened implementation state.
+- `gh pr view 150 --json number,state,mergedAt,mergeCommit,headRefName,baseRefName,statusCheckRollup,title,url`
+  confirmed PR #150 was merged into `dev` with merge commit
+  `62621ec112261abf7c756d3fa0e7671f2a2ce875` and successful required checks.
+
+Closeout verification rerun:
+
+```bash
+python3 -m pytest services/research/strategy_spec -q
+python3 -m services.research.strategy_spec.production_distillation src-note-tw-momentum-quality-001 --source-dir support/evidence/STRAT-V2-001 --sample-run --output /tmp/STRAT-V2-001-SIDECAR-REVIEW-sample_run.generated.json
+diff -u support/evidence/STRAT-V2-001/sample_run.json /tmp/STRAT-V2-001-SIDECAR-REVIEW-sample_run.generated.json
+python3 -m json.tool support/evidence/STRAT-V2-001/sample_run.json
+git diff --check -- support/sidecars/STRAT-V2-001/STRAT-V2-001-SIDECAR-REVIEW.md support/evidence/STRAT-V2-001/sample_run.json support/evidence/STRAT-V2-001/research_note_tw_momentum_quality.md services/research/strategy_spec/production_distillation.py services/research/strategy_spec/test_production_distillation.py
+```
+
+Results:
+
+- StrategySpec package tests: `25 passed in 5.75s`.
+- Sample run regeneration: exit 0.
+- Sample run diff: exit 0, no diff.
+- Sample JSON formatting check: exit 0.
+- Whitespace diff check: exit 0.
+
+Closeout scope remains unchanged: this task owns only the sidecar review
+packet and does not modify L1 canonical truth, StrategySpec contracts,
+registry behavior, governance behavior, runtime behavior, or parent
+implementation artifacts.
 
 ## Reviewer Attention Items
 
