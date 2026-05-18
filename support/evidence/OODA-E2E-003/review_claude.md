@@ -2,7 +2,7 @@
 
 Reviewer: Claude
 Task: OODA-E2E-003 - ExperimentRun -> CandidateArtifact admission E2E test
-Owner: Codex2
+Owner: Codex
 Review date: 2026-05-18
 
 ## Verdict: APPROVED

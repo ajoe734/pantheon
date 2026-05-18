@@ -7,6 +7,7 @@ Status at closeout pickup: review_approved
 Implementation PR: https://github.com/ajoe734/pantheon/pull/82
 Review handoff PR: https://github.com/ajoe734/pantheon/pull/98
 Closeout evidence PR: https://github.com/ajoe734/pantheon/pull/100
+Final evidence alignment PR: https://github.com/ajoe734/pantheon/pull/140
 
 ## Delivered Scope
 
@@ -41,6 +42,6 @@ surface and owner handoff:
 
 ## Publication Notes
 
-PR #82, PR #98, and PR #100 have merged into `dev`. This file records the
-final Codex-owned closeout basis before running the owner-only
+PR #82, PR #98, PR #100, and PR #140 have merged into `dev`. This file
+records the final Codex-owned closeout basis before running the owner-only
 `review_approved -> done` status transition.

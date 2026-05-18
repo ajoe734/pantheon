@@ -15,6 +15,7 @@ from common import (
     runtime_log_path,
     shell_quote,
     spawn_background_process,
+    worker_runtime_paths,
 )
 
 COPILOT_CONFIG_DIR = Path.home() / ".copilot"
@@ -167,6 +168,7 @@ class CopilotLocalAdapter(BaseAdapter):
 
         run_id = new_runtime_id("copilot")
         log_path = runtime_log_path("copilot", request.agent_id)
+        runtime_paths = worker_runtime_paths(self.config, run_id)
         env = os.environ.copy()
         env.update(delivery_runtime_env(self.config, request.metadata))
         if not any(env.get(name) for name in ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")):
@@ -186,6 +188,9 @@ class CopilotLocalAdapter(BaseAdapter):
             cwd=workspace_root,
             log_path=log_path,
             env=env,
+            run_id=run_id,
+            heartbeat_path=runtime_paths["heartbeat_path"],
+            status_path=runtime_paths["status_path"],
         )
         return DeliveryResult(
             ok=True,
@@ -199,5 +204,10 @@ class CopilotLocalAdapter(BaseAdapter):
             log_path=str(log_path),
             pid=process.pid,
             run_id=run_id,
-            metadata={"shell_command": shell_quote(command), "model_preference": model_preference},
+            metadata={
+                "shell_command": shell_quote(command),
+                "model_preference": model_preference,
+                "heartbeat_path": str(runtime_paths["heartbeat_path"]),
+                "runner_status_path": str(runtime_paths["status_path"]),
+            },
         )
