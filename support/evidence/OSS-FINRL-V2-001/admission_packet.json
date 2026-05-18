@@ -5,8 +5,8 @@
     "approver": null,
     "artifact_state": "draft",
     "artifact_type": "model_artifact",
-    "checksum": "sha256:a6ad1b3872c98361e120aae2e43b0abc620be2147011cf2c744848f67fe5580e",
-    "created_at": "2026-05-18T00:41:02Z",
+    "checksum": "sha256:cbdf4ee1343ed6056e02add434dc2ce5ac3abed1e2ac4ee5668b3e4c0966fe09",
+    "created_at": "2026-05-18T01:47:14Z",
     "deployment_summary": {
       "current_stage": "none"
     },
@@ -32,7 +32,7 @@
         "twse-ohlcv-offline-sample-2024-001"
       ],
       "source_run_ids": [
-        "finrl-ppo-16fecc7e3bab"
+        "finrl-ppo-ee024ed84a0b"
       ],
       "source_strategy_spec_id": "strategy-spec:twse-ppo-offline-v1"
     },
@@ -55,7 +55,7 @@
       "observation_dim": 7,
       "training_backend": "finrl_ppo"
     },
-    "producer_run_id": "finrl-ppo-16fecc7e3bab",
+    "producer_run_id": "finrl-ppo-ee024ed84a0b",
     "registry_id": "finrl-policy-twse-ppo-strategy-001-1.0.0",
     "rollback_target": null,
     "storage_ref": {
@@ -127,7 +127,7 @@
     },
     {
       "artifact_state": "draft",
-      "checksum": "sha256:a6ad1b3872c98361e120aae2e43b0abc620be2147011cf2c744848f67fe5580e",
+      "checksum": "sha256:cbdf4ee1343ed6056e02add434dc2ce5ac3abed1e2ac4ee5668b3e4c0966fe09",
       "gate": "model_artifact_projection",
       "source_ref": "support/evidence/OSS-FINRL-V2-001/registry_entry.json",
       "status": "passed",
@@ -151,7 +151,7 @@
       "status": "passed"
     }
   ],
-  "generated_at": "2026-05-18T00:41:02Z",
+  "generated_at": "2026-05-18T01:47:14Z",
   "generated_by": "Codex2 / OSS-FINRL-V2-001",
   "legacy_review_fields": {
     "allowed_next_action": "offline_registry_review_only",
@@ -171,7 +171,7 @@
       "twse-ohlcv-offline-sample-2024-001"
     ],
     "source_run_ids": [
-      "finrl-ppo-16fecc7e3bab"
+      "finrl-ppo-ee024ed84a0b"
     ],
     "source_strategy_spec_id": "strategy-spec:twse-ppo-offline-v1"
   },
@@ -179,7 +179,7 @@
   "model_artifact_ref": {
     "artifact_ref": "finrl-policy-twse-ppo-strategy-001-1.0.0@1.0.0",
     "artifact_type": "model_artifact",
-    "checksum": "sha256:a6ad1b3872c98361e120aae2e43b0abc620be2147011cf2c744848f67fe5580e",
+    "checksum": "sha256:cbdf4ee1343ed6056e02add434dc2ce5ac3abed1e2ac4ee5668b3e4c0966fe09",
     "registry_id": "finrl-policy-twse-ppo-strategy-001-1.0.0",
     "storage_ref": {
       "backend": "object_store",
@@ -277,7 +277,7 @@
     "scoring_only_not_direct_action": true
   },
   "schema_version": "PromotionReadinessPacket.v1",
-  "source_run_id": "finrl-ppo-16fecc7e3bab",
+  "source_run_id": "finrl-ppo-ee024ed84a0b",
   "source_task_id": "OSS-FINRL-V2-001",
   "target_id": "finrl-policy-twse-ppo-strategy-001-1.0.0",
   "target_type": "artifact",
