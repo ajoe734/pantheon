@@ -189,8 +189,9 @@ The reviewed deliverable remains support-only:
 
 - task-owned packet: this file
 - reviewer record: `support/reviews/SPRINT-8-CLOSEOUT-SIDECAR-REVIEW-review-claude.md`
-- PR: `#155`, open against `dev` with auto-merge enabled
-- branch state: task branch refreshed with `origin/dev` before closeout
+- PR `#155`: merged into `dev` as
+  `3016c786ec30df4e6608b71c86536e910e506b02`
+- branch state: task branch refreshed with `origin/dev` before final publication
 - canonical/runtime changes: none
 
 Focused closeout checks:
@@ -208,7 +209,7 @@ Closeout observations:
 
 - sidecar live state is `review_approved`, owner `Codex2`, reviewer `Claude`
 - Claude review file is attached to the sidecar status record
-- visible PR checks were passing before this final closeout update
+- visible PR checks passed before PR `#155` merged
 - PR diff remains scoped to support sidecar/review material
 - parent `SPRINT-8-CLOSEOUT` live lifecycle is separate and must be finalized by
   its owner/reviewer; this sidecar does not move the parent task
