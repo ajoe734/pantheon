@@ -12,6 +12,7 @@ worktree.
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -242,9 +243,6 @@ class WorkerCommitWrapperTests(unittest.TestCase):
             last_files = _git(root, "show", "--name-only", "--format=", "HEAD").stdout.split()
             self.assertIn("kept.py", last_files)
             self.assertNotIn("leaked.py", last_files)
-            audit_lines = (root / "ai-activity-log.jsonl").read_text(encoding="utf-8").splitlines()
-            self.assertTrue(audit_lines)
-            self.assertIn('"message": "Worker commit ', audit_lines[-1])
         finally:
             import shutil; shutil.rmtree(root)
 
@@ -310,6 +308,33 @@ class WorkerCommitWrapperTests(unittest.TestCase):
             self.assertIn("from_a.py", _git(root, "diff", "--cached", "--name-only").stdout)
         finally:
             import shutil; shutil.rmtree(root)
+
+    def test_worker_commit_audit_respects_status_root(self) -> None:
+        root = self._setup_repo()
+        status_root = Path(tempfile.mkdtemp())
+        try:
+            (root / "kept.py").write_text("a\n")
+            msg = root / "msg.txt"
+            msg.write_text("BAR-003: worker audit\n\nLLM-Agent: B\nTask-ID: BAR-003\nReviewer: A\n")
+            proc = self._wrapper(
+                root,
+                "--task-id", "BAR-003",
+                "--message-file", str(msg),
+                "--scope", "kept.py",
+                "--llm-agent", "Codex2",
+                env_extra={"PANTHEON_STATUS_ROOT": str(status_root)},
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stderr + proc.stdout)
+            local_log = root / "ai-activity-log.jsonl"
+            status_log = status_root / "ai-activity-log.jsonl"
+            self.assertFalse(local_log.exists())
+            audit = json.loads(status_log.read_text(encoding="utf-8").splitlines()[-1])
+            self.assertEqual(audit["agent"], "Codex2")
+            self.assertEqual(audit["type"], "worker_commit")
+            self.assertEqual(audit["task_id"], "BAR-003")
+            self.assertIn("Worker commit", audit["message"])
+        finally:
+            import shutil; shutil.rmtree(root); shutil.rmtree(status_root)
 
 
 if __name__ == "__main__":

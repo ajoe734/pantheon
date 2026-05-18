@@ -58,7 +58,8 @@ def _detect_repo_root() -> Path:
 
 
 ROOT = _detect_repo_root()
-ACTIVITY_LOG = ROOT / "ai-activity-log.jsonl"
+STATUS_ROOT = Path(os.environ.get("PANTHEON_STATUS_ROOT") or ROOT).resolve()
+ACTIVITY_LOG = STATUS_ROOT / "ai-activity-log.jsonl"
 
 
 def _git(*args: str, env: dict[str, str] | None = None, check: bool = True) -> subprocess.CompletedProcess:
@@ -104,6 +105,7 @@ def _staged_paths(env: dict[str, str]) -> list[str]:
 
 def _append_audit(payload: dict) -> None:
     try:
+        ACTIVITY_LOG.parent.mkdir(parents=True, exist_ok=True)
         with ACTIVITY_LOG.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
     except OSError as exc:
@@ -219,7 +221,7 @@ def main() -> int:
         "agent": args.llm_agent or "unknown",
         "type": "worker_commit",
         "task_id": args.task_id,
-        "message": f"Worker commit {head_sha[:8]} recorded for {len(staged)} scoped paths.",
+        "message": f"Worker commit {head_sha[:8]} recorded for {args.task_id}.",
         "commit": head_sha,
         "scope": scope,
         "staged": staged,

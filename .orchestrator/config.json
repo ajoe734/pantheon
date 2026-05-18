@@ -75,6 +75,18 @@
     ],
     "auto_restore_enabled": false
   },
+  "worker_worktrees": {
+    "enabled": true,
+    "root": "/tmp/pantheon-worker-worktrees",
+    "base_ref": "origin/dev",
+    "reuse_existing": true,
+    "execution_reasons": [
+      "owned_ready_dispatch",
+      "owned_in_progress_dispatch",
+      "owned_finalize_dispatch",
+      "review_ready_dispatch"
+    ]
+  },
   "worker_retry": {
     "enabled": true,
     "max_attempts": 5,
@@ -815,6 +827,7 @@
       "done"
     ],
     "worker_terminal_statuses": [
+      "review",
       "done",
       "review_approved"
     ],
