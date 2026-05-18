@@ -4,9 +4,23 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from production_drl_run import build_dataset_config, load_twse_data, main
-from registry_admission_packet import generate_admission_packet, validate_admission_packet
+from registry_admission_packet import (
+    RegistryAdmissionPacketError,
+    build_admission_packet,
+    generate_admission_packet,
+    validate_admission_packet,
+)
 from twse_stock_env import TWSESerialEnv
+
+
+def _skip_without_upstream_finrl_runtime() -> None:
+    pytest.importorskip("stable_baselines3")
+    env = TWSESerialEnv(load_twse_data(periods=8), use_finrl=True)
+    if not env.finrl_available:
+        pytest.skip("upstream FinRL StockTradingEnv runtime is not installed")
 
 
 def test_twse_records_are_governed_ohlcv():
@@ -31,6 +45,7 @@ def test_twse_env_import_safe_without_finrl():
 
 
 def test_production_drl_training_writes_offline_artifacts(tmp_path: Path):
+    _skip_without_upstream_finrl_runtime()
     result = main(output_dir=tmp_path)
 
     metrics = result.training_result.metrics
@@ -43,6 +58,11 @@ def test_production_drl_training_writes_offline_artifacts(tmp_path: Path):
     # Production path must clear the 1000-step task acceptance threshold.
     assert metrics["total_training_steps"] >= 1000
     assert metrics["portfolio_value_final"] != metrics["portfolio_value_initial"]
+    assert metrics["stock_trading_env_used"] is True
+    assert metrics["fit_mode"].startswith("upstream_finrl_stocktradingenv")
+    assert metrics["device"] == "cpu"
+    assert result.artifact_bundle["twse_stock_env"]["finrl_available"] is True
+    assert result.artifact_bundle["policy"]["fit_mode"].startswith("upstream_finrl_stocktradingenv")
 
     # Registry entry must carry checksum and trained_policy_ref.
     assert result.registry_entry["artifact_state"] == "draft"
@@ -65,6 +85,8 @@ def test_production_drl_training_writes_offline_artifacts(tmp_path: Path):
     assert admission_packet["legacy_review_fields"]["allowed_next_action"] == "offline_registry_review_only"
     assert "annual_return" in admission_packet["evaluation_summary"]
     assert "max_drawdown" in admission_packet["evaluation_summary"]
+    assert admission_packet["evaluation_summary"]["stock_trading_env_used"] is True
+    assert admission_packet["twse_stock_env"]["finrl_available"] is True
     assert admission_packet["candidate_artifact"]["trained_policy_ref"]
     assert admission_packet["model_artifact_ref"]["checksum"].startswith("sha256:")
 
@@ -90,3 +112,40 @@ def test_admission_packet_generation(tmp_path: Path):
     assert packet["environment"] == "paper"
     assert packet["can_proceed"] is True
     assert validate_admission_packet(packet) == []
+
+
+def test_admission_packet_fails_closed_without_upstream_env(tmp_path: Path):
+    with pytest.raises(RegistryAdmissionPacketError, match="finrl_available must be true"):
+        build_admission_packet(
+            {
+                "registry_id": "fallback-artifact",
+                "artifact_type": "model_artifact",
+                "strategy_id": "manual-finrl-strategy",
+                "version": "manual",
+                "artifact_state": "draft",
+                "deployment_summary": {"current_stage": "none"},
+                "lineage": {
+                    "source_run_ids": ["fallback-run"],
+                    "source_dataset_refs": ["manual-finrl-dataset"],
+                    "source_strategy_spec_id": "manual-finrl-strategy-spec",
+                },
+                "checksum": "sha256:manual",
+                "trained_policy_ref": "fallback-artifact",
+                "storage_ref": {"backend": "manual", "path": "fallback-artifact"},
+                "metadata": {"framework": "finrl", "algorithm": "ppo", "num_steps": 100},
+            },
+            evaluation_summary={
+                "algorithm": "ppo",
+                "num_steps": 100,
+                "total_training_steps": 1200,
+                "sharpe": 1.0,
+                "annual_return": 0.12,
+                "max_drawdown": 0.03,
+                "fit_mode": "bounded_offline_finrl_adapter",
+                "stock_trading_env_used": False,
+                "device": "cpu",
+            },
+            source_run_id="fallback-run",
+            env_summary={"num_instruments": 5, "state_space": 21, "action_space": 5, "finrl_available": False},
+            created_at="2026-05-17T00:00:00Z",
+        )

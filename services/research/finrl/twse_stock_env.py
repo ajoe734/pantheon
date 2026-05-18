@@ -8,13 +8,11 @@ construct the real upstream env.
 """
 from __future__ import annotations
 
+import importlib.metadata
+import importlib.util
+from pathlib import Path
 from collections.abc import Mapping, Sequence
 from typing import Any
-
-try:
-    from finrl.meta.env_stock_trading.env_stocktrading import StockTradingEnv as _FinRLStockTradingEnv
-except ImportError:  # FinRL is optional in repo-local CI; the adapter remains offline-safe.
-    _FinRLStockTradingEnv = None
 
 try:
     import pandas as _pd
@@ -24,6 +22,29 @@ except ImportError:  # pragma: no cover - pandas is service-local but optional f
 
 REQUIRED_OHLCV_FIELDS = ("open", "high", "low", "close", "volume")
 DEFAULT_TECH_INDICATORS = ("daily_return", "volume_change")
+_FINRL_STOCK_ENV_IMPORT_ERROR: str | None = None
+
+
+def _load_finrl_stock_trading_env():
+    """Load upstream StockTradingEnv without importing FinRL's broker facade."""
+
+    global _FINRL_STOCK_ENV_IMPORT_ERROR
+    try:
+        distribution = importlib.metadata.distribution("FinRL")
+        module_path = Path(distribution.locate_file("finrl/meta/env_stock_trading/env_stocktrading.py"))
+        spec = importlib.util.spec_from_file_location("pantheon_finrl_env_stocktrading", module_path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"cannot load FinRL StockTradingEnv from {module_path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _FINRL_STOCK_ENV_IMPORT_ERROR = None
+        return module.StockTradingEnv
+    except Exception as exc:  # pragma: no cover - depends on optional service-local deps.
+        _FINRL_STOCK_ENV_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
+        return None
+
+
+_FinRLStockTradingEnv = _load_finrl_stock_trading_env()
 
 
 class TWSEStockEnvError(ValueError):
@@ -109,9 +130,10 @@ class TWSESerialEnv:
         return self._env is not None
 
     def environment_summary(self) -> dict[str, Any]:
-        return {
+        summary = {
             "wrapper": "TWSESerialEnv",
             "upstream_env": "finrl.meta.env_stock_trading.env_stocktrading.StockTradingEnv",
+            "upstream_env_loader": "direct_finrl_distribution_module",
             "finrl_available": self.finrl_available,
             "num_instruments": self.stock_dim,
             "num_periods": len(self.dates),
@@ -120,6 +142,18 @@ class TWSESerialEnv:
             "tech_indicator_list": list(self.tech_indicator_list),
             "cpu_only": True,
         }
+        if not self.finrl_available and _FINRL_STOCK_ENV_IMPORT_ERROR:
+            summary["finrl_import_error"] = _FINRL_STOCK_ENV_IMPORT_ERROR
+        return summary
+
+    @property
+    def finrl_env(self):
+        if self._env is None:
+            raise TWSEStockEnvError(
+                "FinRL StockTradingEnv is unavailable; install service-local FinRL, "
+                "stable-baselines3, and CPU torch dependencies before production evidence runs"
+            )
+        return self._env
 
     def reset(self):
         if self._env is not None:
@@ -163,8 +197,10 @@ class TWSESerialEnv:
     def _finrl_env_kwargs(self, overrides: Mapping[str, Any]) -> dict[str, Any]:
         if _pd is None:
             raise RuntimeError("pandas is required to construct FinRL StockTradingEnv")
+        df = _pd.DataFrame(self.records).sort_values(["date", "tic"]).reset_index(drop=True)
+        df.index = _pd.factorize(df["date"])[0]
         env_kwargs = {
-            "df": _pd.DataFrame(self.records),
+            "df": df,
             "stock_dim": self.stock_dim,
             "hmax": self.hmax,
             "initial_amount": self.initial_amount,
@@ -178,7 +214,7 @@ class TWSESerialEnv:
             "turbulence_threshold": None,
             "risk_indicator_col": "turbulence",
             "make_plots": False,
-            "print_verbosity": 0,
+            "print_verbosity": 1_000_000,
         }
         env_kwargs.update(dict(overrides))
         return env_kwargs

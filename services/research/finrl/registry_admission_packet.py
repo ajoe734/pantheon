@@ -113,8 +113,9 @@ def build_admission_packet(
             "ref_type": "offline_training_run",
             "status": "passed",
             "description": (
-                f"CPU-only {evaluation.get('algorithm', metadata.get('algorithm'))} run completed "
-                f"{evaluation.get('total_training_steps')} bounded training steps."
+                f"CPU-only {evaluation.get('algorithm', metadata.get('algorithm'))} run used "
+                "upstream FinRL StockTradingEnv and completed "
+                f"{evaluation.get('total_training_steps')} training steps."
             ),
         },
         {
@@ -163,6 +164,70 @@ def build_admission_packet(
         "checksum": checksum,
         "storage_ref": copy.deepcopy(registry.get("storage_ref", {})),
     }
+    stock_env_ready = (
+        int(env.get("num_instruments") or metadata.get("num_instruments") or 0) >= 5
+        and env.get("finrl_available") is True
+    )
+    upstream_fit_mode = str(evaluation.get("fit_mode") or "")
+    production_training_ready = (
+        int(evaluation.get("total_training_steps") or 0) >= 1000
+        and evaluation.get("stock_trading_env_used") is True
+        and upstream_fit_mode.startswith("upstream_finrl_stocktradingenv")
+        and evaluation.get("device") == "cpu"
+    )
+    gate_results = [
+        {
+            "gate": "twse_stock_env",
+            "status": "passed" if stock_env_ready else "failed",
+            "source_ref": "services/research/finrl/twse_stock_env.py",
+            "num_instruments": env.get("num_instruments", metadata.get("num_instruments")),
+            "state_space": env.get("state_space"),
+            "action_space": env.get("action_space"),
+            "finrl_available": env.get("finrl_available"),
+            "upstream_env_loader": env.get("upstream_env_loader"),
+        },
+        {
+            "gate": "production_drl_training",
+            "status": "passed" if production_training_ready else "failed",
+            "source_ref": "services/research/finrl/production_drl_run.py",
+            "algorithm": evaluation.get("algorithm"),
+            "fit_mode": evaluation.get("fit_mode"),
+            "stock_trading_env_used": evaluation.get("stock_trading_env_used"),
+            "total_training_steps": evaluation.get("total_training_steps"),
+            "device": evaluation.get("device"),
+        },
+        {
+            "gate": "evaluation_summary",
+            "status": "passed" if _evaluation_complete(evaluation) else "failed",
+            "source_ref": "support/evidence/OSS-FINRL-V2-001/evaluation_summary.json",
+            "sharpe": evaluation.get("sharpe"),
+            "annual_return": evaluation.get("annual_return"),
+            "max_drawdown": evaluation.get("max_drawdown"),
+        },
+        {
+            "gate": "model_artifact_projection",
+            "status": "passed" if registry.get("artifact_type") == "model_artifact" else "failed",
+            "source_ref": "support/evidence/OSS-FINRL-V2-001/registry_entry.json",
+            "checksum": checksum,
+            "trained_policy_ref": trained_policy_ref,
+            "artifact_state": registry.get("artifact_state"),
+        },
+        {
+            "gate": "lineage_refs",
+            "status": "passed" if _lineage_complete(lineage) else "failed",
+            "source_ref": "registry_entry.lineage",
+            "source_strategy_spec_id": lineage.get("source_strategy_spec_id"),
+            "source_dataset_refs": lineage.get("source_dataset_refs"),
+        },
+        {
+            "gate": "safety_fail_closed",
+            "status": "passed",
+            "source_ref": "packet.safety_assertions",
+            "registry_write_performed": False,
+            "deployment_stage": "none",
+            "order_route": "none",
+        },
+    ]
 
     packet = {
         "packet_id": f"prp-{source_task_id.lower()}-{registry_id}",
@@ -178,60 +243,12 @@ def build_admission_packet(
         "required_evidence": list(REQUIRED_EVIDENCE),
         "provided_evidence": provided_evidence,
         "missing_evidence": missing_evidence,
-        "gate_results": [
-            {
-                "gate": "twse_stock_env",
-                "status": "passed" if int(env.get("num_instruments") or metadata.get("num_instruments") or 0) >= 5 else "failed",
-                "source_ref": "services/research/finrl/twse_stock_env.py",
-                "num_instruments": env.get("num_instruments", metadata.get("num_instruments")),
-                "state_space": env.get("state_space"),
-                "action_space": env.get("action_space"),
-            },
-            {
-                "gate": "bounded_drl_training",
-                "status": "passed" if int(evaluation.get("total_training_steps") or 0) >= 1000 else "failed",
-                "source_ref": "services/research/finrl/production_drl_run.py",
-                "algorithm": evaluation.get("algorithm"),
-                "total_training_steps": evaluation.get("total_training_steps"),
-                "cpu_only": True,
-            },
-            {
-                "gate": "evaluation_summary",
-                "status": "passed" if _evaluation_complete(evaluation) else "failed",
-                "source_ref": "support/evidence/OSS-FINRL-V2-001/evaluation_summary.json",
-                "sharpe": evaluation.get("sharpe"),
-                "annual_return": evaluation.get("annual_return"),
-                "max_drawdown": evaluation.get("max_drawdown"),
-            },
-            {
-                "gate": "model_artifact_projection",
-                "status": "passed" if registry.get("artifact_type") == "model_artifact" else "failed",
-                "source_ref": "support/evidence/OSS-FINRL-V2-001/registry_entry.json",
-                "checksum": checksum,
-                "trained_policy_ref": trained_policy_ref,
-                "artifact_state": registry.get("artifact_state"),
-            },
-            {
-                "gate": "lineage_refs",
-                "status": "passed" if _lineage_complete(lineage) else "failed",
-                "source_ref": "registry_entry.lineage",
-                "source_strategy_spec_id": lineage.get("source_strategy_spec_id"),
-                "source_dataset_refs": lineage.get("source_dataset_refs"),
-            },
-            {
-                "gate": "safety_fail_closed",
-                "status": "passed",
-                "source_ref": "packet.safety_assertions",
-                "registry_write_performed": False,
-                "deployment_stage": "none",
-                "order_route": "none",
-            },
-        ],
+        "gate_results": gate_results,
         "risk_owner_required": False,
         "risk_owner_approval_recorded": False,
         "operator_required": False,
         "operator_approval_recorded": False,
-        "can_proceed": not missing_evidence,
+        "can_proceed": not missing_evidence and _gates_passed(gate_results),
         "reason": (
             "CPU-only FinRL PPO model_artifact is ready for registry candidate review. "
             "This packet performs no registry write and grants no paper/canary/live deployment authority."
@@ -328,12 +345,25 @@ def generate_admission_packet(
             "evaluation_summary": dict(evaluation_summary),
             "metadata": {"framework": "finrl", "algorithm": "ppo", "num_steps": evaluation_summary.get("num_steps")},
         }
+        production_summary = {
+            **dict(evaluation_summary),
+            "fit_mode": "upstream_finrl_stocktradingenv_stable_baselines3_ppo",
+            "stock_trading_env_used": True,
+            "device": "cpu",
+        }
         packet = build_admission_packet(
             registry_entry,
-            evaluation_summary=evaluation_summary,
+            evaluation_summary=production_summary,
             source_run_id=run_id,
             evidence_refs=evidence_refs,
-            env_summary={"num_instruments": 5, "state_space": 21, "action_space": 5, "cpu_only": True},
+            env_summary={
+                "num_instruments": 5,
+                "state_space": 21,
+                "action_space": 5,
+                "cpu_only": True,
+                "finrl_available": True,
+                "upstream_env_loader": "direct_finrl_distribution_module",
+            },
             created_at=created_at,
         )
 
@@ -369,6 +399,7 @@ def validate_admission_packet(packet: Mapping[str, Any]) -> list[str]:
     safety = _mapping(packet.get("safety_assertions"))
     scope = _mapping(packet.get("downstream_scope"))
     evaluation = _mapping(packet.get("evaluation_summary"))
+    env = _mapping(packet.get("twse_stock_env"))
     if request.get("artifact_type") != "model_artifact":
         errors.append("registry_request.artifact_type must be model_artifact")
     if request.get("requested_artifact_state") != "candidate":
@@ -393,6 +424,14 @@ def validate_admission_packet(packet: Mapping[str, Any]) -> list[str]:
         errors.append("evaluation_summary.total_training_steps must be >= 1000")
     if not _evaluation_complete(evaluation):
         errors.append("evaluation_summary must include sharpe, annual_return, and max_drawdown")
+    if env.get("finrl_available") is not True:
+        errors.append("twse_stock_env.finrl_available must be true")
+    if evaluation.get("stock_trading_env_used") is not True:
+        errors.append("evaluation_summary.stock_trading_env_used must be true")
+    if not str(evaluation.get("fit_mode") or "").startswith("upstream_finrl_stocktradingenv"):
+        errors.append("evaluation_summary.fit_mode must identify upstream FinRL StockTradingEnv")
+    if evaluation.get("device") != "cpu":
+        errors.append("evaluation_summary.device must be cpu")
     for key in (
         "no_registry_write",
         "no_order_route",
@@ -435,6 +474,10 @@ def _lineage_complete(lineage: Mapping[str, Any]) -> bool:
     run_ids = _sequence(lineage.get("source_run_ids"))
     dataset_refs = _sequence(lineage.get("source_dataset_refs"))
     return bool(run_ids and dataset_refs and lineage.get("source_strategy_spec_id"))
+
+
+def _gates_passed(gates: Sequence[Mapping[str, Any]]) -> bool:
+    return all(gate.get("status") in {"passed", "present"} for gate in gates)
 
 
 def _mapping(value: Any) -> dict[str, Any]:

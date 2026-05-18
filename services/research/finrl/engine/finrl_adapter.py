@@ -147,6 +147,7 @@ class PolicyTrainingConfig:
     risk_aversion: float = 0.25
     storage_backend: str = "object_store"
     storage_path_template: str = "research/finrl/{strategy_id}/{version}/artifact.json"
+    governance_scope: str = "offline_deferred_prep_only"
 
 
 @dataclass(frozen=True)
@@ -624,11 +625,33 @@ def run_finrl_workflow(
     )
     trainer = backend or StubFinRLBackend()
     training_result = trainer.train(prepared, training_config)
-    artifact_bundle = _build_artifact_bundle(prepared, training_result, training_config)
     environment_metadata = dataset.get("twse_stock_env")
+    return build_finrl_run_result(
+        prepared,
+        training_result,
+        training_config,
+        environment_metadata=environment_metadata if isinstance(environment_metadata, Mapping) else None,
+    )
+
+
+def build_finrl_run_result(
+    prepared: PreparedFinRLDataset,
+    training_result: PolicyTrainingResult,
+    training_config: PolicyTrainingConfig,
+    *,
+    environment_metadata: Mapping[str, Any] | None = None,
+) -> FinRLRunResult:
+    """Project a completed FinRL training result into registry artifacts."""
+
+    artifact_bundle = _build_artifact_bundle(prepared, training_result, training_config)
     if isinstance(environment_metadata, Mapping):
         artifact_bundle["twse_stock_env"] = copy.deepcopy(dict(environment_metadata))
-    registry_entry = _build_registry_entry(prepared, training_result, artifact_bundle, training_config)
+    registry_entry = _build_registry_entry(
+        prepared,
+        training_result,
+        artifact_bundle,
+        training_config,
+    )
     candidate_packet = _build_candidate_packet(registry_entry, prepared, training_result)
     return FinRLRunResult(
         prepared_dataset=prepared,
@@ -696,7 +719,7 @@ def _build_artifact_bundle(
             "output_type": "rl_policy",
             "lean_consumption": "scoring_only_not_direct_action",
             "gate_state": "closed",
-            "allowed_scope": "offline_deferred_prep_only",
+            "allowed_scope": config.governance_scope,
             "notes": list(result.notes),
         },
         "registry_hints": {
