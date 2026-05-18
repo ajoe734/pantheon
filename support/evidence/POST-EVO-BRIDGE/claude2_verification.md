@@ -72,3 +72,7 @@ python3 -m pytest tests/e2e/test_paper_run_to_evolution_decision.py -q
 ```
 
 Result: 19 passed for the bridge suite and 8 passed for the E2E bridge suite.
+
+The task branch was then refreshed against the merged PR #110 base before the
+final status closeout PR so GitHub auto-merge evaluates only this task-scoped
+evidence reconciliation.
