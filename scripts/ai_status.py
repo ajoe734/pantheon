@@ -8,12 +8,18 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import yaml
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
+
+try:
+    import yaml
+except ModuleNotFoundError:  # pragma: no cover - exercised only in lean supervisor envs
+    yaml = None
+
+YAML_ERROR_TYPES = (yaml.YAMLError,) if yaml is not None else ()
 
 ROOT = Path(__file__).resolve().parents[1]
 STATUS_ROOT = (
@@ -2340,8 +2346,10 @@ def load_local_coordination_payload(path_value: str) -> dict[str, Any] | None:
         if local_path.suffix == ".json":
             payload = json.loads(text)
         else:
+            if yaml is None:
+                return None
             payload = yaml.safe_load(text)
-    except (OSError, json.JSONDecodeError, yaml.YAMLError):
+    except (OSError, json.JSONDecodeError, *YAML_ERROR_TYPES):
         return None
     return payload if isinstance(payload, dict) else None
 

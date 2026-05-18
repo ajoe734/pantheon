@@ -128,41 +128,56 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         self.assertEqual(result.mode, "claude_cli")
 
     def test_claude_alias_uses_provider_specific_home_env(self) -> None:
-        config = {
-            "agents": {
-                "claude2": {
-                    "id": "claude2",
-                    "display_name": "Claude2",
-                    "provider": "claude2",
-                    "adapter": "claude_cli",
-                }
-            },
-            "paths": {"status_file": "ai-status.json", "claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json"},
-            "providers": {
-                "claude2": {
-                    "allow_inbox_fallback": False,
-                    "runtime": {
-                        "cli": ".orchestrator/bin/claude",
-                        "home": "~/.claude2",
-                        "output_format": "stream-json",
-                        "include_hook_events": True,
-                    },
-                }
-            },
-        }
-        request = DeliveryRequest(agent_id="claude2", provider="claude2", delivery_mode="claude_cli", message="wake")
-        adapter = ClaudeCLIAdapter(config=config, provider_capabilities={"providers": {"claude": {"supports_auto_approve": True}}})
-        fake_process = mock.Mock(pid=1234)
-        with (
-            mock.patch("adapters.claude_cli._configured_claude_cli", return_value=".orchestrator/bin/claude"),
-            mock.patch("adapters.claude_cli._claude_auth_ready", return_value=True),
-            mock.patch("adapters.claude_cli.spawn_background_process", return_value=(fake_process, Path("/tmp/claude2.log"))) as spawn,
-        ):
-            result = adapter.deliver(request)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            gh_config = root / ".config" / "gh"
+            gh_config.mkdir(parents=True)
+            config = {
+                "agents": {
+                    "claude2": {
+                        "id": "claude2",
+                        "display_name": "Claude2",
+                        "provider": "claude2",
+                        "adapter": "claude_cli",
+                    }
+                },
+                "paths": {
+                    "status_file": "ai-status.json",
+                    "claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
+                },
+                "providers": {
+                    "claude2": {
+                        "allow_inbox_fallback": False,
+                        "runtime": {
+                            "cli": ".orchestrator/bin/claude",
+                            "home": "~/.claude2",
+                            "output_format": "stream-json",
+                            "include_hook_events": True,
+                        },
+                    }
+                },
+            }
+            request = DeliveryRequest(agent_id="claude2", provider="claude2", delivery_mode="claude_cli", message="wake")
+            adapter = ClaudeCLIAdapter(
+                config=config,
+                provider_capabilities={"providers": {"claude": {"supports_auto_approve": True}}},
+            )
+            fake_process = mock.Mock(pid=1234)
+            with (
+                mock.patch.dict(os.environ, {"HOME": str(root)}, clear=False),
+                mock.patch("adapters.claude_cli._configured_claude_cli", return_value=".orchestrator/bin/claude"),
+                mock.patch("adapters.claude_cli._claude_auth_ready", return_value=True),
+                mock.patch(
+                    "adapters.claude_cli.spawn_background_process",
+                    return_value=(fake_process, Path("/tmp/claude2.log")),
+                ) as spawn,
+            ):
+                result = adapter.deliver(request)
 
         self.assertTrue(result.ok)
         env = spawn.call_args.kwargs["env"]
-        self.assertEqual(env["HOME"], os.path.expanduser("~/.claude2"))
+        self.assertEqual(env["HOME"], str(root / ".claude2"))
+        self.assertEqual(env["GH_CONFIG_DIR"], str(gh_config))
         self.assertEqual(env["ORCH_PROVIDER"], "claude2")
         self.assertIn("--permission-mode", result.command)
 

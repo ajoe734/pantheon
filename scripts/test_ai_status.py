@@ -16,6 +16,23 @@ import ai_status
 
 
 class StatusRootRoutingTests(unittest.TestCase):
+    def test_load_local_coordination_payload_tolerates_missing_yaml(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-no-yaml-") as temp_dir:
+            root = Path(temp_dir)
+            (root / "payload.yaml").write_text("status: done\n", encoding="utf-8")
+            (root / "payload.json").write_text('{"status": "done"}\n', encoding="utf-8")
+
+            with (
+                mock.patch.object(ai_status, "ROOT", root),
+                mock.patch.object(ai_status, "yaml", None),
+                mock.patch.object(ai_status, "YAML_ERROR_TYPES", ()),
+            ):
+                self.assertIsNone(ai_status.load_local_coordination_payload("payload.yaml"))
+                self.assertEqual(
+                    {"status": "done"},
+                    ai_status.load_local_coordination_payload("payload.json"),
+                )
+
     def test_load_config_routes_runtime_paths_to_status_root(self) -> None:
         with tempfile.TemporaryDirectory(prefix="ai-status-routing-") as temp_dir:
             root = Path(temp_dir)
