@@ -307,5 +307,6 @@
     "upstream_env": "finrl.meta.env_stock_trading.env_stocktrading.StockTradingEnv",
     "upstream_env_loader": "direct_finrl_distribution_module",
     "wrapper": "TWSESerialEnv"
-  }
+  },
+  "finalization_owner": "Gemini2"
 }
