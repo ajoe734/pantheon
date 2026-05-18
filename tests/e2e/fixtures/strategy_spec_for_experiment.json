@@ -1,0 +1,104 @@
+{
+  "spec_version": "1.0",
+  "strategy_id": "strat-ooda-e2e-002-sma-cross",
+  "title": "OODA E2E SMA Crossover Research Strategy",
+  "hypothesis": "Two liquid TW research symbols with a short moving average crossing above a longer moving average can produce a reproducible research-only backtest signal.",
+  "objective": "Prove the StrategySpec to ExperimentRun transition using the experiment orchestrator and the vectorbt governed adapter.",
+  "lifecycle_state": "draft",
+  "market_scope": {
+    "symbols": [
+      "TWSE:2330",
+      "TWSE:2317"
+    ],
+    "asset_classes": [
+      "equity"
+    ],
+    "venues": [
+      "TWSE"
+    ],
+    "frequency": "1d"
+  },
+  "data_dependencies": [
+    {
+      "ref": "dataset:ooda-e2e-002-synthetic-ohlcv-v1",
+      "kind": "dataset"
+    },
+    {
+      "ref": "source-record:ooda-e2e-001-internal-note",
+      "kind": "source_record"
+    }
+  ],
+  "execution_profile": {
+    "signal_schema_version": "1.0",
+    "quantity_type": "PERCENT_PORTFOLIO",
+    "rebalance_cadence": "1d",
+    "execution_mode_hint": "research"
+  },
+  "evaluation_plan": {
+    "metrics": [
+      "mean_sharpe_ratio",
+      "mean_total_return",
+      "mean_max_drawdown",
+      "total_trades"
+    ],
+    "candidate_gate": "Research-only vectorbt backtest must produce a completed ExperimentRun with StrategySpec lineage.",
+    "paper_gate": "Paper promotion remains downstream and requires explicit approval.",
+    "live_gate": "Live promotion is prohibited by this E2E test."
+  },
+  "governance": {
+    "approval_required": true,
+    "policy_id": "research-ooda-e2e-v1",
+    "risk_profile": "research_only"
+  },
+  "provenance": {
+    "source_kind": "workflow",
+    "created_at": "2026-05-17T11:10:00Z",
+    "source_refs": [
+      "source-record:ooda-e2e-001-internal-note"
+    ],
+    "created_by": "Codex2"
+  },
+  "evidence_refs": [
+    {
+      "ref_type": "source_record",
+      "ref_id": "source-record:ooda-e2e-001-internal-note",
+      "association": "upstream_strategy_spec_seed"
+    }
+  ],
+  "code_refs": [
+    {
+      "repo_ref": "pantheon",
+      "path": "services/research/vectorbt/adapter/vectorbt_adapter.py",
+      "symbol": "run_vectorbt_workflow",
+      "association": "experiment_backend_adapter"
+    }
+  ],
+  "metadata": {
+    "task_id": "OODA-E2E-002",
+    "strategy_spec_artifact_id": "strategy-spec:strat-ooda-e2e-002-sma-cross@1.0.0",
+    "strategy_spec_version": "1.0.0",
+    "dataset_version_id": "dataset:ooda-e2e-002-synthetic-ohlcv-v1",
+    "code_version": "pantheon:services/research/vectorbt@OODA-E2E-002",
+    "experiment_task_id": "etask-ooda-e2e-002-vectorbt",
+    "backend_id": "vectorbt",
+    "synthetic_ohlcv": {
+      "bars": 36,
+      "start_date": "2026-01-05",
+      "data_frequency": "daily",
+      "base_prices": {
+        "TWSE:2330": 100.0,
+        "TWSE:2317": 58.0
+      }
+    },
+    "backtest_config": {
+      "version": "1.0.0",
+      "requested_by": "Codex2",
+      "strategy_params": {
+        "short_window": 4,
+        "long_window": 10
+      },
+      "init_cash": 100000.0,
+      "fees": 0.001
+    }
+  }
+}
