@@ -5,8 +5,8 @@
     "approver": null,
     "artifact_state": "candidate",
     "artifact_type": "model_artifact",
-    "checksum": "sha256:61b787fba72f44cec5aa158622a097abb8cbc3db2602bf7abdc652f321e59573",
-    "created_at": "2026-05-18T02:04:49Z",
+    "checksum": "sha256:9978a36361710deb5658ce1cf8c8a77b4fba4aa993011738fa159eb22598561d",
+    "created_at": "2026-05-18T02:50:59Z",
     "deployment_summary": {
       "current_stage": "none"
     },
@@ -14,7 +14,7 @@
       "algorithm": "ppo",
       "annual_return": 0.861114,
       "bounded_epochs": 12,
-      "framework_import_ready": false,
+      "framework_import_ready": true,
       "max_action_prior": 0.983459,
       "max_drawdown": 0.0,
       "mean_exposure_proxy": 0.20399413,
@@ -32,7 +32,7 @@
         "twse-ohlcv-offline-sample-2024-001"
       ],
       "source_run_ids": [
-        "finrl-ppo-06b89af2dcfa"
+        "finrl-ppo-a0d5b7a85035"
       ],
       "source_strategy_spec_id": "strategy-spec:twse-ppo-offline-v1"
     },
@@ -56,7 +56,7 @@
       "observation_dim": 7,
       "training_backend": "finrl_ppo"
     },
-    "producer_run_id": "finrl-ppo-06b89af2dcfa",
+    "producer_run_id": "finrl-ppo-a0d5b7a85035",
     "registry_id": "finrl-policy-twse-ppo-strategy-001-1.0.0",
     "rollback_target": null,
     "storage_ref": {
@@ -77,5 +77,5 @@
     "Draft artifact must stay non-executable and non-default.",
     "Promotion to candidate requires offline review of policy I/O and lineage only."
   ],
-  "source_run_id": "finrl-ppo-06b89af2dcfa"
+  "source_run_id": "finrl-ppo-a0d5b7a85035"
 }

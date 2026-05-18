@@ -2,7 +2,7 @@
   "algorithm": "ppo",
   "annual_return": 0.861114,
   "bounded_epochs": 12,
-  "framework_import_ready": false,
+  "framework_import_ready": true,
   "max_action_prior": 0.983459,
   "max_drawdown": 0.0,
   "mean_exposure_proxy": 0.20399413,

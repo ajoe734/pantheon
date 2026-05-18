@@ -1,6 +1,6 @@
 {
   "artifact_family": "rl_policy",
-  "created_at": "2026-05-18T02:04:49Z",
+  "created_at": "2026-05-18T02:50:59Z",
   "created_by": "Codex2",
   "dataset_checksum": "sha256:d48d181772c181e9464ee26091a60686819dd651834fc9e00c2652152ed31117",
   "dataset_schema": {
@@ -72,7 +72,7 @@
     "algorithm": "ppo",
     "annual_return": 0.861114,
     "bounded_epochs": 12,
-    "framework_import_ready": false,
+    "framework_import_ready": true,
     "max_action_prior": 0.983459,
     "max_drawdown": 0.0,
     "mean_exposure_proxy": 0.20399413,
@@ -93,7 +93,7 @@
     "gate_state": "closed",
     "lean_consumption": "scoring_only_not_direct_action",
     "notes": [
-      "FinRL package is not installed locally; bounded offline PPO skeleton fit completed.",
+      "FinRL package metadata resolved; bounded offline PPO policy fit completed.",
       "Production/live FinRL execution remains blocked until the RL approval gate reopens."
     ],
     "output_type": "rl_policy",
