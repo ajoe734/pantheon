@@ -7,7 +7,7 @@
 **Reviewer:** `Claude2`
 **Prepared by:** `Codex`
 **Date:** `2026-05-18`
-**Packet status:** `ready_for_review`
+**Packet status:** `review_approved_owner_finalizing`
 
 > Scope constraint: support artifact only. This packet does not change L1
 > canonical truth, core contract truth, runtime registries, or the DEP-004
@@ -101,6 +101,7 @@ Observed result:
 
 ```text
 21 passed in 2.15s
+21 passed in 2.81s (owner closeout rerun, 2026-05-18)
 ```
 
 What this verifies:
@@ -145,3 +146,23 @@ Suggested handoff summary:
 > guard, cron deploy hook, dependency chain, and focused verification evidence.
 > Focused pytest for the guard and cron deploy hook passed: 21 tests. No
 > canonical truth or core implementation files were changed by this sidecar.
+
+## 8. Owner Closeout Note
+
+`Claude2` approved this sidecar packet in `ai-status.json` with these checked
+points: all DEP-004 acceptance criteria are covered, the cron deploy hook is
+before execution projection and saga bootstrap, fail-closed behavior is intact,
+and adjacent `services/deployment/` compatibility preflight work remains out of
+scope.
+
+Owner closeout reran the focused verification command on 2026-05-18:
+
+```bash
+python3 -m pytest -q services/control-plane/governance/test_pool_runtime_compat.py services/control-plane/cron/test_cron.py
+```
+
+Result: `21 passed in 2.81s`.
+
+Final sidecar disposition: ready for task closeout as a support-only packet.
+The parent DEP-004 owner remains responsible for deciding whether and how to
+absorb this packet into the parent delivery trail.
