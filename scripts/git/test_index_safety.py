@@ -12,6 +12,7 @@ worktree.
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -186,6 +187,8 @@ class WorkerCommitWrapperTests(unittest.TestCase):
         # Disable both pre-commit guards for clean test isolation.
         env.setdefault("PANTHEON_GENERATED_FILES_CHECK_DISABLED", "1")
         env.setdefault("PANTHEON_SCOPE_CHECK_DISABLED", "1")
+        if not env_extra or "PANTHEON_STATUS_ROOT" not in env_extra:
+            env["PANTHEON_STATUS_ROOT"] = str(root)
         return subprocess.run(
             [sys.executable, str(HERE / "worker_commit.py"), *args],
             cwd=root,
@@ -212,6 +215,8 @@ class WorkerCommitWrapperTests(unittest.TestCase):
         env = {**os.environ, **(env_extra or {})}
         env.setdefault("PANTHEON_GENERATED_FILES_CHECK_DISABLED", "1")
         env.setdefault("PANTHEON_SCOPE_CHECK_DISABLED", "1")
+        if not env_extra or "PANTHEON_STATUS_ROOT" not in env_extra:
+            env["PANTHEON_STATUS_ROOT"] = str(root)
         return subprocess.run(
             [sys.executable, str(root / "scripts" / "git" / "worker_commit.py"), *args],
             cwd=root,
@@ -242,6 +247,9 @@ class WorkerCommitWrapperTests(unittest.TestCase):
             last_files = _git(root, "show", "--name-only", "--format=", "HEAD").stdout.split()
             self.assertIn("kept.py", last_files)
             self.assertNotIn("leaked.py", last_files)
+            audit = json.loads((root / "ai-activity-log.jsonl").read_text().splitlines()[-1])
+            self.assertIn("message", audit)
+            self.assertIn("Worker commit", audit["message"])
         finally:
             import shutil; shutil.rmtree(root)
 
@@ -307,6 +315,33 @@ class WorkerCommitWrapperTests(unittest.TestCase):
             self.assertIn("from_a.py", _git(root, "diff", "--cached", "--name-only").stdout)
         finally:
             import shutil; shutil.rmtree(root)
+
+    def test_worker_commit_audit_respects_status_root(self) -> None:
+        root = self._setup_repo()
+        status_root = Path(tempfile.mkdtemp())
+        try:
+            (root / "kept.py").write_text("a\n")
+            msg = root / "msg.txt"
+            msg.write_text("BAR-003: worker audit\n\nLLM-Agent: B\nTask-ID: BAR-003\nReviewer: A\n")
+            proc = self._wrapper(
+                root,
+                "--task-id", "BAR-003",
+                "--message-file", str(msg),
+                "--scope", "kept.py",
+                "--llm-agent", "Codex2",
+                env_extra={"PANTHEON_STATUS_ROOT": str(status_root)},
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stderr + proc.stdout)
+            local_log = root / "ai-activity-log.jsonl"
+            status_log = status_root / "ai-activity-log.jsonl"
+            self.assertFalse(local_log.exists())
+            audit = json.loads(status_log.read_text(encoding="utf-8").splitlines()[-1])
+            self.assertEqual(audit["agent"], "Codex2")
+            self.assertEqual(audit["type"], "worker_commit")
+            self.assertEqual(audit["task_id"], "BAR-003")
+            self.assertIn("Worker commit", audit["message"])
+        finally:
+            import shutil; shutil.rmtree(root); shutil.rmtree(status_root)
 
 
 if __name__ == "__main__":
