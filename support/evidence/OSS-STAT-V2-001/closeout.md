@@ -1,12 +1,14 @@
 # OSS-STAT-V2-001 Closeout
 
 Task: OSS-STAT-V2-001
-Owner: Codex
-Reviewer: Codex2
+Current closeout owner: Codex2
+Current reviewer: Codex
+Prior recovery closeout owner/reviewer: Codex / Codex2
 Closeout date: 2026-05-18
-Status at closeout pickup: owned_finalize_dispatch
+Status at closeout pickup: owned_finalize_dispatch / review_approved
 Implementation PR: https://github.com/ajoe734/pantheon/pull/76
 Implementation merge commit: `e68c517dacb4339f4f317ed4ec43fa0a496c3ee4`
+Closeout evidence PR: https://github.com/ajoe734/pantheon/pull/112
 Review record: `support/reviews/OSS-STAT-V2-001-review-codex.md`
 
 ## Delivered Scope
@@ -58,3 +60,34 @@ Results:
 The implementation is already merged into `dev` through PR #76. This closeout
 record preserves the owner-side finalization basis before the task lifecycle is
 restored to `review_approved` and moved to `done`.
+
+## 2026-05-18 Owner Finalization Reconciliation
+
+The canonical status root re-dispatched OSS-STAT-V2-001 to Codex2 as owner with
+Codex as reviewer after the implementation and earlier closeout evidence had
+already merged. This section records the Codex2 owner-side revalidation before
+the final `review_approved` to `done` transition.
+
+No implementation code, registry packet schema, canonical architecture doc, live
+broker boundary, or registry write path changed in this reconciliation. The
+existing PR #76 implementation and PR #112 closeout evidence remain the delivered
+artifact basis.
+
+Commands rerun during Codex2 owner finalization:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/research/statsmodels/test_production_cointegration.py -q
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/research/statsmodels/production_cointegration.py services/research/statsmodels/registry_admission_packet.py services/research/statsmodels/test_production_cointegration.py
+git diff --check origin/dev...HEAD
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/research/statsmodels -q
+PYTHONDONTWRITEBYTECODE=1 python3 services/research/statsmodels/registry_admission_packet.py --output /tmp/oss-stat-v2-admission_packet.json --created-at 2026-05-17T16:45:00Z
+diff -u support/evidence/OSS-STAT-V2-001/admission_packet.json /tmp/oss-stat-v2-admission_packet.json
+```
+
+Results:
+
+- Production cointegration tests: 7 passed in 7.40s.
+- `py_compile`: passed.
+- Diff whitespace check: passed.
+- Full statsmodels test slice: 31 passed in 15.83s.
+- Deterministic admission packet regeneration matched the checked-in evidence.
