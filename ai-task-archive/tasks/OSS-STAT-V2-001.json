@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "task_id": "OSS-STAT-V2-001",
+  "archived_at": "2026-05-18T02:49:17Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-STAT-V2-001",
+    "title": "statsmodels production cointegration on TWSE pairs",
+    "summary_zh": "把 OSS-STAT-001 cointegration adapter 升級到 production：對 10 個 TWSE 大型股配對跑 2-year rolling Engle-Granger 檢定，輸出 signal_snapshot artifact 含 top-N cointegrated pairs，提交 registry admission packet。獨立檔案。",
+    "phase": "Sprint 8 / EPIC-OSS-V2",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "OSS-STAT-001",
+      "MGMT-QLIB-001"
+    ],
+    "artifacts": [
+      "services/research/statsmodels/production_cointegration.py",
+      "services/research/statsmodels/test_production_cointegration.py",
+      "services/research/statsmodels/registry_admission_packet.py",
+      "support/evidence/OSS-STAT-V2-001/admission_packet.json"
+    ],
+    "acceptance": [
+      "production_cointegration.py exposes run_production(pair_universe rolling_window) returning signal_snapshot dict with pair_id p_value half_life spread_zscore per pair",
+      "operates on real TWSE OHLCV from MGMT-QLIB-001 dataset_manifest",
+      "outputs at least 3 cointegrated pairs (p_value < 0.05) on TW large-cap fixture",
+      "signal_snapshot artifact registered with checksum and lineage",
+      "registry_admission_packet.py emits valid admission_packet.json",
+      "pytest -q exit 0",
+      "no live broker"
+    ],
+    "next": "Owner closeout complete: PR #76 merged implementation, PR #112 publishes review and closeout evidence, statsmodels verification passed, no live broker or registry write.",
+    "last_update": "2026-05-18T02:49:17Z",
+    "review_notes_zh": [
+      "審查通過：support/reviews/OSS-STAT-V2-001-review-codex.md records no blocking findings for the production statsmodels cointegration admission packet."
+    ],
+    "review_file": "support/reviews/OSS-STAT-V2-001-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-18T02:49:17Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/oss-stat-v2-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OSS-STAT-V2-001",
+      "git_clean_required": false,
+      "commit": "1c301e5c217633130f9b26fa336ecc2abce092d7",
+      "commit_subject": "OSS-STAT-V2-001: restore approved state",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "L0 lifecycle recovery for OSS-STAT-V2-001 using the checked-in review artifact.",
+        "Not changing": "statsmodels implementation, admission packet evidence, dashboard bundle, or canonical architecture docs.",
+        "Composes with": "PR #76 implementation merge, PR #112 closeout evidence, and the owner done archive commit that follows.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "OSS-STAT-V2-001",
+        "Reviewer": "Codex2",
+        "Verified": "PANTHEON_STATUS_ROOT=$PWD AI_NAME=Codex ./scripts/ai-status.sh assign/start/restore_approved for OSS-STAT-V2-001; jq confirmed status=review_approved owner=Codex reviewer=Codex2"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OSS-STAT-V2-001",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-STAT-V2-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approval restored from support/reviews/OSS-STAT-V2-001-review-codex.md; owner closeout PR #112 is open with auto-merge enabled.",
+      "status": "done",
+      "created_at": "2026-05-18T02:47:22Z",
+      "resolved_at": "2026-05-18T02:49:17Z"
+    }
+  ],
+  "blockers": []
+}

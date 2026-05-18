@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "task_id": "OODA-E2E-005",
+  "archived_at": "2026-05-18T00:45:22Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OODA-E2E-005",
+    "title": "OODA E2E #5: DeploymentPlan(paper) → RuntimeBinding → paper run test",
+    "summary_zh": "OODA Act 階段：證明「DeploymentPlan(paper) → RuntimeBinding → ArtifactLoader → paper algorithm」transition 可端到端走完。使用 RT-001..002 + EX-002-RB loader + LEAN-ALGO-001 algorithm smoke。獨立 test 檔，5 trading days deterministic 數據，無 broker。",
+    "phase": "Sprint 8 / EPIC-OODA-E2E",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "DEP-001",
+      "RT-001",
+      "RT-002",
+      "EX-002-RB",
+      "LEAN-ALGO-001"
+    ],
+    "artifacts": [
+      "tests/e2e/test_deployment_plan_to_paper_run.py",
+      "tests/e2e/fixtures/deployment_plan_for_runtime.json"
+    ],
+    "acceptance": [
+      "test loads fixture DeploymentPlan(paper) and triggers Runtime Manager to bind it",
+      "asserts RuntimeBinding record created with deployment_stage=paper and artifact_ref correct",
+      "test triggers artifact loader to materialize artifact and feed to LEAN smoke algorithm",
+      "asserts 5 days deterministic backtest fires OnData and records at least 1 fill",
+      "asserts no broker credentials accessed and BROKER_PRODUCTION_LIVE_ENABLED stays false",
+      "pytest -q -x exit 0"
+    ],
+    "next": "Owner finalized OODA-E2E-005. Verification: 8 passed in 1.09s (PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/e2e/test_deployment_plan_to_paper_run.py services/execution/lean_runtime/test_algorithm_smoke.py -q -x). Closeout commit: 5d320c37. PR #101 is open with auto-merge enabled after updating the task branch with origin/dev.",
+    "last_update": "2026-05-18T00:45:22Z",
+    "review_notes_zh": [
+      "審查通過：focused pytest 8 passed；DeploymentPlan fixture -> RuntimeBinding -> ArtifactLoader -> LEAN paper smoke identity 與 no-live-broker assertions 均已覆蓋。"
+    ],
+    "review_file": "support/reviews/OODA-E2E-005-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-18T00:45:22Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ooda-e2e-005",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OODA-E2E-005",
+      "git_clean_required": false,
+      "commit": "5d320c379f38517204200db499997674c0ef6daf",
+      "commit_subject": "OODA-E2E-005: owner closeout finalization",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Verification re-confirmed": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "OODA-E2E-005",
+        "Reviewer": "Codex",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/e2e/test_deployment_plan_to_paper_run.py services/execution/lean_runtime/test_algorithm_smoke.py -q -x => 8 passed in 1.09s"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 9,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/dev",
+      "ahead": 8,
+      "behind": 89,
+      "push_status": "diverged"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OODA-E2E-005",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "OODA-E2E-005 implementation complete. All 6 tests pass (pytest -q -x exit 0). Artifacts: tests/e2e/test_deployment_plan_to_paper_run.py (6 tests) + tests/e2e/fixtures/deployment_plan_for_runtime.json. Tests cover: fixture validation, RuntimeManager paper binding, 5-day LEAN smoke run with >=1 fill, broker live flag stays false, artifact identity check, and full e2e fixture-binding identity assertion. Branch: task/OODA-E2E-005 (commits 49833039 and 418d286c). No live broker access, BROKER_PRODUCTION_LIVE_ENABLED stays false throughout.",
+      "status": "done",
+      "created_at": "2026-05-17T17:48:34Z",
+      "resolved_at": "2026-05-17T19:51:14Z"
+    },
+    {
+      "task_id": "OODA-E2E-005",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review approved by Codex. Focused verification passed: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/e2e/test_deployment_plan_to_paper_run.py services/execution/lean_runtime/test_algorithm_smoke.py -q -x => 8 passed in 2.87s. See support/reviews/OODA-E2E-005-review-codex.md; owner Claude2 should finalize and mark done.",
+      "status": "done",
+      "created_at": "2026-05-17T19:51:14Z",
+      "resolved_at": "2026-05-18T00:39:05Z"
+    },
+    {
+      "task_id": "OODA-E2E-005",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Recovery handoff: owner accidentally called progress on review_approved task. Verification confirmed: 8 passed in 1.09s. Review already committed at b4ab4392. Requesting Codex re-approve to restore review_approved state for done transition.",
+      "status": "done",
+      "created_at": "2026-05-18T00:40:48Z",
+      "resolved_at": "2026-05-18T00:43:11Z"
+    },
+    {
+      "task_id": "OODA-E2E-005",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Restoring review_approved state after accidental progress call. Prior approval committed at b4ab4392 by Codex is durable in git and in review_notes_zh. Verification re-confirmed: 8 passed in 1.09s.",
+      "status": "done",
+      "created_at": "2026-05-18T00:43:28Z",
+      "resolved_at": "2026-05-18T00:45:24Z"
+    }
+  ],
+  "blockers": []
+}

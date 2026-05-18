@@ -47,7 +47,7 @@ import {
   renderTaskBoard,
   renderTruthMismatches,
   renderWorkload,
-} from "./js/dashboard-renderers.js?v=20260517-audit";
+} from "./js/dashboard-renderers.js?v=20260518-archive-fix";
 
 let renderInFlight = false;
 
@@ -151,7 +151,7 @@ async function render({ syncFirst = false } = {}) {
     runRenderStep("system_status", renderFailures, () => renderSystemStatus(status, orchState, approvalQueue, agentStates, dashboardBundle));
     runRenderStep("truth_mismatches", renderFailures, () => renderTruthMismatches(status, orchState, approvalQueue, dashboardBundle));
     runRenderStep("workload", renderFailures, () => renderWorkload(status, orchState));
-    runRenderStep("delivery_layers", renderFailures, () => renderDeliveryLayers(status, planningState));
+    runRenderStep("delivery_layers", renderFailures, () => renderDeliveryLayers(status, planningState, dashboardBundle));
     runRenderStep("agent_lanes", renderFailures, () => renderAgentLanes(status, agentStates));
     runRenderStep("archive_records", renderFailures, () => renderArchiveRecords(dashboardBundle));
     runRenderStep("lovable_coordination_summary", renderFailures, () => renderLovableCoordinationSummary(dashboardBundle));

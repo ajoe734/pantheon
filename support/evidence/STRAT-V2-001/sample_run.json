@@ -1,0 +1,427 @@
+{
+  "candidate_advance_request": {
+    "target_state": "candidate"
+  },
+  "evidence_code_lineage_edge": {
+    "actor_ref": "Codex",
+    "citation_refs": [
+      "src-note-tw-momentum-quality-001#strategy-distillation"
+    ],
+    "code_refs": [
+      {
+        "association": "strategy_code_reference",
+        "line_end": 140,
+        "line_start": 80,
+        "path": "services/research/qlib/adapter/qlib_adapter.py",
+        "repo_ref": "pantheon",
+        "source_id": "src-note-tw-momentum-quality-001",
+        "symbol": "QlibAdapter"
+      }
+    ],
+    "created_at": "2026-05-17T18:45:00Z",
+    "edge_id": "lineage-c6b6fcf45e5ed8e0",
+    "edge_type": "strategy_spec_evidence_code_linked",
+    "evidence_refs": [
+      {
+        "association": "source_evidence",
+        "ref_id": "evbundle-4ebd93d74c944cbe",
+        "ref_type": "evidence_bundle"
+      },
+      {
+        "association": "supporting_evidence",
+        "citation_ref": "src-note-tw-momentum-quality-001#strategy-distillation",
+        "evidence_item_id": "evi-src-note-tw-momentum-quality-001",
+        "ref_id": "evi-src-note-tw-momentum-quality-001",
+        "ref_type": "evidence_item",
+        "source_id": "src-note-tw-momentum-quality-001",
+        "summary": "TWSE and TPEx equities with positive 60-day momentum, stable profitability, and moderate volume expansion can rank five-day forward returns better than a sector-neutral baseline."
+      }
+    ],
+    "from_id": "evbundle-4ebd93d74c944cbe",
+    "from_type": "evidence_bundle",
+    "source_ids": [
+      "src-note-tw-momentum-quality-001"
+    ],
+    "to_id": "strat-tw-momentum-quality-production-seed-10425304",
+    "to_type": "strategy_spec",
+    "trace_id": "trace-strat-v2-001-99e1715d2215f785"
+  },
+  "registry_payload": {
+    "artifact_state": "draft",
+    "checksum": "sha256:a8b92dcb04e07e25986bcebe6cd491d58023cee1eb92c7ac6bfc706cc8c1c44c",
+    "evaluation_summary": {
+      "candidate_gate": "schema_and_lineage_review",
+      "confidence": 0.86,
+      "evidence_bundle_id": "evbundle-4ebd93d74c944cbe",
+      "source_seed_id": "seed-e3f5e05dd86a4121"
+    },
+    "lineage": {
+      "source_dataset_refs": [
+        "src-note-tw-momentum-quality-001"
+      ],
+      "source_run_ids": [
+        "seed-e3f5e05dd86a4121"
+      ]
+    },
+    "metadata": {
+      "conversion_service": "StrategySpecConversionService",
+      "conversion_version": "1.0",
+      "evidence_bundle_id": "evbundle-4ebd93d74c944cbe",
+      "execution_route": "none",
+      "registry_payload_built": true,
+      "registry_write_performed": false,
+      "research_only": true,
+      "source_seed_id": "seed-e3f5e05dd86a4121"
+    },
+    "producer_run_id": "seed-e3f5e05dd86a4121",
+    "source_seed_id": "seed-e3f5e05dd86a4121",
+    "storage_ref": {
+      "backend": "inline",
+      "path": "$.entry.metadata.strategy_spec"
+    },
+    "strategy_id": "strat-tw-momentum-quality-production-seed-10425304",
+    "strategy_spec": {
+      "code_refs": [
+        {
+          "association": "strategy_code_reference",
+          "line_end": 140,
+          "line_start": 80,
+          "path": "services/research/qlib/adapter/qlib_adapter.py",
+          "repo_ref": "pantheon",
+          "source_id": "src-note-tw-momentum-quality-001",
+          "symbol": "QlibAdapter"
+        }
+      ],
+      "data_dependencies": [
+        {
+          "kind": "source_record",
+          "ref": "src-note-tw-momentum-quality-001"
+        },
+        {
+          "kind": "dataset",
+          "ref": "dataset:point-in-time-daily-ohlcv"
+        },
+        {
+          "kind": "dataset",
+          "ref": "dataset:adjusted-close"
+        },
+        {
+          "kind": "dataset",
+          "ref": "dataset:fundamentals"
+        },
+        {
+          "kind": "dataset",
+          "ref": "dataset:sector-classifications"
+        },
+        {
+          "kind": "dataset",
+          "ref": "dataset:five-day-forward-return-labels"
+        }
+      ],
+      "evaluation_plan": {
+        "candidate_gate": "StrategySpec schema, source-seed lineage, and evidence/code refs review pass.",
+        "live_gate": "Requires paper evidence, risk owner approval, and explicit live approval.",
+        "metrics": [
+          "information_coefficient",
+          "sharpe_ratio",
+          "max_drawdown"
+        ],
+        "paper_gate": "Requires approved StrategySpec artifact and paper deployment approval."
+      },
+      "evidence_refs": [
+        {
+          "association": "source_evidence",
+          "ref_id": "evbundle-4ebd93d74c944cbe",
+          "ref_type": "evidence_bundle"
+        },
+        {
+          "association": "supporting_evidence",
+          "citation_ref": "src-note-tw-momentum-quality-001#strategy-distillation",
+          "evidence_item_id": "evi-src-note-tw-momentum-quality-001",
+          "ref_id": "evi-src-note-tw-momentum-quality-001",
+          "ref_type": "evidence_item",
+          "source_id": "src-note-tw-momentum-quality-001",
+          "summary": "TWSE and TPEx equities with positive 60-day momentum, stable profitability, and moderate volume expansion can rank five-day forward returns better than a sector-neutral baseline."
+        }
+      ],
+      "execution_profile": {
+        "execution_mode_hint": "research",
+        "quantity_type": "PERCENT_PORTFOLIO",
+        "rebalance_cadence": "5 trading days",
+        "signal_schema_version": "research-signal-v1"
+      },
+      "governance": {
+        "approval_required": true,
+        "policy_id": "research-strategy-spec-conversion-v1",
+        "risk_profile": "research_only"
+      },
+      "hypothesis": "TWSE and TPEx equities with positive 60-day momentum, stable profitability, and moderate volume expansion can rank five-day forward returns better than a sector-neutral baseline.",
+      "lifecycle_state": "draft",
+      "market_scope": {
+        "asset_classes": [
+          "equity"
+        ],
+        "frequency": "1d",
+        "symbols": [
+          "universe:twse-tpex-top200"
+        ],
+        "venues": [
+          "TWSE",
+          "TPEx"
+        ]
+      },
+      "metadata": {
+        "access_scope": [
+          "research"
+        ],
+        "backend_hint": "qlib",
+        "confidence": 0.86,
+        "conversion_service": "StrategySpecConversionService",
+        "conversion_version": "1.0",
+        "distillation_schema_version": "production_distillation.v1",
+        "entitlement_tags": [],
+        "evidence_bundle_id": "evbundle-4ebd93d74c944cbe",
+        "execution_route": "none",
+        "feature_hints": [
+          "60-day momentum",
+          "return volatility",
+          "turnover expansion",
+          "gross margin stability"
+        ],
+        "frequency": "1d",
+        "label_hints": [
+          "five_day_forward_return"
+        ],
+        "metrics": [
+          "information_coefficient",
+          "sharpe_ratio",
+          "max_drawdown"
+        ],
+        "note_content_ref": "support/evidence/STRAT-V2-001/research_note_tw_momentum_quality.md",
+        "production_distillation": true,
+        "registry_write_performed": false,
+        "required_data": [
+          "point-in-time daily OHLCV",
+          "adjusted close",
+          "fundamentals",
+          "sector classifications",
+          "five-day forward return labels"
+        ],
+        "research_only": true,
+        "risk_caps": {
+          "max_gross_exposure_pct": 0.35,
+          "max_position_pct": 0.03,
+          "max_single_sector_pct": 0.25
+        },
+        "risk_notes": [
+          "survivorship bias check",
+          "corporate-action adjustment check"
+        ],
+        "source_license_scope": "internal_research",
+        "source_markdown_sha256": "sha256:1c491bec4f319e48f438f29dbcb4538e5cc3b55c47dc47276099c5f2132b6993",
+        "source_record_id": "src-note-tw-momentum-quality-001",
+        "source_seed_id": "seed-e3f5e05dd86a4121",
+        "symbols": [
+          "universe:twse-tpex-top200"
+        ],
+        "task_id": "STRAT-V2-001"
+      },
+      "objective": "Evaluate TW Momentum Quality Production Seed using qlib under governed research gates before any paper, canary, or live promotion.",
+      "provenance": {
+        "created_at": "2026-05-17T18:45:00Z",
+        "created_by": "Codex",
+        "source_kind": "note",
+        "source_refs": [
+          "src-note-tw-momentum-quality-001"
+        ]
+      },
+      "spec_version": "1.0",
+      "strategy_id": "strat-tw-momentum-quality-production-seed-10425304",
+      "title": "TW Momentum Quality Production Seed"
+    },
+    "version": "1.0.0"
+  },
+  "seed_promotion_lineage_edge": {
+    "citation_refs": [
+      "src-note-tw-momentum-quality-001#strategy-distillation"
+    ],
+    "created_at": "2026-05-17T18:45:00Z",
+    "created_by": "Codex",
+    "edge_id": "lineage-fee5affb73a841ea",
+    "edge_type": "strategy_spec_seed_promoted",
+    "evidence_bundle_id": "evbundle-4ebd93d74c944cbe",
+    "from_id": "seed-e3f5e05dd86a4121",
+    "from_type": "strategy_spec_seed",
+    "metadata": {
+      "promotion_requires_review": true,
+      "registry_write_authority": "registry_service_only",
+      "seed_status_before": "draft"
+    },
+    "source_ids": [
+      "src-note-tw-momentum-quality-001"
+    ],
+    "to_id": "strat-tw-momentum-quality-production-seed-10425304",
+    "to_type": "strategy_spec"
+  },
+  "source_record_id": "src-note-tw-momentum-quality-001",
+  "strategy_spec": {
+    "code_refs": [
+      {
+        "association": "strategy_code_reference",
+        "line_end": 140,
+        "line_start": 80,
+        "path": "services/research/qlib/adapter/qlib_adapter.py",
+        "repo_ref": "pantheon",
+        "source_id": "src-note-tw-momentum-quality-001",
+        "symbol": "QlibAdapter"
+      }
+    ],
+    "data_dependencies": [
+      {
+        "kind": "source_record",
+        "ref": "src-note-tw-momentum-quality-001"
+      },
+      {
+        "kind": "dataset",
+        "ref": "dataset:point-in-time-daily-ohlcv"
+      },
+      {
+        "kind": "dataset",
+        "ref": "dataset:adjusted-close"
+      },
+      {
+        "kind": "dataset",
+        "ref": "dataset:fundamentals"
+      },
+      {
+        "kind": "dataset",
+        "ref": "dataset:sector-classifications"
+      },
+      {
+        "kind": "dataset",
+        "ref": "dataset:five-day-forward-return-labels"
+      }
+    ],
+    "evaluation_plan": {
+      "candidate_gate": "StrategySpec schema, source-seed lineage, and evidence/code refs review pass.",
+      "live_gate": "Requires paper evidence, risk owner approval, and explicit live approval.",
+      "metrics": [
+        "information_coefficient",
+        "sharpe_ratio",
+        "max_drawdown"
+      ],
+      "paper_gate": "Requires approved StrategySpec artifact and paper deployment approval."
+    },
+    "evidence_refs": [
+      {
+        "association": "source_evidence",
+        "ref_id": "evbundle-4ebd93d74c944cbe",
+        "ref_type": "evidence_bundle"
+      },
+      {
+        "association": "supporting_evidence",
+        "citation_ref": "src-note-tw-momentum-quality-001#strategy-distillation",
+        "evidence_item_id": "evi-src-note-tw-momentum-quality-001",
+        "ref_id": "evi-src-note-tw-momentum-quality-001",
+        "ref_type": "evidence_item",
+        "source_id": "src-note-tw-momentum-quality-001",
+        "summary": "TWSE and TPEx equities with positive 60-day momentum, stable profitability, and moderate volume expansion can rank five-day forward returns better than a sector-neutral baseline."
+      }
+    ],
+    "execution_profile": {
+      "execution_mode_hint": "research",
+      "quantity_type": "PERCENT_PORTFOLIO",
+      "rebalance_cadence": "5 trading days",
+      "signal_schema_version": "research-signal-v1"
+    },
+    "governance": {
+      "approval_required": true,
+      "policy_id": "research-strategy-spec-conversion-v1",
+      "risk_profile": "research_only"
+    },
+    "hypothesis": "TWSE and TPEx equities with positive 60-day momentum, stable profitability, and moderate volume expansion can rank five-day forward returns better than a sector-neutral baseline.",
+    "lifecycle_state": "draft",
+    "market_scope": {
+      "asset_classes": [
+        "equity"
+      ],
+      "frequency": "1d",
+      "symbols": [
+        "universe:twse-tpex-top200"
+      ],
+      "venues": [
+        "TWSE",
+        "TPEx"
+      ]
+    },
+    "metadata": {
+      "access_scope": [
+        "research"
+      ],
+      "backend_hint": "qlib",
+      "confidence": 0.86,
+      "conversion_service": "StrategySpecConversionService",
+      "conversion_version": "1.0",
+      "distillation_schema_version": "production_distillation.v1",
+      "entitlement_tags": [],
+      "evidence_bundle_id": "evbundle-4ebd93d74c944cbe",
+      "execution_route": "none",
+      "feature_hints": [
+        "60-day momentum",
+        "return volatility",
+        "turnover expansion",
+        "gross margin stability"
+      ],
+      "frequency": "1d",
+      "label_hints": [
+        "five_day_forward_return"
+      ],
+      "metrics": [
+        "information_coefficient",
+        "sharpe_ratio",
+        "max_drawdown"
+      ],
+      "note_content_ref": "support/evidence/STRAT-V2-001/research_note_tw_momentum_quality.md",
+      "production_distillation": true,
+      "registry_write_performed": false,
+      "required_data": [
+        "point-in-time daily OHLCV",
+        "adjusted close",
+        "fundamentals",
+        "sector classifications",
+        "five-day forward return labels"
+      ],
+      "research_only": true,
+      "risk_caps": {
+        "max_gross_exposure_pct": 0.35,
+        "max_position_pct": 0.03,
+        "max_single_sector_pct": 0.25
+      },
+      "risk_notes": [
+        "survivorship bias check",
+        "corporate-action adjustment check"
+      ],
+      "source_license_scope": "internal_research",
+      "source_markdown_sha256": "sha256:1c491bec4f319e48f438f29dbcb4538e5cc3b55c47dc47276099c5f2132b6993",
+      "source_record_id": "src-note-tw-momentum-quality-001",
+      "source_seed_id": "seed-e3f5e05dd86a4121",
+      "symbols": [
+        "universe:twse-tpex-top200"
+      ],
+      "task_id": "STRAT-V2-001"
+    },
+    "objective": "Evaluate TW Momentum Quality Production Seed using qlib under governed research gates before any paper, canary, or live promotion.",
+    "provenance": {
+      "created_at": "2026-05-17T18:45:00Z",
+      "created_by": "Codex",
+      "source_kind": "note",
+      "source_refs": [
+        "src-note-tw-momentum-quality-001"
+      ]
+    },
+    "spec_version": "1.0",
+    "strategy_id": "strat-tw-momentum-quality-production-seed-10425304",
+    "title": "TW Momentum Quality Production Seed"
+  },
+  "task_id": "STRAT-V2-001"
+}
