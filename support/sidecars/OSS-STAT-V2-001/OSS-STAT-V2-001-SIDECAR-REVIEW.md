@@ -6,7 +6,7 @@
 **Parent owner:** `Copilot`
 **Parent reviewer:** `Codex`
 **Sidecar owner:** `Codex2`
-**Sidecar reviewer:** `Codex` (inferred from parent reviewer; sidecar task entry was not present in `ai-status.json`)
+**Sidecar reviewer:** `Codex`
 **Helper kind:** `review_packet`
 **Generated:** `2026-05-18`
 **Branch:** `task/OSS-STAT-V2-001-SIDECAR-REVIEW`
@@ -33,8 +33,10 @@ Current durable state from `ai-status.json`:
   - `services/research/statsmodels/test_production_cointegration.py`
   - `services/research/statsmodels/registry_admission_packet.py`
   - `support/evidence/OSS-STAT-V2-001/admission_packet.json`
-- No active `OSS-STAT-V2-001-SIDECAR-REVIEW` task entry was found in
-  `ai-status.json`.
+- A raw `jq` lookup of `ai-status.json` did not return
+  `OSS-STAT-V2-001-SIDECAR-REVIEW`; `scripts/ai-status.sh show` can resolve
+  the sidecar as an active `in_progress` supervisor task with
+  `owner=Codex2` and `reviewer=Codex`.
 
 This creates a lifecycle gap: the implementation and evidence artifacts are
 present and reproducible, but the parent task is still recorded as `todo`.
@@ -128,9 +130,10 @@ treated as an official parent review request.
 
 **Severity:** sidecar orchestration gap
 
-The sidecar task brief and sidecar task entry were absent at preparation time.
-This packet is therefore intentionally self-contained and records the context
-gap rather than silently inventing canonical task history.
+The sidecar task brief was absent, and raw `ai-status.json` lookup did not
+surface the sidecar even though the status script can resolve it from active
+orchestrator state. This packet is therefore intentionally self-contained and
+records the context gap rather than silently inventing canonical task history.
 
 ### Finding 3
 
