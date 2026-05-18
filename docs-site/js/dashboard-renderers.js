@@ -260,19 +260,45 @@ export function renderArchiveRecords(dashboardBundle = null) {
   container.appendChild(list);
 }
 
-export function renderDeliveryLayers(status, planningState) {
+function knownExecutionTaskIds(status, dashboardBundle) {
+  const ids = new Set((status.tasks || []).map((task) => task.id).filter(Boolean));
+  const bridgeSummary = dashboardBundle?.bridge_summary || {};
+  for (const taskId of bridgeSummary.materialized_task_ids || []) {
+    if (taskId) ids.add(taskId);
+  }
+
+  const archiveSummary = dashboardBundle?.archive_summary || {};
+  for (const taskId of archiveSummary.recent_terminal_ids || []) {
+    if (taskId) ids.add(taskId);
+  }
+  for (const record of archiveSummary.recent_terminal_tasks || []) {
+    const taskId = record?.task_id || record?.id;
+    if (taskId) ids.add(taskId);
+  }
+  return ids;
+}
+
+function unresolvedPlanningTasks(planning, status, dashboardBundle) {
+  const bridgeSummary = dashboardBundle?.bridge_summary || {};
+  if (Array.isArray(bridgeSummary.pending_proposals)) {
+    return bridgeSummary.pending_proposals;
+  }
+  const taskIds = knownExecutionTaskIds(status, dashboardBundle);
+  return (planning.proposed_execution_tasks || []).filter((task) => !taskIds.has(task.id));
+}
+
+export function renderDeliveryLayers(status, planningState, dashboardBundle = null) {
   const container = qs("#delivery-layers");
   container.innerHTML = "";
 
-  const tasks = (status.tasks || []).filter((task) => task.status !== "done");
+  const tasks = (status.tasks || []).filter((task) => !terminalTaskStatus(task.status));
   const planning = normalizePlanningState(planningState);
-  const taskIds = new Set((status.tasks || []).map((task) => task.id));
   const layers = [
     {
       key: "planning",
       title: "Planning Outputs",
-      copy: "已在 discussion planning 中提出，但尚未完全 materialize 成 execution task 的共識輸出。",
-      tasks: (planning.proposed_execution_tasks || []).filter((task) => !taskIds.has(task.id)),
+      copy: "已在 discussion planning 中提出，且尚未 materialize 或封存結案的共識輸出。",
+      tasks: unresolvedPlanningTasks(planning, status, dashboardBundle),
       planningLayer: true,
     },
     {

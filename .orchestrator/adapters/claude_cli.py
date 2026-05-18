@@ -19,6 +19,7 @@ from common import (
     spawn_background_process,
     command_exists,
     run_command,
+    worker_runtime_paths,
 )
 
 
@@ -184,6 +185,7 @@ class ClaudeCLIAdapter(ClaudeCodeAdapter):
 
         run_id = new_runtime_id(provider_id)
         log_path = runtime_log_path(provider_id, request.agent_id)
+        runtime_paths = worker_runtime_paths(self.config, run_id)
         env.update(delivery_runtime_env(self.config, request.metadata))
         env.update(
             {
@@ -201,6 +203,9 @@ class ClaudeCLIAdapter(ClaudeCodeAdapter):
             cwd=workspace_root,
             log_path=log_path,
             env=env,
+            run_id=run_id,
+            heartbeat_path=runtime_paths["heartbeat_path"],
+            status_path=runtime_paths["status_path"],
         )
         return DeliveryResult(
             ok=True,
@@ -214,5 +219,9 @@ class ClaudeCLIAdapter(ClaudeCodeAdapter):
             log_path=str(log_path),
             pid=process.pid,
             run_id=run_id,
-            metadata={"shell_command": shell_quote(command)},
+            metadata={
+                "shell_command": shell_quote(command),
+                "heartbeat_path": str(runtime_paths["heartbeat_path"]),
+                "runner_status_path": str(runtime_paths["status_path"]),
+            },
         )
