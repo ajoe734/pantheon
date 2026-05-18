@@ -4,7 +4,9 @@ Task: STRAT-V2-001
 Owner: Codex
 Reviewer: Claude
 Closeout date: 2026-05-18
-PR: https://github.com/ajoe734/pantheon/pull/105
+Publication: PR #105 merged the branch refresh; the final closeout evidence
+commit is published through the active `task/STRAT-V2-001` follow-up PR opened
+during closeout.
 
 ## Scope
 
