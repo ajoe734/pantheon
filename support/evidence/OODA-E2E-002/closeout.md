@@ -38,3 +38,31 @@ Result: `53 passed, 5 subtests passed in 6.92s`.
 - The task branch was updated with `origin/dev` before closeout verification.
 - The local task worktree was clean before final evidence commit creation.
 - Finalization should open the per-task PR into `dev` with auto-merge enabled before running `AI_NAME=Codex2 ./scripts/ai-status.sh done OODA-E2E-002 ...`.
+
+## 2026-05-18 Closeout Recovery
+
+- Auto worker dispatch reason: `owned_finalize_dispatch`.
+- The requested task brief `.orchestrator/task-briefs/ooda_e2e_002.md` is not present in this worktree; the task-scoped record in `ai-status.json` and the delivered artifacts above were used as the closeout brief.
+- `origin/dev` already contains the reviewed OODA-E2E-002 implementation via PR #79, but the active L0 task record still showed `todo`; this recovery records the review artifact and restores the task to owner-finalizable state before `done`.
+- Additional review artifact: `support/evidence/OODA-E2E-002/review_claude2.md`.
+- Focused verification after fast-forwarding to `origin/dev`:
+
+```bash
+python3 -m pytest -q -x tests/e2e/test_strategy_spec_to_experiment_run.py
+```
+
+Result: `1 passed in 0.60s`.
+
+## 2026-05-18 Owner Finalization
+
+- Canonical task brief in `PANTHEON_STATUS_ROOT` shows `review_approved` with Codex review approval.
+- PR #79 (`task/OODA-E2E-002` -> `dev`) is already merged.
+- Fresh owner verification:
+
+```bash
+python3 -m pytest -q -x tests/e2e/test_strategy_spec_to_experiment_run.py services/research/experiment_orchestrator/test_parallel_dispatch.py services/research/vectorbt/test_adapter.py services/research/experiments/test_models.py services/research/strategy_spec/test_models.py
+```
+
+Result: `57 passed, 5 subtests passed in 8.72s`.
+
+- The `done` transition is being retried after adding this task-scoped closeout commit, because the prior branch HEAD was a dev merge commit without task trailers.

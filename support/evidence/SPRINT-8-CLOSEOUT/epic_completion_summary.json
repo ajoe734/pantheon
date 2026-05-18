@@ -1,0 +1,284 @@
+{
+  "sprint": "Sprint 8",
+  "sprint_period": "2026-05-16 to 2026-05-18",
+  "generated_at": "2026-05-18T00:00:00Z",
+  "generated_by": "Claude (LLM-Agent)",
+  "task_id": "SPRINT-8-CLOSEOUT",
+  "epics": [
+    {
+      "epic_id": "EPIC-OSS-V2",
+      "title": "OSS Framework Production-Scale Upgrades",
+      "status": "partial",
+      "tasks_total": 5,
+      "tasks_completed": 1,
+      "tasks_blocked": 0,
+      "tasks_in_progress": 0,
+      "tasks_todo": 4,
+      "tasks": [
+        {
+          "id": "OSS-QLIB-V2-001",
+          "title": "Qlib production-scale rolling + registry admission",
+          "status": "review",
+          "owner": "Codex",
+          "reviewer": "Codex2",
+          "note": "In review. PR #70 merged. Awaiting Codex2 review approval."
+        },
+        {
+          "id": "OSS-STAT-V2-001",
+          "title": "statsmodels production cointegration on TWSE pairs",
+          "status": "todo",
+          "owner": "Copilot",
+          "reviewer": "Codex",
+          "note": "Not started."
+        },
+        {
+          "id": "OSS-QUANTLIB-V2-001",
+          "title": "QuantLib production option chain pricer + greeks",
+          "status": "todo",
+          "owner": "Copilot",
+          "reviewer": "Codex2",
+          "note": "Not started."
+        },
+        {
+          "id": "OSS-RLLIB-V2-001",
+          "title": "RLlib production PPO on TWSE trading env",
+          "status": "todo",
+          "owner": "Claude",
+          "reviewer": "Codex",
+          "note": "Not started."
+        },
+        {
+          "id": "OSS-FINRL-V2-001",
+          "title": "FinRL production DRL on TWSE stock env",
+          "status": "todo",
+          "owner": "Gemini2",
+          "reviewer": "Codex2",
+          "note": "Not started. Prior sprint (OSS-FINRL-V2-001) was finalized but this Sprint 8 instance remains todo."
+        }
+      ],
+      "artifacts_produced": [
+        "services/research/qlib/production_rolling_run.py",
+        "services/research/qlib/test_production_rolling_run.py",
+        "services/research/qlib/registry_admission_packet.py",
+        "support/evidence/OSS-QLIB-V2-001/admission_packet.json"
+      ],
+      "gap_note": "4 of 5 OSS V2 tasks not started. OSS-QLIB-V2-001 is furthest along (in review). Production-scale runs for RLlib, FinRL, statsmodels, QuantLib remain as Sprint 9 carry-overs."
+    },
+    {
+      "epic_id": "EPIC-OODA-E2E",
+      "title": "OODA End-to-End Transition Tests",
+      "status": "not_started",
+      "tasks_total": 5,
+      "tasks_completed": 0,
+      "tasks_blocked": 0,
+      "tasks_in_progress": 0,
+      "tasks_todo": 5,
+      "tasks": [
+        {
+          "id": "OODA-E2E-001",
+          "title": "OODA E2E #1: source → StrategySpec transition test",
+          "status": "todo",
+          "owner": "Codex",
+          "reviewer": "Codex2",
+          "note": "Not started."
+        },
+        {
+          "id": "OODA-E2E-002",
+          "title": "OODA E2E #2: StrategySpec → ExperimentRun transition test",
+          "status": "todo",
+          "owner": "Codex2",
+          "reviewer": "Codex",
+          "note": "Not started."
+        },
+        {
+          "id": "OODA-E2E-003",
+          "title": "OODA E2E #3: ExperimentRun → CandidateArtifact admission test",
+          "status": "todo",
+          "owner": "Claude",
+          "reviewer": "Codex",
+          "note": "Not started."
+        },
+        {
+          "id": "OODA-E2E-004",
+          "title": "OODA E2E #4: Admission → ApprovalDecision → DeploymentPlan(paper) test",
+          "status": "todo",
+          "owner": "Claude",
+          "reviewer": "Codex2",
+          "note": "Not started. Depends on DEP-004 (also todo)."
+        },
+        {
+          "id": "OODA-E2E-007",
+          "title": "OODA E2E #7: full OodaLoopPacket closure + evidence chain",
+          "status": "todo",
+          "owner": "Codex",
+          "reviewer": "Claude",
+          "note": "Not started. Depends on OODA-E2E-001 through 006."
+        }
+      ],
+      "artifacts_produced": [],
+      "gap_note": "0 of 5 OODA E2E tasks started. Full OODA loop E2E test coverage is a Sprint 9 critical path item. Missing OODA-E2E-005 and OODA-E2E-006 task definitions also represent a gap."
+    },
+    {
+      "epic_id": "EPIC-STRAT-EXP-DEEP",
+      "title": "Strategy Spec and Experiment Deep Production",
+      "status": "not_started",
+      "tasks_total": 3,
+      "tasks_completed": 0,
+      "tasks_blocked": 0,
+      "tasks_in_progress": 0,
+      "tasks_todo": 3,
+      "tasks": [
+        {
+          "id": "STRAT-V2-001",
+          "title": "Strategy spec distillation production smoke (real research note)",
+          "status": "todo",
+          "owner": "Copilot",
+          "reviewer": "Codex2",
+          "note": "Not started."
+        },
+        {
+          "id": "EXP-V2-001",
+          "title": "Experiment orchestrator parallel multi-backend dispatch",
+          "status": "todo",
+          "owner": "Codex",
+          "reviewer": "Codex2",
+          "note": "Not started."
+        },
+        {
+          "id": "EXP-V2-002",
+          "title": "ExperimentRun multi-artifact lineage tree",
+          "status": "todo",
+          "owner": "Codex2",
+          "reviewer": "Copilot",
+          "note": "Not started."
+        }
+      ],
+      "artifacts_produced": [],
+      "gap_note": "0 of 3 STRAT/EXP deep tasks started. Strategy distillation production smoke and experiment parallel dispatch are Sprint 9 carry-overs."
+    },
+    {
+      "epic_id": "EPIC-GOV-DEPLOY-FOLLOWUP",
+      "title": "Governance and Deployment Follow-Up",
+      "status": "not_started",
+      "tasks_total": 2,
+      "tasks_completed": 0,
+      "tasks_blocked": 0,
+      "tasks_in_progress": 0,
+      "tasks_todo": 2,
+      "tasks": [
+        {
+          "id": "DEP-004",
+          "title": "Pool x runtime compatibility check before deployment advance",
+          "status": "todo",
+          "owner": "Codex",
+          "reviewer": "Codex2",
+          "note": "Not started. Depends on DEP-001, DEP-002, CAP-001, RT-001."
+        },
+        {
+          "id": "POST-EVO-BRIDGE",
+          "title": "Postmortem -> EvolutionDecisionProposal auto-trigger bridge",
+          "status": "todo",
+          "owner": "Claude2",
+          "reviewer": "Codex2",
+          "note": "Not started. Depends on POST-001, EVO-001."
+        }
+      ],
+      "artifacts_produced": [],
+      "gap_note": "DEP-004 pool/runtime compat check blocks OODA-E2E-004. POST-EVO-BRIDGE completes the postmortem → evolution feedback loop. Both remain as Sprint 9 priorities."
+    },
+    {
+      "epic_id": "EPIC-LOVABLE-INFRA",
+      "title": "Lovable Build-Time Strict Env Audit",
+      "status": "not_started",
+      "tasks_total": 1,
+      "tasks_completed": 0,
+      "tasks_blocked": 0,
+      "tasks_in_progress": 0,
+      "tasks_todo": 1,
+      "tasks": [
+        {
+          "id": "LOVABLE-STRICT-PUBLISH",
+          "title": "Lovable build-time strict env publish audit script",
+          "status": "todo",
+          "owner": "Gemini",
+          "reviewer": "Gemini2",
+          "note": "Not started. Non-blocking SA § 2.2 follow-up."
+        }
+      ],
+      "artifacts_produced": [],
+      "gap_note": "Non-blocking audit infrastructure task. Low priority carry-over to Sprint 9."
+    },
+    {
+      "epic_id": "EPIC-OSS-SIDECAR",
+      "title": "OSS Sidecar Acceptance Packets (Sprint 7 carry-over)",
+      "status": "done",
+      "tasks_total": 1,
+      "tasks_completed": 1,
+      "tasks_blocked": 0,
+      "tasks_in_progress": 0,
+      "tasks_todo": 0,
+      "tasks": [
+        {
+          "id": "OSS-STAT-001-SIDECAR-ACCEPTANCE",
+          "title": "Prepare OSS-STAT-001 acceptance packet and dependency map",
+          "status": "done",
+          "owner": "Gemini",
+          "reviewer": "Claude",
+          "note": "Completed. Sidecar acceptance packet durable in support/sidecars/OSS-STAT-001/."
+        }
+      ],
+      "artifacts_produced": [
+        "support/sidecars/OSS-STAT-001/OSS-STAT-001-SIDECAR-ACCEPTANCE.md"
+      ],
+      "gap_note": "None. Sprint 7 carry-over cleanly closed."
+    },
+    {
+      "epic_id": "EPIC-CLOSEOUT",
+      "title": "Sprint 8 Closeout",
+      "status": "in_progress",
+      "tasks_total": 1,
+      "tasks_completed": 0,
+      "tasks_blocked": 0,
+      "tasks_in_progress": 1,
+      "tasks_todo": 0,
+      "tasks": [
+        {
+          "id": "SPRINT-8-CLOSEOUT",
+          "title": "Sprint 8 retrospective + closeout + Sprint 9 candidate topics",
+          "status": "in_progress",
+          "owner": "Claude",
+          "reviewer": "Codex",
+          "note": "In progress (this document)."
+        }
+      ],
+      "artifacts_produced": [
+        "support/evidence/SPRINT-8-CLOSEOUT/retrospective.md",
+        "support/evidence/SPRINT-8-CLOSEOUT/epic_completion_summary.json",
+        "support/evidence/SPRINT-8-CLOSEOUT/sprint_9_candidate_topics.md"
+      ],
+      "gap_note": "None."
+    }
+  ],
+  "sprint_totals": {
+    "tasks_total": 18,
+    "tasks_completed": 1,
+    "tasks_in_review": 1,
+    "tasks_in_progress": 1,
+    "tasks_todo": 15,
+    "tasks_blocked": 0,
+    "pass_rate_completed_over_total": "5.6%",
+    "epics_fully_done": 1,
+    "epics_partial": 1,
+    "epics_not_started": 5
+  },
+  "numeric_metrics": {
+    "tasks_completed": 1,
+    "tasks_in_review": 1,
+    "tasks_todo_carry_over": 15,
+    "avg_cycle_time_days_completed_tasks": "N/A (only 1 task completed and it was Sprint 7 carry-over)",
+    "pass_rate": "5.6%",
+    "epics_closed": 1,
+    "epics_partial": 1,
+    "epics_not_started": 5
+  }
+}
