@@ -6,9 +6,9 @@
 **Parent owner:** `Codex`
 **Parent reviewer:** `Claude`
 **Prepared by:** `Codex2`
-**Reviewer:** `Claude`
+**Reviewer:** `Codex`
 **Date:** `2026-05-18`
-**Status:** `ready for reviewer handoff; refreshed after parent approval evidence`
+**Status:** `ready for Codex reviewer handoff; refreshed after parent approval evidence`
 
 > Scope constraint: support artifact only. This packet does not modify L1
 > canonical truth, core contract truth, runtime implementation, registry
@@ -17,7 +17,7 @@
 
 ## 1. Purpose
 
-This sidecar gives `Claude` a compact review packet for `OODA-E2E-007`.
+This sidecar gives `Codex` a compact review packet for `OODA-E2E-007`.
 It answers four review questions without asking the reviewer to rescan the
 full task history:
 
@@ -26,21 +26,23 @@ full task history:
 3. whether the six transition tests are tied into a single deterministic proof
 4. what caveats remain outside the sidecar's support-only scope
 
-The parent owner (`Codex`) should decide whether and how to absorb this packet
-into the main OODA-E2E-007 review or closeout flow.
+The parent owner and sidecar reviewer (`Codex`) should decide whether and how
+to absorb this packet into the main OODA-E2E-007 review or closeout record.
 
 ## 2. Pickup Notes
 
 The requested sidecar task brief,
 `.orchestrator/task-briefs/ooda_e2e_007_sidecar_review.md`, was not present in
-this worktree at pickup. The active `ai-status.json` parent entry for
-`OODA-E2E-007`, the explicit wake-up prompt, and the repo-current parent
-artifacts were used as the task-scoped context instead.
+this worktree at pickup. The explicit wake-up prompt, the status command
+output, and the repo-current parent artifacts were used as the task-scoped
+context instead.
 
-The active task board did not contain an `OODA-E2E-007-SIDECAR-REVIEW` task
-entry at pickup, and the parent `OODA-E2E-007` entry still showed `todo`.
-Repo history, however, already contains the parent implementation merge and
-the follow-up parent reviewer evidence merge:
+The status resolver used by this auto-worker resolves
+`OODA-E2E-007-SIDECAR-REVIEW` as an active task owned by `Codex2`, reviewed by
+`Codex`, and currently `in_progress`. The same resolver shows the parent
+`OODA-E2E-007` archived as `done`; repo history contains the parent
+implementation merge, parent reviewer evidence merge, and parent finalization
+record:
 
 | Ref | Evidence |
 |---|---|
@@ -49,13 +51,14 @@ the follow-up parent reviewer evidence merge:
 | Parent implementation commit | `284071db OODA-E2E-007: close full OODA packet proof` |
 | Parent review evidence merge | `31813ceb Merge pull request #118 from ajoe734/task/OODA-E2E-007` |
 | Parent review evidence file | `support/evidence/OODA-E2E-007-review/review_claude.md` |
+| Parent finalization commit | `628caafc OODA-E2E-007: record owner finalization` |
 
-This sidecar does not correct the parent lifecycle state. It records the
-review surface only.
+This sidecar does not change the parent lifecycle state. It records the review
+surface only.
 
 ## 3. Parent Snapshot
 
-The parent `ai-status.json` entry defines the target as:
+The parent archived task record defines the target as:
 
 - owner: `Codex`
 - reviewer: `Claude`
@@ -178,10 +181,10 @@ current repo state.
 
 Caveats to keep visible:
 
-1. The active L0 task board was stale at pickup: the sidecar task was missing,
-   and the parent still showed `todo` despite parent PR #114 and reviewer
-   evidence PR #118 being in the current branch history. This packet does not
-   edit that lifecycle state.
+1. The worktree-local `ai-status.json` can lag the status root used by
+   `scripts/ai_status.py` in this auto-worker environment. Reviewer lifecycle
+   actions should use the status command, which currently resolves this sidecar
+   as reviewer `Codex`.
 2. Fresh worktrees must initialize `lean/` before rerunning the full packet
    closure test. Without the submodule, the act-stage smoke path cannot import
    `pantheon_algo`.
@@ -195,7 +198,7 @@ Caveats to keep visible:
 
 ## 8. Reviewer Handoff
 
-Reviewer: `Claude`
+Reviewer: `Codex`
 
 Suggested sidecar review path:
 
@@ -206,13 +209,12 @@ Suggested sidecar review path:
 4. Re-run the verification command in section 5 after `lean/` is initialized,
    if the reviewer wants fresh local proof.
 5. Confirm the acceptance table in section 6 still matches the evidence.
-6. If the sidecar task has been materialized in L0 state before review,
-   approve it with `REVIEW_FILE` pointing to this packet.
+6. Approve the sidecar task with `REVIEW_FILE` pointing to this packet.
 
-Example approval command, only after the L0 task exists:
+Example approval command:
 
 ```bash
-AI_NAME=Claude \
+AI_NAME=Codex \
 REVIEW_FILE=support/sidecars/OODA-E2E-007/OODA-E2E-007-SIDECAR-REVIEW.md \
 REVIEW_NOTES_ZH="審查通過：sidecar review packet confirms OODA-E2E-007 full packet closure evidence, focused pytest passes after lean submodule init, and no canonical/runtime changes were made." \
 python3 scripts/ai_status.py approve OODA-E2E-007-SIDECAR-REVIEW \
