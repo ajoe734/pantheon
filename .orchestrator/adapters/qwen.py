@@ -16,6 +16,7 @@ from common import (
     runtime_log_path,
     shell_quote,
     spawn_background_process,
+    worker_runtime_paths,
 )
 
 
@@ -162,6 +163,7 @@ class QwenAdapter(BaseAdapter):
 
         run_id = new_runtime_id("qwen")
         log_path = runtime_log_path("qwen", request.agent_id)
+        runtime_paths = worker_runtime_paths(self.config, run_id)
         env = os.environ.copy()
         env.update(delivery_runtime_env(self.config, request.metadata))
         env.update(_runtime_env(runtime))
@@ -170,6 +172,9 @@ class QwenAdapter(BaseAdapter):
             cwd=workspace_root,
             log_path=log_path,
             env=env,
+            run_id=run_id,
+            heartbeat_path=runtime_paths["heartbeat_path"],
+            status_path=runtime_paths["status_path"],
         )
 
         return DeliveryResult(
@@ -188,5 +193,7 @@ class QwenAdapter(BaseAdapter):
                 "shell_command": shell_quote(command),
                 "model_preference": model_name,
                 "env_keys": sorted(_runtime_env(runtime)),
+                "heartbeat_path": str(runtime_paths["heartbeat_path"]),
+                "runner_status_path": str(runtime_paths["status_path"]),
             },
         )

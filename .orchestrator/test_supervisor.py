@@ -803,6 +803,58 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         create_worktree.assert_called_once_with(repo_root.resolve(), expected_path, "task/OPS-WORKTREE-001", "origin/dev")
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_worktree_allocated")
 
+    def test_prepare_worker_workspace_materializes_task_brief_into_isolated_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            source_brief = repo_root / ".orchestrator" / "task-briefs" / "ops_brief_001.md"
+            source_brief.parent.mkdir(parents=True)
+            source_brief.write_text("# Source brief\n", encoding="utf-8")
+            worktree_root = Path(tmpdir) / "workers"
+            config = {
+                **self.config,
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "activity-log.jsonl"),
+                },
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(worktree_root),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            state: dict[str, object] = {}
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id="OPS-BRIEF-001",
+                reason="owned_in_progress_dispatch",
+                context_files=[".orchestrator/task-briefs/ops_brief_001.md"],
+            )
+
+            with (
+                mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=None),
+                mock.patch.object(supervisor, "_branch_checked_out_in_root", return_value=False),
+                mock.patch.object(supervisor, "_create_worker_worktree", return_value=(True, None)),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    request,
+                    queue_event_id="evt-brief",
+                    target_agent="Codex",
+                )
+
+            self.assertTrue(ok)
+            self.assertIsNone(message)
+            copied_brief = Path(request.metadata["workspace_path"]) / ".orchestrator" / "task-briefs" / "ops_brief_001.md"
+            self.assertEqual(copied_brief.read_text(encoding="utf-8"), "# Source brief\n")
+            self.assertEqual(request.metadata["materialized_context_files"], [".orchestrator/task-briefs/ops_brief_001.md"])
+
     def test_process_queue_checks_worker_guard_inside_isolated_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "pantheon"
@@ -6122,6 +6174,167 @@ class WorkerOsDuplicateGuardTests(unittest.TestCase):
         self.assertIn("codex1_1", reason)
         self.assertIn("codex1_2", reason)
         scan.assert_not_called()
+
+
+class RuntimeLeaseReconciliationTests(unittest.TestCase):
+    def _config(self, root: Path) -> dict:
+        return {
+            "paths": {
+                "status_file": str(root / "ai-status.json"),
+                "activity_log": str(root / "activity-log.jsonl"),
+                "event_queue": str(root / "event-queue.jsonl"),
+            },
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "status_field": "status",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {},
+            "providers": {"codex": {"delivery_mode": "codex", "quota_group": "codex1"}},
+            "agents": {"codex": {"id": "codex", "display_name": "Codex", "provider": "codex"}},
+        }
+
+    def test_reconcile_runtime_requeues_started_event_without_active_worker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = self._config(root)
+            (root / "ai-status.json").write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "id": "OPS-LEASE-001",
+                                "status": "in_progress",
+                                "owner": "Codex",
+                                "reviewer": "Claude",
+                                "depends_on": [],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (root / "event-queue.jsonl").write_text(
+                json.dumps(
+                    {
+                        "event_id": "evt-lease",
+                        "task_id": "OPS-LEASE-001",
+                        "target_agent": "codex",
+                        "target_display_name": "Codex",
+                        "reason": "owned_in_progress_dispatch",
+                        "message": "wake",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            state = {
+                "queue": {
+                    "events": {
+                        "evt-lease": {
+                            "status": "started",
+                            "run_id": "codex-run-missing",
+                            "lease_owner": "codex-run-missing",
+                        }
+                    }
+                },
+                "workers": {},
+            }
+
+            changed = supervisor.reconcile_runtime_on_boot(config, state)
+
+            self.assertTrue(changed)
+            record = state["queue"]["events"]["evt-lease"]
+            self.assertEqual(record["status"], "queued")
+            self.assertEqual(
+                record["requeue_reason"],
+                "started queue record had no active worker during supervisor boot reconciliation",
+            )
+            self.assertNotIn("lease_owner", record)
+
+    def test_reconcile_runtime_fails_running_worker_when_pid_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = self._config(root)
+            (root / "ai-status.json").write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "id": "OPS-LEASE-002",
+                                "status": "in_progress",
+                                "owner": "Codex",
+                                "reviewer": "Claude",
+                                "depends_on": [],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (root / "event-queue.jsonl").write_text(
+                json.dumps({"event_id": "evt-worker", "task_id": "OPS-LEASE-002", "target_agent": "codex"})
+                + "\n",
+                encoding="utf-8",
+            )
+            state = {
+                "queue": {"events": {"evt-worker": {"status": "started", "run_id": "codex-run-dead"}}},
+                "workers": {
+                    "codex-run-dead": {
+                        "run_id": "codex-run-dead",
+                        "status": "running",
+                        "provider": "codex",
+                        "agent_id": "codex",
+                        "task_id": "OPS-LEASE-002",
+                        "queue_event_id": "evt-worker",
+                        "pid": 987654,
+                    }
+                },
+            }
+
+            with (
+                mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+                mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            ):
+                changed = supervisor.reconcile_runtime_on_boot(config, state)
+
+            self.assertTrue(changed)
+            worker = state["workers"]["codex-run-dead"]
+            self.assertEqual(worker["status"], "failed")
+            self.assertEqual(state["queue"]["events"]["evt-worker"]["status"], "failed")
+            self.assertIn("process missing", worker["last_error"])
+            write_activity_log.assert_called_once()
+
+    def test_quota_group_cap_blocks_second_slot(self) -> None:
+        config = {
+            "ready_dispatcher": {"max_concurrent_per_quota_group": {"codex1": 1}},
+            "agents": {
+                "codex1_1": {"id": "codex1_1", "display_name": "Codex", "provider": "codex1-1"},
+                "codex1_2": {"id": "codex1_2", "display_name": "Codex", "provider": "codex1-2"},
+            },
+            "providers": {
+                "codex1-1": {"quota_group": "codex1"},
+                "codex1-2": {"quota_group": "codex1"},
+            },
+        }
+        state = {
+            "workers": {
+                "run-1": {
+                    "run_id": "run-1",
+                    "status": "running",
+                    "agent_id": "codex1_1",
+                    "provider": "codex1-1",
+                    "quota_group": "codex1",
+                }
+            }
+        }
+
+        reason = supervisor.agent_auto_dispatch_block_reason(config, state, "codex1_2", provider_report={})
+
+        self.assertIsNotNone(reason)
+        self.assertIn("quota group codex1", reason or "")
 
 
 class MaxConcurrentWorkersCapTests(unittest.TestCase):
