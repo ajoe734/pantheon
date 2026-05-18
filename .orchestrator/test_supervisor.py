@@ -4147,6 +4147,7 @@ class ChairReviewDispatchTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_status", return_value={"tasks": []}),
             mock.patch.object(supervisor, "write_activity_log"),
             mock.patch.object(supervisor, "utc_now", return_value="2026-04-28T12:00:00Z"),
+            mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}),
         ):
             changed = supervisor.dispatch_chair_review(
                 self.config,
@@ -5778,6 +5779,177 @@ class WorkerPreemptionSyncTests(unittest.TestCase):
         self.assertEqual(kwargs["new_owner"], "Grok")
         self.assertEqual(kwargs["new_reviewer"], "Codex")
         self.assertIsNone(kwargs["new_status"])
+
+
+class WorkerOsDuplicateGuardTests(unittest.TestCase):
+    def _make_fake_proc(self, entries: dict[int, str | None]) -> Path:
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(self._cleanup_proc, root)
+        for pid, cmdline in entries.items():
+            pid_dir = root / str(pid)
+            pid_dir.mkdir()
+            if cmdline is not None:
+                (pid_dir / "cmdline").write_bytes(cmdline.replace(" ", "\x00").encode("utf-8"))
+        return root
+
+    @staticmethod
+    def _cleanup_proc(root: Path) -> None:
+        for child in root.glob("**/*"):
+            if child.is_file():
+                child.unlink()
+        for child in sorted(root.glob("**/*"), reverse=True):
+            if child.is_dir():
+                child.rmdir()
+        root.rmdir()
+
+    def test_scan_groups_pids_by_agent_marker(self) -> None:
+        proc = self._make_fake_proc(
+            {
+                111: "codex exec -C /tmp/wt 你的 auto worker 身分是：Codex 。 Task ID: T1",
+                222: "codex exec -C /tmp/wt2 你的 auto worker 身分是：Codex2 。 Task ID: T2",
+                333: "codex exec -C /tmp/wt3 你的 auto worker 身分是：Codex 。 Task ID: T3",
+                444: "vim",
+                555: None,
+            }
+        )
+        result = supervisor.scan_live_worker_pids_by_agent(proc_root=proc)
+        self.assertEqual(sorted(result["Codex"]), [111, 333])
+        self.assertEqual(result["Codex2"], [222])
+        self.assertNotIn("vim", result)
+
+    def test_scan_skips_self_pid(self) -> None:
+        proc = self._make_fake_proc(
+            {os.getpid(): "auto worker 身分是：Codex"}
+        )
+        self.assertEqual(supervisor.scan_live_worker_pids_by_agent(proc_root=proc), {})
+
+    def test_block_reason_flags_live_duplicate(self) -> None:
+        config = {
+            "agents": {"codex": {"provider": "codex"}},
+            "ready_dispatcher": {"worker_os_duplicate_guard": True},
+        }
+        state: dict = {}
+        provider_report = {"providers": {"codex": {"auth_ready": True}}}
+        with (
+            mock.patch.object(supervisor, "display_name_for", return_value="Codex"),
+            mock.patch.object(supervisor, "agent_dispatch_paused", return_value=False),
+            mock.patch.object(
+                supervisor, "scan_live_worker_pids_by_agent",
+                return_value={"Codex": [42, 99]},
+            ),
+        ):
+            reason = supervisor.agent_auto_dispatch_block_reason(
+                config, state, "codex", provider_report
+            )
+        self.assertIsNotNone(reason)
+        assert reason is not None
+        self.assertIn("Codex", reason)
+        self.assertIn("42", reason)
+        self.assertIn("99", reason)
+
+    def test_block_reason_passes_when_guard_disabled(self) -> None:
+        config = {
+            "agents": {"codex": {"provider": "codex"}},
+            "ready_dispatcher": {"worker_os_duplicate_guard": False},
+        }
+        provider_report = {"providers": {"codex": {"auth_ready": True}}}
+        with (
+            mock.patch.object(supervisor, "display_name_for", return_value="Codex"),
+            mock.patch.object(supervisor, "agent_dispatch_paused", return_value=False),
+            mock.patch.object(
+                supervisor, "scan_live_worker_pids_by_agent",
+                return_value={"Codex": [42]},
+            ) as scan,
+        ):
+            reason = supervisor.agent_auto_dispatch_block_reason(
+                config, {}, "codex", provider_report
+            )
+        self.assertIsNone(reason)
+        scan.assert_not_called()
+
+    def test_block_reason_ignores_other_agents_processes(self) -> None:
+        config = {
+            "agents": {"codex": {"provider": "codex"}},
+            "ready_dispatcher": {"worker_os_duplicate_guard": True},
+        }
+        provider_report = {"providers": {"codex": {"auth_ready": True}}}
+        with (
+            mock.patch.object(supervisor, "display_name_for", return_value="Codex"),
+            mock.patch.object(supervisor, "agent_dispatch_paused", return_value=False),
+            mock.patch.object(
+                supervisor, "scan_live_worker_pids_by_agent",
+                return_value={"Claude": [42], "Codex2": [99]},
+            ),
+        ):
+            reason = supervisor.agent_auto_dispatch_block_reason(
+                config, {}, "codex", provider_report
+            )
+        self.assertIsNone(reason)
+
+
+class MaxConcurrentWorkersCapTests(unittest.TestCase):
+    def _base_config(self) -> dict:
+        return {
+            "ready_dispatcher": {
+                "max_concurrent_workers": 2,
+                "max_dispatches_per_tick": 4,
+                "enabled": True,
+            },
+            "schema": {},
+            "agents": {},
+        }
+
+    def test_dispatch_ready_tasks_skips_when_global_cap_reached(self) -> None:
+        config = self._base_config()
+        state: dict = {}
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": []}),
+            mock.patch.object(
+                supervisor,
+                "scan_live_worker_pids_by_agent",
+                return_value={"Codex": [1, 2], "Claude": [3]},
+            ) as scan,
+            mock.patch.object(supervisor, "weighted_dispatch_agent_ids", return_value=["codex"]),
+            mock.patch.object(supervisor, "active_worker_indexes", return_value=(set(), set())),
+            mock.patch.object(
+                supervisor, "outstanding_delivery_indexes", return_value=(set(), set(), set())
+            ),
+            mock.patch.object(supervisor, "agent_dispatch_loads", return_value={}),
+            mock.patch.object(supervisor, "failure_loop_agents_for_task_map", return_value=set()),
+            mock.patch.object(supervisor, "chair_rotation_state", return_value={}),
+            mock.patch.object(supervisor, "helper_claim_settings", return_value={}),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(supervisor, "start_worker_for_request") as start,
+        ):
+            changed = supervisor.dispatch_ready_tasks(config, state)
+        scan.assert_called()
+        start.assert_not_called()
+        self.assertFalse(changed)
+
+    def test_dispatch_ready_tasks_proceeds_when_under_cap(self) -> None:
+        config = self._base_config()
+        state: dict = {}
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": []}),
+            mock.patch.object(
+                supervisor,
+                "scan_live_worker_pids_by_agent",
+                return_value={"Codex": [1]},
+            ),
+            mock.patch.object(supervisor, "weighted_dispatch_agent_ids", return_value=["codex"]),
+            mock.patch.object(supervisor, "active_worker_indexes", return_value=(set(), set())),
+            mock.patch.object(
+                supervisor, "outstanding_delivery_indexes", return_value=(set(), set(), set())
+            ),
+            mock.patch.object(supervisor, "agent_dispatch_loads", return_value={}),
+            mock.patch.object(supervisor, "failure_loop_agents_for_task_map", return_value=set()),
+            mock.patch.object(supervisor, "chair_rotation_state", return_value={}),
+            mock.patch.object(supervisor, "helper_claim_settings", return_value={}),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value="blocked"),
+            mock.patch.object(supervisor, "start_worker_for_request") as start,
+        ):
+            supervisor.dispatch_ready_tasks(config, state)
+        start.assert_not_called()
 
 
 if __name__ == "__main__":

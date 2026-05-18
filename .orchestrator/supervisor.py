@@ -1609,6 +1609,43 @@ def pid_is_alive(pid: int | None) -> bool:
     return True
 
 
+# Worker wakeup template always embeds `auto worker 身分是：<DisplayName>` in argv;
+# scan /proc to recover the truth when state["workers"] bookkeeping drifts.
+WORKER_AGENT_CMDLINE_MARKER = re.compile(r"auto worker 身分是：([A-Za-z][A-Za-z0-9_]*)")
+
+
+def scan_live_worker_pids_by_agent(proc_root: Path | None = None) -> dict[str, list[int]]:
+    """Return live worker PIDs grouped by agent display name parsed from /proc/*/cmdline."""
+    root = proc_root if proc_root is not None else Path("/proc")
+    result: dict[str, list[int]] = {}
+    try:
+        entries = list(root.iterdir())
+    except OSError:
+        return result
+    self_pid = os.getpid()
+    for entry in entries:
+        name = entry.name
+        if not name.isdigit():
+            continue
+        pid = int(name)
+        if pid == self_pid:
+            continue
+        cmdline_path = entry / "cmdline"
+        try:
+            raw = cmdline_path.read_bytes()
+        except OSError:
+            continue
+        if not raw:
+            continue
+        cmdline = raw.replace(b"\x00", b" ").decode("utf-8", errors="ignore")
+        match = WORKER_AGENT_CMDLINE_MARKER.search(cmdline)
+        if not match:
+            continue
+        agent = match.group(1)
+        result.setdefault(agent, []).append(pid)
+    return result
+
+
 def terminate_worker_pid(pid: int | None) -> bool:
     if not pid:
         return False
@@ -3827,6 +3864,16 @@ def agent_auto_dispatch_block_reason(
             return f"{provider_id} does not currently support auto-approved dispatch"
         if provider_capability.get("auth_ready") is False:
             return f"{provider_id} authentication is not ready"
+
+    if ready_dispatch_settings(config).get("worker_os_duplicate_guard", True):
+        display_name = display_name_for(config, normalized_agent) or normalized_agent
+        live_pids = scan_live_worker_pids_by_agent().get(display_name, [])
+        if live_pids:
+            return (
+                f"{display_name} already has live worker process(es) "
+                f"PID={','.join(str(p) for p in sorted(set(live_pids)))}; "
+                "skipping dispatch to avoid duplicate workers"
+            )
 
     return None
 
@@ -6638,6 +6685,15 @@ def dispatch_ready_tasks(
         agent_ids = agent_sequence[dispatch_cursor:] + agent_sequence[:dispatch_cursor]
     else:
         agent_ids = []
+    max_concurrent_setting = settings.get("max_concurrent_workers")
+    try:
+        max_concurrent = int(max_concurrent_setting) if max_concurrent_setting not in (None, "") else None
+    except (TypeError, ValueError):
+        max_concurrent = None
+    if max_concurrent is not None and max_concurrent > 0:
+        live_total = sum(len(pids) for pids in scan_live_worker_pids_by_agent().values())
+        if live_total >= max_concurrent:
+            return changed
     considered_agents = 0
     for agent_id in agent_ids:
         if dispatches >= max_dispatches_per_tick:
