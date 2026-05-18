@@ -1,7 +1,7 @@
 # EXP-V2-002 Closeout
 
-Owner: Codex
-Reviewer: Codex2
+Owner: Codex2
+Reviewer: Codex
 Date: 2026-05-18
 Status at final closeout pickup: review_approved
 
@@ -20,7 +20,7 @@ Status at final closeout pickup: review_approved
 
 ## Reviewer Approval
 
-Codex2 approved EXP-V2-002 in the shared status root with no blocking findings. The approval notes state that grouped artifacts preserve `lineage.parent_run_id` for `model_artifact`, `feature_set`, `signal_snapshot`, `optimizer_result`, and `evaluation_result`.
+Codex approved EXP-V2-002 in the shared status root with no blocking findings. The approval notes state that grouped artifacts preserve `lineage.parent_run_id` for `model_artifact`, `feature_set`, `signal_snapshot`, `optimizer_result`, and `evaluation_result`.
 
 The generated task brief was present in the shared status root at `/home/lupin/code/pantheon/.orchestrator/task-briefs/exp_v2_002.md`; the same path was not present in this task worktree at closeout pickup.
 
@@ -56,7 +56,7 @@ The reviewer approval records a prior bounded full-suite attempt: `pytest -q` ti
 
 ## Final Owner Finalization
 
-PR #84 merged into `dev` on 2026-05-17 with merge commit `3dfc22897cb8c7dcca8fcdd17af03b580cceef0d`. On 2026-05-18, the supervisor resumed the current owner (`Codex`) for formal `review_approved` -> `done` closeout after ownership moved from the earlier helper handoff state.
+PR #84 merged into `dev` on 2026-05-17 with merge commit `3dfc22897cb8c7dcca8fcdd17af03b580cceef0d`. On 2026-05-18, the supervisor resumed the current owner (`Codex2`) for formal `review_approved` -> `done` closeout after reviewer approval in the shared status root.
 
 Commands rerun from `task/EXP-V2-002` before final status closeout:
 
@@ -67,5 +67,8 @@ pytest -q services/lineage-read
 
 Finalization results:
 
-- `services/lineage-read/test_multi_artifact_tree.py`: 6 passed in 0.67s.
-- `services/lineage-read`: 15 passed in 3.70s.
+- `services/lineage-read/test_multi_artifact_tree.py`: 6 passed in 0.69s.
+- `services/lineage-read`: 28 passed in 6.03s.
+
+The closeout correction keeps PR #106 scoped to this evidence file only. It
+does not change the already-merged lineage module or tests.
