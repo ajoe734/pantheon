@@ -37,6 +37,8 @@ from common import (
     load_status,
     new_runtime_id,
     normalize_agent_id,
+    is_github_cli_auth_failure,
+    preserve_github_cli_auth_env,
     relpath,
     selected_shared_files,
     shell_quote,
@@ -67,6 +69,9 @@ from runtime_state import load_approval_state, load_event_queue, load_runtime_st
 from runtime_state import enqueue_event
 from task_archive import TaskResolver
 from watch_events import queue_delivery_event, run_scan, trim_seen_events
+
+
+SIDECAR_READY_PRIORITY_OFFSET = 10
 
 
 SESSION_ID_PATTERNS = [
@@ -249,6 +254,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--verbose", action="store_true", help="Print active worker and queue details each tick.")
     parser.add_argument("--claim-agent", default=None, help="Let one idle agent claim and start one ready task.")
     parser.add_argument("--release-task", default=None, help="Release this agent's completed worker slot before claiming more work.")
+    parser.add_argument("--clear-provider-pause", default=None, help="Manually clear one provider dispatch pause.")
     return parser.parse_args()
 
 
@@ -333,7 +339,7 @@ def refresh_dashboard_runtime_artifacts(config: dict[str, Any]) -> None:
         ai_status = importlib.import_module("ai_status")
         status_state = ai_status.load_state()
         ai_status.write_dashboard_bundle(status_state)
-        ai_status.sync_docs_site()
+        ai_status.sync_docs_site(status_state)
     except Exception as exc:
         console_log(
             f"dashboard bundle refresh failed: {type(exc).__name__}: {exc}",
@@ -1604,6 +1610,70 @@ def pid_is_alive(pid: int | None) -> bool:
     except OSError:
         return False
     return True
+
+
+# Worker wakeup template always embeds `auto worker 身分是：<DisplayName>` in argv;
+# scan /proc to recover the truth when state["workers"] bookkeeping drifts.
+WORKER_AGENT_CMDLINE_MARKER = re.compile(r"auto worker 身分是：([A-Za-z][A-Za-z0-9_]*)")
+
+
+def scan_live_worker_pids_by_agent(proc_root: Path | None = None) -> dict[str, list[int]]:
+    """Return live worker PIDs grouped by agent display name parsed from /proc/*/cmdline."""
+    root = proc_root if proc_root is not None else Path("/proc")
+    result: dict[str, list[int]] = {}
+    try:
+        entries = list(root.iterdir())
+    except OSError:
+        return result
+    self_pid = os.getpid()
+    for entry in entries:
+        name = entry.name
+        if not name.isdigit():
+            continue
+        pid = int(name)
+        if pid == self_pid:
+            continue
+        cmdline_path = entry / "cmdline"
+        try:
+            raw = cmdline_path.read_bytes()
+        except OSError:
+            continue
+        if not raw:
+            continue
+        cmdline = raw.replace(b"\x00", b" ").decode("utf-8", errors="ignore")
+        match = WORKER_AGENT_CMDLINE_MARKER.search(cmdline)
+        if not match:
+            continue
+        agent = match.group(1)
+        result.setdefault(agent, []).append(pid)
+    return result
+
+
+def active_worker_refs_for_agent_id(
+    state: dict[str, Any],
+    agent_id: str | None,
+    active_statuses: set[str],
+) -> list[str]:
+    normalized_agent = normalize_agent_id(agent_id or "")
+    if not normalized_agent:
+        return []
+    normalized_statuses = {str(status or "").strip().lower() for status in active_statuses}
+    refs: list[str] = []
+    for worker in (state.get("workers", {}) or {}).values():
+        worker_agent_id = normalize_agent_id(str(worker.get("agent_id") or ""))
+        if worker_agent_id != normalized_agent:
+            continue
+        worker_status = str(worker.get("status") or "").strip().lower()
+        if worker_status not in normalized_statuses:
+            continue
+        pid = worker.get("pid")
+        if pid:
+            refs.append(str(pid))
+            continue
+        run_id = str(worker.get("run_id") or "").strip()
+        if run_id:
+            refs.append(run_id)
+    return sorted(set(refs))
 
 
 def terminate_worker_pid(pid: int | None) -> bool:
@@ -3198,6 +3268,8 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         "[object object]",
     }
 
+    if is_github_cli_auth_failure(reason):
+        return {"kind": "tool_auth", "transient": False, "label": "tool auth"}
     if any(marker in normalized for marker in auth_markers):
         return {"kind": "auth", "transient": False, "label": "auth"}
     if any(marker in normalized for marker in terminal_quota_markers):
@@ -3438,10 +3510,23 @@ def mark_provider_dispatch_paused(
         pause_seconds_key = "quota_terminal_pause_seconds" if effective_pause_kind == "quota_terminal" else "capacity_pause_seconds"
     pause_seconds = max(60, int(settings.get(pause_seconds_key, 900)))
     blocked_until = (now + timedelta(seconds=pause_seconds)).replace(microsecond=0)
+    hinted_blocked_until: str | None = None
+    hint_capped = False
     if effective_pause_kind == "quota_terminal":
         hinted = parse_quota_retry_hint(reason, now=now)
         if hinted is not None and hinted > blocked_until:
-            blocked_until = hinted.replace(microsecond=0)
+            hinted = hinted.replace(microsecond=0)
+            hinted_blocked_until = hinted.isoformat().replace("+00:00", "Z")
+            hint_max_seconds = int(settings.get("quota_terminal_hint_max_seconds", 0) or 0)
+            if hint_max_seconds > 0:
+                hint_cap = (now + timedelta(seconds=hint_max_seconds)).replace(microsecond=0)
+                if hinted > hint_cap:
+                    blocked_until = hint_cap
+                    hint_capped = True
+                else:
+                    blocked_until = hinted
+            else:
+                blocked_until = hinted
     blocked_until_iso = blocked_until.isoformat().replace("+00:00", "Z")
     actual_pause_seconds = max(1, int((blocked_until - now).total_seconds()))
     bucket = _dispatch_pause_bucket(state)
@@ -3468,6 +3553,9 @@ def mark_provider_dispatch_paused(
         "task_id": task_id,
         "worker_run_id": worker_run_id,
     }
+    if hinted_blocked_until:
+        bucket[pause_provider_id]["hint_blocked_until"] = hinted_blocked_until
+        bucket[pause_provider_id]["hint_capped"] = hint_capped
     if changed:
         if effective_pause_kind == "quota_terminal":
             pause_description = "terminal quota failure"
@@ -3491,6 +3579,33 @@ def mark_provider_dispatch_paused(
             },
         )
     return changed
+
+
+def clear_provider_dispatch_pause(config: dict[str, Any], state: dict[str, Any], provider: str | None) -> bool:
+    provider_id = normalize_agent_id(provider or "")
+    if not provider_id:
+        return False
+    pause_provider_id = provider_dispatch_group_id(config, provider_id) or provider_id
+    bucket = _dispatch_pause_bucket(state)
+    removed: list[tuple[str, dict[str, Any]]] = []
+    for pause_id in dict.fromkeys([pause_provider_id, provider_id]):
+        entry = bucket.pop(pause_id, None)
+        if isinstance(entry, dict):
+            removed.append((pause_id, entry))
+    for pause_id, entry in removed:
+        write_activity_log(
+            config,
+            {
+                "type": "provider_dispatch_resumed",
+                "provider": pause_id,
+                "task_id": entry.get("task_id"),
+                "worker_run_id": entry.get("worker_run_id"),
+                "message": f"Manually cleared dispatch pause for {pause_id}; dispatch is enabled again.",
+                "raw_ref": entry.get("raw_ref"),
+                "cleared_pause": entry,
+            },
+        )
+    return bool(removed)
 
 
 def expire_provider_dispatch_pauses(config: dict[str, Any], state: dict[str, Any]) -> bool:
@@ -3779,6 +3894,46 @@ def agent_auto_dispatch_block_reason(
             return f"{provider_id} does not currently support auto-approved dispatch"
         if provider_capability.get("auth_ready") is False:
             return f"{provider_id} authentication is not ready"
+
+    settings = ready_dispatch_settings(config)
+    if settings.get("worker_os_duplicate_guard", True):
+        active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
+        slot_ids = logical_worker_slot_ids(config, normalized_agent)
+        if slot_ids:
+            occupied_slots = {
+                slot_id: refs
+                for slot_id in slot_ids
+                if (refs := active_worker_refs_for_agent_id(state, slot_id, active_statuses))
+            }
+            if len(occupied_slots) >= len(slot_ids):
+                slot_summary = ", ".join(
+                    f"{slot_id}=PID:{'/'.join(refs)}" for slot_id, refs in sorted(occupied_slots.items())
+                )
+                display_name = display_name_for(config, normalized_agent) or normalized_agent
+                return (
+                    f"{display_name} all dispatch slots already have live worker process(es) "
+                    f"{slot_summary}; skipping dispatch to avoid duplicate workers"
+                )
+            return None
+
+        if agent and agent_is_dispatch_slot(agent):
+            slot_refs = active_worker_refs_for_agent_id(state, normalized_agent, active_statuses)
+            if slot_refs:
+                display_name = display_name_for(config, normalized_agent) or normalized_agent
+                return (
+                    f"{display_name} slot {normalized_agent} already has live worker process(es) "
+                    f"PID={','.join(slot_refs)}; skipping dispatch to avoid duplicate workers"
+                )
+            return None
+
+        display_name = display_name_for(config, normalized_agent) or normalized_agent
+        live_pids = scan_live_worker_pids_by_agent().get(display_name, [])
+        if live_pids:
+            return (
+                f"{display_name} already has live worker process(es) "
+                f"PID={','.join(str(p) for p in sorted(set(live_pids)))}; "
+                "skipping dispatch to avoid duplicate workers"
+            )
 
     return None
 
@@ -4438,7 +4593,8 @@ def _provider_uses_claude_cli(config: dict[str, Any], provider_id: str | None) -
 def _claude_runtime_env(config: dict[str, Any], provider_id: str | None) -> dict[str, str]:
     provider = (config.get("providers", {}) or {}).get(normalize_agent_id(provider_id or ""), {}) or {}
     runtime = provider.get("runtime", {}) or {}
-    env = dict(os.environ)
+    base_env = dict(os.environ)
+    env = dict(base_env)
     home = str(runtime.get("home") or "").strip()
     if home:
         env["HOME"] = os.path.expanduser(home)
@@ -4447,6 +4603,7 @@ def _claude_runtime_env(config: dict[str, Any], provider_id: str | None) -> dict
         if value is None:
             continue
         env[str(key)] = os.path.expanduser(str(value))
+    preserve_github_cli_auth_env(env, base_env)
     return env
 
 
@@ -5165,6 +5322,156 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
             changed = True
     return changed
+
+
+def worker_worktree_housekeeping_settings(config: dict[str, Any]) -> dict[str, Any]:
+    raw = config.get("worker_worktree_housekeeping")
+    settings = raw if isinstance(raw, dict) else {}
+    return {
+        "enabled": bool(settings.get("enabled", True)),
+        "tick_interval_seconds": int(settings.get("tick_interval_seconds", 600) or 0),
+        "base_branches": [str(b).strip() for b in (settings.get("base_branches") or ["dev", "master", "main"]) if str(b).strip()],
+        "max_removals_per_tick": int(settings.get("max_removals_per_tick", 5)),
+    }
+
+
+def _scan_process_paths_in_root(base_root: Path) -> set[Path]:
+    """Return resolved paths under base_root mentioned in any live process cmdline."""
+    base_str = str(base_root)
+    referenced: set[Path] = set()
+    try:
+        entries = list(Path("/proc").iterdir())
+    except OSError:
+        return referenced
+    self_pid = os.getpid()
+    for entry in entries:
+        name = entry.name
+        if not name.isdigit():
+            continue
+        if int(name) == self_pid:
+            continue
+        try:
+            raw = (entry / "cmdline").read_bytes()
+        except OSError:
+            continue
+        if not raw:
+            continue
+        cmdline = raw.replace(b"\x00", b" ").decode("utf-8", errors="ignore")
+        if base_str not in cmdline:
+            continue
+        for tok in cmdline.split(" "):
+            if tok.startswith(base_str):
+                try:
+                    referenced.add(Path(tok).resolve())
+                except OSError:
+                    pass
+    return referenced
+
+
+def prune_orphan_worktrees(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    """Remove finished worker worktrees whose branches are merged and tree is clean."""
+    settings = worker_worktree_housekeeping_settings(config)
+    if not settings["enabled"]:
+        return False
+
+    interval = settings["tick_interval_seconds"]
+    bucket = state.setdefault("worker_worktree_housekeeping", {})
+    if interval > 0:
+        last_at = bucket.get("last_run_at")
+        last_dt = _parse_iso_utc(str(last_at or ""))
+        now = datetime.now(timezone.utc)
+        if last_dt is not None and (now - last_dt).total_seconds() < interval:
+            return False
+    bucket["last_run_at"] = utc_now()
+
+    worktree_settings = worker_worktree_settings(config)
+    if not worktree_settings.get("enabled", False):
+        return False
+    base_root = _worker_worktree_base_root(config, worktree_settings)
+    if not base_root.exists():
+        return False
+    repo_root = config_path(config, "status_file").parents[0]
+
+    claimed_paths: set[Path] = set()
+    for worker in state.get("workers", {}).values():
+        wp = worker.get("workspace_path")
+        if not wp:
+            continue
+        try:
+            claimed_paths.add(Path(str(wp)).resolve())
+        except OSError:
+            continue
+
+    live_paths = _scan_process_paths_in_root(base_root)
+
+    merged_branches: set[str] = set()
+    for ref in settings["base_branches"]:
+        for candidate in (f"origin/{ref}", ref):
+            if not _git_ref_exists(repo_root, candidate):
+                continue
+            proc = subprocess.run(
+                ["git", "branch", "--merged", candidate, "--list", "task/*"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if proc.returncode != 0:
+                continue
+            for line in proc.stdout.splitlines():
+                name = line.strip().lstrip("*").strip()
+                if name:
+                    merged_branches.add(name)
+    if not merged_branches:
+        return False
+
+    max_removals = max(0, settings["max_removals_per_tick"])
+    base_root_str = str(base_root)
+    removed: list[str] = []
+    for record in _git_worktree_records(repo_root):
+        if len(removed) >= max_removals:
+            break
+        wt_value = record.get("worktree")
+        if not wt_value or not wt_value.startswith(base_root_str):
+            continue
+        try:
+            wt_path = Path(wt_value).resolve()
+        except OSError:
+            continue
+        if wt_path in claimed_paths:
+            continue
+        if any(str(live).startswith(str(wt_path)) or str(wt_path).startswith(str(live)) for live in live_paths):
+            continue
+        branch = _worktree_record_branch(record)
+        if not branch or branch not in merged_branches:
+            continue
+        status_proc = subprocess.run(
+            ["git", "-C", str(wt_path), "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if status_proc.returncode != 0 or status_proc.stdout.strip():
+            continue
+        remove_proc = subprocess.run(
+            ["git", "-C", str(repo_root), "worktree", "remove", str(wt_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if remove_proc.returncode == 0:
+            removed.append(str(wt_path))
+
+    if removed:
+        write_activity_log(
+            config,
+            {
+                "type": "worktree_pruned",
+                "message": f"Pruned {len(removed)} orphan worker worktree(s): {', '.join(removed)}",
+            },
+        )
+        return True
+    return False
 
 
 def trim_worker_history(state: dict[str, Any], max_entries: int) -> None:
@@ -6551,11 +6858,6 @@ def dispatch_ready_tasks(
     helper_settings = helper_claim_settings(config)
     seen = state.setdefault("seen_event_keys", {})
     failure_loop_agents = failure_loop_agents_for_task_map(config, state, task_map)
-    blocked_sidecar_parents = {
-        str(item).strip()
-        for item in (chair_rotation_state(state).get("sidecar_blocked_parents", []) or [])
-        if str(item).strip()
-    }
 
     changed = False
     normalized = False
@@ -6588,6 +6890,15 @@ def dispatch_ready_tasks(
         agent_ids = agent_sequence[dispatch_cursor:] + agent_sequence[:dispatch_cursor]
     else:
         agent_ids = []
+    max_concurrent_setting = settings.get("max_concurrent_workers")
+    try:
+        max_concurrent = int(max_concurrent_setting) if max_concurrent_setting not in (None, "") else None
+    except (TypeError, ValueError):
+        max_concurrent = None
+    if max_concurrent is not None and max_concurrent > 0:
+        live_total = sum(len(pids) for pids in scan_live_worker_pids_by_agent().values())
+        if live_total >= max_concurrent:
+            return changed
     considered_agents = 0
     for agent_id in agent_ids:
         if dispatches >= max_dispatches_per_tick:
@@ -6611,12 +6922,7 @@ def dispatch_ready_tasks(
             task_id = str(task.get(task_id_field) or "")
             if not task_id:
                 continue
-            if task_is_sidecar(task):
-                if target_has_primary_work:
-                    continue
-                helper_parent = str(task.get("helper_parent") or "").strip()
-                if helper_parent and helper_parent in blocked_sidecar_parents:
-                    continue
+            is_sidecar_task = task_is_sidecar(task)
             task_status = str(task.get("status") or "").lower()
             task_owner = task.get(owner_field)
             task_reviewer = task.get(reviewer_field)
@@ -6705,6 +7011,9 @@ def dispatch_ready_tasks(
 
             if reason is None or priority is None:
                 continue
+
+            if is_sidecar_task and target_has_primary_work:
+                priority += SIDECAR_READY_PRIORITY_OFFSET
 
             event = build_dispatch_event(task, target_agent, reason, task_map)
             if event["key"] in pending_event_keys:
@@ -7214,6 +7523,7 @@ def run_once(
         changed = sync_github_bus(config, state) or changed
         trim_worker_history(state, int(config.get("supervisor", {}).get("max_worker_history", 200)))
         trim_seen_events(state, int(config.get("watcher", {}).get("max_seen_events", 2000)))
+        changed = prune_orphan_worktrees(config, state) or changed
 
         loop_finished_at = utc_now()
         stamp_supervisor_runtime_state(
@@ -7324,6 +7634,15 @@ def main() -> int:
     args = parse_args()
     SUPERVISOR_LOG_QUIET = args.quiet
     config = load_config(args.config)
+    if args.clear_provider_pause:
+        state = load_runtime_state(config)
+        changed = clear_provider_dispatch_pause(config, state, args.clear_provider_pause)
+        if changed:
+            save_runtime_state(config, state)
+            console_log(f"cleared provider dispatch pause: {args.clear_provider_pause}", quiet=args.quiet)
+        else:
+            console_log(f"no provider dispatch pause found for: {args.clear_provider_pause}", quiet=args.quiet)
+        return 0
     if args.claim_agent:
         claim_next_task_for_agent(
             config,

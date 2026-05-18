@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import gzip
 import json
 import os
 import re
@@ -8,12 +9,18 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import yaml
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
+
+try:
+    import yaml
+except ModuleNotFoundError:  # pragma: no cover - exercised only in lean supervisor envs
+    yaml = None
+
+YAML_ERROR_TYPES = (yaml.YAMLError,) if yaml is not None else ()
 
 ROOT = Path(__file__).resolve().parents[1]
 STATUS_ROOT = (
@@ -50,6 +57,8 @@ from runtime_state import load_runtime_state
 
 STATUS_FILE = STATUS_ROOT / "ai-status.json"
 LOG_FILE = STATUS_ROOT / "ai-activity-log.jsonl"
+LOG_ROTATE_MAX_BYTES = int(os.environ.get("AI_STATUS_LOG_ROTATE_MAX_BYTES", str(5 * 1024 * 1024)))
+LOG_ROTATE_KEEP_LINES = int(os.environ.get("AI_STATUS_LOG_ROTATE_KEEP_LINES", "1000"))
 CURRENT_WORK_FILE = STATUS_ROOT / "current-work.md"
 DOCS_SITE_DIR = STATUS_ROOT / "docs-site"
 CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
@@ -823,7 +832,56 @@ def archive_terminal_tasks_in_state(state: dict[str, Any], *, archived_at: str |
     return [task_id for task_id in archived_ids if task_id]
 
 
+def maybe_rotate_activity_log(path: Path | None = None) -> Path | None:
+    """Archive + truncate ai-activity-log.jsonl when it exceeds LOG_ROTATE_MAX_BYTES.
+
+    Returns the gzipped archive path on rotation, None when no rotation happened.
+    The active log file is rewritten in place (same inode), so concurrent
+    append-mode writers see the truncated file rather than a stale handle.
+    """
+    log_path = path if path is not None else LOG_FILE
+    if LOG_ROTATE_MAX_BYTES <= 0:
+        return None
+    try:
+        size = log_path.stat().st_size
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return None
+    if size <= LOG_ROTATE_MAX_BYTES:
+        return None
+    archive_dir = log_path.parent / "archive" / "logs"
+    try:
+        archive_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%MZ")
+    archive_path = archive_dir / f"{log_path.name}-{timestamp}.gz"
+    try:
+        data = log_path.read_bytes()
+    except OSError:
+        return None
+    if LOG_ROTATE_KEEP_LINES > 0:
+        lines = data.splitlines(keepends=True)
+        keep = b"".join(lines[-LOG_ROTATE_KEEP_LINES:])
+    else:
+        keep = b""
+    try:
+        with gzip.open(archive_path, "wb") as dst:
+            dst.write(data)
+    except OSError:
+        return None
+    try:
+        # Rewriting via write_bytes truncates the existing inode (O_TRUNC),
+        # so any open append-mode handle still writes to this same file.
+        log_path.write_bytes(keep)
+    except OSError:
+        return None
+    return archive_path
+
+
 def append_log(entry: dict[str, Any]) -> None:
+    maybe_rotate_activity_log()
     with LOG_FILE.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
@@ -1396,6 +1454,29 @@ def display_task_title(task: dict[str, Any]) -> str:
     return marker_text
 
 
+def activity_log_message(entry: dict[str, Any]) -> str:
+    message = entry.get("message")
+    if message is not None and str(message).strip():
+        return str(message)
+
+    event_type = str(entry.get("type") or "event").strip() or "event"
+    details: list[str] = []
+    commit = str(entry.get("commit") or "").strip()
+    if commit:
+        details.append(f"commit {commit[:12]}")
+
+    scope = entry.get("scope")
+    if isinstance(scope, list) and scope:
+        rendered_scope = ", ".join(f"`{str(item)}`" for item in scope[:3])
+        if len(scope) > 3:
+            rendered_scope += ", ..."
+        details.append(f"scope {rendered_scope}")
+
+    if details:
+        return f"{event_type}: {'; '.join(details)}"
+    return event_type
+
+
 def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> None:
     def cell(value: Any) -> str:
         text = "-" if value is None or value == "" else str(value)
@@ -1659,15 +1740,9 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
         for entry in current_logs:
             task_id = f" `{entry['task_id']}`" if entry.get("task_id") else ""
             timestamp = entry.get("ts") or entry.get("timestamp")
-            message = entry.get("message")
-            if not message:
-                event_type = entry.get("type") or "event"
-                if event_type == "worker_commit" and entry.get("commit"):
-                    message = f"worker_commit {entry['commit']}"
-                else:
-                    message = event_type
             lines.append(
-                f"- {format_display_timestamp(timestamp)} {entry.get('agent', 'Unknown')}:{task_id} {localize_embedded_timestamps(str(message))}"
+                f"- {format_display_timestamp(timestamp)} {entry.get('agent') or 'Unknown'}:{task_id} "
+                f"{localize_embedded_timestamps(activity_log_message(entry))}"
             )
     else:
         lines.append("- No checkpoints yet.")
@@ -2323,8 +2398,10 @@ def load_local_coordination_payload(path_value: str) -> dict[str, Any] | None:
         if local_path.suffix == ".json":
             payload = json.loads(text)
         else:
+            if yaml is None:
+                return None
             payload = yaml.safe_load(text)
-    except (OSError, json.JSONDecodeError, yaml.YAMLError):
+    except (OSError, json.JSONDecodeError, *YAML_ERROR_TYPES):
         return None
     return payload if isinstance(payload, dict) else None
 
