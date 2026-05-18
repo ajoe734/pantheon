@@ -1552,6 +1552,24 @@ def start_worker_for_request(
         "next_retry_at": None,
         "last_error": None,
     }
+    record_worker_runtime_measurement(
+        config,
+        state,
+        "worker_started",
+        {
+            "workers_started": 1,
+            "queue_leases_started": 1 if queue_event_id else 0,
+        },
+        details={
+            "worker_run_id": worker_run_id,
+            "queue_event_id": queue_event_id,
+            "task_id": request.task_id,
+            "agent_id": agent["id"],
+            "provider": request.provider,
+            "lease_expires_at": state["workers"][worker_run_id].get("lease_expires_at"),
+        },
+        emit_activity=False,
+    )
     # Persist immediately after launch so a supervisor crash cannot orphan
     # a live worker before the end-of-tick state save.
     save_runtime_state(config, state)
@@ -1668,6 +1686,24 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             if auto_dispatch_block_is_temporary_capacity(auto_block_reason):
                 record["status"] = "pending"
                 record["last_wait_reason"] = f"Auto dispatch waiting for {request_agent_id}: {auto_block_reason}"
+                record["capacity_wait_count"] = int(record.get("capacity_wait_count", 0) or 0) + 1
+                record["last_capacity_wait_at"] = utc_now()
+                reason_changed = record.get("last_capacity_wait_reason") != auto_block_reason
+                record["last_capacity_wait_reason"] = auto_block_reason
+                record_worker_runtime_measurement(
+                    config,
+                    state,
+                    "dispatch_capacity_wait",
+                    {"capacity_pending_queue_events": 1},
+                    details={
+                        "queue_event_id": event_id,
+                        "task_id": event.get("task_id"),
+                        "agent_id": request_agent_id,
+                        "reason": auto_block_reason,
+                        "capacity_wait_count": record["capacity_wait_count"],
+                    },
+                    emit_activity=reason_changed,
+                )
                 changed = True
                 continue
             record["status"] = "failed"
@@ -3560,6 +3596,83 @@ def worker_runtime_settings(config: dict[str, Any]) -> dict[str, Any]:
     return settings
 
 
+WORKER_RUNTIME_METRIC_COUNTERS = (
+    "workers_started",
+    "queue_leases_started",
+    "marker_updates",
+    "lease_refreshes",
+    "missing_process_workers_failed",
+    "expired_lease_workers_failed",
+    "started_queue_records_requeued",
+    "started_queue_records_failed",
+    "stale_queue_records_completed",
+    "capacity_pending_queue_events",
+)
+
+
+def worker_runtime_metrics_bucket(state: dict[str, Any]) -> dict[str, Any]:
+    bucket = state.setdefault("worker_runtime_metrics", {})
+    bucket.setdefault("version", 1)
+    bucket.setdefault("updated_at", None)
+    totals = bucket.setdefault("totals", {})
+    for key in WORKER_RUNTIME_METRIC_COUNTERS:
+        totals.setdefault(key, 0)
+    bucket.setdefault("last_measurements", {})
+    return bucket
+
+
+def positive_runtime_counts(counts: dict[str, Any]) -> dict[str, int]:
+    positive: dict[str, int] = {}
+    for key, value in counts.items():
+        try:
+            amount = int(value)
+        except (TypeError, ValueError):
+            continue
+        if amount > 0:
+            positive[key] = amount
+    return positive
+
+
+def record_worker_runtime_measurement(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    measurement: str,
+    counts: dict[str, Any],
+    *,
+    details: dict[str, Any] | None = None,
+    emit_activity: bool = True,
+) -> bool:
+    positive = positive_runtime_counts(counts)
+    if not positive and not details:
+        return False
+    now = utc_now()
+    bucket = worker_runtime_metrics_bucket(state)
+    totals = bucket.setdefault("totals", {})
+    for key, amount in positive.items():
+        totals[key] = int(totals.get(key, 0) or 0) + amount
+    bucket["updated_at"] = now
+    bucket.setdefault("last_measurements", {})[measurement] = {
+        "at": now,
+        "counts": positive,
+        "details": details or {},
+    }
+    if emit_activity and positive:
+        try:
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_runtime_metrics",
+                    "measurement": measurement,
+                    "message": f"Worker runtime measurement {measurement}: {positive}",
+                    "counts": positive,
+                    "details": details or {},
+                },
+            )
+        except KeyError:
+            pass
+    return True
+
+
 def worker_lease_expiry(config: dict[str, Any], now: datetime | None = None) -> str:
     settings = worker_runtime_settings(config)
     now_dt = now or datetime.now(timezone.utc)
@@ -5117,6 +5230,11 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
     if provider_report is None:
         provider_report = load_provider_report(config)
     changed = retry_due_workers(config, state, provider_report, now) or changed
+    poll_counts = {
+        "marker_updates": 0,
+        "lease_refreshes": 0,
+        "expired_lease_workers_failed": 0,
+    }
     workers = state.setdefault("workers", {})
     for run_id, worker in list(workers.items()):
         previous_last_event_at = worker.get("last_event_at")
@@ -5140,12 +5258,16 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 )
                 changed = True
                 continue
-        changed = update_worker_runtime_markers(worker) or changed
+        marker_changed = update_worker_runtime_markers(worker)
+        if marker_changed:
+            poll_counts["marker_updates"] += 1
+            changed = True
         update_from_log(config, worker)
         alive = pid_is_alive(worker.get("pid"))
         if alive and worker.get("status") in active_worker_statuses and worker.get("last_heartbeat_at"):
             if not worker_heartbeat_is_stale(config, worker, now):
                 refresh_worker_lease(config, worker, now)
+                poll_counts["lease_refreshes"] += 1
                 if worker.get("queue_event_id"):
                     record = queue_status(state, worker["queue_event_id"])
                     record["lease_owner"] = worker.get("run_id")
@@ -5166,6 +5288,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 },
             )
             finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
+            poll_counts["expired_lease_workers_failed"] += 1
             changed = True
             continue
         last_event_advanced = bool(
@@ -5732,6 +5855,13 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 )
                 finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
             changed = True
+    record_worker_runtime_measurement(
+        config,
+        state,
+        "poll_workers",
+        poll_counts,
+        emit_activity=bool(poll_counts["expired_lease_workers_failed"]),
+    )
     return changed
 
 
@@ -5937,6 +6067,15 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
     now = datetime.now(timezone.utc)
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
     redispatch_statuses = redispatch_candidate_statuses(config)
+    counts = {
+        "marker_updates": 0,
+        "lease_refreshes": 0,
+        "missing_process_workers_failed": 0,
+        "expired_lease_workers_failed": 0,
+        "started_queue_records_requeued": 0,
+        "started_queue_records_failed": 0,
+        "stale_queue_records_completed": 0,
+    }
     try:
         task_map = task_index_from_status(config, load_status(config))
     except KeyError:
@@ -5946,12 +6085,16 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
     for run_id, worker in list(workers.items()):
         if worker.get("status") not in active_statuses:
             continue
-        changed = update_worker_runtime_markers(worker) or changed
+        marker_changed = update_worker_runtime_markers(worker)
+        if marker_changed:
+            counts["marker_updates"] += 1
+            changed = True
         alive = pid_is_alive(worker.get("pid"))
         missing_process = worker.get("status") in {"running", "stalled"} and not alive
         expired_lease = alive and worker_lease_is_expired(config, worker, now)
         if alive and not expired_lease and worker.get("last_heartbeat_at") and not worker_heartbeat_is_stale(config, worker, now):
             refresh_worker_lease(config, worker, now)
+            counts["lease_refreshes"] += 1
             if worker.get("queue_event_id"):
                 record = queue_status(state, worker["queue_event_id"])
                 record["lease_owner"] = worker.get("run_id")
@@ -5971,6 +6114,10 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
         worker["last_event_at"] = utc_now()
         worker["last_error"] = reason
         finalize_queue_event_record(config, state, worker, "failed", reason)
+        if expired_lease:
+            counts["expired_lease_workers_failed"] += 1
+        else:
+            counts["missing_process_workers_failed"] += 1
         write_activity_log(
             config,
             {
@@ -6010,6 +6157,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             record["processed_at"] = utc_now()
             record["skip_reason"] = "stale_dispatch_event"
             record["requeue_reason"] = "started event became stale while supervisor was offline"
+            counts["stale_queue_records_completed"] += 1
             changed = True
             continue
         task_status = str(task_map.get(str(event.get("task_id") or ""), {}).get("status") or "").lower()
@@ -6018,11 +6166,30 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                 record,
                 reason="started queue record had no active worker during supervisor boot reconciliation",
             )
+            counts["started_queue_records_requeued"] += 1
         else:
             record["status"] = "failed"
             record["processed_at"] = utc_now()
             record["error"] = "Started queue record had no active worker and task is no longer redispatchable."
+            counts["started_queue_records_failed"] += 1
         changed = True
+    corrective_counts = {
+        key: counts[key]
+        for key in (
+            "missing_process_workers_failed",
+            "expired_lease_workers_failed",
+            "started_queue_records_requeued",
+            "started_queue_records_failed",
+            "stale_queue_records_completed",
+        )
+    }
+    record_worker_runtime_measurement(
+        config,
+        state,
+        "boot_reconciliation",
+        counts,
+        emit_activity=bool(positive_runtime_counts(corrective_counts)),
+    )
     return changed
 
 def helper_claim_settings(config: dict[str, Any]) -> dict[str, Any]:
