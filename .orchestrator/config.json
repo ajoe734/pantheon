@@ -827,6 +827,7 @@
       "done"
     ],
     "worker_terminal_statuses": [
+      "review",
       "done",
       "review_approved"
     ],

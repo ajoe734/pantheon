@@ -77,6 +77,8 @@ Review handoff PR: https://github.com/ajoe734/pantheon/pull/80
 Review approval: Codex approved the task on 2026-05-17 after verifying the
 script, required env packet, bundle probe documentation, focused tests, and
 Pantheon-only scope.
+Publication closeout: PR #80 merged into `dev` on 2026-05-17 after the task
+branch was refreshed against `origin/dev` and the branch CI gates passed.
 
 ## Codex2 Verification
 

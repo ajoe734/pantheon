@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-18 00:26:36
+Last updated: 2026-05-18 08:42:57
 
 ## Objective
 
@@ -40,18 +40,15 @@ Last updated: 2026-05-18 00:26:36
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
 | `DEP-004` | Sprint 7 / EPIC-GOV-DEPLOY | Pool x runtime compatibility check before deployment advance | Codex | todo | `DEP-001`, `DEP-002`, `CAP-001`, `RT-001` | GAP P1 列為 DEP-004 但 sprint 7 沒派；grep 確認 services 與 governance 樹下沒有 pool/runtime compat check 實作。本任務在 DeploymentPlan 進入 RuntimeBinding 前增加 capital_pool 能力 × runtime 要求的相容性檢查，不通過則阻擋 advance。獨立 module，不修 DEP-001..003 公開 API。 |
-| `M7-CANARY-CLOSEOUT` | Track E / EPIC-05 M7 Canary Readiness | M7 canary readiness packet final closure | Claude | todo | `MGMT-BROKER-002`, `MGMT-BROKER-006` | Track E EPIC-05 全部子任務已完成；MGMT-BROKER-002 Shioaji simulation SDK smoke 也通過。本任務組裝完整 M7 PromotionReadinessPacket：含 broker_sandbox_smoke / shioaji_sandbox_evidence_packet / canary_activation_gate_refs 三項證據引用，加上 risk-owner + operator 雙閘 approval 預留欄位（未實際開啟 live），最終產出 packet JSON 與簽核表。獨立檔案，不修 broker live flag。 |
 | `POST-EVO-BRIDGE` | Sprint 7 / EPIC-EVOLUTION-FOLLOWUP | Postmortem -> EvolutionDecisionProposal auto-trigger bridge | Claude2 | todo | `POST-001`, `EVO-001` | POST-001 + EVO-001 已落地為 schema/service，但 incident/postmortem publish → EvolutionDecisionProposal 自動觸發的 bridge 還沒實際 wire。本任務新增 postmortem_bridge module：訂閱 postmortem published 事件，按 severity 與 corrective_action_required 判斷是否產出 EvolutionDecisionProposal payload（不直接寫 governance store，僅 emit proposal）。獨立 module，不改 POST-001 / EVO-001 公開 API。 |
 | `LOVABLE-STRICT-PUBLISH` | Sprint 7 / EPIC-LOVABLE-INFRA | Lovable build-time strict env publish audit script | Gemini | todo | - | SA § 2.2 列為 non-blocking follow-up：execute-plans@main build-time 應使用 strict env (VITE_BFF_MODE=live VITE_BFF_FALLBACK=strict VITE_BFF_REAL_WRITES=false) 重新發佈一次，並驗證發佈後的 bundle 不再含 seed fallback assets。本任務不直接動 execute-plans repo，而是寫一個 pantheon 端的 audit script + evidence packet，記錄 publish 條件、build env、bundle hash、verification probe 結果。 |
 | `OODA-E2E-001` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #1: source → StrategySpec transition test | Codex | todo | `SRC-001`, `STRAT-001`, `STRAT-003` | OODA Observe 階段第一步：實作整合測試證明「真實 SourceRecord → StrategySpec」這個 transition 可端到端走完。使用 SRC-* 與 STRAT-* 既有 service code，不重做。獨立 test 檔。 |
 | `OODA-E2E-003` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #3: ExperimentRun → CandidateArtifact admission test | Claude | todo | `EXP-005`, `REG-002` | OODA Orient→Decide 階段：證明「ExperimentRun → CandidateArtifact → Registry admission」transition 可端到端走完。使用 EXP-005 writeback + Registry promotion service。獨立 test 檔。 |
 | `OODA-E2E-004` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #4: Admission → ApprovalDecision → DeploymentPlan(paper) test | Claude | todo | `GOV-001`, `DEP-001`, `DEP-002`, `DEP-004` | OODA Decide 階段：證明「CandidateArtifact → ApprovalDecision → DeploymentPlan(paper)」transition 可端到端走完。使用 GOV-001 ApprovalDecision + DEP-001 DeploymentPlan service。獨立 test 檔。 |
 | `OODA-E2E-005` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #5: DeploymentPlan(paper) → RuntimeBinding → paper run test | Claude2 | todo | `DEP-001`, `RT-001`, `RT-002`, `EX-002-RB`, `LEAN-ALGO-001` | OODA Act 階段：證明「DeploymentPlan(paper) → RuntimeBinding → ArtifactLoader → paper algorithm」transition 可端到端走完。使用 RT-001..002 + EX-002-RB loader + LEAN-ALGO-001 algorithm smoke。獨立 test 檔，5 trading days deterministic 數據，無 broker。 |
-| `OODA-E2E-006` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #6: telemetry → Incident → Postmortem → EvolutionDecisionProposal test | Claude | todo | `TEL-001`, `INC-001-RB`, `POST-001`, `POST-EVO-BRIDGE` | OODA Learn 階段：證明「paper run telemetry → IncidentCase → Postmortem → EvolutionDecisionProposal」transition 可端到端走完。注入 1 條合成 incident-trigger telemetry，跑 POST-EVO-BRIDGE。獨立 test 檔，無 live mutation。 |
 | `OODA-E2E-007` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #7: full OodaLoopPacket closure + evidence chain | Codex | todo | `OODA-E2E-001`, `OODA-E2E-002`, `OODA-E2E-003`, `OODA-E2E-004`, `OODA-E2E-005`, `OODA-E2E-006` | OODA 全環收尾：把上述 6 個 transition test 串成單一 OodaLoopPacket 並驗證所有欄位齊全（observe/orient/decide/act/learn refs）。產出 evidence packet 與 closeout summary。獨立 test 檔。 |
 | `STRAT-V2-001` | Sprint 8 / EPIC-STRAT-EXP-DEEP | Strategy spec distillation production smoke (real research note) | Copilot | todo | `STRAT-003`, `STRAT-004`, `SRC-001` | 把 STRAT-003 source converter 升級到 production：吃真實 internal research note (docs/research/notes/*.md 或 fixture)，產出可進 registry 的 StrategySpec，含 evidence_refs + code_refs 完整 binding。獨立 module，不改 STRAT-001..004 公開 API。 |
 | `STRAT-V2-002` | Sprint 8 / EPIC-STRAT-EXP-DEEP | Strategy lineage tree backend read API | Claude2 | todo | `LIN-001`, `STRAT-001`, `EXP-001` | 新增 lineage backend API：給定 strategy_spec_id 回傳完整 lineage tree（source_record → strategy_spec → experiment_runs → candidate_artifacts → deployment_plans → runtime_bindings）。獨立 module，不改 LIN-001 既有 read-model。 |
-| `EXP-V2-001` | Sprint 8 / EPIC-STRAT-EXP-DEEP | Experiment orchestrator parallel multi-backend dispatch | Codex | todo | `EXP-001`, `EXP-002`, `VBT-001`, `OSS-QLIB-002`, `OSS-STAT-001` | 升級 experiment orchestrator 支援平行多 backend：同一個 ExperimentTask 可以同時派給 vectorbt + Qlib + statsmodels 跑，回傳 N 個獨立 ExperimentRun 加上比較摘要。獨立 module，不改 EXP-001 公開 schema。 |
 | `EXP-V2-002` | Sprint 8 / EPIC-STRAT-EXP-DEEP | ExperimentRun multi-artifact lineage tree | Codex2 | todo | `EXP-005`, `LIN-001` | 新增多 artifact-type lineage tree：ExperimentRun 可同時產 model_artifact + feature_set + signal_snapshot + optimizer_result，本任務確保 lineage edges 正確連接 N 個 artifact 而非單一。獨立 module。 |
 | `SPRINT-8-CLOSEOUT` | Sprint 8 / EPIC-CLOSEOUT | Sprint 8 retrospective + closeout + Sprint 9 candidate topics | Claude | todo | `OSS-QLIB-V2-001`, `OSS-STAT-V2-001`, `OSS-QUANTLIB-V2-001`, `OSS-RLLIB-V2-001`, `OSS-FINRL-V2-001`, `OODA-E2E-007`, `STRAT-V2-001`, `STRAT-V2-002`, `EXP-V2-001`, `EXP-V2-002` | Sprint 8 收尾：彙整 16 條子任務 evidence、產 sprint retrospective + 統計報告（哪些 EPIC 過、哪些 EPIC 殘留缺口）、產 sprint 9 候選議題 raw list（供下一輪 planning 用）。獨立 evidence packet。 |
 
@@ -68,11 +65,14 @@ Last updated: 2026-05-18 00:26:36
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-17 13:51:55
-- Terminal tasks archived: `1185` total, `1165` completed, `20` superseded
+- Archive updated: 2026-05-18 08:42:57
+- Terminal tasks archived: `1188` total, `1168` completed, `20` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `EXP-V2-001` | Sprint 8 / EPIC-STRAT-EXP-DEEP | EXP-V2-001: Claude stepped in as helper reviewer (Codex2 unresponsive) | Codex | completed | 2026-05-18 08:42:57 | `ai-task-archive/tasks/EXP-V2-001.json` |
+| `OODA-E2E-006` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #6: telemetry → Incident → Postmortem → EvolutionDecisionProposal test | Claude | completed | 2026-05-17 23:35:04 | `ai-task-archive/tasks/OODA-E2E-006.json` |
+| `M7-CANARY-CLOSEOUT` | Track E / EPIC-05 M7 Canary Readiness | M7 canary readiness packet final closure | Claude2 | completed | 2026-05-18 03:05:08 | `ai-task-archive/tasks/M7-CANARY-CLOSEOUT.json` |
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | Gemini2 | completed | 2026-05-17 13:51:55 | `ai-task-archive/tasks/MGMT-BROKER-002.json` |
 | `OSS-FINRL-001-SIDECAR-ACCEPTANCE` | Sprint 7 / EPIC-OSS-RESEARCH | Prepare OSS-FINRL-001 acceptance packet and dependency map | Codex | completed | 2026-05-17 11:44:36 | `ai-task-archive/tasks/OSS-FINRL-001-SIDECAR-ACCEPTANCE.json` |
 | `OSS-FINRL-001` | Sprint 7 / EPIC-OSS-RESEARCH | FinRL DQN/PPO adapter skeleton | Codex | completed | 2026-05-17 11:35:33 | `ai-task-archive/tasks/OSS-FINRL-001.json` |
@@ -90,9 +90,6 @@ Last updated: 2026-05-18 00:26:36
 | `OSS-STAT-001` | Sprint 7 / EPIC-OSS-RESEARCH | statsmodels cointegration adapter skeleton | Codex | completed | 2026-05-17 10:17:33 | `ai-task-archive/tasks/OSS-STAT-001.json` |
 | `ASK-006` | Sprint 7 / EPIC-CONSULT-ADVANCED | Consult -> Committee -> Memo -> Review e2e test | Codex | completed | 2026-05-17 09:53:14 | `ai-task-archive/tasks/ASK-006.json` |
 | `ASK-007` | Sprint 7 / EPIC-CONSULT-ADVANCED | Consult memo evidence redaction regression | Codex | completed | 2026-05-17 09:52:54 | `ai-task-archive/tasks/ASK-007.json` |
-| `TRN-006` | Sprint 7 / EPIC-TRAINER-ADVANCED | Rapid-eval -> vectorbt backend integration | Codex | completed | 2026-05-17 09:44:24 | `ai-task-archive/tasks/TRN-006.json` |
-| `OSS-QLIB-002` | Sprint 7 / EPIC-OSS-RESEARCH | Qlib rolling-window OOS pipeline + eval | Codex | completed | 2026-05-17 09:42:51 | `ai-task-archive/tasks/OSS-QLIB-002.json` |
-| `PER-003` | Sprint 7 / EPIC-TRAINER-ADVANCED | Persona registry live integration acceptance | Claude2 | completed | 2026-05-17 09:39:19 | `ai-task-archive/tasks/PER-003.json` |
 
 ## Task Board
 
@@ -100,7 +97,6 @@ Last updated: 2026-05-18 00:26:36
 |---|---|---|---|---|---|---|---|---|---|
 | `OSS-STAT-001-SIDECAR-ACCEPTANCE` | Sprint 7 / EPIC-OSS-RESEARCH | [Sidecar] [Auto] [Parent OSS-STAT-001] Prepare OSS-STAT-001 acceptance packet and dependency map | 平行支援 OSS-STAT-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Gemini | Claude | done | - | 2026-05-17 11:45:00 | Owner finalized task and closed it. Sidecar acceptance packet is durable in support/sidecars/OSS-STAT-001/. |
 | `DEP-004` | Sprint 7 / EPIC-GOV-DEPLOY | Pool x runtime compatibility check before deployment advance | GAP P1 列為 DEP-004 但 sprint 7 沒派；grep 確認 services 與 governance 樹下沒有 pool/runtime compat check 實作。本任務在 DeploymentPlan 進入 RuntimeBinding 前增加 capital_pool 能力 × runtime 要求的相容性檢查，不通過則阻擋 advance。獨立 module，不修 DEP-001..003 公開 API。 | Codex | Codex2 | todo | `DEP-001`, `DEP-002`, `CAP-001`, `RT-001` | 2026-05-17 18:43:57 | Assignment created |
-| `M7-CANARY-CLOSEOUT` | Track E / EPIC-05 M7 Canary Readiness | M7 canary readiness packet final closure | Track E EPIC-05 全部子任務已完成；MGMT-BROKER-002 Shioaji simulation SDK smoke 也通過。本任務組裝完整 M7 PromotionReadinessPacket：含 broker_sandbox_smoke / shioaji_sandbox_evidence_packet / canary_activation_gate_refs 三項證據引用，加上 risk-owner + operator 雙閘 approval 預留欄位（未實際開啟 live），最終產出 packet JSON 與簽核表。獨立檔案，不修 broker live flag。 | Claude | Codex | todo | `MGMT-BROKER-002`, `MGMT-BROKER-006` | 2026-05-17 18:44:16 | Assignment created |
 | `POST-EVO-BRIDGE` | Sprint 7 / EPIC-EVOLUTION-FOLLOWUP | Postmortem -> EvolutionDecisionProposal auto-trigger bridge | POST-001 + EVO-001 已落地為 schema/service，但 incident/postmortem publish → EvolutionDecisionProposal 自動觸發的 bridge 還沒實際 wire。本任務新增 postmortem_bridge module：訂閱 postmortem published 事件，按 severity 與 corrective_action_required 判斷是否產出 EvolutionDecisionProposal payload（不直接寫 governance store，僅 emit proposal）。獨立 module，不改 POST-001 / EVO-001 公開 API。 | Claude2 | Codex2 | todo | `POST-001`, `EVO-001` | 2026-05-17 18:44:31 | Assignment created |
 | `LOVABLE-STRICT-PUBLISH` | Sprint 7 / EPIC-LOVABLE-INFRA | Lovable build-time strict env publish audit script | SA § 2.2 列為 non-blocking follow-up：execute-plans@main build-time 應使用 strict env (VITE_BFF_MODE=live VITE_BFF_FALLBACK=strict VITE_BFF_REAL_WRITES=false) 重新發佈一次，並驗證發佈後的 bundle 不再含 seed fallback assets。本任務不直接動 execute-plans repo，而是寫一個 pantheon 端的 audit script + evidence packet，記錄 publish 條件、build env、bundle hash、verification probe 結果。 | Gemini | Gemini2 | todo | - | 2026-05-17 18:44:50 | Assignment created |
 | `OSS-QLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | Qlib production-scale rolling + registry admission | 把 OSS-QLIB-002 的 rolling pipeline 升級到 production scale：使用 MGMT-QLIB-001 已建好的 TWSE OHLCV dataset（≥50 instruments × ≥2 years），跑完整 rolling-window 訓練，產 model_artifact 並提交 registry admission packet。獨立檔案路徑。 | Codex | Codex2 | review | `OSS-QLIB-002`, `MGMT-QLIB-001` | 2026-05-18 00:26:36 | Ready for review: production Qlib rolling runner, registry admission packet emitter, tests, and admission_packet.json are merged via PR #70. Please review services/research/qlib/production_rolling_run.py, services/research/qlib/registry_admission_packet.py, services/research/qlib/test_production_rolling_run.py, and support/evidence/OSS-QLIB-V2-001/admission_packet.json. |
@@ -113,11 +109,9 @@ Last updated: 2026-05-18 00:26:36
 | `OODA-E2E-003` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #3: ExperimentRun → CandidateArtifact admission test | OODA Orient→Decide 階段：證明「ExperimentRun → CandidateArtifact → Registry admission」transition 可端到端走完。使用 EXP-005 writeback + Registry promotion service。獨立 test 檔。 | Claude | Codex | todo | `EXP-005`, `REG-002` | 2026-05-17 19:03:27 | Assignment created |
 | `OODA-E2E-004` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #4: Admission → ApprovalDecision → DeploymentPlan(paper) test | OODA Decide 階段：證明「CandidateArtifact → ApprovalDecision → DeploymentPlan(paper)」transition 可端到端走完。使用 GOV-001 ApprovalDecision + DEP-001 DeploymentPlan service。獨立 test 檔。 | Claude | Codex2 | todo | `GOV-001`, `DEP-001`, `DEP-002`, `DEP-004` | 2026-05-17 19:03:39 | Assignment created |
 | `OODA-E2E-005` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #5: DeploymentPlan(paper) → RuntimeBinding → paper run test | OODA Act 階段：證明「DeploymentPlan(paper) → RuntimeBinding → ArtifactLoader → paper algorithm」transition 可端到端走完。使用 RT-001..002 + EX-002-RB loader + LEAN-ALGO-001 algorithm smoke。獨立 test 檔，5 trading days deterministic 數據，無 broker。 | Claude2 | Codex | todo | `DEP-001`, `RT-001`, `RT-002`, `EX-002-RB`, `LEAN-ALGO-001` | 2026-05-17 19:03:49 | Assignment created |
-| `OODA-E2E-006` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #6: telemetry → Incident → Postmortem → EvolutionDecisionProposal test | OODA Learn 階段：證明「paper run telemetry → IncidentCase → Postmortem → EvolutionDecisionProposal」transition 可端到端走完。注入 1 條合成 incident-trigger telemetry，跑 POST-EVO-BRIDGE。獨立 test 檔，無 live mutation。 | Claude | Claude2 | todo | `TEL-001`, `INC-001-RB`, `POST-001`, `POST-EVO-BRIDGE` | 2026-05-17 19:04:00 | Assignment created |
 | `OODA-E2E-007` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #7: full OodaLoopPacket closure + evidence chain | OODA 全環收尾：把上述 6 個 transition test 串成單一 OodaLoopPacket 並驗證所有欄位齊全（observe/orient/decide/act/learn refs）。產出 evidence packet 與 closeout summary。獨立 test 檔。 | Codex | Claude | todo | `OODA-E2E-001`, `OODA-E2E-002`, `OODA-E2E-003`, `OODA-E2E-004`, `OODA-E2E-005`, `OODA-E2E-006` | 2026-05-17 19:04:11 | Assignment created |
 | `STRAT-V2-001` | Sprint 8 / EPIC-STRAT-EXP-DEEP | Strategy spec distillation production smoke (real research note) | 把 STRAT-003 source converter 升級到 production：吃真實 internal research note (docs/research/notes/*.md 或 fixture)，產出可進 registry 的 StrategySpec，含 evidence_refs + code_refs 完整 binding。獨立 module，不改 STRAT-001..004 公開 API。 | Copilot | Codex2 | todo | `STRAT-003`, `STRAT-004`, `SRC-001` | 2026-05-17 19:05:16 | Assignment created |
 | `STRAT-V2-002` | Sprint 8 / EPIC-STRAT-EXP-DEEP | Strategy lineage tree backend read API | 新增 lineage backend API：給定 strategy_spec_id 回傳完整 lineage tree（source_record → strategy_spec → experiment_runs → candidate_artifacts → deployment_plans → runtime_bindings）。獨立 module，不改 LIN-001 既有 read-model。 | Claude2 | Codex | todo | `LIN-001`, `STRAT-001`, `EXP-001` | 2026-05-17 19:05:29 | Assignment created |
-| `EXP-V2-001` | Sprint 8 / EPIC-STRAT-EXP-DEEP | Experiment orchestrator parallel multi-backend dispatch | 升級 experiment orchestrator 支援平行多 backend：同一個 ExperimentTask 可以同時派給 vectorbt + Qlib + statsmodels 跑，回傳 N 個獨立 ExperimentRun 加上比較摘要。獨立 module，不改 EXP-001 公開 schema。 | Codex | Codex2 | todo | `EXP-001`, `EXP-002`, `VBT-001`, `OSS-QLIB-002`, `OSS-STAT-001` | 2026-05-17 19:05:38 | Assignment created |
 | `EXP-V2-002` | Sprint 8 / EPIC-STRAT-EXP-DEEP | ExperimentRun multi-artifact lineage tree | 新增多 artifact-type lineage tree：ExperimentRun 可同時產 model_artifact + feature_set + signal_snapshot + optimizer_result，本任務確保 lineage edges 正確連接 N 個 artifact 而非單一。獨立 module。 | Codex2 | Copilot | todo | `EXP-005`, `LIN-001` | 2026-05-17 19:05:48 | Assignment created |
 | `SPRINT-8-CLOSEOUT` | Sprint 8 / EPIC-CLOSEOUT | Sprint 8 retrospective + closeout + Sprint 9 candidate topics | Sprint 8 收尾：彙整 16 條子任務 evidence、產 sprint retrospective + 統計報告（哪些 EPIC 過、哪些 EPIC 殘留缺口）、產 sprint 9 候選議題 raw list（供下一輪 planning 用）。獨立 evidence packet。 | Claude | Codex | todo | `OSS-QLIB-V2-001`, `OSS-STAT-V2-001`, `OSS-QUANTLIB-V2-001`, `OSS-RLLIB-V2-001`, `OSS-FINRL-V2-001`, `OODA-E2E-007`, `STRAT-V2-001`, `STRAT-V2-002`, `EXP-V2-001`, `EXP-V2-002` | 2026-05-17 19:06:02 | Assignment created |
 
@@ -167,6 +161,18 @@ Do not read those omitted modules as open Pantheon backlog purely because they a
 
 ## Latest Checkpoints
 
+- 2026-05-16 01:52:26 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:52:28 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:52:31 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:52:32 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:52:37 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:52:38 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:52:42 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:52:43 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:52:47 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:52:48 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:52:52 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:52:53 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:52:57 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:52:57 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:53:02 Orchestrator: PreToolUse: Bash
@@ -174,16 +180,4 @@ Do not read those omitted modules as open Pantheon backlog purely because they a
 - 2026-05-16 01:53:08 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:53:08 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:53:13 Orchestrator: PreToolUse: Bash
-- 2026-05-17 19:39:50 Codex: `OSS-QLIB-V2-001` worker_commit d41fd04223a6cb2fd1afb72968a78fb5d18f665b
-- 2026-05-18 00:19:24 Codex: `OSS-QLIB-V2-001` Picked up OSS-QLIB-V2-001; task artifacts already committed, running focused Qlib verification before reviewer handoff.
-- 2026-05-18 00:21:27 Codex: `OSS-QLIB-V2-001` Picked up OSS-QLIB-V2-001 on task branch; implementation PR #70 is already merged, running status handoff after focused verification.
-- 2026-05-18 00:22:12 Claude: `REG-002` Review passed. Owner should finalize.
-- 2026-05-18 00:22:12 Codex: `REG-002` Owner finalized approved task
-- 2026-05-18 00:22:13 Codex: `REG-002` Handoff to Claude: Ready for review
-- 2026-05-18 00:22:13 Claude: `REG-002` Please address the requested changes
-- 2026-05-18 00:22:13 Codex: `REG-002` Superseded by REG-010 after accepted consensus.
-- 2026-05-18 00:22:14 Codex: Archived 1 terminal tasks from ai-status.json.
-- 2026-05-18 00:22:15 Codex: `APP-001-SIDECAR-BFF-HANDOFF` Assigned APP-001-SIDECAR-BFF-HANDOFF to Gemini with reviewer Copilot
-- 2026-05-18 00:25:24 Codex: `OSS-QLIB-V2-001` Picked up OSS-QLIB-V2-001 on task branch; implementation PR #70 is merged, recording verification and reviewer handoff.
-- 2026-05-18 00:26:00 Codex: `OSS-QLIB-V2-001` Implementation artifacts are merged in PR #70 (commit 5b1abb73). Focused verification rerun: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/research/qlib -q -> 40 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest scripts/test_ai_status.py -q -> 44 passed after status-log compatibility fix.
-- 2026-05-18 00:26:36 Codex: `OSS-QLIB-V2-001` Handoff to Codex2: Ready for review: production Qlib rolling runner, registry admission packet emitter, tests, and admission_packet.json are merged via PR #70. Please review services/research/qlib/production_rolling_run.py, services/research/qlib/registry_admission_packet.py, services/research/qlib/test_production_rolling_run.py, and support/evidence/OSS-QLIB-V2-001/admission_packet.json.
+- 2026-05-18 08:42:57 Codex: `EXP-V2-001` Closeout PR #96 is open with auto-merge enabled; reviewed implementation PR #69 is merged; verification passed and closeout evidence is recorded.

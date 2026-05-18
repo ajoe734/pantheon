@@ -319,8 +319,20 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertEqual(result["kind"], "auth")
         self.assertFalse(result["transient"])
 
+    def test_classifies_github_cli_auth_failure_as_tool_auth(self) -> None:
+        config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
+        worker = {"provider": "claude2"}
+
+        result = supervisor.classify_worker_failure(config, worker, "GitHub CLI is not authenticated. Run gh auth login.")
+
+        self.assertEqual(result["kind"], "tool_auth")
+        self.assertFalse(result["transient"])
+
     def test_auth_failures_pause_provider_dispatch(self) -> None:
         self.assertTrue(supervisor.should_pause_dispatch_for_failure_kind("auth"))
+
+    def test_tool_auth_failures_do_not_pause_provider_dispatch(self) -> None:
+        self.assertFalse(supervisor.should_pause_dispatch_for_failure_kind("tool_auth"))
 
     def test_classifies_gemini_unknown_critical_failure(self) -> None:
         config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}

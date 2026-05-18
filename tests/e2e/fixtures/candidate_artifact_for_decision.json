@@ -1,0 +1,99 @@
+{
+  "candidate_artifact": {
+    "registry_id": "reg-ooda-e2e-004-alpha-1.0.0",
+    "registry_entry_create": {
+      "artifact_type": "model_artifact",
+      "strategy_id": "ooda-e2e-004-alpha",
+      "version": "1.0.0",
+      "artifact_state": "candidate",
+      "lineage": {
+        "parent_registry_ids": [
+          "reg-strategy-spec-ooda-e2e-003-v1"
+        ],
+        "source_run_ids": [
+          "erun-ooda-e2e-003-001"
+        ],
+        "source_dataset_refs": [
+          "dataset-twse-ooda-e2e-003-v1"
+        ],
+        "source_strategy_spec_id": "reg-strategy-spec-ooda-e2e-003-v1"
+      },
+      "storage_ref": {
+        "backend": "object_store",
+        "path": "object://registry/ooda-e2e-004/model.pkl"
+      },
+      "checksum": "sha256:ooda-e2e-004-fixture-checksum-abc123",
+      "producer_run_id": "erun-ooda-e2e-003-001",
+      "evaluation_summary": {
+        "sharpe_ratio": 1.25,
+        "ic_mean": 0.055,
+        "max_drawdown": -0.15,
+        "annual_return": 0.18
+      },
+      "metadata": {
+        "ooda_stage": "decide",
+        "source_task_id": "OODA-E2E-003"
+      }
+    }
+  },
+  "approval_decision": {
+    "decision_id": "appr-ooda-e2e-004-001",
+    "risk_level": "low",
+    "actor_role": "governance_reviewer",
+    "actor_id": "governance-reviewer-ooda-e2e-004",
+    "rationale": "Candidate artifact passed registry admission and is approved for paper deployment planning.",
+    "evidence_refs": [
+      {
+        "ref_type": "evaluator_result",
+        "ref_id": "metrics-ooda-e2e-003-001",
+        "storage_ref": {
+          "backend": "object_store",
+          "path": "object://experiments/erun-ooda-e2e-003-001/metrics.json"
+        },
+        "note": "Accepted evaluation summary from OODA-E2E-003 admission fixture."
+      }
+    ]
+  },
+  "deployment_plan": {
+    "plan_id": "dp-ooda-e2e-004-paper-001",
+    "target_stage": "paper",
+    "current_stage": "none",
+    "created_by": "OODA-E2E-004",
+    "runtime_config_ref": "runtime-config://paper/ooda-e2e-004",
+    "target_size": 50000,
+    "pre_checks": [
+      "approval_decision_decided",
+      "dep004_pool_runtime_compatibility"
+    ],
+    "post_checks": [
+      "paper_telemetry_schema_required"
+    ],
+    "rollback": {
+      "target_artifact_id": "reg-ooda-e2e-004-alpha-0.9.0",
+      "target_version": "0.9.0",
+      "action_type": "replace",
+      "reason": "Previous approved paper baseline."
+    }
+  },
+  "capital_pool": {
+    "pool_id": "pool-ooda-e2e-004-paper",
+    "status": "active",
+    "risk_budget": 100000,
+    "metadata": {
+      "jurisdiction": "us"
+    }
+  },
+  "persona_capital_binding": {
+    "binding_id": "pcb-ooda-e2e-004-paper",
+    "persona_id": "persona-ooda-e2e-004-sponsor",
+    "capital_pool_id": "pool-ooda-e2e-004-paper",
+    "status": "active",
+    "allowed_deployment_scope": "paper"
+  },
+  "runtime_requirements": {
+    "runtime_id": "rt-ooda-e2e-004-paper-001",
+    "runtime_mode": "paper",
+    "broker_jurisdiction": "us",
+    "persona_capital_binding_id": "pcb-ooda-e2e-004-paper"
+  }
+}

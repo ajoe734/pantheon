@@ -12,6 +12,7 @@ from common import (
     config_path,
     delivery_runtime_env,
     delivery_workspace_root,
+    preserve_github_cli_auth_env,
     new_runtime_id,
     runtime_log_path,
     shell_quote,
@@ -41,7 +42,8 @@ def _runtime_settings(config: dict | None = None, provider_id: str | None = None
 
 
 def _spawn_env(config: dict | None = None, provider_id: str | None = None) -> dict[str, str]:
-    env = dict(os.environ)
+    base_env = dict(os.environ)
+    env = dict(base_env)
     runtime = _runtime_settings(config, provider_id)
     home = str(runtime.get("home") or "").strip()
     if home:
@@ -51,6 +53,7 @@ def _spawn_env(config: dict | None = None, provider_id: str | None = None) -> di
         if value is None:
             continue
         env[str(key)] = os.path.expanduser(str(value))
+    preserve_github_cli_auth_env(env, base_env)
     apply_claude_oauth_token_file(env, runtime)
     return env
 

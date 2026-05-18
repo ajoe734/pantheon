@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "OODA-E2E-006",
+  "archived_at": "2026-05-17T15:35:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OODA-E2E-006",
+    "title": "OODA E2E #6: telemetry → Incident → Postmortem → EvolutionDecisionProposal test",
+    "summary_zh": "OODA Learn 階段：證明「paper run telemetry → IncidentCase → Postmortem → EvolutionDecisionProposal」transition 可端到端走完。注入 1 條合成 incident-trigger telemetry，跑 POST-EVO-BRIDGE。獨立 test 檔，無 live mutation。",
+    "phase": "Sprint 8 / EPIC-OODA-E2E",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "TEL-001",
+      "INC-001-RB",
+      "POST-001",
+      "POST-EVO-BRIDGE"
+    ],
+    "artifacts": [
+      "tests/e2e/test_paper_run_to_evolution_decision.py",
+      "tests/e2e/fixtures/synthetic_incident_telemetry.json"
+    ],
+    "acceptance": [
+      "test injects fixture telemetry event with severity=high into ingest endpoint",
+      "asserts IncidentCase record created with related runtime_binding_id and artifact_id",
+      "test triggers Postmortem creation referencing the incident",
+      "asserts POST-EVO-BRIDGE emits EvolutionDecisionProposal with proposed_action in (rollback freeze retrain)",
+      "asserts bridge does NOT write to governance store and no live runtime mutation occurs",
+      "pytest -q -x exit 0"
+    ],
+    "next": "Owner finalized: 8 e2e tests pass (pytest -q -x, 0.96s), PR #72 merged into dev, proposal-only invariants verified, bridge governance-clean. Task artifacts committed in 40500d7f.",
+    "last_update": "2026-05-17T15:35:04Z",
+    "review_notes_zh": [
+      "審查通過：8 個 e2e tests 全部 pass (pytest -q -x 0.79s)。所有接受標準逐一驗證：fixture severity=high + deployment_stage=paper + 全部 binding/lineage 欄位齊全；IncidentCase 正確攜帶 runtime_binding_id / artifact_id；Postmortem 透過 IncidentStore 正確連結 incident lineage；POST-EVO-BRIDGE 回傳 proposal dict 且 proposed_action=rollback (severity=high 映射正確)；governance_store_written 缺席/False；created_by_role=evolution_controller；無 live mutation。bridge 程式碼路徑確認無 governance store 寫入。",
+      "後續：OODA-E2E-007 full packet closure 依賴此 task done。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-17T15:35:04Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OODA-E2E-006",
+      "git_clean_required": false,
+      "commit": "40500d7f5013895e8ad5baa462b3659a1c7c5bb2",
+      "commit_subject": "OODA-E2E-006: paper telemetry to evolution proposal e2e test",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Implements the OODA Learn stage e2e test": "paper run anomaly telemetry",
+        "LLM-Agent": "Claude",
+        "Task-ID": "OODA-E2E-006",
+        "Reviewer": "Claude2",
+        "Verified": "pytest tests/e2e/test_paper_run_to_evolution_decision.py -q -x (8 passed 0.89s)"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 51,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OODA-E2E-006",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OODA-E2E-006",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "8 e2e tests pass (pytest -q -x). PR #72 on task/OODA-E2E-006 open with auto-merge. Review tests/e2e/test_paper_run_to_evolution_decision.py and fixture against acceptance criteria.",
+      "status": "done",
+      "created_at": "2026-05-17T15:26:06Z",
+      "resolved_at": "2026-05-17T15:30:13Z"
+    },
+    {
+      "task_id": "OODA-E2E-006",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "審查通過：8 tests pass，proposal-only invariants 驗證完整，bridge governance-clean，返還 owner Claude 進行 closeout。",
+      "status": "done",
+      "created_at": "2026-05-17T15:30:13Z",
+      "resolved_at": "2026-05-17T15:35:05Z"
+    }
+  ],
+  "blockers": []
+}
