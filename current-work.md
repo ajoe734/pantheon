@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-18 10:01:03
+Last updated: 2026-05-18 13:39:20
 
 ## Objective
 
@@ -47,7 +47,6 @@ Last updated: 2026-05-18 10:01:03
 | `OODA-E2E-004` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #4: Admission → ApprovalDecision → DeploymentPlan(paper) test | Claude | todo | `GOV-001`, `DEP-001`, `DEP-002`, `DEP-004` | OODA Decide 階段：證明「CandidateArtifact → ApprovalDecision → DeploymentPlan(paper)」transition 可端到端走完。使用 GOV-001 ApprovalDecision + DEP-001 DeploymentPlan service。獨立 test 檔。 |
 | `OODA-E2E-007` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #7: full OodaLoopPacket closure + evidence chain | Codex | todo | `OODA-E2E-001`, `OODA-E2E-002`, `OODA-E2E-003`, `OODA-E2E-004`, `OODA-E2E-005`, `OODA-E2E-006` | OODA 全環收尾：把上述 6 個 transition test 串成單一 OodaLoopPacket 並驗證所有欄位齊全（observe/orient/decide/act/learn refs）。產出 evidence packet 與 closeout summary。獨立 test 檔。 |
 | `STRAT-V2-001` | Sprint 8 / EPIC-STRAT-EXP-DEEP | Strategy spec distillation production smoke (real research note) | Copilot | todo | `STRAT-003`, `STRAT-004`, `SRC-001` | 把 STRAT-003 source converter 升級到 production：吃真實 internal research note (docs/research/notes/*.md 或 fixture)，產出可進 registry 的 StrategySpec，含 evidence_refs + code_refs 完整 binding。獨立 module，不改 STRAT-001..004 公開 API。 |
-| `EXP-V2-001` | Sprint 8 / EPIC-STRAT-EXP-DEEP | Experiment orchestrator parallel multi-backend dispatch | Codex | todo | `EXP-001`, `EXP-002`, `VBT-001`, `OSS-QLIB-002`, `OSS-STAT-001` | 升級 experiment orchestrator 支援平行多 backend：同一個 ExperimentTask 可以同時派給 vectorbt + Qlib + statsmodels 跑，回傳 N 個獨立 ExperimentRun 加上比較摘要。獨立 module，不改 EXP-001 公開 schema。 |
 | `EXP-V2-002` | Sprint 8 / EPIC-STRAT-EXP-DEEP | ExperimentRun multi-artifact lineage tree | Codex2 | todo | `EXP-005`, `LIN-001` | 新增多 artifact-type lineage tree：ExperimentRun 可同時產 model_artifact + feature_set + signal_snapshot + optimizer_result，本任務確保 lineage edges 正確連接 N 個 artifact 而非單一。獨立 module。 |
 | `SPRINT-8-CLOSEOUT` | Sprint 8 / EPIC-CLOSEOUT | Sprint 8 retrospective + closeout + Sprint 9 candidate topics | Claude | todo | `OSS-QLIB-V2-001`, `OSS-STAT-V2-001`, `OSS-QUANTLIB-V2-001`, `OSS-RLLIB-V2-001`, `OSS-FINRL-V2-001`, `OODA-E2E-007`, `STRAT-V2-001`, `STRAT-V2-002`, `EXP-V2-001`, `EXP-V2-002` | Sprint 8 收尾：彙整 16 條子任務 evidence、產 sprint retrospective + 統計報告（哪些 EPIC 過、哪些 EPIC 殘留缺口）、產 sprint 9 候選議題 raw list（供下一輪 planning 用）。獨立 evidence packet。 |
 
@@ -56,7 +55,6 @@ Last updated: 2026-05-18 10:01:03
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
 | `OSS-QLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | Qlib production-scale rolling + registry admission | Codex | review | `OSS-QLIB-002`, `MGMT-QLIB-001` | 把 OSS-QLIB-002 的 rolling pipeline 升級到 production scale：使用 MGMT-QLIB-001 已建好的 TWSE OHLCV dataset（≥50 instruments × ≥2 years），跑完整 rolling-window 訓練，產 model_artifact 並提交 registry admission packet。獨立檔案路徑。 |
-| `OSS-STAT-V2-001` | Sprint 8 / EPIC-OSS-V2 | statsmodels production cointegration on TWSE pairs | Copilot | todo | `OSS-STAT-001`, `MGMT-QLIB-001` | 把 OSS-STAT-001 cointegration adapter 升級到 production：對 10 個 TWSE 大型股配對跑 2-year rolling Engle-Granger 檢定，輸出 signal_snapshot artifact 含 top-N cointegrated pairs，提交 registry admission packet。獨立檔案。 |
 | `OSS-QUANTLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | QuantLib production option chain pricer + greeks | Copilot | todo | `OSS-QUANTLIB-001` | 把 OSS-QUANTLIB-001 option pricer 升級為 production：對台指選擇權(TXO)鏈跨多檔履約價與多個到期日定價，輸出含 greeks 的 pricing_snapshot artifact，提交 registry admission packet。獨立檔案。 |
 | `OSS-RLLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | RLlib production PPO on TWSE trading env | Claude | todo | `OSS-RLLIB-001`, `MGMT-QLIB-001` | 把 OSS-RLLIB-001 PPO skeleton 升級到 production：用 TWSE OHLCV 作為環境的 observation/action space，跑 ≥100 iter PPO，輸出 model_artifact 含 trained_policy 與 evaluation_summary，提交 registry admission packet。CPU-only。獨立檔案。 |
 | `OSS-FINRL-V2-001` | Sprint 8 / EPIC-OSS-V2 | FinRL production DRL on TWSE stock env | Gemini2 | todo | `OSS-FINRL-001`, `MGMT-QLIB-001` | 把 OSS-FINRL-001 DRL skeleton 升級到 production：用 TWSE OHLCV 作為 FinRL StockTradingEnv，跑 ≥1000 steps DDPG 或 PPO，輸出 model_artifact 含 evaluation_summary（sharpe annual_return max_drawdown），提交 registry admission packet。CPU-only。 |
@@ -64,11 +62,12 @@ Last updated: 2026-05-18 10:01:03
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-18 08:45:22
-- Terminal tasks archived: `1190` total, `1170` completed, `20` superseded
+- Archive updated: 2026-05-18 10:49:17
+- Terminal tasks archived: `1191` total, `1171` completed, `20` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `OSS-STAT-V2-001` | Sprint 8 / EPIC-OSS-V2 | statsmodels production cointegration on TWSE pairs | Codex | completed | 2026-05-18 10:49:17 | `ai-task-archive/tasks/OSS-STAT-V2-001.json` |
 | `STRAT-V2-002` | Sprint 8 / EPIC-STRAT-EXP-DEEP | Strategy lineage tree backend read API | Claude | completed | 2026-05-18 04:36:15 | `ai-task-archive/tasks/STRAT-V2-002.json` |
 | `OODA-E2E-005` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #5: DeploymentPlan(paper) → RuntimeBinding → paper run test | Claude2 | completed | 2026-05-18 08:45:22 | `ai-task-archive/tasks/OODA-E2E-005.json` |
 | `EXP-V2-001` | Sprint 8 / EPIC-STRAT-EXP-DEEP | EXP-V2-001: Claude stepped in as helper reviewer (Codex2 unresponsive) | Codex | completed | 2026-05-18 08:42:57 | `ai-task-archive/tasks/EXP-V2-001.json` |
@@ -88,7 +87,6 @@ Last updated: 2026-05-18 10:01:03
 | `ASK-008` | Sprint 7 / EPIC-CONSULT-ADVANCED | Committee sponsor decision -> governance action bridge | Codex | completed | 2026-05-17 10:41:04 | `ai-task-archive/tasks/ASK-008.json` |
 | `IMT-008` | Sprint 7 / EPIC-IMITATION-TRAINING | TRL preference-pair dataset bridge | Codex | completed | 2026-05-17 10:24:08 | `ai-task-archive/tasks/IMT-008.json` |
 | `OSS-RLLIB-001` | Sprint 7 / EPIC-OSS-RESEARCH | RLlib PPO adapter skeleton | Codex | completed | 2026-05-17 10:19:40 | `ai-task-archive/tasks/OSS-RLLIB-001.json` |
-| `OSS-STAT-001` | Sprint 7 / EPIC-OSS-RESEARCH | statsmodels cointegration adapter skeleton | Codex | completed | 2026-05-17 10:17:33 | `ai-task-archive/tasks/OSS-STAT-001.json` |
 
 ## Task Board
 
@@ -99,7 +97,6 @@ Last updated: 2026-05-18 10:01:03
 | `POST-EVO-BRIDGE` | Sprint 7 / EPIC-EVOLUTION-FOLLOWUP | Postmortem -> EvolutionDecisionProposal auto-trigger bridge | POST-001 + EVO-001 已落地為 schema/service，但 incident/postmortem publish → EvolutionDecisionProposal 自動觸發的 bridge 還沒實際 wire。本任務新增 postmortem_bridge module：訂閱 postmortem published 事件，按 severity 與 corrective_action_required 判斷是否產出 EvolutionDecisionProposal payload（不直接寫 governance store，僅 emit proposal）。獨立 module，不改 POST-001 / EVO-001 公開 API。 | Claude2 | Codex2 | todo | `POST-001`, `EVO-001` | 2026-05-17 18:44:31 | Assignment created |
 | `LOVABLE-STRICT-PUBLISH` | Sprint 7 / EPIC-LOVABLE-INFRA | Lovable build-time strict env publish audit script | SA § 2.2 列為 non-blocking follow-up：execute-plans@main build-time 應使用 strict env (VITE_BFF_MODE=live VITE_BFF_FALLBACK=strict VITE_BFF_REAL_WRITES=false) 重新發佈一次，並驗證發佈後的 bundle 不再含 seed fallback assets。本任務不直接動 execute-plans repo，而是寫一個 pantheon 端的 audit script + evidence packet，記錄 publish 條件、build env、bundle hash、verification probe 結果。 | Gemini | Gemini2 | todo | - | 2026-05-17 18:44:50 | Assignment created |
 | `OSS-QLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | Qlib production-scale rolling + registry admission | 把 OSS-QLIB-002 的 rolling pipeline 升級到 production scale：使用 MGMT-QLIB-001 已建好的 TWSE OHLCV dataset（≥50 instruments × ≥2 years），跑完整 rolling-window 訓練，產 model_artifact 並提交 registry admission packet。獨立檔案路徑。 | Codex | Codex2 | review | `OSS-QLIB-002`, `MGMT-QLIB-001` | 2026-05-18 00:26:36 | Ready for review: production Qlib rolling runner, registry admission packet emitter, tests, and admission_packet.json are merged via PR #70. Please review services/research/qlib/production_rolling_run.py, services/research/qlib/registry_admission_packet.py, services/research/qlib/test_production_rolling_run.py, and support/evidence/OSS-QLIB-V2-001/admission_packet.json. |
-| `OSS-STAT-V2-001` | Sprint 8 / EPIC-OSS-V2 | statsmodels production cointegration on TWSE pairs | 把 OSS-STAT-001 cointegration adapter 升級到 production：對 10 個 TWSE 大型股配對跑 2-year rolling Engle-Granger 檢定，輸出 signal_snapshot artifact 含 top-N cointegrated pairs，提交 registry admission packet。獨立檔案。 | Copilot | Codex | todo | `OSS-STAT-001`, `MGMT-QLIB-001` | 2026-05-17 19:01:29 | Assignment created |
 | `OSS-QUANTLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | QuantLib production option chain pricer + greeks | 把 OSS-QUANTLIB-001 option pricer 升級為 production：對台指選擇權(TXO)鏈跨多檔履約價與多個到期日定價，輸出含 greeks 的 pricing_snapshot artifact，提交 registry admission packet。獨立檔案。 | Copilot | Codex2 | todo | `OSS-QUANTLIB-001` | 2026-05-17 19:01:36 | Assignment created |
 | `OSS-RLLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | RLlib production PPO on TWSE trading env | 把 OSS-RLLIB-001 PPO skeleton 升級到 production：用 TWSE OHLCV 作為環境的 observation/action space，跑 ≥100 iter PPO，輸出 model_artifact 含 trained_policy 與 evaluation_summary，提交 registry admission packet。CPU-only。獨立檔案。 | Claude | Codex | todo | `OSS-RLLIB-001`, `MGMT-QLIB-001` | 2026-05-17 19:01:43 | Assignment created |
 | `OSS-FINRL-V2-001` | Sprint 8 / EPIC-OSS-V2 | FinRL production DRL on TWSE stock env | 把 OSS-FINRL-001 DRL skeleton 升級到 production：用 TWSE OHLCV 作為 FinRL StockTradingEnv，跑 ≥1000 steps DDPG 或 PPO，輸出 model_artifact 含 evaluation_summary（sharpe annual_return max_drawdown），提交 registry admission packet。CPU-only。 | Gemini2 | Codex2 | todo | `OSS-FINRL-001`, `MGMT-QLIB-001` | 2026-05-17 19:01:50 | Assignment created |
@@ -109,7 +106,6 @@ Last updated: 2026-05-18 10:01:03
 | `OODA-E2E-004` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #4: Admission → ApprovalDecision → DeploymentPlan(paper) test | OODA Decide 階段：證明「CandidateArtifact → ApprovalDecision → DeploymentPlan(paper)」transition 可端到端走完。使用 GOV-001 ApprovalDecision + DEP-001 DeploymentPlan service。獨立 test 檔。 | Claude | Codex2 | todo | `GOV-001`, `DEP-001`, `DEP-002`, `DEP-004` | 2026-05-17 19:03:39 | Assignment created |
 | `OODA-E2E-007` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #7: full OodaLoopPacket closure + evidence chain | OODA 全環收尾：把上述 6 個 transition test 串成單一 OodaLoopPacket 並驗證所有欄位齊全（observe/orient/decide/act/learn refs）。產出 evidence packet 與 closeout summary。獨立 test 檔。 | Codex | Claude | todo | `OODA-E2E-001`, `OODA-E2E-002`, `OODA-E2E-003`, `OODA-E2E-004`, `OODA-E2E-005`, `OODA-E2E-006` | 2026-05-17 19:04:11 | Assignment created |
 | `STRAT-V2-001` | Sprint 8 / EPIC-STRAT-EXP-DEEP | Strategy spec distillation production smoke (real research note) | 把 STRAT-003 source converter 升級到 production：吃真實 internal research note (docs/research/notes/*.md 或 fixture)，產出可進 registry 的 StrategySpec，含 evidence_refs + code_refs 完整 binding。獨立 module，不改 STRAT-001..004 公開 API。 | Copilot | Codex2 | todo | `STRAT-003`, `STRAT-004`, `SRC-001` | 2026-05-17 19:05:16 | Assignment created |
-| `EXP-V2-001` | Sprint 8 / EPIC-STRAT-EXP-DEEP | Experiment orchestrator parallel multi-backend dispatch | 升級 experiment orchestrator 支援平行多 backend：同一個 ExperimentTask 可以同時派給 vectorbt + Qlib + statsmodels 跑，回傳 N 個獨立 ExperimentRun 加上比較摘要。獨立 module，不改 EXP-001 公開 schema。 | Codex | Codex2 | todo | `EXP-001`, `EXP-002`, `VBT-001`, `OSS-QLIB-002`, `OSS-STAT-001` | 2026-05-17 19:05:38 | Assignment created |
 | `EXP-V2-002` | Sprint 8 / EPIC-STRAT-EXP-DEEP | ExperimentRun multi-artifact lineage tree | 新增多 artifact-type lineage tree：ExperimentRun 可同時產 model_artifact + feature_set + signal_snapshot + optimizer_result，本任務確保 lineage edges 正確連接 N 個 artifact 而非單一。獨立 module。 | Codex2 | Copilot | todo | `EXP-005`, `LIN-001` | 2026-05-17 19:05:48 | Assignment created |
 | `SPRINT-8-CLOSEOUT` | Sprint 8 / EPIC-CLOSEOUT | Sprint 8 retrospective + closeout + Sprint 9 candidate topics | Sprint 8 收尾：彙整 16 條子任務 evidence、產 sprint retrospective + 統計報告（哪些 EPIC 過、哪些 EPIC 殘留缺口）、產 sprint 9 候選議題 raw list（供下一輪 planning 用）。獨立 evidence packet。 | Claude | Codex | todo | `OSS-QLIB-V2-001`, `OSS-STAT-V2-001`, `OSS-QUANTLIB-V2-001`, `OSS-RLLIB-V2-001`, `OSS-FINRL-V2-001`, `OODA-E2E-007`, `STRAT-V2-001`, `STRAT-V2-002`, `EXP-V2-001`, `EXP-V2-002` | 2026-05-17 19:06:02 | Assignment created |
 
@@ -159,7 +155,6 @@ Do not read those omitted modules as open Pantheon backlog purely because they a
 
 ## Latest Checkpoints
 
-- 2026-05-16 01:52:26 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:52:26 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:52:28 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:52:31 Orchestrator: PreToolUse: Bash
@@ -179,3 +174,4 @@ Do not read those omitted modules as open Pantheon backlog purely because they a
 - 2026-05-16 01:53:08 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:53:08 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:53:13 Orchestrator: PreToolUse: Bash
+- 2026-05-18 13:39:20 Codex: `EXP-V2-001` Finalized duplicate active closeout record. Existing merged PRs: #69 implementation, #96 owner closeout, #111 finalization. Verification rerun: python3 -m pytest -q services/research/experiment_orchestrator/test_parallel_dispatch.py => 3 passed; python3 -m py_compile services/research/experiment_orchestrator/parallel_dispatch.py services/research/experiment_orchestrator/test_parallel_dispatch.py => ok; python3 -m pytest -q services/research/experiments/test_models.py services/research/experiment_orchestrator/test_parallel_dispatch.py => 15 passed.
