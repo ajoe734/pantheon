@@ -71,6 +71,9 @@ from task_archive import TaskResolver
 from watch_events import queue_delivery_event, run_scan, trim_seen_events
 
 
+SIDECAR_READY_PRIORITY_OFFSET = 10
+
+
 SESSION_ID_PATTERNS = [
     re.compile(r'"session_id"\s*:\s*"([^"]+)"'),
     re.compile(r'"sessionId"\s*:\s*"([^"]+)"'),
@@ -6648,11 +6651,6 @@ def dispatch_ready_tasks(
     helper_settings = helper_claim_settings(config)
     seen = state.setdefault("seen_event_keys", {})
     failure_loop_agents = failure_loop_agents_for_task_map(config, state, task_map)
-    blocked_sidecar_parents = {
-        str(item).strip()
-        for item in (chair_rotation_state(state).get("sidecar_blocked_parents", []) or [])
-        if str(item).strip()
-    }
 
     changed = False
     normalized = False
@@ -6717,12 +6715,7 @@ def dispatch_ready_tasks(
             task_id = str(task.get(task_id_field) or "")
             if not task_id:
                 continue
-            if task_is_sidecar(task):
-                if target_has_primary_work:
-                    continue
-                helper_parent = str(task.get("helper_parent") or "").strip()
-                if helper_parent and helper_parent in blocked_sidecar_parents:
-                    continue
+            is_sidecar_task = task_is_sidecar(task)
             task_status = str(task.get("status") or "").lower()
             task_owner = task.get(owner_field)
             task_reviewer = task.get(reviewer_field)
@@ -6811,6 +6804,9 @@ def dispatch_ready_tasks(
 
             if reason is None or priority is None:
                 continue
+
+            if is_sidecar_task and target_has_primary_work:
+                priority += SIDECAR_READY_PRIORITY_OFFSET
 
             event = build_dispatch_event(task, target_agent, reason, task_map)
             if event["key"] in pending_event_keys:
