@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-18 10:01:03
+Last updated: 2026-05-18 10:47:22
 
 ## Objective
 
@@ -56,7 +56,7 @@ Last updated: 2026-05-18 10:01:03
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
 | `OSS-QLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | Qlib production-scale rolling + registry admission | Codex | review | `OSS-QLIB-002`, `MGMT-QLIB-001` | 把 OSS-QLIB-002 的 rolling pipeline 升級到 production scale：使用 MGMT-QLIB-001 已建好的 TWSE OHLCV dataset（≥50 instruments × ≥2 years），跑完整 rolling-window 訓練，產 model_artifact 並提交 registry admission packet。獨立檔案路徑。 |
-| `OSS-STAT-V2-001` | Sprint 8 / EPIC-OSS-V2 | statsmodels production cointegration on TWSE pairs | Copilot | todo | `OSS-STAT-001`, `MGMT-QLIB-001` | 把 OSS-STAT-001 cointegration adapter 升級到 production：對 10 個 TWSE 大型股配對跑 2-year rolling Engle-Granger 檢定，輸出 signal_snapshot artifact 含 top-N cointegrated pairs，提交 registry admission packet。獨立檔案。 |
+| `OSS-STAT-V2-001` | Sprint 8 / EPIC-OSS-V2 | statsmodels production cointegration on TWSE pairs | Codex | review_approved | `OSS-STAT-001`, `MGMT-QLIB-001` | 把 OSS-STAT-001 cointegration adapter 升級到 production：對 10 個 TWSE 大型股配對跑 2-year rolling Engle-Granger 檢定，輸出 signal_snapshot artifact 含 top-N cointegrated pairs，提交 registry admission packet。獨立檔案。 |
 | `OSS-QUANTLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | QuantLib production option chain pricer + greeks | Copilot | todo | `OSS-QUANTLIB-001` | 把 OSS-QUANTLIB-001 option pricer 升級為 production：對台指選擇權(TXO)鏈跨多檔履約價與多個到期日定價，輸出含 greeks 的 pricing_snapshot artifact，提交 registry admission packet。獨立檔案。 |
 | `OSS-RLLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | RLlib production PPO on TWSE trading env | Claude | todo | `OSS-RLLIB-001`, `MGMT-QLIB-001` | 把 OSS-RLLIB-001 PPO skeleton 升級到 production：用 TWSE OHLCV 作為環境的 observation/action space，跑 ≥100 iter PPO，輸出 model_artifact 含 trained_policy 與 evaluation_summary，提交 registry admission packet。CPU-only。獨立檔案。 |
 | `OSS-FINRL-V2-001` | Sprint 8 / EPIC-OSS-V2 | FinRL production DRL on TWSE stock env | Gemini2 | todo | `OSS-FINRL-001`, `MGMT-QLIB-001` | 把 OSS-FINRL-001 DRL skeleton 升級到 production：用 TWSE OHLCV 作為 FinRL StockTradingEnv，跑 ≥1000 steps DDPG 或 PPO，輸出 model_artifact 含 evaluation_summary（sharpe annual_return max_drawdown），提交 registry admission packet。CPU-only。 |
@@ -99,7 +99,7 @@ Last updated: 2026-05-18 10:01:03
 | `POST-EVO-BRIDGE` | Sprint 7 / EPIC-EVOLUTION-FOLLOWUP | Postmortem -> EvolutionDecisionProposal auto-trigger bridge | POST-001 + EVO-001 已落地為 schema/service，但 incident/postmortem publish → EvolutionDecisionProposal 自動觸發的 bridge 還沒實際 wire。本任務新增 postmortem_bridge module：訂閱 postmortem published 事件，按 severity 與 corrective_action_required 判斷是否產出 EvolutionDecisionProposal payload（不直接寫 governance store，僅 emit proposal）。獨立 module，不改 POST-001 / EVO-001 公開 API。 | Claude2 | Codex2 | todo | `POST-001`, `EVO-001` | 2026-05-17 18:44:31 | Assignment created |
 | `LOVABLE-STRICT-PUBLISH` | Sprint 7 / EPIC-LOVABLE-INFRA | Lovable build-time strict env publish audit script | SA § 2.2 列為 non-blocking follow-up：execute-plans@main build-time 應使用 strict env (VITE_BFF_MODE=live VITE_BFF_FALLBACK=strict VITE_BFF_REAL_WRITES=false) 重新發佈一次，並驗證發佈後的 bundle 不再含 seed fallback assets。本任務不直接動 execute-plans repo，而是寫一個 pantheon 端的 audit script + evidence packet，記錄 publish 條件、build env、bundle hash、verification probe 結果。 | Gemini | Gemini2 | todo | - | 2026-05-17 18:44:50 | Assignment created |
 | `OSS-QLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | Qlib production-scale rolling + registry admission | 把 OSS-QLIB-002 的 rolling pipeline 升級到 production scale：使用 MGMT-QLIB-001 已建好的 TWSE OHLCV dataset（≥50 instruments × ≥2 years），跑完整 rolling-window 訓練，產 model_artifact 並提交 registry admission packet。獨立檔案路徑。 | Codex | Codex2 | review | `OSS-QLIB-002`, `MGMT-QLIB-001` | 2026-05-18 00:26:36 | Ready for review: production Qlib rolling runner, registry admission packet emitter, tests, and admission_packet.json are merged via PR #70. Please review services/research/qlib/production_rolling_run.py, services/research/qlib/registry_admission_packet.py, services/research/qlib/test_production_rolling_run.py, and support/evidence/OSS-QLIB-V2-001/admission_packet.json. |
-| `OSS-STAT-V2-001` | Sprint 8 / EPIC-OSS-V2 | statsmodels production cointegration on TWSE pairs | 把 OSS-STAT-001 cointegration adapter 升級到 production：對 10 個 TWSE 大型股配對跑 2-year rolling Engle-Granger 檢定，輸出 signal_snapshot artifact 含 top-N cointegrated pairs，提交 registry admission packet。獨立檔案。 | Copilot | Codex | todo | `OSS-STAT-001`, `MGMT-QLIB-001` | 2026-05-17 19:01:29 | Assignment created |
+| `OSS-STAT-V2-001` | Sprint 8 / EPIC-OSS-V2 | statsmodels production cointegration on TWSE pairs | 把 OSS-STAT-001 cointegration adapter 升級到 production：對 10 個 TWSE 大型股配對跑 2-year rolling Engle-Granger 檢定，輸出 signal_snapshot artifact 含 top-N cointegrated pairs，提交 registry admission packet。獨立檔案。 | Codex | Codex2 | review_approved | `OSS-STAT-001`, `MGMT-QLIB-001` | 2026-05-18 10:47:22 | Review approval restored from support/reviews/OSS-STAT-V2-001-review-codex.md; owner closeout PR #112 is open with auto-merge enabled. |
 | `OSS-QUANTLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | QuantLib production option chain pricer + greeks | 把 OSS-QUANTLIB-001 option pricer 升級為 production：對台指選擇權(TXO)鏈跨多檔履約價與多個到期日定價，輸出含 greeks 的 pricing_snapshot artifact，提交 registry admission packet。獨立檔案。 | Copilot | Codex2 | todo | `OSS-QUANTLIB-001` | 2026-05-17 19:01:36 | Assignment created |
 | `OSS-RLLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | RLlib production PPO on TWSE trading env | 把 OSS-RLLIB-001 PPO skeleton 升級到 production：用 TWSE OHLCV 作為環境的 observation/action space，跑 ≥100 iter PPO，輸出 model_artifact 含 trained_policy 與 evaluation_summary，提交 registry admission packet。CPU-only。獨立檔案。 | Claude | Codex | todo | `OSS-RLLIB-001`, `MGMT-QLIB-001` | 2026-05-17 19:01:43 | Assignment created |
 | `OSS-FINRL-V2-001` | Sprint 8 / EPIC-OSS-V2 | FinRL production DRL on TWSE stock env | 把 OSS-FINRL-001 DRL skeleton 升級到 production：用 TWSE OHLCV 作為 FinRL StockTradingEnv，跑 ≥1000 steps DDPG 或 PPO，輸出 model_artifact 含 evaluation_summary（sharpe annual_return max_drawdown），提交 registry admission packet。CPU-only。 | Gemini2 | Codex2 | todo | `OSS-FINRL-001`, `MGMT-QLIB-001` | 2026-05-17 19:01:50 | Assignment created |
@@ -118,6 +118,7 @@ Last updated: 2026-05-18 10:01:03
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
 | `OSS-QLIB-V2-001` | Codex | Codex2 | Ready for review: production Qlib rolling runner, registry admission packet emitter, tests, and admission_packet.json are merged via PR #70. Please review services/research/qlib/production_rolling_run.py, services/research/qlib/registry_admission_packet.py, services/research/qlib/test_production_rolling_run.py, and support/evidence/OSS-QLIB-V2-001/admission_packet.json. | pending | 2026-05-18 00:26:36 |
+| `OSS-STAT-V2-001` | Codex2 | Codex | Review approval restored from support/reviews/OSS-STAT-V2-001-review-codex.md; owner closeout PR #112 is open with auto-merge enabled. | pending | 2026-05-18 10:47:22 |
 
 ## Blockers
 
@@ -130,6 +131,7 @@ Last updated: 2026-05-18 10:01:03
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
 | `OSS-STAT-001-SIDECAR-ACCEPTANCE` | Claude | 審查通過：sidecar acceptance packet 文件完整，正確記錄 shadowing 問題解決與最終 artifact 形狀 | support/sidecars/OSS-STAT-001/OSS-STAT-001-SIDECAR-ACCEPTANCE.md |
+| `OSS-STAT-V2-001` | Codex2 | 審查通過：support/reviews/OSS-STAT-V2-001-review-codex.md records no blocking findings for the production statsmodels cointegration admission packet. | support/reviews/OSS-STAT-V2-001-review-codex.md |
 
 ## Lovable Coordination
 
@@ -159,9 +161,6 @@ Do not read those omitted modules as open Pantheon backlog purely because they a
 
 ## Latest Checkpoints
 
-- 2026-05-16 01:52:26 Orchestrator: PreToolUse: Bash
-- 2026-05-16 01:52:26 Orchestrator: PostToolUse: Bash
-- 2026-05-16 01:52:28 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:52:31 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:52:32 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:52:37 Orchestrator: PreToolUse: Bash
@@ -179,3 +178,6 @@ Do not read those omitted modules as open Pantheon backlog purely because they a
 - 2026-05-16 01:53:08 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:53:08 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:53:13 Orchestrator: PreToolUse: Bash
+- 2026-05-18 10:47:12 Codex: `OSS-STAT-V2-001` Assigned OSS-STAT-V2-001 to Codex with reviewer Codex2
+- 2026-05-18 10:47:17 Codex: `OSS-STAT-V2-001` Recovering approved closeout state from merged implementation PR #76, review artifact support/reviews/OSS-STAT-V2-001-review-codex.md, and open closeout PR #112.
+- 2026-05-18 10:47:22 Codex: `OSS-STAT-V2-001` Review approval restored from support/reviews/OSS-STAT-V2-001-review-codex.md; owner closeout PR #112 is open with auto-merge enabled.
