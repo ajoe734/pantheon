@@ -251,6 +251,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--verbose", action="store_true", help="Print active worker and queue details each tick.")
     parser.add_argument("--claim-agent", default=None, help="Let one idle agent claim and start one ready task.")
     parser.add_argument("--release-task", default=None, help="Release this agent's completed worker slot before claiming more work.")
+    parser.add_argument("--clear-provider-pause", default=None, help="Manually clear one provider dispatch pause.")
     return parser.parse_args()
 
 
@@ -1606,6 +1607,43 @@ def pid_is_alive(pid: int | None) -> bool:
     except OSError:
         return False
     return True
+
+
+# Worker wakeup template always embeds `auto worker 身分是：<DisplayName>` in argv;
+# scan /proc to recover the truth when state["workers"] bookkeeping drifts.
+WORKER_AGENT_CMDLINE_MARKER = re.compile(r"auto worker 身分是：([A-Za-z][A-Za-z0-9_]*)")
+
+
+def scan_live_worker_pids_by_agent(proc_root: Path | None = None) -> dict[str, list[int]]:
+    """Return live worker PIDs grouped by agent display name parsed from /proc/*/cmdline."""
+    root = proc_root if proc_root is not None else Path("/proc")
+    result: dict[str, list[int]] = {}
+    try:
+        entries = list(root.iterdir())
+    except OSError:
+        return result
+    self_pid = os.getpid()
+    for entry in entries:
+        name = entry.name
+        if not name.isdigit():
+            continue
+        pid = int(name)
+        if pid == self_pid:
+            continue
+        cmdline_path = entry / "cmdline"
+        try:
+            raw = cmdline_path.read_bytes()
+        except OSError:
+            continue
+        if not raw:
+            continue
+        cmdline = raw.replace(b"\x00", b" ").decode("utf-8", errors="ignore")
+        match = WORKER_AGENT_CMDLINE_MARKER.search(cmdline)
+        if not match:
+            continue
+        agent = match.group(1)
+        result.setdefault(agent, []).append(pid)
+    return result
 
 
 def terminate_worker_pid(pid: int | None) -> bool:
@@ -3442,10 +3480,23 @@ def mark_provider_dispatch_paused(
         pause_seconds_key = "quota_terminal_pause_seconds" if effective_pause_kind == "quota_terminal" else "capacity_pause_seconds"
     pause_seconds = max(60, int(settings.get(pause_seconds_key, 900)))
     blocked_until = (now + timedelta(seconds=pause_seconds)).replace(microsecond=0)
+    hinted_blocked_until: str | None = None
+    hint_capped = False
     if effective_pause_kind == "quota_terminal":
         hinted = parse_quota_retry_hint(reason, now=now)
         if hinted is not None and hinted > blocked_until:
-            blocked_until = hinted.replace(microsecond=0)
+            hinted = hinted.replace(microsecond=0)
+            hinted_blocked_until = hinted.isoformat().replace("+00:00", "Z")
+            hint_max_seconds = int(settings.get("quota_terminal_hint_max_seconds", 0) or 0)
+            if hint_max_seconds > 0:
+                hint_cap = (now + timedelta(seconds=hint_max_seconds)).replace(microsecond=0)
+                if hinted > hint_cap:
+                    blocked_until = hint_cap
+                    hint_capped = True
+                else:
+                    blocked_until = hinted
+            else:
+                blocked_until = hinted
     blocked_until_iso = blocked_until.isoformat().replace("+00:00", "Z")
     actual_pause_seconds = max(1, int((blocked_until - now).total_seconds()))
     bucket = _dispatch_pause_bucket(state)
@@ -3472,6 +3523,9 @@ def mark_provider_dispatch_paused(
         "task_id": task_id,
         "worker_run_id": worker_run_id,
     }
+    if hinted_blocked_until:
+        bucket[pause_provider_id]["hint_blocked_until"] = hinted_blocked_until
+        bucket[pause_provider_id]["hint_capped"] = hint_capped
     if changed:
         if effective_pause_kind == "quota_terminal":
             pause_description = "terminal quota failure"
@@ -3495,6 +3549,33 @@ def mark_provider_dispatch_paused(
             },
         )
     return changed
+
+
+def clear_provider_dispatch_pause(config: dict[str, Any], state: dict[str, Any], provider: str | None) -> bool:
+    provider_id = normalize_agent_id(provider or "")
+    if not provider_id:
+        return False
+    pause_provider_id = provider_dispatch_group_id(config, provider_id) or provider_id
+    bucket = _dispatch_pause_bucket(state)
+    removed: list[tuple[str, dict[str, Any]]] = []
+    for pause_id in dict.fromkeys([pause_provider_id, provider_id]):
+        entry = bucket.pop(pause_id, None)
+        if isinstance(entry, dict):
+            removed.append((pause_id, entry))
+    for pause_id, entry in removed:
+        write_activity_log(
+            config,
+            {
+                "type": "provider_dispatch_resumed",
+                "provider": pause_id,
+                "task_id": entry.get("task_id"),
+                "worker_run_id": entry.get("worker_run_id"),
+                "message": f"Manually cleared dispatch pause for {pause_id}; dispatch is enabled again.",
+                "raw_ref": entry.get("raw_ref"),
+                "cleared_pause": entry,
+            },
+        )
+    return bool(removed)
 
 
 def expire_provider_dispatch_pauses(config: dict[str, Any], state: dict[str, Any]) -> bool:
@@ -3783,6 +3864,16 @@ def agent_auto_dispatch_block_reason(
             return f"{provider_id} does not currently support auto-approved dispatch"
         if provider_capability.get("auth_ready") is False:
             return f"{provider_id} authentication is not ready"
+
+    if ready_dispatch_settings(config).get("worker_os_duplicate_guard", True):
+        display_name = display_name_for(config, normalized_agent) or normalized_agent
+        live_pids = scan_live_worker_pids_by_agent().get(display_name, [])
+        if live_pids:
+            return (
+                f"{display_name} already has live worker process(es) "
+                f"PID={','.join(str(p) for p in sorted(set(live_pids)))}; "
+                "skipping dispatch to avoid duplicate workers"
+            )
 
     return None
 
@@ -6594,6 +6685,15 @@ def dispatch_ready_tasks(
         agent_ids = agent_sequence[dispatch_cursor:] + agent_sequence[:dispatch_cursor]
     else:
         agent_ids = []
+    max_concurrent_setting = settings.get("max_concurrent_workers")
+    try:
+        max_concurrent = int(max_concurrent_setting) if max_concurrent_setting not in (None, "") else None
+    except (TypeError, ValueError):
+        max_concurrent = None
+    if max_concurrent is not None and max_concurrent > 0:
+        live_total = sum(len(pids) for pids in scan_live_worker_pids_by_agent().values())
+        if live_total >= max_concurrent:
+            return changed
     considered_agents = 0
     for agent_id in agent_ids:
         if dispatches >= max_dispatches_per_tick:
@@ -7330,6 +7430,15 @@ def main() -> int:
     args = parse_args()
     SUPERVISOR_LOG_QUIET = args.quiet
     config = load_config(args.config)
+    if args.clear_provider_pause:
+        state = load_runtime_state(config)
+        changed = clear_provider_dispatch_pause(config, state, args.clear_provider_pause)
+        if changed:
+            save_runtime_state(config, state)
+            console_log(f"cleared provider dispatch pause: {args.clear_provider_pause}", quiet=args.quiet)
+        else:
+            console_log(f"no provider dispatch pause found for: {args.clear_provider_pause}", quiet=args.quiet)
+        return 0
     if args.claim_agent:
         claim_next_task_for_agent(
             config,

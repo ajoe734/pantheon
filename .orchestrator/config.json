@@ -51,7 +51,9 @@
     "pause_on_capacity_failure": true,
     "pause_on_auth_failure": true,
     "capacity_pause_seconds": 900,
-    "auth_pause_seconds": 900
+    "auth_pause_seconds": 900,
+    "quota_terminal_pause_seconds": 900,
+    "quota_terminal_hint_max_seconds": 3600
   },
   "worker_tree_guard": {
     "enabled": false,
