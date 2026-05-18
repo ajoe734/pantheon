@@ -5,34 +5,34 @@
     "approver": null,
     "artifact_state": "draft",
     "artifact_type": "model_artifact",
-    "checksum": "sha256:cbdf4ee1343ed6056e02add434dc2ce5ac3abed1e2ac4ee5668b3e4c0966fe09",
-    "created_at": "2026-05-18T01:47:14Z",
+    "checksum": "sha256:61b787fba72f44cec5aa158622a097abb8cbc3db2602bf7abdc652f321e59573",
+    "created_at": "2026-05-18T02:04:49Z",
     "deployment_summary": {
       "current_stage": "none"
     },
     "evaluation_summary": {
       "algorithm": "ppo",
-      "annual_return": 1.197964,
+      "annual_return": 0.861114,
       "bounded_epochs": 12,
       "framework_import_ready": false,
-      "max_action_prior": 0.974255,
+      "max_action_prior": 0.983459,
       "max_drawdown": 0.0,
-      "mean_exposure_proxy": 0.20450864,
-      "mean_reward_proxy": 0.0056406,
+      "mean_exposure_proxy": 0.20399413,
+      "mean_reward_proxy": 0.00499723,
       "num_instruments": 5,
-      "num_steps": 87,
-      "portfolio_value_final": 1.31243725,
+      "num_steps": 197,
+      "portfolio_value_final": 1.62515192,
       "portfolio_value_initial": 1.0,
-      "reward_proxy_stddev": 0.00207091,
-      "sharpe": 43.2379,
-      "total_training_steps": 1044
+      "reward_proxy_stddev": 0.00193029,
+      "sharpe": 41.0967,
+      "total_training_steps": 2364
     },
     "lineage": {
       "source_dataset_refs": [
         "twse-ohlcv-offline-sample-2024-001"
       ],
       "source_run_ids": [
-        "finrl-ppo-ee024ed84a0b"
+        "finrl-ppo-06b89af2dcfa"
       ],
       "source_strategy_spec_id": "strategy-spec:twse-ppo-offline-v1"
     },
@@ -46,16 +46,16 @@
       ],
       "algorithm": "ppo",
       "data_frequency": "daily",
-      "dataset_checksum": "sha256:b4bb73907b08561dd8a3d7d4f3dbecd340e9b4bc5aacfc9621e2f3434e2bf04a",
+      "dataset_checksum": "sha256:d48d181772c181e9464ee26091a60686819dd651834fc9e00c2652152ed31117",
       "decision_focus": "exit_timing",
       "framework": "finrl",
       "framework_version": "0.3.7",
       "model_family": "rl_policy",
-      "num_steps": 87,
+      "num_steps": 197,
       "observation_dim": 7,
       "training_backend": "finrl_ppo"
     },
-    "producer_run_id": "finrl-ppo-ee024ed84a0b",
+    "producer_run_id": "finrl-ppo-06b89af2dcfa",
     "registry_id": "finrl-policy-twse-ppo-strategy-001-1.0.0",
     "rollback_target": null,
     "storage_ref": {
@@ -85,20 +85,20 @@
   "environment": "paper",
   "evaluation_summary": {
     "algorithm": "ppo",
-    "annual_return": 1.197964,
+    "annual_return": 0.861114,
     "bounded_epochs": 12,
     "framework_import_ready": false,
-    "max_action_prior": 0.974255,
+    "max_action_prior": 0.983459,
     "max_drawdown": 0.0,
-    "mean_exposure_proxy": 0.20450864,
-    "mean_reward_proxy": 0.0056406,
+    "mean_exposure_proxy": 0.20399413,
+    "mean_reward_proxy": 0.00499723,
     "num_instruments": 5,
-    "num_steps": 87,
-    "portfolio_value_final": 1.31243725,
+    "num_steps": 197,
+    "portfolio_value_final": 1.62515192,
     "portfolio_value_initial": 1.0,
-    "reward_proxy_stddev": 0.00207091,
-    "sharpe": 43.2379,
-    "total_training_steps": 1044
+    "reward_proxy_stddev": 0.00193029,
+    "sharpe": 41.0967,
+    "total_training_steps": 2364
   },
   "gate_results": [
     {
@@ -115,19 +115,19 @@
       "gate": "bounded_drl_training",
       "source_ref": "services/research/finrl/production_drl_run.py",
       "status": "passed",
-      "total_training_steps": 1044
+      "total_training_steps": 2364
     },
     {
-      "annual_return": 1.197964,
+      "annual_return": 0.861114,
       "gate": "evaluation_summary",
       "max_drawdown": 0.0,
-      "sharpe": 43.2379,
+      "sharpe": 41.0967,
       "source_ref": "support/evidence/OSS-FINRL-V2-001/evaluation_summary.json",
       "status": "passed"
     },
     {
       "artifact_state": "draft",
-      "checksum": "sha256:cbdf4ee1343ed6056e02add434dc2ce5ac3abed1e2ac4ee5668b3e4c0966fe09",
+      "checksum": "sha256:61b787fba72f44cec5aa158622a097abb8cbc3db2602bf7abdc652f321e59573",
       "gate": "model_artifact_projection",
       "source_ref": "support/evidence/OSS-FINRL-V2-001/registry_entry.json",
       "status": "passed",
@@ -151,7 +151,7 @@
       "status": "passed"
     }
   ],
-  "generated_at": "2026-05-18T01:47:14Z",
+  "generated_at": "2026-05-18T02:04:49Z",
   "generated_by": "Codex2 / OSS-FINRL-V2-001",
   "legacy_review_fields": {
     "allowed_next_action": "offline_registry_review_only",
@@ -171,7 +171,7 @@
       "twse-ohlcv-offline-sample-2024-001"
     ],
     "source_run_ids": [
-      "finrl-ppo-ee024ed84a0b"
+      "finrl-ppo-06b89af2dcfa"
     ],
     "source_strategy_spec_id": "strategy-spec:twse-ppo-offline-v1"
   },
@@ -179,7 +179,7 @@
   "model_artifact_ref": {
     "artifact_ref": "finrl-policy-twse-ppo-strategy-001-1.0.0@1.0.0",
     "artifact_type": "model_artifact",
-    "checksum": "sha256:cbdf4ee1343ed6056e02add434dc2ce5ac3abed1e2ac4ee5668b3e4c0966fe09",
+    "checksum": "sha256:61b787fba72f44cec5aa158622a097abb8cbc3db2602bf7abdc652f321e59573",
     "registry_id": "finrl-policy-twse-ppo-strategy-001-1.0.0",
     "storage_ref": {
       "backend": "object_store",
@@ -200,7 +200,7 @@
       "status": "passed"
     },
     {
-      "description": "CPU-only ppo run completed 1044 bounded training steps.",
+      "description": "CPU-only ppo run completed 2364 bounded training steps.",
       "key": "production_drl_training_completed",
       "path": "services/research/finrl/production_drl_run.py",
       "ref_type": "offline_training_run",
@@ -277,7 +277,7 @@
     "scoring_only_not_direct_action": true
   },
   "schema_version": "PromotionReadinessPacket.v1",
-  "source_run_id": "finrl-ppo-ee024ed84a0b",
+  "source_run_id": "finrl-ppo-06b89af2dcfa",
   "source_task_id": "OSS-FINRL-V2-001",
   "target_id": "finrl-policy-twse-ppo-strategy-001-1.0.0",
   "target_type": "artifact",
@@ -286,7 +286,7 @@
     "cpu_only": true,
     "finrl_available": false,
     "num_instruments": 5,
-    "num_periods": 90,
+    "num_periods": 200,
     "state_space": 21,
     "tech_indicator_list": [
       "daily_return",

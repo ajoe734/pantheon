@@ -5,34 +5,34 @@
     "approver": null,
     "artifact_state": "candidate",
     "artifact_type": "model_artifact",
-    "checksum": "sha256:cbdf4ee1343ed6056e02add434dc2ce5ac3abed1e2ac4ee5668b3e4c0966fe09",
-    "created_at": "2026-05-18T01:47:14Z",
+    "checksum": "sha256:61b787fba72f44cec5aa158622a097abb8cbc3db2602bf7abdc652f321e59573",
+    "created_at": "2026-05-18T02:04:49Z",
     "deployment_summary": {
       "current_stage": "none"
     },
     "evaluation_summary": {
       "algorithm": "ppo",
-      "annual_return": 1.197964,
+      "annual_return": 0.861114,
       "bounded_epochs": 12,
       "framework_import_ready": false,
-      "max_action_prior": 0.974255,
+      "max_action_prior": 0.983459,
       "max_drawdown": 0.0,
-      "mean_exposure_proxy": 0.20450864,
-      "mean_reward_proxy": 0.0056406,
+      "mean_exposure_proxy": 0.20399413,
+      "mean_reward_proxy": 0.00499723,
       "num_instruments": 5,
-      "num_steps": 87,
-      "portfolio_value_final": 1.31243725,
+      "num_steps": 197,
+      "portfolio_value_final": 1.62515192,
       "portfolio_value_initial": 1.0,
-      "reward_proxy_stddev": 0.00207091,
-      "sharpe": 43.2379,
-      "total_training_steps": 1044
+      "reward_proxy_stddev": 0.00193029,
+      "sharpe": 41.0967,
+      "total_training_steps": 2364
     },
     "lineage": {
       "source_dataset_refs": [
         "twse-ohlcv-offline-sample-2024-001"
       ],
       "source_run_ids": [
-        "finrl-ppo-ee024ed84a0b"
+        "finrl-ppo-06b89af2dcfa"
       ],
       "source_strategy_spec_id": "strategy-spec:twse-ppo-offline-v1"
     },
@@ -47,16 +47,16 @@
       "algorithm": "ppo",
       "candidate_promotion_scope": "offline_only",
       "data_frequency": "daily",
-      "dataset_checksum": "sha256:b4bb73907b08561dd8a3d7d4f3dbecd340e9b4bc5aacfc9621e2f3434e2bf04a",
+      "dataset_checksum": "sha256:d48d181772c181e9464ee26091a60686819dd651834fc9e00c2652152ed31117",
       "decision_focus": "exit_timing",
       "framework": "finrl",
       "framework_version": "0.3.7",
       "model_family": "rl_policy",
-      "num_steps": 87,
+      "num_steps": 197,
       "observation_dim": 7,
       "training_backend": "finrl_ppo"
     },
-    "producer_run_id": "finrl-ppo-ee024ed84a0b",
+    "producer_run_id": "finrl-ppo-06b89af2dcfa",
     "registry_id": "finrl-policy-twse-ppo-strategy-001-1.0.0",
     "rollback_target": null,
     "storage_ref": {
@@ -77,5 +77,5 @@
     "Draft artifact must stay non-executable and non-default.",
     "Promotion to candidate requires offline review of policy I/O and lineage only."
   ],
-  "source_run_id": "finrl-ppo-ee024ed84a0b"
+  "source_run_id": "finrl-ppo-06b89af2dcfa"
 }

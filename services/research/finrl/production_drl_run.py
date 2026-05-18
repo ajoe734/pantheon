@@ -83,7 +83,7 @@ def main(output_dir: str | Path = DEFAULT_OUTPUT_DIR):
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    records = load_twse_data(periods=90)
+    records = load_twse_data(periods=200)
     dataset_config = build_dataset_config(records)
     config = PolicyTrainingConfig(
         algorithm="ppo",

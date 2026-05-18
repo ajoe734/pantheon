@@ -1,8 +1,8 @@
 {
   "artifact_family": "rl_policy",
-  "created_at": "2026-05-18T01:47:14Z",
+  "created_at": "2026-05-18T02:04:49Z",
   "created_by": "Codex2",
-  "dataset_checksum": "sha256:b4bb73907b08561dd8a3d7d4f3dbecd340e9b4bc5aacfc9621e2f3434e2bf04a",
+  "dataset_checksum": "sha256:d48d181772c181e9464ee26091a60686819dd651834fc9e00c2652152ed31117",
   "dataset_schema": {
     "min_instruments": 2,
     "min_lookback": 3,
@@ -37,7 +37,7 @@
     ],
     "lookback_window": 3,
     "num_instruments": 5,
-    "num_steps": 87,
+    "num_steps": 197,
     "observation_dim": 7,
     "position_ratio": 0.2,
     "source_dataset_refs": [
@@ -70,20 +70,20 @@
   },
   "evaluation_summary": {
     "algorithm": "ppo",
-    "annual_return": 1.197964,
+    "annual_return": 0.861114,
     "bounded_epochs": 12,
     "framework_import_ready": false,
-    "max_action_prior": 0.974255,
+    "max_action_prior": 0.983459,
     "max_drawdown": 0.0,
-    "mean_exposure_proxy": 0.20450864,
-    "mean_reward_proxy": 0.0056406,
+    "mean_exposure_proxy": 0.20399413,
+    "mean_reward_proxy": 0.00499723,
     "num_instruments": 5,
-    "num_steps": 87,
-    "portfolio_value_final": 1.31243725,
+    "num_steps": 197,
+    "portfolio_value_final": 1.62515192,
     "portfolio_value_initial": 1.0,
-    "reward_proxy_stddev": 0.00207091,
-    "sharpe": 43.2379,
-    "total_training_steps": 1044
+    "reward_proxy_stddev": 0.00193029,
+    "sharpe": 41.0967,
+    "total_training_steps": 2364
   },
   "framework": "finrl",
   "framework_version": "0.3.7",
@@ -115,11 +115,11 @@
       "sell_large"
     ],
     "action_priors": {
-      "buy_large": 0.01037,
-      "buy_small": 0.008122,
-      "hold": 0.974255,
-      "sell_large": 0.003626,
-      "sell_small": 0.003626
+      "buy_large": 0.007659,
+      "buy_small": 0.005645,
+      "hold": 0.983459,
+      "sell_large": 0.001618,
+      "sell_small": 0.001618
     },
     "algorithm": "ppo",
     "bounded_epochs": 12,
@@ -130,7 +130,7 @@
     "framework_version": "0.3.7",
     "lookback_window": 3,
     "observation_dim": 7,
-    "total_training_steps": 1044
+    "total_training_steps": 2364
   },
   "registry_hints": {
     "artifact_state": "draft",
@@ -157,7 +157,7 @@
     "cpu_only": true,
     "finrl_available": false,
     "num_instruments": 5,
-    "num_periods": 90,
+    "num_periods": 200,
     "state_space": 21,
     "tech_indicator_list": [
       "daily_return",
