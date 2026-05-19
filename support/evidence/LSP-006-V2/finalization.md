@@ -46,3 +46,7 @@ This closeout commit records the owner finalization evidence, the reviewer note,
 the generated task brief, and the current publish gate verdict so
 `scripts/ai-status.sh done` can record a trailer-bearing task commit after the
 closeout PR is merged.
+
+PR #253 refresh: merged latest `origin/dev` at
+`3fe976f7085030f340f47383c7c6fa4abce1dbbd` into `task/LSP-006-V2` after the
+initial closeout PR opened behind the base branch.
