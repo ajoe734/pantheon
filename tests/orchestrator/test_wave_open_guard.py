@@ -22,6 +22,7 @@ from wave_guards import (
     WaveGuardError,
     check_baton_owner,
     check_cooldown,
+    check_current_wave_closed,
     check_no_skip,
     check_wave_close,
     check_wave_freeze,
@@ -199,6 +200,52 @@ class TestCheckCooldown:
 
 
 # ---------------------------------------------------------------------------
+# check_current_wave_closed
+# ---------------------------------------------------------------------------
+
+class TestCheckCurrentWaveClosed:
+    def test_status_open_rejected(self):
+        ws = {"current_wave_id": "2026-W25", "status": "open"}
+        with pytest.raises(WaveGuardError, match="Current-wave-open guard"):
+            check_current_wave_closed(ws)
+
+    def test_history_open_no_close_rejected(self):
+        ws = _wave_state_with_history(
+            _open_event(_LONG_AGO, "2026-W25"),
+        )
+        with pytest.raises(WaveGuardError, match="Current-wave-open guard"):
+            check_current_wave_closed(ws)
+
+    def test_history_multiple_waves_last_open_no_close_rejected(self):
+        """Earlier waves closed but last opened wave has no close."""
+        ws = _wave_state_with_history(
+            _open_event(_LONG_AGO, "2026-W22"),
+            _close_event(_LONG_AGO, "2026-W22"),
+            _open_event(_LONG_AGO, "2026-W23"),
+        )
+        with pytest.raises(WaveGuardError, match="Current-wave-open guard"):
+            check_current_wave_closed(ws)
+
+    def test_history_open_then_close_accepted(self):
+        ws = _wave_state_with_history(
+            _open_event(_LONG_AGO, "2026-W25"),
+            _close_event(_LONG_AGO, "2026-W25"),
+        )
+        check_current_wave_closed(ws)  # must not raise
+
+    def test_no_history_no_status_accepted(self):
+        check_current_wave_closed({})  # first wave, fine
+
+    def test_status_closed_accepted(self):
+        ws = {"current_wave_id": "2026-W25", "status": "closed"}
+        check_current_wave_closed(ws)  # must not raise
+
+    def test_status_frozen_accepted(self):
+        ws = {"current_wave_id": "2026-W25", "status": "frozen"}
+        check_current_wave_closed(ws)  # must not raise
+
+
+# ---------------------------------------------------------------------------
 # check_baton_owner
 # ---------------------------------------------------------------------------
 
@@ -271,6 +318,28 @@ class TestCheckWaveOpen:
 
     def test_first_wave_no_history(self):
         check_wave_open({}, "2026-W01", "Codex")
+
+    def test_current_wave_still_open_via_status_rejected(self):
+        """Opening successor while wave_state.status='open' must be rejected."""
+        ws = _wave_state_with_history(
+            _open_event(_LONG_AGO, "2026-W22"),
+            _close_event(_LONG_AGO, "2026-W22"),
+            _open_event(_LONG_AGO, "2026-W23"),
+        )
+        ws["status"] = "open"
+        ws["current_wave_id"] = "2026-W23"
+        with pytest.raises(WaveGuardError, match="Current-wave-open guard"):
+            check_wave_open(ws, "2026-W24", "Codex")
+
+    def test_current_wave_no_close_in_history_rejected(self):
+        """Opening successor when last opened wave has no close event is rejected."""
+        ws = _wave_state_with_history(
+            _open_event(_LONG_AGO, "2026-W22"),
+            _close_event(_LONG_AGO, "2026-W22"),
+            _open_event(_LONG_AGO, "2026-W23"),
+        )
+        with pytest.raises(WaveGuardError, match="Current-wave-open guard"):
+            check_wave_open(ws, "2026-W24", "Codex")
 
 
 # ---------------------------------------------------------------------------

@@ -116,6 +116,42 @@ def check_cooldown(
         )
 
 
+def check_current_wave_closed(wave_state: dict[str, Any]) -> None:
+    """Reject if the current or most-recently-opened wave has not been closed.
+
+    Checks ``wave_state["status"]`` directly; falls back to history when the
+    status key is absent.
+    """
+    status = wave_state.get("status")
+    if status == "open":
+        wave_id = wave_state.get("current_wave_id", "?")
+        raise WaveGuardError(
+            f"Current-wave-open guard: wave {wave_id!r} is still open; "
+            "close it before opening the successor"
+        )
+
+    history: list[dict[str, Any]] = wave_state.get("history") or []
+    last_open_wave_id: str | None = None
+    last_open_pos: int = -1
+    for i, event in enumerate(history):
+        if event.get("event") == "open":
+            last_open_wave_id = event.get("wave_id")
+            last_open_pos = i
+
+    if last_open_wave_id is None:
+        return  # no prior wave; first wave is fine
+
+    closed = any(
+        e.get("event") == "close"
+        for e in history[last_open_pos + 1:]
+    )
+    if not closed:
+        raise WaveGuardError(
+            f"Current-wave-open guard: wave {last_open_wave_id!r} "
+            "has not been closed; close it before opening the successor"
+        )
+
+
 def check_baton_owner(
     wave_state: dict[str, Any],
     actor: str,
@@ -153,9 +189,10 @@ def check_wave_open(
 ) -> None:
     """Run all guards for a wave-open operation.
 
-    Order: no-skip → cooldown → baton-owner.
+    Order: current-wave-closed → no-skip → cooldown → baton-owner.
     Raises WaveGuardError with the first violation found.
     """
+    check_current_wave_closed(wave_state)
     check_no_skip(wave_state, new_wave_id)
     check_cooldown(wave_state, now)
     check_baton_owner(wave_state, actor, planning_state)
