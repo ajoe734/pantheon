@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Idle capacity exists and no global provider or approval blocker is active.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "OSS-QUANTLIB-V2-001",
+    "EXP-V2-002"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [
+    {
+      "task_id": "EXP-V2-002",
+      "role": "reviewer",
+      "from": "Copilot",
+      "to": "Claude",
+      "reason": "Copilot review dispatch has failed across repeated reconciliation cycles; Claude just completed OODA-E2E-007 review and can perform the bounded merged-code review."
+    }
+  ],
+  "recommended_focus": [
+    "OSS-QUANTLIB-V2-001",
+    "EXP-V2-002",
+    "OODA-E2E-007"
+  ]
+}

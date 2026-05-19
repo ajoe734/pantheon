@@ -1,7 +1,7 @@
 # EXP-V2-002 Closeout
 
 Owner: Codex2
-Reviewer: Claude2
+Reviewer: Claude
 Date: 2026-05-19
 Status at final closeout pickup: review_approved
 
@@ -108,3 +108,27 @@ This finalization is evidence-only. It composes with the already-merged
 lineage implementation PR #84 and evidence closeout PR #106, and it does not
 change the lineage-read implementation, tests, HTTP wrapper, registry write
 path, or canonical architecture documents.
+
+## 2026-05-19 Claude Approval Finalization Refresh
+
+The task-scoped brief records final reviewer reassignment to Claude and
+`review_approved` at `2026-05-19T06:32:46Z`. Claude approved the deliverable
+with all acceptance criteria met and the 6 focused tests passing.
+
+Owner revalidation from `task/EXP-V2-002` after the Claude approval:
+
+```bash
+pytest -q services/lineage-read/test_multi_artifact_tree.py
+pytest -q services/lineage-read
+```
+
+Results:
+
+- `services/lineage-read/test_multi_artifact_tree.py`: 6 passed in 0.74s.
+- `services/lineage-read`: 28 passed in 5.03s.
+
+PR #171 is already merged into `dev` with merge commit
+`35a69c43ab47f80bb2e75a4612e2ff5b7dc420c4`. This refresh is evidence-only and
+updates the final closeout packet to match the current reviewer of record. It
+does not change the lineage-read implementation, tests, HTTP wrapper, registry
+write path, or canonical architecture documents.

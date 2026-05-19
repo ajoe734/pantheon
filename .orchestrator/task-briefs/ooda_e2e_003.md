@@ -7,11 +7,11 @@ Do not read `current-work.md` by default for implementation context.
 ## Task
 - Title: OODA E2E #3: ExperimentRun → CandidateArtifact admission test
 - Status: review_approved
-- Owner: Claude
-- Reviewer: Codex
+- Owner: Codex2
+- Reviewer: Claude2
 - Phase: Sprint 8 / EPIC-OODA-E2E
-- Last update: 2026-05-19T01:22:49Z
-- Next: Review approved by Codex: focused OODA admission E2E and registry promotion/service checks pass; full repo pytest is blocked by missing flask outside this task scope. Returning to owner Claude for finalization.
+- Last update: 2026-05-19T12:06:53Z
+- Next: Auto-reassigned ownership from Claude to Codex2 after repeated Claude terminal: Worker exited before the task reached a terminal status.
 
 ## Summary
 OODA Orient→Decide 階段：證明「ExperimentRun → CandidateArtifact → Registry admission」transition 可端到端走完。使用 EXP-005 writeback + Registry promotion service。獨立 test 檔。
@@ -25,12 +25,12 @@ OODA Orient→Decide 階段：證明「ExperimentRun → CandidateArtifact → R
 - tests/e2e/fixtures/experiment_run_for_admission.json
 
 ## Recent Task Activity
-- 2026-05-19T01:11:02Z · Orchestrator · worker_superseded · Worker superseded after task responsibility moved to another agent.
-- 2026-05-19T01:16:05Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
-- 2026-05-19T01:16:05Z · Orchestrator · worker_worktree_reused · -
-- 2026-05-19T01:16:05Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
-- 2026-05-19T01:22:49Z · Codex · review_approved · Review approved by Codex: focused OODA admission E2E and registry promotion/service checks pass; full repo pytest is blocked by missing flask outside this task scope. Returning to owner Claude for finalization.
-- 2026-05-19T01:26:15Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
+- 2026-05-19T12:01:28Z · Claude · note · Supervisor resumed OODA-E2E-003 for finalize after successful dispatch.
+- 2026-05-19T12:01:31Z · Orchestrator · task_dispatch_synced · Supervisor resumed OODA-E2E-003 for finalize after successful dispatch.
+- 2026-05-19T12:04:28Z · unknown · worker_commit · Worker commit f76be120db1f recorded 2 staged file(s) for OODA-E2E-003.
+- 2026-05-19T12:06:48Z · Orchestrator · task_preempted_synced · Supervisor paused finalize on OODA-E2E-003 to free Claude for higher-priority review work; task remains review_approved.
+- 2026-05-19T12:06:48Z · Orchestrator · worker_superseded · Worker superseded to prioritize higher-priority review/finalize work.
+- 2026-05-19T12:06:56Z · Orchestrator · task_reassigned · Auto-reassigned ownership from Claude to Codex2 after repeated Claude terminal: Worker exited before the task reached a terminal status.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
