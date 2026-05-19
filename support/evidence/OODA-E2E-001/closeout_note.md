@@ -32,10 +32,14 @@ python3 -m pytest -q -x tests/e2e/test_source_to_strategy_spec.py
 
 python3 -m pytest -q -x tests/e2e/test_source_to_strategy_spec.py
 1 passed in 1.44s
+
+python3 -m pytest -q -x tests/e2e/test_source_to_strategy_spec.py
+1 passed in 1.16s
 ```
 
 Focused verification was rerun during Codex owner finalization on 2026-05-19
-from branch `task/OODA-E2E-001` after fast-forwarding to `origin/dev`.
+from branch `task/OODA-E2E-001` after fast-forwarding to `origin/dev`; it was
+rerun again after refreshing PR #207 with the latest `origin/dev`.
 
 ## Acceptance Criteria Checklist
 
