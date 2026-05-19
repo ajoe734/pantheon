@@ -81,3 +81,4 @@ python3 -m pytest -q -x tests/e2e/test_strategy_spec_to_experiment_run.py
 Result: `1 passed in 0.42s`.
 
 - This retry adds a narrow trailer-bearing evidence commit so `AI_NAME=Codex2 ./scripts/ai-status.sh done OODA-E2E-002 ...` can record delivery metadata from a task-scoped HEAD commit instead of the prior dev-merge HEAD.
+- PR #165 CI passed but branch protection held auto-merge while the branch was behind `origin/dev`; the task branch was refreshed with `origin/dev` at `568e90dd51287595029917fa2a4654d5f55f4457`, then this final evidence note was added so HEAD remains a task-scoped trailer-bearing commit.
