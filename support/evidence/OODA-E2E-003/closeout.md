@@ -1,10 +1,10 @@
 # OODA-E2E-003 Closeout Evidence
 
 Task: OODA-E2E-003
-Owner: Codex
+Owner: Codex2
 Reviewer: Claude
 Status at closeout pickup: review_approved
-Closeout date: 2026-05-18
+Closeout date: 2026-05-19
 
 ## Delivered Scope
 
@@ -14,45 +14,45 @@ Closeout date: 2026-05-18
 - Asserts the registered artifact is `artifact_state=candidate`, not `draft` or `approved`.
 - Asserts lineage includes both `experiment_run_id` and `source_strategy_spec_id`.
 - Asserts the admission gate accepts a mapping `evaluation_summary` and rejects malformed non-mapping input.
+- Moved malformed `evaluation_summary` validation into the production
+  `services/research/experiments/registry_writeback.py` writeback boundary.
+- Added the production-boundary guard in
+  `services/research/experiments/test_registry_writeback.py`.
 
 ## Publication
 
-- Implementation commit: `7a683986` (`OODA-E2E-003: add ExperimentRun to CandidateArtifact admission E2E test`).
-- PR: <https://github.com/ajoe734/pantheon/pull/78>.
-- PR #78 merged into `dev` on 2026-05-17 with required GitHub checks passing.
-- Closeout PR #107 carried the initial closeout evidence and merged on 2026-05-18.
-- Closeout PR #109 refreshed the closeout evidence and merged on 2026-05-18.
-- This owner finalization branch records the reviewer evidence referenced by the central task status.
+- Implementation hardening commit: `5ae4e87a`
+  (`OODA-E2E-003: validate writeback summaries`).
+- Reviewer evidence commit: `7f6b4fb6`
+  (`OODA-E2E-003: Claude review approval`).
+- Approved handoff context commit: `4e44aa19`
+  (`OODA-E2E-003: finalize approved handoff`).
+- PR #184: <https://github.com/ajoe734/pantheon/pull/184>.
+- PR #184 merged into `dev` on 2026-05-19 as
+  `5f738e7489905ab9bce09aab343a49378a01d899`.
 
 ## Reviewer Approval
 
-Claude approved the task on 2026-05-18. The review evidence is recorded at
-`support/evidence/OODA-E2E-003/review_claude.md` and states that all four
-E2E acceptance criteria pass with no required follow-up.
+Claude approved the task on 2026-05-19. The review evidence is recorded at
+`support/evidence/OODA-E2E-003/review_claude.md` and states that validation is
+correctly placed at the production writeback boundary, all acceptance criteria
+pass, and no follow-up is required.
 
 ## Closeout Verification
 
 Commands run from `task/OODA-E2E-003` after merging current `origin/dev`:
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q -x tests/e2e/test_experiment_run_to_admission.py
+python3 -m pytest -q services/research/experiments/test_registry_writeback.py tests/e2e/test_experiment_run_to_admission.py
 ```
 
-Result: `4 passed in 0.81s`.
+Result: `9 passed in 1.14s`.
 
-```bash
-PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q -x tests/e2e/test_experiment_run_to_admission.py tests/e2e/test_admission_to_deployment_plan.py
-```
-
-Result: `7 passed in 1.91s`.
+GitHub required checks for PR #184 passed before merge:
+`Commit trailers`, `Runtime mirror guard`, and `Smoke acceptance`.
 
 ## Lifecycle Note
 
-The task-scoped implementation is already merged. Finalization should run:
-
-```bash
-AI_NAME=Codex ./scripts/ai-status.sh done OODA-E2E-003 "<checkpoint message>"
-```
-
-after the latest task-branch commit carries the required `LLM-Agent`, `Task-ID`, and `Reviewer`
-trailers expected by the central task lifecycle state.
+Owner finalization must run with `AI_NAME=Codex2` after this closeout evidence
+commit is merged, so the central lifecycle state records the correct owner,
+reviewer, PR, merge commit, and verification.
