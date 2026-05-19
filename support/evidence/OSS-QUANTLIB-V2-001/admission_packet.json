@@ -3,10 +3,10 @@
   "candidate_artifact": {
     "artifact_state": "draft",
     "artifact_type": "pricing_snapshot",
-    "checksum": "sha256:78bd779e7f59879118842a8b0948afe9cdb62fad80d5bb94129c606ece690984",
+    "checksum": "sha256:80b1a323b3ce1f3fa5bdb35e20b8750e7c14c3d97fe7b06c36335ea205095b59",
     "deployment_summary": {
       "current_stage": "none",
-      "last_transition_at": "2026-05-17T17:10:00Z"
+      "last_transition_at": "2026-05-17T00:00:00Z"
     },
     "lineage": {
       "parent_registry_ids": [],
@@ -84,7 +84,7 @@
     },
     {
       "artifact_state": "draft",
-      "checksum": "sha256:78bd779e7f59879118842a8b0948afe9cdb62fad80d5bb94129c606ece690984",
+      "checksum": "sha256:80b1a323b3ce1f3fa5bdb35e20b8750e7c14c3d97fe7b06c36335ea205095b59",
       "gate": "pricing_snapshot_projection",
       "source_ref": "pricing_snapshot.registry_entry",
       "status": "passed"
@@ -128,7 +128,7 @@
     "artifact_ref": "quantlib-production-option-chain-txo-2.0.0@2.0.0",
     "artifact_state": "draft",
     "artifact_type": "pricing_snapshot",
-    "checksum": "sha256:78bd779e7f59879118842a8b0948afe9cdb62fad80d5bb94129c606ece690984",
+    "checksum": "sha256:80b1a323b3ce1f3fa5bdb35e20b8750e7c14c3d97fe7b06c36335ea205095b59",
     "deployment_stage": "none",
     "registry_id": "quantlib-production-option-chain-txo-2.0.0",
     "source_dataset_refs": [
@@ -157,7 +157,7 @@
       "put_count": 15,
       "strike_count": 5
     },
-    "checksum": "sha256:78bd779e7f59879118842a8b0948afe9cdb62fad80d5bb94129c606ece690984",
+    "checksum": "sha256:80b1a323b3ce1f3fa5bdb35e20b8750e7c14c3d97fe7b06c36335ea205095b59",
     "snapshot_id": "pricing-snapshot:quantlib_production_option_chain:2.0.0",
     "task_id": "OSS-QUANTLIB-V2-001",
     "underlying": "TXO"
