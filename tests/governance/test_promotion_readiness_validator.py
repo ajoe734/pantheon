@@ -278,7 +278,60 @@ def test_approval_subtree_status_rejected():
 
 
 # ---------------------------------------------------------------------------
-# 11. Multiple simultaneous blockers
+# 11. Precomputed evidence.missing entries (A2.1 supplement)
+# ---------------------------------------------------------------------------
+
+def test_precomputed_missing_evidence_not_in_required():
+    """ev.missing key that is NOT in ev.required must still emit missing_evidence."""
+    data = _base_packet(can_proceed=False, reason="Precomputed missing evidence")
+    # Add a key to ev.missing that is not in ev.required (so the required-loop
+    # would never catch it) and also not in ev.provided.
+    data["evidence"]["missing"] = ["canary_allocation"]
+    packet = _load(data)
+    reasons = validate_readiness(packet)
+    codes = _codes(reasons)
+    assert CODE_MISSING_EVIDENCE in codes
+    missing_reasons = [r for r in reasons if r.code == CODE_MISSING_EVIDENCE]
+    assert any(r.details.get("missing_key") == "canary_allocation" for r in missing_reasons)
+    assert not is_ready(packet)
+
+
+def test_precomputed_missing_evidence_in_required_no_duplicate():
+    """ev.missing key that is also in ev.required (not provided) must emit exactly once."""
+    data = _base_packet(can_proceed=False, reason="Missing required evidence")
+    data["evidence"]["required"] = ["broker_smoke", "rollback_drill", "canary_allocation"]
+    data["evidence"]["missing"] = ["canary_allocation"]
+    packet = _load(data)
+    reasons = validate_readiness(packet)
+    canary_reasons = [
+        r for r in reasons
+        if r.code == CODE_MISSING_EVIDENCE and r.details.get("missing_key") == "canary_allocation"
+    ]
+    assert len(canary_reasons) == 1, f"Expected exactly 1 missing_evidence for canary_allocation, got {len(canary_reasons)}"
+
+
+# ---------------------------------------------------------------------------
+# 12. approval_not_recorded even when state is passing
+# ---------------------------------------------------------------------------
+
+def test_approval_not_recorded_even_when_state_passing():
+    """recorded=false must emit approval_not_recorded regardless of state value."""
+    data = _base_packet(can_proceed=False, reason="Operator approval not recorded")
+    # state="recorded" is in PASSING_APPROVAL_STATUSES, but recorded=False
+    data["approval"]["operator"]["recorded"] = False
+    data["approval"]["operator"]["state"] = "recorded"
+    data["approval"]["status"] = "pending"
+    packet = _load(data)
+    reasons = validate_readiness(packet)
+    codes = _codes(reasons)
+    assert CODE_APPROVAL_NOT_RECORDED in codes
+    appr_reason = next(r for r in reasons if r.code == CODE_APPROVAL_NOT_RECORDED)
+    assert appr_reason.details["role"] == "operator"
+    assert not is_ready(packet)
+
+
+# ---------------------------------------------------------------------------
+# 13. Multiple simultaneous blockers
 # ---------------------------------------------------------------------------
 
 def test_multiple_blockers_combined():

@@ -69,10 +69,12 @@ def _check_evidence(packet: PromotionReadinessPacket) -> list[BlockingReason]:
                 details={"missing_key": key},
             ))
 
-    # Also honour the pre-computed missing list (covers A2.1 packets)
+    # Also honour the pre-computed missing list (covers A2.1 packets).
+    # Emit for every key in ev.missing; skip only those already handled by the
+    # required-keys loop above (key in required AND not yet provided).
     for key in ev.missing:
-        if key not in provided_keys:
-            # Already emitted above; skip duplicates
+        if key in ev.required and key not in provided_keys:
+            # Already emitted by the required-keys loop above
             continue
         reasons.append(_reason(
             CODE_MISSING_EVIDENCE,
@@ -113,7 +115,9 @@ def _check_approvals(packet: PromotionReadinessPacket) -> list[BlockingReason]:
 
         state = req.state or ""
 
-        if not req.recorded and state not in PASSING_APPROVAL_STATUSES:
+        if not req.recorded:
+            # Emit regardless of state: recorded=false is always a blocker when
+            # required=true, even if the state field coincidentally reads as passing.
             reasons.append(_reason(
                 CODE_APPROVAL_NOT_RECORDED,
                 f"Required approval '{req.role}' has not been recorded",
