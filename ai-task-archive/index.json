@@ -1,12 +1,14 @@
 {
   "version": 1,
-  "updated_at": "2026-05-18T02:49:17Z",
+  "updated_at": "2026-05-19T05:18:01Z",
   "counts": {
-    "total": 1191,
-    "completed": 1171,
+    "total": 1193,
+    "completed": 1173,
     "superseded": 20
   },
   "recent_terminal_ids": [
+    "OSS-RLLIB-V2-001",
+    "OSS-FINRL-V2-001",
     "OSS-STAT-V2-001",
     "STRAT-V2-002",
     "OODA-E2E-005",
@@ -24,8 +26,6 @@
     "OPS-REBASE-AUTO-001-SIDECAR-REVIEW",
     "ASK-006-SIDECAR-REVIEW",
     "OPS-REFACTOR-001",
-    "ASK-008",
-    "IMT-008",
-    "OSS-RLLIB-001"
+    "ASK-008"
   ]
 }
