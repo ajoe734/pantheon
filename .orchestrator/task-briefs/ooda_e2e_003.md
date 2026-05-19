@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: OODA E2E #3: ExperimentRun → CandidateArtifact admission test
-- Status: todo
+- Status: review_approved
 - Owner: Claude
 - Reviewer: Codex
 - Phase: Sprint 8 / EPIC-OODA-E2E
-- Last update: 2026-05-17T11:03:27Z
-- Next: Assignment created
+- Last update: 2026-05-19T01:22:49Z
+- Next: Review approved by Codex: focused OODA admission E2E and registry promotion/service checks pass; full repo pytest is blocked by missing flask outside this task scope. Returning to owner Claude for finalization.
 
 ## Summary
 OODA Orient→Decide 階段：證明「ExperimentRun → CandidateArtifact → Registry admission」transition 可端到端走完。使用 EXP-005 writeback + Registry promotion service。獨立 test 檔。
@@ -25,7 +25,12 @@ OODA Orient→Decide 階段：證明「ExperimentRun → CandidateArtifact → R
 - tests/e2e/fixtures/experiment_run_for_admission.json
 
 ## Recent Task Activity
-- none
+- 2026-05-19T01:11:02Z · Orchestrator · worker_superseded · Worker superseded after task responsibility moved to another agent.
+- 2026-05-19T01:16:05Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-19T01:16:05Z · Orchestrator · worker_worktree_reused · -
+- 2026-05-19T01:16:05Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
+- 2026-05-19T01:22:49Z · Codex · review_approved · Review approved by Codex: focused OODA admission E2E and registry promotion/service checks pass; full repo pytest is blocked by missing flask outside this task scope. Returning to owner Claude for finalization.
+- 2026-05-19T01:26:15Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
