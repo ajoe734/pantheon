@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Workers are idle with no provider or approval blocker; productive sidecars need a concrete OPS or Sprint 9 parent.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "OPS-PROMOTE-FIX",
+    "OPS-ZOMBIE-BRANCH-CLEANUP",
+    "OPS-FINRL-BRANCH-RECONCILE",
+    "SPRINT-9-PLANNING"
+  ]
+}

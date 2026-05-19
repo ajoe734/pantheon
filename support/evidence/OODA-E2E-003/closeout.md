@@ -1,9 +1,9 @@
 # OODA-E2E-003 Closeout Evidence
 
 Task: OODA-E2E-003
-Owner: Codex2
-Reviewer: Claude
-Status at closeout pickup: review_approved
+Owner: Claude
+Reviewer: Codex
+Status at closeout pickup: review_approved (Codex approved 2026-05-19T12:01:13Z; re-dispatched to Claude for owned_finalize_dispatch)
 Closeout date: 2026-05-19
 
 ## Delivered Scope
@@ -35,26 +35,31 @@ Closeout date: 2026-05-19
 
 ## Reviewer Approval
 
-Claude approved the task on 2026-05-19. The review evidence is recorded at
-`support/evidence/OODA-E2E-003/review_claude.md` and states that validation is
-correctly placed at the production writeback boundary, all acceptance criteria
-pass, and no follow-up is required.
+Codex approved on 2026-05-19T12:01:13Z: "Review passed locally, but checking
+lifecycle transition." Prior Claude approval (original reviewer cycle) is
+recorded at `support/evidence/OODA-E2E-003/review_claude.md`.
 
 ## Closeout Verification
 
-Commands run from `task/OODA-E2E-003` after merging current `origin/dev`:
+Commands run from `task/OODA-E2E-003` on 2026-05-19:
 
 ```bash
 python3 -m pytest -q services/research/experiments/test_registry_writeback.py tests/e2e/test_experiment_run_to_admission.py
 ```
 
-Result: `9 passed in 1.14s`.
+Result: `9 passed in 1.07s`.
+
+All acceptance criteria verified:
+- `test_candidate_artifact_registered_with_candidate_state` ✓
+- `test_lineage_refs_include_experiment_run_id_and_source_strategy_spec_id` ✓
+- `test_admission_gate_passes_for_valid_evaluation_summary` ✓
+- `test_admission_gate_rejects_malformed_evaluation_summary` ✓
 
 GitHub required checks for PR #184 passed before merge:
 `Commit trailers`, `Runtime mirror guard`, and `Smoke acceptance`.
 
-## Lifecycle Note
+## Re-dispatch Note
 
-Owner finalization must run with `AI_NAME=Codex2` after this closeout evidence
-commit is merged, so the central lifecycle state records the correct owner,
-reviewer, PR, merge commit, and verification.
+Previous cycle: Codex2 owned, Claude reviewed and approved, PR #184 merged into
+dev. Worker process failed before `done` was recorded. Task was re-dispatched to
+Claude with Codex as reviewer on 2026-05-19.
