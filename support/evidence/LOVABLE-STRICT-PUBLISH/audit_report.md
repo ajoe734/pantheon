@@ -166,3 +166,6 @@ Focused verification rerun on 2026-05-19:
 Closeout action: Codex is completing the owner finalization path after Gemini2's
 2026-05-19 review approval. The final status archive is handled through
 `scripts/ai-status.sh done` after the task-scoped closeout commit is merged.
+
+PR base refresh: branch refreshed against `origin/dev` at `a6e4e19f` before
+final `done` archival.
