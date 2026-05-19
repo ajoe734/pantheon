@@ -43,3 +43,9 @@ Checks passing on PR #285 after dev merge:
 - Commit trailers: SUCCESS
 - Runtime mirror guard: SUCCESS
 - Smoke acceptance: SUCCESS (confirmed post-push CI run)
+
+## Final Merge
+
+- PR #285 merged into dev at `569ee876b77bd184cb64882fd257d8ac3f985dee`
+- Merged at: 2026-05-19T19:12:34Z
+- This refresh commit is the final task-branch tip required by the done gate trailer check.
