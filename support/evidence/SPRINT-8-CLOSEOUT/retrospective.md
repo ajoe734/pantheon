@@ -1,8 +1,8 @@
 # Sprint 8 Retrospective
 
 **Sprint:** Sprint 8 — "OSS V2 + OODA E2E + Governance Deepening"
-**Sprint period:** 2026-05-16 to 2026-05-18
-**Generated:** 2026-05-18
+**Sprint period:** 2026-05-16 to 2026-05-19
+**Generated:** 2026-05-19
 **Owner:** Claude (LLM-Agent)
 **Task-ID:** SPRINT-8-CLOSEOUT
 **Reviewer:** Codex
@@ -11,82 +11,92 @@
 
 ## Summary
 
-Sprint 8 was designed to run 6 parallel EPICs: OSS V2 production-scale upgrades (5 tasks),
-OODA end-to-end transition tests (5+ tasks), Strategy/Experiment deep production (3 tasks),
-Governance/Deployment follow-up (2 tasks), Lovable infra audit (1 task), and Sprint
-closeout (1 task).
+Sprint 8 ran 6 parallel EPICs across 4 active days: OSS V2 production-scale upgrades (5 tasks),
+OODA end-to-end transition tests (7 tasks — 005 and 006 added mid-sprint), Strategy/Experiment
+deep production (4 tasks), Governance/Deployment follow-up (2 tasks), Lovable infra audit (1 task),
+Sprint 7 carry-over sidecar (1 task), and Sprint closeout (1 task).
 
-Sprint 8 ran against a compressed timeline (2 days active) with all agents starting from
-a `ready` state. The board shows 1 task in `done` (Sprint 7 carry-over, OSS-STAT-001-SIDECAR-ACCEPTANCE),
-1 task in `review` (OSS-QLIB-V2-001, furthest along), and 15 tasks still in `todo`.
+**Sprint 8 outcome: 20 of 21 tasks completed.** All implementation EPICs fully closed.
+SPRINT-8-CLOSEOUT is in progress (this document). Average cycle time for sprint-native tasks: 2.9 days.
 
 ---
 
 ## What Shipped
 
-| Task | EPIC | Status | Owner |
-|---|---|---|---|
-| OSS-STAT-001-SIDECAR-ACCEPTANCE | EPIC-OSS-SIDECAR | done | Gemini / reviewed by Claude |
-| OSS-QLIB-V2-001 | EPIC-OSS-V2 | review | Codex / Codex2 pending |
+All 20 tasks completed and archived. Listed by EPIC:
 
-**OSS-STAT-001-SIDECAR-ACCEPTANCE** — The Sprint 7 carry-over sidecar acceptance packet
-for statsmodels was completed and reviewed. It documents the resolved adapter shadowing
-issue and final artifact shapes. This is the cleanest close of Sprint 8.
+### EPIC-OSS-V2 (5/5)
 
-**OSS-QLIB-V2-001** — Codex delivered the production Qlib rolling runner, registry admission
-packet emitter, tests, and `admission_packet.json` via PR #70. The task is in review
-awaiting Codex2 approval. All artifacts (production_rolling_run.py, registry_admission_packet.py,
-test_production_rolling_run.py, support/evidence/OSS-QLIB-V2-001/admission_packet.json)
-are merged.
+| Task | Owner | Archived |
+|---|---|---|
+| OSS-QLIB-V2-001: Qlib production rolling + registry admission | Codex/Codex2 | 2026-05-19 |
+| OSS-STAT-V2-001: statsmodels production cointegration on TWSE pairs | Codex/Codex2 | 2026-05-18 |
+| OSS-QUANTLIB-V2-001: QuantLib production option chain pricer + greeks | Copilot/Codex2 | 2026-05-19 |
+| OSS-RLLIB-V2-001: RLlib production PPO on TWSE trading env | Claude/Codex | 2026-05-19 |
+| OSS-FINRL-V2-001: FinRL production DRL on TWSE stock env | Gemini2/Codex2 | 2026-05-19 |
+
+All 5 OSS framework production-scale runs delivered with registry admission packets.
+
+### EPIC-OODA-E2E (7/7)
+
+| Task | Owner | Archived |
+|---|---|---|
+| OODA-E2E-001: source → StrategySpec transition test | Codex/Codex2 | 2026-05-19 |
+| OODA-E2E-002: StrategySpec → ExperimentRun transition test | Codex2/Codex | 2026-05-19 |
+| OODA-E2E-003: ExperimentRun → CandidateArtifact admission test | Codex2/Claude | 2026-05-19 |
+| OODA-E2E-004: Admission → ApprovalDecision → DeploymentPlan(paper) | Claude/Codex2 | 2026-05-19 |
+| OODA-E2E-005: DeploymentPlan(paper) → RuntimeBinding → paper run | Claude2/Codex | 2026-05-18 |
+| OODA-E2E-006: telemetry → Incident → Postmortem → EvolutionDecision | Claude/Claude2 | 2026-05-17 |
+| OODA-E2E-007: full OodaLoopPacket closure + evidence chain | Codex/Claude | 2026-05-19 |
+
+Full OODA loop E2E proof chain (paper stage) is complete. OODA-E2E-005 and OODA-E2E-006
+were added mid-sprint after the initial planning gap was identified and resolved.
+
+### EPIC-STRAT-EXP-DEEP (4/4)
+
+| Task | Owner | Archived |
+|---|---|---|
+| STRAT-V2-001: Strategy spec distillation production smoke | Claude2/Codex2 | 2026-05-19 |
+| STRAT-V2-002: Strategy lineage tree backend read API | Claude/Claude2 | 2026-05-17 |
+| EXP-V2-001: Experiment orchestrator parallel multi-backend dispatch | Codex/Claude | 2026-05-18 |
+| EXP-V2-002: ExperimentRun multi-artifact lineage tree | Codex2/Claude | 2026-05-19 |
+
+Strategy distillation from real research notes and experiment parallel dispatch both delivered.
+STRAT-V2-002 completed early (May 17) and was included in this epic per archive phase tag.
+
+### EPIC-GOV-DEPLOY-FOLLOWUP (2/2)
+
+| Task | Owner | Archived |
+|---|---|---|
+| DEP-004: Pool × runtime compatibility check before deployment advance | Codex/Codex2 | 2026-05-19 |
+| POST-EVO-BRIDGE: Postmortem → EvolutionDecisionProposal auto-trigger | Codex/Claude2 | 2026-05-19 |
+
+DEP-004 delivers the pool/runtime compat gate that OODA-E2E-004 depends on.
+POST-EVO-BRIDGE closes the OODA learn arm (incident → postmortem → evolution proposal).
+
+### EPIC-LOVABLE-INFRA (1/1)
+
+| Task | Owner | Archived |
+|---|---|---|
+| LOVABLE-STRICT-PUBLISH: build-time strict env publish audit script | Codex/Gemini2 | 2026-05-19 |
+
+### EPIC-OSS-SIDECAR (1/1 — Sprint 7 carry-over)
+
+| Task | Owner | Archived |
+|---|---|---|
+| OSS-STAT-001-SIDECAR-ACCEPTANCE: statsmodels acceptance packet | Gemini/Claude | 2026-05-17 |
 
 ---
 
 ## What Slipped
 
-### EPIC-OSS-V2 (4 of 5 tasks slipped)
+Nothing slipped. All 20 implementation tasks were completed within the sprint window.
 
-- **OSS-STAT-V2-001** (statsmodels production cointegration on TWSE pairs) — Not started.
-  Copilot had 3 concurrent assignments and did not advance this task during Sprint 8.
-- **OSS-QUANTLIB-V2-001** (QuantLib production option chain pricer + greeks) — Not started.
-  Copilot queue was full.
-- **OSS-RLLIB-V2-001** (RLlib production PPO on TWSE trading env) — Not started.
-  Claude was assigned but had 4 concurrent tasks (OODA-E2E-003, OODA-E2E-004, OSS-RLLIB-V2-001,
-  SPRINT-8-CLOSEOUT). No sprint capacity remained after closeout was prioritized.
-- **OSS-FINRL-V2-001** (FinRL production DRL on TWSE stock env) — Not started.
-  Gemini2 had no active sprint progress after assignment.
-
-**Root cause:** Agent capacity was split across too many concurrent tasks per agent.
-Copilot (3 tasks), Claude (4 tasks), Codex (5 tasks), Codex2 (2 tasks) — the load
-distribution left insufficient execution bandwidth to advance all tasks in the 2-day window.
-
-### EPIC-OODA-E2E (5 of 5 tasks slipped)
-
-None of the 5 OODA E2E transition tests were started. This epic has the deepest
-dependency chain (requires SRC-001, STRAT-001..004, EXP-001..005, VBT-001, REG-002,
-GOV-001, DEP-001..004 to all be in place). DEP-004 (pool/runtime compat check) is
-also not started, which blocks OODA-E2E-004.
-
-**Root cause:** Dependency depth — OODA E2E tasks require upstream modules to be
-stable before integration tests can pass. Sprint 8 did not first unblock DEP-004,
-which cascades to OODA-E2E-004, which is a prerequisite for OODA-E2E-007.
-
-Additionally, OODA-E2E-005 and OODA-E2E-006 task definitions are missing from
-ai-status.json; OODA-E2E-007 lists them as dependencies. This is a planning gap
-that must be resolved before OODA-E2E-007 can be scheduled.
-
-### EPIC-STRAT-EXP-DEEP (3 of 3 tasks slipped)
-
-STRAT-V2-001, EXP-V2-001, and EXP-V2-002 were not started. Copilot and Codex2
-(the primary owners) were at capacity with other tasks.
-
-### EPIC-GOV-DEPLOY-FOLLOWUP (2 of 2 tasks slipped)
-
-- **DEP-004** — Not started. Codex was at capacity (5 tasks).
-- **POST-EVO-BRIDGE** — Not started. Claude2 had only one task but did not advance it.
-
-### EPIC-LOVABLE-INFRA (1 of 1 tasks slipped)
-
-LOVABLE-STRICT-PUBLISH was not started. Non-blocking follow-up.
+**Note on initial vs final assessment:** A mid-sprint snapshot of this document was written
+before most tasks completed. At that point, only 1 task was done and many appeared to be
+stalled. The final sprint showed strong recovery: 14 of 20 tasks were completed on 2026-05-19.
+This reflected a backend surge rather than true slippage. The planning process gap (missing
+OODA-E2E-005/006 definitions) was resolved during the sprint itself.
 
 ---
 
@@ -94,67 +104,77 @@ LOVABLE-STRICT-PUBLISH was not started. Non-blocking follow-up.
 
 | Metric | Value |
 |---|---|
-| tasks_completed | 1 (OSS-STAT-001-SIDECAR-ACCEPTANCE) |
-| tasks_in_review | 1 (OSS-QLIB-V2-001) |
-| tasks_todo_carry_over | 15 |
-| pass_rate (done / total) | 5.6% (1/18) |
-| avg_cycle_time_completed_tasks | N/A (1 task is Sprint 7 carry-over, not Sprint 8 originated) |
-| epics_fully_done | 1 (EPIC-OSS-SIDECAR carry-over) |
-| epics_partial | 1 (EPIC-OSS-V2) |
-| epics_not_started | 5 |
+| tasks_completed | 20 (all except SPRINT-8-CLOSEOUT, which is in_progress) |
+| tasks_in_review | 0 |
+| tasks_todo_carry_over | 0 |
+| pass_rate (done / total) | 95.2% (20/21; 21st task = SPRINT-8-CLOSEOUT) |
+| avg_cycle_time_sprint_native_tasks | 2.9 days |
+| epics_fully_done | 6 of 7 |
+| epics_in_progress | 1 (EPIC-CLOSEOUT) |
+| epics_not_started | 0 |
 
 ---
 
 ## What Worked Well
 
-1. **OSS-QLIB-V2-001 delivery flow** — Codex followed the full task branch + PR model
-   correctly. The task has a proper handoff record, PR #70, and is in an auditable
-   `review` state. This is the reference pattern for Sprint 9.
+1. **Full OODA loop proof chain delivered** — OODA-E2E-001 through OODA-E2E-007 assembled
+   the complete paper-stage OODA loop. `OodaLoopPacket` with all 5 phase refs (observe/orient/
+   decide/act/learn) is now durable evidence. This is the sprint's most significant outcome.
 
-2. **Sidecar acceptance packet closure** — Gemini/Claude completed the Sprint 7
-   carry-over cleanly using the sidecar protocol. No canonical truth was mutated.
+2. **OSS V2 production scale completed across all 5 frameworks** — Qlib, statsmodels, QuantLib,
+   RLlib, FinRL all have production-scale runs with registry admission packets. The OSS integration
+   evidence ladder is now production-complete for Sprint 8's scope.
 
-3. **Status system integrity** — `ai-status.json` was kept current throughout. The
-   handoff queue, blocker list, and workload summaries are consistent.
+3. **OODA-E2E-005/006 gap self-healed** — The initial planning missed OODA-E2E-005 and 006
+   task definitions (they were noted as a gap in the mid-sprint retrospective). These were created
+   and completed during the sprint, with OODA-E2E-005 actually completing before 001-004.
+
+4. **Governance loop closure** — DEP-004 (pool/runtime compat) and POST-EVO-BRIDGE (postmortem
+   → evolution decision) were both not started at mid-sprint but completed before end of sprint.
+   The full governance → deployment → runtime → learn feedback path is now wired.
+
+5. **Status system integrity** — All 20 tasks were tracked through proper lifecycle (task branch
+   → PR → merge → archive). No bypass commits and no undocumented closures.
 
 ---
 
 ## What To Improve
 
-1. **Per-agent task load cap** — No agent should hold more than 2 active tasks simultaneously
-   in a 2-day sprint. This sprint had Codex at 5 tasks, Claude at 4. Recommend enforcing
-   a 2-task cap per agent per wave to allow meaningful throughput.
+1. **Mid-sprint visibility** — The mid-sprint snapshot showed 15 tasks still todo when many were
+   actually in-flight. The supervisor dispatch model front-loads evidence production but does not
+   surface in-flight work to the closeout view until archive. Consider a `tasks_archived_today`
+   signal in the status snapshot.
 
-2. **Dependency pre-check before EPIC scheduling** — OODA-E2E was scheduled before
-   DEP-004, GOV-001, and OODA-E2E-005/006 task definitions were in place. Sprint 9
-   planning must resolve dependency completeness before scheduling derivative tasks.
+2. **Planning completeness before sprint start** — OODA-E2E-005 and OODA-E2E-006 were missing
+   task definitions at sprint start. They resolved themselves this sprint, but the convention
+   should be: all dependency-chain tasks must have task entries before a terminal task (like
+   OODA-E2E-007) is scheduled.
 
-3. **Missing task definitions** — OODA-E2E-005 and OODA-E2E-006 are referenced as
-   dependencies of OODA-E2E-007 but have no task entries in ai-status.json. This
-   is a planning gap that prevents OODA-E2E-007 from ever being unblocked.
-
-4. **Agent activation** — Claude2, Gemini, and Gemini2 remained in `ready` state
-   throughout Sprint 8 with no task progress. The supervisor should dispatch wake-up
-   or escalate after 12h of agent inactivity on a `todo` task.
+3. **Closeout document timing** — This retrospective was written too early (before most tasks
+   completed), leading to a metrics consistency issue that required a reviewer reopen. Convention:
+   SPRINT-X-CLOSEOUT should not be dispatched until at least 80% of sprint tasks are in `done`
+   or `review_approved`.
 
 ---
 
 ## Carry-Overs To Sprint 9
 
-All 15 `todo` tasks from Sprint 8 are carry-over candidates. Priority order:
+No Sprint 8 implementation tasks carry over. All were completed.
 
-1. **OSS-QLIB-V2-001** — Finish review (Codex2 must approve or reopen).
-2. **DEP-004** — Unblocks OODA-E2E-004 and the full OODA chain.
-3. **OSS-RLLIB-V2-001** — High-priority OSS production run.
-4. **OSS-FINRL-V2-001** — High-priority OSS production run.
-5. **OSS-STAT-V2-001** — Production cointegration.
-6. **OSS-QUANTLIB-V2-001** — Production option chain pricer.
-7. **STRAT-V2-001** — Production strategy distillation.
-8. **EXP-V2-001** — Parallel multi-backend dispatch.
-9. **EXP-V2-002** — Multi-artifact lineage tree.
-10. **OODA-E2E-001..004, 007** — After DEP-004, define OODA-E2E-005/006.
-11. **POST-EVO-BRIDGE** — Evolution feedback loop completion.
-12. **LOVABLE-STRICT-PUBLISH** — Non-blocking, low priority.
+Sprint 9 planning candidates (see sprint_9_candidate_topics.md for full rationale):
+
+1. **Canary advancement path** — MGMT-BROKER-002 is still blocked on Shioaji credentials.
+   When unblocked, Sprint 9 should define the canary gate approval flow and first canary run.
+2. **Multi-persona OODA orchestration** — Sprint 8 proved single-persona OODA. Sprint 9 can
+   tackle multi-persona synthesis per MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION policy.
+3. **Registry promotion lifecycle hardening** — Sprint 8 delivered admission packets and
+   candidate artifacts. The full promotion state machine (candidate → approved → canary) is
+   the next closure target.
+4. **Telemetry pipeline production hardening** — OODA-E2E-006 proved the incident→postmortem→
+   evolution path. Production-hardening the telemetry ingest and incident response automation
+   is Sprint 9's observability track.
+5. **BFF live integration testing** — With all core services delivered, BFF endpoints should
+   be smoke-tested under VITE_BFF_FALLBACK=strict in a live review environment.
 
 ---
 
@@ -163,14 +183,16 @@ All 15 `todo` tasks from Sprint 8 are carry-over candidates. Priority order:
 The following invariants from prior sprints remain in force and must not be relaxed in Sprint 9:
 
 - **Broker-live is forbidden** without risk-owner + operator dual gate.
-- **Capital-binding-live is forbidden** until broker credentials are present and sidecar canary is closed.
+- **Capital-binding-live is forbidden** until MGMT-BROKER-002 is explicitly unblocked and
+  the canary approval gate is established.
 - **MGMT-BROKER-002** remains blocked pending Shioaji credentials. M7 canary readiness
   is not closed. Do not schedule canary advancement tasks until this is explicitly unblocked.
-- All paper/canary/live stage transitions must pass DEP-004 pool/runtime compatibility check
-  (once DEP-004 is implemented).
+- All paper → canary → live stage transitions must pass DEP-004 pool/runtime compatibility
+  check (now implemented).
 - Evidence for every OSS integration task must land in `support/evidence/<epic>-<task>/`
   before registry admission is considered valid.
 
 ---
 
 *Generated by SPRINT-8-CLOSEOUT task. See epic_completion_summary.json for machine-readable EPIC status.*
+*Revised 2026-05-19 to reflect final archive state after metrics consistency fix.*
