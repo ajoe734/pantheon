@@ -25,3 +25,12 @@ python3 -m pytest tests/lovable/test_forbidden_path_scanner.py -v
 ```
 
 Result: 4 passed.
+
+## Publication
+
+PR #222 merged to `dev` on 2026-05-19 as
+`c231fc29425850a207e8b3df5ad312c05212fb1c`.
+
+Post-merge closeout refresh kept the task scope limited to this evidence note
+so `scripts/ai-status.sh done` can record a trailer-bearing task commit after
+the merged PR state is visible locally.
