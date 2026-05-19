@@ -240,9 +240,10 @@ class TestCheckCurrentWaveClosed:
         ws = {"current_wave_id": "2026-W25", "status": "closed"}
         check_current_wave_closed(ws)  # must not raise
 
-    def test_status_frozen_accepted(self):
+    def test_status_frozen_rejected(self):
         ws = {"current_wave_id": "2026-W25", "status": "frozen"}
-        check_current_wave_closed(ws)  # must not raise
+        with pytest.raises(WaveGuardError, match="Current-wave-frozen guard"):
+            check_current_wave_closed(ws)
 
 
 # ---------------------------------------------------------------------------
@@ -348,21 +349,21 @@ class TestCheckWaveOpen:
 
 class TestCheckWaveCloseAndFreeze:
     def test_close_no_baton_configured(self):
-        check_wave_close({}, "anyone")
+        check_wave_close({"status": "frozen", "frozen_at": _LONG_AGO}, "anyone")
 
     def test_close_baton_match(self):
-        check_wave_close({"baton_owner": "Codex"}, "Codex")
+        check_wave_close({"status": "frozen", "frozen_at": _LONG_AGO, "baton_owner": "Codex"}, "Codex")
 
     def test_close_baton_mismatch(self):
         with pytest.raises(WaveGuardError):
-            check_wave_close({"baton_owner": "Codex"}, "Claude")
+            check_wave_close({"status": "frozen", "frozen_at": _LONG_AGO, "baton_owner": "Codex"}, "Claude")
 
     def test_freeze_no_baton_configured(self):
-        check_wave_freeze({}, "anyone")
+        check_wave_freeze({"status": "open"}, "anyone")
 
     def test_freeze_baton_match(self):
-        check_wave_freeze({"baton_owner": "Codex"}, "Codex")
+        check_wave_freeze({"status": "open", "baton_owner": "Codex"}, "Codex")
 
     def test_freeze_baton_mismatch(self):
         with pytest.raises(WaveGuardError):
-            check_wave_freeze({"baton_owner": "Codex"}, "Claude")
+            check_wave_freeze({"status": "open", "baton_owner": "Codex"}, "Claude")
