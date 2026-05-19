@@ -1,9 +1,9 @@
 """Research adapter backend disclosure report.
 
 This module is intentionally static and governance-facing. It records the
-current repository truth for research/upstream adapters: whether the default
-path is a real backend or a stub/mock path, which real backend is selectable,
-and which gate keeps that path non-default.
+current repository truth for research adapters: whether the default path is a
+real backend or a stub/mock path, which real backend is selectable, and which
+gate keeps that path non-default.
 """
 from __future__ import annotations
 
@@ -471,12 +471,12 @@ def _default_backend_disclosures() -> Iterable[BackendDisclosure]:
         BackendDisclosure(
             adapter_id="rllib",
             adapter_kind="rllib",
-            default_backend="stub",
+            default_backend="stub_rllib",
             default_backend_kind="stub_mock",
             activation_state="real_backend_gated",
-            real_backend="rllib",
+            real_backend="rllib_ppo",
             real_backend_status="selectable_gated",
-            stub_backend="stub",
+            stub_backend="stub_rllib",
             stub_backend_available=True,
             selector="PANTHEON_RLLIB_BACKEND=rllib",
             activation_gates=("PANTHEON_RLLIB_PREP_ENABLED=1", "PANTHEON_RLLIB_BACKEND=rllib"),
@@ -487,8 +487,8 @@ def _default_backend_disclosures() -> Iterable[BackendDisclosure]:
                 "services/research/rllib/activation_smoke.py",
             ),
             notes=(
-                "Default selector resolves to stub.",
-                "Real RLlib is explicit-select and still research-only.",
+                "Default selector token stub resolves to emitted backend stub_rllib.",
+                "Selector token rllib emits rllib_ppo and remains research-only.",
             ),
         ),
         BackendDisclosure(
@@ -625,29 +625,6 @@ def _default_backend_disclosures() -> Iterable[BackendDisclosure]:
             notes=(
                 "W&B is not selected by default; the default experiment backend remains MLflow.",
                 "W&B online sync is explicit-gated; offline local store is not online proof.",
-            ),
-        ),
-        BackendDisclosure(
-            adapter_id="openclaw",
-            adapter_kind="openclaw",
-            default_backend="pantheon_openclaw_gateway_adapter",
-            default_backend_kind="real_service",
-            activation_state="real_backend_gated",
-            real_backend="upstream_openclaw_gateway",
-            real_backend_status="selectable_gated",
-            stub_backend=None,
-            stub_backend_available=False,
-            selector="OPENCLAW_GATEWAY_URL",
-            activation_gates=("docker compose --profile openclaw", "OPENCLAW_GATEWAY_TOKEN"),
-            evidence_refs=(
-                "services/openclaw-gateway-adapter/main.py",
-                "services/openclaw-gateway-adapter/live_gate_adapter.py",
-                "services/openclaw-gateway-adapter/tool_workflow_bridge.py",
-                "OPENCLAW_RUNTIME_CONTRACT.md",
-            ),
-            notes=(
-                "Pantheon adapter is a real service boundary that degrades when upstream OpenClaw is absent.",
-                "Upstream OpenClaw gateway is explicit-profile/gateway configured, not a preview mock.",
             ),
         ),
     )

@@ -5,6 +5,7 @@ import pytest
 from services.governance.research_activation.disclosure_report import (
     BackendDisclosure,
     DisclosureReportError,
+    RESEARCH_OUTPUT_SCOPE,
     ResearchBackendDisclosureReport,
     SCHEMA_VERSION,
     build_default_disclosure_report,
@@ -21,6 +22,7 @@ def test_default_disclosure_report_serializes_current_backend_truth() -> None:
     assert payload["validation"]["passed"] is True
     assert payload["summary"]["fail_closed"] is True
     assert payload["summary"]["stub_or_mock_default_count"] >= 8
+    assert payload["summary"]["order_route_capable_count"] == 0
 
     adapter_ids = {adapter["adapter_id"] for adapter in payload["adapters"]}
     assert {
@@ -34,8 +36,11 @@ def test_default_disclosure_report_serializes_current_backend_truth() -> None:
         "vectorbt",
         "imitation_bc",
         "wandb_experiment_tracking",
-        "openclaw",
     }.issubset(adapter_ids)
+    assert "openclaw" not in adapter_ids
+    assert all(
+        adapter["output_scope"] == RESEARCH_OUTPUT_SCOPE for adapter in payload["adapters"]
+    )
 
     qlib = report.adapter_by_id("qlib")
     assert qlib.default_backend == "stub_lgbm"
@@ -46,6 +51,12 @@ def test_default_disclosure_report_serializes_current_backend_truth() -> None:
     assert "QLIB_BACKEND=real" in qlib.activation_gates
     assert qlib.silent_stub_fallback is False
     assert qlib.can_route_orders is False
+
+    rllib = report.adapter_by_id("rllib")
+    assert rllib.default_backend == "stub_rllib"
+    assert rllib.stub_backend == "stub_rllib"
+    assert rllib.real_backend == "rllib_ppo"
+    assert "PANTHEON_RLLIB_BACKEND=rllib" in rllib.activation_gates
 
     imitation = report.adapter_by_id("imitation_bc")
     assert imitation.uses_real_backend_by_default is True
