@@ -19,6 +19,7 @@ Closeout date: 2026-05-19
 - Reviewer approval: Claude2 approved on 2026-05-19.
 - Review evidence: `support/evidence/EP5-004-V2/review.md`.
 - Implementation PR: https://github.com/ajoe734/pantheon/pull/272
+- Implementation merge commit: `f34de4ebc952455a84f12ee8ae11a1cf929bb24c`
 - Merge target: `dev`
 
 ## Verification
@@ -36,6 +37,11 @@ Result:
 - `37 passed in 2.46s`
 - py_compile passed
 - diff check passed
+
+Post-merge refresh after PR #272 merged into `dev`:
+
+- `pytest -q tests/governance/test_revoke_expire.py`
+- Result: `37 passed in 2.68s`
 
 ## Boundaries
 
