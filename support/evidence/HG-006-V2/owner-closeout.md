@@ -46,6 +46,6 @@ Checks passing on PR #285 after dev merge:
 
 ## Final Merge
 
-- PR #285 merged into dev at `569ee876b77bd184cb64882fd257d8ac3f985dee`
-- Merged at: 2026-05-19T19:12:34Z
-- This refresh commit is the final task-branch tip required by the done gate trailer check.
+- PR #285 merged into dev at `569ee876b77bd184cb64882fd257d8ac3f985dee` (2026-05-19T19:12:34Z)
+- PR #291 (closeout refresh) merged into dev at `7efe00e7e623ea9893f0464d7896baf299f36da5` (2026-05-19T19:20:22Z)
+- Final trailer-bearing tip commit placed after all dev merges to satisfy the done gate.
