@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Strategy spec distillation production smoke (real research note)
-- Status: review_approved
-- Owner: Codex
-- Reviewer: Claude
+- Status: todo
+- Owner: Claude2
+- Reviewer: Copilot
 - Phase: Sprint 8 / EPIC-STRAT-EXP-DEEP
-- Last update: 2026-05-19T02:49:29Z
-- Next: Review approved and returned to Codex for finalization
+- Last update: 2026-05-19T06:31:31Z
+- Next: Helper-claimed by Claude2 while Copilot completes higher-priority work.
 
 ## Summary
 把 STRAT-003 source converter 升級到 production：吃真實 internal research note (docs/research/notes/*.md 或 fixture)，產出可進 registry 的 StrategySpec，含 evidence_refs + code_refs 完整 binding。獨立 module，不改 STRAT-001..004 公開 API。
@@ -27,12 +27,7 @@ Do not read `current-work.md` by default for implementation context.
 - support/evidence/STRAT-V2-001/sample_run.json
 
 ## Recent Task Activity
-- 2026-05-19T02:47:42Z · Orchestrator · chair_review_reassignment_applied · Chair reassigned review from Copilot to Claude: Copilot reviewer workers are repeatedly failing with 402 quota while the review is ready and scoped to already-merged artifacts.
-- 2026-05-19T02:47:45Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
-- 2026-05-19T02:47:45Z · Orchestrator · worker_worktree_reused · -
-- 2026-05-19T02:47:45Z · Orchestrator · worker_started · Worker started via claude_cli: review_ready_dispatch
-- 2026-05-19T02:49:29Z · Claude · review_approved · Review approved and returned to Codex for finalization
-- 2026-05-19T02:52:51Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
+- none
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
