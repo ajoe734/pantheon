@@ -30,6 +30,8 @@ Closeout date: 2026-05-19
 - PR #184: <https://github.com/ajoe734/pantheon/pull/184>.
 - PR #184 merged into `dev` on 2026-05-19 as
   `5f738e7489905ab9bce09aab343a49378a01d899`.
+- Final closeout evidence is carried by follow-up PR #186 after refreshing the
+  task branch on top of the PR #184 merge commit.
 
 ## Reviewer Approval
 
