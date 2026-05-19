@@ -68,6 +68,20 @@ def test_operator_checklist_fails_closed_for_non_live_runtime_binding() -> None:
     )
 
 
+def test_operator_checklist_fails_closed_without_runtime_target_stage() -> None:
+    payload = _activation_request()
+    del payload["operator_review"]["target_stage"]
+
+    checklist = generate_operator_checklist(payload)
+
+    assert checklist.can_sign_off is False
+    assert checklist.items[3].status == "blocked"
+    assert (
+        "runtime binding live-stage evidence is required"
+        in checklist.items[3].blocking_reasons
+    )
+
+
 def test_operator_checklist_fails_closed_for_active_hard_fail_condition() -> None:
     payload = _activation_request()
     payload["conditions"]["kill_switch_unavailable"] = True

@@ -306,6 +306,8 @@ def _check_runtime_binding(context: _ChecklistContext) -> _CheckResult:
             blocking_reasons.append("runtime binding target stage must be live")
         else:
             evidence_refs.append(stage_path)
+    else:
+        blocking_reasons.append("runtime binding live-stage evidence is required")
 
     verified_value, verified_path = _first_key(
         context,
@@ -315,8 +317,6 @@ def _check_runtime_binding(context: _ChecklistContext) -> _CheckResult:
         evidence_refs.append(verified_path)
     elif verified_value is False:
         blocking_reasons.append("runtime binding must be verified")
-    elif not stage_path:
-        blocking_reasons.append("runtime binding live-stage verification is required")
 
     return _CheckResult(
         tuple(ref for ref in evidence_refs if ref),
