@@ -90,3 +90,16 @@ Fresh verification on 2026-05-17:
 
 Result: audit infrastructure is review approved and ready for task closeout.
 This task still does not modify the `execute-plans` repository.
+
+## 2026-05-18 Codex Status Recovery
+
+Codex found the implementation and review handoff already merged through PRs
+#62 and #80, while the canonical task board still listed
+`LOVABLE-STRICT-PUBLISH` as `todo`. The audit infrastructure remains unchanged
+from the merged state; this recovery only records the task-board closeout.
+
+Verification rerun on 2026-05-18:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q -p no:cacheprovider scripts/test_audit_lovable_strict_publish.py`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/audit_lovable_strict_publish.py scripts/test_audit_lovable_strict_publish.py`
+- `git diff --check -- scripts/audit_lovable_strict_publish.py scripts/test_audit_lovable_strict_publish.py support/evidence/LOVABLE-STRICT-PUBLISH/audit_report.md support/evidence/LOVABLE-STRICT-PUBLISH/required_build_env.json support/evidence/LOVABLE-STRICT-PUBLISH/bundle_verification_probe.md`

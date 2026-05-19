@@ -14,6 +14,7 @@ from common import (
     runtime_log_path,
     shell_quote,
     spawn_background_process,
+    worker_runtime_paths,
 )
 
 
@@ -136,6 +137,7 @@ class CopilotCloudAdapter(BaseAdapter):
 
         run_id = new_runtime_id("copilot-cloud")
         log_path = runtime_log_path("copilot-cloud", request.agent_id)
+        runtime_paths = worker_runtime_paths(self.config, run_id)
         env = os.environ.copy()
         env.update(delivery_runtime_env(self.config, request.metadata))
         env.update(
@@ -146,7 +148,15 @@ class CopilotCloudAdapter(BaseAdapter):
                 "ORCH_PROVIDER": "copilot_cloud",
             }
         )
-        process, _ = spawn_background_process(command, cwd=root, log_path=log_path, env=env)
+        process, _ = spawn_background_process(
+            command,
+            cwd=root,
+            log_path=log_path,
+            env=env,
+            run_id=run_id,
+            heartbeat_path=runtime_paths["heartbeat_path"],
+            status_path=runtime_paths["status_path"],
+        )
         return DeliveryResult(
             ok=True,
             adapter=self.name,
@@ -159,5 +169,10 @@ class CopilotCloudAdapter(BaseAdapter):
             log_path=str(log_path),
             pid=process.pid,
             run_id=run_id,
-            metadata={"shell_command": shell_quote(command), "repo": repo},
+            metadata={
+                "shell_command": shell_quote(command),
+                "repo": repo,
+                "heartbeat_path": str(runtime_paths["heartbeat_path"]),
+                "runner_status_path": str(runtime_paths["status_path"]),
+            },
         )

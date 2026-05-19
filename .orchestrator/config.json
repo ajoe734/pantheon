@@ -34,6 +34,41 @@
     "max_worker_history": 200,
     "auto_refresh_provider_capabilities": true
   },
+  "worker_runtime": {
+    "worker_lease_seconds": 1800,
+    "queue_lease_seconds": 1800,
+    "heartbeat_stale_seconds": 300,
+    "heartbeat_grace_seconds": 60,
+    "runner_heartbeat_interval_seconds": 15
+  },
+  "watchdog": {
+    "enabled": true,
+    "state_file": ".orchestrator/watchdog-state.json",
+    "metrics_file": ".orchestrator/metrics/supervisor-watchdog.jsonl",
+    "heartbeat_stale_seconds": 900,
+    "restart_budget_window_seconds": 900,
+    "max_restarts_per_window": 2,
+    "max_restarts_per_hour": 4,
+    "backoff_schedule_seconds": [
+      30,
+      120,
+      300,
+      900
+    ],
+    "circuit_cooldown_seconds": 1800,
+    "safe_mode_seconds": 120,
+    "min_disk_free_gb": 2.0,
+    "max_disk_used_percent": 95.0,
+    "min_memory_available_mb": 512,
+    "max_load_1m": 24.0,
+    "max_active_workers": 12,
+    "supervisor_command": [
+      "python3",
+      "-u",
+      ".orchestrator/supervisor.py",
+      "--verbose"
+    ]
+  },
   "chair_review": {
     "enabled": true,
     "cooldown_seconds": 1800,
@@ -811,6 +846,20 @@
       }
     }
   },
+  "underutilization_dispatch": {
+    "enabled": false,
+    "threshold_ratio": 0.5,
+    "continuous_window_seconds": 900,
+    "cooldown_seconds": 900,
+    "max_new_sidecars_per_wave": 2,
+    "max_active_sidecars_per_agent": 1,
+    "productive_worker_statuses": [
+      "running",
+      "waiting_approval",
+      "suspended_approval",
+      "retry_backoff"
+    ]
+  },
   "ready_dispatcher": {
     "enabled": true,
     "review_statuses": [
@@ -844,12 +893,11 @@
     "helper_claim": {
       "enabled": true,
       "task_statuses": [
-        "todo",
-        "in_progress"
+        "todo"
       ],
       "require_owner_higher_priority_load": true,
-      "claim_idle_work": true,
-      "claim_sidecars_when_idle": true
+      "claim_idle_work": false,
+      "claim_sidecars_when_idle": false
     },
     "worker_self_claim": {
       "enabled": true,
@@ -871,7 +919,22 @@
       "Copilot": 5
     },
     "max_tasks_per_agent": 1,
-    "max_dispatches_per_tick": 8
+    "max_tasks_per_agent_by_agent": {
+      "Codex": 3,
+      "Codex2": 3
+    },
+    "max_dispatches_per_tick": 10,
+    "max_active_workers_per_task": 1,
+    "max_concurrent_per_quota_group": {
+      "claude": 1,
+      "claude2": 1,
+      "gemini": 1,
+      "gemini2": 1,
+      "codex1": 3,
+      "codex2": 3,
+      "copilot": 1
+    },
+    "max_concurrent_workers": 11
   },
   "branch_workflow": {
     "enabled": true,
