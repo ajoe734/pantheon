@@ -50,3 +50,18 @@ Results:
 - `py_compile`: passed
 
 No live broker, live capital, or external order route side effects were invoked.
+
+## PR Refresh
+
+After closeout PR `#221` opened, the branch was refreshed with `origin/dev` to
+clear the GitHub `BEHIND` state. Owner closeout reran the same focused checks:
+
+```bash
+pytest -q tests/integrations/test_research_no_order_route.py
+python3 -m py_compile services/governance/research_activation/no_order_route_scanner.py tests/integrations/test_research_no_order_route.py
+```
+
+Results:
+
+- `pytest`: `3 passed in 0.77s`
+- `py_compile`: passed
