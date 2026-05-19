@@ -46,3 +46,9 @@ Not changed:
 - L1 canonical architecture or policy documents
 - `sidecar_cleanup` behavior outside the evidence-retention wrapper
 - live/canary/human-gate/rollback/postmortem evidence artifacts
+
+## Publication Checkpoints
+
+- Implementation PR: #231, merged into `dev` at `a606ffa8a48b6fe6a57893381d7123124f972a13`.
+- Reviewer/owner evidence PR: #237, merged into `dev` at `14fdc934bf0bd34d278a21d25ec9307fae96edda`.
+- This final status-ready commit records owner closeout metadata after the evidence PR merge.
