@@ -752,6 +752,9 @@ def validate_packet(packet_or_data: PromotionReadinessPacket | Mapping[str, Any]
 
     provided_keys = {item.key for item in packet.evidence.provided}
     missing_required = tuple(key for key in packet.evidence.required if key not in provided_keys)
+    blocking_provided_evidence = tuple(
+        item for item in packet.evidence.provided if item.status not in PASSING_STATUSES
+    )
     blocking_gate_results = tuple(item for item in packet.evidence.gate_results if item.status not in PASSING_STATUSES)
     blocking_approvals = tuple(
         item
@@ -770,6 +773,11 @@ def validate_packet(packet_or_data: PromotionReadinessPacket | Mapping[str, Any]
             errors.append(
                 "evidence.required must all be provided when can_proceed is true: "
                 + ", ".join(missing_required)
+            )
+        if blocking_provided_evidence:
+            errors.append(
+                "provided evidence statuses must pass when can_proceed is true: "
+                + ", ".join(f"{item.key}={item.status}" for item in blocking_provided_evidence)
             )
         if blocking_gate_results:
             errors.append(

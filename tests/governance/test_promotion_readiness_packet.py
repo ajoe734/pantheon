@@ -189,6 +189,15 @@ def test_fail_closed_when_can_proceed_without_required_approval():
         PromotionReadinessPacket.from_dict(_structured_packet(approval=approval))
 
 
+def test_fail_closed_when_provided_required_evidence_status_blocks():
+    evidence = dict(_structured_packet()["evidence"])
+    evidence["provided"] = [dict(item) for item in evidence["provided"]]
+    evidence["provided"][0]["status"] = "failed"
+
+    with pytest.raises(PromotionReadinessPacketError, match="provided evidence statuses"):
+        PromotionReadinessPacket.from_dict(_structured_packet(evidence=evidence))
+
+
 def test_fail_closed_when_live_or_capital_flag_is_enabled():
     flags = {
         "BROKER_PRODUCTION_LIVE_ENABLED": True,
@@ -198,4 +207,3 @@ def test_fail_closed_when_live_or_capital_flag_is_enabled():
 
     with pytest.raises(PromotionReadinessPacketError, match="fail-closed"):
         PromotionReadinessPacket.from_dict(_structured_packet(flags=flags))
-
