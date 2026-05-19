@@ -8,7 +8,7 @@ Status: approved
 ## Scope
 
 Reviewed the current `task/OSS-FINRL-V2-001` HEAD
-`cc52b0ac3e33a6bb4e3d62d69e1ed7fcede1e111`, including:
+`746770a72e3b5418dacdc2d3cfdff7ef9d6d6880`, including:
 
 - `services/research/finrl/production_drl_run.py`
 - `services/research/finrl/twse_stock_env.py`
@@ -21,6 +21,14 @@ Reviewed the current `task/OSS-FINRL-V2-001` HEAD
 ## Findings
 
 No blocking findings remain.
+
+Refresh note: the post-approval HEAD only changes
+`support/evidence/OSS-FINRL-V2-001/admission_packet.json` to record
+`finalization_owner=Gemini2`. The packet still validates as a bounded
+PromotionReadinessPacket candidate-review artifact, keeps the model artifact in
+`draft`, requests only `draft_to_candidate`, and preserves the fail-closed
+assertions for registry write, broker session, order route, capital binding,
+GPU, and deployment stage.
 
 The prior blocker was resolved: the production evidence path now constructs the
 upstream FinRL `StockTradingEnv` from the installed `FinRL==0.3.7`
@@ -54,6 +62,15 @@ python3 -m py_compile services/research/finrl/production_drl_run.py services/res
 python3 -m pytest -q services/research/finrl/test_production_drl_run.py services/research/finrl/test_adapter.py services/research/finrl/smoke_test.py
 /tmp/pantheon-worker-worktrees/pantheon/oss-finrl-v2-001/.finrl_venv/bin/python -c "from twse_stock_env import TWSESerialEnv; from production_drl_run import load_twse_data; env=TWSESerialEnv(load_twse_data(periods=8), use_finrl=True); print(env.environment_summary())"
 .finrl_venv/bin/python -m pytest -q services/research/finrl/test_production_drl_run.py services/research/finrl/test_adapter.py services/research/finrl/smoke_test.py
+python3 - <<'PY'
+import json
+import sys
+sys.path.insert(0, 'services/research/finrl')
+from registry_admission_packet import validate_admission_packet
+with open('support/evidence/OSS-FINRL-V2-001/admission_packet.json', encoding='utf-8') as f:
+    packet = json.load(f)
+print(validate_admission_packet(packet))
+PY
 ```
 
 Results:
@@ -62,6 +79,7 @@ Results:
 - Root pytest: 24 passed, 1 skipped.
 - Task-local venv upstream env probe: passed with `finrl_available=true`.
 - Task-local venv pytest: 25 passed.
+- Admission packet validator: passed (`[]`).
 
 ## Decision
 
