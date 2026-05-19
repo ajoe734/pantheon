@@ -1,13 +1,14 @@
 # OSS-QUANTLIB-V2-001 Closeout
 
 Task: OSS-QUANTLIB-V2-001
-Owner: Codex
+Owner: Claude2
 Reviewer: Codex2
 Status at closeout pickup: review_approved
 Implementation PR: https://github.com/ajoe734/pantheon/pull/82
 Review handoff PR: https://github.com/ajoe734/pantheon/pull/98
 Closeout evidence PR: https://github.com/ajoe734/pantheon/pull/100
 Final evidence alignment PR: https://github.com/ajoe734/pantheon/pull/140
+Final approval PR: https://github.com/ajoe734/pantheon/pull/173
 
 ## Delivered Scope
 
@@ -18,8 +19,7 @@ Final evidence alignment PR: https://github.com/ajoe734/pantheon/pull/140
 
 ## Review Approval
 
-Codex2 approved the task on 2026-05-18 after checking the full acceptance
-surface and owner handoff:
+Codex2 approved the task on 2026-05-19 via PR #173 (owner Claude2):
 
 - `price_chain` covers 5 strikes x 3 expiries x call/put.
 - Each row includes price, delta, gamma, vega, and theta.
@@ -27,6 +27,8 @@ surface and owner handoff:
 - `admission_packet.json` conforms to `PromotionReadinessPacket.v1`.
 - Call-put parity is within the 1e-3 task tolerance.
 - Fail-closed assertions confirm no broker, registry, capital binding, order route, or deployment side effects.
+
+Review file: `support/reviews/OSS-QUANTLIB-V2-001-review-codex2.md`
 
 ## Safety Boundary
 
@@ -37,11 +39,14 @@ surface and owner handoff:
 
 ## Closeout Verification
 
-- `pytest -q services/research/quantlib/test_production_option_chain.py` - 6 passed on 2026-05-18.
-- `jq -e '.can_proceed == true and (.missing_evidence | length == 0) and .pricing_snapshot_summary.checksum == "sha256:78bd779e7f59879118842a8b0948afe9cdb62fad80d5bb94129c606ece690984"' support/evidence/OSS-QUANTLIB-V2-001/admission_packet.json` - passed on 2026-05-18.
+- `pytest -q services/research/quantlib/test_production_option_chain.py` - 6 passed (Codex2 reviewer verification, 2026-05-19).
+- `jq -e '.can_proceed == true and (.missing_evidence | length == 0) and (.gate_results | map(.status == "passed") | all) and .pricing_snapshot_summary.checksum == .candidate_artifact.checksum and .candidate_artifact.checksum == .pricing_snapshot_ref.checksum' support/evidence/OSS-QUANTLIB-V2-001/admission_packet.json` - passed on 2026-05-19.
+- Admission packet current checksum: `sha256:80b1a323b3ce1f3fa5bdb35e20b8750e7c14c3d97fe7b06c36335ea205095b59` (refreshed 2026-05-19 via commit 58918194).
+
+Note: QuantLib not installed in closeout worktree environment; all pytest verification is from Codex2 reviewer run and is durable in the review file.
 
 ## Publication Notes
 
-PR #82, PR #98, PR #100, and PR #140 have merged into `dev`. This file
-records the final Codex-owned closeout basis before running the owner-only
-`review_approved -> done` status transition.
+PR #82, PR #98, PR #100, and PR #140 have merged into `dev`. PR #173 is the final
+Claude2-owned closeout PR (auto-merge enabled). This file records the final
+Claude2-owned closeout basis for the `review_approved -> done` status transition.
