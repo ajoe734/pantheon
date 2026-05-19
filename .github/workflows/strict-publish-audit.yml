@@ -37,7 +37,7 @@ jobs:
       - name: Validate audit wrapper
         run: |
           bash -n scripts/lovable/ci_strict_publish_audit.sh
-          python3 -m py_compile scripts/audit_lovable_strict_publish.py
+          python3 -m py_compile scripts/lovable/strict_publish_audit.py scripts/lovable/publish_gate_checker.py
 
       - name: Run strict-publish audit
         run: bash scripts/lovable/ci_strict_publish_audit.sh
@@ -62,5 +62,12 @@ jobs:
               cat "${LOVABLE_AUDIT_OUTPUT_DIR}/strict-publish-audit.md"
             else
               echo "Audit report was not generated."
+            fi
+            echo
+            if [[ -f "${LOVABLE_AUDIT_OUTPUT_DIR}/publish-gate.json" ]]; then
+              echo "## Publish gate"
+              cat "${LOVABLE_AUDIT_OUTPUT_DIR}/publish-gate.json"
+            else
+              echo "Publish gate result was not generated."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
