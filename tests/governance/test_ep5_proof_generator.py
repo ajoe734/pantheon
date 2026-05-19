@@ -7,6 +7,7 @@ from services.governance.ep5_proof.packet_generator import (
     EP5ProofGeneratorError,
     PROOF_FLAG_BROKER_PRODUCTION_LIVE,
     PROOF_FLAG_CANARY_RUNTIME_STARTED,
+    PROOF_FLAG_DEPLOYMENT_STAGE_IS_CANARY,
     PROOF_FLAG_LIVE_CAPITAL_SIDE_EFFECTS,
     PROOF_FLAG_ORDER_ROUTE_MODE,
     PROOF_FLAG_RUNTIME_HEARTBEAT_RECEIVED,
@@ -238,3 +239,52 @@ class TestMalformedInput:
     def test_empty_dict_raises(self):
         with pytest.raises(EP5ProofGeneratorError):
             generate_ep5_proof_packet({})
+
+
+# ---------------------------------------------------------------------------
+# Deployment stage guard (regression: non-canary must never allow can_proceed)
+# ---------------------------------------------------------------------------
+
+
+class TestDeploymentStageGuard:
+    @pytest.mark.parametrize("stage", ["paper", "live", "frozen", "staging", "production"])
+    def test_non_canary_deployment_stage_blocks(self, stage: str):
+        """Regression: non-canary deployment_stage must never produce can_proceed=True."""
+        packet = generate_ep5_proof_packet(_make_run(deployment_stage=stage))
+        assert packet.can_proceed is False, (
+            f"can_proceed must be False for deployment_stage={stage!r}"
+        )
+        codes = [b.code for b in packet.blocking_reasons]
+        assert "DEPLOYMENT_STAGE_NOT_CANARY" in codes, (
+            f"expected DEPLOYMENT_STAGE_NOT_CANARY blocking reason for deployment_stage={stage!r}"
+        )
+
+    @pytest.mark.parametrize("stage", ["paper", "live", "staging"])
+    def test_non_canary_stage_flag_false_in_output(self, stage: str):
+        packet = generate_ep5_proof_packet(_make_run(deployment_stage=stage))
+        assert packet.flags.values[PROOF_FLAG_DEPLOYMENT_STAGE_IS_CANARY] is False
+
+    def test_canary_stage_flag_true_in_output(self):
+        packet = generate_ep5_proof_packet(_VALID_CANARY_RUN)
+        assert packet.flags.values[PROOF_FLAG_DEPLOYMENT_STAGE_IS_CANARY] is True
+
+    def test_deployment_stage_not_canary_is_critical_severity(self):
+        packet = generate_ep5_proof_packet(_make_run(deployment_stage="paper"))
+        critical = [b for b in packet.blocking_reasons if b.code == "DEPLOYMENT_STAGE_NOT_CANARY"]
+        assert len(critical) == 1
+        assert critical[0].severity == "critical"
+
+    def test_non_canary_blocks_even_when_all_other_flags_pass(self):
+        """All four proof flags pass but deployment_stage=paper must still block."""
+        run = _make_run(
+            deployment_stage="paper",
+            runtime_started=True,
+            heartbeat_count=10,
+            order_route_mode="paper",
+            telemetry_event_count=5,
+            result="pass",
+        )
+        packet = generate_ep5_proof_packet(run)
+        assert packet.can_proceed is False
+        codes = [b.code for b in packet.blocking_reasons]
+        assert "DEPLOYMENT_STAGE_NOT_CANARY" in codes

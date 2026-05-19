@@ -37,6 +37,7 @@ PROOF_FLAG_CANARY_RUNTIME_STARTED = "canary_runtime_started"
 PROOF_FLAG_RUNTIME_HEARTBEAT_RECEIVED = "runtime_heartbeat_received"
 PROOF_FLAG_ORDER_ROUTE_MODE = "order_route_mode"
 PROOF_FLAG_TELEMETRY_INGESTED = "telemetry_ingested"
+PROOF_FLAG_DEPLOYMENT_STAGE_IS_CANARY = "deployment_stage_is_canary"
 
 # Fail-closed invariant: live-capital and broker-production must stay False
 PROOF_FLAG_LIVE_CAPITAL_SIDE_EFFECTS = "live_capital_side_effects"
@@ -129,6 +130,7 @@ def generate_ep5_proof_packet(
     # ------------------------------------------------------------------
     # Evaluate proof flags
     # ------------------------------------------------------------------
+    flag_deployment_stage_is_canary = deployment_stage == "canary"
     flag_runtime_started = runtime_started
     flag_heartbeat_received = heartbeat_count > 0
     flag_order_route_paper = order_route_mode in _PAPER_ORDER_ROUTE_MODES
@@ -203,6 +205,15 @@ def generate_ep5_proof_packet(
     # ------------------------------------------------------------------
     blocking: list[BlockingReason] = []
 
+    if not flag_deployment_stage_is_canary:
+        blocking.append(BlockingReason(
+            code="DEPLOYMENT_STAGE_NOT_CANARY",
+            message=(
+                f"deployment_stage={deployment_stage!r} is not 'canary'; "
+                "EP5 proof packets may only be generated for canary-stage runs"
+            ),
+            severity="critical",
+        ))
     if not flag_runtime_started:
         blocking.append(BlockingReason(
             code="CANARY_RUNTIME_NOT_STARTED",
@@ -257,6 +268,7 @@ def generate_ep5_proof_packet(
     # Flags subtree (fail-closed invariants always explicit)
     # ------------------------------------------------------------------
     flags = FlagSubtree(values={
+        PROOF_FLAG_DEPLOYMENT_STAGE_IS_CANARY: flag_deployment_stage_is_canary,
         PROOF_FLAG_CANARY_RUNTIME_STARTED: flag_runtime_started,
         PROOF_FLAG_RUNTIME_HEARTBEAT_RECEIVED: flag_heartbeat_received,
         PROOF_FLAG_ORDER_ROUTE_MODE: flag_order_route_paper,
