@@ -4,7 +4,7 @@
 **Owner:** Claude2  
 **Reviewer:** Codex  
 **Review outcome:** Approved 2026-05-19T17:17:46Z  
-**PR:** #260 (auto-merge enabled; CI passing as of 2026-05-19T17:37Z)
+**PR:** #260 merged into dev 2026-05-19T17:51Z
 
 ## Deliverables
 
@@ -28,7 +28,7 @@ pytest tests/governance/test_promotion_readiness_validator.py -q
 27 passed in 1.90s
 ```
 
-Run pre-merge (after dev sync): all 27 tests pass.
+Post-merge dev sync (HA-005-V2, HA-006-V2, wave guard): all 27 tests still pass.
 
 ## Reviewer Notes
 
