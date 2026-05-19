@@ -331,8 +331,24 @@ def test_approval_not_recorded_even_when_state_passing():
 
 
 # ---------------------------------------------------------------------------
-# 13. Multiple simultaneous blockers
+# 13. Required approval revoked by state only (no revoked_at timestamp)
 # ---------------------------------------------------------------------------
+
+def test_required_approval_revoked_state_only_no_timestamp():
+    """state='revoked' must emit approval_revoked even when revoked_at is absent."""
+    data = _base_packet(can_proceed=False, reason="Risk owner approval revoked by state")
+    data["approval"]["risk_owner"]["state"] = "revoked"
+    # revoked_at intentionally absent — state alone must be sufficient
+    data["approval"]["status"] = "revoked"
+    packet = _load(data)
+    reasons = validate_readiness(packet)
+    codes = _codes(reasons)
+    assert CODE_APPROVAL_REVOKED in codes, f"Expected approval_revoked, got codes: {codes}"
+    rev_reason = next(r for r in reasons if r.code == CODE_APPROVAL_REVOKED)
+    assert rev_reason.details["role"] == "risk_owner"
+    assert rev_reason.details["revoked_at"] is None
+    assert not is_ready(packet)
+
 
 def test_multiple_blockers_combined():
     """Missing evidence + unsafe flag + not-recorded approval all produce reasons."""

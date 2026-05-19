@@ -126,12 +126,13 @@ def _check_approvals(packet: PromotionReadinessPacket) -> list[BlockingReason]:
             ))
             continue
 
-        if state == "expired" or req.revoked_at is not None:
-            # revoked_at takes precedence
-            if req.revoked_at is not None:
+        if state == "revoked" or state == "expired" or req.revoked_at is not None:
+            # state='revoked' or revoked_at present both indicate revocation
+            if state == "revoked" or req.revoked_at is not None:
                 reasons.append(_reason(
                     CODE_APPROVAL_REVOKED,
-                    f"Approval for '{req.role}' was revoked at {req.revoked_at}",
+                    f"Approval for '{req.role}' was revoked"
+                    + (f" at {req.revoked_at}" if req.revoked_at is not None else ""),
                     source_ref=req.source_ref,
                     details={"role": req.role, "revoked_at": req.revoked_at},
                 ))
