@@ -137,7 +137,7 @@ def test_missing_required_evidence_key():
 # 3. Evidence with non-passing status
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("bad_status", ["fail", "failed", "missing", "expired", "revoked", "pending", "incomplete"])
+@pytest.mark.parametrize("bad_status", ["fail", "failed", "missing", "expired", "revoked", "pending", "incomplete", "warning", "unknown", "degraded"])
 def test_evidence_non_passing_status(bad_status):
     data = _base_packet(can_proceed=False, reason="Evidence not passing")
     data["evidence"]["provided"][0]["status"] = bad_status  # broker_smoke

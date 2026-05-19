@@ -18,7 +18,6 @@ from __future__ import annotations
 from typing import Any
 
 from services.governance.promotion_readiness.packet_model import (
-    BLOCKING_STATUSES,
     PASSING_APPROVAL_STATUSES,
     PASSING_STATUSES,
     UNSAFE_TRUE_FLAGS,
@@ -81,9 +80,9 @@ def _check_evidence(packet: PromotionReadinessPacket) -> list[BlockingReason]:
             details={"missing_key": key},
         ))
 
-    # Provided items whose status is not passing
+    # Provided items whose status is not passing (mirrors packet_model.validate_packet logic)
     for item in ev.provided:
-        if item.status in BLOCKING_STATUSES:
+        if item.status not in PASSING_STATUSES:
             reasons.append(_reason(
                 CODE_EVIDENCE_NOT_PASSING,
                 f"Evidence '{item.key}' has non-passing status: {item.status}",
