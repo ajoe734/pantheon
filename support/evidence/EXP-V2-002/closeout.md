@@ -91,6 +91,19 @@ Finalization results:
 - `services/lineage-read/test_multi_artifact_tree.py`: 6 passed in 0.51s.
 - `services/lineage-read`: 28 passed in 4.78s.
 
+PR #171 initially reported `mergeStateStatus=BEHIND`, so the task branch was
+updated with `origin/dev` and the same focused verification was rerun:
+
+```bash
+pytest -q services/lineage-read/test_multi_artifact_tree.py
+pytest -q services/lineage-read
+```
+
+Post-merge finalization results:
+
+- `services/lineage-read/test_multi_artifact_tree.py`: 6 passed in 0.51s.
+- `services/lineage-read`: 28 passed in 4.72s.
+
 This finalization is evidence-only. It composes with the already-merged
 lineage implementation PR #84 and evidence closeout PR #106, and it does not
 change the lineage-read implementation, tests, HTTP wrapper, registry write
