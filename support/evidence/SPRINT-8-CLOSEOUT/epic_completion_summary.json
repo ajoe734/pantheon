@@ -1,212 +1,272 @@
 {
   "sprint": "Sprint 8",
-  "sprint_period": "2026-05-16 to 2026-05-18",
-  "generated_at": "2026-05-19T00:00:00Z",
+  "sprint_period": "2026-05-16 to 2026-05-19",
+  "generated_at": "2026-05-19T08:30:00Z",
   "generated_by": "Claude (LLM-Agent)",
   "task_id": "SPRINT-8-CLOSEOUT",
+  "revision_note": "Updated 2026-05-19 to reflect final archive state. All 20 sub-tasks completed. Prior version had stale metrics from mid-sprint snapshot.",
   "epics": [
     {
       "epic_id": "EPIC-OSS-V2",
       "title": "OSS Framework Production-Scale Upgrades",
-      "status": "partial",
+      "status": "done",
       "tasks_total": 5,
-      "tasks_completed": 1,
+      "tasks_completed": 5,
       "tasks_blocked": 0,
       "tasks_in_progress": 0,
-      "tasks_todo": 4,
+      "tasks_todo": 0,
       "tasks": [
         {
           "id": "OSS-QLIB-V2-001",
           "title": "Qlib production-scale rolling + registry admission",
-          "status": "review",
+          "status": "done",
           "owner": "Codex",
           "reviewer": "Codex2",
-          "note": "In review. PR #70 merged. Awaiting Codex2 review approval."
+          "archived_at": "2026-05-19T05:23:37Z",
+          "note": "Production rolling runner + registry admission packet. PR #81 merged. 40 tests passed."
         },
         {
           "id": "OSS-STAT-V2-001",
           "title": "statsmodels production cointegration on TWSE pairs",
-          "status": "todo",
-          "owner": "Copilot",
-          "reviewer": "Codex",
-          "note": "Not started."
+          "status": "done",
+          "owner": "Codex",
+          "reviewer": "Codex2",
+          "archived_at": "2026-05-18T02:49:17Z",
+          "note": "Production cointegration on TWSE pairs. Completed mid-sprint."
         },
         {
           "id": "OSS-QUANTLIB-V2-001",
           "title": "QuantLib production option chain pricer + greeks",
-          "status": "todo",
+          "status": "done",
           "owner": "Copilot",
           "reviewer": "Codex2",
-          "note": "Not started."
+          "archived_at": "2026-05-19T07:19:29Z",
+          "note": "Production TXO option chain pricing with full greeks."
         },
         {
           "id": "OSS-RLLIB-V2-001",
           "title": "RLlib production PPO on TWSE trading env",
-          "status": "todo",
+          "status": "done",
           "owner": "Claude",
           "reviewer": "Codex",
-          "note": "Not started."
+          "archived_at": "2026-05-19T05:26:24Z",
+          "note": "Production PPO training on TWSE trading environment."
         },
         {
           "id": "OSS-FINRL-V2-001",
           "title": "FinRL production DRL on TWSE stock env",
-          "status": "todo",
+          "status": "done",
           "owner": "Gemini2",
           "reviewer": "Codex2",
-          "note": "Not started. Prior sprint (OSS-FINRL-V2-001) was finalized but this Sprint 8 instance remains todo."
+          "archived_at": "2026-05-19T05:31:01Z",
+          "note": "Production DRL training on TWSE stock environment."
         }
       ],
       "artifacts_produced": [
         "services/research/qlib/production_rolling_run.py",
-        "services/research/qlib/test_production_rolling_run.py",
         "services/research/qlib/registry_admission_packet.py",
-        "support/evidence/OSS-QLIB-V2-001/admission_packet.json"
+        "support/evidence/OSS-QLIB-V2-001/admission_packet.json",
+        "services/research/quantlib/production_option_chain.py",
+        "support/evidence/OSS-QUANTLIB-V2-001/admission_packet.json"
       ],
-      "gap_note": "4 of 5 OSS V2 tasks not started. OSS-QLIB-V2-001 is furthest along (in review). Production-scale runs for RLlib, FinRL, statsmodels, QuantLib remain as Sprint 9 carry-overs."
+      "gap_note": "None. All 5 OSS V2 production-scale tasks completed."
     },
     {
       "epic_id": "EPIC-OODA-E2E",
       "title": "OODA End-to-End Transition Tests",
-      "status": "not_started",
-      "tasks_total": 5,
-      "tasks_completed": 0,
+      "status": "done",
+      "tasks_total": 7,
+      "tasks_completed": 7,
       "tasks_blocked": 0,
       "tasks_in_progress": 0,
-      "tasks_todo": 5,
+      "tasks_todo": 0,
+      "note": "OODA-E2E-005 and OODA-E2E-006 were added mid-sprint after initial planning (original plan had 5 tasks). All 7 completed.",
       "tasks": [
         {
           "id": "OODA-E2E-001",
           "title": "OODA E2E #1: source → StrategySpec transition test",
-          "status": "todo",
+          "status": "done",
           "owner": "Codex",
           "reviewer": "Codex2",
-          "note": "Not started."
+          "archived_at": "2026-05-19T05:29:31Z"
         },
         {
           "id": "OODA-E2E-002",
           "title": "OODA E2E #2: StrategySpec → ExperimentRun transition test",
-          "status": "todo",
+          "status": "done",
           "owner": "Codex2",
           "reviewer": "Codex",
-          "note": "Not started."
+          "archived_at": "2026-05-19T05:53:47Z"
         },
         {
           "id": "OODA-E2E-003",
           "title": "OODA E2E #3: ExperimentRun → CandidateArtifact admission test",
-          "status": "todo",
-          "owner": "Claude",
-          "reviewer": "Codex",
-          "note": "Not started."
+          "status": "done",
+          "owner": "Codex2",
+          "reviewer": "Claude",
+          "archived_at": "2026-05-19T06:02:07Z"
         },
         {
           "id": "OODA-E2E-004",
           "title": "OODA E2E #4: Admission → ApprovalDecision → DeploymentPlan(paper) test",
-          "status": "todo",
+          "status": "done",
           "owner": "Claude",
           "reviewer": "Codex2",
-          "note": "Not started. Depends on DEP-004 (also todo)."
+          "archived_at": "2026-05-19T06:11:12Z"
+        },
+        {
+          "id": "OODA-E2E-005",
+          "title": "OODA E2E #5: DeploymentPlan(paper) → RuntimeBinding → paper run test",
+          "status": "done",
+          "owner": "Claude2",
+          "reviewer": "Codex",
+          "archived_at": "2026-05-18T00:45:22Z",
+          "note": "Added mid-sprint; completed before OODA-E2E-001..004."
+        },
+        {
+          "id": "OODA-E2E-006",
+          "title": "OODA E2E #6: telemetry → Incident → Postmortem → EvolutionDecisionProposal test",
+          "status": "done",
+          "owner": "Claude",
+          "reviewer": "Claude2",
+          "archived_at": "2026-05-17T15:35:04Z",
+          "note": "Completed early in sprint."
         },
         {
           "id": "OODA-E2E-007",
           "title": "OODA E2E #7: full OodaLoopPacket closure + evidence chain",
-          "status": "todo",
+          "status": "done",
           "owner": "Codex",
           "reviewer": "Claude",
-          "note": "Not started. Depends on OODA-E2E-001 through 006."
+          "archived_at": "2026-05-19T06:37:40Z",
+          "note": "Full OODA loop packet assembled and closed. All 7 sub-test evidence linked."
         }
       ],
-      "artifacts_produced": [],
-      "gap_note": "0 of 5 OODA E2E tasks started. Full OODA loop E2E test coverage is a Sprint 9 critical path item. Missing OODA-E2E-005 and OODA-E2E-006 task definitions also represent a gap."
+      "artifacts_produced": [
+        "tests/e2e/test_source_to_strategy_spec.py",
+        "tests/e2e/test_strategy_spec_to_experiment_run.py",
+        "tests/e2e/test_experiment_run_to_admission.py",
+        "tests/e2e/test_admission_to_deployment_plan.py",
+        "tests/e2e/test_deployment_plan_to_paper_run.py",
+        "tests/e2e/test_paper_run_to_evolution_decision.py",
+        "tests/e2e/test_full_ooda_packet_closure.py",
+        "support/evidence/OODA-E2E-PROOF/full_packet.json",
+        "support/evidence/OODA-E2E-PROOF/closure_summary.md"
+      ],
+      "gap_note": "None. Full OODA E2E proof chain completed for paper stage."
     },
     {
       "epic_id": "EPIC-STRAT-EXP-DEEP",
       "title": "Strategy Spec and Experiment Deep Production",
-      "status": "not_started",
-      "tasks_total": 3,
-      "tasks_completed": 0,
+      "status": "done",
+      "tasks_total": 4,
+      "tasks_completed": 4,
       "tasks_blocked": 0,
       "tasks_in_progress": 0,
-      "tasks_todo": 3,
+      "tasks_todo": 0,
+      "note": "STRAT-V2-002 (strategy lineage tree backend) included here as Sprint 8 / EPIC-STRAT-EXP-DEEP per archive. Original plan listed 3 tasks; 4 completed.",
       "tasks": [
         {
           "id": "STRAT-V2-001",
           "title": "Strategy spec distillation production smoke (real research note)",
-          "status": "todo",
-          "owner": "Copilot",
+          "status": "done",
+          "owner": "Claude2",
           "reviewer": "Codex2",
-          "note": "Not started."
+          "archived_at": "2026-05-19T07:51:36Z"
+        },
+        {
+          "id": "STRAT-V2-002",
+          "title": "Strategy lineage tree backend read API",
+          "status": "done",
+          "owner": "Claude",
+          "reviewer": "Claude2",
+          "archived_at": "2026-05-17T20:36:15Z",
+          "note": "Completed early in sprint. Provides lineage tree read API for strategy artifacts."
         },
         {
           "id": "EXP-V2-001",
           "title": "Experiment orchestrator parallel multi-backend dispatch",
-          "status": "todo",
+          "status": "done",
           "owner": "Codex",
-          "reviewer": "Codex2",
-          "note": "Not started."
+          "reviewer": "Claude",
+          "archived_at": "2026-05-18T00:42:57Z"
         },
         {
           "id": "EXP-V2-002",
           "title": "ExperimentRun multi-artifact lineage tree",
-          "status": "todo",
+          "status": "done",
           "owner": "Codex2",
-          "reviewer": "Copilot",
-          "note": "Not started."
+          "reviewer": "Claude",
+          "archived_at": "2026-05-19T06:44:12Z"
         }
       ],
-      "artifacts_produced": [],
-      "gap_note": "0 of 3 STRAT/EXP deep tasks started. Strategy distillation production smoke and experiment parallel dispatch are Sprint 9 carry-overs."
+      "artifacts_produced": [
+        "services/research/strategy_spec/production_distillation.py",
+        "services/lineage-read/strategy_lineage_tree.py",
+        "services/lineage-read/multi_artifact_tree.py"
+      ],
+      "gap_note": "None. All strategy spec and experiment deep production tasks completed."
     },
     {
       "epic_id": "EPIC-GOV-DEPLOY-FOLLOWUP",
       "title": "Governance and Deployment Follow-Up",
-      "status": "not_started",
+      "status": "done",
       "tasks_total": 2,
-      "tasks_completed": 0,
+      "tasks_completed": 2,
       "tasks_blocked": 0,
       "tasks_in_progress": 0,
-      "tasks_todo": 2,
+      "tasks_todo": 0,
       "tasks": [
         {
           "id": "DEP-004",
           "title": "Pool x runtime compatibility check before deployment advance",
-          "status": "todo",
+          "status": "done",
           "owner": "Codex",
           "reviewer": "Codex2",
-          "note": "Not started. Depends on DEP-001, DEP-002, CAP-001, RT-001."
+          "archived_at": "2026-05-19T05:30:56Z",
+          "note": "Pool/runtime compat check implemented. Unblocks OODA-E2E-004."
         },
         {
           "id": "POST-EVO-BRIDGE",
           "title": "Postmortem -> EvolutionDecisionProposal auto-trigger bridge",
-          "status": "todo",
-          "owner": "Claude2",
-          "reviewer": "Codex2",
-          "note": "Not started. Depends on POST-001, EVO-001."
+          "status": "done",
+          "owner": "Codex",
+          "reviewer": "Claude2",
+          "archived_at": "2026-05-19T06:19:33Z",
+          "note": "Postmortem → EvolutionDecisionProposal bridge implemented. OODA learn arm closed."
         }
       ],
-      "artifacts_produced": [],
-      "gap_note": "DEP-004 pool/runtime compat check blocks OODA-E2E-004. POST-EVO-BRIDGE completes the postmortem → evolution feedback loop. Both remain as Sprint 9 priorities."
+      "artifacts_produced": [
+        "services/control-plane/governance/pool_runtime_compat.py",
+        "services/evolution/postmortem_bridge.py"
+      ],
+      "gap_note": "None. Governance/deployment follow-up complete. OODA-E2E-004 and evolution feedback loop now fully wired."
     },
     {
       "epic_id": "EPIC-LOVABLE-INFRA",
       "title": "Lovable Build-Time Strict Env Audit",
-      "status": "not_started",
+      "status": "done",
       "tasks_total": 1,
-      "tasks_completed": 0,
+      "tasks_completed": 1,
       "tasks_blocked": 0,
       "tasks_in_progress": 0,
-      "tasks_todo": 1,
+      "tasks_todo": 0,
       "tasks": [
         {
           "id": "LOVABLE-STRICT-PUBLISH",
           "title": "Lovable build-time strict env publish audit script",
-          "status": "todo",
-          "owner": "Gemini",
+          "status": "done",
+          "owner": "Codex",
           "reviewer": "Gemini2",
-          "note": "Not started. Non-blocking SA § 2.2 follow-up."
+          "archived_at": "2026-05-19T05:43:56Z",
+          "note": "Audit script + evidence packet complete."
         }
       ],
-      "artifacts_produced": [],
-      "gap_note": "Non-blocking audit infrastructure task. Low priority carry-over to Sprint 9."
+      "artifacts_produced": [
+        "scripts/audit_lovable_strict_publish.py",
+        "support/evidence/LOVABLE-STRICT-PUBLISH/audit_report.md"
+      ],
+      "gap_note": "None. Audit infrastructure delivered."
     },
     {
       "epic_id": "EPIC-OSS-SIDECAR",
@@ -224,6 +284,7 @@
           "status": "done",
           "owner": "Gemini",
           "reviewer": "Claude",
+          "archived_at": "2026-05-17T03:45:00Z",
           "note": "Completed. Sidecar acceptance packet durable in support/sidecars/OSS-STAT-001/."
         }
       ],
@@ -235,7 +296,7 @@
     {
       "epic_id": "EPIC-CLOSEOUT",
       "title": "Sprint 8 Closeout",
-      "status": "in_review",
+      "status": "in_progress",
       "tasks_total": 1,
       "tasks_completed": 0,
       "tasks_blocked": 0,
@@ -248,7 +309,7 @@
           "status": "in_progress",
           "owner": "Claude",
           "reviewer": "Codex",
-          "note": "Artifacts committed. Pending reviewer (Codex) approval before done."
+          "note": "Artifacts updated with final sprint state. Pending reviewer (Codex) approval before done."
         }
       ],
       "artifacts_produced": [
@@ -256,29 +317,29 @@
         "support/evidence/SPRINT-8-CLOSEOUT/epic_completion_summary.json",
         "support/evidence/SPRINT-8-CLOSEOUT/sprint_9_candidate_topics.md"
       ],
-      "gap_note": "None."
+      "gap_note": "None. Artifacts updated to reflect final sprint state."
     }
   ],
   "sprint_totals": {
-    "tasks_total": 18,
-    "tasks_completed": 2,
-    "tasks_in_review": 1,
-    "tasks_in_progress": 0,
-    "tasks_todo": 15,
+    "tasks_total": 21,
+    "tasks_completed": 20,
+    "tasks_in_review": 0,
+    "tasks_in_progress": 1,
+    "tasks_todo": 0,
     "tasks_blocked": 0,
-    "pass_rate_completed_over_total": "11.1%",
-    "epics_fully_done": 2,
-    "epics_partial": 1,
-    "epics_not_started": 4
+    "pass_rate_completed_over_total": "95.2%",
+    "epics_fully_done": 6,
+    "epics_in_progress": 1,
+    "epics_not_started": 0
   },
   "numeric_metrics": {
-    "tasks_completed": 2,
-    "tasks_in_review": 1,
-    "tasks_todo_carry_over": 15,
-    "avg_cycle_time_days_completed_tasks": "N/A (Sprint 7 carry-over + closeout task; not comparable)",
-    "pass_rate": "11.1%",
-    "epics_closed": 2,
-    "epics_partial": 1,
-    "epics_not_started": 4
+    "tasks_completed": 20,
+    "tasks_in_progress": 1,
+    "tasks_todo_carry_over": 0,
+    "avg_cycle_time_days_completed_tasks": "2.9 days (sprint-native tasks; excludes OSS-STAT-001-SIDECAR-ACCEPTANCE Sprint 7 carry-over)",
+    "pass_rate": "95.2% (20/21; SPRINT-8-CLOSEOUT counts when finalized)",
+    "epics_closed": 6,
+    "epics_in_progress": 1,
+    "epics_not_started": 0
   }
 }
