@@ -28,7 +28,7 @@ pytest tests/governance/test_promotion_readiness_validator.py -q
 27 passed in 1.90s
 ```
 
-Post-merge dev sync (HA-005-V2, HA-006-V2, wave guard): all 27 tests still pass.
+Post-merge dev sync (BLA-002-V2 included): all 27 tests still pass. Final closeout.
 
 ## Reviewer Notes
 
