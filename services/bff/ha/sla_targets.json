@@ -1,0 +1,30 @@
+{
+  "schema_version": "bff_ha_sla_targets.v1",
+  "source": "docs/04/pantheon_design_blueprint_supplement_2026-05-19/pantheon_blueprint_supplement.md#d3-sla-targets",
+  "targets": {
+    "dev": {
+      "uptime_target_percent": 95.0,
+      "p99_latency_ms": 1000,
+      "sse_connections": 100,
+      "rto_seconds": 300,
+      "rpo_seconds": 60,
+      "monthly_cost_ceiling_usd": 100
+    },
+    "staging": {
+      "uptime_target_percent": 99.0,
+      "p99_latency_ms": 700,
+      "sse_connections": 500,
+      "rto_seconds": 120,
+      "rpo_seconds": 30,
+      "monthly_cost_ceiling_usd": 300
+    },
+    "production": {
+      "uptime_target_percent": 99.5,
+      "p99_latency_ms": 500,
+      "sse_connections": 1000,
+      "rto_seconds": 60,
+      "rpo_seconds": 10,
+      "monthly_cost_ceiling_usd": 800
+    }
+  }
+}
