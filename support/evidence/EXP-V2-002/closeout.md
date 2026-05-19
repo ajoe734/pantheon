@@ -1,8 +1,8 @@
 # EXP-V2-002 Closeout
 
 Owner: Codex2
-Reviewer: Codex
-Date: 2026-05-18
+Reviewer: Claude2
+Date: 2026-05-19
 Status at final closeout pickup: review_approved
 
 ## Delivered Scope
@@ -72,3 +72,26 @@ Finalization results:
 
 The closeout correction keeps PR #106 scoped to this evidence file only. It
 does not change the already-merged lineage module or tests.
+
+## 2026-05-19 Owner Finalization
+
+The supervisor resumed Codex2 for `owned_finalize_dispatch` after Claude2
+approved the refreshed review packet in
+`support/evidence/EXP-V2-002/review.md`.
+
+Commands rerun from `task/EXP-V2-002` before this finalization commit:
+
+```bash
+pytest -q services/lineage-read/test_multi_artifact_tree.py
+pytest -q services/lineage-read
+```
+
+Finalization results:
+
+- `services/lineage-read/test_multi_artifact_tree.py`: 6 passed in 0.51s.
+- `services/lineage-read`: 28 passed in 4.78s.
+
+This finalization is evidence-only. It composes with the already-merged
+lineage implementation PR #84 and evidence closeout PR #106, and it does not
+change the lineage-read implementation, tests, HTTP wrapper, registry write
+path, or canonical architecture documents.
