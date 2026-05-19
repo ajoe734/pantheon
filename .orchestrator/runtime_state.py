@@ -57,6 +57,19 @@ def default_state() -> dict[str, Any]:
             "dispatch_pauses": {},
             "task_failure_streaks": {},
         },
+        "worker_runtime_metrics": {
+            "version": 1,
+            "updated_at": None,
+            "totals": {},
+            "last_measurements": {},
+        },
+        "watchdog": {
+            "safe_mode_until": None,
+            "safe_mode_reason": None,
+            "safe_mode_started_at": None,
+            "last_decision": None,
+            "last_safe_mode_observed_until": None,
+        },
         "coordination": {
             "last_scan_at": None,
             "files": {},
@@ -90,7 +103,7 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state = deepcopy(default_state())
     if not raw:
         return state
-    state.update({k: v for k, v in raw.items() if k in state or k in {"queue", "workers", "approvals", "supervisor", "coordination"}})
+    state.update({k: v for k, v in raw.items() if k in state or k in {"queue", "workers", "approvals", "supervisor", "coordination", "watchdog"}})
     state.setdefault("tasks", {})
     recent_terminal_tasks = state.get("recent_terminal_tasks")
     state["recent_terminal_tasks"] = recent_terminal_tasks if isinstance(recent_terminal_tasks, list) else []
@@ -121,6 +134,17 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state.setdefault("provider_guardrails", {})
     state["provider_guardrails"].setdefault("dispatch_pauses", {})
     state["provider_guardrails"].setdefault("task_failure_streaks", {})
+    state.setdefault("worker_runtime_metrics", {})
+    state["worker_runtime_metrics"].setdefault("version", 1)
+    state["worker_runtime_metrics"].setdefault("updated_at", None)
+    state["worker_runtime_metrics"].setdefault("totals", {})
+    state["worker_runtime_metrics"].setdefault("last_measurements", {})
+    state.setdefault("watchdog", {})
+    state["watchdog"].setdefault("safe_mode_until", None)
+    state["watchdog"].setdefault("safe_mode_reason", None)
+    state["watchdog"].setdefault("safe_mode_started_at", None)
+    state["watchdog"].setdefault("last_decision", None)
+    state["watchdog"].setdefault("last_safe_mode_observed_until", None)
     state.setdefault("coordination", {})
     state["coordination"].setdefault("last_scan_at", None)
     state["coordination"].setdefault("files", {})
