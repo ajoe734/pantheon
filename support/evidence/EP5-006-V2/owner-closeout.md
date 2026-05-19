@@ -25,6 +25,10 @@ Closeout date: 2026-05-19
 - Implementation merge commit:
   `1117c189954290ceff222ccb7f5aaeb6b770138e`
 - Merge target: `dev`
+- Owner closeout PR: https://github.com/ajoe734/pantheon/pull/290
+- Owner closeout branch refresh: merged latest `origin/dev` after PR #290
+  initially reported `BEHIND`; this note keeps the final task HEAD traceable
+  after that refresh.
 
 ## Verification
 
