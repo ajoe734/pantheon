@@ -22,7 +22,9 @@ balancer configuration, runtime source behavior, or shared SSE fanout.
 - Delivery PR: `#267`
 - Delivery merge commit: `66340ff696a63b930498639a24af449fa409d671`
 - Reviewer approval evidence: `services/bff/ha/multi_replica_poc.md`
-- Closeout evidence PR: pending
+- Closeout evidence PR: `#281`
+- Branch refresh: merged latest `origin/dev` into `task/HA-007-V2` before
+  final closeout publication
 
 ## Owner Verification
 
