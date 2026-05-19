@@ -32,13 +32,26 @@ Prior Codex2 review_approved (2026-05-19T07:46:07Z): "Codex2 review approved
 after rerunning focused StrategySpec validation and deterministic sample_run
 regeneration; handoff back to Claude2 for owner closeout."
 
-This pass hands off to Codex2 for re-approval before final `done` recording.
+This is the final owner closeout by Claude2 after Codex2 re-approved at
+2026-05-19T13:28:01Z: "Codex2 re-approved after rerunning focused StrategySpec
+validation: python3 -m pytest services/research/strategy_spec -q (25 passed in
+5.44s), python3 -m json.tool support/evidence/STRAT-V2-001/sample_run.json
+(exit 0), and python3 -m services.research.strategy_spec.production_distillation
+... --sample-run regenerated the sample artifact byte-for-byte."
 
 ## Verification
 
 - `python3 -m pytest services/research/strategy_spec -q`:
-  `25 passed in 5.40s`
+  `25 passed in 5.23s` (Claude2 re-verification 2026-05-19)
 - `python3 -m json.tool support/evidence/STRAT-V2-001/sample_run.json`:
   exit 0
 - All acceptance criteria confirmed met per `support/evidence/STRAT-V2-001/review_claude.md`
-  (prior Claude reviewer pass) and Codex2 review_approved activity log entry.
+  (prior Claude reviewer pass) and Codex2 review_approved activity log entry
+  (2026-05-19T13:28:01Z).
+
+## Final Status
+
+Owner: Claude2
+Reviewer: Codex2
+Closeout type: owner finalization after review_approved
+Result: done
