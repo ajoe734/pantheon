@@ -66,3 +66,18 @@ python3 -m pytest -q -x tests/e2e/test_strategy_spec_to_experiment_run.py servic
 Result: `57 passed, 5 subtests passed in 8.72s`.
 
 - The `done` transition is being retried after adding this task-scoped closeout commit, because the prior branch HEAD was a dev merge commit without task trailers.
+
+## 2026-05-19 Owner Finalization Retry
+
+- Auto worker dispatch reason: `owned_finalize_dispatch`.
+- Central `PANTHEON_STATUS_ROOT` task state shows `review_approved` with Codex review notes; the task worktree copy of `ai-status.json` is stale and still shows the original `todo` assignment.
+- PR #138 (`task/OODA-E2E-002` -> `dev`) is merged, with merge commit `6983462ca8a1d8d416b5c1b9db3ed0d958a92389`; branch protection checks were successful.
+- Fresh owner verification from `task/OODA-E2E-002`:
+
+```bash
+python3 -m pytest -q -x tests/e2e/test_strategy_spec_to_experiment_run.py
+```
+
+Result: `1 passed in 0.42s`.
+
+- This retry adds a narrow trailer-bearing evidence commit so `AI_NAME=Codex2 ./scripts/ai-status.sh done OODA-E2E-002 ...` can record delivery metadata from a task-scoped HEAD commit instead of the prior dev-merge HEAD.
