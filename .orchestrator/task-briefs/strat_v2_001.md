@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Strategy spec distillation production smoke (real research note)
-- Status: todo
+- Status: review
 - Owner: Claude2
-- Reviewer: Copilot
+- Reviewer: Codex2
 - Phase: Sprint 8 / EPIC-STRAT-EXP-DEEP
-- Last update: 2026-05-19T06:31:31Z
-- Next: Helper-claimed by Claude2 while Copilot completes higher-priority work.
+- Last update: 2026-05-19T07:07:23Z
+- Next: Chair reassigned review from Copilot to Codex2: The review queue event matches the assigned reviewer, but Copilot repeatedly exits with 402 quota; Codex2 can review after chair duty and is not the task owner.
 
 ## Summary
 把 STRAT-003 source converter 升級到 production：吃真實 internal research note (docs/research/notes/*.md 或 fixture)，產出可進 registry 的 StrategySpec，含 evidence_refs + code_refs 完整 binding。獨立 module，不改 STRAT-001..004 公開 API。
@@ -27,7 +27,12 @@ Do not read `current-work.md` by default for implementation context.
 - support/evidence/STRAT-V2-001/sample_run.json
 
 ## Recent Task Activity
-- none
+- 2026-05-19T07:02:14Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
+- 2026-05-19T07:02:16Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-19T07:02:16Z · Orchestrator · worker_worktree_reused · -
+- 2026-05-19T07:02:16Z · Orchestrator · worker_started · Worker started via copilot_local: review_ready_dispatch
+- 2026-05-19T07:07:19Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
+- 2026-05-19T07:07:25Z · Orchestrator · chair_review_reassignment_applied · Chair reassigned review from Copilot to Codex2: The review queue event matches the assigned reviewer, but Copilot repeatedly exits with 402 quota; Codex2 can review after chair duty and is not the task owner.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
