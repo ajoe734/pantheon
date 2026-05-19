@@ -33,10 +33,11 @@ and publish-ready before running `scripts/ai-status.sh done`.
      (for example generated state mirrors, cross-sidecar docs, or
      unrelated task artifacts), record a blocker and stop. Do not fold
      those files into the closeout commit.
-7. Create the task PR (see § Per-Task PR Flow below) before finalizing
-   whenever the task changed repo files.
+7. Create the task PR (see § Per-Task PR Flow below) whenever the task
+   changed repo files, then wait for it to merge into the target branch.
 8. Run `AI_NAME=<Owner> ./scripts/ai-status.sh done <task-id> "<checkpoint message>"`
-   only after the PR is open with `--auto --merge` enabled (or merged).
+   only after the PR is merged. An open PR, auto-merge enabled, or green
+   checks are not sufficient.
 
 ## Per-Task PR Flow (mandatory)
 
@@ -62,7 +63,7 @@ python3 scripts/git/worker_commit.py \
 # 3. Push and open PR with auto-merge.
 ./scripts/git/task_finalize.sh "$TASK"
 
-# 4. Run done. PR will auto-merge once branch-ci status checks pass.
+# 4. Wait until GitHub reports the PR merged into dev, then run done.
 AI_NAME=<Owner> ./scripts/ai-status.sh done "$TASK" "<checkpoint message>"
 ```
 
@@ -178,12 +179,14 @@ Do not edit these generated state files by hand during closeout.
 
 ## Push and Merge Policy
 
-Closeout is not complete until the finished work has a PR open with
-`--auto --merge` enabled, or has already merged into `dev`.
+Closeout is not complete until the finished work has merged into the
+target branch (`dev` for Pantheon task PRs). `scripts/ai-status.sh done`
+enforces this by verifying the task branch HEAD is an ancestor of the
+target branch before it updates `ai-status.json` or archives the task.
 
 - Default: after the task-scoped commit, push the `task/<TASK-ID>`
-  branch and open a PR via `task_finalize.sh`. Run
-  `scripts/ai-status.sh done` only once that PR exists.
+  branch and open a PR via `task_finalize.sh`. Wait for GitHub to merge
+  that PR, then run `scripts/ai-status.sh done`.
 - `dev` and `master` are branch-protected: a direct `git push` to
   either will be rejected by GitHub. Workers must always go through PR
   + auto-merge.
@@ -191,6 +194,8 @@ Closeout is not complete until the finished work has a PR open with
   merges. If a PR fails CI, the task branch stays for the worker (or
   chair-review) to push a fix commit; do **not** force-push to recover
   unless explicitly authorized.
+- If the PR is `BEHIND`, failing checks, or otherwise still open, leave
+  the task in `review_approved`; refresh or repair the PR branch first.
 - Never use `--force`, `--mirror`, `--delete`, `--all`, or `--tags`
   pushes as routine closeout.
 

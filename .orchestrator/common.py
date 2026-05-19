@@ -526,22 +526,69 @@ def new_runtime_id(prefix: str) -> str:
     return f"{prefix}-{stamp}-{uuid.uuid4().hex[:8]}"
 
 
+def worker_runtime_paths(config: dict[str, Any], run_id: str) -> dict[str, Path]:
+    safe_run_id = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(run_id or "worker")).strip("-") or "worker"
+    try:
+        root = config_path(config, "state_file").parent / "worker-runtime"
+    except KeyError:
+        try:
+            root = config_path(config, "status_file").parent / ".orchestrator" / "worker-runtime"
+        except KeyError:
+            root = ORCHESTRATOR_DIR / "worker-runtime"
+    return {
+        "heartbeat_path": root / "heartbeats" / f"{safe_run_id}.json",
+        "status_path": root / "status" / f"{safe_run_id}.json",
+    }
+
+
 def spawn_background_process(
     command: list[str],
     *,
     cwd: Path | None = None,
     log_path: Path,
     env: dict[str, str] | None = None,
+    run_id: str | None = None,
+    heartbeat_path: Path | None = None,
+    status_path: Path | None = None,
+    heartbeat_interval_seconds: int = 15,
+    runner_enabled: bool = True,
 ) -> tuple[subprocess.Popen[str], Path]:
     ensure_parent(log_path)
+    command_to_spawn = list(command)
+    spawn_env = env
+    if runner_enabled and run_id:
+        if heartbeat_path is None:
+            heartbeat_path = log_path.with_suffix(log_path.suffix + ".heartbeat.json")
+        if status_path is None:
+            status_path = log_path.with_suffix(log_path.suffix + ".status.json")
+        ensure_parent(heartbeat_path)
+        ensure_parent(status_path)
+        spawn_env = dict(env or os.environ)
+        spawn_env["ORCH_RUN_ID"] = str(run_id)
+        spawn_env["ORCH_HEARTBEAT_PATH"] = str(heartbeat_path)
+        spawn_env["ORCH_RUNNER_STATUS_PATH"] = str(status_path)
+        command_to_spawn = [
+            sys.executable,
+            str(ORCHESTRATOR_DIR / "worker_runner.py"),
+            "--run-id",
+            str(run_id),
+            "--heartbeat-path",
+            str(heartbeat_path),
+            "--status-path",
+            str(status_path),
+            "--heartbeat-interval-seconds",
+            str(max(1, int(heartbeat_interval_seconds or 15))),
+            "--",
+            *command,
+        ]
     handle = log_path.open("w", encoding="utf-8")
     process = subprocess.Popen(
-        command,
+        command_to_spawn,
         cwd=str(cwd or ROOT),
         stdout=handle,
         stderr=subprocess.STDOUT,
         text=True,
-        env=env,
+        env=spawn_env,
         start_new_session=True,
     )
     return process, log_path
