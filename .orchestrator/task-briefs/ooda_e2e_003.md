@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: OODA E2E #3: ExperimentRun → CandidateArtifact admission test
-- Status: review_approved
-- Owner: Codex
-- Reviewer: Claude
+- Status: todo
+- Owner: Claude
+- Reviewer: Codex
 - Phase: Sprint 8 / EPIC-OODA-E2E
-- Last update: 2026-05-18T08:20:45Z
-- Next: Review approved: all 4 tests pass, all acceptance criteria met. Returning to owner Codex for finalization.
+- Last update: 2026-05-17T11:03:27Z
+- Next: Assignment created
 
 ## Summary
 OODA Orient→Decide 階段：證明「ExperimentRun → CandidateArtifact → Registry admission」transition 可端到端走完。使用 EXP-005 writeback + Registry promotion service。獨立 test 檔。
@@ -25,12 +25,7 @@ OODA Orient→Decide 階段：證明「ExperimentRun → CandidateArtifact → R
 - tests/e2e/fixtures/experiment_run_for_admission.json
 
 ## Recent Task Activity
-- 2026-05-18T08:17:24Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
-- 2026-05-18T08:17:29Z · Orchestrator · worker_worktree_reused · -
-- 2026-05-18T08:17:29Z · Orchestrator · worker_started · Worker started via claude_cli: review_ready_dispatch
-- 2026-05-18T08:20:45Z · Claude · review_approved · Review approved: all 4 tests pass, all acceptance criteria met. Returning to owner Codex for finalization.
-- 2026-05-18T08:21:32Z · unknown · worker_commit · Worker commit e22480c2ecb3 recorded 1 staged file(s) for OODA-E2E-003.
-- 2026-05-18T08:22:35Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
+- none
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
