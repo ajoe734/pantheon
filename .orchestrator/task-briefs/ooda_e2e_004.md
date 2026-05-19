@@ -10,7 +10,7 @@ Do not read `current-work.md` by default for implementation context.
 - Owner: Claude
 - Reviewer: Codex2
 - Phase: Sprint 8 / EPIC-OODA-E2E
-- Last update: 2026-05-19T01:45:53Z
+- Last update: 2026-05-19T05:47:06Z
 - Next: Review approved: OODA-E2E-004 artifacts satisfy acceptance; verified python3 -m pytest tests/e2e/test_admission_to_deployment_plan.py -q -x -> 3 passed. Owner should finalize.
 
 ## Summary
@@ -27,12 +27,12 @@ OODA Decide 階段：證明「CandidateArtifact → ApprovalDecision → Deploym
 - tests/e2e/fixtures/candidate_artifact_for_decision.json
 
 ## Recent Task Activity
-- 2026-05-19T01:36:45Z · Orchestrator · worker_superseded · Worker superseded after task responsibility moved to another agent.
-- 2026-05-19T01:41:49Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
-- 2026-05-19T01:41:49Z · Orchestrator · worker_worktree_reused · -
-- 2026-05-19T01:41:50Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
-- 2026-05-19T01:45:53Z · Codex2 · review_approved · Review approved: OODA-E2E-004 artifacts satisfy acceptance; verified python3 -m pytest tests/e2e/test_admission_to_deployment_plan.py -q -x -> 3 passed. Owner should finalize.
-- 2026-05-19T01:46:55Z · Orchestrator · worker_superseded · Worker superseded after task responsibility moved to another agent.
+- 2026-05-19T05:45:08Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
+- 2026-05-19T05:45:10Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-19T05:45:11Z · Orchestrator · worker_worktree_reused · -
+- 2026-05-19T05:45:11Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
+- 2026-05-19T05:47:06Z · Codex2 · review_approved · Review approved: OODA-E2E-004 artifacts satisfy acceptance; verified python3 -m pytest tests/e2e/test_admission_to_deployment_plan.py -q -x -> 3 passed. Owner should finalize.
+- 2026-05-19T05:50:18Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
