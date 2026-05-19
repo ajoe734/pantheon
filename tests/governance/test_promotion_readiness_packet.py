@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from services.governance.promotion_readiness.packet_model import (
+    A2_1_PACKET_VERSION,
     LEGACY_SCHEMA_VERSION,
     SCHEMA_VERSION,
     PromotionReadinessPacket,
@@ -106,6 +107,67 @@ def _structured_packet(**overrides):
     return packet
 
 
+def _a2_1_packet(**overrides):
+    packet = {
+        "packet_id": "prp-a2-1-canary-ready",
+        "packet_version": A2_1_PACKET_VERSION,
+        "generated_at": "2026-05-19T16:00:00Z",
+        "generated_by": "Codex / EP5-001-V2",
+        "source_task_id": "EP5-001-V2",
+        "target_environment": "canary",
+        "artifact_ref": {
+            "artifact_id": "artifact-reg-001",
+            "registry_id": "reg-m7-canary",
+            "version": "2026.05.19",
+        },
+        "deployment_ref": {
+            "deployment_id": "deployment-plan-001",
+            "stage": "canary",
+        },
+        "runtime_ref": {
+            "runtime_id": "runtime-binding-001",
+            "runtime_kind": "paper",
+        },
+        "pool_ref": {
+            "pool_id": "capital-pool-paper-001",
+            "mode": "paper",
+        },
+        "policy_ref": {
+            "policy_id": "paper-canary-live-policy",
+            "version": "2026-05-19",
+        },
+        "required_evidence": {
+            "broker_sandbox_smoke": {
+                "status": "passed",
+                "source_task_id": "MGMT-BROKER-002",
+                "evidence_ref": "support/evidence/MGMT-BROKER-002/summary.json",
+                "ref_type": "broker_sandbox_smoke_summary",
+            },
+            "rollback_drill": {
+                "status": "passed",
+                "source_task_id": "EP5-007-V2",
+                "evidence_ref": "support/evidence/EP5-007-V2/rollback-drill.json",
+                "ref_type": "rollback_drill_evidence",
+            },
+        },
+        "approval": {
+            "status": "approved",
+            "risk_owner_ref": "approval://risk-owner/prp-a2-1",
+            "operator_ref": "approval://operator/prp-a2-1",
+        },
+        "flags": {
+            "can_proceed": True,
+            "BROKER_PRODUCTION_LIVE_ENABLED": False,
+            "CAPITAL_BINDING_LIVE_ENABLED": False,
+            "live_capital_side_effects": False,
+        },
+        "blocking_reasons": [],
+        "reason": "A2.1 packet has required evidence, refs, approvals, and fail-closed flags.",
+    }
+    packet.update(overrides)
+    return packet
+
+
 def test_structured_packet_round_trips_a2_1_subtrees():
     packet = PromotionReadinessPacket.from_dict(_structured_packet())
 
@@ -123,6 +185,33 @@ def test_structured_packet_round_trips_a2_1_subtrees():
     assert encoded["approval"]["records"][1]["role"] == "operator"
     assert encoded["blocking_reasons"] == []
     validate_packet(packet)
+
+
+def test_a2_1_packet_shape_round_trips_without_normalizing_refs():
+    source = _a2_1_packet()
+
+    packet = PromotionReadinessPacket.from_dict(source)
+
+    assert packet.packet_version == A2_1_PACKET_VERSION
+    assert packet.target.environment == "canary"
+    assert packet.target.target_id == "deployment-plan-001"
+    assert packet.evidence.required == ("broker_sandbox_smoke", "rollback_drill")
+    assert packet.approval.status == "approved"
+    assert packet.can_proceed is True
+
+    encoded = packet.to_dict()
+    assert encoded["packet_version"] == A2_1_PACKET_VERSION
+    assert encoded["target_environment"] == "canary"
+    assert encoded["artifact_ref"] == source["artifact_ref"]
+    assert encoded["deployment_ref"] == source["deployment_ref"]
+    assert encoded["runtime_ref"] == source["runtime_ref"]
+    assert encoded["pool_ref"] == source["pool_ref"]
+    assert encoded["policy_ref"] == source["policy_ref"]
+    assert encoded["required_evidence"] == source["required_evidence"]
+    assert encoded["approval"]["status"] == "approved"
+    assert encoded["flags"]["can_proceed"] is True
+    assert encoded["blocking_reasons"] == []
+    validate_packet(encoded)
 
 
 def test_legacy_flat_packet_normalizes_to_subtrees():
@@ -207,3 +296,19 @@ def test_fail_closed_when_live_or_capital_flag_is_enabled():
 
     with pytest.raises(PromotionReadinessPacketError, match="fail-closed"):
         PromotionReadinessPacket.from_dict(_structured_packet(flags=flags))
+
+
+def test_a2_1_blocks_when_flags_can_proceed_with_string_reasons():
+    with pytest.raises(PromotionReadinessPacketError, match="blocking_reasons"):
+        PromotionReadinessPacket.from_dict(
+            _a2_1_packet(blocking_reasons=["risk_owner_approval_pending"])
+        )
+
+
+def test_a2_1_blocks_when_approval_status_is_pending():
+    packet = _a2_1_packet()
+    packet["approval"] = dict(packet["approval"])
+    packet["approval"]["status"] = "pending"
+
+    with pytest.raises(PromotionReadinessPacketError, match="approval.status"):
+        PromotionReadinessPacket.from_dict(packet)
