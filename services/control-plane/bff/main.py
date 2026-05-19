@@ -19684,6 +19684,67 @@ _ask_events = _sse_buffers["ask"]
 _ask_subscribers = _sse_subscribers["ask"]
 
 
+def _sse_shared_replay_enabled() -> bool:
+    mode = os.getenv("PANTHEON_BFF_SSE_REPLAY_STORE", "memory").strip().lower()
+    return mode in {"1", "true", "file", "jsonl", "shared", "shared-file"}
+
+
+def _sse_replay_store_label(channel: str) -> str:
+    return "file" if channel in SSE_CHANNELS and _sse_shared_replay_enabled() else "in-memory"
+
+
+def _sse_channel_for_buffer(buffer: deque) -> Optional[str]:
+    for channel, candidate in _sse_buffers.items():
+        if candidate is buffer:
+            return channel
+    return None
+
+
+def _sse_shared_replay_file(channel: str) -> str:
+    if channel not in SSE_CHANNELS:
+        raise ValueError(f"Unknown SSE channel: {channel}")
+    replay_dir = os.path.join(BFF_DATA_DIR, "sse_replay")
+    os.makedirs(replay_dir, exist_ok=True)
+    return os.path.join(replay_dir, f"{channel}.jsonl")
+
+
+def _read_shared_sse_events(channel: str) -> list[dict]:
+    path = _sse_shared_replay_file(channel)
+    if not os.path.exists(path):
+        return []
+    events: list[dict] = []
+    with open(path, "r", encoding="utf-8") as handle:
+        for line in handle:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                event = json.loads(stripped)
+            except json.JSONDecodeError as exc:
+                raise SseReplayUnavailableError("Shared SSE replay store is unreadable") from exc
+            if isinstance(event, dict):
+                events.append(event)
+    return events[-_MAX_EVENTS:]
+
+
+def _trim_shared_sse_events(path: str) -> None:
+    with open(path, "r", encoding="utf-8") as handle:
+        lines = [line for line in handle if line.strip()]
+    if len(lines) <= _MAX_EVENTS:
+        return
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.writelines(lines[-_MAX_EVENTS:])
+
+
+def _append_shared_sse_event(channel: Optional[str], event: dict) -> None:
+    if not channel or not _sse_shared_replay_enabled():
+        return
+    path = _sse_shared_replay_file(channel)
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n")
+    _trim_shared_sse_events(path)
+
+
 def _make_event_id(prefix: str = "evt") -> str:
     return f"{prefix}-{int(time.time())}-{uuid.uuid4().hex[:8]}"
 
@@ -19703,7 +19764,7 @@ def _sse_replay_headers(channel: str) -> Dict[str, str]:
         "X-SSE-Replay-Supported": "true",
         "X-SSE-Replay-Window-Events": str(_MAX_EVENTS),
         "X-SSE-Buffer-Size": str(_MAX_EVENTS),
-        "X-SSE-Replay-Store": "in-memory",
+        "X-SSE-Replay-Store": _sse_replay_store_label(channel),
     }
     resync_routes = _SSE_RESYNC_ROUTES.get(channel, ())
     if resync_routes:
@@ -19720,6 +19781,7 @@ def _publish_event(buffer: deque, subscribers: list[asyncio.Queue], event_type: 
         data=dict(data or {}),
     ).model_dump(mode="json")
     buffer.append((event_id, event))
+    _append_shared_sse_event(_sse_channel_for_buffer(buffer), event)
     # Notify subscribers
     for q in list(subscribers):
         try:
@@ -19729,34 +19791,63 @@ def _publish_event(buffer: deque, subscribers: list[asyncio.Queue], event_type: 
     return event_id
 
 
-def _replay_from(buffer: deque, last_event_id: Optional[str]) -> list[dict]:
-    """Replay events from the buffer starting after last_event_id."""
+def _replay_from_events(
+    events: list[dict],
+    last_event_id: Optional[str],
+    *,
+    source_label: str,
+) -> list[dict]:
     if not last_event_id:
-        return [evt for _, evt in buffer]
+        return list(events)
     found = False
-    result = []
-    for eid, evt in buffer:
+    result: list[dict] = []
+    for evt in events:
+        eid = evt.get("id")
         if found:
             result.append(evt)
         elif eid == last_event_id:
             found = True
     if not found:
-        # Client requested an event ID we no longer have
-        raise SseReplayUnavailableError(f"Event ID {last_event_id} is no longer in the buffer")
+        raise SseReplayUnavailableError(f"Event ID {last_event_id} is no longer in the {source_label}")
     return result
+
+
+def _replay_from(buffer: deque, last_event_id: Optional[str]) -> list[dict]:
+    """Replay events from the buffer starting after last_event_id."""
+    return _replay_from_events(
+        [evt for _, evt in buffer],
+        last_event_id,
+        source_label="buffer",
+    )
+
+
+def _replay_from_channel(channel: str, buffer: deque, last_event_id: Optional[str]) -> list[dict]:
+    if _sse_shared_replay_enabled() and channel in SSE_CHANNELS:
+        return _replay_from_events(
+            _read_shared_sse_events(channel),
+            last_event_id,
+            source_label="replay store",
+        )
+    return _replay_from(buffer, last_event_id)
 
 
 async def _sse_stream(
     buffer: deque,
     subscribers: list[asyncio.Queue],
     last_event_id: Optional[str] = None,
+    channel: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:
     """Async generator that yields SSE-formatted events."""
     q: asyncio.Queue = asyncio.Queue(maxsize=1000)
     subscribers.append(q)
     try:
         # Replay historical events first
-        for evt in _replay_from(buffer, last_event_id):
+        replayed = (
+            _replay_from_channel(channel, buffer, last_event_id)
+            if channel
+            else _replay_from(buffer, last_event_id)
+        )
+        for evt in replayed:
             yield _sse_format(evt)
 
         # Then stream new events as they arrive
@@ -19783,7 +19874,7 @@ def _handle_sse_stream(
     """Helper to create a StreamingResponse with replay error handling."""
     try:
         # Check if replay is possible before starting the stream
-        _replay_from(buffer, last_event_id)
+        _replay_from_channel(channel, buffer, last_event_id)
     except SseReplayUnavailableError as exc:
         error = _bff_error(
             status_code=409,
@@ -19813,7 +19904,7 @@ def _handle_sse_stream(
         headers.update(extra_headers)
 
     return StreamingResponse(
-        _sse_stream(buffer, subscribers, last_event_id),
+        _sse_stream(buffer, subscribers, last_event_id, channel),
         media_type="text/event-stream",
         headers=headers,
     )
