@@ -434,6 +434,11 @@ class HumanGateDecision:
         blockers.extend(f"rejected_signature:{role}" for role in self.rejected_roles())
         return tuple(blockers)
 
+    def derived_reason(self) -> str:
+        if self.can_proceed:
+            return "All required human gate signatures are bound to the reviewed evidence."
+        return "Human gate is not ready: " + ", ".join(self.blocking_summary())
+
     def with_signature(self, signature: HumanGateSignature) -> "HumanGateDecision":
         if signature.role not in self.required_roles:
             raise HumanGateDecisionError(f"signature role is not required for this decision: {signature.role}")
@@ -451,13 +456,7 @@ class HumanGateDecision:
             status=self.calculated_status(),
             can_proceed=self.calculated_can_proceed(),
         )
-        if normalized.reason is None:
-            if normalized.can_proceed:
-                reason = "All required human gate signatures are bound to the reviewed evidence."
-            else:
-                reason = "Human gate is not ready: " + ", ".join(normalized.blocking_summary())
-            normalized = replace(normalized, reason=reason)
-        return normalized
+        return replace(normalized, reason=normalized.derived_reason())
 
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -544,6 +543,16 @@ def validate_decision(decision_or_data: HumanGateDecision | Mapping[str, Any]) -
             raise HumanGateDecisionError(
                 "signature evidence_reviewed must cover all required evidence"
             )
+
+    active_approval_roles: set[str] = set()
+    for signature in decision.signatures:
+        if not signature.active_approval():
+            continue
+        if signature.role in active_approval_roles:
+            raise HumanGateDecisionError(
+                f"role already has an active approval signature: {signature.role}"
+            )
+        active_approval_roles.add(signature.role)
 
     normalized = decision.normalized()
     if decision.can_proceed and not normalized.can_proceed:

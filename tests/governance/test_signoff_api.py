@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from services.governance.human_gate.decision_model import (
@@ -7,7 +9,9 @@ from services.governance.human_gate.decision_model import (
     EvidenceReviewed,
     HumanGateDecision,
     HumanGateDecisionError,
+    HumanGateSignature,
     compute_evidence_hash,
+    validate_decision,
 )
 from services.governance.promotion_readiness.signoff_api import (
     HumanGateDecisionStore,
@@ -72,6 +76,7 @@ def test_signoff_api_records_two_role_human_gate_and_allows_proceed():
 
     assert risk_signed.can_proceed is False
     assert risk_signed.missing_required_roles() == ("operator",)
+    assert risk_signed.reason == "Human gate is not ready: missing_signature:operator"
 
     operator_signed = api.append_signature(
         created.decision_id,
@@ -85,6 +90,7 @@ def test_signoff_api_records_two_role_human_gate_and_allows_proceed():
 
     assert operator_signed.status == "approved"
     assert operator_signed.can_proceed is True
+    assert operator_signed.reason == "All required human gate signatures are bound to the reviewed evidence."
     assert operator_signed.evidence_hash == compute_evidence_hash(_evidence())
     assert {item["role"] for item in operator_signed.to_dict()["signatures"]} == {
         "risk_owner",
@@ -156,3 +162,33 @@ def test_create_decision_rejects_unbound_evidence_hash():
 
     with pytest.raises(HumanGateDecisionError, match="evidence_hash"):
         SignoffAPI(HumanGateDecisionStore()).create_decision(bad)
+
+
+def test_validate_decision_rejects_duplicate_active_approvals_for_role():
+    decision = _decision()
+    evidence_hash = compute_evidence_hash(_evidence())
+    signature_evidence = ("broker_sandbox_smoke", "rollback_drill")
+    duplicate = replace(
+        decision,
+        signatures=(
+            HumanGateSignature(
+                signature_id="sig-risk-owner-001",
+                role="risk_owner",
+                actor_id="risk-owner-1",
+                signed_at="2026-05-19T16:20:00Z",
+                evidence_hash=evidence_hash,
+                evidence_reviewed=signature_evidence,
+            ),
+            HumanGateSignature(
+                signature_id="sig-risk-owner-002",
+                role="risk_owner",
+                actor_id="risk-owner-2",
+                signed_at="2026-05-19T16:21:00Z",
+                evidence_hash=evidence_hash,
+                evidence_reviewed=signature_evidence,
+            ),
+        ),
+    )
+
+    with pytest.raises(HumanGateDecisionError, match="active approval signature: risk_owner"):
+        validate_decision(duplicate)
