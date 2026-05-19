@@ -246,13 +246,16 @@ def _evaluation_summary(
     summary: dict[str, Any] = {}
     if run.metric_bundle_id:
         summary["metric_bundle_id"] = run.metric_bundle_id
-    for source in (
-        artifact.get("evaluation_summary"),
-        hints.get("evaluation_summary"),
-        override,
+    for source_name, source in (
+        ("artifact.evaluation_summary", artifact.get("evaluation_summary")),
+        ("registry_hints.evaluation_summary", hints.get("evaluation_summary")),
+        ("evaluation_summary", override),
     ):
-        if isinstance(source, Mapping):
-            summary.update(dict(source))
+        if source is None:
+            continue
+        if not isinstance(source, Mapping):
+            raise ExperimentRegistryWritebackError(f"{source_name} must be a mapping for registry writeback.")
+        summary.update(dict(source))
     return summary or None
 
 

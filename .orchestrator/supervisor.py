@@ -1171,6 +1171,63 @@ def _create_worker_worktree(repo_root: Path, path: Path, branch: str, base_ref: 
     return True, None
 
 
+def _refresh_reused_worker_worktree(repo_root: Path, worktree_path: Path, base_ref: str) -> tuple[bool, str]:
+    """Fast-forward a reused worker worktree to the current base ref tip.
+
+    Reused worktrees may carry the worker's per-task branch from days ago,
+    which means their copy of `scripts/ai_status.py` / supervisor / skills can
+    be older than the supervisor root. That stale snapshot has bypassed gates
+    such as ORCH-CLOSEOUT-MERGE-GATE (require_merged_pr). Refresh on lease so
+    the worker always sees current control-plane code.
+
+    Strategy: fetch + `git merge --ff-only origin/<base>`. Never auto-resolve
+    a real merge — if the branch genuinely diverged, leave it for the worker
+    to handle. Never block dispatch on refresh failure; the worker may still
+    do useful work even on a stale snapshot.
+    """
+    base = base_ref.split("/", 1)[1] if base_ref.startswith("origin/") else base_ref
+    fetch_proc = subprocess.run(
+        ["git", "fetch", "origin", base, "--quiet"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if fetch_proc.returncode != 0:
+        details = (fetch_proc.stderr or fetch_proc.stdout or "").strip()
+        return False, f"fetch_failed: {details}"
+
+    status_proc = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=no"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if status_proc.returncode == 0 and status_proc.stdout.strip():
+        return False, "skipped_dirty_worktree"
+
+    merge_proc = subprocess.run(
+        ["git", "merge", "--ff-only", f"origin/{base}"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if merge_proc.returncode == 0:
+        head_proc = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        head = (head_proc.stdout or "").strip()
+        return True, f"ff_to_{head}" if head else "ff_ok"
+    details = (merge_proc.stderr or merge_proc.stdout or "").strip().splitlines()[0] if (merge_proc.stderr or merge_proc.stdout) else "unknown"
+    return False, f"non_fast_forward: {details}"
+
+
 def _task_brief_context_candidates(task_id: str | None, rel_context_path: str) -> list[str]:
     normalized = rel_context_path.replace("\\", "/").strip()
     candidates = [normalized]
@@ -1282,6 +1339,22 @@ def prepare_worker_workspace(
         if existing:
             worktree_path = existing
             reused = True
+            refresh_ok, refresh_status = _refresh_reused_worker_worktree(
+                repo_root, worktree_path, str(settings.get("base_ref") or "origin/dev")
+            )
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_worktree_refreshed",
+                    "task_id": request.task_id,
+                    "target_agent": target_agent,
+                    "queue_event_id": queue_event_id,
+                    "workspace_branch": branch,
+                    "workspace_path": str(worktree_path),
+                    "refresh_ok": refresh_ok,
+                    "refresh_status": refresh_status,
+                },
+            )
 
     if not reused:
         if _branch_checked_out_in_root(repo_root, branch):

@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "No runnable sidecar-safe backlog exists while OSS-FINRL-V2-001 remains a closeout state-sync blocker.",
+  "blocked_by": [
+    "dashboard-bundle.json reports ready_now=0 and dependency_ready=0",
+    "OSS-FINRL-V2-001 board status is blocked while its generated task brief says review_approved",
+    "SPRINT-8-CLOSEOUT depends on OSS-FINRL-V2-001 reaching a truthful terminal state"
+  ],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [
+    {
+      "task_id": "OSS-FINRL-V2-001",
+      "role": "owner",
+      "from": "Gemini2",
+      "to": "Codex",
+      "reason": "Gemini2 is blocked on git credential/push finalization; the remaining work is closeout state-sync and preservation or supersession of the Codex2 review refresh, which Codex can repair without changing implementation scope."
+    }
+  ],
+  "recommended_focus": [
+    "OSS-FINRL-V2-001",
+    "SPRINT-8-CLOSEOUT",
+    "OPS-CLOSEOUT-PUSH-HYGIENE",
+    "OPS-PROMOTE-HEALTH-001"
+  ]
+}
