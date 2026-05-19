@@ -21,6 +21,7 @@
 #   5. git push -u origin task/<TASK-ID>
 #   6. gh pr create --base dev --head task/<TASK-ID> --label auto-merge
 #   7. gh pr merge task/<TASK-ID> --auto --merge
+#   8. wait for the PR to merge before running scripts/ai-status.sh done
 #
 # Output is intentionally short: each step prints a single PASS / FAIL line.
 # Long sub-command output is captured into /tmp/safe-pr-<TASK-ID>.log so
@@ -176,3 +177,4 @@ echo
 echo "DONE — task $TASK_ID on $TASK_BRANCH"
 echo "  PR: https://github.com/ajoe734/pantheon/pull/${EXISTING_PR:-?}"
 echo "  log: $LOG"
+echo "  wait for the PR to merge before running scripts/ai-status.sh done"

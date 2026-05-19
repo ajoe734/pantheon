@@ -267,17 +267,126 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             "status": "review_approved",
             "artifacts": ["execute-plans/e2e/dummy.spec.ts"],
         }
-        execute_plans_root = ai_status.ROOT.parent / "execute-plans"
-
-        with mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command):
+        with (
+            mock.patch.dict(os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False),
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
+        ):
             delivery = ai_status.collect_done_delivery_metadata(task, "Codex2")
 
+        execute_plans_root = Path(delivery["repository_path"])
         self.assertEqual(delivery["repository_id"], "execute_plans")
         self.assertEqual(delivery["repository_path"], str(execute_plans_root))
         self.assertEqual(delivery["repository_slug"], "ajoe734/execute-plans")
         self.assertEqual(delivery["branch"], "bff-luv-fe-006-dev-deploy")
         self.assertTrue(calls)
         self.assertTrue(all(cwd == execute_plans_root for _, cwd in calls))
+
+    def test_collect_done_delivery_metadata_blocks_unmerged_task_pr(self) -> None:
+        task = {
+            "id": "REG-002",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "artifacts": [],
+        }
+
+        def fake_run_git_command(args: list[str], **kwargs: object) -> str:
+            if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                return "task/REG-002"
+            if args == ["rev-parse", "HEAD"]:
+                return "abc123"
+            if args == ["show", "-s", "--format=%s", "HEAD"]:
+                return "REG-002 finalize"
+            if args == ["show", "-s", "--format=%b", "HEAD"]:
+                return "LLM-Agent: Codex\nTask-ID: REG-002\nReviewer: Claude\n"
+            if args == ["show", "-s", "--format=%an", "HEAD"]:
+                return "Codex"
+            if args == ["show", "-s", "--format=%ae", "HEAD"]:
+                return "codex@example.com"
+            if args == ["status", "--porcelain"]:
+                return ""
+            if args == ["remote"]:
+                return "origin"
+            if args == ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]:
+                return "origin/task/REG-002"
+            if args == ["rev-list", "--left-right", "--count", "origin/task/REG-002...HEAD"]:
+                return "0 0"
+            if args == ["fetch", "origin", "dev"]:
+                return ""
+            if args == ["rev-parse", "--verify", "origin/dev"]:
+                return "devsha"
+            raise AssertionError(f"unexpected git command: {args}")
+
+        with (
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
+            mock.patch.object(ai_status, "git_command_succeeds", return_value=False),
+            mock.patch.object(
+                ai_status,
+                "pull_request_status_for_branch",
+                return_value={
+                    "number": 152,
+                    "state": "OPEN",
+                    "mergeStateStatus": "BEHIND",
+                    "autoMergeRequest": {"mergeMethod": "MERGE"},
+                    "url": "https://github.com/ajoe734/pantheon/pull/152",
+                },
+            ),
+        ):
+            with self.assertRaises(SystemExit) as exc_info:
+                ai_status.collect_done_delivery_metadata(task, "Codex")
+
+        message = str(exc_info.exception)
+        self.assertIn("not merged into `origin/dev`", message)
+        self.assertIn("PR #152", message)
+        self.assertIn("mergeState=BEHIND", message)
+        self.assertIn("review_approved", message)
+
+    def test_collect_done_delivery_metadata_allows_head_merged_to_dev(self) -> None:
+        task = {
+            "id": "REG-002",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "artifacts": [],
+        }
+
+        def fake_run_git_command(args: list[str], **kwargs: object) -> str:
+            if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                return "task/REG-002"
+            if args == ["rev-parse", "HEAD"]:
+                return "abc123"
+            if args == ["show", "-s", "--format=%s", "HEAD"]:
+                return "REG-002 finalize"
+            if args == ["show", "-s", "--format=%b", "HEAD"]:
+                return "LLM-Agent: Codex\nTask-ID: REG-002\nReviewer: Claude\n"
+            if args == ["show", "-s", "--format=%an", "HEAD"]:
+                return "Codex"
+            if args == ["show", "-s", "--format=%ae", "HEAD"]:
+                return "codex@example.com"
+            if args == ["status", "--porcelain"]:
+                return ""
+            if args == ["remote"]:
+                return "origin"
+            if args == ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]:
+                return "origin/task/REG-002"
+            if args == ["rev-list", "--left-right", "--count", "origin/task/REG-002...HEAD"]:
+                return "0 0"
+            if args == ["fetch", "origin", "dev"]:
+                return ""
+            if args == ["rev-parse", "--verify", "origin/dev"]:
+                return "devsha"
+            raise AssertionError(f"unexpected git command: {args}")
+
+        with (
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
+            mock.patch.object(ai_status, "git_command_succeeds", return_value=True),
+        ):
+            delivery = ai_status.collect_done_delivery_metadata(task, "Codex")
+
+        self.assertEqual(delivery["merge_target_branch"], "dev")
+        self.assertEqual(delivery["merge_target_ref"], "origin/dev")
+        self.assertEqual(delivery["merge_target_sha"], "devsha")
+        self.assertTrue(delivery["head_merged_to_target"])
 
 
 class ArchiveWorkflowTests(unittest.TestCase):

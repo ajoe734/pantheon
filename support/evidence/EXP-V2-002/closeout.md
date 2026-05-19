@@ -1,9 +1,9 @@
 # EXP-V2-002 Closeout
 
 Owner: Codex2
-Reviewer: Codex
-Date: 2026-05-17
-Status at closeout pickup: review_approved
+Reviewer: Claude2
+Date: 2026-05-19
+Status at final closeout pickup: review_approved
 
 ## Delivered Scope
 
@@ -53,3 +53,58 @@ Post-merge results:
 - `services/lineage-read`: 15 passed in 16.25s.
 
 The reviewer approval records a prior bounded full-suite attempt: `pytest -q` timed out after 300 seconds with no output, so no repo-wide exit-0 result was produced.
+
+## Final Owner Finalization
+
+PR #84 merged into `dev` on 2026-05-17 with merge commit `3dfc22897cb8c7dcca8fcdd17af03b580cceef0d`. On 2026-05-18, the supervisor resumed the current owner (`Codex2`) for formal `review_approved` -> `done` closeout after reviewer approval in the shared status root.
+
+Commands rerun from `task/EXP-V2-002` before final status closeout:
+
+```bash
+pytest -q services/lineage-read/test_multi_artifact_tree.py
+pytest -q services/lineage-read
+```
+
+Finalization results:
+
+- `services/lineage-read/test_multi_artifact_tree.py`: 6 passed in 0.64s.
+- `services/lineage-read`: 28 passed in 6.80s.
+
+The closeout correction keeps PR #106 scoped to this evidence file only. It
+does not change the already-merged lineage module or tests.
+
+## 2026-05-19 Owner Finalization
+
+The supervisor resumed Codex2 for `owned_finalize_dispatch` after Claude2
+approved the refreshed review packet in
+`support/evidence/EXP-V2-002/review.md`.
+
+Commands rerun from `task/EXP-V2-002` before this finalization commit:
+
+```bash
+pytest -q services/lineage-read/test_multi_artifact_tree.py
+pytest -q services/lineage-read
+```
+
+Finalization results:
+
+- `services/lineage-read/test_multi_artifact_tree.py`: 6 passed in 0.51s.
+- `services/lineage-read`: 28 passed in 4.78s.
+
+PR #171 initially reported `mergeStateStatus=BEHIND`, so the task branch was
+updated with `origin/dev` and the same focused verification was rerun:
+
+```bash
+pytest -q services/lineage-read/test_multi_artifact_tree.py
+pytest -q services/lineage-read
+```
+
+Post-merge finalization results:
+
+- `services/lineage-read/test_multi_artifact_tree.py`: 6 passed in 0.51s.
+- `services/lineage-read`: 28 passed in 4.72s.
+
+This finalization is evidence-only. It composes with the already-merged
+lineage implementation PR #84 and evidence closeout PR #106, and it does not
+change the lineage-read implementation, tests, HTTP wrapper, registry write
+path, or canonical architecture documents.

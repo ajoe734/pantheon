@@ -11,6 +11,7 @@ import os
 import random
 import re
 import signal
+import shutil
 import subprocess
 import sys
 import time
@@ -49,6 +50,7 @@ from common import (
     write_failure_evidence,
     write_json,
     write_activity_log,
+    worker_runtime_paths,
 )
 from coordination_file_watcher import sync_coordination_files
 from dispatch_policy import (
@@ -249,13 +251,62 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--no-watch", action="store_true", help="Process the event queue without running watch_events first.")
     parser.add_argument("--replay", action="store_true", help="Pass replay through to watch_events for the first scan.")
-    parser.add_argument("--poll-interval", type=float, default=None)
+    parser.add_argument(
+        "--poll-interval",
+        type=float,
+        default=None,
+        help=(
+            "Override supervisor poll interval in seconds. Values below "
+            "config.supervisor.poll_interval_seconds require --allow-fast-poll."
+        ),
+    )
+    parser.add_argument(
+        "--allow-fast-poll",
+        action="store_true",
+        help=(
+            "Authorize --poll-interval below the configured value. Reserved for "
+            "ad-hoc incident debugging; do not use for steady-state runs."
+        ),
+    )
     parser.add_argument("--quiet", action="store_true", help="Suppress terminal heartbeat output.")
     parser.add_argument("--verbose", action="store_true", help="Print active worker and queue details each tick.")
     parser.add_argument("--claim-agent", default=None, help="Let one idle agent claim and start one ready task.")
     parser.add_argument("--release-task", default=None, help="Release this agent's completed worker slot before claiming more work.")
     parser.add_argument("--clear-provider-pause", default=None, help="Manually clear one provider dispatch pause.")
     return parser.parse_args()
+
+
+CONFIG_DEFAULT_POLL_INTERVAL_SECONDS = 300.0
+
+
+class FastPollNotAllowedError(SystemExit):
+    """Raised when --poll-interval is below config without --allow-fast-poll."""
+
+
+def resolve_poll_interval(
+    config: dict[str, Any],
+    *,
+    cli_value: float | None,
+    allow_fast_poll: bool,
+) -> tuple[float, str]:
+    configured = float(
+        config.get("supervisor", {}).get(
+            "poll_interval_seconds", CONFIG_DEFAULT_POLL_INTERVAL_SECONDS
+        )
+    )
+    if cli_value is None:
+        return configured, "config"
+    if cli_value <= 0:
+        raise FastPollNotAllowedError(
+            f"--poll-interval must be positive (got {cli_value})."
+        )
+    if cli_value < configured and not allow_fast_poll:
+        raise FastPollNotAllowedError(
+            f"--poll-interval={cli_value}s is below config.supervisor.poll_interval_seconds={configured}s. "
+            "Pass --allow-fast-poll to authorize an ad-hoc fast cadence, or update config.json "
+            "if this is a steady-state change."
+        )
+    return cli_value, "cli"
 
 
 def console_log(message: str, *, quiet: bool = False) -> None:
@@ -280,6 +331,35 @@ def heartbeat_lag_seconds(previous_heartbeat: str | None, current_heartbeat: str
     if previous_dt is None or current_dt is None:
         return None
     return max(0.0, (current_dt - previous_dt).total_seconds())
+
+
+def watchdog_safe_mode_active(state: dict[str, Any], now: datetime | None = None) -> bool:
+    watchdog = state.get("watchdog", {}) if isinstance(state.get("watchdog"), dict) else {}
+    safe_mode_until = parse_runtime_timestamp(str(watchdog.get("safe_mode_until") or ""))
+    if safe_mode_until is None:
+        return False
+    now_dt = now or datetime.now(timezone.utc)
+    return now_dt.astimezone(timezone.utc) < safe_mode_until.astimezone(timezone.utc)
+
+
+def record_watchdog_safe_mode_observed(config: dict[str, Any], state: dict[str, Any], now: str) -> bool:
+    watchdog = state.setdefault("watchdog", {})
+    safe_mode_until = str(watchdog.get("safe_mode_until") or "").strip()
+    if not safe_mode_until:
+        return False
+    if watchdog.get("last_safe_mode_observed_until") == safe_mode_until:
+        return False
+    watchdog["last_safe_mode_observed_until"] = safe_mode_until
+    write_activity_log(
+        config,
+        {
+            "type": "watchdog_safe_mode_dispatch_suppressed",
+            "message": f"Watchdog safe mode suppresses new supervisor dispatch until {safe_mode_until}.",
+            "safe_mode_until": safe_mode_until,
+            "reason": watchdog.get("safe_mode_reason"),
+        },
+    )
+    return True
 
 
 def format_runtime_timestamp_local(ts: str | None) -> str:
@@ -657,6 +737,92 @@ def provider_dispatch_group_id(config: dict[str, Any], provider: str | None) -> 
     return normalize_agent_id(str(group or provider_id))
 
 
+def agent_provider_id(config: dict[str, Any], agent_id: str | None) -> str:
+    normalized = normalize_agent_id(agent_id or "")
+    if not normalized:
+        return ""
+    agent = (config.get("agents", {}) or {}).get(normalized, {}) or {}
+    return normalize_agent_id(str(agent.get("provider") or normalized))
+
+
+def agent_quota_group_id(config: dict[str, Any], agent_id: str | None) -> str:
+    provider_id = agent_provider_id(config, agent_id)
+    return provider_dispatch_group_id(config, provider_id or agent_id)
+
+
+def active_quota_group_counts(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    active_statuses: set[str],
+) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for worker in state.get("workers", {}).values():
+        if worker.get("status") not in active_statuses:
+            continue
+        group_id = normalize_agent_id(str(worker.get("quota_group") or ""))
+        if not group_id:
+            group_id = provider_dispatch_group_id(config, str(worker.get("provider") or worker.get("agent_id") or ""))
+        if not group_id:
+            continue
+        counts[group_id] = counts.get(group_id, 0) + 1
+    return counts
+
+
+def queued_quota_group_counts(config: dict[str, Any], state: dict[str, Any]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    queue_records = state.get("queue", {}).get("events", {})
+    active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
+    active_queue_event_ids = {
+        str(worker.get("queue_event_id") or "")
+        for worker in state.get("workers", {}).values()
+        if worker.get("status") in active_statuses and worker.get("queue_event_id")
+    }
+    try:
+        queued_events = load_event_queue(config)
+    except KeyError:
+        queued_events = []
+    for event in queued_events:
+        event_id = str(event.get("event_id") or "")
+        if not event_id:
+            continue
+        if event_id in active_queue_event_ids:
+            continue
+        record = queue_records.get(event_id, {})
+        if record.get("status") in {"completed", "failed"}:
+            continue
+        group_id = agent_quota_group_id(config, str(event.get("target_agent") or ""))
+        if not group_id:
+            continue
+        counts[group_id] = counts.get(group_id, 0) + 1
+    return counts
+
+
+def quota_group_concurrency_limit(
+    config: dict[str, Any],
+    agent_id: str | None,
+    settings: dict[str, Any] | None = None,
+) -> int | None:
+    settings = settings or ready_dispatch_settings(config)
+    raw = settings.get("max_concurrent_per_quota_group")
+    group_id = agent_quota_group_id(config, agent_id)
+    if isinstance(raw, dict):
+        provider_id = agent_provider_id(config, agent_id)
+        display_name = display_name_for(config, normalize_agent_id(agent_id or ""))
+        for key in (group_id, provider_id, normalize_agent_id(agent_id or ""), display_name):
+            if key in raw:
+                try:
+                    return max(0, int(raw[key]))
+                except (TypeError, ValueError):
+                    return None
+        return None
+    if raw in (None, ""):
+        return None
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return None
+
+
 def agent_is_dispatch_slot(agent: dict[str, Any] | None) -> bool:
     return bool(isinstance(agent, dict) and str(agent.get("dispatch_slot_for") or "").strip())
 
@@ -770,6 +936,7 @@ def select_dispatch_agent_id(
     provider_report: dict[str, Any] | None = None,
 ) -> str | None:
     normalized = normalize_agent_id(agent_id or "")
+    settings = ready_dispatch_settings(config)
     slot_ids = logical_worker_slot_ids(config, normalized)
     if not slot_ids:
         return normalized
@@ -781,6 +948,12 @@ def select_dispatch_agent_id(
     for slot_id in slot_ids:
         if slot_id in active_slots:
             continue
+        quota_limit = quota_group_concurrency_limit(config, slot_id, settings)
+        quota_group = agent_quota_group_id(config, slot_id)
+        if quota_limit and quota_group:
+            quota_counts = active_quota_group_counts(config, state, active_statuses)
+            if quota_counts.get(quota_group, 0) >= quota_limit:
+                continue
         if agent_auto_dispatch_block_reason(config, state, slot_id, provider_report):
             continue
         return slot_id
@@ -998,6 +1171,89 @@ def _create_worker_worktree(repo_root: Path, path: Path, branch: str, base_ref: 
     return True, None
 
 
+def _task_brief_context_candidates(task_id: str | None, rel_context_path: str) -> list[str]:
+    normalized = rel_context_path.replace("\\", "/").strip()
+    candidates = [normalized]
+    if ".orchestrator/task-briefs/" in normalized and task_id:
+        hyphen_slug = _task_id_slug(task_id)
+        underscore_slug = hyphen_slug.replace("-", "_")
+        for slug in (underscore_slug, hyphen_slug, normalize_agent_id(task_id)):
+            if slug:
+                candidates.append(f".orchestrator/task-briefs/{slug}.md")
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate and candidate not in seen:
+            seen.add(candidate)
+            ordered.append(candidate)
+    return ordered
+
+
+def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) -> str:
+    task = task_index_from_status(config, load_status(config)).get(str(task_id or ""))
+    if not task:
+        return "\n".join(
+            [
+                f"# Task Brief: {task_id or 'unknown-task'}",
+                "",
+                "Generated in the worker workspace because the supervisor root did not have a task brief file.",
+                "",
+            ]
+        )
+    return "\n".join(
+        [
+            f"# Task Brief: {task.get('id') or task_id}",
+            "",
+            "Generated in the worker workspace because the supervisor root did not have a task brief file.",
+            "",
+            "## Task",
+            f"- Title: {task.get('title') or '-'}",
+            f"- Status: {task.get('status') or '-'}",
+            f"- Owner: {task.get('owner') or '-'}",
+            f"- Reviewer: {task.get('reviewer') or '-'}",
+            f"- Next: {task.get('next') or '-'}",
+            "",
+            "## Summary",
+            str(task.get("summary_zh") or "-"),
+            "",
+        ]
+    )
+
+
+def materialize_worker_context_files(
+    config: dict[str, Any],
+    request: DeliveryRequest,
+    workspace_path: Path,
+) -> list[str]:
+    """Copy generated task briefs into isolated worktrees before worker launch."""
+    if not request.context_files:
+        return []
+    status_root = config_path(config, "status_file").parents[0].resolve()
+    materialized: list[str] = []
+    for rel_context_path in request.context_files:
+        rel_value = str(rel_context_path or "").strip().replace("\\", "/")
+        if not rel_value or Path(rel_value).is_absolute():
+            continue
+        if ".orchestrator/task-briefs/" not in rel_value:
+            continue
+        destination = workspace_path / rel_value
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        copied = False
+        for candidate in _task_brief_context_candidates(request.task_id, rel_value):
+            source = status_root / candidate
+            if not source.exists() or not source.is_file():
+                continue
+            shutil.copy2(source, destination)
+            copied = True
+            break
+        if not copied:
+            destination.write_text(_generated_worker_task_brief(config, request.task_id), encoding="utf-8")
+        materialized.append(rel_value)
+    if materialized:
+        request.metadata["materialized_context_files"] = materialized
+    return materialized
+
+
 def prepare_worker_workspace(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -1072,6 +1328,7 @@ def prepare_worker_workspace(
             "status_root": str(repo_root),
         }
     )
+    materialized_context_files = materialize_worker_context_files(config, request, worktree_path)
     leases = state.setdefault("worker_worktrees", {}).setdefault("leases", {})
     leases[str(request.task_id)] = {
         "task_id": request.task_id,
@@ -1081,6 +1338,7 @@ def prepare_worker_workspace(
         "last_queue_event_id": queue_event_id,
         "last_target_agent": target_agent,
         "last_used_at": utc_now(),
+        "materialized_context_files": materialized_context_files,
     }
     write_activity_log(
         config,
@@ -1280,6 +1538,9 @@ def start_worker_for_request(
     worker_run_id = result.run_id or new_runtime_id(request.provider)
     logical_agent_id = str(request.metadata.get("logical_agent_id") or agent["id"])
     dispatch_slot_id = str(request.metadata.get("dispatch_slot_id") or "")
+    now_dt = datetime.now(timezone.utc)
+    now = _isoformat_utc(now_dt)
+    result_metadata = result.metadata if isinstance(result.metadata, dict) else {}
     state.setdefault("workers", {})[worker_run_id] = {
         "run_id": worker_run_id,
         "provider": request.provider,
@@ -1292,7 +1553,10 @@ def start_worker_for_request(
         "session_id": result.session_id,
         "mode": result.mode,
         "status": "manual_pending" if result.manual_confirmation_required and not result.auto_delivered else "running",
-        "last_event_at": utc_now(),
+        "last_event_at": now,
+        "last_heartbeat_at": None,
+        "lease_acquired_at": now,
+        "lease_expires_at": worker_lease_expiry(config, now_dt),
         "deferred_action": None,
         "resume_token": result.resume_token or result.session_id,
         "pr_url": normalize_pr_url(config, result.pr_url),
@@ -1307,14 +1571,34 @@ def start_worker_for_request(
         "workspace_branch": request.metadata.get("workspace_branch"),
         "status_root": request.metadata.get("status_root"),
         "pid": result.pid,
+        "heartbeat_path": result_metadata.get("heartbeat_path"),
+        "runner_status_path": result_metadata.get("runner_status_path"),
         "notes": result.notes,
-        "metadata": result.metadata,
+        "metadata": result_metadata,
         "request_snapshot": request_snapshot(request),
         "parent_run_id": parent_run_id,
         "retry_count": 0,
         "next_retry_at": None,
         "last_error": None,
     }
+    record_worker_runtime_measurement(
+        config,
+        state,
+        "worker_started",
+        {
+            "workers_started": 1,
+            "queue_leases_started": 1 if queue_event_id else 0,
+        },
+        details={
+            "worker_run_id": worker_run_id,
+            "queue_event_id": queue_event_id,
+            "task_id": request.task_id,
+            "agent_id": agent["id"],
+            "provider": request.provider,
+            "lease_expires_at": state["workers"][worker_run_id].get("lease_expires_at"),
+        },
+        emit_activity=False,
+    )
     # Persist immediately after launch so a supervisor crash cannot orphan
     # a live worker before the end-of-tick state save.
     save_runtime_state(config, state)
@@ -1376,6 +1660,9 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             if record.get("status") != desired_status or record.get("run_id") != active_worker.get("run_id"):
                 record["status"] = desired_status
                 record["run_id"] = active_worker.get("run_id") or event_id
+                record["lease_owner"] = active_worker.get("run_id") or event_id
+                record["lease_acquired_at"] = record.get("lease_acquired_at") or active_worker.get("lease_acquired_at") or utc_now()
+                record["lease_expires_at"] = active_worker.get("lease_expires_at") or queue_lease_expiry(config)
                 record["processed_at"] = record.get("processed_at") or utc_now()
                 sync_dispatched_task_status(config, event)
                 changed = True
@@ -1425,6 +1712,29 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
         request_agent_id = str(getattr(request, "agent_id", event.get("target_agent")) or "")
         auto_block_reason = agent_auto_dispatch_block_reason(config, state, request_agent_id, provider_report)
         if auto_block_reason:
+            if auto_dispatch_block_is_temporary_capacity(auto_block_reason):
+                record["status"] = "pending"
+                record["last_wait_reason"] = f"Auto dispatch waiting for {request_agent_id}: {auto_block_reason}"
+                record["capacity_wait_count"] = int(record.get("capacity_wait_count", 0) or 0) + 1
+                record["last_capacity_wait_at"] = utc_now()
+                reason_changed = record.get("last_capacity_wait_reason") != auto_block_reason
+                record["last_capacity_wait_reason"] = auto_block_reason
+                record_worker_runtime_measurement(
+                    config,
+                    state,
+                    "dispatch_capacity_wait",
+                    {"capacity_pending_queue_events": 1},
+                    details={
+                        "queue_event_id": event_id,
+                        "task_id": event.get("task_id"),
+                        "agent_id": request_agent_id,
+                        "reason": auto_block_reason,
+                        "capacity_wait_count": record["capacity_wait_count"],
+                    },
+                    emit_activity=reason_changed,
+                )
+                changed = True
+                continue
             record["status"] = "failed"
             record["processed_at"] = utc_now()
             record["error"] = f"Auto dispatch unavailable for {request_agent_id}: {auto_block_reason}"
@@ -1580,9 +1890,14 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             continue
 
         worker_run_id = outcome or event_id
+        queue_started_at = datetime.now(timezone.utc)
         record["status"] = "manual_pending" if delivery and delivery.get("manual_confirmation_required") and not delivery.get("auto_delivered") else "started"
         record["run_id"] = worker_run_id
-        record["processed_at"] = utc_now()
+        record["lease_owner"] = worker_run_id
+        record["lease_acquired_at"] = _isoformat_utc(queue_started_at)
+        record["lease_expires_at"] = queue_lease_expiry(config, queue_started_at)
+        record["processed_at"] = _isoformat_utc(queue_started_at)
+        record.pop("last_wait_reason", None)
         sync_dispatched_task_status(config, event)
         changed = True
     return changed
@@ -2916,7 +3231,7 @@ def build_chair_review_message(
         '  "decision": "approve_sidecars | deny_sidecars",\n'
         '  "sidecar_approved": true,\n'
         '  "approval_ttl_minutes": 45,\n'
-        '  "max_sidecars": 2,\n'
+        '  "max_sidecars": null,\n'
         '  "reason": "one concise operational reason",\n'
         '  "blocked_by": [],\n'
         '  "blocked_sidecar_parents": [],\n'
@@ -2940,6 +3255,7 @@ def build_chair_review_message(
         '  "recommended_focus": []\n'
         "}\n\n"
         "如果目前有 idle auto worker、execution backlog 有可安全平行化的工作、且沒有 global blocker，預設應 approve_sidecars。\n"
+        "不要為 sidecar wave 設定數量上限；max_sidecars 請填 null，除非存在具體安全風險需要暫時 cap。\n"
         "如果 deny_sidecars，blocked_by 必須列出具體 blocker；如果只有特定 parent 不應產生 sidecar，請放進 blocked_sidecar_parents。\n"
         "如果 Pending Approval Details 裡有你能判斷的低風險 approval，請在 approval_actions 裡 allow 或 deny；不能判斷就不要列入。\n"
         "如果 Repeated Failure Details 顯示同一 agent 在同一 task 壞循環，請用 reassignment_actions 指定是否改派；不需要就留空。\n"
@@ -3292,6 +3608,183 @@ def _parse_iso_utc(ts: str | None) -> datetime | None:
         return datetime.fromisoformat(ts.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def _isoformat_utc(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def worker_runtime_settings(config: dict[str, Any]) -> dict[str, Any]:
+    raw = config.get("worker_runtime")
+    settings = dict(raw if isinstance(raw, dict) else {})
+    supervisor_settings = config.get("supervisor", {}) if isinstance(config.get("supervisor"), dict) else {}
+    settings.setdefault("worker_lease_seconds", supervisor_settings.get("worker_lease_seconds", 1800))
+    settings.setdefault("queue_lease_seconds", supervisor_settings.get("queue_lease_seconds", 1800))
+    settings.setdefault("heartbeat_stale_seconds", supervisor_settings.get("heartbeat_stale_seconds", 300))
+    settings.setdefault("heartbeat_grace_seconds", supervisor_settings.get("heartbeat_grace_seconds", 60))
+    settings.setdefault("runner_heartbeat_interval_seconds", 15)
+    return settings
+
+
+WORKER_RUNTIME_METRIC_COUNTERS = (
+    "workers_started",
+    "queue_leases_started",
+    "marker_updates",
+    "lease_refreshes",
+    "missing_process_workers_failed",
+    "expired_lease_workers_failed",
+    "started_queue_records_requeued",
+    "started_queue_records_failed",
+    "stale_queue_records_completed",
+    "capacity_pending_queue_events",
+)
+
+
+def worker_runtime_metrics_bucket(state: dict[str, Any]) -> dict[str, Any]:
+    bucket = state.setdefault("worker_runtime_metrics", {})
+    bucket.setdefault("version", 1)
+    bucket.setdefault("updated_at", None)
+    totals = bucket.setdefault("totals", {})
+    for key in WORKER_RUNTIME_METRIC_COUNTERS:
+        totals.setdefault(key, 0)
+    bucket.setdefault("last_measurements", {})
+    return bucket
+
+
+def positive_runtime_counts(counts: dict[str, Any]) -> dict[str, int]:
+    positive: dict[str, int] = {}
+    for key, value in counts.items():
+        try:
+            amount = int(value)
+        except (TypeError, ValueError):
+            continue
+        if amount > 0:
+            positive[key] = amount
+    return positive
+
+
+def record_worker_runtime_measurement(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    measurement: str,
+    counts: dict[str, Any],
+    *,
+    details: dict[str, Any] | None = None,
+    emit_activity: bool = True,
+) -> bool:
+    positive = positive_runtime_counts(counts)
+    if not positive and not details:
+        return False
+    now = utc_now()
+    bucket = worker_runtime_metrics_bucket(state)
+    totals = bucket.setdefault("totals", {})
+    for key, amount in positive.items():
+        totals[key] = int(totals.get(key, 0) or 0) + amount
+    bucket["updated_at"] = now
+    bucket.setdefault("last_measurements", {})[measurement] = {
+        "at": now,
+        "counts": positive,
+        "details": details or {},
+    }
+    if emit_activity and positive:
+        try:
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_runtime_metrics",
+                    "measurement": measurement,
+                    "message": f"Worker runtime measurement {measurement}: {positive}",
+                    "counts": positive,
+                    "details": details or {},
+                },
+            )
+        except KeyError:
+            pass
+    return True
+
+
+def worker_lease_expiry(config: dict[str, Any], now: datetime | None = None) -> str:
+    settings = worker_runtime_settings(config)
+    now_dt = now or datetime.now(timezone.utc)
+    return _isoformat_utc(now_dt + timedelta(seconds=max(60, int(settings.get("worker_lease_seconds", 1800)))))
+
+
+def queue_lease_expiry(config: dict[str, Any], now: datetime | None = None) -> str:
+    settings = worker_runtime_settings(config)
+    now_dt = now or datetime.now(timezone.utc)
+    return _isoformat_utc(now_dt + timedelta(seconds=max(60, int(settings.get("queue_lease_seconds", 1800)))))
+
+
+def refresh_worker_lease(config: dict[str, Any], worker: dict[str, Any], now: datetime | None = None) -> None:
+    now_dt = now or datetime.now(timezone.utc)
+    worker.setdefault("lease_acquired_at", _isoformat_utc(now_dt))
+    worker["lease_expires_at"] = worker_lease_expiry(config, now_dt)
+
+
+def _load_runtime_marker(path_value: Any) -> dict[str, Any] | None:
+    if not path_value:
+        return None
+    path = Path(str(path_value))
+    if not path.exists():
+        return None
+    try:
+        payload = load_json(path, default={}) or {}
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def update_worker_runtime_markers(worker: dict[str, Any]) -> bool:
+    metadata = worker.setdefault("metadata", {}) if isinstance(worker.get("metadata"), dict) else {}
+    heartbeat_path = worker.get("heartbeat_path") or metadata.get("heartbeat_path")
+    status_path = worker.get("runner_status_path") or metadata.get("runner_status_path")
+    changed = False
+    status_payload = _load_runtime_marker(status_path)
+    heartbeat_payload = _load_runtime_marker(heartbeat_path)
+    for payload in (status_payload, heartbeat_payload):
+        if not payload:
+            continue
+        heartbeat_at = str(payload.get("last_heartbeat_at") or payload.get("updated_at") or "").strip()
+        if heartbeat_at and heartbeat_at > str(worker.get("last_heartbeat_at") or ""):
+            worker["last_heartbeat_at"] = heartbeat_at
+            changed = True
+        child_pid = payload.get("child_pid")
+        if child_pid and worker.get("child_pid") != child_pid:
+            worker["child_pid"] = child_pid
+            changed = True
+    if status_payload:
+        runner_status = str(status_payload.get("status") or "").strip()
+        if runner_status and worker.get("runner_status") != runner_status:
+            worker["runner_status"] = runner_status
+            changed = True
+        if status_payload.get("finished_at") and worker.get("runner_finished_at") != status_payload.get("finished_at"):
+            worker["runner_finished_at"] = status_payload.get("finished_at")
+            changed = True
+        if "exit_code" in status_payload and worker.get("exit_code") != status_payload.get("exit_code"):
+            worker["exit_code"] = status_payload.get("exit_code")
+            changed = True
+        if status_payload.get("signal") and worker.get("runner_signal") != status_payload.get("signal"):
+            worker["runner_signal"] = status_payload.get("signal")
+            changed = True
+    return changed
+
+
+def worker_heartbeat_is_stale(config: dict[str, Any], worker: dict[str, Any], now: datetime | None = None) -> bool:
+    settings = worker_runtime_settings(config)
+    heartbeat_dt = _parse_iso_utc(str(worker.get("last_heartbeat_at") or ""))
+    if heartbeat_dt is None:
+        return True
+    now_dt = now or datetime.now(timezone.utc)
+    stale_after = int(settings.get("heartbeat_stale_seconds", 300)) + int(settings.get("heartbeat_grace_seconds", 60))
+    return (now_dt - heartbeat_dt.astimezone(timezone.utc)).total_seconds() > max(60, stale_after)
+
+
+def worker_lease_is_expired(config: dict[str, Any], worker: dict[str, Any], now: datetime | None = None) -> bool:
+    lease_expires_at = _parse_iso_utc(str(worker.get("lease_expires_at") or ""))
+    if lease_expires_at is None:
+        return False
+    now_dt = now or datetime.now(timezone.utc)
+    return now_dt > lease_expires_at.astimezone(timezone.utc) and worker_heartbeat_is_stale(config, worker, now_dt)
 
 
 _QUOTA_RETRY_AT_PATTERN = re.compile(
@@ -3869,6 +4362,18 @@ def agent_auto_dispatch_block_reason(
         return "missing target agent"
     if agent_dispatch_paused(config, state, normalized_agent):
         return f"dispatch is paused or disabled for {display_name_for(config, normalized_agent) or normalized_agent}"
+    settings = ready_dispatch_settings(config)
+    active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
+    quota_limit = quota_group_concurrency_limit(config, normalized_agent, settings)
+    quota_group = agent_quota_group_id(config, normalized_agent)
+    if quota_limit and quota_group:
+        active_quota_counts = active_quota_group_counts(config, state, active_statuses)
+        active_count = active_quota_counts.get(quota_group, 0)
+        if active_count >= quota_limit:
+            return (
+                f"quota group {quota_group} already has {active_count}/{quota_limit} "
+                "active worker(s)"
+            )
     if not provider_report:
         return None
 
@@ -3895,9 +4400,7 @@ def agent_auto_dispatch_block_reason(
         if provider_capability.get("auth_ready") is False:
             return f"{provider_id} authentication is not ready"
 
-    settings = ready_dispatch_settings(config)
     if settings.get("worker_os_duplicate_guard", True):
-        active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
         slot_ids = logical_worker_slot_ids(config, normalized_agent)
         if slot_ids:
             occupied_slots = {
@@ -3936,6 +4439,19 @@ def agent_auto_dispatch_block_reason(
             )
 
     return None
+
+
+def auto_dispatch_block_is_temporary_capacity(reason: str | None) -> bool:
+    normalized = str(reason or "").lower()
+    return any(
+        marker in normalized
+        for marker in (
+            "quota group",
+            "already has live worker",
+            "all dispatch slots",
+            "slot",
+        )
+    )
 
 
 def sync_status_pipeline(config: dict[str, Any]) -> bool:
@@ -4680,20 +5196,30 @@ def resume_claude_worker(
             "ORCH_WORKSPACE_PATH": str(workspace_root),
         }
     )
+    runtime_paths = worker_runtime_paths(config, worker["run_id"])
     process, _ = spawn_background_process(
         command,
         cwd=workspace_root,
         log_path=log_path,
         env=env,
+        run_id=worker["run_id"],
+        heartbeat_path=runtime_paths["heartbeat_path"],
+        status_path=runtime_paths["status_path"],
     )
     previous_logs = list(worker.get("previous_log_paths") or [])
     if worker.get("log_path"):
         previous_logs.append(worker["log_path"])
+    now_dt = datetime.now(timezone.utc)
     worker["previous_log_paths"] = previous_logs
     worker["pid"] = process.pid
     worker["status"] = "running"
     worker["deferred_action"] = None
-    worker["last_event_at"] = utc_now()
+    worker["last_event_at"] = _isoformat_utc(now_dt)
+    worker["last_heartbeat_at"] = None
+    worker["lease_acquired_at"] = _isoformat_utc(now_dt)
+    worker["lease_expires_at"] = worker_lease_expiry(config, now_dt)
+    worker["heartbeat_path"] = str(runtime_paths["heartbeat_path"])
+    worker["runner_status_path"] = str(runtime_paths["status_path"])
     worker["log_path"] = str(log_path)
     worker["resume_count"] = int(worker.get("resume_count", 0)) + 1
     worker["last_resumed_session_id"] = str(session_id)
@@ -4701,6 +5227,8 @@ def resume_claude_worker(
     worker.setdefault("metadata", {})["shell_command"] = shell_quote(command)
     worker["metadata"]["resume_permission_mode"] = resume_permission_mode if worker.get("last_approval_id") else None
     worker["metadata"]["resume_allowed_tools"] = allowed_tools
+    worker["metadata"]["heartbeat_path"] = str(runtime_paths["heartbeat_path"])
+    worker["metadata"]["runner_status_path"] = str(runtime_paths["status_path"])
     return {
         "command": command,
         "log_path": str(log_path),
@@ -4732,6 +5260,11 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
     if provider_report is None:
         provider_report = load_provider_report(config)
     changed = retry_due_workers(config, state, provider_report, now) or changed
+    poll_counts = {
+        "marker_updates": 0,
+        "lease_refreshes": 0,
+        "expired_lease_workers_failed": 0,
+    }
     workers = state.setdefault("workers", {})
     for run_id, worker in list(workers.items()):
         previous_last_event_at = worker.get("last_event_at")
@@ -4755,8 +5288,39 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 )
                 changed = True
                 continue
+        marker_changed = update_worker_runtime_markers(worker)
+        if marker_changed:
+            poll_counts["marker_updates"] += 1
+            changed = True
         update_from_log(config, worker)
         alive = pid_is_alive(worker.get("pid"))
+        if alive and worker.get("status") in active_worker_statuses and worker.get("last_heartbeat_at"):
+            if not worker_heartbeat_is_stale(config, worker, now):
+                refresh_worker_lease(config, worker, now)
+                poll_counts["lease_refreshes"] += 1
+                if worker.get("queue_event_id"):
+                    record = queue_status(state, worker["queue_event_id"])
+                    record["lease_owner"] = worker.get("run_id")
+                    record["lease_expires_at"] = queue_lease_expiry(config, now)
+        if alive and worker.get("status") in active_worker_statuses and worker_lease_is_expired(config, worker, now):
+            terminate_worker_pid(worker.get("pid"))
+            worker["status"] = "failed"
+            worker["last_event_at"] = utc_now()
+            worker["last_error"] = "Worker lease expired after heartbeat became stale."
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_failed",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": worker["last_error"],
+                    "worker_run_id": worker.get("run_id"),
+                },
+            )
+            finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
+            poll_counts["expired_lease_workers_failed"] += 1
+            changed = True
+            continue
         last_event_advanced = bool(
             previous_last_event_at
             and worker.get("last_event_at")
@@ -5321,6 +5885,13 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 )
                 finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
             changed = True
+    record_worker_runtime_measurement(
+        config,
+        state,
+        "poll_workers",
+        poll_counts,
+        emit_activity=bool(poll_counts["expired_lease_workers_failed"]),
+    )
     return changed
 
 
@@ -5504,6 +6075,153 @@ def reconcile_queue_records(config: dict[str, Any], state: dict[str, Any]) -> bo
             changed = True
     return changed
 
+
+def _reset_queue_record_for_redispatch(record: dict[str, Any], *, reason: str) -> None:
+    record["status"] = "queued"
+    record["requeued_at"] = utc_now()
+    record["requeue_reason"] = reason
+    for key in (
+        "processed_at",
+        "error",
+        "lease_owner",
+        "lease_acquired_at",
+        "lease_expires_at",
+        "lease_released_at",
+        "last_wait_reason",
+    ):
+        record.pop(key, None)
+
+
+def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    changed = False
+    now = datetime.now(timezone.utc)
+    active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
+    redispatch_statuses = redispatch_candidate_statuses(config)
+    counts = {
+        "marker_updates": 0,
+        "lease_refreshes": 0,
+        "missing_process_workers_failed": 0,
+        "expired_lease_workers_failed": 0,
+        "started_queue_records_requeued": 0,
+        "started_queue_records_failed": 0,
+        "stale_queue_records_completed": 0,
+    }
+    try:
+        task_map = task_index_from_status(config, load_status(config))
+    except KeyError:
+        task_map = {}
+    workers = state.setdefault("workers", {})
+
+    for run_id, worker in list(workers.items()):
+        if worker.get("status") not in active_statuses:
+            continue
+        marker_changed = update_worker_runtime_markers(worker)
+        if marker_changed:
+            counts["marker_updates"] += 1
+            changed = True
+        alive = pid_is_alive(worker.get("pid"))
+        missing_process = worker.get("status") in {"running", "stalled"} and not alive
+        expired_lease = alive and worker_lease_is_expired(config, worker, now)
+        if alive and not expired_lease and worker.get("last_heartbeat_at") and not worker_heartbeat_is_stale(config, worker, now):
+            refresh_worker_lease(config, worker, now)
+            counts["lease_refreshes"] += 1
+            if worker.get("queue_event_id"):
+                record = queue_status(state, worker["queue_event_id"])
+                record["lease_owner"] = worker.get("run_id")
+                record["lease_expires_at"] = queue_lease_expiry(config, now)
+            changed = True
+            continue
+        if not missing_process and not expired_lease:
+            continue
+        if alive:
+            terminate_worker_pid(worker.get("pid"))
+        reason = (
+            "Worker lease expired during supervisor boot reconciliation."
+            if expired_lease
+            else "Worker process missing during supervisor boot reconciliation."
+        )
+        worker["status"] = "failed"
+        worker["last_event_at"] = utc_now()
+        worker["last_error"] = reason
+        finalize_queue_event_record(config, state, worker, "failed", reason)
+        if expired_lease:
+            counts["expired_lease_workers_failed"] += 1
+        else:
+            counts["missing_process_workers_failed"] += 1
+        write_activity_log(
+            config,
+            {
+                "type": "worker_failed",
+                "provider": worker.get("provider"),
+                "task_id": worker.get("task_id"),
+                "message": reason,
+                "worker_run_id": run_id,
+            },
+        )
+        changed = True
+
+    queue_records = state.setdefault("queue", {}).setdefault("events", {})
+    try:
+        queued_events = load_event_queue(config)
+    except KeyError:
+        queued_events = []
+    for event in queued_events:
+        event_id = str(event.get("event_id") or "")
+        if not event_id:
+            continue
+        record = queue_records.get(event_id)
+        if not isinstance(record, dict):
+            continue
+        if str(record.get("status") or "") not in {"started", "stalled"}:
+            continue
+        related_active = [
+            worker
+            for worker in workers.values()
+            if worker.get("queue_event_id") == event_id and worker.get("status") in active_statuses
+        ]
+        if related_active:
+            continue
+        skip_message = stale_dispatch_skip_message(config, event, task_map)
+        if skip_message:
+            record["status"] = "completed"
+            record["processed_at"] = utc_now()
+            record["skip_reason"] = "stale_dispatch_event"
+            record["requeue_reason"] = "started event became stale while supervisor was offline"
+            counts["stale_queue_records_completed"] += 1
+            changed = True
+            continue
+        task_status = str(task_map.get(str(event.get("task_id") or ""), {}).get("status") or "").lower()
+        if task_status in redispatch_statuses:
+            _reset_queue_record_for_redispatch(
+                record,
+                reason="started queue record had no active worker during supervisor boot reconciliation",
+            )
+            counts["started_queue_records_requeued"] += 1
+        else:
+            record["status"] = "failed"
+            record["processed_at"] = utc_now()
+            record["error"] = "Started queue record had no active worker and task is no longer redispatchable."
+            counts["started_queue_records_failed"] += 1
+        changed = True
+    corrective_counts = {
+        key: counts[key]
+        for key in (
+            "missing_process_workers_failed",
+            "expired_lease_workers_failed",
+            "started_queue_records_requeued",
+            "started_queue_records_failed",
+            "stale_queue_records_completed",
+        )
+    }
+    record_worker_runtime_measurement(
+        config,
+        state,
+        "boot_reconciliation",
+        counts,
+        emit_activity=bool(positive_runtime_counts(corrective_counts)),
+    )
+    return changed
+
 def helper_claim_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings = dict(ready_dispatch_settings(config).get("helper_claim", {}) or {})
     settings.setdefault("enabled", True)
@@ -5512,6 +6230,7 @@ def helper_claim_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("require_owner_higher_priority_load", True)
     settings.setdefault("claim_idle_work", False)
     settings.setdefault("claim_sidecars_when_idle", False)
+    settings.setdefault("disable_when_failure_loops", True)
     return settings
 
 
@@ -5579,13 +6298,25 @@ def underutilization_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("threshold_ratio", 0.5)
     settings.setdefault("continuous_window_seconds", 900)
     settings.setdefault("cooldown_seconds", 900)
-    settings.setdefault("max_new_sidecars_per_wave", 2)
+    settings.setdefault("max_new_sidecars_per_wave", None)
     settings.setdefault("max_active_sidecars_per_agent", 1)
+    settings.setdefault("respect_chair_max_sidecars", False)
     settings.setdefault(
         "productive_worker_statuses",
         ["running", "waiting_approval", "suspended_approval", "retry_backoff"],
     )
     return settings
+
+
+def sidecar_wave_limit(raw_value: Any) -> int | None:
+    if raw_value in (None, ""):
+        return None
+    if isinstance(raw_value, str) and raw_value.strip().lower() in {"none", "null", "unlimited", "false"}:
+        return None
+    try:
+        return max(0, int(raw_value))
+    except (TypeError, ValueError):
+        return None
 
 
 def load_sidecar_catalog(config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -6262,6 +6993,9 @@ def finalize_queue_event_record(config: dict[str, Any], state: dict[str, Any], w
     record = queue_status(state, queue_event_id)
     record["status"] = status
     record["processed_at"] = utc_now()
+    record["lease_released_at"] = record["processed_at"]
+    if worker.get("run_id"):
+        record["lease_owner"] = worker.get("run_id")
     if error:
         record["error"] = error
 
@@ -6856,8 +7590,13 @@ def dispatch_ready_tasks(
     pending_task_ids = {task_id for task_id, _agent_id in pending_task_agents if task_id}
     agent_loads = agent_dispatch_loads(config, state, active_statuses)
     helper_settings = helper_claim_settings(config)
+    active_quota_counts = active_quota_group_counts(config, state, active_statuses)
+    pending_quota_counts = queued_quota_group_counts(config, state)
     seen = state.setdefault("seen_event_keys", {})
     failure_loop_agents = failure_loop_agents_for_task_map(config, state, task_map)
+    helper_claims_allowed = not (
+        bool(failure_loop_agents) and helper_settings.get("disable_when_failure_loops", True)
+    )
 
     changed = False
     normalized = False
@@ -6890,11 +7629,7 @@ def dispatch_ready_tasks(
         agent_ids = agent_sequence[dispatch_cursor:] + agent_sequence[:dispatch_cursor]
     else:
         agent_ids = []
-    max_concurrent_setting = settings.get("max_concurrent_workers")
-    try:
-        max_concurrent = int(max_concurrent_setting) if max_concurrent_setting not in (None, "") else None
-    except (TypeError, ValueError):
-        max_concurrent = None
+    max_concurrent = ready_dispatch_max_concurrent_workers(config)
     if max_concurrent is not None and max_concurrent > 0:
         live_total = sum(len(pids) for pids in scan_live_worker_pids_by_agent().values())
         if live_total >= max_concurrent:
@@ -6909,11 +7644,20 @@ def dispatch_ready_tasks(
             continue
         if agent_auto_dispatch_block_reason(config, state, agent_id, provider_report):
             continue
+        quota_limit = quota_group_concurrency_limit(config, agent_id, settings)
+        quota_group = agent_quota_group_id(config, agent_id)
+        quota_used = active_quota_counts.get(quota_group, 0) + pending_quota_counts.get(quota_group, 0)
+        if quota_limit and quota_group and quota_used >= quota_limit:
+            continue
         agent_capacity = agent_dispatch_capacity(config, agent_id, settings)
         current_agent_load = len(agent_loads.get(target_agent, []))
         if current_agent_load >= agent_capacity:
             continue
         available_agent_slots = agent_capacity - current_agent_load
+        if quota_limit and quota_group:
+            available_agent_slots = min(available_agent_slots, max(0, quota_limit - quota_used))
+            if available_agent_slots <= 0:
+                continue
         target_has_primary_work = agent_has_dispatchable_primary_work(config, status, target_agent, task_map)
 
         candidates: list[tuple[int, int, dict[str, Any], str]] = []
@@ -6921,6 +7665,8 @@ def dispatch_ready_tasks(
         for index, task in enumerate(tasks):
             task_id = str(task.get(task_id_field) or "")
             if not task_id:
+                continue
+            if task_id in active_task_ids or task_id in pending_task_ids:
                 continue
             is_sidecar_task = task_is_sidecar(task)
             task_status = str(task.get("status") or "").lower()
@@ -6964,7 +7710,8 @@ def dispatch_ready_tasks(
                 or bool(helper_settings.get("claim_sidecars_when_idle", False))
             )
             helper_claim_candidate = (
-                dependencies_satisfied(task, task_map, dependency_done_statuses)
+                helper_claims_allowed
+                and dependencies_satisfied(task, task_map, dependency_done_statuses)
                 and task_id not in active_task_ids
                 and task_id not in pending_task_ids
                 and sidecar_claim_allowed
@@ -7028,7 +7775,12 @@ def dispatch_ready_tasks(
             if queue_delivery_event(config, event):
                 seen[event["key"]] = utc_now()
                 pending_event_keys.add(event["key"])
+                pending_agents.add(agent_id)
+                pending_task_ids.add(str(task.get(task_id_field) or ""))
+                pending_task_agents.add((str(task.get(task_id_field) or ""), agent_id))
                 agent_loads.setdefault(target_agent, []).append(dispatch_reason_priority(reason) or 9)
+                if quota_group:
+                    pending_quota_counts[quota_group] = pending_quota_counts.get(quota_group, 0) + 1
                 changed = True
                 dispatches += 1
                 queued_for_agent += 1
@@ -7103,6 +7855,9 @@ def dispatch_ready_tasks(
                     dispatch_reason_priority(helper_dispatch_reason) or 9
                 )
                 active_task_ids.add(task_id)
+                pending_task_ids.add(task_id)
+                if quota_group:
+                    pending_quota_counts[quota_group] = pending_quota_counts.get(quota_group, 0) + 1
                 changed = True
                 dispatches += 1
                 write_activity_log(
@@ -7126,6 +7881,17 @@ def dispatch_ready_tasks(
     if agent_sequence and considered_agents and not agent_ids_override:
         dispatch_state["weighted_cursor"] = (dispatch_cursor + considered_agents) % len(agent_sequence)
     return changed
+
+
+def ready_dispatch_max_concurrent_workers(config: dict[str, Any]) -> int | None:
+    max_concurrent_setting = ready_dispatch_settings(config).get("max_concurrent_workers")
+    try:
+        max_concurrent = int(max_concurrent_setting) if max_concurrent_setting not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+    if max_concurrent is not None and max_concurrent <= 0:
+        return None
+    return max_concurrent
 
 
 def dispatch_chair_review(
@@ -7176,6 +7942,12 @@ def dispatch_chair_review(
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
     active_agents, _active_task_agents = active_worker_indexes(state, active_statuses)
     pending_agents, _pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
+    max_concurrent = ready_dispatch_max_concurrent_workers(config)
+    if max_concurrent is not None:
+        live_total = sum(len(pids) for pids in scan_live_worker_pids_by_agent().values())
+        reserved_total = len(set(active_agents) | set(pending_agents))
+        if max(live_total, reserved_total) >= max_concurrent:
+            return False
     seen = state.setdefault("seen_event_keys", {})
     status = load_status(config)
     task_map = task_index_from_status(config, status)
@@ -7331,16 +8103,15 @@ def dispatch_underutilization_sidecars(
     _pending_agents, _pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
     seen = state.setdefault("seen_event_keys", {})
     per_agent_counts = {agent: count_open_sidecars_for_agent(status, agent) for agent in idle_agents}
-    max_new_sidecars = int(settings.get("max_new_sidecars_per_wave", 2))
-    if rotation.get("sidecar_approval_max_sidecars") is not None:
-        try:
-            max_new_sidecars = min(max_new_sidecars, max(0, int(rotation.get("sidecar_approval_max_sidecars"))))
-        except (TypeError, ValueError):
-            pass
+    max_new_sidecars = sidecar_wave_limit(settings.get("max_new_sidecars_per_wave"))
+    if settings.get("respect_chair_max_sidecars", False):
+        chair_limit = sidecar_wave_limit(rotation.get("sidecar_approval_max_sidecars"))
+        if chair_limit is not None:
+            max_new_sidecars = chair_limit if max_new_sidecars is None else min(max_new_sidecars, chair_limit)
     created = 0
 
     for candidate in candidates:
-        if created >= max_new_sidecars:
+        if max_new_sidecars is not None and created >= max_new_sidecars:
             break
 
         parent_owner = str(candidate.get("reviewer") or "").strip()
@@ -7479,6 +8250,9 @@ def run_once(
     save_runtime_state(config, state)
     changed = False
     try:
+        changed = reconcile_runtime_on_boot(config, state) or changed
+        if changed:
+            save_runtime_state(config, state)
         continue_or_skip_empty(THIS_DIR.parent)
         changed = expire_provider_dispatch_pauses(config, state) or changed
         pruned = prune_stale_approvals(config)
@@ -7504,7 +8278,10 @@ def run_once(
         planning_state = load_discussion_planning_state()
         changed = auto_materialize_discussion_planning(config, planning_state) or changed
         planning_state = load_discussion_planning_state()
-        if discussion_planning_is_active(planning_state):
+        dispatch_suppressed_by_watchdog = watchdog_safe_mode_active(state)
+        if dispatch_suppressed_by_watchdog:
+            changed = record_watchdog_safe_mode_observed(config, state, loop_started_at) or changed
+        elif discussion_planning_is_active(planning_state):
             changed = dispatch_discussion_planning(config, state, planning_state, provider_report=provider_report) or changed
         else:
             if chair_review_failure_loop_details(config, state):
@@ -7516,7 +8293,8 @@ def run_once(
                 changed = dispatch_ready_tasks(config, state, provider_report=provider_report) or changed
                 changed = dispatch_chair_review(config, state, planning_state, provider_report=provider_report) or changed
             changed = dispatch_underutilization_sidecars(config, state, provider_report=provider_report) or changed
-        changed = process_queue(config, state, provider_report) or changed
+        if not dispatch_suppressed_by_watchdog:
+            changed = process_queue(config, state, provider_report) or changed
         changed = poll_workers(config, state, provider_report=provider_report) or changed
         changed = reconcile_queue_records(config, state) or changed
         changed = prune_event_queue(config, state) or changed
@@ -7655,9 +8433,14 @@ def main() -> int:
     atexit.register(clear_supervisor_pid, config)
     write_supervisor_pid(config)
     bootstrap_supervisor_runtime_state(config, lifecycle="starting")
-    poll_interval = args.poll_interval or float(config.get("supervisor", {}).get("poll_interval_seconds", 300.0))
+    poll_interval, poll_source = resolve_poll_interval(
+        config,
+        cli_value=args.poll_interval,
+        allow_fast_poll=args.allow_fast_poll,
+    )
     console_log(
-        f"starting supervisor pid={os.getpid()} poll_interval={poll_interval:.1f}s config={args.config}",
+        f"starting supervisor pid={os.getpid()} poll_interval={poll_interval:.1f}s "
+        f"source={poll_source} config={args.config}",
         quiet=args.quiet,
     )
     if args.once:

@@ -1,7 +1,7 @@
 # OODA-E2E-003 Closeout Evidence
 
 Task: OODA-E2E-003
-Owner: Codex2
+Owner: Codex
 Reviewer: Claude
 Status at closeout pickup: review_approved
 Closeout date: 2026-05-18
@@ -21,7 +21,8 @@ Closeout date: 2026-05-18
 - PR: <https://github.com/ajoe734/pantheon/pull/78>.
 - PR #78 merged into `dev` on 2026-05-17 with required GitHub checks passing.
 - Closeout PR #107 carried the initial closeout evidence and merged on 2026-05-18.
-- A follow-up closeout commit records the reviewer evidence referenced by the central task status.
+- Closeout PR #109 refreshed the closeout evidence and merged on 2026-05-18.
+- This owner finalization branch records the reviewer evidence referenced by the central task status.
 
 ## Reviewer Approval
 
@@ -31,26 +32,26 @@ E2E acceptance criteria pass with no required follow-up.
 
 ## Closeout Verification
 
-Commands run from `task/OODA-E2E-003` after fast-forwarding the branch to current `origin/dev`:
+Commands run from `task/OODA-E2E-003` after merging current `origin/dev`:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q -x tests/e2e/test_experiment_run_to_admission.py
 ```
 
-Result: `4 passed in 0.54s`.
+Result: `4 passed in 0.81s`.
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q -x tests/e2e/test_experiment_run_to_admission.py tests/e2e/test_admission_to_deployment_plan.py
 ```
 
-Result: `7 passed in 0.98s`.
+Result: `7 passed in 1.91s`.
 
 ## Lifecycle Note
 
 The task-scoped implementation is already merged. Finalization should run:
 
 ```bash
-AI_NAME=Codex2 ./scripts/ai-status.sh done OODA-E2E-003 "<checkpoint message>"
+AI_NAME=Codex ./scripts/ai-status.sh done OODA-E2E-003 "<checkpoint message>"
 ```
 
 after the latest task-branch commit carries the required `LLM-Agent`, `Task-ID`, and `Reviewer`
