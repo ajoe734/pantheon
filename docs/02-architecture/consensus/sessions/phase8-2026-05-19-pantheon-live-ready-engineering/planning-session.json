@@ -1,0 +1,113 @@
+{
+  "session_id": "phase8-2026-05-19-pantheon-live-ready-engineering",
+  "phase": "phase8",
+  "profile": "mixed_dispatch",
+  "status": "accepted",
+  "planning_mode": "external_design_handoff",
+  "runtime_mode": "supervisor_managed_execution",
+  "summary": "Pantheon go-live engineering 2026-05-19 re-baseline: 33 Track A tasks dispatch directly (EP5 / LSP / RES-ACT / OODA-CANARY / residual HG / 3 LIVE-gate placeholders) and 27 Track B tasks held for discussion_planning sub-sessions (BLA / CBL / HA). Predecessor session phase8-2026-05-18 was rolled back overnight when the worktree reset to origin/dev.",
+  "objective": "Materialize the pre-gate engineering for EP5 canary proof, Human Gate residual work, Strict Lovable final audit, Research production-data activation, Canary OODA proof, and human-gate placeholders. Broker live, capital binding live, and BFF HA engineering is held until their respective discussion_planning sub-sessions reach accepted consensus.",
+  "facilitator": "Claude",
+  "baton_owner": "Claude",
+  "starter_owner": "Claude",
+  "next_reviewer": "Codex",
+  "baton_sequence": [
+    "Claude",
+    "Codex",
+    "Codex2",
+    "Claude2",
+    "Gemini",
+    "Copilot"
+  ],
+  "review_sequence": [
+    "Codex2",
+    "Codex",
+    "Claude2",
+    "Gemini",
+    "Copilot"
+  ],
+  "brief_files": [
+    "docs/04/pantheon_design_blueprint_supplement_2026-05-19/INDEX.md",
+    "docs/04/pantheon_design_blueprint_supplement_2026-05-19/pantheon_blueprint_supplement.md",
+    "docs/04/planning_briefs_2026-05-17/BROKER_LIVE_ACTIVATION_PLANNING_BRIEF.md",
+    "docs/04/planning_briefs_2026-05-17/BFF_HA_TOPOLOGY_PLANNING_BRIEF.md"
+  ],
+  "expected_outputs": [
+    "33 Track A tasks materialized into ai-status.json with -V2 suffix",
+    "Track B Broker-Live sub-session opened (phase8-2026-05-XX-broker-live-activation-criteria)",
+    "Track B BFF-HA sub-session opened (phase8-2026-05-XX-bff-ha-topology-poc)",
+    "EP5 closeout packet (output of EP5-010-V2)"
+  ],
+  "lane_focus": {
+    "Claude": "facilitate session, own BFF/UI integration tasks (HG-006-V2, LSP browser probe)",
+    "Claude2": "BFF/Lovable strict publish final audit support, UI test coverage",
+    "Codex": "EP5 packet implementation, schema, validators, research adapter activation, OODA-CANARY",
+    "Codex2": "review, evidence collectors, LSP audit tooling, fail-closed tests, research admission gate",
+    "Gemini": "research activation reviewer, L1 risk-surface readout for Track B",
+    "Copilot": "scaffolding"
+  },
+  "fallback_policy": {
+    "broker_live": "discussion_planning required; do not dispatch BLA-*-V2 until sub-session consensus accepted",
+    "capital_binding_live": "discussion_planning required; do not dispatch CBL-*-V2 until sub-session consensus accepted",
+    "bff_ha": "discussion_planning required; do not dispatch HA-*-V2 until sub-session consensus accepted",
+    "live_gate_placeholders": "BLA-LIVE-001-V2 / CBL-LIVE-001-V2 / HA-PROD-001-V2 remain status=blocked with task_class=human_gate until preconditions met"
+  },
+  "current_round": 0,
+  "document_reconciliation_status": "external_handoff_accepted",
+  "consensus_status": "accepted_by_external_design_team",
+  "human_gate_status": "engineering_dispatch_authorized_activation_human_gate_preserved",
+  "artifacts": {
+    "planning_readme": "docs/02-architecture/consensus/sessions/phase8-2026-05-19-pantheon-live-ready-engineering/README.md",
+    "planning_session": "docs/02-architecture/consensus/sessions/phase8-2026-05-19-pantheon-live-ready-engineering/planning-session.json",
+    "execution_materialization": "docs/02-architecture/consensus/sessions/phase8-2026-05-19-pantheon-live-ready-engineering/execution-materialization.md",
+    "source_packet_index": "docs/04/pantheon_design_blueprint_supplement_2026-05-19/INDEX.md",
+    "source_packet_main": "docs/04/pantheon_design_blueprint_supplement_2026-05-19/pantheon_blueprint_supplement.md"
+  },
+  "readouts": {},
+  "cross_review_rounds": [],
+  "unresolved_items": [
+    "HG-005-V2 / HG-006-V2: included by default but design-team may want them absorbed into EP5-003/004",
+    "OPS-WAVE-* tasks: not dispatched; design-team can request explicit dispatch against H1/H4",
+    "RES-ACT-* generic vs adapter-specific: dispatched generically; per-adapter evidence is task output",
+    "OODA-CANARY-004-V2 declared depends_on EP5-007-V2 for rollback drill linkage",
+    "LIVE-gate placeholders carry task_class=human_gate, status=blocked",
+    "broker_sandbox_smoke_ref vs shioaji_sandbox_evidence_packet_ref: kept as two distinct refs",
+    "Track B routing: still discussion_planning; design-team may authorize direct dispatch if multi-AI consensus already satisfied"
+  ],
+  "proposed_execution_tasks": [
+    "EP5-001-V2", "EP5-002-V2", "EP5-003-V2", "EP5-004-V2", "EP5-005-V2", "EP5-006-V2", "EP5-007-V2", "EP5-008-V2", "EP5-009-V2", "EP5-010-V2",
+    "LSP-001-V2", "LSP-002-V2", "LSP-003-V2", "LSP-004-V2", "LSP-005-V2", "LSP-006-V2",
+    "RES-ACT-001-V2", "RES-ACT-002-V2", "RES-ACT-003-V2", "RES-ACT-004-V2", "RES-ACT-005-V2", "RES-ACT-006-V2",
+    "WNB-ACT-001-V2",
+    "OODA-CANARY-001-V2", "OODA-CANARY-002-V2", "OODA-CANARY-003-V2", "OODA-CANARY-004-V2", "OODA-CANARY-005-V2",
+    "HG-005-V2", "HG-006-V2",
+    "BLA-LIVE-001-V2", "CBL-LIVE-001-V2", "HA-PROD-001-V2"
+  ],
+  "deferred_tasks_pending_subsession": [
+    "BLA-001-V2", "BLA-002-V2", "BLA-003-V2", "BLA-004-V2", "BLA-005-V2", "BLA-006-V2", "BLA-007-V2", "BLA-008-V2", "BLA-009-V2", "BLA-010-V2",
+    "CBL-001-V2", "CBL-002-V2", "CBL-003-V2", "CBL-004-V2", "CBL-005-V2", "CBL-006-V2", "CBL-007-V2",
+    "HA-001-V2", "HA-002-V2", "HA-003-V2", "HA-004-V2", "HA-005-V2", "HA-006-V2", "HA-007-V2", "HA-008-V2", "HA-009-V2", "HA-010-V2"
+  ],
+  "recent_events": [
+    {
+      "at": "2026-05-19T14:50:00Z",
+      "actor": "Claude",
+      "event": "session_opened",
+      "note": "External design handoff from 2026-05-19 SA+SD+Task Spec packet accepted; Track A (33 tasks) authorized for direct dispatch, Track B (27 tasks) held for discussion_planning sub-sessions. Predecessor session phase8-2026-05-18 was rolled back overnight."
+    }
+  ],
+  "updated_at": "2026-05-19T14:50:00Z",
+  "planning_dir": "docs/02-architecture/consensus/sessions/phase8-2026-05-19-pantheon-live-ready-engineering",
+  "session_file": "docs/02-architecture/consensus/sessions/phase8-2026-05-19-pantheon-live-ready-engineering/planning-session.json",
+  "initial_materialization_task_ids": [],
+  "materialization_contract": {
+    "type": "mixed_dispatch",
+    "session_id": "phase8-2026-05-19-pantheon-live-ready-engineering",
+    "phase": "phase8",
+    "profile": "mixed_dispatch",
+    "planning_dir": "docs/02-architecture/consensus/sessions/phase8-2026-05-19-pantheon-live-ready-engineering",
+    "direct_dispatch_count": 33,
+    "deferred_count": 27
+  },
+  "materialized_at": null
+}
