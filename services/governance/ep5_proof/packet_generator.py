@@ -51,7 +51,14 @@ REQUIRED_EVIDENCE_KEYS = (
     PROOF_FLAG_TELEMETRY_INGESTED,
 )
 
-_PAPER_ORDER_ROUTE_MODES = {"paper", "paper_trading", "paper_only", "simulation"}
+_PAPER_ORDER_ROUTE_MODES = {
+    "paper",
+    "paper_trading",
+    "paper_only",
+    "simulation",
+    "sandbox",
+    "validate_only",
+}
 
 
 class EP5ProofGeneratorError(ValueError):
