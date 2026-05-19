@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-18 13:39:20
+Last updated: 2026-05-19 13:18:02
 
 ## Objective
 
@@ -31,7 +31,7 @@ Last updated: 2026-05-18 13:39:20
 - `Codex2`: integration, status-system, schema, acceptance; next: Assignment created
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: Assignment created
 - `Claude2`: execution, control-plane, governance-review; next: Assignment created
-- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Assignment created
+- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 
 ## Delivery Layers
 
@@ -56,17 +56,17 @@ Last updated: 2026-05-18 13:39:20
 |---|---|---|---|---|---|---|
 | `OSS-QLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | Qlib production-scale rolling + registry admission | Codex | review | `OSS-QLIB-002`, `MGMT-QLIB-001` | 把 OSS-QLIB-002 的 rolling pipeline 升級到 production scale：使用 MGMT-QLIB-001 已建好的 TWSE OHLCV dataset（≥50 instruments × ≥2 years），跑完整 rolling-window 訓練，產 model_artifact 並提交 registry admission packet。獨立檔案路徑。 |
 | `OSS-QUANTLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | QuantLib production option chain pricer + greeks | Copilot | todo | `OSS-QUANTLIB-001` | 把 OSS-QUANTLIB-001 option pricer 升級為 production：對台指選擇權(TXO)鏈跨多檔履約價與多個到期日定價，輸出含 greeks 的 pricing_snapshot artifact，提交 registry admission packet。獨立檔案。 |
-| `OSS-RLLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | RLlib production PPO on TWSE trading env | Claude | todo | `OSS-RLLIB-001`, `MGMT-QLIB-001` | 把 OSS-RLLIB-001 PPO skeleton 升級到 production：用 TWSE OHLCV 作為環境的 observation/action space，跑 ≥100 iter PPO，輸出 model_artifact 含 trained_policy 與 evaluation_summary，提交 registry admission packet。CPU-only。獨立檔案。 |
-| `OSS-FINRL-V2-001` | Sprint 8 / EPIC-OSS-V2 | FinRL production DRL on TWSE stock env | Gemini2 | todo | `OSS-FINRL-001`, `MGMT-QLIB-001` | 把 OSS-FINRL-001 DRL skeleton 升級到 production：用 TWSE OHLCV 作為 FinRL StockTradingEnv，跑 ≥1000 steps DDPG 或 PPO，輸出 model_artifact 含 evaluation_summary（sharpe annual_return max_drawdown），提交 registry admission packet。CPU-only。 |
 | `OODA-E2E-002` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #2: StrategySpec → ExperimentRun transition test | Codex2 | todo | `STRAT-001`, `EXP-001`, `EXP-002`, `VBT-001` | OODA Observe→Orient 階段：證明「StrategySpec → ExperimentRun」transition 可端到端走完。使用 EXP-001..002 service + 一個 OSS adapter (vectorbt VBT-001) 跑 backtest。獨立 test 檔。 |
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-18 10:49:17
-- Terminal tasks archived: `1191` total, `1171` completed, `20` superseded
+- Archive updated: 2026-05-19 13:18:01
+- Terminal tasks archived: `1193` total, `1173` completed, `20` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `OSS-RLLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | RLlib production PPO on TWSE trading env | Claude | completed | 2026-05-19 13:18:01 | `ai-task-archive/tasks/OSS-RLLIB-V2-001.json` |
+| `OSS-FINRL-V2-001` | Sprint 8 / EPIC-OSS-V2 | FinRL production DRL on TWSE stock env | Gemini2 | completed | 2026-05-19 13:17:12 | `ai-task-archive/tasks/OSS-FINRL-V2-001.json` |
 | `OSS-STAT-V2-001` | Sprint 8 / EPIC-OSS-V2 | statsmodels production cointegration on TWSE pairs | Codex | completed | 2026-05-18 10:49:17 | `ai-task-archive/tasks/OSS-STAT-V2-001.json` |
 | `STRAT-V2-002` | Sprint 8 / EPIC-STRAT-EXP-DEEP | Strategy lineage tree backend read API | Claude | completed | 2026-05-18 04:36:15 | `ai-task-archive/tasks/STRAT-V2-002.json` |
 | `OODA-E2E-005` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #5: DeploymentPlan(paper) → RuntimeBinding → paper run test | Claude2 | completed | 2026-05-18 08:45:22 | `ai-task-archive/tasks/OODA-E2E-005.json` |
@@ -85,8 +85,6 @@ Last updated: 2026-05-18 13:39:20
 | `ASK-006-SIDECAR-REVIEW` | Sprint 7 / EPIC-CONSULT-ADVANCED | Prepare ASK-006 review packet and evidence summary | Claude | completed | 2026-05-17 10:57:18 | `ai-task-archive/tasks/ASK-006-SIDECAR-REVIEW.json` |
 | `OPS-REFACTOR-001` | Sprint 7 / EPIC-OPS-BACKLOG | Re-apply dispatch policy refactor on current master | Codex | completed | 2026-05-17 10:46:36 | `ai-task-archive/tasks/OPS-REFACTOR-001.json` |
 | `ASK-008` | Sprint 7 / EPIC-CONSULT-ADVANCED | Committee sponsor decision -> governance action bridge | Codex | completed | 2026-05-17 10:41:04 | `ai-task-archive/tasks/ASK-008.json` |
-| `IMT-008` | Sprint 7 / EPIC-IMITATION-TRAINING | TRL preference-pair dataset bridge | Codex | completed | 2026-05-17 10:24:08 | `ai-task-archive/tasks/IMT-008.json` |
-| `OSS-RLLIB-001` | Sprint 7 / EPIC-OSS-RESEARCH | RLlib PPO adapter skeleton | Codex | completed | 2026-05-17 10:19:40 | `ai-task-archive/tasks/OSS-RLLIB-001.json` |
 
 ## Task Board
 
@@ -98,8 +96,6 @@ Last updated: 2026-05-18 13:39:20
 | `LOVABLE-STRICT-PUBLISH` | Sprint 7 / EPIC-LOVABLE-INFRA | Lovable build-time strict env publish audit script | SA § 2.2 列為 non-blocking follow-up：execute-plans@main build-time 應使用 strict env (VITE_BFF_MODE=live VITE_BFF_FALLBACK=strict VITE_BFF_REAL_WRITES=false) 重新發佈一次，並驗證發佈後的 bundle 不再含 seed fallback assets。本任務不直接動 execute-plans repo，而是寫一個 pantheon 端的 audit script + evidence packet，記錄 publish 條件、build env、bundle hash、verification probe 結果。 | Gemini | Gemini2 | todo | - | 2026-05-17 18:44:50 | Assignment created |
 | `OSS-QLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | Qlib production-scale rolling + registry admission | 把 OSS-QLIB-002 的 rolling pipeline 升級到 production scale：使用 MGMT-QLIB-001 已建好的 TWSE OHLCV dataset（≥50 instruments × ≥2 years），跑完整 rolling-window 訓練，產 model_artifact 並提交 registry admission packet。獨立檔案路徑。 | Codex | Codex2 | review | `OSS-QLIB-002`, `MGMT-QLIB-001` | 2026-05-18 00:26:36 | Ready for review: production Qlib rolling runner, registry admission packet emitter, tests, and admission_packet.json are merged via PR #70. Please review services/research/qlib/production_rolling_run.py, services/research/qlib/registry_admission_packet.py, services/research/qlib/test_production_rolling_run.py, and support/evidence/OSS-QLIB-V2-001/admission_packet.json. |
 | `OSS-QUANTLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | QuantLib production option chain pricer + greeks | 把 OSS-QUANTLIB-001 option pricer 升級為 production：對台指選擇權(TXO)鏈跨多檔履約價與多個到期日定價，輸出含 greeks 的 pricing_snapshot artifact，提交 registry admission packet。獨立檔案。 | Copilot | Codex2 | todo | `OSS-QUANTLIB-001` | 2026-05-17 19:01:36 | Assignment created |
-| `OSS-RLLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | RLlib production PPO on TWSE trading env | 把 OSS-RLLIB-001 PPO skeleton 升級到 production：用 TWSE OHLCV 作為環境的 observation/action space，跑 ≥100 iter PPO，輸出 model_artifact 含 trained_policy 與 evaluation_summary，提交 registry admission packet。CPU-only。獨立檔案。 | Claude | Codex | todo | `OSS-RLLIB-001`, `MGMT-QLIB-001` | 2026-05-17 19:01:43 | Assignment created |
-| `OSS-FINRL-V2-001` | Sprint 8 / EPIC-OSS-V2 | FinRL production DRL on TWSE stock env | 把 OSS-FINRL-001 DRL skeleton 升級到 production：用 TWSE OHLCV 作為 FinRL StockTradingEnv，跑 ≥1000 steps DDPG 或 PPO，輸出 model_artifact 含 evaluation_summary（sharpe annual_return max_drawdown），提交 registry admission packet。CPU-only。 | Gemini2 | Codex2 | todo | `OSS-FINRL-001`, `MGMT-QLIB-001` | 2026-05-17 19:01:50 | Assignment created |
 | `OODA-E2E-001` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #1: source → StrategySpec transition test | OODA Observe 階段第一步：實作整合測試證明「真實 SourceRecord → StrategySpec」這個 transition 可端到端走完。使用 SRC-* 與 STRAT-* 既有 service code，不重做。獨立 test 檔。 | Codex | Codex2 | todo | `SRC-001`, `STRAT-001`, `STRAT-003` | 2026-05-17 19:02:55 | Assignment created |
 | `OODA-E2E-002` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #2: StrategySpec → ExperimentRun transition test | OODA Observe→Orient 階段：證明「StrategySpec → ExperimentRun」transition 可端到端走完。使用 EXP-001..002 service + 一個 OSS adapter (vectorbt VBT-001) 跑 backtest。獨立 test 檔。 | Codex2 | Codex | todo | `STRAT-001`, `EXP-001`, `EXP-002`, `VBT-001` | 2026-05-17 19:03:09 | Assignment created |
 | `OODA-E2E-003` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #3: ExperimentRun → CandidateArtifact admission test | OODA Orient→Decide 階段：證明「ExperimentRun → CandidateArtifact → Registry admission」transition 可端到端走完。使用 EXP-005 writeback + Registry promotion service。獨立 test 檔。 | Claude | Codex | todo | `EXP-005`, `REG-002` | 2026-05-17 19:03:27 | Assignment created |
@@ -155,13 +151,6 @@ Do not read those omitted modules as open Pantheon backlog purely because they a
 
 ## Latest Checkpoints
 
-- 2026-05-16 01:52:26 Orchestrator: PostToolUse: Bash
-- 2026-05-16 01:52:28 Orchestrator: PreToolUse: Bash
-- 2026-05-16 01:52:31 Orchestrator: PreToolUse: Bash
-- 2026-05-16 01:52:32 Orchestrator: PostToolUse: Bash
-- 2026-05-16 01:52:37 Orchestrator: PreToolUse: Bash
-- 2026-05-16 01:52:38 Orchestrator: PostToolUse: Bash
-- 2026-05-16 01:52:42 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:52:43 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:52:47 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:52:48 Orchestrator: PostToolUse: Bash
@@ -174,4 +163,11 @@ Do not read those omitted modules as open Pantheon backlog purely because they a
 - 2026-05-16 01:53:08 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:53:08 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:53:13 Orchestrator: PreToolUse: Bash
-- 2026-05-18 13:39:20 Codex: `EXP-V2-001` Finalized duplicate active closeout record. Existing merged PRs: #69 implementation, #96 owner closeout, #111 finalization. Verification rerun: python3 -m pytest -q services/research/experiment_orchestrator/test_parallel_dispatch.py => 3 passed; python3 -m py_compile services/research/experiment_orchestrator/parallel_dispatch.py services/research/experiment_orchestrator/test_parallel_dispatch.py => ok; python3 -m pytest -q services/research/experiments/test_models.py services/research/experiment_orchestrator/test_parallel_dispatch.py => 15 passed.
+- 2026-05-19 13:15:58 Gemini2: `OSS-FINRL-V2-001` Reconciliation: implementation and finalization owner evidence are already merged in origin/dev; preparing review closeout.
+- 2026-05-19 13:16:10 Gemini2: `OSS-FINRL-V2-001` Handoff to Codex2: Reconciliation review: merged FinRL implementation and finalization owner evidence verified; Codex2 review refresh recorded.
+- 2026-05-19 13:16:21 Codex2: `OSS-FINRL-V2-001` Review approved after reconciliation against merged origin/dev evidence.
+- 2026-05-19 13:17:12 Gemini2: `OSS-FINRL-V2-001` FINRL closeout reconciled: implementation, evidence, review approval, and finalization owner update are merged in origin/dev; no live broker/capital/GPU side effects.
+- 2026-05-19 13:17:26 Claude: `OSS-RLLIB-V2-001` Reconciliation: PR #77 and closeout commit 06066e4d are merged in origin/dev; preparing owner finalization.
+- 2026-05-19 13:17:35 Claude: `OSS-RLLIB-V2-001` Handoff to Codex: Owner finalization evidence recorded; PR #77 merged and closeout commit 06066e4d verified in origin/dev.
+- 2026-05-19 13:17:49 Codex: `OSS-RLLIB-V2-001` Review approved after reconciliation against merged PR #77 and closeout evidence.
+- 2026-05-19 13:18:01 Claude: `OSS-RLLIB-V2-001` RLLIB closeout reconciled: PR #77, closeout evidence, Codex review approval, and safety properties are merged in origin/dev; local orphan finalization replaced by this reconciliation record.
