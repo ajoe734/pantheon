@@ -27,6 +27,15 @@ def test_criteria_json_matches_2026_05_19_b2_shape() -> None:
     assert validate_criteria_shape(criteria).passed is True
 
 
+def test_explicit_empty_criteria_fails_closed_instead_of_using_default() -> None:
+    result = validate_criteria_shape({})
+
+    assert result.passed is False
+    codes = {issue.code for issue in result.errors}
+    assert "invalid_criteria_version" in codes
+    assert "invalid_criteria_required_evidence" in codes
+
+
 def test_activation_request_happy_path_passes_without_live_side_effects() -> None:
     result = validate_activation_request(_activation_request())
 
@@ -59,6 +68,21 @@ def test_activation_request_fails_closed_without_operator_approval() -> None:
     assert {issue.code for issue in result.errors} == {"required_approval_missing"}
     with pytest.raises(BrokerLiveActivationValidationError, match="operator approval"):
         validate_activation_request_or_raise(payload)
+
+
+@pytest.mark.parametrize(
+    "criteria",
+    [
+        {"version": "bad"},
+        {"version": "1.0"},
+    ],
+)
+def test_activation_request_fails_closed_for_invalid_criteria(criteria: dict) -> None:
+    result = validate_activation_request(_activation_request(), criteria=criteria)
+
+    assert result.passed is False
+    assert result.blocking_reasons
+    assert any(issue.code.startswith("invalid_criteria_") for issue in result.errors)
 
 
 def test_activation_request_enforces_short_term_drift_cooldown() -> None:
