@@ -28,6 +28,7 @@ PORTABLE_SCRIPT_FILES = [
     "scripts/launch-docs-site.sh",
     "scripts/orchestrator_bundle.py",
     "scripts/run-supervisor.sh",
+    "scripts/run-supervisor-watchdog.sh",
     "scripts/run-dashboard.sh",
     "scripts/setup-llm-cli.sh",
 ]
@@ -46,10 +47,12 @@ ORCHESTRATOR_EXCLUDES = {
     "github-relay-state.json",
     "github-webhook-events.jsonl",
     "logs",
+    "metrics",
     "provider_capabilities.json",
     "planning-state.json",
     "state.json",
     "supervisor.pid",
+    "watchdog-state.json",
 }
 
 DOCS_SITE_EXCLUDES = {
