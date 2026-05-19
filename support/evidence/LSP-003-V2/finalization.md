@@ -11,6 +11,7 @@ Status: review_approved closeout in progress
 - Implementation merge commit: `3f8fab29e86af7ff38c2cb629dc64fdce84ac9f1`.
 - Reviewer approval is recorded in `support/evidence/LSP-003-V2/claude_review.md`.
 - Reviewer evidence commit: `3d840b6e42bbbd306ecf4e421be6c25e6a857695`.
+- Closeout branch refreshed against `origin/dev` at `ad89ae10dbf9e76197e2ff485083f715578f925b`.
 
 ## Scope Confirmed
 
