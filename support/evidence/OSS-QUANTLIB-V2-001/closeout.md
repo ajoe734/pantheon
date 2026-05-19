@@ -71,3 +71,7 @@ admission packet builder, pricing snapshot, or fail-closed runtime boundary.
 PR #82, PR #98, PR #100, PR #140, and PR #173 have merged into `dev`. This file
 records the final reviewed closeout basis for the `review_approved -> done`
 status transition.
+
+PR #194 was refreshed after `dev` advanced through PR #193. The refresh did
+not alter the QuantLib implementation or admission artifacts; it only preserved
+the Codex closeout recovery note on top of the latest `dev`.
