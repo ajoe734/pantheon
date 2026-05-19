@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import pytest
 
@@ -41,17 +41,7 @@ def _admission_gate(
     service: RegistryService,
     source_strategy_spec_id: str | None = None,
 ) -> Any:
-    """Admission gate: validates evaluation_summary then writes to registry.
-
-    Raises ValueError when evaluation_summary is provided but is not a Mapping
-    (e.g., a bare string or list), which is structurally malformed for admission.
-    """
-    eval_summary = artifact.get("evaluation_summary")
-    if eval_summary is not None and not isinstance(eval_summary, Mapping):
-        raise ValueError(
-            "Admission gate rejected: evaluation_summary must be a mapping when provided; "
-            f"got {type(eval_summary).__name__!r}"
-        )
+    """Admission gate: delegates ExperimentRun artifact admission to production writeback."""
     run = ExperimentRun.from_dict(run_dict)
     return write_experiment_run_artifact_to_registry(
         run,
@@ -138,7 +128,7 @@ def test_admission_gate_rejects_malformed_evaluation_summary() -> None:
     artifact["evaluation_summary"] = "invalid-not-a-dict"
     service = _make_service()
 
-    with pytest.raises(ValueError, match="evaluation_summary must be a mapping"):
+    with pytest.raises(ExperimentRegistryWritebackError, match="evaluation_summary must be a mapping"):
         _admission_gate(
             fixture["experiment_run"],
             artifact,

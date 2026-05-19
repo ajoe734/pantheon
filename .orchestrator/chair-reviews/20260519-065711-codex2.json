@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Current runnable work needs Copilot quota reassignment and closeout repair, not parallel sidecar support.",
+  "blocked_by": [
+    "OSS-QUANTLIB-V2-001 is in_progress without a live worker after Copilot quota failures.",
+    "STRAT-V2-001 reviewer dispatches to Copilot are failing with 402 quota errors.",
+    "SPRINT-8-CLOSEOUT remains dependency-gated and is not a safe sidecar parent."
+  ],
+  "blocked_sidecar_parents": [
+    "OSS-QUANTLIB-V2-001",
+    "STRAT-V2-001",
+    "SPRINT-8-CLOSEOUT"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [
+    {
+      "task_id": "OSS-QUANTLIB-V2-001",
+      "role": "owner",
+      "from": "Copilot",
+      "to": "Codex",
+      "reason": "Copilot has repeated quota-terminal failures and no live worker for this in_progress task; Codex is an idle non-Copilot implementation-capable lane."
+    },
+    {
+      "task_id": "STRAT-V2-001",
+      "role": "reviewer",
+      "from": "Copilot",
+      "to": "Codex2",
+      "reason": "The review queue event matches the assigned reviewer, but Copilot repeatedly exits with 402 quota; Codex2 can review after chair duty and is not the task owner."
+    }
+  ],
+  "recommended_focus": [
+    "OSS-QUANTLIB-V2-001",
+    "STRAT-V2-001",
+    "OSS-FINRL-V2-001",
+    "OPS-TASK-BRANCH-RETIREMENT"
+  ]
+}

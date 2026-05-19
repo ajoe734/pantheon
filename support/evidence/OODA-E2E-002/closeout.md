@@ -82,3 +82,19 @@ Result: `1 passed in 0.42s`.
 
 - This retry adds a narrow trailer-bearing evidence commit so `AI_NAME=Codex2 ./scripts/ai-status.sh done OODA-E2E-002 ...` can record delivery metadata from a task-scoped HEAD commit instead of the prior dev-merge HEAD.
 - PR #165 CI passed but branch protection held auto-merge while the branch was behind `origin/dev`; the task branch was refreshed with `origin/dev` at `568e90dd51287595029917fa2a4654d5f55f4457`, then this final evidence note was added so HEAD remains a task-scoped trailer-bearing commit.
+
+## 2026-05-19 Finalization Dispatch
+
+- Auto worker dispatch reason: `owned_finalize_dispatch`.
+- Central `PANTHEON_STATUS_ROOT` task state shows `review_approved` with Codex review notes; the task worktree copy of `ai-status.json` remains a stale snapshot and is not used for status mutation.
+- PR #165 (`task/OODA-E2E-002` -> `dev`) is merged, with merge commit `c2eb12bceb645b4eb8ab94360c295f678c6f2cc7`; required branch checks succeeded.
+- The task branch was fast-forwarded to current `origin/dev` at `587161e8` before re-verification.
+- Fresh owner verification:
+
+```bash
+python3 -m pytest -q -x tests/e2e/test_strategy_spec_to_experiment_run.py services/research/strategy_spec/test_models.py services/research/experiments/test_models.py services/research/experiment_orchestrator/test_parallel_dispatch.py services/research/vectorbt/test_adapter.py
+```
+
+Result: `57 passed, 5 subtests passed in 5.09s`.
+
+- This finalization dispatch adds a fresh task-scoped evidence commit on top of current `origin/dev` before opening the required closeout PR and running `AI_NAME=Codex2 ./scripts/ai-status.sh done OODA-E2E-002 ...`.

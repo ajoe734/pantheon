@@ -1,8 +1,16 @@
 # EXP-V2-002 Review: ExperimentRun multi-artifact lineage tree
 
-Reviewer: Claude2
+Reviewer: Claude
 Date: 2026-05-19
 Status: APPROVED
+
+## Final Reviewer Approval Refresh
+
+The task-scoped brief records Claude as the final reviewer after review
+reassignment, with `review_approved` recorded at `2026-05-19T06:32:46Z`.
+Claude approved the already-merged implementation with all acceptance criteria
+met and 6 focused tests passing. The prior Claude2 evidence below is retained
+as supporting review history.
 
 ## Artifacts Reviewed
 
@@ -25,6 +33,14 @@ Status: APPROVED
 $ cd services/lineage-read && python3 -m pytest test_multi_artifact_tree.py -q
 ......                                                                   [100%]
 6 passed in 1.38s
+```
+
+Owner revalidation after Claude approval:
+
+```
+$ pytest -q services/lineage-read/test_multi_artifact_tree.py
+......                                                                   [100%]
+6 passed in 0.74s
 ```
 
 ## Code Quality Assessment

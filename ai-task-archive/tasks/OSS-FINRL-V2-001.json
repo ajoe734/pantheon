@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "task_id": "OSS-FINRL-V2-001",
+  "archived_at": "2026-05-19T05:17:12Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-FINRL-V2-001",
+    "title": "FinRL production DRL on TWSE stock env",
+    "summary_zh": "把 OSS-FINRL-001 DRL skeleton 升級到 production：用 TWSE OHLCV 作為 FinRL StockTradingEnv，跑 ≥1000 steps DDPG 或 PPO，輸出 model_artifact 含 evaluation_summary（sharpe annual_return max_drawdown），提交 registry admission packet。CPU-only。",
+    "phase": "Sprint 8 / EPIC-OSS-V2",
+    "owner": "Gemini2",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "OSS-FINRL-001",
+      "MGMT-QLIB-001"
+    ],
+    "artifacts": [
+      "services/research/finrl/production_drl_run.py",
+      "services/research/finrl/twse_stock_env.py",
+      "services/research/finrl/test_production_drl_run.py",
+      "services/research/finrl/registry_admission_packet.py",
+      "support/evidence/OSS-FINRL-V2-001/admission_packet.json"
+    ],
+    "acceptance": [
+      "twse_stock_env.py wraps FinRL StockTradingEnv with TWSE OHLCV (5+ instruments)",
+      "production_drl_run.py trains DDPG or PPO for ≥ 1000 steps CPU-only and produces evaluation_summary with sharpe annual_return max_drawdown",
+      "model_artifact registered with checksum and trained_policy_ref",
+      "admission_packet.json valid",
+      "test fixture trains ≥ 100 steps and asserts portfolio_value changes",
+      "pytest -q exit 0",
+      "no GPU no live broker"
+    ],
+    "next": "FINRL closeout reconciled: implementation, evidence, review approval, and finalization owner update are merged in origin/dev; no live broker/capital/GPU side effects.",
+    "last_update": "2026-05-19T05:17:12Z",
+    "review_notes_zh": [
+      "審查重新通過：FINRL production DRL artifacts 已在 origin/dev；finalization owner commit 289c9d91 已合併；admission packet validator 通過且保持 registry/broker/capital/GPU/deployment fail-closed。"
+    ],
+    "review_file": "support/reviews/OSS-FINRL-V2-001-review-codex2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T05:17:12Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-finrl-rllib-reconcile",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/FINRL-RLLIB-RECONCILE-20260519",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 9,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/dev",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "7d21e88caedcb93e96f5116257a9e3d32866be16",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-FINRL-V2-001",
+      "from": "Gemini2",
+      "to": "Codex2",
+      "message": "Reconciliation review: merged FinRL implementation and finalization owner evidence verified; Codex2 review refresh recorded.",
+      "status": "done",
+      "created_at": "2026-05-19T05:16:10Z",
+      "resolved_at": "2026-05-19T05:16:21Z"
+    },
+    {
+      "task_id": "OSS-FINRL-V2-001",
+      "from": "Codex2",
+      "to": "Gemini2",
+      "message": "Review approved after reconciliation against merged origin/dev evidence.",
+      "status": "done",
+      "created_at": "2026-05-19T05:16:21Z",
+      "resolved_at": "2026-05-19T05:17:12Z"
+    }
+  ],
+  "blockers": []
+}
