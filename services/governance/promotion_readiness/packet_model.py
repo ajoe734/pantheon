@@ -16,9 +16,23 @@ from typing import Any, Mapping, Sequence
 
 SCHEMA_VERSION = "PromotionReadinessPacket.v2"
 LEGACY_SCHEMA_VERSION = "PromotionReadinessPacket.v1"
+A2_1_PACKET_VERSION = "2026-05-19.A2.1"
 
 PASSING_STATUSES = {"pass", "passed", "present", "satisfied", "not_applicable"}
 BLOCKING_STATUSES = {"fail", "failed", "missing", "pending", "expired", "revoked", "incomplete"}
+APPROVAL_STATUSES = {
+    "not_required",
+    "pending",
+    "approved",
+    "approved_with_conditions",
+    "rejected",
+    "expired",
+    "revoked",
+    "recorded",
+}
+PASSING_APPROVAL_STATUSES = {"approved", "approved_with_conditions", "recorded", "not_required"}
+REF_FIELDS = ("artifact_ref", "deployment_ref", "runtime_ref", "pool_ref", "policy_ref")
+REF_ALIASES = {"capital_pool_ref": "pool_ref"}
 UNSAFE_TRUE_FLAGS = {
     "BROKER_PRODUCTION_LIVE_ENABLED",
     "CAPITAL_BINDING_LIVE_ENABLED",
@@ -72,6 +86,17 @@ def _normalize_status(value: Any, *, default: str = "pending") -> str:
     return str(value or default).strip().lower()
 
 
+def _normalize_approval_status(value: Any) -> str | None:
+    if value is None:
+        return None
+    status = _normalize_status(value)
+    if status not in APPROVAL_STATUSES:
+        raise PromotionReadinessPacketError(
+            "approval.status must be one of: " + ", ".join(sorted(APPROVAL_STATUSES))
+        )
+    return status
+
+
 def _as_bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -82,6 +107,96 @@ def _as_bool(value: Any) -> bool:
 
 def _string_tuple(values: Any, field_name: str) -> tuple[str, ...]:
     return tuple(str(item) for item in _sequence(values, field_name))
+
+
+def _looks_like_a2_1(payload: Mapping[str, Any]) -> bool:
+    flags = payload.get("flags")
+    return (
+        "packet_version" in payload
+        or "target_environment" in payload
+        or any(field in payload for field in (*REF_FIELDS, *REF_ALIASES))
+        or isinstance(payload.get("required_evidence"), Mapping)
+        or (isinstance(flags, Mapping) and "can_proceed" in flags and "target" not in payload)
+    )
+
+
+def _ref_identifier(field_name: str, value: Any) -> str | None:
+    if isinstance(value, str):
+        return _optional_text(value)
+    if not isinstance(value, Mapping):
+        return None
+
+    specific_keys = {
+        "artifact_ref": ("artifact_id", "registry_id", "candidate_artifact_id"),
+        "deployment_ref": ("deployment_id", "deployment_plan_id", "plan_id"),
+        "runtime_ref": ("runtime_id", "runtime_binding_id", "binding_id"),
+        "pool_ref": ("pool_id", "capital_pool_id"),
+        "policy_ref": ("policy_id", "policy_version_id"),
+    }
+    for key in (*specific_keys.get(field_name, ()), "id", "ref", "uri", "name"):
+        text = _optional_text(value.get(key))
+        if text:
+            return text
+    return None
+
+
+def _extract_refs(payload: Mapping[str, Any]) -> dict[str, Any]:
+    refs: dict[str, Any] = {}
+    for field_name in REF_FIELDS:
+        if field_name in payload and payload[field_name] is not None:
+            refs[field_name] = copy.deepcopy(payload[field_name])
+    for alias, canonical in REF_ALIASES.items():
+        if canonical not in refs and alias in payload and payload[alias] is not None:
+            refs[canonical] = copy.deepcopy(payload[alias])
+    return refs
+
+
+def _target_from_a2_1(payload: Mapping[str, Any], refs: Mapping[str, Any]) -> TargetRef:
+    target_environment = _required_text(
+        payload.get("target_environment") or payload.get("environment"),
+        "target_environment",
+    )
+    target_type = _optional_text(payload.get("target_type"))
+    target_id = _optional_text(payload.get("target_id"))
+
+    for field_name in ("deployment_ref", "runtime_ref", "artifact_ref", "pool_ref", "policy_ref"):
+        if field_name in refs:
+            if target_type is None:
+                target_type = field_name.removesuffix("_ref")
+            if target_id is None:
+                target_id = _ref_identifier(field_name, refs[field_name])
+    if target_id is None:
+        target_id = _optional_text(payload.get("packet_id"))
+
+    return TargetRef(
+        target_type=target_type or "promotion",
+        target_id=_required_text(target_id, "target_id"),
+        environment=target_environment,
+        target_version=_optional_text(payload.get("target_version")),
+        deployment_stage=_optional_text(payload.get("deployment_stage")),
+    )
+
+
+def _evidence_item_from_required_entry(key: str, value: Any) -> EvidenceItem:
+    if isinstance(value, Mapping):
+        payload = copy.deepcopy(dict(value))
+        payload.setdefault("key", key)
+        payload.setdefault("status", "present")
+        if "path" not in payload:
+            evidence_ref = payload.get("evidence_ref")
+            if isinstance(evidence_ref, str):
+                payload["path"] = evidence_ref
+        if "ref_type" not in payload and "type" in payload:
+            payload["ref_type"] = payload["type"]
+        return EvidenceItem.from_dict(payload)
+    if isinstance(value, bool):
+        return EvidenceItem(key=key, status="present" if value else "missing")
+    if value is None:
+        return EvidenceItem(key=key, status="missing")
+    text = str(value).strip()
+    if not text:
+        return EvidenceItem(key=key, status="missing")
+    return EvidenceItem(key=key, status="present", path=text)
 
 
 @dataclass(frozen=True)
@@ -223,6 +338,7 @@ class EvidenceSubtree:
     provided: tuple[EvidenceItem, ...] = ()
     missing: tuple[str, ...] = ()
     gate_results: tuple[GateResult, ...] = ()
+    required_map: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "EvidenceSubtree":
@@ -253,6 +369,30 @@ class EvidenceSubtree:
             ),
         )
 
+    @classmethod
+    def from_a2_1(cls, payload: Mapping[str, Any]) -> "EvidenceSubtree":
+        required_map = _mapping(payload.get("required_evidence"), "required_evidence")
+        provided = tuple(
+            _evidence_item_from_required_entry(key, value)
+            for key, value in required_map.items()
+        )
+        missing = tuple(
+            item.key
+            for item in provided
+            if item.status in {"missing", "pending", "incomplete", "expired", "revoked"}
+        )
+        gate_results = tuple(
+            GateResult.from_dict(item)
+            for item in _sequence(payload.get("gate_results"), "gate_results")
+        )
+        return cls(
+            required=tuple(str(key) for key in required_map),
+            provided=provided,
+            missing=missing,
+            gate_results=gate_results,
+            required_map=required_map,
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "required": list(self.required),
@@ -260,6 +400,21 @@ class EvidenceSubtree:
             "missing": list(self.missing),
             "gate_results": [item.to_dict() for item in self.gate_results],
         }
+
+    def to_a2_1_required_evidence(self) -> dict[str, Any]:
+        if self.required_map:
+            return copy.deepcopy(self.required_map)
+        provided = {item.key: item for item in self.provided}
+        required: dict[str, Any] = {}
+        for key in self.required:
+            item = provided.get(key)
+            if item is None:
+                required[key] = {"status": "missing"}
+            else:
+                payload = item.to_dict()
+                payload.pop("key", None)
+                required[key] = payload
+        return required
 
 
 @dataclass(frozen=True)
@@ -427,13 +582,14 @@ class ApprovalSubtree:
     risk_owner: ApprovalRequirement = field(default_factory=lambda: ApprovalRequirement(role="risk_owner"))
     operator: ApprovalRequirement = field(default_factory=lambda: ApprovalRequirement(role="operator"))
     records: tuple[ApprovalRecord, ...] = ()
+    status: str | None = None
     approval_decision_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "ApprovalSubtree":
         payload = _mapping(data, "approval")
-        known = {"risk_owner", "operator", "records", "approval_decision_id"}
+        known = {"risk_owner", "operator", "records", "status", "approval_decision_id"}
         return cls(
             risk_owner=ApprovalRequirement.from_dict("risk_owner", payload.get("risk_owner")),
             operator=ApprovalRequirement.from_dict("operator", payload.get("operator")),
@@ -441,6 +597,7 @@ class ApprovalSubtree:
                 ApprovalRecord.from_dict(item)
                 for item in _sequence(payload.get("records"), "approval.records")
             ),
+            status=_normalize_approval_status(payload.get("status")),
             approval_decision_id=_optional_text(payload.get("approval_decision_id")),
             metadata={key: value for key, value in payload.items() if key not in known},
         )
@@ -461,6 +618,7 @@ class ApprovalSubtree:
                 recorded=payload.get("operator_approval_recorded", False),
                 source_ref=source_refs.get("operator"),
             ),
+            status=_normalize_approval_status(payload.get("approval_status")),
             approval_decision_id=_optional_text(payload.get("approval_decision_id")),
         )
 
@@ -473,6 +631,8 @@ class ApprovalSubtree:
             "operator": self.operator.to_dict(),
             "records": [item.to_dict() for item in self.records],
         }
+        if self.status:
+            data["status"] = self.status
         if self.approval_decision_id:
             data["approval_decision_id"] = self.approval_decision_id
         data.update(copy.deepcopy(self.metadata))
@@ -518,11 +678,21 @@ class BlockingReason:
     severity: str = "blocking"
     source_ref: str | None = None
     details: dict[str, Any] = field(default_factory=dict)
+    raw_text: str | None = None
+
+    @classmethod
+    def from_value(cls, data: Any) -> "BlockingReason":
+        if isinstance(data, str):
+            text = _required_text(data, "blocking_reasons[]")
+            return cls(code=text, message=text, raw_text=text)
+        if not isinstance(data, Mapping):
+            raise PromotionReadinessPacketError("blocking_reasons[] must be a string or object")
+        return cls.from_dict(data)
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "BlockingReason":
         payload = _mapping(data, "blocking_reasons[]")
-        known = {"code", "message", "severity", "source_ref", "details"}
+        known = {"code", "message", "severity", "source_ref", "details", "raw_text"}
         details = _mapping(payload.get("details"), "blocking_reasons[].details")
         details.update({key: value for key, value in payload.items() if key not in known})
         return cls(
@@ -531,6 +701,7 @@ class BlockingReason:
             severity=_optional_text(payload.get("severity")) or "blocking",
             source_ref=_optional_text(payload.get("source_ref")),
             details=details,
+            raw_text=_optional_text(payload.get("raw_text")),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -543,6 +714,9 @@ class BlockingReason:
                 "details": copy.deepcopy(self.details) if self.details else None,
             }
         )
+
+    def to_a2_1_value(self) -> str:
+        return self.raw_text or self.message or self.code
 
 
 @dataclass(frozen=True)
@@ -563,6 +737,10 @@ class PromotionReadinessPacket:
     source_task_id: str | None = None
     depends_on_tasks: tuple[str, ...] = ()
     extensions: dict[str, Any] = field(default_factory=dict)
+    packet_version: str | None = None
+    target_environment: str | None = None
+    refs: dict[str, Any] = field(default_factory=dict)
+    packet_format: str = "structured"
 
     @classmethod
     def from_dict(
@@ -572,7 +750,9 @@ class PromotionReadinessPacket:
         validate: bool = True,
     ) -> "PromotionReadinessPacket":
         payload = _mapping(data, "packet")
-        if "target" in payload or "evidence" in payload or "approval" in payload or "flags" in payload:
+        if _looks_like_a2_1(payload):
+            packet = cls._from_a2_1(payload)
+        elif "target" in payload or "evidence" in payload or "approval" in payload or "flags" in payload:
             packet = cls._from_structured(payload)
         else:
             packet = cls._from_legacy(payload)
@@ -608,7 +788,7 @@ class PromotionReadinessPacket:
             approval=ApprovalSubtree.from_dict(_mapping(payload.get("approval"), "approval")),
             flags=FlagSubtree.from_dict(_mapping(payload.get("flags"), "flags")),
             blocking_reasons=tuple(
-                BlockingReason.from_dict(item)
+                BlockingReason.from_value(item)
                 for item in _sequence(payload.get("blocking_reasons"), "blocking_reasons")
             ),
             can_proceed=_as_bool(payload.get("can_proceed", False)),
@@ -618,6 +798,9 @@ class PromotionReadinessPacket:
             source_task_id=_optional_text(payload.get("source_task_id")),
             depends_on_tasks=_string_tuple(payload.get("depends_on_tasks"), "depends_on_tasks"),
             extensions=extensions,
+            target_environment=_optional_text(payload.get("target_environment")),
+            refs=_extract_refs(payload),
+            packet_format="structured",
         )
 
     @classmethod
@@ -641,6 +824,7 @@ class PromotionReadinessPacket:
             "risk_owner_approval_recorded",
             "operator_required",
             "operator_approval_recorded",
+            "approval_status",
             "can_proceed",
             "reason",
             "approval_decision_id",
@@ -658,7 +842,7 @@ class PromotionReadinessPacket:
             approval=ApprovalSubtree.from_legacy(payload),
             flags=FlagSubtree.from_legacy(payload),
             blocking_reasons=tuple(
-                BlockingReason.from_dict(item)
+                BlockingReason.from_value(item)
                 for item in _sequence(payload.get("blocking_reasons"), "blocking_reasons")
             ),
             can_proceed=_as_bool(payload.get("can_proceed", False)),
@@ -668,9 +852,67 @@ class PromotionReadinessPacket:
             source_task_id=_optional_text(payload.get("source_task_id")),
             depends_on_tasks=_string_tuple(payload.get("depends_on_tasks"), "depends_on_tasks"),
             extensions={key: copy.deepcopy(value) for key, value in payload.items() if key not in known},
+            packet_format="legacy",
+        )
+
+    @classmethod
+    def _from_a2_1(cls, payload: Mapping[str, Any]) -> "PromotionReadinessPacket":
+        known = {
+            "packet_id",
+            "packet_version",
+            "schema_version",
+            "generated_at",
+            "generated_by",
+            "source_task_id",
+            "depends_on_tasks",
+            "target_type",
+            "target_id",
+            "target_version",
+            "target_environment",
+            "environment",
+            "deployment_stage",
+            "required_evidence",
+            "gate_results",
+            "approval",
+            "flags",
+            "blocking_reasons",
+            "can_proceed",
+            "reason",
+            *REF_FIELDS,
+            *REF_ALIASES,
+        }
+        flags = FlagSubtree.from_dict(_mapping(payload.get("flags"), "flags"))
+        can_proceed_source = flags.values.get("can_proceed", payload.get("can_proceed", False))
+        refs = _extract_refs(payload)
+        target = _target_from_a2_1(payload, refs)
+        return cls(
+            packet_id=_required_text(payload.get("packet_id"), "packet_id"),
+            schema_version=_optional_text(payload.get("schema_version")) or SCHEMA_VERSION,
+            packet_version=_optional_text(payload.get("packet_version")) or A2_1_PACKET_VERSION,
+            target=target,
+            target_environment=target.environment,
+            evidence=EvidenceSubtree.from_a2_1(payload),
+            approval=ApprovalSubtree.from_dict(_mapping(payload.get("approval"), "approval")),
+            flags=flags,
+            blocking_reasons=tuple(
+                BlockingReason.from_value(item)
+                for item in _sequence(payload.get("blocking_reasons"), "blocking_reasons")
+            ),
+            can_proceed=_as_bool(can_proceed_source),
+            reason=_required_text(payload.get("reason"), "reason"),
+            generated_at=_optional_text(payload.get("generated_at")),
+            generated_by=_optional_text(payload.get("generated_by")),
+            source_task_id=_optional_text(payload.get("source_task_id")),
+            depends_on_tasks=_string_tuple(payload.get("depends_on_tasks"), "depends_on_tasks"),
+            extensions={key: copy.deepcopy(value) for key, value in payload.items() if key not in known},
+            refs=refs,
+            packet_format="a2_1",
         )
 
     def to_dict(self) -> dict[str, Any]:
+        if self.packet_format == "a2_1":
+            return self.to_a2_1_dict()
+
         data = _compact(
             {
                 "packet_id": self.packet_id,
@@ -694,6 +936,40 @@ class PromotionReadinessPacket:
         )
         if self.extensions:
             data["extensions"] = copy.deepcopy(self.extensions)
+        return data
+
+    def to_a2_1_dict(self) -> dict[str, Any]:
+        flags = self.flags.to_dict()
+        flags["can_proceed"] = self.can_proceed
+        data = _compact(
+            {
+                "packet_id": self.packet_id,
+                "packet_version": self.packet_version or A2_1_PACKET_VERSION,
+                "generated_at": self.generated_at,
+                "generated_by": self.generated_by,
+                "source_task_id": self.source_task_id,
+                "target_environment": self.target_environment or self.target.environment,
+                "target_type": self.target.target_type,
+                "target_id": self.target.target_id,
+                "target_version": self.target.target_version,
+                "deployment_stage": self.target.deployment_stage,
+                "reason": self.reason,
+            }
+        )
+        if self.depends_on_tasks:
+            data["depends_on_tasks"] = list(self.depends_on_tasks)
+        for field_name in REF_FIELDS:
+            if field_name in self.refs:
+                data[field_name] = copy.deepcopy(self.refs[field_name])
+        data.update(
+            {
+                "required_evidence": self.evidence.to_a2_1_required_evidence(),
+                "approval": self.approval.to_dict(),
+                "flags": flags,
+                "blocking_reasons": [item.to_a2_1_value() for item in self.blocking_reasons],
+            }
+        )
+        data.update(copy.deepcopy(self.extensions))
         return data
 
     def to_legacy_dict(self) -> dict[str, Any]:
@@ -761,6 +1037,7 @@ def validate_packet(packet_or_data: PromotionReadinessPacket | Mapping[str, Any]
         for item in packet.approval.required_approvals()
         if not item.recorded or item.state in {"pending", "expired", "revoked"}
     )
+    approval_status = packet.approval.status
     unsafe_flags = packet.flags.unsafe_true_flags()
 
     if packet.can_proceed:
@@ -788,6 +1065,11 @@ def validate_packet(packet_or_data: PromotionReadinessPacket | Mapping[str, Any]
             errors.append(
                 "required approvals must be recorded when can_proceed is true: "
                 + ", ".join(item.role for item in blocking_approvals)
+            )
+        if approval_status and approval_status not in PASSING_APPROVAL_STATUSES:
+            errors.append(
+                "approval.status must be approved when can_proceed is true: "
+                + approval_status
             )
         if unsafe_flags:
             errors.append(
