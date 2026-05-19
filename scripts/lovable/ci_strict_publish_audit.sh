@@ -2,20 +2,22 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-DEFAULT_OUTPUT_DIR="$ROOT_DIR/support/evidence/LOVABLE-STRICT-PUBLISH"
+DEFAULT_OUTPUT_DIR="$ROOT_DIR/support/evidence/lsp-final-audit"
 
 usage() {
   cat <<'USAGE'
 Usage: scripts/lovable/ci_strict_publish_audit.sh [deployment-url]
 
-Runs the Lovable strict-publish audit with the required build-time BFF flags:
+Runs the Lovable LSP strict-publish audit with the required build-time BFF flags:
   VITE_BFF_MODE=live
   VITE_BFF_FALLBACK=strict
   VITE_BFF_REAL_WRITES=false
 
 The deployment URL may be passed as the first argument or via
 LOVABLE_DEPLOYMENT_URL. Override LOVABLE_AUDIT_OUTPUT_DIR to write generated
-audit artifacts outside support/evidence when running in CI.
+audit artifacts outside support/evidence when running in CI. The final process
+exit is controlled by publish_gate_checker.py so publish completion remains
+blocked unless the LSP-005 strict-publish-audit packet passed.
 USAGE
 }
 
@@ -57,13 +59,29 @@ require_or_set_env "VITE_BFF_FALLBACK" "strict"
 require_or_set_env "VITE_BFF_REAL_WRITES" "false"
 
 output_dir="${LOVABLE_AUDIT_OUTPUT_DIR:-$DEFAULT_OUTPUT_DIR}"
-required_env_path="${LOVABLE_REQUIRED_ENV_PATH:-$DEFAULT_OUTPUT_DIR/required_build_env.json}"
 output_json="${LOVABLE_AUDIT_OUTPUT_JSON:-$output_dir/strict-publish-audit.json}"
 report_md="${LOVABLE_AUDIT_REPORT_MD:-$output_dir/strict-publish-audit.md}"
+gate_json="${LOVABLE_PUBLISH_GATE_OUTPUT_JSON:-$output_dir/publish-gate.json}"
 
 mkdir -p "$output_dir"
 
-python3 "$ROOT_DIR/scripts/audit_lovable_strict_publish.py" "$deployment_url" \
-  --required-env "$required_env_path" \
+set +e
+python3 "$ROOT_DIR/scripts/lovable/strict_publish_audit.py" "$deployment_url" \
   --output "$output_json" \
   --report "$report_md"
+audit_rc=$?
+set -e
+
+set +e
+python3 "$ROOT_DIR/scripts/lovable/publish_gate_checker.py" \
+  --audit-json "$output_json" \
+  --output "$gate_json"
+gate_rc=$?
+set -e
+
+if [[ "$audit_rc" -ne 0 && "$gate_rc" -eq 0 ]]; then
+  echo "ci_strict_publish_audit: strict audit failed but publish gate passed; refusing inconsistent result" >&2
+  exit "$audit_rc"
+fi
+
+exit "$gate_rc"
