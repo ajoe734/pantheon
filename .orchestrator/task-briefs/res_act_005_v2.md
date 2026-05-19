@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: No-order-route scanner (generic)
-- Status: todo
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Codex2
 - Phase: Phase 8 / EPIC-RES-ACT
-- Last update: 2026-05-19T14:55:28Z
-- Next: Assignment created
+- Last update: 2026-05-19T15:21:04Z
+- Next: Review approved: PR #216 merged into dev; focused pytest and py_compile pass locally; no blocking findings.
 
 ## Summary
 Static + dynamic proof that research adapters do not call any broker order route. Includes code-path scan + integration test asserting empty broker outbox after a training step. Generic across FinRL/RLlib/Qlib/TRL/etc.
@@ -24,7 +24,12 @@ Static + dynamic proof that research adapters do not call any broker order route
 - tests/integrations/test_research_no_order_route.py
 
 ## Recent Task Activity
-- 2026-05-19T14:55:28Z · Claude · assign · Assigned RES-ACT-005-V2 to Codex with reviewer Codex2
+- 2026-05-19T15:12:11Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
+- 2026-05-19T15:17:47Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-19T15:17:48Z · Orchestrator · worker_worktree_reused · -
+- 2026-05-19T15:17:48Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
+- 2026-05-19T15:21:04Z · Codex2 · review_approved · Review approved: PR #216 merged into dev; focused pytest and py_compile pass locally; no blocking findings.
+- 2026-05-19T15:22:58Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
