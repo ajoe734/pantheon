@@ -10,8 +10,8 @@ Do not read `current-work.md` by default for implementation context.
 - Owner: Claude2
 - Reviewer: Codex2
 - Phase: Sprint 8 / EPIC-STRAT-EXP-DEEP
-- Last update: 2026-05-19T07:12:28Z
-- Next: Codex2 review approved after scoped StrategySpec distillation verification; return to Claude2 for owner closeout/finalization.
+- Last update: 2026-05-19T07:12:34Z
+- Next: Supervisor resumed STRAT-V2-001 for finalize after successful dispatch.
 
 ## Summary
 把 STRAT-003 source converter 升級到 production：吃真實 internal research note (docs/research/notes/*.md 或 fixture)，產出可進 registry 的 StrategySpec，含 evidence_refs + code_refs 完整 binding。獨立 module，不改 STRAT-001..004 公開 API。
@@ -27,12 +27,12 @@ Do not read `current-work.md` by default for implementation context.
 - support/evidence/STRAT-V2-001/sample_run.json
 
 ## Recent Task Activity
-- 2026-05-19T07:07:26Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
-- 2026-05-19T07:07:29Z · Orchestrator · worker_worktree_reused · -
-- 2026-05-19T07:07:30Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
-- 2026-05-19T07:11:55Z · Codex2 · worker_commit · Worker commit 77329361122c recorded 1 staged file(s) for STRAT-V2-001.
-- 2026-05-19T07:12:28Z · Codex2 · review_approved · Codex2 review approved after scoped StrategySpec distillation verification; return to Claude2 for owner closeout/finalization.
-- 2026-05-19T07:12:33Z · Orchestrator · worker_superseded · Worker superseded after task responsibility moved to another agent.
+- 2026-05-19T07:12:34Z · Orchestrator · worker_started · Worker started via claude_cli: owned_finalize_dispatch
+- 2026-05-19T07:12:34Z · Claude2 · note · Supervisor resumed STRAT-V2-001 for finalize after successful dispatch.
+- 2026-05-19T07:12:37Z · Orchestrator · task_dispatch_synced · Supervisor resumed STRAT-V2-001 for finalize after successful dispatch.
+- 2026-05-19T07:14:02Z · unknown · worker_commit · Worker commit 22a8e6fd0077 recorded 1 staged file(s) for STRAT-V2-001.
+- 2026-05-19T07:27:47Z · Orchestrator · worker_stalled · Worker appears stalled after 300 seconds.
+- 2026-05-19T07:32:51Z · Orchestrator · worker_failed · Worker remained stalled for 741 seconds and was terminated for redispatch.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
