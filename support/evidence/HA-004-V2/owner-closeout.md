@@ -21,6 +21,8 @@ Date: 2026-05-19
 - Task PR: https://github.com/ajoe734/pantheon/pull/255
 - Merge commit: `ac840972062634b6deef17033978af1b9a1f682a`
 - Delivered commit: `44ddaccf2f14a0dc401397362ebb54c7da342e87`
+- Closeout evidence PR: https://github.com/ajoe734/pantheon/pull/259
+- Closeout evidence merge commit: `16feeb300cae5bc7be83e4afcf3f398574f1be67`
 
 ## Owner Verification
 
@@ -36,3 +38,6 @@ Result: 7 passed in 1.11s.
 
 The approved runbook remains true in the current worktree. Closeout evidence is
 task-scoped and does not broaden HA policy or production readiness claims.
+
+This final owner closeout refresh keeps the branch tip on a task commit with the
+required trailers after the evidence PR merged through the normal dev PR flow.
