@@ -20,6 +20,7 @@ Date: 2026-05-19
 ## Review And Publication
 
 - Implementation PR: <https://github.com/ajoe734/pantheon/pull/265>
+- Closeout PR: <https://github.com/ajoe734/pantheon/pull/275>
 - Merge commit: `a9d9bf819e1b589c503a86506d42e9b8d2e38c3d`
 - Reviewer verdict: APPROVED by `Claude` on 2026-05-19.
 
