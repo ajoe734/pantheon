@@ -63,6 +63,22 @@ def test_missing_daily_checkin_fails_closed_and_blocks_continue() -> None:
         build_first_week_observation_report_or_raise(packet)
 
 
+def test_invalid_observation_timestamps_fail_closed_even_with_explicit_days() -> None:
+    packet = _observation_packet()
+    packet["observation_window"]["live_started_at"] = "not-a-time"
+    packet["observation_window"]["observed_through_at"] = "also-not-a-time"
+    packet["observation_window"]["observation_window_days"] = 7
+
+    report = build_first_week_observation_report(packet)
+
+    assert report.can_continue_live is False
+    assert report.decision == "hold_live_change"
+    assert report.checks[1].status == "blocked"
+    assert report.checks[1].blocking_reasons == (
+        "observation timestamps must be valid ISO-8601 values",
+    )
+
+
 def test_daily_checkin_without_evidence_ref_fails_closed() -> None:
     packet = _observation_packet()
     del packet["daily_checkins"][0]["evidence_ref"]

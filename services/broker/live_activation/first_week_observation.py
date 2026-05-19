@@ -317,12 +317,18 @@ def _check_observation_window(context: _ObservationContext) -> _CheckResult:
     else:
         blocking_reasons.append("observed_through_at is required")
 
+    timestamp_blockers = _observation_timestamp_blockers(start, end)
+    blocking_reasons.extend(timestamp_blockers)
+
     days = _observation_window_days(context)
     if days is None:
-        if start and end:
-            blocking_reasons.append("observation timestamps must be valid ISO-8601 values")
-        else:
-            blocking_reasons.append("observation window days are required")
+        if not timestamp_blockers:
+            if start and end:
+                blocking_reasons.append(
+                    "observed_through_at must be greater than or equal to live_started_at"
+                )
+            else:
+                blocking_reasons.append("observation window days are required")
     elif days < REQUIRED_OBSERVATION_DAYS:
         blocking_reasons.append(
             f"observation window must cover at least {REQUIRED_OBSERVATION_DAYS} days"
@@ -907,6 +913,12 @@ def _observation_window_days(context: _ObservationContext) -> float | None:
     if explicit is not None and derived is not None:
         return min(explicit, derived)
     return explicit if explicit is not None else derived
+
+
+def _observation_timestamp_blockers(start: str | None, end: str | None) -> tuple[str, ...]:
+    if (start and _parse_timestamp(start) is None) or (end and _parse_timestamp(end) is None):
+        return ("observation timestamps must be valid ISO-8601 values",)
+    return ()
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
