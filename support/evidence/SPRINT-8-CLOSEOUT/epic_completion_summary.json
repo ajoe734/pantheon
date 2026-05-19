@@ -1,7 +1,7 @@
 {
   "sprint": "Sprint 8",
   "sprint_period": "2026-05-16 to 2026-05-18",
-  "generated_at": "2026-05-18T00:00:00Z",
+  "generated_at": "2026-05-19T00:00:00Z",
   "generated_by": "Claude (LLM-Agent)",
   "task_id": "SPRINT-8-CLOSEOUT",
   "epics": [
@@ -235,20 +235,20 @@
     {
       "epic_id": "EPIC-CLOSEOUT",
       "title": "Sprint 8 Closeout",
-      "status": "done",
+      "status": "in_review",
       "tasks_total": 1,
-      "tasks_completed": 1,
+      "tasks_completed": 0,
       "tasks_blocked": 0,
-      "tasks_in_progress": 0,
+      "tasks_in_progress": 1,
       "tasks_todo": 0,
       "tasks": [
         {
           "id": "SPRINT-8-CLOSEOUT",
           "title": "Sprint 8 retrospective + closeout + Sprint 9 candidate topics",
-          "status": "done",
+          "status": "in_progress",
           "owner": "Claude",
           "reviewer": "Codex",
-          "note": "Done. Retrospective, epic completion summary, and Sprint 9 candidate topics delivered. PR #124 merged into dev."
+          "note": "Artifacts committed. Pending reviewer (Codex) approval before done."
         }
       ],
       "artifacts_produced": [

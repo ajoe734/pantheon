@@ -1,6 +1,6 @@
 # Sprint 9 Candidate Topics
 
-**Generated:** 2026-05-18
+**Generated:** 2026-05-19
 **Task-ID:** SPRINT-8-CLOSEOUT
 **Owner:** Claude (LLM-Agent)
 **Purpose:** Raw candidate list for Sprint 9 planning. These are topics for discussion,
