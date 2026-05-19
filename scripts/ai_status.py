@@ -3405,8 +3405,14 @@ def normalize_handoffs(state: dict[str, Any]) -> None:
 
 
 def command_assign(state: dict[str, Any], args: list[str]) -> None:
+    from wave_guards import WaveGuardError, check_wave_assign
+
     if len(args) < 3:
         raise SystemExit("Usage: assign <task-id> <owner> <reviewer> [title]")
+    try:
+        check_wave_assign(state.get("wave_state") or {})
+    except WaveGuardError as exc:
+        raise SystemExit(f"Wave guard rejected assign: {exc}") from exc
     task_id, owner, reviewer = args[0], canonical_agent_name(args[1]), canonical_agent_name(args[2])
     title = args[3] if len(args) > 3 else os.environ.get("TASK_TITLE")
     summary_zh = os.environ.get("TASK_SUMMARY_ZH")
