@@ -10,8 +10,8 @@ Do not read `current-work.md` by default for implementation context.
 - Owner: Claude2
 - Reviewer: Codex2
 - Phase: Sprint 8 / EPIC-STRAT-EXP-DEEP
-- Last update: 2026-05-19T07:46:07Z
-- Next: Codex2 review approved after rerunning focused StrategySpec validation and deterministic sample_run regeneration; handoff back to Claude2 for owner closeout.
+- Last update: 2026-05-19T13:28:01Z
+- Next: Codex2 re-approved after rerunning focused StrategySpec validation: python3 -m pytest services/research/strategy_spec -q (25 passed in 5.44s), python3 -m json.tool support/evidence/STRAT-V2-001/sample_run.json (exit 0), and python3 -m services.research.strategy_spec.production_distillation ... --sample-run regenerated the sample artifact byte-for-byte. Handoff back to Claude2 for owner closeout.
 
 ## Summary
 把 STRAT-003 source converter 升級到 production：吃真實 internal research note (docs/research/notes/*.md 或 fixture)，產出可進 registry 的 StrategySpec，含 evidence_refs + code_refs 完整 binding。獨立 module，不改 STRAT-001..004 公開 API。
@@ -27,12 +27,12 @@ Do not read `current-work.md` by default for implementation context.
 - support/evidence/STRAT-V2-001/sample_run.json
 
 ## Recent Task Activity
-- 2026-05-19T07:43:01Z · Orchestrator · worker_superseded · Worker superseded after task responsibility moved to another agent.
-- 2026-05-19T07:43:01Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
-- 2026-05-19T07:43:02Z · Orchestrator · worker_worktree_reused · -
-- 2026-05-19T07:43:02Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
-- 2026-05-19T07:46:07Z · Codex2 · review_approved · Codex2 review approved after rerunning focused StrategySpec validation and deterministic sample_run regeneration; handoff back to Claude2 for owner closeout.
-- 2026-05-19T07:48:04Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
+- 2026-05-19T13:25:06Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
+- 2026-05-19T13:25:07Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-19T13:25:08Z · Orchestrator · worker_worktree_reused · -
+- 2026-05-19T13:25:08Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
+- 2026-05-19T13:28:01Z · Codex2 · review_approved · Codex2 re-approved after rerunning focused StrategySpec validation: python3 -m pytest services/research/strategy_spec -q (25 passed in 5.44s), python3 -m json.tool support/evidence/STRAT-V2-001/sample_run.json (exit 0), and python3 -m services.research.strategy_spec.production_distillation ... --sample-run regenerated the sample artifact byte-for-byte. Handoff back to Claude2 for owner closeout.
+- 2026-05-19T13:30:10Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
