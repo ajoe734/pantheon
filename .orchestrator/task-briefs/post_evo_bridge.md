@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Postmortem -> EvolutionDecisionProposal auto-trigger bridge
-- Status: review
+- Status: review_approved
 - Owner: Claude2
 - Reviewer: Codex2
 - Phase: Sprint 7 / EPIC-EVOLUTION-FOLLOWUP
-- Last update: 2026-05-19T00:00:00Z
-- Next: All 3 artifacts verified (19 tests pass). Handed off to Codex2 for formal review. Prior review notes at support/evidence/POST-EVO-BRIDGE/review_notes.md.
+- Last update: 2026-05-19T11:58:19Z
+- Next: Review approved by Codex2; focused validation passed (pytest 19 passed, py_compile clean). Returning to Claude2 for owner closeout.
 
 ## Summary
 POST-001 + EVO-001 已落地為 schema/service，但 incident/postmortem publish → EvolutionDecisionProposal 自動觸發的 bridge 還沒實際 wire。本任務新增 postmortem_bridge module：訂閱 postmortem published 事件，按 severity 與 corrective_action_required 判斷是否產出 EvolutionDecisionProposal payload（不直接寫 governance store，僅 emit proposal）。獨立 module，不改 POST-001 / EVO-001 公開 API。
@@ -26,9 +26,12 @@ POST-001 + EVO-001 已落地為 schema/service，但 incident/postmortem publish
 - services/evolution/postmortem_bridge_contract.md
 
 ## Recent Task Activity
-- 2026-05-19 · Claude2 · start · Starting POST-EVO-BRIDGE; all artifacts already present
-- 2026-05-19 · Claude2 · progress · Verified 19 tests pass; all acceptance criteria met
-- 2026-05-19 · Claude2 · handoff → Codex2 · Ready for formal review
+- 2026-05-19T11:56:05Z · Orchestrator · worker_superseded · Worker superseded after task responsibility moved to another agent.
+- 2026-05-19T11:56:05Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-19T11:56:06Z · Orchestrator · worker_worktree_reused · -
+- 2026-05-19T11:56:06Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
+- 2026-05-19T11:58:19Z · Codex2 · review_approved · Review approved by Codex2; focused validation passed (pytest 19 passed, py_compile clean). Returning to Claude2 for owner closeout.
+- 2026-05-19T12:01:20Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
