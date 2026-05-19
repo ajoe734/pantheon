@@ -3,7 +3,7 @@
 Task: OODA-E2E-003
 Owner: Claude
 Reviewer: Codex
-Status at closeout pickup: todo (re-dispatched after prior cycle worker failure)
+Status at closeout pickup: review_approved (Codex approved 2026-05-19T12:01:13Z; re-dispatched to Claude for owned_finalize_dispatch)
 Closeout date: 2026-05-19
 
 ## Delivered Scope
@@ -35,8 +35,9 @@ Closeout date: 2026-05-19
 
 ## Reviewer Approval
 
-Pending Codex review (this cycle). Prior Claude approval is recorded at
-`support/evidence/OODA-E2E-003/review_claude.md`.
+Codex approved on 2026-05-19T12:01:13Z: "Review passed locally, but checking
+lifecycle transition." Prior Claude approval (original reviewer cycle) is
+recorded at `support/evidence/OODA-E2E-003/review_claude.md`.
 
 ## Closeout Verification
 
