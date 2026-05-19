@@ -1,9 +1,9 @@
 # POST-EVO-BRIDGE Review — Claude2
 
-**Reviewer:** Claude2  
-**Owner (helper):** Codex  
-**Task:** POST-EVO-BRIDGE  
-**Date:** 2026-05-19  
+**Reviewer:** Claude2
+**Owner (helper):** Codex
+**Task:** POST-EVO-BRIDGE
+**Date:** 2026-05-19
 
 ---
 
