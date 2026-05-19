@@ -46,3 +46,48 @@ Result:
 ```
 
 No live broker, live capital, or external runtime side effects were invoked.
+
+## Owner Finalization Refresh
+
+On `2026-05-19`, owner closeout rechecked the approved implementation after
+the prior DEP-004 implementation and evidence PRs had already merged into
+`dev`.
+
+- Current dev tip checked from `task/DEP-004`: `e620ae722382e726ed02fdeb71ecf0bf814048f1`
+- Approved evidence already merged: PR `#135`, commit `08b5cc9fc31db6af87ddc558724515d8dc0cc541`
+- Scope remains unchanged: compatibility guard, cron deploy hook, contract, and focused tests only
+
+Focused verification rerun:
+
+```bash
+pytest -q services/control-plane/governance/test_pool_runtime_compat.py services/control-plane/cron/test_cron.py -q
+```
+
+Result:
+
+```text
+21 passed
+```
+
+## Owner Finalization Dispatch
+
+On `2026-05-19`, owner finalization was resumed from
+`owned_finalize_dispatch` after Codex2 re-approved the task.
+
+- Current dev tip checked from `task/DEP-004`: `c3e44d1d4a8e4b9c6444a28edcd9b6c3fd528196`
+- Reviewer approval record: `support/reviews/DEP-004-review-codex2.md`
+- Task brief record: `.orchestrator/task-briefs/dep_004.md`
+- Scope remains closeout records only; the approved compatibility guard,
+  cron deploy hook, contract, and focused tests are unchanged.
+
+Focused verification rerun:
+
+```bash
+python3 -m pytest -q services/control-plane/governance/test_pool_runtime_compat.py services/control-plane/cron/test_cron.py
+```
+
+Result:
+
+```text
+21 passed in 3.18s
+```

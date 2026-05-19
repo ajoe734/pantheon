@@ -333,6 +333,35 @@ def heartbeat_lag_seconds(previous_heartbeat: str | None, current_heartbeat: str
     return max(0.0, (current_dt - previous_dt).total_seconds())
 
 
+def watchdog_safe_mode_active(state: dict[str, Any], now: datetime | None = None) -> bool:
+    watchdog = state.get("watchdog", {}) if isinstance(state.get("watchdog"), dict) else {}
+    safe_mode_until = parse_runtime_timestamp(str(watchdog.get("safe_mode_until") or ""))
+    if safe_mode_until is None:
+        return False
+    now_dt = now or datetime.now(timezone.utc)
+    return now_dt.astimezone(timezone.utc) < safe_mode_until.astimezone(timezone.utc)
+
+
+def record_watchdog_safe_mode_observed(config: dict[str, Any], state: dict[str, Any], now: str) -> bool:
+    watchdog = state.setdefault("watchdog", {})
+    safe_mode_until = str(watchdog.get("safe_mode_until") or "").strip()
+    if not safe_mode_until:
+        return False
+    if watchdog.get("last_safe_mode_observed_until") == safe_mode_until:
+        return False
+    watchdog["last_safe_mode_observed_until"] = safe_mode_until
+    write_activity_log(
+        config,
+        {
+            "type": "watchdog_safe_mode_dispatch_suppressed",
+            "message": f"Watchdog safe mode suppresses new supervisor dispatch until {safe_mode_until}.",
+            "safe_mode_until": safe_mode_until,
+            "reason": watchdog.get("safe_mode_reason"),
+        },
+    )
+    return True
+
+
 def format_runtime_timestamp_local(ts: str | None) -> str:
     dt = parse_runtime_timestamp(ts)
     if dt is None:
@@ -1142,6 +1171,63 @@ def _create_worker_worktree(repo_root: Path, path: Path, branch: str, base_ref: 
     return True, None
 
 
+def _refresh_reused_worker_worktree(repo_root: Path, worktree_path: Path, base_ref: str) -> tuple[bool, str]:
+    """Fast-forward a reused worker worktree to the current base ref tip.
+
+    Reused worktrees may carry the worker's per-task branch from days ago,
+    which means their copy of `scripts/ai_status.py` / supervisor / skills can
+    be older than the supervisor root. That stale snapshot has bypassed gates
+    such as ORCH-CLOSEOUT-MERGE-GATE (require_merged_pr). Refresh on lease so
+    the worker always sees current control-plane code.
+
+    Strategy: fetch + `git merge --ff-only origin/<base>`. Never auto-resolve
+    a real merge — if the branch genuinely diverged, leave it for the worker
+    to handle. Never block dispatch on refresh failure; the worker may still
+    do useful work even on a stale snapshot.
+    """
+    base = base_ref.split("/", 1)[1] if base_ref.startswith("origin/") else base_ref
+    fetch_proc = subprocess.run(
+        ["git", "fetch", "origin", base, "--quiet"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if fetch_proc.returncode != 0:
+        details = (fetch_proc.stderr or fetch_proc.stdout or "").strip()
+        return False, f"fetch_failed: {details}"
+
+    status_proc = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=no"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if status_proc.returncode == 0 and status_proc.stdout.strip():
+        return False, "skipped_dirty_worktree"
+
+    merge_proc = subprocess.run(
+        ["git", "merge", "--ff-only", f"origin/{base}"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if merge_proc.returncode == 0:
+        head_proc = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        head = (head_proc.stdout or "").strip()
+        return True, f"ff_to_{head}" if head else "ff_ok"
+    details = (merge_proc.stderr or merge_proc.stdout or "").strip().splitlines()[0] if (merge_proc.stderr or merge_proc.stdout) else "unknown"
+    return False, f"non_fast_forward: {details}"
+
+
 def _task_brief_context_candidates(task_id: str | None, rel_context_path: str) -> list[str]:
     normalized = rel_context_path.replace("\\", "/").strip()
     candidates = [normalized]
@@ -1253,6 +1339,22 @@ def prepare_worker_workspace(
         if existing:
             worktree_path = existing
             reused = True
+            refresh_ok, refresh_status = _refresh_reused_worker_worktree(
+                repo_root, worktree_path, str(settings.get("base_ref") or "origin/dev")
+            )
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_worktree_refreshed",
+                    "task_id": request.task_id,
+                    "target_agent": target_agent,
+                    "queue_event_id": queue_event_id,
+                    "workspace_branch": branch,
+                    "workspace_path": str(worktree_path),
+                    "refresh_ok": refresh_ok,
+                    "refresh_status": refresh_status,
+                },
+            )
 
     if not reused:
         if _branch_checked_out_in_root(repo_root, branch):
@@ -7600,11 +7702,7 @@ def dispatch_ready_tasks(
         agent_ids = agent_sequence[dispatch_cursor:] + agent_sequence[:dispatch_cursor]
     else:
         agent_ids = []
-    max_concurrent_setting = settings.get("max_concurrent_workers")
-    try:
-        max_concurrent = int(max_concurrent_setting) if max_concurrent_setting not in (None, "") else None
-    except (TypeError, ValueError):
-        max_concurrent = None
+    max_concurrent = ready_dispatch_max_concurrent_workers(config)
     if max_concurrent is not None and max_concurrent > 0:
         live_total = sum(len(pids) for pids in scan_live_worker_pids_by_agent().values())
         if live_total >= max_concurrent:
@@ -7858,6 +7956,17 @@ def dispatch_ready_tasks(
     return changed
 
 
+def ready_dispatch_max_concurrent_workers(config: dict[str, Any]) -> int | None:
+    max_concurrent_setting = ready_dispatch_settings(config).get("max_concurrent_workers")
+    try:
+        max_concurrent = int(max_concurrent_setting) if max_concurrent_setting not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+    if max_concurrent is not None and max_concurrent <= 0:
+        return None
+    return max_concurrent
+
+
 def dispatch_chair_review(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -7906,6 +8015,12 @@ def dispatch_chair_review(
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
     active_agents, _active_task_agents = active_worker_indexes(state, active_statuses)
     pending_agents, _pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
+    max_concurrent = ready_dispatch_max_concurrent_workers(config)
+    if max_concurrent is not None:
+        live_total = sum(len(pids) for pids in scan_live_worker_pids_by_agent().values())
+        reserved_total = len(set(active_agents) | set(pending_agents))
+        if max(live_total, reserved_total) >= max_concurrent:
+            return False
     seen = state.setdefault("seen_event_keys", {})
     status = load_status(config)
     task_map = task_index_from_status(config, status)
@@ -8236,7 +8351,10 @@ def run_once(
         planning_state = load_discussion_planning_state()
         changed = auto_materialize_discussion_planning(config, planning_state) or changed
         planning_state = load_discussion_planning_state()
-        if discussion_planning_is_active(planning_state):
+        dispatch_suppressed_by_watchdog = watchdog_safe_mode_active(state)
+        if dispatch_suppressed_by_watchdog:
+            changed = record_watchdog_safe_mode_observed(config, state, loop_started_at) or changed
+        elif discussion_planning_is_active(planning_state):
             changed = dispatch_discussion_planning(config, state, planning_state, provider_report=provider_report) or changed
         else:
             if chair_review_failure_loop_details(config, state):
@@ -8248,7 +8366,8 @@ def run_once(
                 changed = dispatch_ready_tasks(config, state, provider_report=provider_report) or changed
                 changed = dispatch_chair_review(config, state, planning_state, provider_report=provider_report) or changed
             changed = dispatch_underutilization_sidecars(config, state, provider_report=provider_report) or changed
-        changed = process_queue(config, state, provider_report) or changed
+        if not dispatch_suppressed_by_watchdog:
+            changed = process_queue(config, state, provider_report) or changed
         changed = poll_workers(config, state, provider_report=provider_report) or changed
         changed = reconcile_queue_records(config, state) or changed
         changed = prune_event_queue(config, state) or changed
