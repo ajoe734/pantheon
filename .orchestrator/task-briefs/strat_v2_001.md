@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Strategy spec distillation production smoke (real research note)
-- Status: review
+- Status: review_approved
 - Owner: Claude2
 - Reviewer: Codex2
 - Phase: Sprint 8 / EPIC-STRAT-EXP-DEEP
-- Last update: 2026-05-19T07:07:23Z
-- Next: Chair reassigned review from Copilot to Codex2: The review queue event matches the assigned reviewer, but Copilot repeatedly exits with 402 quota; Codex2 can review after chair duty and is not the task owner.
+- Last update: 2026-05-19T07:12:28Z
+- Next: Codex2 review approved after scoped StrategySpec distillation verification; return to Claude2 for owner closeout/finalization.
 
 ## Summary
 把 STRAT-003 source converter 升級到 production：吃真實 internal research note (docs/research/notes/*.md 或 fixture)，產出可進 registry 的 StrategySpec，含 evidence_refs + code_refs 完整 binding。獨立 module，不改 STRAT-001..004 公開 API。
@@ -27,12 +27,12 @@ Do not read `current-work.md` by default for implementation context.
 - support/evidence/STRAT-V2-001/sample_run.json
 
 ## Recent Task Activity
-- 2026-05-19T07:02:14Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
-- 2026-05-19T07:02:16Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
-- 2026-05-19T07:02:16Z · Orchestrator · worker_worktree_reused · -
-- 2026-05-19T07:02:16Z · Orchestrator · worker_started · Worker started via copilot_local: review_ready_dispatch
-- 2026-05-19T07:07:19Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
-- 2026-05-19T07:07:25Z · Orchestrator · chair_review_reassignment_applied · Chair reassigned review from Copilot to Codex2: The review queue event matches the assigned reviewer, but Copilot repeatedly exits with 402 quota; Codex2 can review after chair duty and is not the task owner.
+- 2026-05-19T07:07:26Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-19T07:07:29Z · Orchestrator · worker_worktree_reused · -
+- 2026-05-19T07:07:30Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
+- 2026-05-19T07:11:55Z · Codex2 · worker_commit · Worker commit 77329361122c recorded 1 staged file(s) for STRAT-V2-001.
+- 2026-05-19T07:12:28Z · Codex2 · review_approved · Codex2 review approved after scoped StrategySpec distillation verification; return to Claude2 for owner closeout/finalization.
+- 2026-05-19T07:12:33Z · Orchestrator · worker_superseded · Worker superseded after task responsibility moved to another agent.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
