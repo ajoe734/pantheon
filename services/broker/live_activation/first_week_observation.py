@@ -188,7 +188,7 @@ def build_first_week_observation_report(
     return FirstWeekObservationReport(
         version=REPORT_VERSION,
         source=REPORT_SOURCE,
-        report_id=_report_id(packet, checks, decision),
+        report_id=_report_id(context, checks, decision),
         decision=decision,
         can_continue_live=can_continue_live,
         escalation_required=not can_continue_live,
@@ -217,6 +217,7 @@ def _blocked_report(
     blocking_reasons: Sequence[str],
 ) -> FirstWeekObservationReport:
     reasons = _unique(blocking_reasons)
+    context = _context_for(packet)
     checks = tuple(
         FirstWeekObservationCheck(
             id=_check_id(index),
@@ -230,7 +231,7 @@ def _blocked_report(
     return FirstWeekObservationReport(
         version=REPORT_VERSION,
         source=REPORT_SOURCE,
-        report_id=_report_id(packet, checks, DECISION_HOLD),
+        report_id=_report_id(context, checks, DECISION_HOLD),
         decision=DECISION_HOLD,
         can_continue_live=False,
         escalation_required=True,
@@ -916,8 +917,12 @@ def _observation_window_days(context: _ObservationContext) -> float | None:
 
 
 def _observation_timestamp_blockers(start: str | None, end: str | None) -> tuple[str, ...]:
-    if (start and _parse_timestamp(start) is None) or (end and _parse_timestamp(end) is None):
+    start_ts = _parse_timestamp(start) if start else None
+    end_ts = _parse_timestamp(end) if end else None
+    if (start and start_ts is None) or (end and end_ts is None):
         return ("observation timestamps must be valid ISO-8601 values",)
+    if start_ts is not None and end_ts is not None and end_ts < start_ts:
+        return ("observed_through_at must be greater than or equal to live_started_at",)
     return ()
 
 
@@ -963,21 +968,21 @@ def _cooldown_hours(criteria: Mapping[str, Any]) -> float:
 
 
 def _report_id(
-    packet: Mapping[str, Any],
+    context: _ObservationContext,
     checks: Sequence[FirstWeekObservationCheck],
     decision: str,
 ) -> str:
     stable_payload = {
         "activation_ref": _first_value(
-            packet,
+            context.packet,
             ("live_activation_ref", "activation_ref", "activation_id"),
         ),
         "runtime_binding_id": _first_value(
-            packet,
+            context.packet,
             ("runtime_binding_id", "runtime_binding_ref", "live_runtime_binding_ref"),
         ),
-        "observed_through_at": _first_value(
-            packet,
+        "observed_through_at": _first_string(
+            context,
             ("observed_through_at", "window_ended_at", "ended_at"),
         ),
         "decision": decision,

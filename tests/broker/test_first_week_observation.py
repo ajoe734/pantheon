@@ -121,6 +121,38 @@ def test_threshold_breach_escalates_to_risk_owner() -> None:
     )
 
 
+def test_reversed_timestamps_fail_closed_even_with_explicit_window_days() -> None:
+    """Chronologically reversed timestamps must block even when observation_window_days=7 is supplied."""
+    packet = _observation_packet()
+    packet["observation_window"]["live_started_at"] = "2026-05-26T00:00:00Z"
+    packet["observation_window"]["observed_through_at"] = "2026-05-19T00:00:00Z"
+    packet["observation_window"]["observation_window_days"] = 7
+
+    report = build_first_week_observation_report(packet)
+
+    assert report.can_continue_live is False
+    assert report.decision == "hold_live_change"
+    assert report.checks[1].status == "blocked"
+    assert (
+        "observed_through_at must be greater than or equal to live_started_at"
+        in report.checks[1].blocking_reasons
+    )
+
+
+def test_report_id_changes_when_nested_observed_through_at_changes() -> None:
+    """report_id must reflect context-resolved observed_through_at from nested observation_window."""
+    packet_a = _observation_packet()
+    packet_b = _observation_packet()
+    packet_b["observation_window"]["observed_through_at"] = "2026-05-27T00:00:00Z"
+
+    report_a = build_first_week_observation_report(packet_a)
+    report_b = build_first_week_observation_report(packet_b)
+
+    assert report_a.can_continue_live is True
+    assert report_b.can_continue_live is True
+    assert report_a.report_id != report_b.report_id
+
+
 def test_invalid_criteria_blocks_every_check() -> None:
     report = build_first_week_observation_report(_observation_packet(), criteria={"version": "bad"})
 
