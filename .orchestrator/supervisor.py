@@ -333,6 +333,35 @@ def heartbeat_lag_seconds(previous_heartbeat: str | None, current_heartbeat: str
     return max(0.0, (current_dt - previous_dt).total_seconds())
 
 
+def watchdog_safe_mode_active(state: dict[str, Any], now: datetime | None = None) -> bool:
+    watchdog = state.get("watchdog", {}) if isinstance(state.get("watchdog"), dict) else {}
+    safe_mode_until = parse_runtime_timestamp(str(watchdog.get("safe_mode_until") or ""))
+    if safe_mode_until is None:
+        return False
+    now_dt = now or datetime.now(timezone.utc)
+    return now_dt.astimezone(timezone.utc) < safe_mode_until.astimezone(timezone.utc)
+
+
+def record_watchdog_safe_mode_observed(config: dict[str, Any], state: dict[str, Any], now: str) -> bool:
+    watchdog = state.setdefault("watchdog", {})
+    safe_mode_until = str(watchdog.get("safe_mode_until") or "").strip()
+    if not safe_mode_until:
+        return False
+    if watchdog.get("last_safe_mode_observed_until") == safe_mode_until:
+        return False
+    watchdog["last_safe_mode_observed_until"] = safe_mode_until
+    write_activity_log(
+        config,
+        {
+            "type": "watchdog_safe_mode_dispatch_suppressed",
+            "message": f"Watchdog safe mode suppresses new supervisor dispatch until {safe_mode_until}.",
+            "safe_mode_until": safe_mode_until,
+            "reason": watchdog.get("safe_mode_reason"),
+        },
+    )
+    return True
+
+
 def format_runtime_timestamp_local(ts: str | None) -> str:
     dt = parse_runtime_timestamp(ts)
     if dt is None:
@@ -3202,7 +3231,7 @@ def build_chair_review_message(
         '  "decision": "approve_sidecars | deny_sidecars",\n'
         '  "sidecar_approved": true,\n'
         '  "approval_ttl_minutes": 45,\n'
-        '  "max_sidecars": 2,\n'
+        '  "max_sidecars": null,\n'
         '  "reason": "one concise operational reason",\n'
         '  "blocked_by": [],\n'
         '  "blocked_sidecar_parents": [],\n'
@@ -3226,6 +3255,7 @@ def build_chair_review_message(
         '  "recommended_focus": []\n'
         "}\n\n"
         "如果目前有 idle auto worker、execution backlog 有可安全平行化的工作、且沒有 global blocker，預設應 approve_sidecars。\n"
+        "不要為 sidecar wave 設定數量上限；max_sidecars 請填 null，除非存在具體安全風險需要暫時 cap。\n"
         "如果 deny_sidecars，blocked_by 必須列出具體 blocker；如果只有特定 parent 不應產生 sidecar，請放進 blocked_sidecar_parents。\n"
         "如果 Pending Approval Details 裡有你能判斷的低風險 approval，請在 approval_actions 裡 allow 或 deny；不能判斷就不要列入。\n"
         "如果 Repeated Failure Details 顯示同一 agent 在同一 task 壞循環，請用 reassignment_actions 指定是否改派；不需要就留空。\n"
@@ -6268,13 +6298,25 @@ def underutilization_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("threshold_ratio", 0.5)
     settings.setdefault("continuous_window_seconds", 900)
     settings.setdefault("cooldown_seconds", 900)
-    settings.setdefault("max_new_sidecars_per_wave", 2)
+    settings.setdefault("max_new_sidecars_per_wave", None)
     settings.setdefault("max_active_sidecars_per_agent", 1)
+    settings.setdefault("respect_chair_max_sidecars", False)
     settings.setdefault(
         "productive_worker_statuses",
         ["running", "waiting_approval", "suspended_approval", "retry_backoff"],
     )
     return settings
+
+
+def sidecar_wave_limit(raw_value: Any) -> int | None:
+    if raw_value in (None, ""):
+        return None
+    if isinstance(raw_value, str) and raw_value.strip().lower() in {"none", "null", "unlimited", "false"}:
+        return None
+    try:
+        return max(0, int(raw_value))
+    except (TypeError, ValueError):
+        return None
 
 
 def load_sidecar_catalog(config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -7587,11 +7629,7 @@ def dispatch_ready_tasks(
         agent_ids = agent_sequence[dispatch_cursor:] + agent_sequence[:dispatch_cursor]
     else:
         agent_ids = []
-    max_concurrent_setting = settings.get("max_concurrent_workers")
-    try:
-        max_concurrent = int(max_concurrent_setting) if max_concurrent_setting not in (None, "") else None
-    except (TypeError, ValueError):
-        max_concurrent = None
+    max_concurrent = ready_dispatch_max_concurrent_workers(config)
     if max_concurrent is not None and max_concurrent > 0:
         live_total = sum(len(pids) for pids in scan_live_worker_pids_by_agent().values())
         if live_total >= max_concurrent:
@@ -7845,6 +7883,17 @@ def dispatch_ready_tasks(
     return changed
 
 
+def ready_dispatch_max_concurrent_workers(config: dict[str, Any]) -> int | None:
+    max_concurrent_setting = ready_dispatch_settings(config).get("max_concurrent_workers")
+    try:
+        max_concurrent = int(max_concurrent_setting) if max_concurrent_setting not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+    if max_concurrent is not None and max_concurrent <= 0:
+        return None
+    return max_concurrent
+
+
 def dispatch_chair_review(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -7893,6 +7942,12 @@ def dispatch_chair_review(
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
     active_agents, _active_task_agents = active_worker_indexes(state, active_statuses)
     pending_agents, _pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
+    max_concurrent = ready_dispatch_max_concurrent_workers(config)
+    if max_concurrent is not None:
+        live_total = sum(len(pids) for pids in scan_live_worker_pids_by_agent().values())
+        reserved_total = len(set(active_agents) | set(pending_agents))
+        if max(live_total, reserved_total) >= max_concurrent:
+            return False
     seen = state.setdefault("seen_event_keys", {})
     status = load_status(config)
     task_map = task_index_from_status(config, status)
@@ -8048,16 +8103,15 @@ def dispatch_underutilization_sidecars(
     _pending_agents, _pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
     seen = state.setdefault("seen_event_keys", {})
     per_agent_counts = {agent: count_open_sidecars_for_agent(status, agent) for agent in idle_agents}
-    max_new_sidecars = int(settings.get("max_new_sidecars_per_wave", 2))
-    if rotation.get("sidecar_approval_max_sidecars") is not None:
-        try:
-            max_new_sidecars = min(max_new_sidecars, max(0, int(rotation.get("sidecar_approval_max_sidecars"))))
-        except (TypeError, ValueError):
-            pass
+    max_new_sidecars = sidecar_wave_limit(settings.get("max_new_sidecars_per_wave"))
+    if settings.get("respect_chair_max_sidecars", False):
+        chair_limit = sidecar_wave_limit(rotation.get("sidecar_approval_max_sidecars"))
+        if chair_limit is not None:
+            max_new_sidecars = chair_limit if max_new_sidecars is None else min(max_new_sidecars, chair_limit)
     created = 0
 
     for candidate in candidates:
-        if created >= max_new_sidecars:
+        if max_new_sidecars is not None and created >= max_new_sidecars:
             break
 
         parent_owner = str(candidate.get("reviewer") or "").strip()
@@ -8224,7 +8278,10 @@ def run_once(
         planning_state = load_discussion_planning_state()
         changed = auto_materialize_discussion_planning(config, planning_state) or changed
         planning_state = load_discussion_planning_state()
-        if discussion_planning_is_active(planning_state):
+        dispatch_suppressed_by_watchdog = watchdog_safe_mode_active(state)
+        if dispatch_suppressed_by_watchdog:
+            changed = record_watchdog_safe_mode_observed(config, state, loop_started_at) or changed
+        elif discussion_planning_is_active(planning_state):
             changed = dispatch_discussion_planning(config, state, planning_state, provider_report=provider_report) or changed
         else:
             if chair_review_failure_loop_details(config, state):
@@ -8236,7 +8293,8 @@ def run_once(
                 changed = dispatch_ready_tasks(config, state, provider_report=provider_report) or changed
                 changed = dispatch_chair_review(config, state, planning_state, provider_report=provider_report) or changed
             changed = dispatch_underutilization_sidecars(config, state, provider_report=provider_report) or changed
-        changed = process_queue(config, state, provider_report) or changed
+        if not dispatch_suppressed_by_watchdog:
+            changed = process_queue(config, state, provider_report) or changed
         changed = poll_workers(config, state, provider_report=provider_report) or changed
         changed = reconcile_queue_records(config, state) or changed
         changed = prune_event_queue(config, state) or changed

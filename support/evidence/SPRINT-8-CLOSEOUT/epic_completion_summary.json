@@ -235,20 +235,20 @@
     {
       "epic_id": "EPIC-CLOSEOUT",
       "title": "Sprint 8 Closeout",
-      "status": "in_progress",
+      "status": "done",
       "tasks_total": 1,
-      "tasks_completed": 0,
+      "tasks_completed": 1,
       "tasks_blocked": 0,
-      "tasks_in_progress": 1,
+      "tasks_in_progress": 0,
       "tasks_todo": 0,
       "tasks": [
         {
           "id": "SPRINT-8-CLOSEOUT",
           "title": "Sprint 8 retrospective + closeout + Sprint 9 candidate topics",
-          "status": "in_progress",
+          "status": "done",
           "owner": "Claude",
           "reviewer": "Codex",
-          "note": "In progress (this document)."
+          "note": "Done. Retrospective, epic completion summary, and Sprint 9 candidate topics delivered. PR #124 merged into dev."
         }
       ],
       "artifacts_produced": [
@@ -261,24 +261,24 @@
   ],
   "sprint_totals": {
     "tasks_total": 18,
-    "tasks_completed": 1,
+    "tasks_completed": 2,
     "tasks_in_review": 1,
-    "tasks_in_progress": 1,
+    "tasks_in_progress": 0,
     "tasks_todo": 15,
     "tasks_blocked": 0,
-    "pass_rate_completed_over_total": "5.6%",
-    "epics_fully_done": 1,
+    "pass_rate_completed_over_total": "11.1%",
+    "epics_fully_done": 2,
     "epics_partial": 1,
-    "epics_not_started": 5
+    "epics_not_started": 4
   },
   "numeric_metrics": {
-    "tasks_completed": 1,
+    "tasks_completed": 2,
     "tasks_in_review": 1,
     "tasks_todo_carry_over": 15,
-    "avg_cycle_time_days_completed_tasks": "N/A (only 1 task completed and it was Sprint 7 carry-over)",
-    "pass_rate": "5.6%",
-    "epics_closed": 1,
+    "avg_cycle_time_days_completed_tasks": "N/A (Sprint 7 carry-over + closeout task; not comparable)",
+    "pass_rate": "11.1%",
+    "epics_closed": 2,
     "epics_partial": 1,
-    "epics_not_started": 5
+    "epics_not_started": 4
   }
 }

@@ -46,3 +46,25 @@ Result:
 ```
 
 No live broker, live capital, or external runtime side effects were invoked.
+
+## Owner Finalization Refresh
+
+On `2026-05-19`, owner closeout rechecked the approved implementation after
+the prior DEP-004 implementation and evidence PRs had already merged into
+`dev`.
+
+- Current dev tip checked from `task/DEP-004`: `e620ae722382e726ed02fdeb71ecf0bf814048f1`
+- Approved evidence already merged: PR `#135`, commit `08b5cc9fc31db6af87ddc558724515d8dc0cc541`
+- Scope remains unchanged: compatibility guard, cron deploy hook, contract, and focused tests only
+
+Focused verification rerun:
+
+```bash
+pytest -q services/control-plane/governance/test_pool_runtime_compat.py services/control-plane/cron/test_cron.py -q
+```
+
+Result:
+
+```text
+21 passed
+```

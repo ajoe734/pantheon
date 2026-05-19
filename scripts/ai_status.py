@@ -50,6 +50,7 @@ from task_archive import (
 from multi_repo_registry import (
     repository_local_path,
     repository_slug,
+    resolve_repository,
     task_artifact_repository_ids,
     task_primary_repository_id,
 )
@@ -166,6 +167,7 @@ DEFAULT_DELIVERY_GATES = {
     "require_commit_hash": True,
     "require_git_clean": False,
     "record_remote_status": True,
+    "require_merged_pr": True,
 }
 DEFAULT_COMMIT_CONVENTIONS = {
     "subject_must_include_task_id": True,
@@ -970,6 +972,7 @@ def delivery_gate_settings() -> dict[str, bool]:
         "TASK_REQUIRE_COMMIT_HASH": "require_commit_hash",
         "TASK_REQUIRE_GIT_CLEAN": "require_git_clean",
         "TASK_RECORD_REMOTE_STATUS": "record_remote_status",
+        "TASK_REQUIRE_MERGED_PR": "require_merged_pr",
     }
     for env_name, field_name in env_overrides.items():
         parsed = parse_bool_env(env_name)
@@ -1024,6 +1027,34 @@ def run_git_command(
     return result.stdout.strip()
 
 
+def git_command_succeeds(args: list[str], *, cwd: Path | None = None) -> bool:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=cwd or ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def run_gh_json_command(args: list[str], *, cwd: Path | None = None) -> dict[str, Any] | None:
+    result = subprocess.run(
+        ["gh", *args],
+        cwd=cwd or ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 def classify_push_status(ahead: int, behind: int) -> str:
     if ahead == 0 and behind == 0:
         return "in_sync"
@@ -1032,6 +1063,95 @@ def classify_push_status(ahead: int, behind: int) -> str:
     if ahead == 0 and behind > 0:
         return "behind"
     return "diverged"
+
+
+def delivery_merge_target_branch(config: dict[str, Any], repository_id: str) -> str:
+    if repository_id == "pantheon":
+        branch = str((config.get("branch_workflow") or {}).get("dev_branch") or "").strip()
+        if branch:
+            return branch
+    repo = resolve_repository(config, repository_id)
+    branch = str(repo.get("default_branch") or "").strip()
+    return branch or "main"
+
+
+def pull_request_status_for_branch(repository_root: Path, branch: str) -> dict[str, Any] | None:
+    if not branch or branch == "HEAD":
+        return None
+    return run_gh_json_command(
+        [
+            "pr",
+            "view",
+            branch,
+            "--json",
+            "number,state,mergeStateStatus,mergedAt,mergeCommit,autoMergeRequest,url",
+        ],
+        cwd=repository_root,
+    )
+
+
+def format_pull_request_status(pr: dict[str, Any] | None) -> str:
+    if not pr:
+        return ""
+    number = pr.get("number")
+    state = str(pr.get("state") or "unknown")
+    merge_state = str(pr.get("mergeStateStatus") or "unknown")
+    url = str(pr.get("url") or "").strip()
+    auto_merge = "enabled" if pr.get("autoMergeRequest") else "disabled"
+    prefix = f" PR #{number}" if number else " PR"
+    parts = [f"{prefix} is {state}", f"mergeState={merge_state}", f"autoMerge={auto_merge}"]
+    if url:
+        parts.append(url)
+    return "; ".join(parts)
+
+
+def enforce_delivery_merged_gate(
+    config: dict[str, Any],
+    delivery: dict[str, Any],
+    *,
+    repository_root: Path,
+    repository_id: str,
+    branch: str,
+    remote_names: list[str],
+) -> None:
+    target_branch = delivery_merge_target_branch(config, repository_id)
+    delivery["merge_target_branch"] = target_branch
+    if not remote_names:
+        raise SystemExit(
+            "Cannot finalize task: delivery_gates.require_merged_pr is enabled, "
+            "but the repository has no git remote to verify the task PR merge."
+        )
+    remote = "origin" if "origin" in remote_names else remote_names[0]
+    target_ref = f"{remote}/{target_branch}"
+    delivery["merge_target_ref"] = target_ref
+    run_git_command(["fetch", remote, target_branch], cwd=repository_root, required=False)
+    target_sha = run_git_command(
+        ["rev-parse", "--verify", target_ref],
+        cwd=repository_root,
+        required=False,
+    )
+    if not target_sha:
+        raise SystemExit(
+            "Cannot finalize task: unable to verify task PR merge because "
+            f"`{target_ref}` is unavailable."
+        )
+    delivery["merge_target_sha"] = target_sha
+    merged = git_command_succeeds(
+        ["merge-base", "--is-ancestor", "HEAD", target_ref],
+        cwd=repository_root,
+    )
+    delivery["head_merged_to_target"] = merged
+    if merged:
+        return
+    pr_status = pull_request_status_for_branch(repository_root, branch)
+    status_text = format_pull_request_status(pr_status)
+    detail = f";{status_text}" if status_text else ""
+    raise SystemExit(
+        "Cannot finalize task: the task branch HEAD is not merged into "
+        f"`{target_ref}` yet{detail}. Keep the task in `review_approved`, "
+        "refresh the PR branch if it is behind, and run `done` only after "
+        "GitHub reports the PR merged."
+    )
 
 
 def parse_commit_metadata_lines(body: str) -> dict[str, str]:
@@ -1198,6 +1318,16 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
             delivery["push_status"] = classify_push_status(ahead, behind)
         else:
             delivery["push_status"] = "no_upstream"
+
+    if settings["require_merged_pr"]:
+        enforce_delivery_merged_gate(
+            config,
+            delivery,
+            repository_root=repository_root,
+            repository_id=repository_id,
+            branch=branch,
+            remote_names=remote_names,
+        )
 
     return delivery
 
