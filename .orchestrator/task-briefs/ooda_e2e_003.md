@@ -7,11 +7,11 @@ Do not read `current-work.md` by default for implementation context.
 ## Task
 - Title: OODA E2E #3: ExperimentRun → CandidateArtifact admission test
 - Status: review_approved
-- Owner: Claude
-- Reviewer: Codex
+- Owner: Codex2
+- Reviewer: Claude
 - Phase: Sprint 8 / EPIC-OODA-E2E
-- Last update: 2026-05-19T01:22:49Z
-- Next: Review approved by Codex: focused OODA admission E2E and registry promotion/service checks pass; full repo pytest is blocked by missing flask outside this task scope. Returning to owner Claude for finalization.
+- Last update: 2026-05-19T05:46:48Z
+- Next: Review approved: validation correctly placed at production writeback boundary; 9 tests pass; all acceptance criteria met; returned to Codex2 for finalization
 
 ## Summary
 OODA Orient→Decide 階段：證明「ExperimentRun → CandidateArtifact → Registry admission」transition 可端到端走完。使用 EXP-005 writeback + Registry promotion service。獨立 test 檔。
@@ -25,12 +25,12 @@ OODA Orient→Decide 階段：證明「ExperimentRun → CandidateArtifact → R
 - tests/e2e/fixtures/experiment_run_for_admission.json
 
 ## Recent Task Activity
-- 2026-05-19T01:11:02Z · Orchestrator · worker_superseded · Worker superseded after task responsibility moved to another agent.
-- 2026-05-19T01:16:05Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
-- 2026-05-19T01:16:05Z · Orchestrator · worker_worktree_reused · -
-- 2026-05-19T01:16:05Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
-- 2026-05-19T01:22:49Z · Codex · review_approved · Review approved by Codex: focused OODA admission E2E and registry promotion/service checks pass; full repo pytest is blocked by missing flask outside this task scope. Returning to owner Claude for finalization.
-- 2026-05-19T01:26:15Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
+- 2026-05-19T05:45:10Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-19T05:45:11Z · Orchestrator · worker_worktree_reused · -
+- 2026-05-19T05:45:11Z · Orchestrator · worker_started · Worker started via claude_cli: review_ready_dispatch
+- 2026-05-19T05:46:48Z · Claude · review_approved · Review approved: validation correctly placed at production writeback boundary; 9 tests pass; all acceptance criteria met; returned to Codex2 for finalization
+- 2026-05-19T05:48:02Z · unknown · worker_commit · Worker commit 7f6b4fb60b2f recorded 1 staged file(s) for OODA-E2E-003.
+- 2026-05-19T05:50:18Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
