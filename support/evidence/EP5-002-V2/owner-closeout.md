@@ -4,7 +4,7 @@
 **Owner:** Claude2  
 **Reviewer:** Codex  
 **Review outcome:** Approved 2026-05-19T17:17:46Z  
-**PR:** #236 merged into dev 2026-05-19T17:34:29Z
+**PR:** #260 (auto-merge enabled; CI passing as of 2026-05-19T17:37Z)
 
 ## Deliverables
 
