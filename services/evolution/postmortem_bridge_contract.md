@@ -4,7 +4,7 @@
 **Owner:** Claude2  
 **Reviewer:** Codex2  
 **Phase:** Sprint 7 / EPIC-EVOLUTION-FOLLOWUP  
-**Status:** delivered — pending review  
+**Status:** done — review approved; closeout complete  
 
 ---
 
