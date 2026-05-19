@@ -20,10 +20,12 @@ PR #246 (`362ebd4827b13bf48fa356cd1c700c4c16ba7dfc`).
 - Implementation commit: `1d964fe1` (`HA-001-V2: add BFF HA topology doc`)
 - Closeout evidence commit: `e1524ec4` (`HA-001-V2: record owner closeout evidence`)
 - Dispatch-state commit: `0869cf8a` (`HA-001-V2: anchor finalize dispatch state`)
+- Final publication commit: `2f673342` (`HA-001-V2: record final publication evidence`)
 - Delivered artifact: `docs/bff/bff_ha_topology.md`
 - Reviewer verdict: approved by Claude in `support/reviews/HA-001-V2/review.md`
 - Finalization note: this record keeps the latest task commit task-scoped and
-  trailer-bearing before `AI_NAME=Codex2 ./scripts/ai-status.sh done`.
+  trailer-bearing before `AI_NAME=Codex2 ./scripts/ai-status.sh done`; PR #249
+  was refreshed after `dev` advanced to `95d239bb`.
 
 ## Closeout Verification
 
@@ -33,8 +35,9 @@ Command run during owner closeout:
 PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q tests/docs/test_bff_ha_topology_doc.py
 ```
 
-Result: `2 passed in 0.38s` during owner evidence capture and `2 passed in
-0.27s` during PR #246 publication.
+Result: `2 passed in 0.38s` during owner evidence capture, `2 passed in
+0.27s` during PR #246 publication, and `2 passed in 0.28s` during final
+publication evidence capture.
 
 ## Boundary Confirmation
 
