@@ -131,4 +131,4 @@ All 6 acceptance criteria confirmed:
 5. DeploymentPlan persisted with stage=paper and approval_decision_ref: PASS
 6. DeploymentPlan creation rejected for non-approved artifact: PASS
 
-All PRs (#90, #146, #167, #185) merged into dev. Task finalized.
+All PRs (#90, #146, #167, #185, #187) merged into dev. Task finalized.
