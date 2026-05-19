@@ -119,7 +119,20 @@ def load_default_criteria() -> dict[str, Any]:
 def validate_criteria_shape(criteria: Mapping[str, Any] | None = None) -> ValidationResult:
     """Validate that the criteria document still matches supplement Part B2."""
 
-    payload = dict(criteria or load_default_criteria())
+    if criteria is None:
+        payload = load_default_criteria()
+    elif isinstance(criteria, Mapping):
+        payload = dict(criteria)
+    else:
+        return _result(
+            [
+                ValidationIssue(
+                    "invalid_criteria_document",
+                    "$",
+                    "criteria document must be an object",
+                )
+            ]
+        )
     errors: list[ValidationIssue] = []
 
     if payload.get("version") != EXPECTED_VERSION:
@@ -187,8 +200,7 @@ def validate_activation_request(
     ``hard_fail_conditions`` or as booleans under ``conditions``.
     """
 
-    criteria_payload = dict(criteria or load_default_criteria())
-    criteria_result = validate_criteria_shape(criteria_payload)
+    criteria_result = validate_criteria_shape(criteria)
     errors: list[ValidationIssue] = list(criteria_result.errors)
     if not isinstance(request, Mapping):
         errors.append(
@@ -199,7 +211,10 @@ def validate_activation_request(
             )
         )
         return _result(errors)
+    if not criteria_result.passed:
+        return _result(errors)
 
+    criteria_payload = load_default_criteria() if criteria is None else dict(criteria)
     evidence = _mapping(request.get("evidence")) or request
     approvals = _mapping(request.get("approvals") or request.get("approval"))
     conditions = _mapping(request.get("conditions"))
