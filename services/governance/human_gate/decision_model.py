@@ -444,6 +444,8 @@ class HumanGateDecision:
         return tuple(blockers)
 
     def derived_reason(self) -> str:
+        if self.status in TERMINAL_LIFECYCLE_STATUSES:
+            return self.reason or f"Human gate decision is {self.status}."
         if self.can_proceed:
             return "All required human gate signatures are bound to the reviewed evidence."
         return "Human gate is not ready: " + ", ".join(self.blocking_summary())

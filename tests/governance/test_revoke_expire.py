@@ -174,22 +174,20 @@ def test_revoke_signature_keeps_decision_blocked_when_readiness_not_ready():
     decision = _base_decision(readiness_can_proceed=False, blocking_reasons=("drill_pending",))
     evidence_hash = compute_evidence_hash(_evidence())
     sig_evidence = ("broker_sandbox_smoke", "rollback_drill")
-    with_sig = validate_decision(
-        decision.__class__(
-            **{
-                **decision.to_dict(),
-                "signatures": [
-                    {
-                        "signature_id": "sig-risk-002",
-                        "role": "risk_owner",
-                        "actor_id": "risk-owner-2",
-                        "signed_at": "2026-05-19T11:00:00Z",
-                        "evidence_hash": evidence_hash,
-                        "evidence_reviewed": list(sig_evidence),
-                    }
-                ],
-            }
-        )
+    with_sig = HumanGateDecision.from_dict(
+        {
+            **decision.to_dict(),
+            "signatures": [
+                {
+                    "signature_id": "sig-risk-002",
+                    "role": "risk_owner",
+                    "actor_id": "risk-owner-2",
+                    "signed_at": "2026-05-19T11:00:00Z",
+                    "evidence_hash": evidence_hash,
+                    "evidence_reviewed": list(sig_evidence),
+                }
+            ],
+        }
     )
     updated = revoke_signature(with_sig, "sig-risk-002")
     assert updated.status == "blocked"

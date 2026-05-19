@@ -75,6 +75,8 @@ def revoke_signature(
     updated = replace(
         decision,
         signatures=tuple(new_signatures),
+        status="pending",
+        can_proceed=False,
         updated_at=utc_now(),
         reason=reason or decision.reason,
     )
