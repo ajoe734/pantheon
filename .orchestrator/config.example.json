@@ -39,6 +39,34 @@
     "heartbeat_grace_seconds": 60,
     "runner_heartbeat_interval_seconds": 15
   },
+  "watchdog": {
+    "enabled": true,
+    "state_file": ".orchestrator/watchdog-state.json",
+    "metrics_file": ".orchestrator/metrics/supervisor-watchdog.jsonl",
+    "heartbeat_stale_seconds": 900,
+    "restart_budget_window_seconds": 900,
+    "max_restarts_per_window": 2,
+    "max_restarts_per_hour": 4,
+    "backoff_schedule_seconds": [
+      30,
+      120,
+      300,
+      900
+    ],
+    "circuit_cooldown_seconds": 1800,
+    "safe_mode_seconds": 120,
+    "min_disk_free_gb": 2.0,
+    "max_disk_used_percent": 95.0,
+    "min_memory_available_mb": 512,
+    "max_load_1m": 24.0,
+    "max_active_workers": 12,
+    "supervisor_command": [
+      "python3",
+      "-u",
+      ".orchestrator/supervisor.py",
+      "--verbose"
+    ]
+  },
   "provider_guardrails": {
     "pause_on_capacity_failure": true,
     "pause_on_auth_failure": true,
@@ -163,7 +191,7 @@
     }
   },
   "underutilization_dispatch": {
-    "enabled": true,
+    "enabled": false,
     "threshold_ratio": 0.5,
     "continuous_window_seconds": 900,
     "cooldown_seconds": 900,
@@ -568,9 +596,10 @@
       ]
     },
     "max_tasks_per_agent": 1,
-    "max_dispatches_per_tick": 4,
+    "max_dispatches_per_tick": 2,
     "max_active_workers_per_task": 1,
-    "max_concurrent_per_quota_group": {}
+    "max_concurrent_per_quota_group": {},
+    "max_concurrent_workers": 2
   },
   "branch_workflow": {
     "enabled": true,
