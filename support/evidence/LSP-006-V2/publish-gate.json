@@ -1,0 +1,41 @@
+{
+  "audit_path": "support/evidence/lsp-final-audit/strict-publish-audit.json",
+  "audit_summary": {
+    "browser_probe_error_count": 0,
+    "bundle_capture_error_count": 0,
+    "forbidden_scan_error_count": 0,
+    "forbidden_signal_count": 84,
+    "js_bundle_count": 2,
+    "scanned_url_count": 3
+  },
+  "can_mark_publish_complete": false,
+  "checked_at": "2026-05-19T17:13:11Z",
+  "component_status": {
+    "LSP-002-V2": true,
+    "LSP-003-V2": true,
+    "LSP-004-V2": false
+  },
+  "deployment_url": "https://pantheon-dev.lovable.app/management",
+  "gate": "lovable_publish_complete",
+  "passed": false,
+  "rejection_reasons": [
+    "strict_publish_audit_passed_not_true",
+    "component_failed: LSP-004-V2",
+    "audit_errors_present: 1",
+    "audit_summary_counter_nonzero: forbidden_signal_count=84"
+  ],
+  "required_audit_task_id": "LSP-005-V2",
+  "required_component_status": {
+    "LSP-002-V2": true,
+    "LSP-003-V2": true,
+    "LSP-004-V2": false
+  },
+  "required_components": [
+    "LSP-002-V2",
+    "LSP-003-V2",
+    "LSP-004-V2"
+  ],
+  "strict_publish_audit_checked_at": "2026-05-19T15:55:28Z",
+  "strict_publish_audit_task_id": "LSP-005-V2",
+  "task_id": "LSP-006-V2"
+}
