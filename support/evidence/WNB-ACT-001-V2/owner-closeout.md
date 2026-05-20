@@ -51,6 +51,29 @@ Results:
   `WANDB_API_KEY`; `secrets_persisted` remained `false`
 - `test_adapter`: `Ran 16 tests ... OK`
 
+## PR Refresh
+
+PR `#304` initially reported `BEHIND`, so owner closeout merged latest
+`origin/dev` into `task/WNB-ACT-001-V2` at
+`a80f0b82fbbf7e9dc0ed07612aa95f1ce27de089`.
+
+Focused verification was re-run after the refresh:
+
+```bash
+python3 -m pytest tests/integrations/test_wandb_sync.py -q
+python3 -m py_compile tests/integrations/test_wandb_sync.py
+python3 services/registry/experiments/smoke_test.py --backend wandb-online
+python3 -m unittest test_adapter -q
+```
+
+Results:
+
+- `pytest`: `5 passed in 0.65s`
+- `py_compile`: passed
+- `smoke_test.py --backend wandb-online`: structured skip with
+  `secrets_persisted` remaining `false`
+- `test_adapter`: `Ran 16 tests ... OK`
+
 ## Boundaries
 
 - No live W&B API call was made from this worktree because credentialed test
