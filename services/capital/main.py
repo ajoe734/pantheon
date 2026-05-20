@@ -15,7 +15,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
 
@@ -403,6 +404,18 @@ def _raise_http_error(exc: Exception) -> None:
     if "not found" in message.lower():
         raise HTTPException(status_code=404, detail=message)
     raise HTTPException(status_code=400, detail=message)
+
+
+@app.exception_handler(ValueError)
+async def value_error_handler(_request: Request, exc: ValueError) -> JSONResponse:
+    message = str(exc)
+    status_code = 404 if "not found" in message.lower() else 400
+    return JSONResponse(status_code=status_code, content={"detail": message})
+
+
+@app.exception_handler(PermissionError)
+async def permission_error_handler(_request: Request, exc: PermissionError) -> JSONResponse:
+    return JSONResponse(status_code=403, content={"detail": str(exc)})
 
 
 def _pool_body(pool: CapitalPool) -> CapitalPoolBody:
