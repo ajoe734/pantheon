@@ -7,7 +7,8 @@ Reviewer: `Claude`
 Status: review-approved implementation proof
 
 Closeout note: Claude review approval is recorded in the task-scoped brief and
-status root; this proof changes no runtime adapter semantics.
+status root. The PR branch was refreshed through `origin/dev` commit `08233106`
+before final closeout; this proof changes no runtime adapter semantics.
 
 ## Scope
 
