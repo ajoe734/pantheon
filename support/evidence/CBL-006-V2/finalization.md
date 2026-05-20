@@ -32,4 +32,3 @@ python3 -m py_compile services/capital/binding_live/evidence_collector.py servic
 git diff --check origin/dev..HEAD
 # passed
 ```
-
