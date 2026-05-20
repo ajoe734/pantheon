@@ -1,5 +1,13 @@
 """Governance schemas for research production activation."""
 
+from .admission_gate import (
+    SCHEMA_VERSION as ADMISSION_GATE_SCHEMA_VERSION,
+    AdmissionGateError,
+    AdmissionGateIssue,
+    AdmissionGateResult,
+    evaluate_candidate_admission,
+    require_candidate_admission,
+)
 from .production_data_proof import (
     ACTIVATION_TIERS,
     ALLOWED_ADAPTER_OUTPUT_TYPES,
@@ -24,7 +32,11 @@ from .production_data_proof import (
 
 __all__ = [
     "ACTIVATION_TIERS",
+    "ADMISSION_GATE_SCHEMA_VERSION",
     "ALLOWED_ADAPTER_OUTPUT_TYPES",
+    "AdmissionGateError",
+    "AdmissionGateIssue",
+    "AdmissionGateResult",
     "FORBIDDEN_ADAPTER_OUTPUT_TYPES",
     "PRODUCTION_DATA_TIER",
     "SCHEMA_VERSION",
@@ -41,5 +53,7 @@ __all__ = [
     "ProviderProof",
     "ValidationIssue",
     "ValidationResult",
+    "evaluate_candidate_admission",
+    "require_candidate_admission",
     "validate_production_data_proof",
 ]
