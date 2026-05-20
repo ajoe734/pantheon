@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: FinRL/RLlib no-order-route proof and research-only admission evidence
-- Status: todo
+- Status: review_approved
 - Owner: Codex
-- Reviewer: Gemini
+- Reviewer: Claude2
 - Phase: Phase 8 / EPIC-RES-ACT
-- Last update: 2026-05-19T15:58:03Z
-- Next: Assignment created
+- Last update: 2026-05-20T07:04:49Z
+- Next: Review approved: FinRL no-order-route proof and RLlib research-only admission evidence satisfy all acceptance criteria. All 6 governance tests pass. Returned to Codex for finalization.
 
 ## Summary
 Adapter-specific child: FinRL/RLlib no-order-route proof + research-only admission evidence. Parent: RES-ACT-001-V2.
@@ -24,7 +24,12 @@ Adapter-specific child: FinRL/RLlib no-order-route proof + research-only admissi
 - integrations/rllib/research_only_admission.md
 
 ## Recent Task Activity
-- none
+- 2026-05-20T06:54:39Z · Orchestrator · chair_review_reassignment_applied · Chair reassigned review from Copilot to Claude2: Copilot quota is blocking the review backlog; Claude2 can review without touching human-gate task state.
+- 2026-05-20T06:59:48Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-20T06:59:52Z · Orchestrator · worker_worktree_reused · -
+- 2026-05-20T06:59:52Z · Orchestrator · worker_started · Worker started via claude_cli: review_ready_dispatch
+- 2026-05-20T07:04:49Z · Claude2 · review_approved · Review approved: FinRL no-order-route proof and RLlib research-only admission evidence satisfy all acceptance criteria. All 6 governance tests pass. Returned to Codex for finalization.
+- 2026-05-20T07:05:00Z · Orchestrator · worker_superseded · Worker superseded after task responsibility moved to another agent.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md

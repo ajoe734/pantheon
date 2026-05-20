@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Qlib production data proof and rolling OOS admission packet
-- Status: todo
+- Status: review_approved
 - Owner: Codex
-- Reviewer: Gemini
+- Reviewer: Claude2
 - Phase: Phase 8 / EPIC-RES-ACT
-- Last update: 2026-05-20T03:06:34Z
-- Next: Supervisor preempted RES-ACT-QLIB-001-V2 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.
+- Last update: 2026-05-20T06:56:34Z
+- Next: Review approved: production data proof and rolling OOS admission packet meet all acceptance criteria; returned to owner for finalization
 
 ## Summary
 Adapter-specific child: Qlib production data proof (entitlement, PIT, durable storage) + R5 rolling OOS admission packet. Parent: RES-ACT-001-V2.
@@ -22,14 +22,16 @@ Adapter-specific child: Qlib production data proof (entitlement, PIT, durable st
 ## Artifacts
 - integrations/qlib/production_data_proof.md
 - integrations/qlib/rolling_oos_admission_packet.md
+- support/evidence/RES-ACT-QLIB-001-V2/closeout.md
 
 ## Recent Task Activity
-- 2026-05-20T03:01:23Z · Orchestrator · worker_started · Worker started via codex: owned_ready_dispatch
-- 2026-05-20T03:01:23Z · Codex · start · Supervisor auto-started RES-ACT-QLIB-001-V2 after successful dispatch.
-- 2026-05-20T03:01:26Z · Orchestrator · task_dispatch_synced · Supervisor auto-started RES-ACT-QLIB-001-V2 after successful dispatch.
-- 2026-05-20T03:06:39Z · Orchestrator · task_preempted_synced · Supervisor preempted RES-ACT-QLIB-001-V2 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.
-- 2026-05-20T03:06:39Z · Orchestrator · worker_superseded · Worker superseded to prioritize higher-priority review/finalize work.
-- 2026-05-20T03:06:49Z · Orchestrator · worker_failed · Worker exited before the task reached a terminal status.
+- 2026-05-20T06:54:34Z · Orchestrator · chair_review_reassignment_applied · Chair reassigned review from Copilot to Claude2: Copilot has repeated 402 quota failures for this review path; Claude2 has no runnable non-human-gate task and can perform evidence review.
+- 2026-05-20T06:54:42Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-20T06:54:44Z · Orchestrator · worker_worktree_reused · -
+- 2026-05-20T06:54:44Z · Orchestrator · worker_started · Worker started via claude_cli: review_ready_dispatch
+- 2026-05-20T06:56:34Z · Claude2 · review_approved · Review approved: production data proof and rolling OOS admission packet meet all acceptance criteria; returned to owner for finalization
+- 2026-05-20T06:59:46Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
+- 2026-05-20T07:03:05Z · Codex · owner_closeout_evidence · Owner re-read approved Qlib proof artifacts, verified focused governance coverage, and recorded closeout evidence for PR finalization.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md

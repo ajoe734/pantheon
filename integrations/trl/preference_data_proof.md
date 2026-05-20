@@ -2,7 +2,7 @@
 
 Task: `RES-ACT-TRL-001-V2`
 Owner: `Codex`
-Reviewer: `Gemini`
+Reviewer: `Claude`
 Status: adapter-specific proof artifact
 
 ## Scope
