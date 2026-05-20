@@ -43,7 +43,7 @@ Focused verification:
 pytest -q tests/governance/test_quantlib_proof_artifacts.py
 ```
 
-Result: `5 passed in 0.55s`.
+Result: `5 passed in 0.77s` after merging `origin/dev` into the task branch.
 
 ## Closeout Boundary
 
