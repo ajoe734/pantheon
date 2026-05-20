@@ -17,7 +17,11 @@ from typing import Any, Mapping, Sequence
 
 
 SCHEMA_VERSION = "HumanGateDecision.v1"
-DECISION_STATUSES = {"pending", "approved", "blocked", "rejected", "revoked"}
+DECISION_STATUSES = {
+    "pending", "approved", "blocked", "rejected", "revoked",
+    "expired", "withdrawn", "superseded",
+}
+TERMINAL_LIFECYCLE_STATUSES = {"revoked", "expired", "withdrawn", "superseded"}
 PASSING_EVIDENCE_STATUSES = {"pass", "passed", "present", "satisfied", "not_applicable"}
 SIGNATURE_MEANINGS = {"approved", "approved_with_conditions", "rejected", "revoked"}
 
@@ -411,6 +415,8 @@ class HumanGateDecision:
         )
 
     def calculated_can_proceed(self) -> bool:
+        if self.status in TERMINAL_LIFECYCLE_STATUSES:
+            return False
         return (
             self.can_proceed_input.base_ready()
             and not self.missing_required_roles()
@@ -418,6 +424,9 @@ class HumanGateDecision:
         )
 
     def calculated_status(self) -> str:
+        # Terminal lifecycle states set by external operations are preserved.
+        if self.status in TERMINAL_LIFECYCLE_STATUSES:
+            return self.status
         if any(signature.revoked_at is None and signature.meaning == "revoked" for signature in self.signatures):
             return "revoked"
         if self.rejected_roles():
@@ -435,6 +444,8 @@ class HumanGateDecision:
         return tuple(blockers)
 
     def derived_reason(self) -> str:
+        if self.status in TERMINAL_LIFECYCLE_STATUSES:
+            return self.reason or f"Human gate decision is {self.status}."
         if self.can_proceed:
             return "All required human gate signatures are bound to the reviewed evidence."
         return "Human gate is not ready: " + ", ".join(self.blocking_summary())
@@ -555,10 +566,11 @@ def validate_decision(decision_or_data: HumanGateDecision | Mapping[str, Any]) -
         active_approval_roles.add(signature.role)
 
     normalized = decision.normalized()
-    if decision.can_proceed and not normalized.can_proceed:
-        raise HumanGateDecisionError(
-            "can_proceed cannot be true until readiness input passes and required signatures are present"
-        )
-    if decision.status == "approved" and not normalized.can_proceed:
-        raise HumanGateDecisionError("status cannot be approved when can_proceed is false")
+    if normalized.status not in TERMINAL_LIFECYCLE_STATUSES:
+        if decision.can_proceed and not normalized.can_proceed:
+            raise HumanGateDecisionError(
+                "can_proceed cannot be true until readiness input passes and required signatures are present"
+            )
+        if decision.status == "approved" and not normalized.can_proceed:
+            raise HumanGateDecisionError("status cannot be approved when can_proceed is false")
     return normalized
