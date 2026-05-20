@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: No-order-route enforcement test harness
-- Status: todo
+- Status: review_approved
 - Owner: Codex2
 - Reviewer: Codex
 - Phase: Phase 8 / EPIC-RES-ACT
-- Last update: 2026-05-20T02:50:53Z
-- Next: Helper-claimed by Codex2 while Codex completes higher-priority work.
+- Last update: 2026-05-20T03:03:43Z
+- Next: Review approved: generic OOS no-order-route harness is adapter-neutral, fails closed on static/dynamic broker route attempts and order-capable controls, and focused verification passed. Returning to Codex2 for owner closeout.
 
 ## Summary
 Re-spec'd per design reply section 4. Test harness asserting no research adapter calls broker order routes. Generic across all adapters; per-adapter children carry their own proofs.
@@ -22,9 +22,15 @@ Re-spec'd per design reply section 4. Test harness asserting no research adapter
 ## Artifacts
 - services/governance/research_activation/oos_runner.py
 - tests/governance/test_oos_runner.py
+- support/evidence/RES-ACT-004-V2/closeout.md
 
 ## Recent Task Activity
-- none
+- 2026-05-20T03:01:18Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
+- 2026-05-20T03:01:19Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-20T03:01:21Z · Orchestrator · worker_worktree_reused · -
+- 2026-05-20T03:01:21Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
+- 2026-05-20T03:03:43Z · Codex · review_approved · Review approved: generic OOS no-order-route harness is adapter-neutral, fails closed on static/dynamic broker route attempts and order-capable controls, and focused verification passed. Returning to Codex2 for owner closeout.
+- 2026-05-20T03:06:33Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
