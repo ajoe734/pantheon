@@ -11,11 +11,13 @@ Owner: Codex
 
 ```
 python3 -m pytest -q tests/bff/test_sse_replay.py
-2 passed in 4.39s
+2 passed in 4.09s
 ```
 
 Delivery PR: #287
 Merge commit: 845d9c7192d8d0f36b7393701f294d9ae69d8855
+Closeout evidence PR: #322
+Closeout evidence merge commit: 2301ce0de444e89b735a40790bd4b4579b724db8
 
 ## Verification
 
