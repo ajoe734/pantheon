@@ -74,3 +74,5 @@ can read EP5-008-V2 trailers from branch HEAD.
 
 - Refreshed against `origin/dev`:
   `845d9c7192d8d0f36b7393701f294d9ae69d8855`
+- Refreshed again after `dev` advanced while PR #299 checks were green:
+  `357d0ad89f155883bd895043c7b38ada853ebc5c`
