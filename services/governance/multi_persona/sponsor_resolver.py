@@ -309,10 +309,13 @@ def _build_conflict_resolution_log(
         for conflict in conflict_report.conflicts
     )
     committee_ref = source_log.committee_ref if source_log else None
+    vetoed_proposals = _vetoed_proposals(source_log)
+    source_vetoed_proposal_ids = {record.proposal_id for record in vetoed_proposals}
     open_conflicts = _open_conflicts_from_report(
         classified_conflicts,
         resolved_conflict_ids=resolved_ids,
         has_committee_resolution=bool(committee_ref),
+        source_vetoed_proposal_ids=source_vetoed_proposal_ids,
         evidence_ref=conflict_evidence_ref,
     )
 
@@ -325,7 +328,7 @@ def _build_conflict_resolution_log(
         sponsor_persona_id=artifact.sponsor_persona_id,
         artifact_id=artifact.artifact_id,
         synthesis_method=artifact.synthesis_method,
-        vetoed_proposals=_vetoed_proposals(source_log),
+        vetoed_proposals=vetoed_proposals,
         weighting_inputs=_weighting_inputs(proposals, source_log),
         weighting_outputs=_weighting_outputs(proposals, source_log),
         classified_conflicts=classified_conflicts,
@@ -341,6 +344,7 @@ def _open_conflicts_from_report(
     *,
     resolved_conflict_ids: set[str],
     has_committee_resolution: bool,
+    source_vetoed_proposal_ids: set[str],
     evidence_ref: str | None,
 ) -> tuple[OpenConflict, ...]:
     if has_committee_resolution:
@@ -348,6 +352,10 @@ def _open_conflicts_from_report(
     open_conflicts: list[OpenConflict] = []
     for conflict in classified_conflicts:
         if conflict.conflict_id in resolved_conflict_ids:
+            continue
+        # MGMT-SYN hard vetoes remove those proposals from the live-binding gate;
+        # keep the classified conflict for audit, but do not leave it open.
+        if source_vetoed_proposal_ids.intersection(conflict.proposal_ids):
             continue
         if conflict.severity != "committee" and not conflict.committee_trigger:
             continue
