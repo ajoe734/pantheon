@@ -15,8 +15,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Query
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
 
@@ -406,16 +405,13 @@ def _raise_http_error(exc: Exception) -> None:
     raise HTTPException(status_code=400, detail=message)
 
 
-@app.exception_handler(ValueError)
-async def value_error_handler(_request: Request, exc: ValueError) -> JSONResponse:
-    message = str(exc)
-    status_code = 404 if "not found" in message.lower() else 400
-    return JSONResponse(status_code=status_code, content={"detail": message})
-
-
-@app.exception_handler(PermissionError)
-async def permission_error_handler(_request: Request, exc: PermissionError) -> JSONResponse:
-    return JSONResponse(status_code=403, content={"detail": str(exc)})
+CAPITAL_HTTP_ERRORS = (
+    CapitalServiceError,
+    CapitalPoolError,
+    PersonaCapitalBindingError,
+    ValueError,
+    PermissionError,
+)
 
 
 def _pool_body(pool: CapitalPool) -> CapitalPoolBody:
@@ -431,7 +427,7 @@ def create_capital_pool(body: CreateCapitalPoolRequest) -> CapitalPoolBody:
     service = get_capital_service()
     try:
         return _pool_body(service.create_pool(body))
-    except (CapitalServiceError, CapitalPoolError, PermissionError) as exc:
+    except CAPITAL_HTTP_ERRORS as exc:
         _raise_http_error(exc)
 
 
@@ -448,7 +444,7 @@ def list_capital_pools(
 def get_capital_pool(pool_id: str) -> CapitalPoolBody:
     try:
         return _pool_body(get_capital_service().get_pool(pool_id))
-    except (CapitalServiceError, CapitalPoolError) as exc:
+    except CAPITAL_HTTP_ERRORS as exc:
         _raise_http_error(exc)
 
 
@@ -460,7 +456,7 @@ def update_capital_pool_status(
     service = get_capital_service()
     try:
         return _pool_body(service.update_pool_status(pool_id, body))
-    except (CapitalServiceError, CapitalPoolError, PermissionError) as exc:
+    except CAPITAL_HTTP_ERRORS as exc:
         _raise_http_error(exc)
 
 
@@ -471,7 +467,7 @@ def update_capital_pool_status(
 def get_live_owner(pool_id: str) -> Optional[PersonaCapitalBindingBody]:
     try:
         binding = get_capital_service().current_live_owner(pool_id)
-    except (CapitalServiceError, CapitalPoolError) as exc:
+    except CAPITAL_HTTP_ERRORS as exc:
         _raise_http_error(exc)
     return _binding_body(binding) if binding else None
 
@@ -491,7 +487,7 @@ def binding_admissibility(
             capital_pool_id=capital_pool_id,
             target_stage=target_stage,
         )
-    except (CapitalServiceError, CapitalPoolError, PersonaCapitalBindingError) as exc:
+    except CAPITAL_HTTP_ERRORS as exc:
         _raise_http_error(exc)
 
 
@@ -500,12 +496,7 @@ def create_binding(body: CreateBindingRequest) -> PersonaCapitalBindingBody:
     service = get_capital_service()
     try:
         return _binding_body(service.create_binding(body))
-    except (
-        CapitalServiceError,
-        CapitalPoolError,
-        PersonaCapitalBindingError,
-        PermissionError,
-    ) as exc:
+    except CAPITAL_HTTP_ERRORS as exc:
         _raise_http_error(exc)
 
 
@@ -529,7 +520,7 @@ def list_bindings(
 def get_binding(binding_id: str) -> PersonaCapitalBindingBody:
     try:
         return _binding_body(get_capital_service().get_binding(binding_id))
-    except (CapitalServiceError, PersonaCapitalBindingError) as exc:
+    except CAPITAL_HTTP_ERRORS as exc:
         _raise_http_error(exc)
 
 
@@ -538,12 +529,7 @@ def activate_binding(binding_id: str, body: ActivateBindingRequest) -> PersonaCa
     service = get_capital_service()
     try:
         return _binding_body(service.activate_binding(binding_id, body))
-    except (
-        CapitalServiceError,
-        CapitalPoolError,
-        PersonaCapitalBindingError,
-        PermissionError,
-    ) as exc:
+    except CAPITAL_HTTP_ERRORS as exc:
         _raise_http_error(exc)
 
 
@@ -555,11 +541,7 @@ def update_binding_status(
     service = get_capital_service()
     try:
         return _binding_body(service.update_binding_status(binding_id, body))
-    except (
-        CapitalServiceError,
-        PersonaCapitalBindingError,
-        PermissionError,
-    ) as exc:
+    except CAPITAL_HTTP_ERRORS as exc:
         _raise_http_error(exc)
 
 
