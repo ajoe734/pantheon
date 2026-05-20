@@ -101,6 +101,11 @@ class SponsorResolver:
             scope_ref=artifact.scope_ref,
         )
         source_log = _normalize_source_log(source_conflict_resolution_log)
+        _validate_source_log_matches_artifact(
+            artifact=artifact,
+            proposals=proposals,
+            source_log=source_log,
+        )
         log = _build_conflict_resolution_log(
             artifact=artifact,
             proposals=proposals,
@@ -212,6 +217,74 @@ def _normalize_source_log(
         raise SponsorResolverError(f"invalid source_conflict_resolution_log: {exc}") from exc
 
 
+def _validate_source_log_matches_artifact(
+    *,
+    artifact: AllocationPolicyArtifact,
+    proposals: Sequence[PersonaAllocationProposal],
+    source_log: MgmtSynConflictResolutionLog | None,
+) -> None:
+    if source_log is None:
+        return
+
+    expected_proposal_ids = tuple(proposal.proposal_id for proposal in proposals)
+    _require_equal(
+        source_log.log_id,
+        artifact.conflict_resolution_log_id,
+        "source_conflict_resolution_log.log_id",
+        "allocation_policy_artifact.conflict_resolution_log_id",
+    )
+    _require_equal(
+        source_log.capital_pool_id,
+        artifact.capital_pool_id,
+        "source_conflict_resolution_log.capital_pool_id",
+        "allocation_policy_artifact.capital_pool_id",
+    )
+    _require_equal(
+        source_log.scope_ref,
+        artifact.scope_ref,
+        "source_conflict_resolution_log.scope_ref",
+        "allocation_policy_artifact.scope_ref",
+    )
+    _require_equal(
+        source_log.sponsor_persona_id,
+        artifact.sponsor_persona_id,
+        "source_conflict_resolution_log.sponsor_persona_id",
+        "allocation_policy_artifact.sponsor_persona_id",
+    )
+    _require_equal(
+        source_log.synthesis_method,
+        artifact.synthesis_method,
+        "source_conflict_resolution_log.synthesis_method",
+        "allocation_policy_artifact.synthesis_method",
+    )
+
+    source_proposal_ids = tuple(
+        _require_text(proposal_id, "source_conflict_resolution_log.proposal_ids[]")
+        for proposal_id in source_log.proposal_ids
+    )
+    if source_proposal_ids != expected_proposal_ids:
+        raise SponsorResolverError(
+            "source_conflict_resolution_log.proposal_ids must match "
+            "allocation_policy_artifact.provenance_refs in order"
+        )
+
+    allowed_proposal_ids = set(expected_proposal_ids)
+    _validate_source_weight_keys(
+        source_log.weighting_inputs,
+        "source_conflict_resolution_log.weighting_inputs",
+        allowed_proposal_ids,
+    )
+    _validate_source_weight_keys(
+        source_log.weighting_outputs,
+        "source_conflict_resolution_log.weighting_outputs",
+        allowed_proposal_ids,
+    )
+    _validate_source_vetoes(
+        source_log,
+        {proposal.proposal_id: proposal.persona_id for proposal in proposals},
+    )
+
+
 def _build_conflict_resolution_log(
     *,
     artifact: AllocationPolicyArtifact,
@@ -236,10 +309,13 @@ def _build_conflict_resolution_log(
         for conflict in conflict_report.conflicts
     )
     committee_ref = source_log.committee_ref if source_log else None
+    vetoed_proposals = _vetoed_proposals(source_log)
+    source_vetoed_proposal_ids = {record.proposal_id for record in vetoed_proposals}
     open_conflicts = _open_conflicts_from_report(
         classified_conflicts,
         resolved_conflict_ids=resolved_ids,
         has_committee_resolution=bool(committee_ref),
+        source_vetoed_proposal_ids=source_vetoed_proposal_ids,
         evidence_ref=conflict_evidence_ref,
     )
 
@@ -252,7 +328,7 @@ def _build_conflict_resolution_log(
         sponsor_persona_id=artifact.sponsor_persona_id,
         artifact_id=artifact.artifact_id,
         synthesis_method=artifact.synthesis_method,
-        vetoed_proposals=_vetoed_proposals(source_log),
+        vetoed_proposals=vetoed_proposals,
         weighting_inputs=_weighting_inputs(proposals, source_log),
         weighting_outputs=_weighting_outputs(proposals, source_log),
         classified_conflicts=classified_conflicts,
@@ -268,6 +344,7 @@ def _open_conflicts_from_report(
     *,
     resolved_conflict_ids: set[str],
     has_committee_resolution: bool,
+    source_vetoed_proposal_ids: set[str],
     evidence_ref: str | None,
 ) -> tuple[OpenConflict, ...]:
     if has_committee_resolution:
@@ -275,6 +352,10 @@ def _open_conflicts_from_report(
     open_conflicts: list[OpenConflict] = []
     for conflict in classified_conflicts:
         if conflict.conflict_id in resolved_conflict_ids:
+            continue
+        # MGMT-SYN hard vetoes remove those proposals from the live-binding gate;
+        # keep the classified conflict for audit, but do not leave it open.
+        if source_vetoed_proposal_ids.intersection(conflict.proposal_ids):
             continue
         if conflict.severity != "committee" and not conflict.committee_trigger:
             continue
@@ -338,6 +419,60 @@ def _weighting_outputs(
         equal = 1.0 / len(proposals)
         return {proposal.proposal_id: equal for proposal in proposals}
     return {proposal_id: weight / total for proposal_id, weight in raw_weights.items()}
+
+
+def _require_equal(value: Any, expected: Any, field_name: str, expected_field_name: str) -> None:
+    normalized = _require_text(value, field_name)
+    expected_normalized = _require_text(expected, expected_field_name)
+    if normalized != expected_normalized:
+        raise SponsorResolverError(f"{field_name} must match {expected_field_name}")
+
+
+def _validate_source_weight_keys(
+    weights: Mapping[Any, Any],
+    field_name: str,
+    allowed_proposal_ids: set[str],
+) -> None:
+    for raw_proposal_id in weights:
+        proposal_id = _require_text(raw_proposal_id, f"{field_name}.key")
+        if proposal_id not in allowed_proposal_ids:
+            raise SponsorResolverError(f"{field_name} contains unknown proposal_id {proposal_id!r}")
+
+
+def _validate_source_vetoes(
+    source_log: MgmtSynConflictResolutionLog,
+    persona_by_proposal_id: Mapping[str, str],
+) -> None:
+    for record in source_log.vetoed_proposals:
+        if isinstance(record, Mapping):
+            proposal_id = _require_text(
+                record.get("proposal_id"),
+                "source_conflict_resolution_log.vetoed_proposals[].proposal_id",
+            )
+            persona_id = _require_text(
+                record.get("persona_id"),
+                "source_conflict_resolution_log.vetoed_proposals[].persona_id",
+            )
+        else:
+            proposal_id = _require_text(
+                record.proposal_id,
+                "source_conflict_resolution_log.vetoed_proposals[].proposal_id",
+            )
+            persona_id = _require_text(
+                record.persona_id,
+                "source_conflict_resolution_log.vetoed_proposals[].persona_id",
+            )
+        expected_persona_id = persona_by_proposal_id.get(proposal_id)
+        if expected_persona_id is None:
+            raise SponsorResolverError(
+                "source_conflict_resolution_log.vetoed_proposals[] contains "
+                f"unknown proposal_id {proposal_id!r}"
+            )
+        if persona_id != expected_persona_id:
+            raise SponsorResolverError(
+                "source_conflict_resolution_log.vetoed_proposals[] persona_id "
+                f"must match proposal {proposal_id!r}"
+            )
 
 
 def _require_text(value: Any, field_name: str) -> str:

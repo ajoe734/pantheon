@@ -18,7 +18,9 @@ from allocation_aggregation import (  # noqa: E402
 from portfolio_synthesis import (  # noqa: E402
     AllocationPolicyArtifact,
     PersonaAllocationProposal,
+    PoolRiskPolicy,
     SynthesisMethod,
+    VetoReason,
 )
 from services.governance.multi_persona.conflict_resolution_log import (  # noqa: E402
     validate_conflict_resolution_log,
@@ -175,6 +177,63 @@ def test_resolver_surfaces_unresolved_committee_conflict_as_open_conflict(tmp_pa
     )
 
 
+def test_source_vetoed_proposal_closes_live_binding_conflicts(tmp_path) -> None:
+    store = PersonaAllocationProposalJsonlStore(tmp_path / "proposals.jsonl")
+    ingest_persona_proposal(
+        make_proposal(
+            conviction=0.92,
+            directions=["long"],
+            target_weights={"2330.TW": 0.6},
+        ),
+        store=store,
+    )
+    ingest_persona_proposal(
+        make_proposal(
+            proposal_id="pap-beta",
+            persona_id="persona-beta",
+            conviction=0.91,
+            directions=["short"],
+            target_weights={"2330.TW": 0.1, "2454.TW": 0.8},
+            created_at="2026-05-15T14:01:00Z",
+            evidence_refs=["evidence://pap-beta"],
+            metadata={
+                "holding_period": "swing",
+                "risk_posture": "risk_on",
+                "strategy_family": "blocked_short",
+            },
+        ),
+        store=store,
+    )
+    synthesis = synthesize_allocation_with_log(
+        capital_pool_id="pool-paper",
+        proposal_ids=["pap-alpha", "pap-beta"],
+        method="risk_first",
+        risk_policy_ref="risk-policy://pool-paper/v1",
+        store=store,
+        pool_risk_policy=PoolRiskPolicy(forbidden_strategy_families={"blocked_short"}),
+        constraints_bundle={"environment": "paper"},
+    )
+
+    resolved = resolve_sponsor(
+        synthesis.artifact,
+        store=store,
+        source_conflict_resolution_log=synthesis.conflict_resolution_log,
+    )
+
+    assert synthesis.artifact.synthesis_method == SynthesisMethod.SINGLE_PROPOSAL.value
+    assert synthesis.conflict_resolution_log.vetoed_proposals[0].proposal_id == "pap-beta"
+    assert synthesis.conflict_resolution_log.vetoed_proposals[0].reason == (
+        VetoReason.FORBIDDEN_STRATEGY_FAMILY.value
+    )
+    assert resolved.conflict_report.requires_committee is True
+    assert resolved.has_open_conflicts is False
+    assert resolved.conflict_resolution_log.open_conflicts == ()
+    assert {conflict.conflict_type for conflict in resolved.conflict_resolution_log.classified_conflicts} >= {
+        "direction_conflict",
+        "sponsor_ambiguity",
+    }
+
+
 def test_committee_ref_closes_classifier_committee_conflicts(tmp_path) -> None:
     store = PersonaAllocationProposalJsonlStore(tmp_path / "proposals.jsonl")
     ingest_persona_proposal(
@@ -209,7 +268,7 @@ def test_committee_ref_closes_classifier_committee_conflicts(tmp_path) -> None:
         artifact,
         store=store,
         source_conflict_resolution_log={
-            "log_id": "mgmt-syn-conflict-log-committee",
+            "log_id": artifact.conflict_resolution_log_id,
             "capital_pool_id": "pool-paper",
             "scope_ref": "paper",
             "timestamp": "2026-05-15T14:02:00Z",
@@ -229,3 +288,82 @@ def test_committee_ref_closes_classifier_committee_conflicts(tmp_path) -> None:
     assert resolved.conflict_resolution_log.classified_conflicts[0].committee_trigger == (
         "long_vs_short_high_conviction_conflict"
     )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("log_id", "unrelated-conflict-log", "log_id must match"),
+        ("capital_pool_id", "pool-other", "capital_pool_id must match"),
+        ("scope_ref", "live", "scope_ref must match"),
+        ("proposal_ids", ["pap-alpha", "pap-other"], "proposal_ids must match"),
+        ("sponsor_persona_id", "persona-beta", "sponsor_persona_id must match"),
+        ("synthesis_method", SynthesisMethod.WEIGHTED_FUSION.value, "synthesis_method must match"),
+        (
+            "weighting_outputs",
+            {"pap-other": 1.0},
+            "weighting_outputs contains unknown proposal_id",
+        ),
+        (
+            "vetoed_proposals",
+            [{"proposal_id": "pap-other", "persona_id": "persona-other", "reason": "risk_policy"}],
+            "vetoed_proposals.*unknown proposal_id",
+        ),
+    ],
+)
+def test_resolver_rejects_mismatched_source_conflict_log_before_closing_conflicts(
+    tmp_path,
+    field,
+    value,
+    message,
+) -> None:
+    store = PersonaAllocationProposalJsonlStore(tmp_path / "proposals.jsonl")
+    ingest_persona_proposal(
+        make_proposal(conviction=0.92, directions=["long"], target_weights={"2330.TW": 0.6}),
+        store=store,
+    )
+    ingest_persona_proposal(
+        make_proposal(
+            proposal_id="pap-beta",
+            persona_id="persona-beta",
+            directions=["short"],
+            target_weights={"2330.TW": 0.1, "2454.TW": 0.8},
+            conviction=0.91,
+            created_at="2026-05-15T14:01:00Z",
+            evidence_refs=["evidence://pap-beta"],
+        ),
+        store=store,
+    )
+    artifact = AllocationPolicyArtifact(
+        artifact_id="alloc-policy-mpo-source-validation",
+        capital_pool_id="pool-paper",
+        scope_ref="paper",
+        sponsor_persona_id="persona-alpha",
+        synthesis_method=SynthesisMethod.COMMITTEE_OVERRIDE.value,
+        target_weights={"2330.TW": 0.4, "2454.TW": 0.3},
+        created_at="2026-05-15T14:02:00Z",
+        provenance_refs=["pap-alpha", "pap-beta"],
+        conflict_resolution_log_id="conflict-log-mpo-source-validation",
+    )
+    source_log = {
+        "log_id": artifact.conflict_resolution_log_id,
+        "capital_pool_id": artifact.capital_pool_id,
+        "scope_ref": artifact.scope_ref,
+        "timestamp": artifact.created_at,
+        "proposal_ids": list(artifact.provenance_refs),
+        "vetoed_proposals": [],
+        "weighting_inputs": {"pap-alpha": 0.8, "pap-beta": 0.8},
+        "weighting_outputs": {},
+        "committee_ref": "committee-risk-001",
+        "sponsor_persona_id": artifact.sponsor_persona_id,
+        "rejected_reason": None,
+        "synthesis_method": artifact.synthesis_method,
+    }
+    source_log[field] = value
+
+    with pytest.raises(SponsorResolverError, match=message):
+        resolve_sponsor(
+            artifact,
+            store=store,
+            source_conflict_resolution_log=source_log,
+        )
