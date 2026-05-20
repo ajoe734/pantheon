@@ -43,11 +43,13 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile tests/governance/test_statsmodel
 git diff --check origin/dev..HEAD
 ```
 
-Result: all commands exited 0. Pytest reported `12 passed in 9.91s`.
+Result: all commands exited 0. The latest post-dev-merge pytest rerun reported
+`12 passed`.
 
 ## Publication Notes
 
 This closeout follows the per-task branch flow for
 `task/RES-ACT-STAT-001-V2`. The earlier implementation PR was merged as
-`#315`; this finalization publishes the Claude review evidence and owner
-closeout as a follow-up task PR before the task is marked `done`.
+`#315`, and the Claude review evidence plus owner closeout were merged through
+`#351`. This final metadata refresh keeps the latest task commit aligned with
+the owner closeout gate before the task is marked `done`.
