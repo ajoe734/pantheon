@@ -106,6 +106,21 @@ def validate_canary_rollback_drill_linkage(
                 "stages.act.rollback_drill_ref must equal "
                 f"{linkage.rollback_drill_ref}"
             )
+        if packet_obj.act.runtime_binding_ref != linkage.runtime_binding_ref:
+            errors.append(
+                "stages.act.runtime_binding_ref must equal "
+                f"{linkage.runtime_binding_ref}"
+            )
+        if packet_obj.act.canary_runtime_ref != linkage.canary_runtime_ref:
+            errors.append(
+                "stages.act.canary_runtime_ref must equal "
+                f"{linkage.canary_runtime_ref}"
+            )
+        if packet_obj.decide.deployment_plan_ref != linkage.deployment_plan_ref:
+            errors.append(
+                "stages.decide.deployment_plan_ref must equal "
+                f"{linkage.deployment_plan_ref}"
+            )
         if packet_obj.assertions.rollback_drill_completed is not True:
             errors.append(
                 "assertions.rollback_drill_completed must be true after EP5 rollback drill linkage"
