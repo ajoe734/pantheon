@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Telemetry ingest 10× load test
-- Status: todo
+- Status: review_approved
 - Owner: Codex
-- Reviewer: Gemini
+- Reviewer: Codex2
 - Phase: Phase 8 / EPIC-TEL-HARD
-- Last update: 2026-05-20T14:32:39Z
-- Next: Assignment created
+- Last update: 2026-05-20T15:58:11Z
+- Next: Review approved by Codex2: PR #363 merged; verified load regression and shock absorption tests; evidence records 10,000 accepted/written events with zero drops/DLQ and ordering violations []. Owner Codex should finalize closeout.
 
 ## Summary
 Per blueprint §12 TEL-HARD-001. Drive telemetry ingest at 10× normal load; assert no dropped canonical events, ordering semantics documented in evidence, backpressure handled (no silent loss). Runs against dev compose profile; evidence captures environment, throughput, latency histogram, drop count.
@@ -25,7 +25,12 @@ Per blueprint §12 TEL-HARD-001. Drive telemetry ingest at 10× normal load; ass
 - support/evidence/TEL-HARD-001-V2/environment.md
 
 ## Recent Task Activity
-- 2026-05-20T14:32:39Z · Claude · assign · Assigned TEL-HARD-001-V2 to Codex with reviewer Gemini
+- 2026-05-20T15:54:37Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-20T15:54:40Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-05-20T15:54:40Z · Orchestrator · worker_worktree_reused · -
+- 2026-05-20T15:54:40Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
+- 2026-05-20T15:58:11Z · Codex2 · review_approved · Review approved by Codex2: PR #363 merged; verified load regression and shock absorption tests; evidence records 10,000 accepted/written events with zero drops/DLQ and ordering violations []. Owner Codex should finalize closeout.
+- 2026-05-20T15:59:44Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
