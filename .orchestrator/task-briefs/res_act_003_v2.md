@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Production data entitlement and PIT validator
-- Status: todo
+- Status: review_approved
 - Owner: Codex2
 - Reviewer: Codex
 - Phase: Phase 8 / EPIC-RES-ACT
-- Last update: 2026-05-20T02:50:50Z
-- Next: Helper-claimed by Codex2 while Codex completes higher-priority work.
+- Last update: 2026-05-20T03:10:42Z
+- Next: Review approved: ProductionDataProof admission gate satisfies entitlement/license/PIT/storage/freshness/audit and no-order candidate scope. Verified focused tests, py_compile, full governance tests, and PR #307 merge/checks. Returning to owner Codex2 for closeout.
 
 ## Summary
 Re-spec'd per design reply section 4. Validator for production data: entitlement, license, PIT correctness, durable storage, freshness, audit ref.
@@ -22,9 +22,15 @@ Re-spec'd per design reply section 4. Validator for production data: entitlement
 ## Artifacts
 - services/governance/research_activation/admission_gate.py
 - tests/governance/test_admission_gate.py
+- support/evidence/RES-ACT-003-V2/closeout.md
 
 ## Recent Task Activity
-- none
+- 2026-05-20T03:06:33Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
+- 2026-05-20T03:06:39Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-20T03:06:42Z · Orchestrator · worker_worktree_reused · -
+- 2026-05-20T03:06:42Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
+- 2026-05-20T03:10:42Z · Codex · review_approved · Review approved: ProductionDataProof admission gate satisfies entitlement/license/PIT/storage/freshness/audit and no-order candidate scope. Verified focused tests, py_compile, full governance tests, and PR #307 merge/checks. Returning to owner Codex2 for closeout.
+- 2026-05-20T03:11:53Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md

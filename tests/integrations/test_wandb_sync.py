@@ -248,6 +248,9 @@ def test_credentialed_sync_proof_artifact_records_truth_boundary() -> None:
         encoding="utf-8"
     )
 
+    assert "Task: `RES-ACT-WANDB-001-V2`" in proof
+    assert "Parent: `RES-ACT-001-V2`" in proof
+    assert "Task: `WNB-ACT-001-V2`" not in proof
     assert "Pantheon registry remains" in proof
     assert "artifact-admission system of record" in proof
     assert "PANTHEON_WANDB_ONLINE_SYNC_ENABLED=1" in proof
