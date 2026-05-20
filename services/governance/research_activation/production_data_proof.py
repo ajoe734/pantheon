@@ -22,6 +22,7 @@ ALLOWED_ADAPTER_OUTPUT_TYPES = frozenset(
         "evaluation_result",
         "model_artifact",
         "signal_snapshot",
+        "pricing_snapshot",
         "optimizer_result",
         "registry_admission_packet",
         "candidate_packet",
