@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: TRL runtime preference-data proof and DPO real-backend evidence
-- Status: todo
+- Status: review_approved
 - Owner: Codex
-- Reviewer: Gemini
+- Reviewer: Claude
 - Phase: Phase 8 / EPIC-RES-ACT
-- Last update: 2026-05-19T15:58:01Z
-- Next: Assignment created
+- Last update: 2026-05-20T06:56:09Z
+- Next: Review approved: TRL preference-data proof and DPO backend evidence are accurate, fail-closed, and backed by 5 passing governance tests. Returned to Codex for finalization.
 
 ## Summary
 Adapter-specific child: TRL preference dataset proof + DPO real-backend install/config evidence. Parent: RES-ACT-001-V2.
@@ -24,7 +24,12 @@ Adapter-specific child: TRL preference dataset proof + DPO real-backend install/
 - integrations/trl/dpo_backend_evidence.md
 
 ## Recent Task Activity
-- none
+- 2026-05-20T06:54:42Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-20T06:54:43Z · Orchestrator · worker_worktree_reused · -
+- 2026-05-20T06:54:44Z · Orchestrator · worker_started · Worker started via claude_cli: review_ready_dispatch
+- 2026-05-20T06:56:09Z · Claude · review_approved · Review approved: TRL preference-data proof and DPO backend evidence are accurate, fail-closed, and backed by 5 passing governance tests. Returned to Codex for finalization.
+- 2026-05-20T06:57:53Z · unknown · worker_commit · Worker commit 325614d21d9a recorded 1 staged file(s) for RES-ACT-TRL-001-V2.
+- 2026-05-20T06:59:46Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
