@@ -160,6 +160,23 @@ def test_approved_human_gate_allows_cooldown_override_and_records_ref():
     assert result.override_decision.status == "approved"
 
 
+def test_human_gate_override_requires_explicit_cooldown_scope():
+    first = record_emitted_proposal(
+        _proposal(),
+        emitted_at="2026-05-20T15:00:00Z",
+    )
+    unrelated_approval = _approved_human_gate().to_dict()
+    unrelated_approval.pop("override_scope")
+
+    with pytest.raises(CooldownEnforcementError, match="override_scope must be"):
+        enforce_proposal_cooldown(
+            _proposal(source_postmortem_id="pm-tel-hard-unrelated-approval"),
+            [first],
+            emitted_at="2026-05-20T16:00:00Z",
+            override_decision=unrelated_approval,
+        )
+
+
 def test_human_gate_override_must_be_approved_and_target_same_artifact():
     first = record_emitted_proposal(
         _proposal(),
