@@ -17,6 +17,8 @@ Status: ready for done finalization
 - Implementation PR: #300, merged to `dev` on 2026-05-20T01:58:22Z
 - Merge commit: `357d0ad8367c403d652707fbf042073fd60c9198`
 - Reviewer approval: `support/evidence/BLA-008-V2/review_claude.md`
+- Closeout evidence PR: #319
+- Branch refresh: merged `origin/dev` after PR #319 reported `BEHIND`, then recorded this note update as the latest task commit for closeout metadata.
 
 ## Verification
 
@@ -26,7 +28,7 @@ Re-run during owner closeout:
 PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/broker/test_approval_revoke_withdraw.py tests/governance/test_revoke_expire.py -q
 ```
 
-Result: 43 passed in 3.04s.
+Result: 43 passed in 3.88s after refreshing the task branch with `origin/dev`.
 
 ## Closeout Boundary
 
