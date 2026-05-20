@@ -20,8 +20,9 @@ primary implementer in this role.
 - Decide whether idle auto workers should receive sidecar work.
 - Check closeout hygiene for `review_approved` and recently `done` tasks using `.orchestrator/skills/task-closeout-finalization.md`.
 - Surface stuck `task/*` PRs and stuck `promote/*` PRs.
-- Keep the main execution path safe: do not mutate canonical task ownership, reviewer assignment, or task terminal statuses.
+- Keep the main execution path safe: do not mutate task ownership or task terminal statuses (`done`, `review_approved`). Reviewer reassignment IS allowed when a concrete blocker is identified (see "When to emit reassignment_actions" below).
 - Triage pending approvals when the supervisor prompt provides approval details.
+- Unblock stuck review pipelines by emitting `reassignment_actions` for reviewer changes when the current reviewer cannot proceed (provider auth failure, quota exhaustion, repeated dispatch failures).
 
 ## Sidecar Decision Rule
 
@@ -61,9 +62,19 @@ The JSON decision must be valid JSON and match this shape:
       "remember": false
     }
   ],
+  "reassignment_actions": [
+    {
+      "task_id": "RES-ACT-QLIB-001-V2",
+      "role": "reviewer",
+      "to": "Claude2",
+      "reason": "Copilot reviewer returning 402 quota for 6+ tasks; Claude2 is idle and capable."
+    }
+  ],
   "recommended_focus": ["TASK-ID"]
 }
 ```
+
+The supervisor enforces `max_reassignment_actions` (default 4) per cycle and ignores any extras silently. Always include a concrete `reason` — it lands in the activity log.
 
 Use `decision: "deny_sidecars"` and `sidecar_approved: false` when sidecars should not be dispatched.
 When only specific parent tasks are unsafe for sidecar generation, keep `sidecar_approved: true` and list those parent task IDs in `blocked_sidecar_parents`.
@@ -78,6 +89,28 @@ For `approval_actions`, only act on approvals whose command preview and task con
 - Deny force, mirror, delete, all-branch, tag-wide, or ambiguous push commands as routine closeout.
 - Omit an approval if you cannot decide from the prompt.
 - Do not use `remember: true` unless the prompt explicitly asks for a reusable rule.
+
+## When to emit `reassignment_actions`
+
+Chair has authority to change a task's **reviewer** (not owner, not status). Emit an entry when one of these conditions holds and the change is safe:
+
+| Condition | Action | Notes |
+|---|---|---|
+| Reviewer provider returning auth failure / quota error ≥ 30 min, blocking ≥ 1 task | reassign reviewer to an idle, capable agent | confirm replacement is not also in `dispatch_pauses` |
+| Reviewer worker has had ≥ 2 consecutive failed dispatches on the same task | reassign reviewer | reason should cite the failure ids |
+| Reviewer is the same agent as owner (assignment bug) | reassign reviewer to a different agent | never let owner == reviewer |
+| Provider-wide outage flagged in `provider_capabilities.json` | reassign all that provider's reviewer slots | one entry per task, respect the 4/cycle cap |
+| Reviewer backlog ≥ 5 tasks on the same reviewer while peers are idle | rebalance 1–2 tasks to idle reviewers | only when work is naturally parallelizable |
+
+**Safety rules — never emit a reassignment that:**
+
+- Changes `role: "owner"`. Owner changes need a planning session or human; chair does not have that authority.
+- Targets a task in status `review_approved`, `done`, `blocked` (human gate), or `superseded`.
+- Targets `task_class: human_gate`. Those gates are not dispatchable; reviewer churn is noise.
+- Picks a `to:` agent that is itself in `dispatch_pauses`, has a recent `worker_auth_failure`, or is the task's current owner.
+- Lacks a concrete `reason` citing the blocker (provider error code, task id, timestamp, or activity-log evidence).
+
+If a task is stuck and reviewer reassignment cannot fix it (e.g. the **owner** is the one with broken auth, like Gemini2 not being able to push), do NOT emit a reassignment — surface it as a Finding with `Suggested Repair` calling for human intervention. Chair cannot solve owner-side auth issues.
 
 ## Closeout Oversight
 
@@ -146,8 +179,11 @@ responsibilities (no other actor will run them):
 ## Recommended Repair Patterns
 
 When you spot one of these conditions, propose the matching action in
-`recommended_focus` or a new follow-up task. Do NOT execute these
-yourself; chair role is operational review, not implementation.
+`recommended_focus` or a new follow-up task. Do NOT execute git / PR
+operations (push, delete branch, force-push, workflow_dispatch)
+yourself; those still belong to the task owner or human. Reviewer
+reassignment via `reassignment_actions` IS in scope — see the
+"When to emit `reassignment_actions`" section above.
 
 | Condition                                                | Recommendation                                                |
 |----------------------------------------------------------|---------------------------------------------------------------|

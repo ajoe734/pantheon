@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "No queue, provider, or approval blocker; idle workers can take OPS follow-ups once parent tasks exist.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "OPS-PROMOTE-FIX",
+    "OPS-CLOSEOUT-PUSH-STATUS-AUDIT",
+    "OPS-ZOMBIE-BRANCH-CLEANUP",
+    "SPRINT-9-PLANNING"
+  ]
+}
