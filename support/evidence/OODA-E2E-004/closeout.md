@@ -132,3 +132,30 @@ All 6 acceptance criteria confirmed:
 6. DeploymentPlan creation rejected for non-approved artifact: PASS
 
 All PRs (#90, #146, #167, #185, #187) merged into dev. Task finalized.
+
+## Codex2 Final Closeout (2026-05-19)
+
+Owner: Codex2
+Reviewer: Claude
+Reason: owned_finalize_dispatch after Claude review_approved (2026-05-19T12:08:13Z)
+
+Claude approved in `support/evidence/OODA-E2E-004/review_claude_zh.md`:
+"all 3 acceptance tests pass; all acceptance criteria verified."
+
+Final owner verification:
+
+```text
+python3 -m pytest tests/e2e/test_admission_to_deployment_plan.py -q -x
+3 passed in 0.43s
+```
+
+All 6 acceptance criteria confirmed:
+1. ApprovalDecision proposed -> under_review -> decided(approved): PASS
+2. artifact_state advances to approved: PASS
+3. DeploymentPlan(target_stage=paper) created referencing approved artifact: PASS
+4. DEP-004 pool/runtime compatibility passes for fixture pool: PASS
+5. DeploymentPlan persisted with stage=paper and approval_decision_ref: PASS
+6. DeploymentPlan creation rejected for non-approved artifact: PASS
+
+The current dispatch keeps task status at `review_approved` until the
+task-scoped PR containing this closeout evidence is merged into `dev`.

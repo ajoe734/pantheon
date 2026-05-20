@@ -42,3 +42,12 @@ Classify evidence retention per Part H5; archive eligible sidecars; never delete
 - Use scripts/ai-status.sh or python3 scripts/ai_status.py for status changes.
 - Keep execution updates short and structured.
 - If you need raw provider/debug details, ask for the relevant runtime log or evidence ref instead of scanning global summaries.
+
+## Owner Closeout
+- 2026-05-19 Codex re-read the task brief, Claude review note, and touched artifacts.
+- Focused verification rerun:
+  - `pytest tests/orchestrator/test_evidence_retention_policy.py -q` -> 3 passed.
+  - `python3 -m py_compile scripts/evidence_retention_policy.py` -> passed.
+  - `pytest .orchestrator/test_sidecar_cleanup.py -q` -> 3 passed.
+- Closeout evidence recorded in `support/evidence/OPS-WAVE-005-V2/owner-closeout.md`.
+- Scope boundary: no L1 canonical docs changed; no evidence deletion behavior introduced.

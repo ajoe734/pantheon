@@ -20,7 +20,15 @@ Status at final closeout pickup: review_approved
 
 ## Reviewer Approval
 
-Codex approved EXP-V2-002 in the shared status root with no blocking findings. The approval notes state that grouped artifacts preserve `lineage.parent_run_id` for `model_artifact`, `feature_set`, `signal_snapshot`, `optimizer_result`, and `evaluation_result`.
+The current reviewer of record is Claude. The shared status root records the
+latest Claude approval at `2026-05-19T12:20:23Z` with all acceptance criteria
+met, 6 focused tests passing, and the implementation clean and
+self-contained.
+
+Earlier review history is retained in `support/evidence/EXP-V2-002/review.md`.
+The approval notes state that grouped artifacts preserve
+`lineage.parent_run_id` for `model_artifact`, `feature_set`,
+`signal_snapshot`, `optimizer_result`, and `evaluation_result`.
 
 The generated task brief was present in the shared status root at `/home/lupin/code/pantheon/.orchestrator/task-briefs/exp_v2_002.md`; the same path was not present in this task worktree at closeout pickup.
 
@@ -132,3 +140,27 @@ PR #171 is already merged into `dev` with merge commit
 updates the final closeout packet to match the current reviewer of record. It
 does not change the lineage-read implementation, tests, HTTP wrapper, registry
 write path, or canonical architecture documents.
+
+## 2026-05-19 12:20 UTC Owner Closeout Refresh
+
+The supervisor resumed Codex2 for `owned_finalize_dispatch` after Claude
+approved EXP-V2-002 at `2026-05-19T12:20:23Z`. This refresh records the final
+reviewer-of-record approval in the task evidence before moving the task from
+`review_approved` to `done`.
+
+Commands rerun from `task/EXP-V2-002` after fast-forwarding the task branch to
+current `origin/dev`:
+
+```bash
+pytest -q services/lineage-read/test_multi_artifact_tree.py
+pytest -q services/lineage-read
+```
+
+Results:
+
+- `services/lineage-read/test_multi_artifact_tree.py`: 6 passed in 0.62s.
+- `services/lineage-read`: 28 passed in 4.74s.
+
+This closeout refresh is evidence-only. It does not change the lineage-read
+implementation, tests, HTTP wrapper, registry write path, or canonical
+architecture documents.

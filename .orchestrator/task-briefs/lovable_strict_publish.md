@@ -5,13 +5,13 @@ Treat `ai-status.json` as the durable execution source of truth only when you ne
 Do not read `current-work.md` by default for implementation context.
 
 ## Task
-- Title: Finalizing recovery closeout.
-- Status: review_approved
-- Owner: Gemini2
-- Reviewer: Gemini
+- Title: Lovable build-time strict env publish audit script
+- Status: todo
+- Owner: Claude
+- Reviewer: Gemini2
 - Phase: Sprint 7 / EPIC-LOVABLE-INFRA
-- Last update: 2026-05-19T12:43:47Z
-- Next: Supervisor resumed LOVABLE-STRICT-PUBLISH for finalize after successful dispatch.
+- Last update: 2026-05-19T12:17:35Z
+- Next: Chair reassigned owner from Gemini to Claude: Gemini has repeated 429 quota failures with reset in about 12 hours; the task remains in_progress without a live worker.. Task returned to todo for a fresh run.
 
 ## Summary
 SA § 2.2 列為 non-blocking follow-up：execute-plans@main build-time 應使用 strict env (VITE_BFF_MODE=live VITE_BFF_FALLBACK=strict VITE_BFF_REAL_WRITES=false) 重新發佈一次，並驗證發佈後的 bundle 不再含 seed fallback assets。本任務不直接動 execute-plans repo，而是寫一個 pantheon 端的 audit script + evidence packet，記錄 publish 條件、build env、bundle hash、verification probe 結果。
@@ -27,12 +27,12 @@ SA § 2.2 列為 non-blocking follow-up：execute-plans@main build-time 應使�
 - scripts/test_audit_lovable_strict_publish.py
 
 ## Recent Task Activity
-- 2026-05-19T12:43:46Z · Orchestrator · worker_started · Worker started via gemini: owned_finalize_dispatch
-- 2026-05-19T12:43:47Z · Gemini2 · note · Supervisor resumed LOVABLE-STRICT-PUBLISH for finalize after successful dispatch.
-- 2026-05-19T12:43:52Z · Orchestrator · task_dispatch_synced · Supervisor resumed LOVABLE-STRICT-PUBLISH for finalize after successful dispatch.
-- 2026-05-19T12:45:04Z · Gemini2 · worker_commit · Worker commit 543c54deb359 recorded 1 staged file(s) for LOVABLE-STRICT-PUBLISH.
-- 2026-05-19T12:46:16Z · Gemini2 · worker_commit · Worker commit 4178c7746dc1 recorded 1 staged file(s) for LOVABLE-STRICT-PUBLISH.
-- 2026-05-19T12:49:02Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
+- 2026-05-19T12:12:24Z · Orchestrator · worker_worktree_reused · -
+- 2026-05-19T12:12:24Z · Orchestrator · worker_started · Worker started via gemini: owned_in_progress_dispatch
+- 2026-05-19T12:12:24Z · Gemini · progress · Supervisor re-dispatched LOVABLE-STRICT-PUBLISH; task remains in progress.
+- 2026-05-19T12:12:29Z · Orchestrator · task_dispatch_synced · Supervisor re-dispatched LOVABLE-STRICT-PUBLISH; task remains in progress.
+- 2026-05-19T12:17:34Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
+- 2026-05-19T12:17:38Z · Orchestrator · chair_review_reassignment_applied · Chair reassigned owner from Gemini to Claude: Gemini has repeated 429 quota failures with reset in about 12 hours; the task remains in_progress without a live worker.. Task returned to todo for a fresh run.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md

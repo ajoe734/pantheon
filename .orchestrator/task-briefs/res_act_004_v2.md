@@ -22,6 +22,7 @@ Re-spec'd per design reply section 4. Test harness asserting no research adapter
 ## Artifacts
 - services/governance/research_activation/oos_runner.py
 - tests/governance/test_oos_runner.py
+- support/evidence/RES-ACT-004-V2/closeout.md
 
 ## Recent Task Activity
 - 2026-05-20T03:01:18Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.

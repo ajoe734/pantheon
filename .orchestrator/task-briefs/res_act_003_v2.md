@@ -22,6 +22,7 @@ Re-spec'd per design reply section 4. Validator for production data: entitlement
 ## Artifacts
 - services/governance/research_activation/admission_gate.py
 - tests/governance/test_admission_gate.py
+- support/evidence/RES-ACT-003-V2/closeout.md
 
 ## Recent Task Activity
 - 2026-05-20T03:06:33Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.

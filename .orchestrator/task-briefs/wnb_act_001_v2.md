@@ -22,6 +22,8 @@ Demonstrates W&B online sync works with credentialed access while preserving Pan
 ## Artifacts
 - integrations/wandb/credentialed_sync_proof.md
 - tests/integrations/test_wandb_sync.py
+- support/evidence/WNB-ACT-001-V2/review_claude2.md
+- support/evidence/WNB-ACT-001-V2/owner-closeout.md
 
 ## Recent Task Activity
 - 2026-05-20T02:40:33Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch

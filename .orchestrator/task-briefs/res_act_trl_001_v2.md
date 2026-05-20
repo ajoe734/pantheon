@@ -10,8 +10,8 @@ Do not read `current-work.md` by default for implementation context.
 - Owner: Codex
 - Reviewer: Claude
 - Phase: Phase 8 / EPIC-RES-ACT
-- Last update: 2026-05-20T06:56:09Z
-- Next: Review approved: TRL preference-data proof and DPO backend evidence are accurate, fail-closed, and backed by 5 passing governance tests. Returned to Codex for finalization.
+- Last update: 2026-05-20T07:06:53Z
+- Next: Owner closeout in progress: PR #347 opened with auto-merge and task branch refreshed against origin/dev; awaiting merge before done transition.
 
 ## Summary
 Adapter-specific child: TRL preference dataset proof + DPO real-backend install/config evidence. Parent: RES-ACT-001-V2.
@@ -30,6 +30,9 @@ Adapter-specific child: TRL preference dataset proof + DPO real-backend install/
 - 2026-05-20T06:56:09Z · Claude · review_approved · Review approved: TRL preference-data proof and DPO backend evidence are accurate, fail-closed, and backed by 5 passing governance tests. Returned to Codex for finalization.
 - 2026-05-20T06:57:53Z · unknown · worker_commit · Worker commit 325614d21d9a recorded 1 staged file(s) for RES-ACT-TRL-001-V2.
 - 2026-05-20T06:59:46Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
+- 2026-05-20T07:04:06Z · Codex · worker_commit · Owner closeout commit 18ce07da recorded review-status sync and reviewer header alignment.
+- 2026-05-20T07:05:30Z · Codex · pr_opened · PR #347 opened with auto-merge for owner closeout.
+- 2026-05-20T07:06:53Z · Codex · branch_refresh · Merged origin/dev into the task branch after PR #347 reported BEHIND.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md

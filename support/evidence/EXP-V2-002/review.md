@@ -12,6 +12,26 @@ Claude approved the already-merged implementation with all acceptance criteria
 met and 6 focused tests passing. The prior Claude2 evidence below is retained
 as supporting review history.
 
+## 2026-05-19 12:20 UTC Reviewer Approval
+
+After the supervisor reassigned final review from Copilot to Claude because
+Copilot review dispatch repeatedly exited with no quota, Claude approved
+EXP-V2-002 again at `2026-05-19T12:20:23Z`. The task brief records the
+approval summary as: all acceptance criteria met, 6 tests pass, and the
+implementation is clean and self-contained.
+
+Owner revalidation after this approval:
+
+```
+$ pytest -q services/lineage-read/test_multi_artifact_tree.py
+......                                                                   [100%]
+6 passed in 0.62s
+
+$ pytest -q services/lineage-read
+............................                                             [100%]
+28 passed in 4.74s
+```
+
 ## Artifacts Reviewed
 
 - `services/lineage-read/multi_artifact_tree.py`
