@@ -47,6 +47,9 @@ Status before finalization: review_approved
 - After PR #332 opened as `BEHIND`, the task branch merged latest
   `origin/dev` and re-ran owner closeout verification. The merge brought in
   unrelated HA/CBL task files only; OODA linkage scope was unchanged.
+- After `origin/dev` advanced again to `dfe4c529`, the task branch merged that
+  tip as well and re-ran the same owner closeout verification. The second merge
+  brought in unrelated CBL closeout files only; OODA linkage scope was unchanged.
 
 ## Local Verification
 
@@ -62,7 +65,7 @@ git diff --check origin/dev...HEAD
 
 Results:
 
-- `tests/ooda/test_canary_rollback_linkage.py`: 5 passed in 0.78s.
-- `tests/ooda`: 14 passed in 1.76s.
+- `tests/ooda/test_canary_rollback_linkage.py`: 5 passed in 0.67s.
+- `tests/ooda`: 14 passed in 1.40s.
 - `py_compile`: passed.
 - `git diff --check origin/dev...HEAD`: passed.
