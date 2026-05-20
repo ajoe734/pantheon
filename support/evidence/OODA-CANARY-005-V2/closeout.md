@@ -47,10 +47,11 @@ Results:
 
 ## Publication Refresh
 
-After the owner closeout evidence commit, `origin/dev` advanced through PR
-`#340` for CBL-007. This task branch was refreshed with `origin/dev` so the
-closeout PR does not carry any reverse diff for other tasks. This final refresh
-does not change renderer code, renderer tests, or canary closure behavior.
+After the owner closeout evidence commit, `origin/dev` advanced through PRs
+`#340` for CBL-007 and `#341` for CBL-005. This task branch was refreshed with
+`origin/dev` so the closeout PR does not carry any reverse diff for other
+tasks. This final refresh does not change renderer code, renderer tests, or
+canary closure behavior.
 
 ## Boundaries
 
