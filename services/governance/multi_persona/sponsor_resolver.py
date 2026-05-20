@@ -101,6 +101,11 @@ class SponsorResolver:
             scope_ref=artifact.scope_ref,
         )
         source_log = _normalize_source_log(source_conflict_resolution_log)
+        _validate_source_log_matches_artifact(
+            artifact=artifact,
+            proposals=proposals,
+            source_log=source_log,
+        )
         log = _build_conflict_resolution_log(
             artifact=artifact,
             proposals=proposals,
@@ -210,6 +215,74 @@ def _normalize_source_log(
         )
     except TypeError as exc:
         raise SponsorResolverError(f"invalid source_conflict_resolution_log: {exc}") from exc
+
+
+def _validate_source_log_matches_artifact(
+    *,
+    artifact: AllocationPolicyArtifact,
+    proposals: Sequence[PersonaAllocationProposal],
+    source_log: MgmtSynConflictResolutionLog | None,
+) -> None:
+    if source_log is None:
+        return
+
+    expected_proposal_ids = tuple(proposal.proposal_id for proposal in proposals)
+    _require_equal(
+        source_log.log_id,
+        artifact.conflict_resolution_log_id,
+        "source_conflict_resolution_log.log_id",
+        "allocation_policy_artifact.conflict_resolution_log_id",
+    )
+    _require_equal(
+        source_log.capital_pool_id,
+        artifact.capital_pool_id,
+        "source_conflict_resolution_log.capital_pool_id",
+        "allocation_policy_artifact.capital_pool_id",
+    )
+    _require_equal(
+        source_log.scope_ref,
+        artifact.scope_ref,
+        "source_conflict_resolution_log.scope_ref",
+        "allocation_policy_artifact.scope_ref",
+    )
+    _require_equal(
+        source_log.sponsor_persona_id,
+        artifact.sponsor_persona_id,
+        "source_conflict_resolution_log.sponsor_persona_id",
+        "allocation_policy_artifact.sponsor_persona_id",
+    )
+    _require_equal(
+        source_log.synthesis_method,
+        artifact.synthesis_method,
+        "source_conflict_resolution_log.synthesis_method",
+        "allocation_policy_artifact.synthesis_method",
+    )
+
+    source_proposal_ids = tuple(
+        _require_text(proposal_id, "source_conflict_resolution_log.proposal_ids[]")
+        for proposal_id in source_log.proposal_ids
+    )
+    if source_proposal_ids != expected_proposal_ids:
+        raise SponsorResolverError(
+            "source_conflict_resolution_log.proposal_ids must match "
+            "allocation_policy_artifact.provenance_refs in order"
+        )
+
+    allowed_proposal_ids = set(expected_proposal_ids)
+    _validate_source_weight_keys(
+        source_log.weighting_inputs,
+        "source_conflict_resolution_log.weighting_inputs",
+        allowed_proposal_ids,
+    )
+    _validate_source_weight_keys(
+        source_log.weighting_outputs,
+        "source_conflict_resolution_log.weighting_outputs",
+        allowed_proposal_ids,
+    )
+    _validate_source_vetoes(
+        source_log,
+        {proposal.proposal_id: proposal.persona_id for proposal in proposals},
+    )
 
 
 def _build_conflict_resolution_log(
@@ -338,6 +411,60 @@ def _weighting_outputs(
         equal = 1.0 / len(proposals)
         return {proposal.proposal_id: equal for proposal in proposals}
     return {proposal_id: weight / total for proposal_id, weight in raw_weights.items()}
+
+
+def _require_equal(value: Any, expected: Any, field_name: str, expected_field_name: str) -> None:
+    normalized = _require_text(value, field_name)
+    expected_normalized = _require_text(expected, expected_field_name)
+    if normalized != expected_normalized:
+        raise SponsorResolverError(f"{field_name} must match {expected_field_name}")
+
+
+def _validate_source_weight_keys(
+    weights: Mapping[Any, Any],
+    field_name: str,
+    allowed_proposal_ids: set[str],
+) -> None:
+    for raw_proposal_id in weights:
+        proposal_id = _require_text(raw_proposal_id, f"{field_name}.key")
+        if proposal_id not in allowed_proposal_ids:
+            raise SponsorResolverError(f"{field_name} contains unknown proposal_id {proposal_id!r}")
+
+
+def _validate_source_vetoes(
+    source_log: MgmtSynConflictResolutionLog,
+    persona_by_proposal_id: Mapping[str, str],
+) -> None:
+    for record in source_log.vetoed_proposals:
+        if isinstance(record, Mapping):
+            proposal_id = _require_text(
+                record.get("proposal_id"),
+                "source_conflict_resolution_log.vetoed_proposals[].proposal_id",
+            )
+            persona_id = _require_text(
+                record.get("persona_id"),
+                "source_conflict_resolution_log.vetoed_proposals[].persona_id",
+            )
+        else:
+            proposal_id = _require_text(
+                record.proposal_id,
+                "source_conflict_resolution_log.vetoed_proposals[].proposal_id",
+            )
+            persona_id = _require_text(
+                record.persona_id,
+                "source_conflict_resolution_log.vetoed_proposals[].persona_id",
+            )
+        expected_persona_id = persona_by_proposal_id.get(proposal_id)
+        if expected_persona_id is None:
+            raise SponsorResolverError(
+                "source_conflict_resolution_log.vetoed_proposals[] contains "
+                f"unknown proposal_id {proposal_id!r}"
+            )
+        if persona_id != expected_persona_id:
+            raise SponsorResolverError(
+                "source_conflict_resolution_log.vetoed_proposals[] persona_id "
+                f"must match proposal {proposal_id!r}"
+            )
 
 
 def _require_text(value: Any, field_name: str) -> str:
