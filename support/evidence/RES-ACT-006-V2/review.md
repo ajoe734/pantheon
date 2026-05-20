@@ -57,3 +57,5 @@ pytest -q tests/governance/test_research_handoff_packet.py tests/governance/test
 ```
 
 Result: `py_compile` OK; `28 passed in 2.31s`.
+
+Refresh after merging `origin/dev` at `3dd4cd9f`: `py_compile` OK; `28 passed in 2.55s`.
