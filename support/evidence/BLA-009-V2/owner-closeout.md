@@ -43,6 +43,24 @@ Result:
 132 passed in 20.31s
 ```
 
+## Owner Finalization Refresh
+
+PR #301 initially passed required checks but remained behind the `dev` branch.
+Owner finalization refreshed `task/BLA-009-V2` with latest `origin/dev` at
+`db47421fd7e6dc1b2a41ce4904ddd422d479ea18`.
+
+Focused verification was re-run after the refresh:
+
+```bash
+pytest -q tests/broker services/broker
+```
+
+Result:
+
+```text
+138 passed in 19.10s
+```
+
 ## Boundaries
 
 - No Runtime Manager command dispatch is performed.
