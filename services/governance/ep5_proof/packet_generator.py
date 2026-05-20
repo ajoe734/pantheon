@@ -31,6 +31,11 @@ from services.governance.promotion_readiness.packet_model import (
     TargetRef,
     validate_packet,
 )
+from services.governance.ep5_proof.persona_lineage import (
+    EP5PersonaLineage,
+    PersonaLineageError,
+    normalize_ep5_persona_lineage,
+)
 
 # Proof flags surfaced by the generator
 PROOF_FLAG_CANARY_RUNTIME_STARTED = "canary_runtime_started"
@@ -38,6 +43,8 @@ PROOF_FLAG_RUNTIME_HEARTBEAT_RECEIVED = "runtime_heartbeat_received"
 PROOF_FLAG_ORDER_ROUTE_MODE = "order_route_mode"
 PROOF_FLAG_TELEMETRY_INGESTED = "telemetry_ingested"
 PROOF_FLAG_DEPLOYMENT_STAGE_IS_CANARY = "deployment_stage_is_canary"
+PROOF_FLAG_PERSONA_LINEAGE_LINKED = "persona_lineage_linked"
+EVIDENCE_KEY_PERSONA_LINEAGE = "persona_lineage"
 
 # Fail-closed invariant: live-capital and broker-production must stay False
 PROOF_FLAG_LIVE_CAPITAL_SIDE_EFFECTS = "live_capital_side_effects"
@@ -76,6 +83,42 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _persona_lineage_source(canary_run: Mapping[str, Any]) -> Any:
+    for key in ("persona_lineage", "multi_persona_ooda_packet", "multi_persona_packet"):
+        value = canary_run.get(key)
+        if value is not None:
+            return value
+    return None
+
+
+def _persona_lineage_ref(canary_run: Mapping[str, Any]) -> str | None:
+    for key in ("persona_lineage_ref", "multi_persona_packet_ref", "multi_persona_ooda_packet_ref"):
+        value = _optional_text(canary_run.get(key))
+        if value:
+            return value
+    return None
+
+
+def _normalize_lineage(canary_run: Mapping[str, Any]) -> EP5PersonaLineage | None:
+    lineage_source = _persona_lineage_source(canary_run)
+    if lineage_source is None:
+        return None
+    try:
+        return normalize_ep5_persona_lineage(
+            lineage_source,
+            source_packet_ref=_persona_lineage_ref(canary_run),
+        )
+    except PersonaLineageError as exc:
+        raise EP5ProofGeneratorError(f"invalid persona lineage: {exc}") from exc
+
+
 def generate_ep5_proof_packet(
     canary_run: Mapping[str, Any],
     *,
@@ -101,6 +144,10 @@ def generate_ep5_proof_packet(
         - result (str): overall canary result, e.g. "pass" / "fail"
         - started_at (str, optional): ISO timestamp of run start
         - finished_at (str, optional): ISO timestamp of run finish
+        - multi_persona_ooda_packet (Mapping, optional): MPO-003 full packet,
+          or persona_lineage containing a normalized EP5PersonaLineage.v1 dict
+        - multi_persona_packet_ref (str, optional): portable ref for the MPO
+          evidence packet, used to build conflict-log and memo refs
     packet_id:
         Override the generated packet UUID.
     generated_by:
@@ -133,6 +180,7 @@ def generate_ep5_proof_packet(
     heartbeat_count: int = int(canary_run.get("heartbeat_count", 0))
     order_route_mode: str = str(canary_run.get("order_route_mode", "")).strip().lower()
     telemetry_event_count: int = int(canary_run.get("telemetry_event_count", 0))
+    persona_lineage = _normalize_lineage(canary_run)
 
     # ------------------------------------------------------------------
     # Evaluate proof flags
@@ -142,6 +190,11 @@ def generate_ep5_proof_packet(
     flag_heartbeat_received = heartbeat_count > 0
     flag_order_route_paper = order_route_mode in _PAPER_ORDER_ROUTE_MODES
     flag_telemetry_ingested = telemetry_event_count > 0
+    flag_persona_lineage_linked = (
+        persona_lineage is not None
+        and persona_lineage.sponsor_persona_id == persona_id
+        and not persona_lineage.has_open_conflicts
+    )
 
     # Fail-closed: these must never be True in an EP5 canary proof
     live_capital_side_effects = bool(canary_run.get("live_capital_side_effects", False))
@@ -158,7 +211,7 @@ def generate_ep5_proof_packet(
             description=note,
         )
 
-    provided = (
+    provided_items = [
         _evidence(
             PROOF_FLAG_CANARY_RUNTIME_STARTED,
             flag_runtime_started,
@@ -183,7 +236,38 @@ def generate_ep5_proof_packet(
             f"telemetry_event_count={telemetry_event_count}" if flag_telemetry_ingested
             else "no telemetry events ingested during canary run",
         ),
-    )
+    ]
+
+    if persona_lineage is not None:
+        lineage_status = (
+            flag_persona_lineage_linked
+            and bool(persona_lineage.conflict_log_ref)
+            and bool(persona_lineage.synthesized_memo_refs)
+        )
+        provided_items.append(
+            EvidenceItem(
+                key=EVIDENCE_KEY_PERSONA_LINEAGE,
+                status="pass" if lineage_status else "fail",
+                source_task_id=persona_lineage.source_task_id or source_task_id,
+                path=persona_lineage.source_packet_ref,
+                ref_type="multi_persona_ooda_packet",
+                description=(
+                    "multi-persona sponsor lineage linked: "
+                    f"sponsor_persona_id={persona_lineage.sponsor_persona_id}, "
+                    f"conflict_log_ref={persona_lineage.conflict_log_ref}, "
+                    f"synthesized_memo_refs={list(persona_lineage.synthesized_memo_refs)}"
+                ),
+                metadata={
+                    "sponsor_persona_id": persona_lineage.sponsor_persona_id,
+                    "conflict_resolution_log_id": persona_lineage.conflict_resolution_log_id,
+                    "conflict_log_ref": persona_lineage.conflict_log_ref,
+                    "synthesized_memo_refs": list(persona_lineage.synthesized_memo_refs),
+                    "has_open_conflicts": persona_lineage.has_open_conflicts,
+                },
+            )
+        )
+
+    provided = tuple(provided_items)
 
     missing = tuple(
         item.key for item in provided if item.status not in {"pass", "present", "satisfied"}
@@ -244,6 +328,29 @@ def generate_ep5_proof_packet(
             code="TELEMETRY_NOT_INGESTED",
             message=f"No telemetry events ingested during canary run {run_id!r}",
         ))
+    if persona_lineage is not None and persona_lineage.sponsor_persona_id != persona_id:
+        blocking.append(BlockingReason(
+            code="SPONSOR_PERSONA_MISMATCH",
+            message=(
+                f"Canary run persona_id={persona_id!r} does not match "
+                f"multi-persona sponsor={persona_lineage.sponsor_persona_id!r}"
+            ),
+            severity="critical",
+            source_ref=persona_lineage.conflict_log_ref,
+            details={
+                "persona_id": persona_id,
+                "sponsor_persona_id": persona_lineage.sponsor_persona_id,
+                "source_packet_ref": persona_lineage.source_packet_ref,
+            },
+        ))
+    if persona_lineage is not None and persona_lineage.has_open_conflicts:
+        blocking.append(BlockingReason(
+            code="PERSONA_LINEAGE_OPEN_CONFLICTS",
+            message="Multi-persona sponsor lineage still has open conflicts",
+            severity="critical",
+            source_ref=persona_lineage.conflict_log_ref,
+            details={"open_conflict_ids": list(persona_lineage.open_conflict_ids)},
+        ))
     if live_capital_side_effects:
         blocking.append(BlockingReason(
             code="LIVE_CAPITAL_SIDE_EFFECTS",
@@ -280,6 +387,7 @@ def generate_ep5_proof_packet(
         PROOF_FLAG_RUNTIME_HEARTBEAT_RECEIVED: flag_heartbeat_received,
         PROOF_FLAG_ORDER_ROUTE_MODE: flag_order_route_paper,
         PROOF_FLAG_TELEMETRY_INGESTED: flag_telemetry_ingested,
+        PROOF_FLAG_PERSONA_LINEAGE_LINKED: flag_persona_lineage_linked,
         PROOF_FLAG_LIVE_CAPITAL_SIDE_EFFECTS: False,
         PROOF_FLAG_BROKER_PRODUCTION_LIVE: False,
     })
@@ -310,12 +418,32 @@ def generate_ep5_proof_packet(
         ),
     )
 
+    target_metadata: dict[str, Any] = {"persona_id": persona_id, "runtime_id": runtime_id}
+    if persona_lineage is not None:
+        target_metadata.update(
+            {
+                "sponsor_persona_id": persona_lineage.sponsor_persona_id,
+                "multi_persona_artifact_id": persona_lineage.allocation_artifact_id,
+            }
+        )
+
+    extensions: dict[str, Any] = {
+        "canary_run_result": result,
+        "heartbeat_count": heartbeat_count,
+        "order_route_mode": order_route_mode,
+        "telemetry_event_count": telemetry_event_count,
+        "started_at": canary_run.get("started_at"),
+        "finished_at": canary_run.get("finished_at"),
+    }
+    if persona_lineage is not None:
+        extensions["persona_lineage"] = persona_lineage.to_dict()
+
     target = TargetRef(
         target_type="canary_run",
         target_id=run_id,
         environment=environment,
         deployment_stage=deployment_stage,
-        metadata={"persona_id": persona_id, "runtime_id": runtime_id},
+        metadata=target_metadata,
     )
 
     packet = PromotionReadinessPacket(
@@ -332,14 +460,7 @@ def generate_ep5_proof_packet(
         generated_by=generated_by,
         source_task_id=source_task_id,
         depends_on_tasks=("EP5-001-V2",),
-        extensions={
-            "canary_run_result": result,
-            "heartbeat_count": heartbeat_count,
-            "order_route_mode": order_route_mode,
-            "telemetry_event_count": telemetry_event_count,
-            "started_at": canary_run.get("started_at"),
-            "finished_at": canary_run.get("finished_at"),
-        },
+        extensions=extensions,
     )
 
     # Structural validation only; policy gate is EP5-002
