@@ -21,6 +21,8 @@ Closeout date: 2026-05-20
   still true in the current task worktree.
 - PR #337 was refreshed against `origin/dev` after GitHub reported the branch
   behind the merge target.
+- PR #337 was refreshed again after `origin/dev` advanced while CI checks were
+  running.
 
 ## Verification
 
