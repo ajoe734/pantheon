@@ -1,5 +1,22 @@
 """Governance schemas for research production activation."""
 
+from .admission_gate import (
+    SCHEMA_VERSION as ADMISSION_GATE_SCHEMA_VERSION,
+    AdmissionGateError,
+    AdmissionGateIssue,
+    AdmissionGateResult,
+    evaluate_candidate_admission,
+    require_candidate_admission,
+)
+from .handoff_packet import (
+    SCHEMA_VERSION as HANDOFF_PACKET_SCHEMA_VERSION,
+    AdapterActivationRow,
+    AdmissionGateStatus,
+    EvidencePresence,
+    ResearchActivationHandoffPacket,
+    ResearchActivationSummary,
+    build_research_activation_handoff_packet,
+)
 from .production_data_proof import (
     ACTIVATION_TIERS,
     ALLOWED_ADAPTER_OUTPUT_TYPES,
@@ -24,8 +41,16 @@ from .production_data_proof import (
 
 __all__ = [
     "ACTIVATION_TIERS",
+    "ADMISSION_GATE_SCHEMA_VERSION",
     "ALLOWED_ADAPTER_OUTPUT_TYPES",
+    "AdmissionGateError",
+    "AdmissionGateIssue",
+    "AdmissionGateResult",
+    "AdapterActivationRow",
+    "AdmissionGateStatus",
     "FORBIDDEN_ADAPTER_OUTPUT_TYPES",
+    "EvidencePresence",
+    "HANDOFF_PACKET_SCHEMA_VERSION",
     "PRODUCTION_DATA_TIER",
     "SCHEMA_VERSION",
     "AdapterEvidence",
@@ -38,8 +63,13 @@ __all__ = [
     "PointInTimeProof",
     "ProductionDataProof",
     "ProductionDataProofError",
+    "ResearchActivationHandoffPacket",
+    "ResearchActivationSummary",
     "ProviderProof",
     "ValidationIssue",
     "ValidationResult",
+    "build_research_activation_handoff_packet",
+    "evaluate_candidate_admission",
+    "require_candidate_admission",
     "validate_production_data_proof",
 ]
