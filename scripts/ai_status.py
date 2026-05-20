@@ -3405,8 +3405,14 @@ def normalize_handoffs(state: dict[str, Any]) -> None:
 
 
 def command_assign(state: dict[str, Any], args: list[str]) -> None:
+    from wave_guards import WaveGuardError, check_wave_assign
+
     if len(args) < 3:
         raise SystemExit("Usage: assign <task-id> <owner> <reviewer> [title]")
+    try:
+        check_wave_assign(state.get("wave_state") or {})
+    except WaveGuardError as exc:
+        raise SystemExit(f"Wave guard rejected assign: {exc}") from exc
     task_id, owner, reviewer = args[0], canonical_agent_name(args[1]), canonical_agent_name(args[2])
     title = args[3] if len(args) > 3 else os.environ.get("TASK_TITLE")
     summary_zh = os.environ.get("TASK_SUMMARY_ZH")
@@ -3834,6 +3840,73 @@ def command_show(state: dict[str, Any], args: list[str]) -> None:
     )
 
 
+def command_wave(state: dict[str, Any], args: list[str]) -> None:
+    """wave open <wave-id> | wave close | wave freeze"""
+    from wave_guards import (  # lazy: only needed for this command
+        WaveGuardError,
+        check_wave_close,
+        check_wave_freeze,
+        check_wave_open,
+    )
+
+    if not args:
+        raise SystemExit("Usage: wave <open <wave-id> | close | freeze>")
+
+    subcommand = args[0]
+    actor = current_actor()
+    timestamp = iso_now()
+    wave_state: dict[str, Any] = state.setdefault("wave_state", {})
+    planning_state = load_planning_state()
+
+    if subcommand == "open":
+        if len(args) < 2:
+            raise SystemExit("Usage: wave open <wave-id>")
+        new_wave_id = args[1]
+        try:
+            check_wave_open(wave_state, new_wave_id, actor, planning_state)
+        except WaveGuardError as exc:
+            raise SystemExit(f"Wave guard rejected open: {exc}") from exc
+        wave_state["current_wave_id"] = new_wave_id
+        wave_state["status"] = "open"
+        wave_state["opened_at"] = timestamp
+        wave_state["frozen_at"] = None
+        wave_state["closed_at"] = None
+        wave_state["branch"] = f"wave/{new_wave_id}"
+        wave_state.setdefault("history", []).append(
+            {"ts": timestamp, "event": "open", "wave_id": new_wave_id, "actor": actor, "branch": f"wave/{new_wave_id}"}
+        )
+        append_log({"ts": timestamp, "agent": actor, "type": "wave_open", "wave_id": new_wave_id})
+
+    elif subcommand == "close":
+        try:
+            check_wave_close(wave_state, actor, planning_state)
+        except WaveGuardError as exc:
+            raise SystemExit(f"Wave guard rejected close: {exc}") from exc
+        current_wave_id = wave_state.get("current_wave_id", "")
+        wave_state["status"] = "closed"
+        wave_state["closed_at"] = timestamp
+        wave_state.setdefault("history", []).append(
+            {"ts": timestamp, "event": "close", "wave_id": current_wave_id, "actor": actor}
+        )
+        append_log({"ts": timestamp, "agent": actor, "type": "wave_close", "wave_id": current_wave_id})
+
+    elif subcommand == "freeze":
+        try:
+            check_wave_freeze(wave_state, actor, planning_state)
+        except WaveGuardError as exc:
+            raise SystemExit(f"Wave guard rejected freeze: {exc}") from exc
+        current_wave_id = wave_state.get("current_wave_id", "")
+        wave_state["status"] = "frozen"
+        wave_state["frozen_at"] = timestamp
+        wave_state.setdefault("history", []).append(
+            {"ts": timestamp, "event": "freeze", "wave_id": current_wave_id, "actor": actor}
+        )
+        append_log({"ts": timestamp, "agent": actor, "type": "wave_freeze", "wave_id": current_wave_id})
+
+    else:
+        raise SystemExit(f"Unknown wave subcommand: {subcommand!r}. Use: open <wave-id>, close, freeze")
+
+
 def main(argv: list[str]) -> int:
     state = load_state()
     command = argv[1] if len(argv) > 1 else "sync"
@@ -3858,6 +3931,7 @@ def main(argv: list[str]) -> int:
         "approve": command_approve,
         "archive_migrate": command_archive_migrate,
         "sync": command_sync,
+        "wave": command_wave,
     }
 
     if command in read_only_commands:

@@ -948,7 +948,7 @@
     "nightly_publish": {
       "enabled": true,
       "cron_utc": "0 3 * * *",
-      "version_format": "vYYYY.MM.DD.N",
+      "version_format": "vYYYY.WW.0",
       "skip_if_no_new_commits": true
     },
     "promote": {
