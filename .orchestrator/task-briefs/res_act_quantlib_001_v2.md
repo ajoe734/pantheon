@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: QuantLib production pricing evidence retention and admission proof
-- Status: todo
+- Status: review
 - Owner: Codex
-- Reviewer: Gemini
+- Reviewer: Claude
 - Phase: Phase 8 / EPIC-RES-ACT
-- Last update: 2026-05-19T15:58:08Z
-- Next: Assignment created
+- Last update: 2026-05-20T08:21:28Z
+- Next: Chair reassigned review from Copilot to Claude: Copilot review dispatch failed repeatedly at 08:01, 08:06, 08:11, and 08:16 UTC with 402 quota; Claude is not the owner and can review the merged evidence.
 
 ## Summary
 Adapter-specific child: QuantLib production pricing evidence retention + admission proof. Parent: RES-ACT-001-V2.
@@ -24,7 +24,12 @@ Adapter-specific child: QuantLib production pricing evidence retention + admissi
 - integrations/quantlib/admission_proof.md
 
 ## Recent Task Activity
-- none
+- 2026-05-20T08:16:21Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
+- 2026-05-20T08:16:23Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-20T08:16:24Z · Orchestrator · worker_worktree_reused · -
+- 2026-05-20T08:16:24Z · Orchestrator · worker_started · Worker started via copilot_local: review_ready_dispatch
+- 2026-05-20T08:21:27Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
+- 2026-05-20T08:21:30Z · Orchestrator · chair_review_reassignment_applied · Chair reassigned review from Copilot to Claude: Copilot review dispatch failed repeatedly at 08:01, 08:06, 08:11, and 08:16 UTC with 402 quota; Claude is not the owner and can review the merged evidence.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
