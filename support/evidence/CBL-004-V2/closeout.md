@@ -36,3 +36,10 @@ Results:
 - py_compile: passed
 - diff whitespace check: passed
 - broader capital/governance regression: 80 passed
+
+## Publication Refresh
+
+PR #338 initially reported `BEHIND` after checks passed, so the task branch
+was refreshed with `origin/dev` before final publication. This evidence file
+was updated after that refresh so the branch head remains a task-scoped
+CBL-004-V2 commit with the required closeout trailers.
