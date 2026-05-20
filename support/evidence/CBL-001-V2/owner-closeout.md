@@ -54,3 +54,15 @@ Results:
 - This task remains schema and consistency validation only; follow-up CBL tasks
   own evidence assembly, simulator integration, dashboard surfaces, and live
   gate wiring.
+
+## PR Refresh
+
+After closeout PR `#321` opened, GitHub reported the branch as `BEHIND`.
+Owner finalization merged the latest `origin/dev` into `task/CBL-001-V2` and
+kept this final task-scoped refresh note on top so branch HEAD continues to
+carry CBL-001-V2 trailers.
+
+- Refreshed against `origin/dev`:
+  `c193e59a8507da60c2a566873f0e5a6cfdda6138`
+- Local merge commit:
+  `eb6c991ffbdd2f69cae9aec3101cc962205f7584`
