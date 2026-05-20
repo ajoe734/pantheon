@@ -1,6 +1,7 @@
 # W&B Credentialed Sync Proof
 
-Task: `WNB-ACT-001-V2`
+Task: `RES-ACT-WANDB-001-V2`
+Parent: `RES-ACT-001-V2`
 Owner: `Codex`
 Reviewer: `Gemini`
 Status: implementation proof
@@ -9,6 +10,11 @@ Status: implementation proof
 
 This proof covers the explicit-gated W&B online sync path in
 `services/registry/experiments/adapter.py`.
+
+`RES-ACT-WANDB-001-V2` is the canonical W&B-specific child for the
+adapter-neutral `RES-ACT-001-V2` production data proof schema. The earlier
+`WNB-ACT-001-V2` implementation supplied the runtime shape; this replacement
+child records the evidence under the current RES-ACT task tree.
 
 W&B is an experiment metadata mirror only. Pantheon registry remains the
 artifact-admission system of record:
@@ -65,9 +71,9 @@ python3 -m pytest tests/integrations/test_wandb_sync.py -q
 python3 services/registry/experiments/smoke_test.py --backend wandb-online
 ```
 
-Results recorded on 2026-05-19:
+Results recorded on 2026-05-20 for `RES-ACT-WANDB-001-V2`:
 
-- `python3 -m pytest tests/integrations/test_wandb_sync.py -q` -> `5 passed`
+- `python3 -m pytest tests/integrations/test_wandb_sync.py -q` -> `5 passed in 0.62s`
 - `python3 -m py_compile tests/integrations/test_wandb_sync.py` -> passed
 - `python3 -m unittest test_adapter -q` from `services/registry/experiments/`
   -> `Ran 16 tests ... OK`
