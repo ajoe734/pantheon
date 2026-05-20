@@ -19,6 +19,8 @@ Closeout date: 2026-05-20
   `support/evidence/CBL-006-V2/review.md`.
 - Owner closeout rechecked the reviewed artifacts and found the approved scope
   still true in the current task worktree.
+- PR #337 was refreshed against `origin/dev` after GitHub reported the branch
+  behind the merge target.
 
 ## Verification
 
