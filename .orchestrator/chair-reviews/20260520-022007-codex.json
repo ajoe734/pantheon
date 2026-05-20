@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Idle capacity exists and there is no global blocker, but Gemini review work should be reassigned while quota is exhausted.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "BLA-LIVE-001-V2",
+    "CBL-LIVE-001-V2",
+    "HA-PROD-001-V2"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [
+    {
+      "task_id": "RES-ACT-001-V2",
+      "role": "reviewer",
+      "from": "Gemini",
+      "to": "Claude2",
+      "reason": "Gemini review dispatch is repeatedly exiting on quota exhaustion; reassign to an available non-owner reviewer so RES-ACT children can unblock."
+    },
+    {
+      "task_id": "WNB-ACT-001-V2",
+      "role": "reviewer",
+      "from": "Gemini",
+      "to": "Claude2",
+      "reason": "The task has aged in review with the same Gemini quota guardrail; a non-Gemini reviewer can safely perform the review."
+    }
+  ],
+  "recommended_focus": [
+    "RES-ACT-001-V2",
+    "WNB-ACT-001-V2",
+    "BLA-007-V2",
+    "PHASE8-V2-DISPATCH-20260519",
+    "LOVABLE-STRICT-PUBLISH",
+    "OSS-QUANTLIB-V2-001"
+  ]
+}
