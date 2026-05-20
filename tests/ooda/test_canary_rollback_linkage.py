@@ -46,6 +46,12 @@ def test_links_canary_packet_rollback_ref_to_ep5_output() -> None:
     assert linkage.runtime_binding_ref == (
         f"runtime-binding://{output['proof_packet']['runtime']['runtime_binding_id']}"
     )
+    assert linkage.canary_runtime_ref == (
+        f"runtime://{output['proof_packet']['runtime']['runtime_id']}"
+    )
+    assert linkage.deployment_plan_ref == (
+        f"deployment-plan://{output['proof_packet']['runtime']['deployment_plan_id']}"
+    )
     assert packet.act.rollback_drill_ref == linkage.rollback_drill_ref
     assert packet.assertions.rollback_drill_completed is True
     assert validate_canary_rollback_drill_linkage(packet, output) == []
@@ -74,6 +80,35 @@ def test_validate_linkage_reports_stale_packet_ref() -> None:
         f"{output['rollback_drill_evidence']['evidence_id']}"
     )
     assert f"stages.act.rollback_drill_ref must equal {expected_ref}" in errors
+
+
+def test_validate_linkage_rejects_stale_runtime_and_deployment_refs() -> None:
+    output = _ep5_output()
+    packet = _closed_packet_without_rollback(output)
+    packet.act.rollback_drill_ref = (
+        f"{EP5_ROLLBACK_DRILL_REF_PREFIX}"
+        f"{output['rollback_drill_evidence']['evidence_id']}"
+    )
+    packet.assertions.rollback_drill_completed = True
+    packet.act.runtime_binding_ref = "runtime-binding://stale"
+    packet.act.canary_runtime_ref = "runtime://stale"
+    packet.decide.deployment_plan_ref = "deployment-plan://stale"
+
+    errors = validate_canary_rollback_drill_linkage(packet, output)
+
+    runtime = output["proof_packet"]["runtime"]
+    assert (
+        "stages.act.runtime_binding_ref must equal "
+        f"runtime-binding://{runtime['runtime_binding_id']}"
+    ) in errors
+    assert (
+        "stages.act.canary_runtime_ref must equal "
+        f"runtime://{runtime['runtime_id']}"
+    ) in errors
+    assert (
+        "stages.decide.deployment_plan_ref must equal "
+        f"deployment-plan://{runtime['deployment_plan_id']}"
+    ) in errors
 
 
 def test_validate_ep5_output_requires_proof_evidence_ref() -> None:
