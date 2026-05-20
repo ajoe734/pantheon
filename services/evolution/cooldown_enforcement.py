@@ -355,7 +355,7 @@ def validate_cooldown_override(
         )
 
     override_scope = str(normalized.metadata.get("override_scope") or "").strip()
-    if override_scope and override_scope != COOLDOWN_OVERRIDE_SCOPE:
+    if override_scope != COOLDOWN_OVERRIDE_SCOPE:
         raise CooldownEnforcementError(
             f"cooldown override HumanGateDecision override_scope must be {COOLDOWN_OVERRIDE_SCOPE!r}"
         )
