@@ -15,6 +15,13 @@ if [[ -z "${gemini_js}" ]]; then
 fi
 
 export GOOGLE_GENAI_USE_GCA="${GOOGLE_GENAI_USE_GCA:-1}"
+# Preserve host gh config so `gh` and `git push` keep credentials after the
+# HOME override below; otherwise gemini workers with a custom HOME (e.g.
+# /home/lupin/.gemini2) cannot run task_finalize.sh.
+host_gh_config="${GH_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gh}"
+if [[ -d "$host_gh_config" ]]; then
+  export GH_CONFIG_DIR="$host_gh_config"
+fi
 if [[ -n "${GEMINI_CLI_HOME:-}" ]]; then
   mkdir -p "${GEMINI_CLI_HOME}"
   export HOME="${GEMINI_CLI_HOME}"
