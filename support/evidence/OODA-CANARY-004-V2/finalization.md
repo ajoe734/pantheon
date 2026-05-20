@@ -42,21 +42,27 @@ Status before finalization: review_approved
   - Runtime mirror guard: passed.
   - Smoke acceptance: passed.
   - Forward to orchestrator: passed.
+- Closeout PR: #332,
+  https://github.com/ajoe734/pantheon/pull/332
+- After PR #332 opened as `BEHIND`, the task branch merged latest
+  `origin/dev` and re-ran owner closeout verification. The merge brought in
+  unrelated HA/CBL task files only; OODA linkage scope was unchanged.
 
 ## Local Verification
 
-Commands run during owner closeout finalization:
+Commands run during owner closeout finalization after refreshing against
+latest `origin/dev`:
 
 ```bash
 pytest -q tests/ooda/test_canary_rollback_linkage.py
 pytest -q tests/ooda
 PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/ooda/canary_rollback_drill_linkage.py tests/ooda/test_canary_rollback_linkage.py
-git diff --check
+git diff --check origin/dev...HEAD
 ```
 
 Results:
 
-- `tests/ooda/test_canary_rollback_linkage.py`: 5 passed in 0.50s.
-- `tests/ooda`: 14 passed in 2.06s.
+- `tests/ooda/test_canary_rollback_linkage.py`: 5 passed in 0.78s.
+- `tests/ooda`: 14 passed in 1.76s.
 - `py_compile`: passed.
-- `git diff --check`: passed.
+- `git diff --check origin/dev...HEAD`: passed.
