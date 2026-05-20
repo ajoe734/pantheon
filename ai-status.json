@@ -3,7 +3,7 @@
   "sprint": "2026-05-16-pantheon-bff-p0-foundation",
   "sprint_started_at": "2026-05-16T00:00:00Z",
   "objective": "跨進開發團隊 GAP master rebaseline (docs/04/pantheon_sa_supplemental_2026-05-15/GAP_dev_team_master_rebaseline_2026-05-15.md)，以 pantheon@master + execute-plans@main 為基準。並行 6 條 EPIC，按 P0→P3 階梯推進：(I) EPIC-BFF-P0 (P0 10 task / Sprint 1) — session trio (/bff/me, auth/refresh, logout) + /openapi.json + canonical action endpoint + approval decide + registry reads (strategies/personas/capital-pools/audit)，讓 execute-plans@main 在 VITE_BFF_FALLBACK=strict 下可 bootstrap 核心 Management flow 不再 fallback mock；(II) EPIC-GOV-DEPLOY (P1 5 task / Sprint 2) — ApprovalDecision first-class + DeploymentPlan contract/service + stage planner + deployment projection + pool/runtime compatibility 檢查；(III) EPIC-RUNTIME (P1 6 task / Sprint 3) — RuntimeBinding schema + Runtime Manager skeleton + /bff/runtimes + deploy/pause/replace/rollback actions + loader metadata migration (promotion_state → artifact_state + deployment_stage) + LEAN algorithm-level smoke；(IV) EPIC-TELEMETRY (P2 7 task / Sprint 4) — TelemetryEvent canonical schema + RuntimeHeartbeat ingest + AuditAction backend + /bff/alerts + /bff/incidents + reconciliation record + Postmortem schema/endpoint；(V) EPIC-RESEARCH (P3 28 task / Sprint 5) — Source Ingest (SRC) + StrategySpec (STRAT) + Experiment orchestrator (EXP) + Qlib/vectorbt adapters + Persona/Trainer (PER/TRN) + Imitation dataset (IMT) + Consult/Committee (ASK)；(VI) EPIC-EVOLUTION (P3 3 task / Sprint 6) — EvolutionDecision service + /bff/v5/loop-runs + /bff/v5/sentinel/findings。GAP § 10 最大阻塞：BFF live endpoints 不足 → EPIC-BFF-P0 必須最先收斂；Registry/Promotion canonical 已 implemented，DeploymentPlan/RuntimeBinding 是 governance→execution 缺口；Artifact Loader 仍寫 legacy promotion_state，EX-002 metadata migration 是 execution-side 技術債。fail-closed 鐵律延續：broker production live、capital binding live 仍禁止；canary 需 risk-owner + operator 雙閘；evidence 走 support/evidence/<epic>-<task>/。Track E 收尾備註：46 個 MGMT-* task 中 45 個 done+archive，僅 MGMT-BROKER-002 仍 blocked 等 Shioaji credentials (commit 22e5ca3b 已備 sidecar acceptance packet)；M7 canary readiness 因此未閉合；Track E objective 不在本 sprint 推進範圍，僅 carry-over 記錄。",
-  "updated_at": "2026-05-19T05:18:02Z",
+  "updated_at": "2026-05-20T14:21:03Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -94,13 +94,11 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "ready",
-      "current_task_ids": [
-        "OODA-E2E-003"
-      ],
-      "branch": "feat/claude-execution-control",
-      "next": "Assignment created",
-      "last_update": "2026-05-17T11:03:27Z"
+      "status": "idle",
+      "current_task_ids": [],
+      "branch": "task/LSP-002-V2",
+      "next": "",
+      "last_update": "2026-05-20T11:44:38Z"
     },
     {
       "name": "Gemini",
@@ -110,13 +108,11 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "ready",
-      "current_task_ids": [
-        "LOVABLE-STRICT-PUBLISH"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/gemini-research-runtime",
-      "next": "Assignment created",
-      "last_update": "2026-05-17T10:44:50Z"
+      "next": "",
+      "last_update": "2026-05-19T12:12:24Z"
     },
     {
       "name": "Codex",
@@ -126,13 +122,11 @@
         "schema",
         "acceptance"
       ],
-      "status": "reviewing",
-      "current_task_ids": [
-        "OSS-QLIB-V2-001"
-      ],
-      "branch": "feat/codex-collab-system",
-      "next": "Ready for review: production Qlib rolling runner, registry admission packet emitter, tests, and admission_packet.json are merged via PR #70. Please review services/research/qlib/production_rolling_run.py, services/research/qlib/registry_admission_packet.py, services/research/qlib/test_production_rolling_run.py, and support/evidence/OSS-QLIB-V2-001/admission_packet.json.",
-      "last_update": "2026-05-17T16:26:36Z"
+      "status": "idle",
+      "current_task_ids": [],
+      "branch": "task/OODA-CANARY-004-V2",
+      "next": "",
+      "last_update": "2026-05-20T08:31:49Z"
     },
     {
       "name": "Codex2",
@@ -142,14 +136,11 @@
         "schema",
         "acceptance"
       ],
-      "status": "ready",
-      "current_task_ids": [
-        "OODA-E2E-002",
-        "EXP-V2-002"
-      ],
-      "branch": "bff-luv-fe-006-dev-deploy",
-      "next": "Assignment created",
-      "last_update": "2026-05-17T11:03:09Z"
+      "status": "idle",
+      "current_task_ids": [],
+      "branch": "task/EP5-010-V2",
+      "next": "",
+      "last_update": "2026-05-19T15:59:39Z"
     },
     {
       "name": "Copilot",
@@ -159,14 +150,11 @@
         "spec-review",
         "critique"
       ],
-      "status": "ready",
-      "current_task_ids": [
-        "OSS-QUANTLIB-V2-001",
-        "STRAT-V2-001"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/grok-research-critique",
-      "next": "Assignment created",
-      "last_update": "2026-05-17T11:01:36Z"
+      "next": "",
+      "last_update": "2026-05-19T13:09:48Z"
     },
     {
       "name": "Claude2",
@@ -175,13 +163,11 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "ready",
-      "current_task_ids": [
-        "POST-EVO-BRIDGE"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/claude2-execution-control",
-      "next": "Assignment created",
-      "last_update": "2026-05-17T10:44:31Z"
+      "next": "",
+      "last_update": "2026-05-19T15:59:34Z"
     },
     {
       "name": "Gemini2",
@@ -195,7 +181,9 @@
       "current_task_ids": [],
       "branch": "bff-luv-fe-006-dev-deploy",
       "next": "",
-      "last_update": "2026-05-19T05:16:21Z"
+      "last_update": "2026-05-19T13:10:41Z",
+      "last_action_at": "2026-05-20T11:29:47Z",
+      "last_action_note": "Manual ai-status sync by Claude: cleared ['LOVABLE-STRICT-PUBLISH', 'OSS-QUANTLIB-V2-001'] after push-auth failure."
     }
   ],
   "tasks": [
@@ -230,79 +218,13 @@
       "review_file": "support/sidecars/OSS-STAT-001/OSS-STAT-001-SIDECAR-ACCEPTANCE.md"
     },
     {
-      "id": "DEP-004",
-      "title": "Pool x runtime compatibility check before deployment advance",
-      "summary_zh": "GAP P1 列為 DEP-004 但 sprint 7 沒派；grep 確認 services 與 governance 樹下沒有 pool/runtime compat check 實作。本任務在 DeploymentPlan 進入 RuntimeBinding 前增加 capital_pool 能力 × runtime 要求的相容性檢查，不通過則阻擋 advance。獨立 module，不修 DEP-001..003 公開 API。",
-      "phase": "Sprint 7 / EPIC-GOV-DEPLOY",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [
-        "DEP-001",
-        "DEP-002",
-        "CAP-001",
-        "RT-001"
-      ],
-      "artifacts": [
-        "services/control-plane/governance/pool_runtime_compat.py",
-        "services/control-plane/governance/test_pool_runtime_compat.py",
-        "services/control-plane/governance/pool_runtime_compat_contract.md"
-      ],
-      "acceptance": [
-        "pool_runtime_compat.py exposes check_compatibility(capital_pool_id deployment_plan_id) returning CompatibilityResult dict with passed bool and rejection_reasons list",
-        "checks include: pool admissibility status equals active",
-        "pool risk_budget covers DeploymentPlan target_size",
-        "pool jurisdiction matches runtime broker jurisdiction",
-        "runtime mode matches deployment_stage (paper/canary/live/frozen)",
-        "persona_capital_binding exists and is active",
-        "DeploymentPlan service refuses advance when CompatibilityResult.passed is false (1-line hook)",
-        "test covers 1 pass + 5 fail scenarios (one per check) with pytest -q exit 0",
-        "no live broker side effects"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-17T10:43:57Z"
-    },
-    {
-      "id": "POST-EVO-BRIDGE",
-      "title": "Postmortem -> EvolutionDecisionProposal auto-trigger bridge",
-      "summary_zh": "POST-001 + EVO-001 已落地為 schema/service，但 incident/postmortem publish → EvolutionDecisionProposal 自動觸發的 bridge 還沒實際 wire。本任務新增 postmortem_bridge module：訂閱 postmortem published 事件，按 severity 與 corrective_action_required 判斷是否產出 EvolutionDecisionProposal payload（不直接寫 governance store，僅 emit proposal）。獨立 module，不改 POST-001 / EVO-001 公開 API。",
-      "phase": "Sprint 7 / EPIC-EVOLUTION-FOLLOWUP",
-      "owner": "Claude2",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [
-        "POST-001",
-        "EVO-001"
-      ],
-      "artifacts": [
-        "services/evolution/postmortem_bridge.py",
-        "services/evolution/test_postmortem_bridge.py",
-        "services/evolution/postmortem_bridge_contract.md"
-      ],
-      "acceptance": [
-        "postmortem_bridge.py exposes on_postmortem_published(postmortem) returning EvolutionDecisionProposal or None",
-        "proposal emitted when postmortem.severity in (high critical) or corrective_action_required is true",
-        "proposal payload includes source_postmortem_id evidence_refs proposed_action (rollback retrain revalidate redeploy retire) and cooldown_window_hours",
-        "bridge never writes to governance store only returns proposal dict for governance to admit",
-        "test covers 5 scenarios: low-severity skip",
-        "high-severity rollback",
-        "critical-severity freeze",
-        "corrective-flag retrain",
-        "malformed-input fail-fast",
-        "test passes pytest -q exit 0",
-        "no live runtime mutation"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-17T10:44:31Z"
-    },
-    {
       "id": "LOVABLE-STRICT-PUBLISH",
-      "title": "Lovable build-time strict env publish audit script",
+      "title": "Finalizing recovery closeout.",
       "summary_zh": "SA § 2.2 列為 non-blocking follow-up：execute-plans@main build-time 應使用 strict env (VITE_BFF_MODE=live VITE_BFF_FALLBACK=strict VITE_BFF_REAL_WRITES=false) 重新發佈一次，並驗證發佈後的 bundle 不再含 seed fallback assets。本任務不直接動 execute-plans repo，而是寫一個 pantheon 端的 audit script + evidence packet，記錄 publish 條件、build env、bundle hash、verification probe 結果。",
       "phase": "Sprint 7 / EPIC-LOVABLE-INFRA",
-      "owner": "Gemini",
-      "reviewer": "Gemini2",
-      "status": "todo",
+      "owner": "Gemini2",
+      "reviewer": "Gemini",
+      "status": "done",
       "depends_on": [],
       "artifacts": [
         "scripts/audit_lovable_strict_publish.py",
@@ -319,47 +241,26 @@
         "test_audit_lovable_strict_publish.py covers 1 pass case (all flags strict) and 1 fail case (any flag relaxed) with pytest -q exit 0",
         "no execute-plans repo modification this task only produces audit infrastructure inside pantheon"
       ],
-      "next": "Assignment created",
-      "last_update": "2026-05-17T10:44:50Z"
-    },
-    {
-      "id": "OSS-QLIB-V2-001",
-      "title": "Qlib production-scale rolling + registry admission",
-      "summary_zh": "把 OSS-QLIB-002 的 rolling pipeline 升級到 production scale：使用 MGMT-QLIB-001 已建好的 TWSE OHLCV dataset（≥50 instruments × ≥2 years），跑完整 rolling-window 訓練，產 model_artifact 並提交 registry admission packet。獨立檔案路徑。",
-      "phase": "Sprint 8 / EPIC-OSS-V2",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "review",
-      "depends_on": [
-        "OSS-QLIB-002",
-        "MGMT-QLIB-001"
-      ],
-      "artifacts": [
-        "services/research/qlib/production_rolling_run.py",
-        "services/research/qlib/test_production_rolling_run.py",
-        "services/research/qlib/registry_admission_packet.py",
-        "support/evidence/OSS-QLIB-V2-001/admission_packet.json"
-      ],
-      "acceptance": [
-        "production_rolling_run.py exposes run_production(instrument_universe start_date end_date window_days) returning ExperimentRun dict with rolling_sharpe and rolling_ic per window",
-        "uses real TWSE dataset from MGMT-QLIB-001 dataset_manifest not synthetic data",
-        "produces model_artifact registered as artifact_type=model_artifact with checksum and lineage refs",
-        "registry_admission_packet.py emits admission_packet.json conforming to PromotionReadinessPacket schema",
-        "test asserts at least one rolling window produces non-trivial sharpe > 0 on test fixture",
-        "pytest -q exit 0",
-        "CPU-only no GPU no live broker"
-      ],
-      "next": "Ready for review: production Qlib rolling runner, registry admission packet emitter, tests, and admission_packet.json are merged via PR #70. Please review services/research/qlib/production_rolling_run.py, services/research/qlib/registry_admission_packet.py, services/research/qlib/test_production_rolling_run.py, and support/evidence/OSS-QLIB-V2-001/admission_packet.json.",
-      "last_update": "2026-05-17T16:26:36Z"
+      "next": "Closeout PR #83 merged 2026-05-17T18:37:05Z; ai-status manual sync 2026-05-20T11:29:47Z after Gemini2 push-auth failure stalled lifecycle write.",
+      "last_update": "2026-05-20T11:29:47Z",
+      "terminal_outcome": "completed",
+      "delivery": {
+        "channel": "manual_ai_status_sync",
+        "merged_pr": 83,
+        "merged_at": "2026-05-17T18:37:05Z",
+        "recorded_at": "2026-05-20T11:29:47Z",
+        "actor": "Claude",
+        "reason": "Gemini2 push-auth failure prevented worker closeout; code already merged."
+      }
     },
     {
       "id": "OSS-QUANTLIB-V2-001",
-      "title": "QuantLib production option chain pricer + greeks",
+      "title": "Reassigning for finalization",
       "summary_zh": "把 OSS-QUANTLIB-001 option pricer 升級為 production：對台指選擇權(TXO)鏈跨多檔履約價與多個到期日定價，輸出含 greeks 的 pricing_snapshot artifact，提交 registry admission packet。獨立檔案。",
       "phase": "Sprint 8 / EPIC-OSS-V2",
-      "owner": "Copilot",
+      "owner": "Gemini2",
       "reviewer": "Codex2",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "OSS-QUANTLIB-001"
       ],
@@ -377,242 +278,21 @@
         "test fixture covers 1 TXO-like chain and asserts call-put parity within 1e-3 tolerance",
         "pytest -q exit 0"
       ],
-      "next": "Assignment created",
-      "last_update": "2026-05-17T11:01:36Z"
-    },
-    {
-      "id": "OODA-E2E-001",
-      "title": "OODA E2E #1: source → StrategySpec transition test",
-      "summary_zh": "OODA Observe 階段第一步：實作整合測試證明「真實 SourceRecord → StrategySpec」這個 transition 可端到端走完。使用 SRC-* 與 STRAT-* 既有 service code，不重做。獨立 test 檔。",
-      "phase": "Sprint 8 / EPIC-OODA-E2E",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [
-        "SRC-001",
-        "STRAT-001",
-        "STRAT-003"
+      "next": "Closeout PR #194 merged 2026-05-19T07:18:36Z; ai-status manual sync 2026-05-20T11:29:47Z after Gemini2 push-auth failure stalled lifecycle write.",
+      "last_update": "2026-05-20T11:29:47Z",
+      "review_notes_zh": [
+        "Codex2 re-review: implementation and evidence still satisfy acceptance; pytest and jq gates passed, PR #194 is merged. Lifecycle write is blocked if durable ai-status remains out of sync."
       ],
-      "artifacts": [
-        "tests/e2e/test_source_to_strategy_spec.py",
-        "tests/e2e/fixtures/sample_internal_research_note.md"
-      ],
-      "acceptance": [
-        "test ingests sample_internal_research_note.md via POST /api/source-ingest/source-records and asserts a SourceRecord is created with status=normalized",
-        "test then triggers STRAT-003 converter (or equivalent service) to produce a StrategySpec artifact",
-        "asserts StrategySpec has lineage refs pointing to source_record_id and content_hash matches",
-        "asserts strategy_spec artifact_state=draft and registered in registry",
-        "uses pytest -q -x exit 0",
-        "no live broker no live capital"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-17T11:02:55Z"
-    },
-    {
-      "id": "OODA-E2E-002",
-      "title": "OODA E2E #2: StrategySpec → ExperimentRun transition test",
-      "summary_zh": "OODA Observe→Orient 階段：證明「StrategySpec → ExperimentRun」transition 可端到端走完。使用 EXP-001..002 service + 一個 OSS adapter (vectorbt VBT-001) 跑 backtest。獨立 test 檔。",
-      "phase": "Sprint 8 / EPIC-OODA-E2E",
-      "owner": "Codex2",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [
-        "STRAT-001",
-        "EXP-001",
-        "EXP-002",
-        "VBT-001"
-      ],
-      "artifacts": [
-        "tests/e2e/test_strategy_spec_to_experiment_run.py",
-        "tests/e2e/fixtures/strategy_spec_for_experiment.json"
-      ],
-      "acceptance": [
-        "test loads fixture StrategySpec then submits ExperimentTask via experiment orchestrator",
-        "orchestrator routes to vectorbt adapter and runs deterministic synthetic OHLCV backtest",
-        "asserts ExperimentRun artifact produced with producer_run_id and evaluation_summary",
-        "asserts run.lineage references the source StrategySpec id",
-        "pytest -q -x exit 0",
-        "no live broker"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-17T11:03:09Z"
-    },
-    {
-      "id": "OODA-E2E-003",
-      "title": "OODA E2E #3: ExperimentRun → CandidateArtifact admission test",
-      "summary_zh": "OODA Orient→Decide 階段：證明「ExperimentRun → CandidateArtifact → Registry admission」transition 可端到端走完。使用 EXP-005 writeback + Registry promotion service。獨立 test 檔。",
-      "phase": "Sprint 8 / EPIC-OODA-E2E",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [
-        "EXP-005",
-        "REG-002"
-      ],
-      "artifacts": [
-        "tests/e2e/test_experiment_run_to_admission.py",
-        "tests/e2e/fixtures/experiment_run_for_admission.json"
-      ],
-      "acceptance": [
-        "test loads fixture ExperimentRun and calls writeback service to register CandidateArtifact",
-        "asserts artifact registered with artifact_state=candidate not draft and not approved",
-        "asserts lineage refs include experiment_run_id and source_strategy_spec_id",
-        "test attempts admission gate (registry → candidate) and asserts gate passes for valid input and rejects for malformed evaluation_summary",
-        "pytest -q -x exit 0"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-17T11:03:27Z"
-    },
-    {
-      "id": "OODA-E2E-004",
-      "title": "OODA E2E #4: Admission → ApprovalDecision → DeploymentPlan(paper) test",
-      "summary_zh": "OODA Decide 階段：證明「CandidateArtifact → ApprovalDecision → DeploymentPlan(paper)」transition 可端到端走完。使用 GOV-001 ApprovalDecision + DEP-001 DeploymentPlan service。獨立 test 檔。",
-      "phase": "Sprint 8 / EPIC-OODA-E2E",
-      "owner": "Claude",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [
-        "GOV-001",
-        "DEP-001",
-        "DEP-002",
-        "DEP-004"
-      ],
-      "artifacts": [
-        "tests/e2e/test_admission_to_deployment_plan.py",
-        "tests/e2e/fixtures/candidate_artifact_for_decision.json"
-      ],
-      "acceptance": [
-        "test creates ApprovalDecision proposed→under_review→decided(approved) for fixture candidate_artifact",
-        "asserts artifact advances to artifact_state=approved",
-        "test then creates DeploymentPlan(target_stage=paper) referencing the approved artifact",
-        "asserts DEP-004 pool/runtime compatibility check passes for fixture pool",
-        "asserts DeploymentPlan record persisted with stage=paper and approval_decision_ref",
-        "test rejects creating DeploymentPlan for non-approved artifact",
-        "pytest -q -x exit 0"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-17T11:03:39Z"
-    },
-    {
-      "id": "OODA-E2E-007",
-      "title": "OODA E2E #7: full OodaLoopPacket closure + evidence chain",
-      "summary_zh": "OODA 全環收尾：把上述 6 個 transition test 串成單一 OodaLoopPacket 並驗證所有欄位齊全（observe/orient/decide/act/learn refs）。產出 evidence packet 與 closeout summary。獨立 test 檔。",
-      "phase": "Sprint 8 / EPIC-OODA-E2E",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "todo",
-      "depends_on": [
-        "OODA-E2E-001",
-        "OODA-E2E-002",
-        "OODA-E2E-003",
-        "OODA-E2E-004",
-        "OODA-E2E-005",
-        "OODA-E2E-006"
-      ],
-      "artifacts": [
-        "tests/e2e/test_full_ooda_packet_closure.py",
-        "support/evidence/OODA-E2E-PROOF/full_packet.json",
-        "support/evidence/OODA-E2E-PROOF/closure_summary.md"
-      ],
-      "acceptance": [
-        "test runs all 6 OODA-E2E transition tests in sequence and assembles a single OodaLoopPacket",
-        "packet has packet_id loop_type=paper_strategy status=closed",
-        "observe.source_refs orient.allocation_proposal_refs decide.deployment_plan_id act.runtime_binding_id learn.evolution_followthrough_refs are all non-null",
-        "packet.act.live_capital_side_effects=false invariant holds",
-        "closure_summary.md links all 6 sub-test evidence and lists each artifact_id produced",
-        "pytest -q -x exit 0"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-17T11:04:11Z"
-    },
-    {
-      "id": "STRAT-V2-001",
-      "title": "Strategy spec distillation production smoke (real research note)",
-      "summary_zh": "把 STRAT-003 source converter 升級到 production：吃真實 internal research note (docs/research/notes/*.md 或 fixture)，產出可進 registry 的 StrategySpec，含 evidence_refs + code_refs 完整 binding。獨立 module，不改 STRAT-001..004 公開 API。",
-      "phase": "Sprint 8 / EPIC-STRAT-EXP-DEEP",
-      "owner": "Copilot",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [
-        "STRAT-003",
-        "STRAT-004",
-        "SRC-001"
-      ],
-      "artifacts": [
-        "services/research/strategy_spec/production_distillation.py",
-        "services/research/strategy_spec/test_production_distillation.py",
-        "support/evidence/STRAT-V2-001/sample_run.json"
-      ],
-      "acceptance": [
-        "production_distillation.py exposes distill(source_record_id) returning StrategySpec dict ready for registry write",
-        "distillation extracts hypothesis universe frequency risk_caps from source markdown structured sections",
-        "evidence_refs and code_refs binding via STRAT-004 helper",
-        "test feeds 2 fixture research notes and asserts both produce valid StrategySpec passing schema validation",
-        "distillation rejects malformed sources with explicit ValidationError",
-        "pytest -q exit 0"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-17T11:05:16Z"
-    },
-    {
-      "id": "EXP-V2-002",
-      "title": "ExperimentRun multi-artifact lineage tree",
-      "summary_zh": "新增多 artifact-type lineage tree：ExperimentRun 可同時產 model_artifact + feature_set + signal_snapshot + optimizer_result，本任務確保 lineage edges 正確連接 N 個 artifact 而非單一。獨立 module。",
-      "phase": "Sprint 8 / EPIC-STRAT-EXP-DEEP",
-      "owner": "Codex2",
-      "reviewer": "Copilot",
-      "status": "todo",
-      "depends_on": [
-        "EXP-005",
-        "LIN-001"
-      ],
-      "artifacts": [
-        "services/lineage-read/multi_artifact_tree.py",
-        "services/lineage-read/test_multi_artifact_tree.py"
-      ],
-      "acceptance": [
-        "multi_artifact_tree.py exposes get_run_artifacts(experiment_run_id) returning list of artifact records grouped by artifact_type",
-        "supports model_artifact feature_set signal_snapshot optimizer_result evaluation_result types",
-        "each artifact node carries lineage.parent_run_id pointing back to experiment_run",
-        "test fixture creates a run producing 4 artifact types and asserts all retrieved with correct grouping",
-        "pytest -q exit 0"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-17T11:05:48Z"
-    },
-    {
-      "id": "SPRINT-8-CLOSEOUT",
-      "title": "Sprint 8 retrospective + closeout + Sprint 9 candidate topics",
-      "summary_zh": "Sprint 8 收尾：彙整 16 條子任務 evidence、產 sprint retrospective + 統計報告（哪些 EPIC 過、哪些 EPIC 殘留缺口）、產 sprint 9 候選議題 raw list（供下一輪 planning 用）。獨立 evidence packet。",
-      "phase": "Sprint 8 / EPIC-CLOSEOUT",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [
-        "OSS-QLIB-V2-001",
-        "OSS-STAT-V2-001",
-        "OSS-QUANTLIB-V2-001",
-        "OSS-RLLIB-V2-001",
-        "OSS-FINRL-V2-001",
-        "OODA-E2E-007",
-        "STRAT-V2-001",
-        "STRAT-V2-002",
-        "EXP-V2-001",
-        "EXP-V2-002"
-      ],
-      "artifacts": [
-        "support/evidence/SPRINT-8-CLOSEOUT/retrospective.md",
-        "support/evidence/SPRINT-8-CLOSEOUT/epic_completion_summary.json",
-        "support/evidence/SPRINT-8-CLOSEOUT/sprint_9_candidate_topics.md"
-      ],
-      "acceptance": [
-        "retrospective.md lists what shipped what slipped per EPIC and 3 numeric metrics (tasks_completed avg_cycle_time pass_rate)",
-        "epic_completion_summary.json conforms to schema {epic_id status tasks_total tasks_completed tasks_blocked artifacts_produced} per EPIC",
-        "sprint_9_candidate_topics.md lists at least 3 candidate Sprint 9 themes with rationale (one-paragraph each) and explicit fail-closed reminder for broker-live and capital-binding-live",
-        "no execution code changes only evidence and planning notes"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-17T11:06:02Z"
+      "review_file": "support/reviews/OSS-QUANTLIB-V2-001-review-codex2.md",
+      "terminal_outcome": "completed",
+      "delivery": {
+        "channel": "manual_ai_status_sync",
+        "merged_pr": 194,
+        "merged_at": "2026-05-19T07:18:36Z",
+        "recorded_at": "2026-05-20T11:29:47Z",
+        "actor": "Claude",
+        "reason": "Gemini2 push-auth failure prevented worker closeout; code already merged."
+      }
     }
   ],
   "handoffs": [
@@ -644,15 +324,105 @@
       "resolved_at": "2026-05-17T03:33:14Z"
     },
     {
-      "task_id": "OSS-QLIB-V2-001",
-      "from": "Codex",
+      "task_id": "LOVABLE-STRICT-PUBLISH",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Chair reassigned owner from Gemini to Claude: Gemini has repeated 429 quota failures with reset in about 12 hours; the task remains in_progress without a live worker.. Task returned to todo for a fresh run.",
+      "status": "done",
+      "created_at": "2026-05-19T12:17:35Z",
+      "resolved_at": "2026-05-19T12:22:57Z"
+    },
+    {
+      "task_id": "OSS-QUANTLIB-V2-001",
+      "from": "Copilot",
+      "to": "Gemini2",
+      "message": "Chair reassigned owner from Copilot to Gemini2: Copilot exits immediately with 402 no quota; Gemini2 is idle and reviewer remains Codex2.. Task returned to todo for a fresh run.",
+      "status": "done",
+      "created_at": "2026-05-19T12:17:38Z",
+      "resolved_at": "2026-05-19T12:17:45Z"
+    },
+    {
+      "task_id": "OSS-QUANTLIB-V2-001",
+      "from": "Gemini2",
       "to": "Codex2",
-      "message": "Ready for review: production Qlib rolling runner, registry admission packet emitter, tests, and admission_packet.json are merged via PR #70. Please review services/research/qlib/production_rolling_run.py, services/research/qlib/registry_admission_packet.py, services/research/qlib/test_production_rolling_run.py, and support/evidence/OSS-QLIB-V2-001/admission_packet.json.",
-      "status": "pending",
-      "created_at": "2026-05-17T16:26:36Z"
+      "message": "Implementation complete, ready for review. Local commit: fbad08ba.",
+      "status": "done",
+      "created_at": "2026-05-19T12:20:05Z",
+      "resolved_at": "2026-05-19T12:25:31Z"
+    },
+    {
+      "task_id": "OSS-QUANTLIB-V2-001",
+      "from": "Codex2",
+      "to": "Gemini2",
+      "message": "Review failed: HEAD fbad08ba regresses the accepted production implementation; current worktree lacks required price_chain API, focused pytest fails, and shared index has inverse staged diffs. Owner must restore a single clean implementation surface and rerun pytest before review.",
+      "status": "done",
+      "created_at": "2026-05-19T12:25:31Z",
+      "resolved_at": "2026-05-19T12:25:31Z"
+    },
+    {
+      "task_id": "LOVABLE-STRICT-PUBLISH",
+      "from": "Claude",
+      "to": "Gemini2",
+      "message": "Recovery closeout: implementation unchanged from Gemini2's prior approval. PR #208 merged to dev (2026-05-19T12:27:56Z). All 5 acceptance criteria verified: pytest 2 passed, py_compile clean, no execute-plans modification. Requesting re-approval to finalize recovery done.",
+      "status": "done",
+      "created_at": "2026-05-19T12:28:47Z",
+      "resolved_at": "2026-05-19T12:33:49Z"
+    },
+    {
+      "task_id": "OSS-QUANTLIB-V2-001",
+      "from": "Gemini2",
+      "to": "Codex2",
+      "message": "Restored clean production implementation surface. Please review.",
+      "status": "done",
+      "created_at": "2026-05-19T12:30:18Z",
+      "resolved_at": "2026-05-19T12:37:08Z"
+    },
+    {
+      "task_id": "LOVABLE-STRICT-PUBLISH",
+      "from": "Gemini2",
+      "to": "Claude",
+      "message": "Finalized recovery verified, approved for closeout.",
+      "status": "done",
+      "created_at": "2026-05-19T12:33:49Z",
+      "resolved_at": "2026-05-19T12:34:07Z"
+    },
+    {
+      "task_id": "LOVABLE-STRICT-PUBLISH",
+      "from": "Gemini",
+      "to": "Gemini2",
+      "message": "Ownership updated",
+      "status": "done",
+      "created_at": "2026-05-19T12:34:07Z",
+      "resolved_at": "2026-05-19T12:50:04Z"
+    },
+    {
+      "task_id": "OSS-QUANTLIB-V2-001",
+      "from": "Codex2",
+      "to": "Gemini2",
+      "message": "Re-review approved: QuantLib production option chain remains valid; local pytest/jq gates pass and PR #194 is already merged.",
+      "status": "done",
+      "created_at": "2026-05-19T12:37:08Z",
+      "resolved_at": "2026-05-19T13:06:09Z"
     }
   ],
-  "blockers": [],
+  "blockers": [
+    {
+      "task_id": "LOVABLE-STRICT-PUBLISH",
+      "owner": "Gemini2",
+      "waiting_for": "Gemini",
+      "message": "PR push failed due to auth; requires manual intervention to push task branch and open PR",
+      "status": "open",
+      "created_at": "2026-05-19T12:50:04Z"
+    },
+    {
+      "task_id": "OSS-QUANTLIB-V2-001",
+      "owner": "Gemini2",
+      "waiting_for": "Gemini",
+      "message": "Unable to push branch and open PR due to authentication failure in task_finalize.sh",
+      "status": "open",
+      "created_at": "2026-05-19T13:10:41Z"
+    }
+  ],
   "workload": {
     "Claude": 5,
     "Claude2": 5,
@@ -664,33 +434,6 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 3,
-      "active": 0,
-      "blocked": 0,
-      "done": 0,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 3
-    },
-    "Claude2": {
-      "total": 1,
-      "active": 0,
-      "blocked": 0,
-      "done": 0,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 1
-    },
-    "Gemini": {
-      "total": 2,
-      "active": 0,
-      "blocked": 0,
-      "done": 1,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 1
-    },
-    "Gemini2": {
       "total": 0,
       "active": 0,
       "blocked": 0,
@@ -699,32 +442,59 @@
       "review_approved": 0,
       "todo": 0
     },
-    "Codex": {
-      "total": 4,
-      "active": 1,
+    "Claude2": {
+      "total": 0,
+      "active": 0,
       "blocked": 0,
       "done": 0,
-      "review": 1,
+      "review": 0,
       "review_approved": 0,
-      "todo": 3
+      "todo": 0
+    },
+    "Gemini": {
+      "total": 1,
+      "active": 0,
+      "blocked": 0,
+      "done": 1,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 0
+    },
+    "Gemini2": {
+      "total": 2,
+      "active": 0,
+      "blocked": 0,
+      "done": 2,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 0
+    },
+    "Codex": {
+      "total": 0,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 0
     },
     "Codex2": {
-      "total": 2,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 2
+      "todo": 0
     },
     "Copilot": {
-      "total": 2,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 2
+      "todo": 0
     }
   },
   "wave_state": {

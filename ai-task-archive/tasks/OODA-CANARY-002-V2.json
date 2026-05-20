@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "OODA-CANARY-002-V2",
+  "archived_at": "2026-05-19T16:14:28Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OODA-CANARY-002-V2",
+    "title": "Canary transition tests",
+    "summary_zh": "Tests that exercise observe→orient→decide→act→learn stage transitions in canary scope.",
+    "phase": "Phase 8 / EPIC-OODA-CANARY",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "OODA-CANARY-001-V2"
+    ],
+    "artifacts": [
+      "tests/ooda/test_canary_transitions.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner finalized approved canary transition tests after PR #228 merged into dev (merge 4a0b2421); verified: python3 -m pytest -q tests/ooda/test_canary_transitions.py; python3 -m pytest -q tests/ooda services/control-plane/ooda/test_stage_transition.py.",
+    "last_update": "2026-05-19T16:14:28Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：新增 tests/ooda/test_canary_transitions.py 覆蓋有序 canary observe/orient/decide/act/learn replay、跳階拒絕、以及缺少 human gate/rollback drill 時 closed packet fail-closed 驗證。",
+      "本地驗證通過：python3 -m pytest -q tests/ooda/test_canary_transitions.py；python3 -m pytest -q tests/ooda services/control-plane/ooda/test_stage_transition.py。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T16:14:28Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ooda-canary-002-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OODA-CANARY-002-V2",
+      "git_clean_required": false,
+      "commit": "bf6f9f26cb1ed508a39ebf77baf336b2467e851c",
+      "commit_subject": "OODA-CANARY-002-V2: add canary transition tests",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "OODA-CANARY-002-V2",
+        "Reviewer": "Codex2",
+        "Verified": "python3 -m pytest -q tests/ooda/test_canary_packet_schema.py tests/ooda/test_canary_transitions.py; python3 -m pytest -q tests/ooda services/control-plane/ooda/test_stage_transition.py"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OODA-CANARY-002-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "6fdbe97042f9755d1d108ba913c1eb9d183a51a5",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OODA-CANARY-002-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review: tests/ooda/test_canary_transitions.py is merged via PR #228 (commit bf6f9f26, merge 4a0b2421). Local validation: python3 -m pytest -q tests/ooda services/control-plane/ooda/test_stage_transition.py => 39 passed. Covers ordered canary observe/orient/decide/act/learn replay, skipped-stage rejection, and fail-closed missing gate/drill closure validation.",
+      "status": "done",
+      "created_at": "2026-05-19T15:51:54Z",
+      "resolved_at": "2026-05-19T16:03:23Z"
+    },
+    {
+      "task_id": "OODA-CANARY-002-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved by Codex2: tests/ooda/test_canary_transitions.py covers ordered canary OODA replay, skipped-stage rejection, and fail-closed missing human gate/rollback drill closure validation. Verified: python3 -m pytest -q tests/ooda/test_canary_transitions.py; python3 -m pytest -q tests/ooda services/control-plane/ooda/test_stage_transition.py.",
+      "status": "done",
+      "created_at": "2026-05-19T16:03:23Z",
+      "resolved_at": "2026-05-19T16:14:28Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "task_id": "RES-ACT-004-V2",
+  "archived_at": "2026-05-20T03:13:10Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "RES-ACT-004-V2",
+    "title": "No-order-route enforcement test harness",
+    "summary_zh": "Re-spec'd per design reply section 4. Test harness asserting no research adapter calls broker order routes. Generic across all adapters; per-adapter children carry their own proofs.",
+    "phase": "Phase 8 / EPIC-RES-ACT",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "RES-ACT-001-V2"
+    ],
+    "artifacts": [
+      "services/governance/research_activation/oos_runner.py",
+      "tests/governance/test_oos_runner.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner closeout merged via PR #309 (merge 6c612c919db1e81153ebd1e1eea5c98a15601469); focused verification passed: python3 -m pytest -q tests/governance/test_oos_runner.py tests/integrations/test_research_no_order_route.py tests/governance/test_production_data_proof.py tests/governance/test_disclosure_report.py -> 18 passed; python3 -m py_compile services/governance/research_activation/oos_runner.py tests/governance/test_oos_runner.py passed.",
+    "last_update": "2026-05-20T03:13:10Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：generic OOS harness 先驗證 research-only controls，再覆蓋 static forbidden import/call、dynamic broker import probe、order-capable output/target fail-closed cases；focused pytest 18 passed。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T03:13:10Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/res-act-004-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/RES-ACT-004-V2",
+      "git_clean_required": false,
+      "commit": "9847f16745afca5d2bbbf46164fb9d703555a7b4",
+      "commit_subject": "RES-ACT-004-V2: record owner closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "RES-ACT-004-V2",
+        "Reviewer": "Codex",
+        "Verified": "python3 -m pytest -q tests/governance/test_oos_runner.py tests/integrations/test_research_no_order_route.py tests/governance/test_production_data_proof.py tests/governance/test_disclosure_report.py -> 18 passed; python3 -m py_compile services/governance/research_activation/oos_runner.py tests/governance/test_oos_runner.py"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/RES-ACT-004-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "6c612c919db1e81153ebd1e1eea5c98a15601469",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "RES-ACT-004-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-20T02:50:53Z",
+      "resolved_at": "2026-05-20T02:51:09Z"
+    },
+    {
+      "task_id": "RES-ACT-004-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implementation committed in f5898053 and PR #305 opened with auto-merge enabled; please review the generic no-order OOS harness and governance tests.",
+      "status": "done",
+      "created_at": "2026-05-20T02:58:04Z",
+      "resolved_at": "2026-05-20T03:03:43Z"
+    },
+    {
+      "task_id": "RES-ACT-004-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: generic OOS no-order-route harness is adapter-neutral, fails closed on static/dynamic broker route attempts and order-capable controls, and focused verification passed. Returning to Codex2 for owner closeout.",
+      "status": "done",
+      "created_at": "2026-05-20T03:03:43Z",
+      "resolved_at": "2026-05-20T03:13:11Z"
+    }
+  ],
+  "blockers": []
+}

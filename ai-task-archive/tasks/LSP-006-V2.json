@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "LSP-006-V2",
+  "archived_at": "2026-05-19T17:18:12Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LSP-006-V2",
+    "title": "Publish gate checker",
+    "summary_zh": "Gate checker: refuses to mark the publish complete unless strict-publish-audit passed. Wired into release pipeline as a required check.",
+    "phase": "Phase 8 / EPIC-LSP",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "LSP-005-V2"
+    ],
+    "artifacts": [
+      "scripts/lovable/publish_gate_checker.py",
+      "tests/lovable/test_publish_gate_checker.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner closeout complete: implementation PR #250 and closeout PR #253 merged; verification rerun; publish gate evidence recorded and current LSP-005 audit correctly blocks publish completion.",
+    "last_update": "2026-05-19T17:18:12Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：fail-closed 實作正確，所有 LSP-005 audit packet 檢查項均覆蓋，5 測試 pass，CI wrapper 語法正確，30 個 lovable tests 全過"
+    ],
+    "review_file": "support/evidence/LSP-006-V2/review_notes.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T17:18:12Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/lsp-006-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LSP-006-V2",
+      "git_clean_required": false,
+      "commit": "98a7c3c2b32c405f2d6d04db03203dbd6647559c",
+      "commit_subject": "LSP-006-V2: refresh closeout after dev merge",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "LSP-006-V2",
+        "Reviewer": "Claude",
+        "Verified": "git diff --check origin/dev...HEAD"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LSP-006-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "195a28e1eb878c4fc93f8fdba5bb770b6c87d3e0",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LSP-006-V2",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for review: PR #250 merged to dev at 453f61b31324c854fb9c19fb0980674febd4c9d1. Implemented fail-closed publish_gate_checker.py over LSP-005 strict-publish-audit JSON, added tests, and wired ci_strict_publish_audit.sh / strict-publish-audit workflow to emit publish-gate.json and use the gate exit code. Verified py_compile, pytest tests/lovable/test_publish_gate_checker.py -q, pytest tests/lovable -q (30 passed), bash -n wrapper, git diff --check, and GitHub required checks all pass.",
+      "status": "done",
+      "created_at": "2026-05-19T17:02:09Z",
+      "resolved_at": "2026-05-19T17:05:44Z"
+    },
+    {
+      "task_id": "LSP-006-V2",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved and returned to Codex2 for finalization",
+      "status": "done",
+      "created_at": "2026-05-19T17:05:44Z",
+      "resolved_at": "2026-05-19T17:18:13Z"
+    }
+  ],
+  "blockers": []
+}

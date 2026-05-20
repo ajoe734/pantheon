@@ -5,13 +5,13 @@ Treat `ai-status.json` as the durable execution source of truth only when you ne
 Do not read `current-work.md` by default for implementation context.
 
 ## Task
-- Title: QuantLib production option chain pricer + greeks
-- Status: review_approved
-- Owner: Codex
+- Title: Reassigning for finalization
+- Status: in_progress
+- Owner: Gemini2
 - Reviewer: Codex2
 - Phase: Sprint 8 / EPIC-OSS-V2
-- Last update: 2026-05-19T07:11:43Z
-- Next: Codex recovered approved lifecycle state from existing Codex2 review evidence and merged PR #173; owner may finalize after closeout recovery commit merges.
+- Last update: 2026-05-19T13:06:09Z
+- Next: Finalization committed, awaiting PR push and merge
 
 ## Summary
 把 OSS-QUANTLIB-001 option pricer 升級為 production：對台指選擇權(TXO)鏈跨多檔履約價與多個到期日定價，輸出含 greeks 的 pricing_snapshot artifact，提交 registry admission packet。獨立檔案。
@@ -26,13 +26,12 @@ Do not read `current-work.md` by default for implementation context.
 - support/evidence/OSS-QUANTLIB-V2-001/admission_packet.json
 
 ## Recent Task Activity
-- 2026-05-19T06:31:37Z · Orchestrator · worker_worktree_reused · -
-- 2026-05-19T06:31:38Z · Orchestrator · worker_started · Worker started via copilot_local: owned_in_progress_dispatch
-- 2026-05-19T06:31:38Z · Copilot · progress · Supervisor re-dispatched OSS-QUANTLIB-V2-001; task remains in progress.
-- 2026-05-19T06:31:42Z · Orchestrator · task_dispatch_synced · Supervisor re-dispatched OSS-QUANTLIB-V2-001; task remains in progress.
-- 2026-05-19T06:36:48Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
-- 2026-05-19T07:07:23Z · Orchestrator · chair_review_reassignment_applied · Chair reassigned owner from Copilot to Codex: Copilot has repeated quota-terminal failures and no live worker for this in_progress task; Codex is an idle non-Copilot implementation-capable lane.. Task returned to todo for a fresh run.
-- 2026-05-19T07:11:43Z · Codex · restore_approved · Recovered approved lifecycle state from Codex2 review evidence and merged PR #173; owner may finalize after committing closeout state.
+- 2026-05-19T13:04:34Z · Gemini2 · note · Supervisor resumed OSS-QUANTLIB-V2-001 for finalize after successful dispatch.
+- 2026-05-19T13:04:37Z · Orchestrator · task_dispatch_synced · Supervisor resumed OSS-QUANTLIB-V2-001 for finalize after successful dispatch.
+- 2026-05-19T13:05:25Z · Gemini2 · assign · Assigned OSS-QUANTLIB-V2-001 to Gemini2 with reviewer Codex2
+- 2026-05-19T13:05:39Z · Gemini2 · worker_commit · Worker commit d1978884e760 recorded 1 staged file(s) for OSS-QUANTLIB-V2-001.
+- 2026-05-19T13:06:09Z · Gemini2 · progress · Finalization committed, awaiting PR push and merge
+- 2026-05-19T13:09:42Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md

@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "task_id": "OODA-E2E-004",
+  "archived_at": "2026-05-19T12:23:43Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OODA-E2E-004",
+    "title": "OODA E2E #4: Admission → ApprovalDecision → DeploymentPlan(paper) test",
+    "summary_zh": "OODA Decide 階段：證明「CandidateArtifact → ApprovalDecision → DeploymentPlan(paper)」transition 可端到端走完。使用 GOV-001 ApprovalDecision + DEP-001 DeploymentPlan service。獨立 test 檔。",
+    "phase": "Sprint 8 / EPIC-OODA-E2E",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "GOV-001",
+      "DEP-001",
+      "DEP-002",
+      "DEP-004"
+    ],
+    "artifacts": [
+      "tests/e2e/test_admission_to_deployment_plan.py",
+      "tests/e2e/fixtures/candidate_artifact_for_decision.json"
+    ],
+    "acceptance": [
+      "test creates ApprovalDecision proposed→under_review→decided(approved) for fixture candidate_artifact",
+      "asserts artifact advances to artifact_state=approved",
+      "test then creates DeploymentPlan(target_stage=paper) referencing the approved artifact",
+      "asserts DEP-004 pool/runtime compatibility check passes for fixture pool",
+      "asserts DeploymentPlan record persisted with stage=paper and approval_decision_ref",
+      "test rejects creating DeploymentPlan for non-approved artifact",
+      "pytest -q -x exit 0"
+    ],
+    "next": "PR #205 merged into dev (merge 86e360c134592c5a724ae65c43ef5d198c1ef290); final verification python3 -m pytest tests/e2e/test_admission_to_deployment_plan.py -q -x -> 3 passed in 0.32s; required GitHub checks passed.",
+    "last_update": "2026-05-19T12:23:43Z",
+    "review_notes_zh": [
+      "審查通過：3 tests passed；所有 acceptance criteria 驗證齊備；fixture 完整覆蓋 paper-stage 欄位；無 live broker/capital side effects"
+    ],
+    "review_file": "support/evidence/OODA-E2E-004/review_claude_zh.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T12:23:43Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ooda-e2e-004",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OODA-E2E-004",
+      "git_clean_required": false,
+      "commit": "0ff89043b35e1e2aa610be0bd4e407408e8320db",
+      "commit_subject": "OODA-E2E-004: merge final dev for PR 205",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "OODA-E2E-004",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m pytest tests/e2e/test_admission_to_deployment_plan.py -q -x -> 3 passed in 0.32s"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OODA-E2E-004",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "86e360c134592c5a724ae65c43ef5d198c1ef290",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OODA-E2E-004",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-19T12:01:21Z",
+      "resolved_at": "2026-05-19T12:01:34Z"
+    },
+    {
+      "task_id": "OODA-E2E-004",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for review: no code changes needed in this dispatch. Existing tests/e2e/test_admission_to_deployment_plan.py and fixture satisfy acceptance; re-verified python3 -m pytest tests/e2e/test_admission_to_deployment_plan.py -q -x -> 3 passed. Branch fast-forwarded to origin/dev before handoff.",
+      "status": "done",
+      "created_at": "2026-05-19T12:05:31Z",
+      "resolved_at": "2026-05-19T12:08:13Z"
+    },
+    {
+      "task_id": "OODA-E2E-004",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: all 3 acceptance tests pass (python3 -m pytest tests/e2e/test_admission_to_deployment_plan.py -q -x -> 3 passed in 0.32s). All acceptance criteria verified. Returning to owner Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-05-19T12:08:13Z",
+      "resolved_at": "2026-05-19T12:23:44Z"
+    }
+  ],
+  "blockers": []
+}

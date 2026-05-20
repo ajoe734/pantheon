@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "task_id": "DEP-004",
+  "archived_at": "2026-05-19T12:00:12Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DEP-004",
+    "title": "Pool x runtime compatibility check before deployment advance",
+    "summary_zh": "GAP P1 列為 DEP-004 但 sprint 7 沒派；grep 確認 services 與 governance 樹下沒有 pool/runtime compat check 實作。本任務在 DeploymentPlan 進入 RuntimeBinding 前增加 capital_pool 能力 × runtime 要求的相容性檢查，不通過則阻擋 advance。獨立 module，不修 DEP-001..003 公開 API。",
+    "phase": "Sprint 7 / EPIC-GOV-DEPLOY",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "DEP-001",
+      "DEP-002",
+      "CAP-001",
+      "RT-001"
+    ],
+    "artifacts": [
+      "services/control-plane/governance/pool_runtime_compat.py",
+      "services/control-plane/governance/test_pool_runtime_compat.py",
+      "services/control-plane/governance/pool_runtime_compat_contract.md"
+    ],
+    "acceptance": [
+      "pool_runtime_compat.py exposes check_compatibility(capital_pool_id deployment_plan_id) returning CompatibilityResult dict with passed bool and rejection_reasons list",
+      "checks include: pool admissibility status equals active",
+      "pool risk_budget covers DeploymentPlan target_size",
+      "pool jurisdiction matches runtime broker jurisdiction",
+      "runtime mode matches deployment_stage (paper/canary/live/frozen)",
+      "persona_capital_binding exists and is active",
+      "DeploymentPlan service refuses advance when CompatibilityResult.passed is false (1-line hook)",
+      "test covers 1 pass + 5 fail scenarios (one per check) with pytest -q exit 0",
+      "no live broker side effects"
+    ],
+    "next": "Owner finalized merged DEP-004 closeout. PR #179 is merged to dev; HEAD a95176659957e260b32106ac9eb16aec39fc0517 is contained in origin/dev. Verification: python3 -m pytest -q services/control-plane/governance/test_pool_runtime_compat.py services/control-plane/cron/test_cron.py -> 21 passed in 1.88s.",
+    "last_update": "2026-05-19T12:00:12Z",
+    "review_notes_zh": [
+      "Codex2 approved DEP-004 after re-verification; owner may finalize done. Verification: python3 -m pytest -q services/control-plane/governance/test_pool_runtime_compat.py services/control-plane/cron/test_cron.py -> 21 passed."
+    ],
+    "review_file": "support/reviews/DEP-004-review-codex2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T12:00:12Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/dep-004",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/DEP-004",
+      "git_clean_required": false,
+      "commit": "a95176659957e260b32106ac9eb16aec39fc0517",
+      "commit_subject": "DEP-004: finalize Codex2-approved closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "DEP-004 closeout records and publication evidence.",
+        "Not changing": "pool/runtime compatibility implementation, cron deploy hook,",
+        "Composes with": "merged DEP-004 implementation/evidence PRs and Codex2 approval.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "DEP-004",
+        "Reviewer": "Codex2",
+        "Verified": "python3 -m pytest -q services/control-plane/governance/test_pool_runtime_compat.py services/control-plane/cron/test_cron.py -> 21 passed in 3.18s"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/DEP-004",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "c7acf6c8da64935f04acd43ddaeb9f138aed7e18",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DEP-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Restored DEP-004 review_approved from Codex2 approval evidence after stale todo state recovery.",
+      "status": "done",
+      "created_at": "2026-05-19T11:56:02Z",
+      "resolved_at": "2026-05-19T11:56:14Z"
+    },
+    {
+      "task_id": "DEP-004",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Codex to Claude after repeated Codex capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-05-19T11:56:14Z",
+      "resolved_at": "2026-05-19T12:00:02Z"
+    },
+    {
+      "task_id": "DEP-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ownership updated",
+      "status": "done",
+      "created_at": "2026-05-19T12:00:02Z",
+      "resolved_at": "2026-05-19T12:00:13Z"
+    }
+  ],
+  "blockers": []
+}

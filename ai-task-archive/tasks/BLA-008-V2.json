@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "task_id": "BLA-008-V2",
+  "archived_at": "2026-05-20T04:42:48Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BLA-008-V2",
+    "title": "Approval revoke / withdraw model",
+    "summary_zh": "Model for risk-owner / operator approval revoke and withdraw lifecycle, tied to the HumanGateDecision schema in EP5-003-V2/EP5-004-V2.",
+    "phase": "Phase 8 / EPIC-BROKER-LIVE",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BLA-001-V2",
+      "EP5-004-V2"
+    ],
+    "artifacts": [
+      "services/broker/live_activation/approval_revoke_withdraw.py",
+      "tests/broker/test_approval_revoke_withdraw.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner finalized approved BLA-008-V2 after PR #300 implementation merge and PR #319 closeout evidence merge. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/broker/test_approval_revoke_withdraw.py tests/governance/test_revoke_expire.py -q => 43 passed.",
+    "last_update": "2026-05-20T04:42:48Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：fail-closed 合約正確、雙閘角色與環境範圍明確、不可變性經測試驗證、43 個測試全數通過、無 L1 canonical docs 修改"
+    ],
+    "review_file": "support/evidence/BLA-008-V2/review_claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T04:42:48Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bla-008-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BLA-008-V2",
+      "git_clean_required": false,
+      "commit": "368b1b11ddd61c4d97ef66c130a13b5f186ed6c8",
+      "commit_subject": "BLA-008-V2: refresh closeout after dev merge",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "broker live activation approval lifecycle closeout evidence.",
+        "Not changing": "model behavior, HumanGateDecision schema, storage, runtime activation, broker credentials, live capital routing, or L1 docs.",
+        "Composes with": "closeout evidence PR #319 and merged implementation PR #300.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BLA-008-V2",
+        "Reviewer": "Claude",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/broker/test_approval_revoke_withdraw.py tests/governance/test_revoke_expire.py -q (43 passed)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BLA-008-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "ee1ecb89c0ab04d34c14bec3b1626971a660cb92",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BLA-008-V2",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-20T01:49:00Z",
+      "resolved_at": "2026-05-20T01:49:10Z"
+    },
+    {
+      "task_id": "BLA-008-V2",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for review: PR #300 merged commit 357d0ad8367c403d652707fbf042073fd60c9198. Added broker live approval revoke/withdraw model and tests. Local validation: pytest tests/broker/test_approval_revoke_withdraw.py tests/governance/test_revoke_expire.py (43 passed). GitHub checks passed before merge. No L1 canonical docs modified.",
+      "status": "done",
+      "created_at": "2026-05-20T02:00:16Z",
+      "resolved_at": "2026-05-20T04:31:21Z"
+    },
+    {
+      "task_id": "BLA-008-V2",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: fail-closed model correct, dual-gate role/env scoping enforced, immutability verified, 43 tests passed, no L1 docs modified. Returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-05-20T04:31:21Z",
+      "resolved_at": "2026-05-20T04:42:49Z"
+    }
+  ],
+  "blockers": []
+}
