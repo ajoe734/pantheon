@@ -36,3 +36,9 @@ Results:
 - Not changing canonical L1 architecture docs.
 - Not changing PER-001 registry schema or persistence behavior.
 - This closeout commit records task evidence and makes the task branch HEAD traceable for the final `done` delivery gate.
+
+## Branch Refresh
+
+- PR #364 initially reported `BEHIND` after `origin/dev` advanced.
+- Merged latest `origin/dev` into `task/MPO-002-V2` and kept the final owner closeout as a task-scoped evidence commit.
+- Rechecked the focused persona test set after the branch refresh.
