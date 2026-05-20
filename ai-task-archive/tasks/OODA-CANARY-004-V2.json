@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "task_id": "OODA-CANARY-004-V2",
+  "archived_at": "2026-05-20T05:34:40Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OODA-CANARY-004-V2",
+    "title": "Canary rollback drill linkage",
+    "summary_zh": "Links CanaryOodaPacket.act.rollback_drill_ref to the EP5 rollback drill output and validates the linkage.",
+    "phase": "Phase 8 / EPIC-OODA-CANARY",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "OODA-CANARY-001-V2",
+      "EP5-007-V2"
+    ],
+    "artifacts": [
+      "services/ooda/canary_rollback_drill_linkage.py",
+      "tests/ooda/test_canary_rollback_linkage.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Closed after implementation PR #320, review-fix PR #328, and closeout PR #332 merged. Final closeout merge commit 8d81fc8edb1e1d063bda5467cc0ecb58e1f661a0; final task HEAD 18098fe993502c25aca9d0313b38e9ef691f339b. Verification passed after latest dev refresh: pytest -q tests/ooda/test_canary_rollback_linkage.py (5 passed), pytest -q tests/ooda (14 passed), py_compile passed, git diff --check origin/dev...HEAD passed. No L1 canonical docs or live side effects changed.",
+    "last_update": "2026-05-20T05:34:40Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：canary rollback linkage 會從 EP5 rollback drill evidence 產生 deterministic rollback_drill_ref，並驗證 proof/runtime/deployment refs 對齊。",
+      "驗證通過：pytest -q tests/ooda/test_canary_rollback_linkage.py；pytest -q tests/ooda。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T05:34:40Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ooda-canary-004-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OODA-CANARY-004-V2",
+      "git_clean_required": false,
+      "commit": "18098fe993502c25aca9d0313b38e9ef691f339b",
+      "commit_subject": "OODA-CANARY-004-V2: refresh closeout at dev tip",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "OODA-CANARY-004-V2",
+        "Reviewer": "Codex2",
+        "Verified": "pytest -q tests/ooda/test_canary_rollback_linkage.py (5 passed); pytest -q tests/ooda (14 passed); PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/ooda/canary_rollback_drill_linkage.py tests/ooda/test_canary_rollback_linkage.py; git diff --check origin/dev...HEAD"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OODA-CANARY-004-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "8d81fc8edb1e1d063bda5467cc0ecb58e1f661a0",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OODA-CANARY-004-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review: implemented EP5 rollback drill linkage and tests; PR #320 merged into dev at c193e59a8507da60c2a566873f0e5a6cfdda6138. Local verification: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q tests/ooda; py_compile linkage/test; git diff --check.",
+      "status": "done",
+      "created_at": "2026-05-20T04:45:59Z",
+      "resolved_at": "2026-05-20T04:53:08Z"
+    },
+    {
+      "task_id": "OODA-CANARY-004-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review finding: validate_canary_rollback_drill_linkage must reject CanaryOodaPacket runtime/deployment refs that do not match the EP5 rollback drill proof; current validator returns [] for stale act.runtime_binding_ref, act.canary_runtime_ref, and decide.deployment_plan_ref.",
+      "status": "done",
+      "created_at": "2026-05-20T04:53:08Z",
+      "resolved_at": "2026-05-20T04:53:08Z"
+    },
+    {
+      "task_id": "OODA-CANARY-004-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for Codex2 review. PR #328 merged into dev at 6dcdd1fbfc8eb695a03df0c86832b663e59a5afe; task head 85b3c1ac9ba607409cbd9806863e245c95feb1fc; verified pytest -q tests/ooda/test_canary_rollback_linkage.py and pytest -q tests/ooda.",
+      "status": "done",
+      "created_at": "2026-05-20T05:16:45Z",
+      "resolved_at": "2026-05-20T05:19:20Z"
+    },
+    {
+      "task_id": "OODA-CANARY-004-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved by Codex2; rollback drill linkage and validation tests pass. Returning to Codex for closeout finalization.",
+      "status": "done",
+      "created_at": "2026-05-20T05:19:20Z",
+      "resolved_at": "2026-05-20T05:34:40Z"
+    }
+  ],
+  "blockers": []
+}

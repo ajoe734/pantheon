@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "task_id": "BLA-001-V2",
+  "archived_at": "2026-05-19T17:30:05Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BLA-001-V2",
+    "title": "Broker live activation criteria JSON + validator",
+    "summary_zh": "Implement broker_live_activation_criteria.json schema and validator per Part B2.",
+    "phase": "Phase 8 / EPIC-BROKER-LIVE",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/broker/live_activation/criteria.json",
+      "services/broker/live_activation/validator.py",
+      "tests/broker/test_live_activation_validator.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Closeout finalized after PR #251 implementation merge f0207b3f and PR #256 finalization merge 12999e0d; verified pytest -q tests/broker/test_live_activation_validator.py and pytest -q tests/broker (8 passed).",
+    "last_update": "2026-05-19T17:30:05Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：criteria.json 符合 2026-05-19 Part B2 shape；validate_criteria_shape({}) 會 fail closed，不再回退 default。",
+      "審查通過：invalid activation criteria 會在 evidence/approval/hard-fail 檢查前回傳 ValidationResult errors；validator 未執行 live broker/runtime side effects。",
+      "驗證：pytest -q tests/broker/test_live_activation_validator.py；pytest -q tests/broker 均為 8 passed。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T17:30:05Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bla-001-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BLA-001-V2",
+      "git_clean_required": false,
+      "commit": "8ea3d1ae767ed70af0bcc88ca07ff308d8b1c2ee",
+      "commit_subject": "BLA-001-V2: merge dev for finalization",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BLA-001-V2",
+        "Reviewer": "Codex2",
+        "Verified": "pytest -q tests/broker/test_live_activation_validator.py; pytest -q tests/broker",
+        "Cross-Dir": "yes"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BLA-001-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "12999e0dd5d7d812b22af8522fda1fd5c0ce6a17",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BLA-001-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review: B2 broker live activation criteria JSON and fail-closed validator merged via PR #245. Implementation commit 2e8c8a9c, merge commit 7f914982. Verified locally with pytest -q tests/broker/test_live_activation_validator.py (5 passed), python3 -m py_compile services/broker/live_activation/validator.py services/broker/live_activation/__init__.py, and python3 -m json.tool services/broker/live_activation/criteria.json.",
+      "status": "done",
+      "created_at": "2026-05-19T16:47:44Z",
+      "resolved_at": "2026-05-19T16:52:37Z"
+    },
+    {
+      "task_id": "BLA-001-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review changes requested: fail-closed criteria handling needs correction. validate_criteria_shape({}) currently falls back to default criteria and passes, while validate_activation_request(..., criteria={'version':'bad'} or missing required_evidence) raises TypeError instead of returning a blocking ValidationResult. Please treat only None as default criteria, make explicit empty/invalid criteria fail closed with validation issues, and add regression coverage before re-handoff.",
+      "status": "done",
+      "created_at": "2026-05-19T16:52:37Z",
+      "resolved_at": "2026-05-19T16:52:37Z"
+    },
+    {
+      "task_id": "BLA-001-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Re-handoff after fail-closed criteria fix. PR #251 pushed at 447d1a2f; validate_criteria_shape({}) now blocks instead of defaulting, invalid activation criteria return ValidationResult errors before evidence checks, and pytest tests/broker passes.",
+      "status": "done",
+      "created_at": "2026-05-19T17:03:30Z",
+      "resolved_at": "2026-05-19T17:06:46Z"
+    },
+    {
+      "task_id": "BLA-001-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved by Codex2. Verified fail-closed criteria handling and broker validator tests: pytest -q tests/broker/test_live_activation_validator.py and pytest -q tests/broker both passed (8 passed). PR #251 is already merged into dev at f0207b3f; owner should run closeout finalization and mark done.",
+      "status": "done",
+      "created_at": "2026-05-19T17:06:46Z",
+      "resolved_at": "2026-05-19T17:30:06Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "task_id": "HA-002-V2",
+  "archived_at": "2026-05-19T16:41:40Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "HA-002-V2",
+    "title": "SLA targets JSON (Part D3)",
+    "summary_zh": "Define dev / staging / production SLA targets per Part D3: uptime, p99 latency, SSE connections, RTO, RPO, monthly cost ceiling.",
+    "phase": "Phase 8 / EPIC-BFF-HA",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/bff/ha/sla_targets.json",
+      "tests/bff/test_sla_targets.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Closed after PR #234 delivery merge and PR #243 evidence closeout merge; verified pytest SLA target tests (3 passed) and jq JSON parse.",
+    "last_update": "2026-05-19T16:41:40Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：sla_targets.json 結構正確，三個環境的 uptime/latency/SSE/RTO/RPO/cost 值順序合理，RPO ≤ RTO 不變式在 JSON 與驗證器中均成立；測試 3 項全過"
+    ],
+    "review_file": "support/evidence/HA-002-V2/review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T16:41:40Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ha-002-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/HA-002-V2",
+      "git_clean_required": false,
+      "commit": "489d616ac040ae68d954c573b4d956c6098c5d35",
+      "commit_subject": "HA-002-V2: finalize owner closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "HA-002-V2",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m pytest -q tests/bff/test_sla_targets.py (3 passed); jq . services/bff/ha/sla_targets.json"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/HA-002-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "da470c41267c8eb1239e9950321a11ced4bae1e6",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "HA-002-V2",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for review: PR #234 merged as 6fdbe97042f9755d1d108ba913c1eb9d183a51a5. Added services/bff/ha/sla_targets.json and tests/bff/test_sla_targets.py for Part D3 dev/staging/production SLA targets. Local validation: jq . services/bff/ha/sla_targets.json; python3 -m pytest -q tests/bff/test_sla_targets.py (3 passed). GitHub checks passed: Commit trailers, Runtime mirror guard, Smoke acceptance, Forward to orchestrator.",
+      "status": "done",
+      "created_at": "2026-05-19T16:13:19Z",
+      "resolved_at": "2026-05-19T16:29:50Z"
+    },
+    {
+      "task_id": "HA-002-V2",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: SLA target artifact and validation tests match Part D3 spec; 3/3 tests pass. Returned to Codex2 for closeout.",
+      "status": "done",
+      "created_at": "2026-05-19T16:29:50Z",
+      "resolved_at": "2026-05-19T16:41:41Z"
+    }
+  ],
+  "blockers": []
+}

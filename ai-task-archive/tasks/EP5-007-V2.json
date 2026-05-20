@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "task_id": "EP5-007-V2",
+  "archived_at": "2026-05-20T04:31:58Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EP5-007-V2",
+    "title": "Rollback drill harness",
+    "summary_zh": "Rollback drill harness for EP5 proof packet evidence. PR #298 delivered code docs and tests; PR #317 records closeout evidence and generated drill output.",
+    "phase": "Phase 8 / EPIC-EP5",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "EP5-005-V2"
+    ],
+    "artifacts": [
+      "services/governance/ep5_proof/rollback_drill_harness.py",
+      "docs/operations/rollback_drill_runbook.md",
+      "tests/governance/test_rollback_drill_harness.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner finalized EP5-007-V2. Implementation PR #298 merged at 3d65f751574f617320735df9412d43557a26713d; closeout evidence PR #317 merged at 57d356374d4aafe18ee61e85c2402efb064a4883; local verification python3 -m pytest tests/governance/test_rollback_drill_harness.py -q => 5 passed in 1.74s.",
+    "last_update": "2026-05-20T04:31:58Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "Review approved by Claude on 2026-05-20: harness enforces fail-closed at type level, all 5 focused tests pass, runbook complete."
+    ],
+    "review_file": "support/evidence/EP5-007-V2/review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T04:31:58Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ep5-007-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/EP5-007-V2",
+      "git_clean_required": false,
+      "commit": "f637009e0871a06aa2c2515d49387ca5b2899d23",
+      "commit_subject": "EP5-007-V2: record closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "EP5-007-V2",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m pytest tests/governance/test_rollback_drill_harness.py -q; jq status/proof checks on support/evidence/EP5-007-V2/rollback-drill.json; git diff --check on EP5-007-V2 closeout evidence files"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/EP5-007-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "57d356374d4aafe18ee61e85c2402efb064a4883",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EP5-007-V2",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-20T01:33:19Z",
+      "resolved_at": "2026-05-20T01:33:24Z"
+    },
+    {
+      "task_id": "EP5-007-V2",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for review: rollback drill harness, runbook, and tests merged via PR #298 (merge commit 3d65f751). Local focused validation passed: 55 passed across rollback harness, rollback dry-run, EP5 dry-run, and EP5 proof generator; GitHub Commit trailers, Runtime mirror guard, Smoke acceptance, and Orchestrator Sync passed.",
+      "status": "done",
+      "created_at": "2026-05-20T01:48:57Z",
+      "resolved_at": "2026-05-20T04:20:51Z"
+    },
+    {
+      "task_id": "EP5-007-V2",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: harness enforces fail-closed at type level, all 5 tests pass, runbook complete. Returned to Codex2 for closeout finalization.",
+      "status": "done",
+      "created_at": "2026-05-20T04:20:51Z",
+      "resolved_at": "2026-05-20T04:31:53Z"
+    },
+    {
+      "task_id": "EP5-007-V2",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approval restored from task brief and support/evidence/EP5-007-V2/review-claude.md after PR #298 and PR #317 merged.",
+      "status": "done",
+      "created_at": "2026-05-20T04:31:55Z",
+      "resolved_at": "2026-05-20T04:31:59Z"
+    }
+  ],
+  "blockers": []
+}

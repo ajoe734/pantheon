@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "LSP-004-V2",
+  "archived_at": "2026-05-19T15:36:30Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LSP-004-V2",
+    "title": "Forbidden runtime path scanner",
+    "summary_zh": "Scanner reads hosted JS bundles and fails if any forbidden runtime/mock/seed/fallback signal is present: /mocks/, seed., mockSeed, silent fallback markers, VITE_BFF_FALLBACK=auto, and local seed hydration.",
+    "phase": "Phase 8 / EPIC-LSP",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "scripts/lovable/forbidden_path_scanner.py",
+      "tests/lovable/test_forbidden_path_scanner.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Finalized LSP-004-V2. PR #222 merged as c231fc29425850a207e8b3df5ad312c05212fb1c; post-merge closeout PR #223 merged as b9483ed5ef102b57cae53a795f79a52f8f9da1f7. Local validation: python3 -m pytest tests/lovable/test_forbidden_path_scanner.py -v (4 passed).",
+    "last_update": "2026-05-19T15:36:30Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：6 項 forbidden signal pattern 全部覆蓋，fail-closed 語義正確，4 個 pytest 測試全部通過",
+      "無遺留問題，可直接收尾"
+    ],
+    "review_file": "support/evidence/LSP-004-V2/review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T15:36:30Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/lsp-004-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LSP-004-V2",
+      "git_clean_required": false,
+      "commit": "de6a1a60e1e5b789fd0c3ca7eec1fd4574fe312f",
+      "commit_subject": "LSP-004-V2: refresh closeout after merge",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "LSP-004-V2",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m pytest tests/lovable/test_forbidden_path_scanner.py -v"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LSP-004-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "b9483ed5ef102b57cae53a795f79a52f8f9da1f7",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LSP-004-V2",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Implementation merged via PR #217 (merge commit dc8e18149f384d0b391325c521b763ca1a19f1f1). Please review scripts/lovable/forbidden_path_scanner.py and tests/lovable/test_forbidden_path_scanner.py; local focused pytest and smoke acceptance passed, and GitHub Branch CI checks passed.",
+      "status": "done",
+      "created_at": "2026-05-19T15:12:33Z",
+      "resolved_at": "2026-05-19T15:19:29Z"
+    },
+    {
+      "task_id": "LSP-004-V2",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: all 6 forbidden signal patterns verified, fail-closed semantics correct, 4/4 tests pass. Returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-05-19T15:19:29Z",
+      "resolved_at": "2026-05-19T15:36:31Z"
+    }
+  ],
+  "blockers": []
+}

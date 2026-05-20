@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "BLA-005-V2",
+  "archived_at": "2026-05-19T18:49:51Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BLA-005-V2",
+    "title": "Kill-switch demo evidence collector",
+    "summary_zh": "Evidence collector for kill-switch demo per Part B5 runbook.",
+    "phase": "Phase 8 / EPIC-BROKER-LIVE",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "BLA-001-V2"
+    ],
+    "artifacts": [
+      "services/broker/live_activation/kill_switch_evidence.py",
+      "tests/broker/test_kill_switch_evidence.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner closeout finalized: PR #277 delivered the kill-switch demo evidence collector, PR #283 merged owner closeout artifact, and focused broker validation passed (24 tests).",
+    "last_update": "2026-05-19T18:49:51Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：collector 只封裝 Runtime Manager drill evidence，不 dispatch kill-switch command、不 mutate runtime state、不 enable broker live flag。",
+      "審查通過：acknowledged/fail_closed gate、DeploymentPlan/RuntimeBinding/capital pool/operator/broker subaccount linkage、raw broker secret block 與 required action coverage 符合 BLA-005-V2 scope。",
+      "驗證通過：python3 -m pytest tests/broker/test_kill_switch_evidence.py tests/broker/test_live_activation_validator.py tests/broker/test_operator_checklist.py tests/broker/test_risk_owner_checklist.py -q (24 passed)."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T18:49:51Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bla-005-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BLA-005-V2",
+      "git_clean_required": false,
+      "commit": "a896a49f908d6f60cfcad3be15460bf3e67b5231",
+      "commit_subject": "BLA-005-V2: finalize kill-switch evidence closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BLA-005-V2",
+        "Reviewer": "Codex2",
+        "Verified": "python3 -m pytest tests/broker/test_kill_switch_evidence.py tests/broker/test_live_activation_validator.py tests/broker/test_operator_checklist.py tests/broker/test_risk_owner_checklist.py -q; git diff --check"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BLA-005-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "95875fe4f95b4130827b4238fe803ff11c5c5f66",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BLA-005-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review: kill-switch demo evidence collector merged via PR #277. Owner commit a4d4c21a1a459a69d615b0075c79dd2464f0b98e is ancestor of origin/dev merge 67ce137ade2ec2b4dfc1f908c3ad2843c6264315. Validation: python3 -m pytest tests/broker/test_kill_switch_evidence.py tests/broker/test_live_activation_validator.py tests/broker/test_operator_checklist.py tests/broker/test_risk_owner_checklist.py -q (24 passed). Review services/broker/live_activation/kill_switch_evidence.py and tests/broker/test_kill_switch_evidence.py.",
+      "status": "done",
+      "created_at": "2026-05-19T18:36:07Z",
+      "resolved_at": "2026-05-19T18:43:12Z"
+    },
+    {
+      "task_id": "BLA-005-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved by Codex2: kill-switch demo evidence collector matches scope; validation passed (24 tests). Owner Codex should finalize closeout.",
+      "status": "done",
+      "created_at": "2026-05-19T18:43:12Z",
+      "resolved_at": "2026-05-19T18:49:51Z"
+    }
+  ],
+  "blockers": []
+}

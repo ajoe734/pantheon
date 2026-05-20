@@ -1,0 +1,117 @@
+{
+  "version": 1,
+  "task_id": "RES-ACT-QLIB-001-V2",
+  "archived_at": "2026-05-20T07:06:19Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "RES-ACT-QLIB-001-V2",
+    "title": "Qlib production data proof and rolling OOS admission packet",
+    "summary_zh": "Adapter-specific child: Qlib production data proof (entitlement, PIT, durable storage) + R5 rolling OOS admission packet. Parent: RES-ACT-001-V2.",
+    "phase": "Phase 8 / EPIC-RES-ACT",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "RES-ACT-001-V2"
+    ],
+    "artifacts": [
+      "integrations/qlib/production_data_proof.md",
+      "integrations/qlib/rolling_oos_admission_packet.md"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner closeout complete: PR #311 delivered approved Qlib proof artifacts; PR #346 merged owner closeout evidence at d1b7efdfb44bbb0c7378b65c700d924444f6976f, merge 4c884ce19e24bfbf8a747667949bff847d9ddddd; focused verification passed: pytest -q tests/governance/test_qlib_proof_artifacts.py.",
+    "last_update": "2026-05-20T07:06:19Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：production_data_proof.md 正確映射 ProductionDataProof.v1 schema，全部 data gate 達標（50 instruments / 2.0096 years / 525 periods），entitlement 限定 research_and_model_training，no_order_route 邊界明確",
+      "rolling_oos_admission_packet.md 正確記錄 R5 rolling OOS 指標（457 windows / mean Sharpe 0.115705 / mean IC 0.005935），safety fail-closed 確認（registry_write=false、order_route=none、deployment_stage=none）",
+      "test_qlib_proof_artifacts.py 涵蓋 5 個測試：happy path + fail-closed（PIT fail、order route fail、deployment stage fail），均符合 acceptance criteria",
+      "無 L1 canonical doc 異動"
+    ],
+    "review_file": "integrations/qlib/rolling_oos_admission_packet.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T07:06:19Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/res-act-qlib-001-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/RES-ACT-QLIB-001-V2",
+      "git_clean_required": false,
+      "commit": "d1b7efdfb44bbb0c7378b65c700d924444f6976f",
+      "commit_subject": "RES-ACT-QLIB-001-V2: record owner closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "RES-ACT-QLIB-001-V2",
+        "Reviewer": "Claude2",
+        "Verified": "pytest -q tests/governance/test_qlib_proof_artifacts.py -> 6 passed; git diff --check -- .orchestrator/task-briefs/res_act_qlib_001_v2.md support/evidence/RES-ACT-QLIB-001-V2/closeout.md"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/RES-ACT-QLIB-001-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "4c884ce19e24bfbf8a747667949bff847d9ddddd",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "RES-ACT-QLIB-001-V2",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Ready for review: Qlib ProductionDataProof and R5 rolling OOS admission artifacts are merged via PR #311 (commit 296a9b5356fd07635584e5e6fc007598099ab93c; merge 7fce4377fad6641b508d7e94a6ccb4a55b22ac51). Please review integrations/qlib/production_data_proof.md, integrations/qlib/rolling_oos_admission_packet.md, and tests/governance/test_qlib_proof_artifacts.py. Validation: 22 governance tests passed; py_compile passed.",
+      "status": "done",
+      "created_at": "2026-05-20T03:23:52Z",
+      "resolved_at": "2026-05-20T03:58:20Z"
+    },
+    {
+      "task_id": "RES-ACT-QLIB-001-V2",
+      "from": "Gemini",
+      "to": "Copilot",
+      "message": "Chair reassigned review from Gemini to Copilot: Gemini review dispatch failed with quota exhaustion for roughly 20h41m; Copilot is idle and suitable for evidence/spec review.",
+      "status": "done",
+      "created_at": "2026-05-20T03:58:20Z",
+      "resolved_at": "2026-05-20T06:54:32Z"
+    },
+    {
+      "task_id": "RES-ACT-QLIB-001-V2",
+      "from": "Copilot",
+      "to": "Claude2",
+      "message": "Chair reassigned review from Copilot to Claude2: Copilot has repeated 402 quota failures for this review path; Claude2 has no runnable non-human-gate task and can perform evidence review.",
+      "status": "done",
+      "created_at": "2026-05-20T06:54:32Z",
+      "resolved_at": "2026-05-20T06:56:34Z"
+    },
+    {
+      "task_id": "RES-ACT-QLIB-001-V2",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved: production data proof and rolling OOS admission packet meet all acceptance criteria; returned to owner for finalization",
+      "status": "done",
+      "created_at": "2026-05-20T06:56:34Z",
+      "resolved_at": "2026-05-20T07:06:20Z"
+    }
+  ],
+  "blockers": []
+}

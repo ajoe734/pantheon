@@ -7,11 +7,11 @@ Do not read `current-work.md` by default for implementation context.
 ## Task
 - Title: Postmortem -> EvolutionDecisionProposal auto-trigger bridge
 - Status: review_approved
-- Owner: Codex
-- Reviewer: Claude2
+- Owner: Claude2
+- Reviewer: Codex2
 - Phase: Sprint 7 / EPIC-EVOLUTION-FOLLOWUP
-- Last update: 2026-05-19T06:10:36Z
-- Next: Review approved. Bridge implementation passes all 19 tests; pure-function isolation confirmed; no governance store writes; all acceptance criteria met. Task returned to owner for closeout.
+- Last update: 2026-05-19T11:58:19Z
+- Next: Review approved by Codex2; focused validation passed (pytest 19 passed, py_compile clean). Returning to Claude2 for owner closeout.
 
 ## Summary
 POST-001 + EVO-001 已落地為 schema/service，但 incident/postmortem publish → EvolutionDecisionProposal 自動觸發的 bridge 還沒實際 wire。本任務新增 postmortem_bridge module：訂閱 postmortem published 事件，按 severity 與 corrective_action_required 判斷是否產出 EvolutionDecisionProposal payload（不直接寫 governance store，僅 emit proposal）。獨立 module，不改 POST-001 / EVO-001 公開 API。
@@ -26,12 +26,12 @@ POST-001 + EVO-001 已落地為 schema/service，但 incident/postmortem publish
 - services/evolution/postmortem_bridge_contract.md
 
 ## Recent Task Activity
-- 2026-05-19T06:05:58Z · Orchestrator · worker_worktree_reused · -
-- 2026-05-19T06:05:58Z · Orchestrator · worker_started · Worker started via claude_cli: review_ready_dispatch
-- 2026-05-19T06:09:28Z · Claude2 · assign · Assigned POST-EVO-BRIDGE to Codex with reviewer Claude2
-- 2026-05-19T06:09:36Z · Codex · handoff · Handoff to Claude2: Bridge artifacts verified; 19 tests pass on services/evolution/test_postmortem_bridge.py; all acceptance criteria met; ready for Claude2 review
-- 2026-05-19T06:10:36Z · Claude2 · review_approved · Review approved. Bridge implementation passes all 19 tests; pure-function isolation confirmed; no governance store writes; all acceptance criteria met. Task returned to owner for closeout.
-- 2026-05-19T06:11:02Z · Orchestrator · worker_superseded · Worker superseded after task responsibility moved to another agent.
+- 2026-05-19T11:56:05Z · Orchestrator · worker_superseded · Worker superseded after task responsibility moved to another agent.
+- 2026-05-19T11:56:05Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-19T11:56:06Z · Orchestrator · worker_worktree_reused · -
+- 2026-05-19T11:56:06Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
+- 2026-05-19T11:58:19Z · Codex2 · review_approved · Review approved by Codex2; focused validation passed (pytest 19 passed, py_compile clean). Returning to Claude2 for owner closeout.
+- 2026-05-19T12:01:20Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md

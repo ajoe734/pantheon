@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "task_id": "GOLIVE-RESET-RECON-001",
+  "archived_at": "2026-05-19T17:28:20Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "GOLIVE-RESET-RECON-001",
+    "title": "Reconcile dropped 2026-05-18 GOLIVE assignments against V2 set",
+    "summary_zh": "Audit-only reconciliation. List the 7 preserved assign log records for the rolled-back 2026-05-18 -GOLIVE batch, map each old GOLIVE intent to its V2 task id (or mark superseded). Identify any unique requirement not covered by V2; if none, mark the old GOLIVE set superseded_by: blueprint_v2_2026_05_19. blocks_execution: false.",
+    "phase": "Phase 8 / EPIC-AUDIT-RECON",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/audit/golive-reset-reconciliation/README.md"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Closeout merged via PR #257 (merge f412739d); audit artifact PR #244 confirms 31 GOLIVE records superseded by blueprint_v2_2026_05_19; blocks_execution=false.",
+    "last_update": "2026-05-19T17:28:20Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：support/audit/golive-reset-reconciliation/README.md 列出 31 筆 2026-05-18 -GOLIVE assign，與 stash blob e58004d7 / 2e7c2a1d / e19d75019 驗證一致；7 個 mapping groups 對應 V2 task set，未發現 V2 未覆蓋的 unique requirement；blocks_execution=false。"
+    ],
+    "review_file": "support/audit/golive-reset-reconciliation/README.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T17:28:20Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/golive-reset-recon-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/GOLIVE-RESET-RECON-001",
+      "git_clean_required": false,
+      "commit": "0d90416f4a011ff79d1cd952233005eaf61d687d",
+      "commit_subject": "GOLIVE-RESET-RECON-001: record closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "closeout evidence and task brief for GOLIVE reset reconciliation.",
+        "Not changing": "reviewed audit mapping, ai-status.json, current-work.md, or L1 canonical docs.",
+        "Composes with": "merged PR #244 audit artifact and Codex review_approved handoff.",
+        "- rg -n \"superseded_by": "blueprint_v2_2026_05_19|blocks_execution: false|None found\" support/audit/golive-reset-reconciliation/README.md",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "GOLIVE-RESET-RECON-001",
+        "Reviewer": "Codex",
+        "Verified": "audit-only closeout checks listed above"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/GOLIVE-RESET-RECON-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "f412739d046c30b4bf278f96e2073b49c3ac643e",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "GOLIVE-RESET-RECON-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reconciliation audit complete. support/audit/golive-reset-reconciliation/README.md lists all 31 rolled-back GOLIVE assign records (7 mapping groups), maps each to V2 equivalents, confirms no unique requirements not covered by V2, and marks the set superseded_by: blueprint_v2_2026_05_19. Stash evidence verified (blobs e58004d7 / 2e7c2a1d / e19d75019). Commit 43ce6f74. Please review and approve.",
+      "status": "done",
+      "created_at": "2026-05-19T16:44:39Z",
+      "resolved_at": "2026-05-19T16:54:04Z"
+    },
+    {
+      "task_id": "GOLIVE-RESET-RECON-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: audit artifact verified against stash evidence and V2 mapping; owner should finalize closeout and mark done after PR merge.",
+      "status": "done",
+      "created_at": "2026-05-19T16:54:04Z",
+      "resolved_at": "2026-05-19T17:15:01Z"
+    },
+    {
+      "task_id": "GOLIVE-RESET-RECON-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Auto-reassigned ownership from Claude to Codex2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-05-19T17:15:01Z",
+      "resolved_at": "2026-05-19T17:28:20Z"
+    }
+  ],
+  "blockers": []
+}

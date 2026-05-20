@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "task_id": "BLA-010-V2",
+  "archived_at": "2026-05-20T01:52:36Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BLA-010-V2",
+    "title": "Broker go/no-go dashboard",
+    "summary_zh": "Dashboard read model showing broker live readiness state, checklist progress, blocking reasons.",
+    "phase": "Phase 8 / EPIC-BROKER-LIVE",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "BLA-001-V2",
+      "BLA-002-V2",
+      "BLA-003-V2"
+    ],
+    "artifacts": [
+      "services/broker/live_activation/dashboard.py",
+      "apps/management/src/screens/BrokerGoNoGo/",
+      "tests/broker/test_dashboard.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Closeout complete: PR #295 merged into dev at 7d0b0e4803b132f0230f0814c2386fc1837e1363; delivery commit a688a50789ad87c1c21601aa447fbca2b8eacb46 remains read-only/fail-closed. Verified: PYTHONDONTWRITEBYTECODE=1 pytest -q tests/broker/test_dashboard.py; PYTHONDONTWRITEBYTECODE=1 pytest -q tests/broker; PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/broker/live_activation/dashboard.py services/broker/live_activation/__init__.py tests/broker/test_dashboard.py.",
+    "last_update": "2026-05-20T01:52:36Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：dashboard read model 正確組合 BLA-001 criteria、BLA-002 risk-owner checklist、BLA-003 operator checklist，且維持 read-only/no live side effect 邊界。",
+      "驗證通過：PYTHONDONTWRITEBYTECODE=1 pytest -q tests/broker/test_dashboard.py；PYTHONDONTWRITEBYTECODE=1 pytest -q tests/broker；PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/broker/live_activation/dashboard.py services/broker/live_activation/__init__.py tests/broker/test_dashboard.py。",
+      "管理端 BrokerGoNoGo component source-level review 通過；repo 沒有 root/apps management JS package 或 tsconfig，所以無可執行 frontend typecheck。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T01:52:36Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bla-010-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BLA-010-V2",
+      "git_clean_required": false,
+      "commit": "a688a50789ad87c1c21601aa447fbca2b8eacb46",
+      "commit_subject": "BLA-010-V2: add broker go no-go dashboard",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "broker live activation dashboard read model, management BrokerGoNoGo read-only component, and focused dashboard tests.",
+        "Not changing": "L1 canonical docs, approval recording, Runtime Manager dispatch, broker adapters, or live broker enablement paths.",
+        "Composes with": "BLA-001-V2 activation criteria validator, BLA-002-V2 risk-owner checklist, and BLA-003-V2 operator checklist.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "BLA-010-V2",
+        "Reviewer": "Codex2",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 pytest -q tests/broker/test_dashboard.py (5 passed); PYTHONDONTWRITEBYTECODE=1 pytest -q tests/broker (45 passed); PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/broker/live_activation/dashboard.py services/broker/live_activation/__init__.py tests/broker/test_dashboard.py"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BLA-010-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "845d9c7192d8d0f36b7393701f294d9ae69d8855",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BLA-010-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review: PR #295 adds the broker go/no-go dashboard read model and BrokerGoNoGo management component. Task commit a688a50789ad87c1c21601aa447fbca2b8eacb46 composes BLA-001 criteria, BLA-002 risk-owner checklist, and BLA-003 operator checklist into a read-only no-side-effect dashboard with progress and blocking reasons. Local validation passed: PYTHONDONTWRITEBYTECODE=1 pytest -q tests/broker/test_dashboard.py (5 passed); PYTHONDONTWRITEBYTECODE=1 pytest -q tests/broker (45 passed); PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/broker/live_activation/dashboard.py services/broker/live_activation/__init__.py tests/broker/test_dashboard.py. Untracked .orchestrator/task-briefs/bla_010_v2.md is generated task context and intentionally excluded.",
+      "status": "done",
+      "created_at": "2026-05-20T01:41:51Z",
+      "resolved_at": "2026-05-20T01:47:40Z"
+    },
+    {
+      "task_id": "BLA-010-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: PR #295 is merged into dev, dashboard remains read-only/fail-closed, focused broker tests pass, and owner Codex may run closeout finalization.",
+      "status": "done",
+      "created_at": "2026-05-20T01:47:40Z",
+      "resolved_at": "2026-05-20T01:52:36Z"
+    }
+  ],
+  "blockers": []
+}
