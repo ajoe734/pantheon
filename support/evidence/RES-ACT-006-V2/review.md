@@ -38,3 +38,22 @@ claims.
 
 Approved. Implementation meets the acceptance criteria: R0-R7 tier per adapter, evidence
 presence panel, admission gate status, read-only, no execution side-effects.
+
+## Owner Closeout
+
+Owner: Codex2  
+Closeout date: 2026-05-20  
+Merged implementation PR: #313 (`c7805c461311ac5bc925cb47be772d9f7c4f2933`)
+
+Finalization scope is evidence-only: this note preserves the reviewer sign-off and owner
+closeout record after the approved implementation merged to `dev`. No canonical L1 docs,
+registry, deployment, broker, runtime, or capital surfaces are changed by closeout.
+
+Final verification command:
+
+```
+python3 -m py_compile services/governance/research_activation/handoff_packet.py
+pytest -q tests/governance/test_research_handoff_packet.py tests/governance/test_admission_gate.py tests/governance/test_production_data_proof.py tests/governance/test_pit_license_freshness.py
+```
+
+Result: `py_compile` OK; `28 passed in 2.31s`.
