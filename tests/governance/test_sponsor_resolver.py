@@ -18,7 +18,9 @@ from allocation_aggregation import (  # noqa: E402
 from portfolio_synthesis import (  # noqa: E402
     AllocationPolicyArtifact,
     PersonaAllocationProposal,
+    PoolRiskPolicy,
     SynthesisMethod,
+    VetoReason,
 )
 from services.governance.multi_persona.conflict_resolution_log import (  # noqa: E402
     validate_conflict_resolution_log,
@@ -173,6 +175,63 @@ def test_resolver_surfaces_unresolved_committee_conflict_as_open_conflict(tmp_pa
     assert resolved.conflict_resolution_log.open_conflicts[0].evidence_ref == (
         "support/evidence/MPO-001/conflict-resolution.json"
     )
+
+
+def test_source_vetoed_proposal_closes_live_binding_conflicts(tmp_path) -> None:
+    store = PersonaAllocationProposalJsonlStore(tmp_path / "proposals.jsonl")
+    ingest_persona_proposal(
+        make_proposal(
+            conviction=0.92,
+            directions=["long"],
+            target_weights={"2330.TW": 0.6},
+        ),
+        store=store,
+    )
+    ingest_persona_proposal(
+        make_proposal(
+            proposal_id="pap-beta",
+            persona_id="persona-beta",
+            conviction=0.91,
+            directions=["short"],
+            target_weights={"2330.TW": 0.1, "2454.TW": 0.8},
+            created_at="2026-05-15T14:01:00Z",
+            evidence_refs=["evidence://pap-beta"],
+            metadata={
+                "holding_period": "swing",
+                "risk_posture": "risk_on",
+                "strategy_family": "blocked_short",
+            },
+        ),
+        store=store,
+    )
+    synthesis = synthesize_allocation_with_log(
+        capital_pool_id="pool-paper",
+        proposal_ids=["pap-alpha", "pap-beta"],
+        method="risk_first",
+        risk_policy_ref="risk-policy://pool-paper/v1",
+        store=store,
+        pool_risk_policy=PoolRiskPolicy(forbidden_strategy_families={"blocked_short"}),
+        constraints_bundle={"environment": "paper"},
+    )
+
+    resolved = resolve_sponsor(
+        synthesis.artifact,
+        store=store,
+        source_conflict_resolution_log=synthesis.conflict_resolution_log,
+    )
+
+    assert synthesis.artifact.synthesis_method == SynthesisMethod.SINGLE_PROPOSAL.value
+    assert synthesis.conflict_resolution_log.vetoed_proposals[0].proposal_id == "pap-beta"
+    assert synthesis.conflict_resolution_log.vetoed_proposals[0].reason == (
+        VetoReason.FORBIDDEN_STRATEGY_FAMILY.value
+    )
+    assert resolved.conflict_report.requires_committee is True
+    assert resolved.has_open_conflicts is False
+    assert resolved.conflict_resolution_log.open_conflicts == ()
+    assert {conflict.conflict_type for conflict in resolved.conflict_resolution_log.classified_conflicts} >= {
+        "direction_conflict",
+        "sponsor_ambiguity",
+    }
 
 
 def test_committee_ref_closes_classifier_committee_conflicts(tmp_path) -> None:
