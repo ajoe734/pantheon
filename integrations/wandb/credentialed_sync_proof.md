@@ -6,6 +6,9 @@ Owner: `Codex`
 Reviewer: `Claude`
 Status: review-approved implementation proof
 
+Closeout note: Claude review approval is recorded in the task-scoped brief and
+status root; this proof changes no runtime adapter semantics.
+
 ## Scope
 
 This proof covers the explicit-gated W&B online sync path in
