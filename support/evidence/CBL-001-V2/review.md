@@ -1,8 +1,8 @@
 # CBL-001-V2 Review Notes
 
-**Reviewer:** Claude  
-**Owner:** Codex2  
-**Review date:** 2026-05-20  
+**Reviewer:** Claude
+**Owner:** Codex2
+**Review date:** 2026-05-20
 **Task:** CapitalBindingLiveReadiness schema (Part C2)
 
 ## Artifacts Reviewed
