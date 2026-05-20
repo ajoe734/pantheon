@@ -23,6 +23,7 @@ capital bindings at admission time.
 ## Review And Publication
 
 - Implementation PR: `#307`
+- Owner closeout PR: `#310`
 - Implementation task commit: `b6b9a8c7f8a23b600cfd3539db414effe2d51636`
 - Implementation merge commit: `25c71b30cb1a290a45f32a9e61f46b4f94ce606f`
 - Merge target: `dev`
@@ -31,6 +32,9 @@ capital bindings at admission time.
 The implementation commit and merge commit are already contained in
 `origin/dev` at closeout pickup. GitHub PR #307 reports merged state with
 successful Branch CI Gate and Orchestrator Sync checks.
+
+The owner closeout branch was refreshed from `origin/dev` after PR #310 opened
+so the final closeout commit can merge without a stale-base gate.
 
 ## Owner Verification
 
@@ -45,9 +49,9 @@ python3 -m pytest -q tests/governance
 
 Results:
 
-- focused `pytest`: `12 passed in 1.22s`
+- focused `pytest`: `12 passed in 0.96s`
 - `py_compile`: passed
-- full governance `pytest`: `150 passed in 25.66s`
+- full governance `pytest`: `167 passed in 24.45s`
 
 ## Boundaries
 
