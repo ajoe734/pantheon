@@ -1,0 +1,35 @@
+{
+  "version": "1.0",
+  "required_evidence": {
+    "paper_run_days_min": 14,
+    "canary_run_days_min": 7,
+    "ep4_packet_required": true,
+    "ep5_packet_required": true,
+    "broker_sandbox_smoke_required": true,
+    "broker_credential_scope_verified": true,
+    "kill_switch_demo_required": true,
+    "rollback_drill_required": true,
+    "bff_ha_readiness_required": true,
+    "telemetry_readiness_required": true,
+    "audit_retention_ready": true,
+    "first_week_observation_window_ready": true
+  },
+  "required_approvals": [
+    "risk_owner",
+    "operator"
+  ],
+  "hard_fail_conditions": [
+    "telemetry_unavailable",
+    "audit_unavailable",
+    "kill_switch_unavailable",
+    "rollback_target_missing",
+    "broker_credential_unverified",
+    "bff_control_plane_unhealthy",
+    "capital_binding_unapproved",
+    "runtime_binding_unverified",
+    "openclaw_as_execution_kernel_attempted"
+  ],
+  "cooldown_policy": {
+    "min_hours_after_short_term_drift_before_live_change": 24
+  }
+}

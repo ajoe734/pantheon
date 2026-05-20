@@ -1,0 +1,719 @@
+{
+  "browser_probe_base_url": "https://pantheon-dev.lovable.app",
+  "checked_at": "2026-05-19T15:55:28Z",
+  "component_status": {
+    "LSP-002-V2": true,
+    "LSP-003-V2": true,
+    "LSP-004-V2": false
+  },
+  "components": {
+    "browser_probe": {
+      "all_passed": true,
+      "app_page_reachable": true,
+      "base_url": "https://pantheon-dev.lovable.app",
+      "bff_me": {
+        "body_prefix": null,
+        "duration_ms": 1540,
+        "error": null,
+        "mock_seed_detected": false,
+        "mock_seed_matches": [],
+        "ok": true,
+        "path": "/bff/me",
+        "status": 200
+      },
+      "checked_at": "2026-05-19T15:55:32Z",
+      "errors": [],
+      "health": {
+        "body_prefix": null,
+        "duration_ms": 1695,
+        "error": null,
+        "mock_seed_detected": false,
+        "mock_seed_matches": [],
+        "ok": true,
+        "path": "/health",
+        "status": 200
+      },
+      "mock_seed_free": true,
+      "task_id": "LSP-002-V2"
+    },
+    "bundle_hash_capture": {
+      "asset_count": 3,
+      "assets": [
+        {
+          "bytes": 1820,
+          "kind": "index_html",
+          "sha256": "6d883a2577b6b40096813bffd25fd27b525b70ef4d2f8626a213d30d6c18c97e",
+          "url": "https://pantheon-dev.lovable.app/management"
+        },
+        {
+          "bytes": 2008993,
+          "kind": "js_bundle",
+          "sha256": "4d2243c39e6f1aae730e0f102c8b36738f7d32c94d797bc9582e8c868d51ffab",
+          "url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "bytes": 21296,
+          "kind": "js_bundle",
+          "sha256": "a86e084b4f82709814be6c15fd6305daa783fda87ad95402da9a4d3a1dd6d748",
+          "url": "https://pantheon-dev.lovable.app/~flock.js"
+        }
+      ],
+      "checked_at": "2026-05-19T15:55:37Z",
+      "deployment_url": "https://pantheon-dev.lovable.app/management",
+      "errors": [],
+      "index": {
+        "bytes": 1820,
+        "kind": "index_html",
+        "sha256": "6d883a2577b6b40096813bffd25fd27b525b70ef4d2f8626a213d30d6c18c97e",
+        "url": "https://pantheon-dev.lovable.app/management"
+      },
+      "js_bundle_urls": [
+        "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js",
+        "https://pantheon-dev.lovable.app/~flock.js"
+      ],
+      "js_bundles": {
+        "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js": {
+          "bytes": 2008993,
+          "kind": "js_bundle",
+          "sha256": "4d2243c39e6f1aae730e0f102c8b36738f7d32c94d797bc9582e8c868d51ffab",
+          "url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        "https://pantheon-dev.lovable.app/~flock.js": {
+          "bytes": 21296,
+          "kind": "js_bundle",
+          "sha256": "a86e084b4f82709814be6c15fd6305daa783fda87ad95402da9a4d3a1dd6d748",
+          "url": "https://pantheon-dev.lovable.app/~flock.js"
+        }
+      },
+      "passed": true,
+      "task_id": "LSP-003-V2"
+    },
+    "forbidden_path_scan": {
+      "bundle_urls": [
+        "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js",
+        "https://pantheon-dev.lovable.app/~flock.js"
+      ],
+      "checked_at": "2026-05-19T15:55:41Z",
+      "deployment_url": "https://pantheon-dev.lovable.app/management",
+      "errors": [],
+      "forbidden_signals": [
+        {
+          "column": 51381,
+          "line": 716,
+          "signal": "seed.",
+          "snippet": "...apshotted to localStorage. Snapshot now to force-write, or reset to clear and reload from seed.\",persistSnapshot:\"Snapshot now\",persistSnapshotDone:\"Persistence snapshot written\",persis...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 140434,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...re=\"BFF-CONSOL-007\",xre=\"2026-05-13T11:28:46Z\",yre={brief_path:\"execute-plans/src/lib/bff/seed.ts\",actual_frontend_path:\"../execute-plans/src/lib/bff-v1/seed.ts\",seed_data_path:\"../exec...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 140497,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...\"execute-plans/src/lib/bff/seed.ts\",actual_frontend_path:\"../execute-plans/src/lib/bff-v1/seed.ts\",seed_data_path:\"../execute-plans/src/mocks/seed.ts\",notes:[\"The pantheon checkout does...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 140542,
+          "line": 760,
+          "signal": "/mocks/",
+          "snippet": "...ontend_path:\"../execute-plans/src/lib/bff-v1/seed.ts\",seed_data_path:\"../execute-plans/src/mocks/seed.ts\",notes:[\"The pantheon checkout does not contain an execute-plans/ directory.\",\"The...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 140549,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...path:\"../execute-plans/src/lib/bff-v1/seed.ts\",seed_data_path:\"../execute-plans/src/mocks/seed.ts\",notes:[\"The pantheon checkout does not contain an execute-plans/ directory.\",\"The sibl...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 140715,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...rectory.\",\"The sibling execute-plans checkout exposes the seed accessor at src/lib/bff-v1/seed.ts; src/lib/bff/client.ts and src/lib/bff-v1/legacy.ts bridge the current live/mock surfac...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 141313,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...ssor that should be replaced by the typed live surface or command client and removed from seed.ts after the migration task lands.\",deferred:\"No safe direct live replacement. In strict l...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 145251,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...e write facade/tests.\"},{name:\"bff.strategies.list\",category:\"live_required\",seed_source:\"seed.strategies\",live_routes:[\"GET /bff/strategies\"],replacement:\"managementClient.strategies.l...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 145543,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...gement Console family.\"},{name:\"bff.strategies.get\",category:\"live_required\",seed_source:\"seed.strategies\",live_routes:[\"GET /bff/strategies/{id}\"],replacement:\"managementClient.strateg...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 145871,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...age/audit related tabs.\"},{name:\"bff.personas.list\",category:\"live_required\",seed_source:\"seed.personas\",live_routes:[\"GET /bff/personas\"],replacement:\"managementClient.personas.list or...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 146153,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...nagement Console family.\"},{name:\"bff.personas.get\",category:\"live_required\",seed_source:\"seed.personas\",live_routes:[\"GET /bff/personas/{id}\"],replacement:\"managementClient.personas.ge...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 146475,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...mory from live BFF.\"},{name:\"bff.capitalPools.list\",category:\"live_required\",seed_source:\"seed.capitalPools\",live_routes:[\"GET /bff/capital-pools\"],replacement:\"managementClient.capital...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 146769,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...ck A fixture family.\"},{name:\"bff.capitalPools.get\",category:\"live_required\",seed_source:\"seed.capitalPools\",live_routes:[\"GET /bff/capital-pools/{id}\"],replacement:\"managementClient.ca...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 147090,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "... in strict live.\"},{name:\"bff.rankingFormulas.list\",category:\"live_required\",seed_source:\"seed.rankingFormulas\",live_routes:[\"GET /bff/ranking-formulas\"],replacement:\"managementClient.r...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 147420,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...atibility routes.\"},{name:\"bff.rankingFormulas.get\",category:\"live_required\",seed_source:\"seed.rankingFormulas\",live_routes:[\"GET /bff/ranking-formulas/{id}\"],replacement:\"managementCli...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 147707,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "... live wiring surface.\"},{name:\"bff.rebalances.list\",category:\"live_required\",seed_source:\"seed.rebalances\",live_routes:[\"GET /bff/rebalances\"],replacement:\"managementClient.rebalances.l...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 147997,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...vernance queue family.\"},{name:\"bff.rebalances.get\",category:\"live_required\",seed_source:\"seed.rebalances\",live_routes:[\"GET /bff/rebalances/{id}\"],replacement:\"managementClient.rebalan...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 148290,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...nce live transcript.\"},{name:\"bff.deployments.list\",category:\"live_required\",seed_source:\"seed.deployments\",live_routes:[\"GET /bff/deployments\"],replacement:\"managementClient.deployment...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 148578,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...ack A fixture family.\"},{name:\"bff.deployments.get\",category:\"live_required\",seed_source:\"seed.deployments\",live_routes:[\"GET /bff/deployments/{id}\"],replacement:\"managementClient.deplo...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 148885,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...and approval pointers.\"},{name:\"bff.evolution.list\",category:\"live_required\",seed_source:\"seed.evolutionPrograms\",live_routes:[\"GET /bff/evolution-programs\"],replacement:\"managementClie...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 149180,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...\"Pack B fixture family.\"},{name:\"bff.evolution.get\",category:\"live_required\",seed_source:\"seed.evolutionPrograms\",live_routes:[\"GET /bff/evolution-programs/{id}\"],replacement:\"managemen...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 149484,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...B owns live transcript.\"},{name:\"bff.research.list\",category:\"live_required\",seed_source:\"seed.researchExperiments\",live_routes:[\"GET /bff/research-experiments\"],replacement:\"management...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 149834,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...es research-experiments.\"},{name:\"bff.research.get\",category:\"live_required\",seed_source:\"seed.researchExperiments\",live_routes:[\"GET /bff/research-experiments/{id}\"],replacement:\"manag...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 150142,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...ink analysis evidence.\"},{name:\"bff.artifacts.list\",category:\"live_required\",seed_source:\"seed.artifacts\",live_routes:[\"GET /bff/artifacts\"],replacement:\"managementClient.artifacts.list...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 150420,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...\"Pack B fixture family.\"},{name:\"bff.artifacts.get\",category:\"live_required\",seed_source:\"seed.artifacts\",live_routes:[\"GET /bff/artifacts/{id}\"],replacement:\"managementClient.artifacts...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 150696,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...ail should include lineage.\"},{name:\"bff.jobs.list\",category:\"live_required\",seed_source:\"seed.jobs\",live_routes:[\"GET /bff/jobs\"],replacement:\"managementClient.jobs.list or lists.jobs\"...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 150877,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...obs\",follow_up_tasks:[\"BFF-CONSOL-018\",\"BFF-CONSOL-025\"],priority:\"P0\",notes:\"There is no seed.ts jobs.get; managementClient has a placeholder detail gap owned by BFF-CONSOL-018.\"},{nam...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 151032,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...wned by BFF-CONSOL-018.\"},{name:\"bff.runtimes.list\",category:\"live_required\",seed_source:\"seed.runtimes\",live_routes:[\"GET /bff/runtimes\"],replacement:\"managementClient.runtimes.list or...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 151352,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...sed for production live.\"},{name:\"bff.runtimes.get\",category:\"live_required\",seed_source:\"seed.runtimes\",live_routes:[\"GET /bff/runtimes/{id}\"],replacement:\"managementClient.runtimes.ge...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 151632,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...e A owns live transcript.\"},{name:\"bff.alerts.list\",category:\"live_required\",seed_source:\"seed.alerts\",live_routes:[\"GET /bff/alerts\"],replacement:\"managementClient.alerts.list or lists...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 151895,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...es:\"Pack C fixture family.\"},{name:\"bff.alerts.get\",category:\"live_required\",seed_source:\"seed.alerts\",live_routes:[\"GET /bff/alerts/{id}\"],replacement:\"managementClient.alerts.get\",fol...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 152177,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": ".../bff/risk/alerts/{id}.\"},{name:\"bff.incidents.list\",category:\"live_required\",seed_source:\"seed.incidents\",live_routes:[\"GET /bff/incidents\"],replacement:\"managementClient.incidents.list...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 152455,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...\"Pack C fixture family.\"},{name:\"bff.incidents.get\",category:\"live_required\",seed_source:\"seed.incidents\",live_routes:[\"GET /bff/incidents/{id}\"],replacement:\"managementClient.incidents...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 152770,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...lback-option evidence.\"},{name:\"bff.approvals.list\",category:\"live_required\",seed_source:\"seed.approvals\",live_routes:[\"GET /bff/approvals\"],replacement:\"managementClient.approvals.list...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 153048,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...\"Pack C fixture family.\"},{name:\"bff.approvals.get\",category:\"live_required\",seed_source:\"seed.approvals\",live_routes:[\"GET /bff/approvals/{id}\"],replacement:\"managementClient.approvals...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 153340,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "... deployment-link evidence.\"},{name:\"bff.audit.list\",category:\"live_required\",seed_source:\"seed.auditEvents\",live_routes:[\"GET /bff/audit\"],replacement:\"managementClient.audit.list or li...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 153654,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...drawer should be disabled.\"},{name:\"bff.tools.list\",category:\"live_required\",seed_source:\"seed.tools\",live_routes:[\"GET /bff/tools\"],replacement:\"managementClient.tools.list or lists.to...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 153912,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...tes:\"Pack C fixture family.\"},{name:\"bff.tools.get\",category:\"live_required\",seed_source:\"seed.tools\",live_routes:[\"GET /bff/tools/{id}\"],replacement:\"managementClient.tools.get\",follow...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 154190,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "... seed in strict live.\"},{name:\"bff.mcpServers.list\",category:\"live_required\",seed_source:\"seed.mcpServers\",live_routes:[\"GET /bff/mcp-servers\"],replacement:\"managementClient.mcpServers....",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 154486,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...mcp-final alias route.\"},{name:\"bff.mcpServers.get\",category:\"live_required\",seed_source:\"seed.mcpServers\",live_routes:[\"GET /bff/mcp-servers/{id}\"],replacement:\"managementClient.mcpSer...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 154780,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...se seed in strict live.\"},{name:\"bff.mcpTools.list\",category:\"live_required\",seed_source:\"seed.mcpTools\",live_routes:[\"GET /bff/mcp-tools\"],replacement:\"managementClient.mcpTools.list o...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 155066,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...s mcp-final alias route.\"},{name:\"bff.mcpTools.get\",category:\"live_required\",seed_source:\"seed.mcpTools\",live_routes:[\"GET /bff/mcp-tools/{id}\"],replacement:\"managementClient.mcpTools.g...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 155354,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "... use seed in strict live.\"},{name:\"bff.skills.list\",category:\"live_required\",seed_source:\"seed.skills\",live_routes:[\"GET /bff/skills\"],replacement:\"managementClient.skills.list or lists...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 155617,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...es:\"Pack C fixture family.\"},{name:\"bff.skills.get\",category:\"live_required\",seed_source:\"seed.skills\",live_routes:[\"GET /bff/skills/{id}\"],replacement:\"managementClient.skills.get\",fol...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 155904,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...se seed in strict live.\"},{name:\"bff.channels.list\",category:\"live_required\",seed_source:\"seed.channels\",live_routes:[\"GET /bff/channels\"],replacement:\"managementClient.channels.list or...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 156207,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...E-topic alignment input.\"},{name:\"bff.channels.get\",category:\"live_required\",seed_source:\"seed.channels\",live_routes:[\"GET /bff/channels/{id}\"],replacement:\"managementClient.channels.ge...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 156500,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...ed in strict live.\"},{name:\"bff.routePolicies.list\",category:\"live_required\",seed_source:\"seed.routePolicies\",live_routes:[\"GET /bff/personas\",\"GET /bff/personas/{id}/route-policy\"],rep...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 156894,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...-policy BFF routes.\"},{name:\"bff.routePolicies.get\",category:\"live_required\",seed_source:\"seed.routePolicies\",live_routes:[\"GET /bff/personas\",\"GET /bff/personas/{id}/route-policy\"],rep...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 157308,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...policy DTOs.\"},{name:\"bff.routePolicies.forPersona\",category:\"live_required\",seed_source:\"seed.routePolicies\",live_routes:[\"GET /bff/personas/{id}/route-policy\"],replacement:\"Wire perso...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 157640,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...t backend replacement.\"},{name:\"bff.policyVersions.list\",category:\"deferred\",seed_source:\"seed.policyVersions\",live_routes:[],replacement:\"Add version history to route-policy DTO or cre...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 158058,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "... for policy versions.\"},{name:\"bff.permissionMatrix.get\",category:\"deferred\",seed_source:\"seed.permissionMatrices\",live_routes:[],replacement:\"Wire a permissions/capabilities route or h...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 158469,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...e in the manifest.\"},{name:\"bff.permissionMatrices.list\",category:\"deferred\",seed_source:\"seed.permissionMatrices\",live_routes:[],replacement:\"Wire a permissions/capabilities route or h...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 158885,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...e in the manifest.\"},{name:\"bff.memoryUpdates.list\",category:\"live_required\",seed_source:\"seed.memoryUpdates\",live_routes:[\"GET /bff/personas\",\"GET /bff/personas/{id}/memory\"],replaceme...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 159284,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "... BFF routes.\"},{name:\"bff.memoryUpdates.forPersona\",category:\"live_required\",seed_source:\"seed.memoryUpdates\",live_routes:[\"GET /bff/personas/{id}/memory\"],replacement:\"Wire persona mem...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 159607,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...ackend replacement.\"},{name:\"bff.consultRules.list\",category:\"live_required\",seed_source:\"seed.consultRules\",live_routes:[\"GET /bff/personas\",\"GET /bff/personas/{id}/route-policy\"],repl...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 159967,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...P2\",notes:\"BFF-CONSOL-028: folded consult rules into persona route-policy DTOs instead of seed.\"},{name:\"bff.consultRules.get\",category:\"live_required\",seed_source:\"seed.consultRules\",l...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 160042,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...TOs instead of seed.\"},{name:\"bff.consultRules.get\",category:\"live_required\",seed_source:\"seed.consultRules\",live_routes:[\"GET /bff/personas\",\"GET /bff/personas/{id}/route-policy\"],repl...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 160434,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...route-policy DTOs.\"},{name:\"bff.evolutionRuns.list\",category:\"live_required\",seed_source:\"seed.evolutionRuns\",live_routes:[\"GET /bff/evolution-programs\",\"GET /bff/evolution-programs/{id...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 160805,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "... run routes.\"},{name:\"bff.evolutionRuns.forProgram\",category:\"live_required\",seed_source:\"seed.evolutionRuns\",live_routes:[\"GET /bff/evolution-programs/{id}/runs\"],replacement:\"Wire evo...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 161138,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...te exists.\"},{name:\"bff.evolutionCandidates.forRun\",category:\"live_required\",seed_source:\"seed.evolutionCandidates\",live_routes:[\"GET /bff/evolution-programs\",\"GET /bff/evolution-progra...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 161629,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...oped candidate route.\"},{name:\"bff.fitnessFormulas.list\",category:\"deferred\",seed_source:\"seed.fitnessFormulas\",live_routes:[],replacement:\"Create an evolution formula/config route or h...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 162025,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...e in backend manifest.\"},{name:\"bff.fitnessFormulas.get\",category:\"deferred\",seed_source:\"seed.fitnessFormulas\",live_routes:[],replacement:\"Create an evolution formula/config detail rou...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 162428,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...te in backend manifest.\"},{name:\"bff.mutationRules.list\",category:\"deferred\",seed_source:\"seed.mutationRules\",live_routes:[],replacement:\"Create an evolution mutation-rule route or hide...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 162841,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...t.\"},{name:\"bff.allocationSimulations.forRebalance\",category:\"mock_only_dev\",seed_source:\"seed.allocationSimulations\",live_routes:[],replacement:\"Hide or show an explicit mock-only simu...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 163187,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...; no live authority.\"},{name:\"bff.policyViolations.list\",category:\"deferred\",seed_source:\"seed.policyViolations\",live_routes:[],replacement:\"Add policy-violation route or fold into pers...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 163602,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...kend manifest.\"},{name:\"bff.policyViolations.forSubject\",category:\"deferred\",seed_source:\"seed.policyViolations\",live_routes:[],replacement:\"Add subject-scoped policy-violation route or...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 164017,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "... non-seed source.\"},{name:\"bff.evaluationRuns.list\",category:\"live_required\",seed_source:\"seed.evaluationRuns\",live_routes:[\"GET /bff/personas\",\"GET /bff/personas/{id}/evaluations\"],rep...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 164441,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...ion routes.\"},{name:\"bff.evaluationRuns.forSubject\",category:\"live_required\",seed_source:\"seed.evaluationRuns\",live_routes:[\"GET /bff/personas/{id}/evaluations\"],replacement:\"Use the li...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 164873,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...not seeded.\"},{name:\"bff.objectVersions.forSubject\",category:\"live_required\",seed_source:\"seed.objectVersions\",live_routes:[\"GET /bff/strategies/{id}/specs\"],replacement:\"Use strategy s...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 165321,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...ical route exists.\"},{name:\"bff.featureSets.forStrategy\",category:\"deferred\",seed_source:\"seed.featureSets\",live_routes:[],replacement:\"Add strategy feature-set route or fold into strat...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 165725,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...-only today.\"},{name:\"bff.performanceSeries.forStrategy\",category:\"deferred\",seed_source:\"seed.performanceSeries\",live_routes:[],replacement:\"Add strategy performance route or map to a ...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 166157,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...how seed as live.\"},{name:\"bff.watchers.forSubject\",category:\"mock_only_dev\",seed_source:\"seed.watchers\",live_routes:[],replacement:\"Hide watcher chips or replace with a real subscripti...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 167175,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...ora live adapter.\"},{name:\"bff.allocationLimits.forPool\",category:\"deferred\",seed_source:\"seed.allocationLimits\",live_routes:[],replacement:\"Fold allocation limits into capital-pool det...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 167575,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...on-limits route found.\"},{name:\"bff.poolFreezes.forPool\",category:\"deferred\",seed_source:\"seed.poolFreezes\",live_routes:[],replacement:\"Fold freezes into capital-pool detail DTO or add ...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 167966,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...found.\"},{name:\"bff.deploymentStages.forDeployment\",category:\"live_required\",seed_source:\"seed.deploymentStages\",live_routes:[\"GET /bff/deployments/{id}\"],replacement:\"Read stages from ...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 168338,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...pproval pointer.\"},{name:\"bff.mcpSecrets.forServer\",category:\"mock_only_dev\",seed_source:\"seed.mcpSecrets\",live_routes:[],replacement:\"Hide in live mode unless a masked secret-metadata ...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 168672,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...ive seed-only panel.\"},{name:\"bff.promotions.forProgram\",category:\"deferred\",seed_source:\"seed.promotions\",live_routes:[],replacement:\"Add promotion-history route or fold promotion hist...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 169085,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...ckend manifest.\"},{name:\"bff.metricFreezes.forRebalance\",category:\"deferred\",seed_source:\"seed.metricFreezes\",live_routes:[],replacement:\"Fold metric freezes into rebalance detail DTO o...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 169485,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...ute found.\"},{name:\"bff.rebalanceOverrides.forRebalance\",category:\"deferred\",seed_source:\"seed.rebalanceOverrides\",live_routes:[],replacement:\"Fold overrides into rebalance detail DTO o...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 169894,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...found.\"},{name:\"bff.rebalanceWorkflow.forRebalance\",category:\"live_required\",seed_source:\"seed.rebalanceWorkflowSteps\",live_routes:[\"GET /bff/rebalances/{id}\"],replacement:\"Read workflo...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 170241,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "... should prove the replacement.\"},{name:\"bff.search\",category:\"live_required\",seed_source:\"seed.searchableObjects\",live_routes:[\"GET /bff/search\"],replacement:\"Add a live search adapter;...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 170533,
+          "line": 760,
+          "signal": "seed.",
+          "snippet": "...follow_up_tasks:[\"BFF-CONSOL-025\"],priority:\"P0\",notes:\"Command palette currently queries seed.searchableObjects directly.\"}],kre=[{priority:\"P0\",helpers:[\"mutations\",\"bff.commands.requ...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 89,
+          "line": 930,
+          "signal": "/mocks/",
+          "snippet": "...\\n\\n1. \u628a Pack C 78 \u689d\u898f\u7bc4\u56de\u61c9\uff0c\u8207 \\`src/lib/v4/\\`\u3001\\`src/lib/bff/\\`\u3001\\`src/lib/stateMachines/\\`\u3001\\`src/mocks/seed.ts\\` \u9010\u689d\u5c0d\u7167\u3002\\n2. \u9047\u5230\u4efb\u4f55\u4e00\u8655\u300c\u5be6\u4f5c\u7aef\u5fc5\u9808\u505a\u9078\u64c7\uff0c\u4f46\u898f\u7bc4\u6c92\u6709\u7d66\u4f9d\u64da\u300d\u5373\u8a18\u9304\u70ba gap\u3002\\n3. \u5c0d\u77db\u76fe\u9805\uff1a\u4ee5 v4 \u2192 v3 \u2192 v2 \u2192 v1 \u9806\u5e8f\u5957\u7528\uff0c\u4ecd\u7121\u6cd5...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        },
+        {
+          "column": 96,
+          "line": 930,
+          "signal": "seed.",
+          "snippet": "...Pack C 78 \u689d\u898f\u7bc4\u56de\u61c9\uff0c\u8207 \\`src/lib/v4/\\`\u3001\\`src/lib/bff/\\`\u3001\\`src/lib/stateMachines/\\`\u3001\\`src/mocks/seed.ts\\` \u9010\u689d\u5c0d\u7167\u3002\\n2. \u9047\u5230\u4efb\u4f55\u4e00\u8655\u300c\u5be6\u4f5c\u7aef\u5fc5\u9808\u505a\u9078\u64c7\uff0c\u4f46\u898f\u7bc4\u6c92\u6709\u7d66\u4f9d\u64da\u300d\u5373\u8a18\u9304\u70ba gap\u3002\\n3. \u5c0d\u77db\u76fe\u9805\uff1a\u4ee5 v4 \u2192 v3 \u2192 v2 \u2192 v1 \u9806\u5e8f\u5957\u7528\uff0c\u4ecd\u7121\u6cd5\u89e3\u7684\u8a18\u9304\u70ba...",
+          "source_url": "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js"
+        }
+      ],
+      "passed": false,
+      "scanned_urls": [
+        "https://pantheon-dev.lovable.app/assets/index-DdbnZ6Bd.js",
+        "https://pantheon-dev.lovable.app/management",
+        "https://pantheon-dev.lovable.app/~flock.js"
+      ],
+      "task_id": "LSP-004-V2"
+    }
+  },
+  "deployment_url": "https://pantheon-dev.lovable.app/management",
+  "errors": [
+    "LSP-004-V2 failed: forbidden_signals=84 errors=0"
+  ],
+  "inputs": {
+    "browser_probe_base_url": "https://pantheon-dev.lovable.app",
+    "browser_probe_token_provided": false,
+    "deployment_url": "https://pantheon-dev.lovable.app/management",
+    "max_js_assets": 50,
+    "timeout_seconds": 12.0
+  },
+  "passed": false,
+  "summary": {
+    "browser_probe_error_count": 0,
+    "bundle_capture_error_count": 0,
+    "forbidden_scan_error_count": 0,
+    "forbidden_signal_count": 84,
+    "js_bundle_count": 2,
+    "scanned_url_count": 3
+  },
+  "task_id": "LSP-005-V2"
+}

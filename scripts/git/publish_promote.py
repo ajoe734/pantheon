@@ -31,7 +31,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
 
-# Accept both YYYY.WW.P (legacy wave) and YYYY.MM.DD.N (per-task) formats.
+# Accept the current YYYY.WW.P format and historical YYYY.MM.DD.N tags.
 RELEASE_TAG_RE = re.compile(r"^refs/tags/release/(v\d{4}\.\d{2}(?:\.\d+){1,2})$")
 
 
