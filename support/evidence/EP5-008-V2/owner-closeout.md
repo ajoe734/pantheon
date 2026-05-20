@@ -64,3 +64,13 @@ Result:
 - No L1 canonical architecture document was changed for this task.
 - This closeout adds task evidence only; it does not broaden harness behavior,
   add broker calls, or enable production live capital routing.
+
+## PR Refresh
+
+After closeout PR #299 opened, GitHub reported the branch as `BEHIND`.
+Owner finalization merged the latest `origin/dev` into `task/EP5-008-V2`
+and kept a final task-scoped closeout commit on top so the done delivery gate
+can read EP5-008-V2 trailers from branch HEAD.
+
+- Refreshed against `origin/dev`:
+  `845d9c7192d8d0f36b7393701f294d9ae69d8855`
