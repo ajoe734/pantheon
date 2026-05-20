@@ -35,7 +35,7 @@
     "strat-spec://tw_equity/mean-reversion-v1"
   ],
   "synthesis": {
-    "artifact_id": "44e3a5fb-57ab-4d6e-bb1b-697f55bc5666",
+    "artifact_id": "e7f9cc45-da7a-4159-b049-9a9766ec5429",
     "capital_pool_id": "pool-paper",
     "sponsor_persona_id": "persona-alpha",
     "synthesis_method": "weighted_fusion",
@@ -48,7 +48,7 @@
       "0050.TW": 0.16609152288072018,
       "2454.TW": 0.20086271567891972
     },
-    "mgmt_syn_conflict_log_id": "a18f9a30-8abd-409e-9a7e-e6dd8633e431"
+    "mgmt_syn_conflict_log_id": "6be3a687-ebe4-4c23-ae63-451ec5ab3a65"
   },
   "sponsor_resolution": {
     "sponsor_persona_id": "persona-alpha",
@@ -58,16 +58,16 @@
     ],
     "has_open_conflicts": false,
     "conflict_resolution_log": {
-      "log_id": "a18f9a30-8abd-409e-9a7e-e6dd8633e431",
+      "log_id": "6be3a687-ebe4-4c23-ae63-451ec5ab3a65",
       "capital_pool_id": "pool-paper",
       "scope_ref": "paper",
-      "timestamp": "2026-05-20T15:47:54Z",
+      "timestamp": "2026-05-20T16:00:46Z",
       "proposal_ids": [
         "pap-alpha-001",
         "pap-beta-001"
       ],
       "sponsor_persona_id": "persona-alpha",
-      "artifact_id": "44e3a5fb-57ab-4d6e-bb1b-697f55bc5666",
+      "artifact_id": "e7f9cc45-da7a-4159-b049-9a9766ec5429",
       "synthesis_method": "weighted_fusion",
       "vetoed_proposals": [],
       "weighting_inputs": {
@@ -158,7 +158,7 @@
         }
       ],
       "open_conflicts": [],
-      "source_conflict_resolution_log_id": "a18f9a30-8abd-409e-9a7e-e6dd8633e431",
+      "source_conflict_resolution_log_id": "6be3a687-ebe4-4c23-ae63-451ec5ab3a65",
       "schema_version": "MultiPersonaConflictResolutionLog.v1"
     }
   },
