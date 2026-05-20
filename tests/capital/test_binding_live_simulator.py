@@ -138,6 +138,34 @@ def test_simulator_refuses_live_side_effect_or_production_flag_requests() -> Non
     assert "operator" not in result.simulated_approvals
 
 
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("dry_run", "false"),
+        ("dry_run", 0),
+        ("simulation_only", "no"),
+        ("simulation_only", None),
+    ],
+)
+def test_simulator_refuses_false_like_safety_guard_values(key: str, value) -> None:
+    packet = _simulation_packet()
+    packet["operations"] = {key: value}
+
+    result = simulate_binding_live_activation(packet, at=NOW)
+
+    assert result.passed is False
+    assert result.live_side_effects_attempted is True
+    assert result.live_side_effects_executed is False
+    assert result.issues[0].code == "live_side_effect_requested"
+    assert result.issues[0].path == f"operations.{key}"
+    assert (
+        "simulator refuses non-dry-run or non-simulation requests"
+        in result.blocking_reasons
+    )
+    assert "risk_owner" not in result.simulated_approvals
+    assert "operator" not in result.simulated_approvals
+
+
 def test_simulator_does_not_override_explicit_operator_rejection() -> None:
     packet = _simulation_packet(
         readiness=_readiness_packet(

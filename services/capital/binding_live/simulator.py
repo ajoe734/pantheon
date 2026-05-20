@@ -619,7 +619,7 @@ def _live_side_effect_issues(
                         "simulator refuses live side-effect or production flag requests",
                     )
                 )
-            if normalized in FALSE_MUST_BLOCK_KEYS and child is False:
+            if normalized in FALSE_MUST_BLOCK_KEYS and _explicit_false(child):
                 issues.append(
                     BindingLiveActivationSimulationIssue(
                         "live_side_effect_requested",
@@ -682,6 +682,20 @@ def _requested(value: Any) -> bool:
     if isinstance(value, (Sequence, Mapping)):
         return bool(value)
     return True
+
+
+def _explicit_false(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return value is False
+    if isinstance(value, (int, float)):
+        return value == 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"", "0", "false", "none", "no"}
+    if isinstance(value, (Sequence, Mapping)):
+        return not bool(value)
+    return False
 
 
 def _unique(values: Sequence[str]) -> tuple[str, ...]:
