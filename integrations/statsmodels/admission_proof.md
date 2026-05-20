@@ -121,6 +121,7 @@ The admission proof fails closed if any of these fields drift:
 | `safety_assertions.no_order_route` | `true` |
 | `safety_assertions.no_registry_write` | `true` |
 | `safety_assertions.deployment_stage_remains_none` | `true` |
+| `safety_assertions.artifact_state_request_limited_to_candidate` | `true` |
 
 ## Verification
 
