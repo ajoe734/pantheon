@@ -434,5 +434,7 @@
     "pending_human_signoff": 1,
     "total": 16
   },
-  "task_id": "BPC-002-V2"
+  "task_id": "BPC-002-V2",
+  "closeout_at": "2026-05-21T00:00:00Z",
+  "closeout_note": "PR #377 merged. All 8 pytest tests pass. Verdict remains pending_human_signoff until production activation gates receive human signoff per blueprint §16."
 }
