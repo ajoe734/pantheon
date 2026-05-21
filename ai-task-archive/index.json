@@ -1,9 +1,9 @@
 {
   "version": 1,
-  "updated_at": "2026-05-20T11:54:36Z",
+  "updated_at": "2026-05-21T03:00:00Z",
   "counts": {
-    "total": 1277,
-    "completed": 1254,
+    "total": 1278,
+    "completed": 1255,
     "superseded": 23
   },
   "recent_terminal_ids": [
@@ -26,6 +26,7 @@
     "OODA-CANARY-004-V2",
     "CBL-002-V2",
     "CBL-003-V2",
-    "HA-009-V2"
+    "HA-009-V2",
+    "BPC-003-V2"
   ]
 }
