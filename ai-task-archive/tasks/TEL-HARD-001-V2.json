@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "task_id": "TEL-HARD-001-V2",
+  "archived_at": "2026-05-20T16:06:16Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "TEL-HARD-001-V2",
+    "title": "Telemetry ingest 10× load test",
+    "summary_zh": "Per blueprint §12 TEL-HARD-001. Drive telemetry ingest at 10× normal load; assert no dropped canonical events, ordering semantics documented in evidence, backpressure handled (no silent loss). Runs against dev compose profile; evidence captures environment, throughput, latency histogram, drop count.",
+    "phase": "Phase 8 / EPIC-TEL-HARD",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "tests/telemetry/test_ingest_load_10x.py",
+      "support/evidence/TEL-HARD-001-V2/load_report.json",
+      "support/evidence/TEL-HARD-001-V2/environment.md"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 blueprint section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner closeout complete: PR #363 delivered telemetry 10x load evidence; closeout PR #373 merged at dafd78fe2d46bb6aade066e3d6ee21c5d6bfcbc7; verified python3 -m pytest tests/telemetry/test_ingest_load_10x.py and git diff --check.",
+    "last_update": "2026-05-20T16:06:16Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-v3-blueprint-residual-2026-05-20",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：PR #363 已於 2026-05-20T14:53:41Z merge；diff 僅包含 task brief、10x load regression、TEL-HARD-001-V2 evidence artifacts，未修改 L1 canonical docs。",
+      "驗證通過：python3 -m pytest -q tests/telemetry/test_ingest_load_10x.py => 3 passed in 37.20s；python3 -m pytest -q services/telemetry/test_ingest_shock_absorption.py => 53 passed in 8.55s；git diff --check 無輸出。",
+      "接受證據：load_report.json 記錄 expected/accepted/written=10000，rejected/drop/DLQ/buffer_overflow=0，per-aggregate ordering violations=[]，burst pressure=high 且 overflow fail-closed path 進 DLQ。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T16:06:16Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/tel-hard-001-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/TEL-HARD-001-V2",
+      "git_clean_required": false,
+      "commit": "7d5198cdcc06a57fe1c83e9a417254d10e8ca8af",
+      "commit_subject": "TEL-HARD-001-V2: finalize approved closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped brief recording review approval and finalization handoff for TEL-HARD-001-V2.",
+        "Not changing": "telemetry ingest code, evidence payloads, L1 canonical architecture docs, or reviewer approval notes.",
+        "Composes with": "PR #363 merged into dev at 30d6e91b99b06aab77123da0aef6d0e10b50a2fa; final owner status closeout follows after this PR merges.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "TEL-HARD-001-V2",
+        "Reviewer": "Codex2",
+        "Verified": "python3 -m pytest tests/telemetry/test_ingest_load_10x.py; git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/TEL-HARD-001-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "dafd78fe2d46bb6aade066e3d6ee21c5d6bfcbc7",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "TEL-HARD-001-V2",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "PR #363 opened with 10x telemetry ingest load regression and evidence; please review load_report/environment artifacts.",
+      "status": "done",
+      "created_at": "2026-05-20T14:51:32Z",
+      "resolved_at": "2026-05-20T15:54:35Z"
+    },
+    {
+      "task_id": "TEL-HARD-001-V2",
+      "from": "Gemini",
+      "to": "Codex2",
+      "message": "Chair reassigned review from Gemini to Codex2: Gemini review workers for TEL-HARD-001-V2 were repeatedly missing during boot reconciliation at 15:39, 15:44, and 15:49Z while PR #363 is already merged; Codex2 is idle and not the owner.",
+      "status": "done",
+      "created_at": "2026-05-20T15:54:35Z",
+      "resolved_at": "2026-05-20T15:58:11Z"
+    },
+    {
+      "task_id": "TEL-HARD-001-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved by Codex2: PR #363 merged; verified load regression and shock absorption tests; evidence records 10,000 accepted/written events with zero drops/DLQ and ordering violations []. Owner Codex should finalize closeout.",
+      "status": "done",
+      "created_at": "2026-05-20T15:58:11Z",
+      "resolved_at": "2026-05-20T16:06:17Z"
+    }
+  ],
+  "blockers": []
+}
