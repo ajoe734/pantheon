@@ -1,0 +1,438 @@
+{
+  "blueprint_source": "docs/04/pantheon_design_blueprint_supplement_2026-05-19/pantheon_blueprint_supplement.md#12-final-acceptance-matrix",
+  "bpc001_overall_passed": false,
+  "bpc001_report_ref": "support/evidence/BPC-001-V2/blueprint_completion_report.json",
+  "failed_rows": [],
+  "generated_at": "2026-05-21T00:54:29Z",
+  "go": false,
+  "human_gate_record_count": 2,
+  "human_gate_records": [
+    "support/evidence/MGMT-BROKER-006/human-gate/human-gate-packet.json",
+    "support/evidence/MGMT-BROKER-006/human-gate/summary.json"
+  ],
+  "matrix": [
+    {
+      "bpc001_condition_id": null,
+      "bpc001_status": null,
+      "capability": "OODA paper loop",
+      "evidence_paths": [],
+      "human_gate_type": null,
+      "id": "ooda_paper_loop",
+      "missing_evidence_paths": [],
+      "passed": true,
+      "required_before_live": true,
+      "status_target": "closed",
+      "task_refs": [],
+      "tasks_not_done": [],
+      "verdict": "passed"
+    },
+    {
+      "bpc001_condition_id": "ooda_canary_loop",
+      "bpc001_status": "passed",
+      "capability": "OODA canary loop",
+      "evidence_paths": [
+        {
+          "exists": true,
+          "path": "support/evidence/OODA-CANARY-005-V2/closeout.md"
+        }
+      ],
+      "human_gate_type": null,
+      "id": "ooda_canary_loop",
+      "missing_evidence_paths": [],
+      "passed": true,
+      "required_before_live": true,
+      "status_target": "must pass",
+      "task_refs": [
+        {
+          "delivery_commit": "00a741187f45bfef9ad8be4c7d888f1b906d76b9",
+          "head_merged_to_target": true,
+          "source": "ai-task-archive/tasks/OODA-CANARY-005-V2.json",
+          "status": "done",
+          "task_id": "OODA-CANARY-005-V2"
+        }
+      ],
+      "tasks_not_done": [],
+      "verdict": "passed"
+    },
+    {
+      "bpc001_condition_id": null,
+      "bpc001_status": null,
+      "capability": "EP4 governed paper",
+      "evidence_paths": [],
+      "human_gate_type": null,
+      "id": "ep4_governed_paper",
+      "missing_evidence_paths": [],
+      "passed": true,
+      "required_before_live": true,
+      "status_target": "stable",
+      "task_refs": [],
+      "tasks_not_done": [],
+      "verdict": "passed"
+    },
+    {
+      "bpc001_condition_id": "ep5_canary_proof",
+      "bpc001_status": "passed",
+      "capability": "EP5 canary proof",
+      "evidence_paths": [],
+      "human_gate_type": null,
+      "id": "ep5_canary_proof",
+      "missing_evidence_paths": [],
+      "passed": true,
+      "required_before_live": true,
+      "status_target": "must pass",
+      "task_refs": [
+        {
+          "delivery_commit": "7ac65f47c861696b31f13baf25d79f3ea5fb0b19",
+          "head_merged_to_target": true,
+          "source": "ai-task-archive/tasks/EP5-010-V2.json",
+          "status": "done",
+          "task_id": "EP5-010-V2"
+        }
+      ],
+      "tasks_not_done": [],
+      "verdict": "passed"
+    },
+    {
+      "bpc001_condition_id": "broker_live_criteria",
+      "bpc001_status": "passed",
+      "capability": "Broker live criteria",
+      "evidence_paths": [],
+      "human_gate_type": null,
+      "id": "broker_live_criteria",
+      "missing_evidence_paths": [],
+      "passed": true,
+      "required_before_live": true,
+      "status_target": "approved",
+      "task_refs": [
+        {
+          "delivery_commit": "a688a50789ad87c1c21601aa447fbca2b8eacb46",
+          "head_merged_to_target": true,
+          "source": "ai-task-archive/tasks/BLA-010-V2.json",
+          "status": "done",
+          "task_id": "BLA-010-V2"
+        }
+      ],
+      "tasks_not_done": [],
+      "verdict": "passed"
+    },
+    {
+      "bpc001_condition_id": "human_gate_model_and_audit",
+      "bpc001_status": "passed",
+      "capability": "Risk-owner signoff",
+      "evidence_paths": [],
+      "human_gate_type": "broker_live_activation",
+      "id": "risk_owner_signoff",
+      "missing_evidence_paths": [],
+      "passed": true,
+      "required_before_live": true,
+      "status_target": "approved, unexpired",
+      "task_refs": [
+        {
+          "delivery_commit": "6a377c502412e06af7a38e2f03f2c0ed1a14c7ec",
+          "head_merged_to_target": true,
+          "source": "ai-task-archive/tasks/HG-005-V2.json",
+          "status": "done",
+          "task_id": "HG-005-V2"
+        },
+        {
+          "delivery_commit": "9f5d0ef430723394af9ddb7088e9d09393ce6011",
+          "head_merged_to_target": true,
+          "source": "ai-task-archive/tasks/HG-006-V2.json",
+          "status": "done",
+          "task_id": "HG-006-V2"
+        }
+      ],
+      "tasks_not_done": [],
+      "verdict": "passed"
+    },
+    {
+      "bpc001_condition_id": "human_gate_model_and_audit",
+      "bpc001_status": "passed",
+      "capability": "Operator signoff",
+      "evidence_paths": [],
+      "human_gate_type": "broker_live_activation",
+      "id": "operator_signoff",
+      "missing_evidence_paths": [],
+      "passed": true,
+      "required_before_live": true,
+      "status_target": "approved, unexpired",
+      "task_refs": [
+        {
+          "delivery_commit": "6a377c502412e06af7a38e2f03f2c0ed1a14c7ec",
+          "head_merged_to_target": true,
+          "source": "ai-task-archive/tasks/HG-005-V2.json",
+          "status": "done",
+          "task_id": "HG-005-V2"
+        },
+        {
+          "delivery_commit": "9f5d0ef430723394af9ddb7088e9d09393ce6011",
+          "head_merged_to_target": true,
+          "source": "ai-task-archive/tasks/HG-006-V2.json",
+          "status": "done",
+          "task_id": "HG-006-V2"
+        }
+      ],
+      "tasks_not_done": [],
+      "verdict": "passed"
+    },
+    {
+      "bpc001_condition_id": "capital_binding_readiness",
+      "bpc001_status": "passed",
+      "capability": "Capital binding live readiness",
+      "evidence_paths": [
+        {
+          "exists": true,
+          "path": "support/evidence/CBL-007-V2/owner-closeout.md"
+        }
+      ],
+      "human_gate_type": null,
+      "id": "capital_binding_live_readiness",
+      "missing_evidence_paths": [],
+      "passed": true,
+      "required_before_live": true,
+      "status_target": "approved",
+      "task_refs": [
+        {
+          "delivery_commit": "1e61b7a7e2956a5e15dcd6dbe267eec30fedd799",
+          "head_merged_to_target": true,
+          "source": "ai-task-archive/tasks/CBL-007-V2.json",
+          "status": "done",
+          "task_id": "CBL-007-V2"
+        }
+      ],
+      "tasks_not_done": [],
+      "verdict": "passed"
+    },
+    {
+      "bpc001_condition_id": "bff_ha_topology",
+      "bpc001_status": "passed",
+      "capability": "BFF HA production topology",
+      "evidence_paths": [],
+      "human_gate_type": null,
+      "id": "bff_ha_production_topology",
+      "missing_evidence_paths": [],
+      "passed": true,
+      "required_before_live": true,
+      "status_target": "PoC passed + approved",
+      "task_refs": [
+        {
+          "delivery_commit": "8435c5afab627c379749937d7e90805f3795bbff",
+          "head_merged_to_target": true,
+          "source": "ai-task-archive/tasks/HA-010-V2.json",
+          "status": "done",
+          "task_id": "HA-010-V2"
+        }
+      ],
+      "tasks_not_done": [],
+      "verdict": "passed"
+    },
+    {
+      "bpc001_condition_id": "strict_publish_final_audit",
+      "bpc001_status": "passed",
+      "capability": "Strict publish final audit",
+      "evidence_paths": [
+        {
+          "exists": true,
+          "path": "support/evidence/LSP-006-V2/publish-gate.json"
+        }
+      ],
+      "human_gate_type": null,
+      "id": "strict_publish_final_audit",
+      "missing_evidence_paths": [],
+      "passed": true,
+      "required_before_live": true,
+      "status_target": "passed",
+      "task_refs": [
+        {
+          "delivery_commit": "98a7c3c2b32c405f2d6d04db03203dbd6647559c",
+          "head_merged_to_target": true,
+          "source": "ai-task-archive/tasks/LSP-006-V2.json",
+          "status": "done",
+          "task_id": "LSP-006-V2"
+        }
+      ],
+      "tasks_not_done": [],
+      "verdict": "passed"
+    },
+    {
+      "bpc001_condition_id": "telemetry_audit_incident_hardening",
+      "bpc001_status": "passed",
+      "capability": "Telemetry / audit / incident",
+      "evidence_paths": [
+        {
+          "exists": true,
+          "path": "support/evidence/TEL-HARD-001-V2/load_report.json"
+        }
+      ],
+      "human_gate_type": null,
+      "id": "telemetry_audit_incident",
+      "missing_evidence_paths": [],
+      "passed": true,
+      "required_before_live": true,
+      "status_target": "available",
+      "task_refs": [
+        {
+          "delivery_commit": "7d5198cdcc06a57fe1c83e9a417254d10e8ca8af",
+          "head_merged_to_target": true,
+          "source": "ai-task-archive/tasks/TEL-HARD-001-V2.json",
+          "status": "done",
+          "task_id": "TEL-HARD-001-V2"
+        },
+        {
+          "delivery_commit": "afc19686ba6fbecd69f144fa01021c9e12ee0b69",
+          "head_merged_to_target": true,
+          "source": "ai-task-archive/tasks/TEL-HARD-002-V2.json",
+          "status": "done",
+          "task_id": "TEL-HARD-002-V2"
+        },
+        {
+          "delivery_commit": "e787316e23623048d95683bdb60c069557bc560f",
+          "head_merged_to_target": true,
+          "source": "ai-task-archive/tasks/TEL-HARD-003-V2.json",
+          "status": "done",
+          "task_id": "TEL-HARD-003-V2"
+        }
+      ],
+      "tasks_not_done": [],
+      "verdict": "passed"
+    },
+    {
+      "bpc001_condition_id": "rollback_and_kill_switch",
+      "bpc001_status": "passed",
+      "capability": "Rollback drill",
+      "evidence_paths": [
+        {
+          "exists": true,
+          "path": "support/evidence/EP5-007-V2/rollback-drill.json"
+        }
+      ],
+      "human_gate_type": null,
+      "id": "rollback_drill",
+      "missing_evidence_paths": [],
+      "passed": true,
+      "required_before_live": true,
+      "status_target": "passed",
+      "task_refs": [
+        {
+          "delivery_commit": "f637009e0871a06aa2c2515d49387ca5b2899d23",
+          "head_merged_to_target": true,
+          "source": "ai-task-archive/tasks/EP5-007-V2.json",
+          "status": "done",
+          "task_id": "EP5-007-V2"
+        }
+      ],
+      "tasks_not_done": [],
+      "verdict": "passed"
+    },
+    {
+      "bpc001_condition_id": "rollback_and_kill_switch",
+      "bpc001_status": "passed",
+      "capability": "Kill switch demo",
+      "evidence_paths": [
+        {
+          "exists": true,
+          "path": "support/evidence/EP5-008-V2/kill-switch-demo.json"
+        }
+      ],
+      "human_gate_type": null,
+      "id": "kill_switch_demo",
+      "missing_evidence_paths": [],
+      "passed": true,
+      "required_before_live": true,
+      "status_target": "passed",
+      "task_refs": [
+        {
+          "delivery_commit": "2ad877f73e25b6c0edbf134cb0a3697b1a838165",
+          "head_merged_to_target": true,
+          "source": "ai-task-archive/tasks/EP5-008-V2.json",
+          "status": "done",
+          "task_id": "EP5-008-V2"
+        }
+      ],
+      "tasks_not_done": [],
+      "verdict": "passed"
+    },
+    {
+      "bpc001_condition_id": "multi_persona_sponsor_lineage",
+      "bpc001_status": "passed",
+      "capability": "Multi-persona sponsor lineage",
+      "evidence_paths": [
+        {
+          "exists": true,
+          "path": "support/evidence/MPO-003-V2/full_packet.json"
+        }
+      ],
+      "human_gate_type": null,
+      "id": "multi_persona_sponsor_lineage",
+      "missing_evidence_paths": [],
+      "passed": true,
+      "required_before_live": true,
+      "status_target": "bridged",
+      "task_refs": [
+        {
+          "delivery_commit": "3e0622e5c04b0708d35d126f522d6ee244e86d67",
+          "head_merged_to_target": true,
+          "source": "ai-task-archive/tasks/MPO-004-V2.json",
+          "status": "done",
+          "task_id": "MPO-004-V2"
+        }
+      ],
+      "tasks_not_done": [],
+      "verdict": "passed"
+    },
+    {
+      "bpc001_condition_id": "research_production_activation",
+      "bpc001_status": "passed",
+      "capability": "Research production activation",
+      "evidence_paths": [
+        {
+          "exists": true,
+          "path": "support/evidence/RES-ACT-006-V2/review.md"
+        }
+      ],
+      "human_gate_type": null,
+      "id": "research_production_activation",
+      "missing_evidence_paths": [],
+      "passed": true,
+      "required_before_live": false,
+      "status_target": "governed",
+      "task_refs": [
+        {
+          "delivery_commit": "98765f0fa4df74d1ac2b1d7b39b1881cdd089808",
+          "head_merged_to_target": true,
+          "source": "ai-task-archive/tasks/RES-ACT-006-V2.json",
+          "status": "done",
+          "task_id": "RES-ACT-006-V2"
+        }
+      ],
+      "tasks_not_done": [],
+      "verdict": "passed"
+    },
+    {
+      "bpc001_condition_id": "production_activation_signoff_gates",
+      "bpc001_status": "pending_human_signoff",
+      "capability": "Production real-writes and live-scale human signoff",
+      "evidence_paths": [],
+      "human_gate_type": "production_real_writes_enable",
+      "id": "production_activation_gates",
+      "missing_evidence_paths": [],
+      "passed": false,
+      "required_before_live": true,
+      "status_target": "approved",
+      "task_refs": [],
+      "tasks_not_done": [],
+      "verdict": "pending_human_signoff"
+    }
+  ],
+  "overall_verdict": "pending_human_signoff",
+  "pending_human_signoff_rows": [
+    "production_activation_gates"
+  ],
+  "summary": {
+    "failed": 0,
+    "passed": 15,
+    "pending_human_signoff": 1,
+    "total": 16
+  },
+  "task_id": "BPC-002-V2"
+}
