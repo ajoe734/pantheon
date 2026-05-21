@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "No dispatch or provider blocker exists; sidecar approval is safe and will no-op until eligible execution work appears.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "PROD-WRITES-001-V2",
+    "LIVE-SCALE-001-V2"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "OPS-PUBLISH-WAVE-DISCIPLINE-20260521",
+    "OPS-PROMOTE-FAILURE-TRIAGE-20260521",
+    "OPS-CLOSEOUT-AHEAD-RECON-20260521",
+    "OPS-STALE-BLOCKER-CLEANUP-20260521",
+    "OPS-BRANCH-CLEANUP-20260521"
+  ]
+}
