@@ -1,0 +1,189 @@
+{
+  "decisions": {
+    "HGD-BLA-LIVE-001-V2": {
+      "can_proceed": false,
+      "can_proceed_input": {
+        "blocking_reasons": [
+          "pending_human_go_no_go"
+        ],
+        "gate_results_blocking": [],
+        "missing_evidence": [],
+        "readiness_packet_can_proceed": false,
+        "required_evidence": [],
+        "unsafe_true_flags": []
+      },
+      "created_at": "2026-05-21T00:32:59Z",
+      "decision_id": "HGD-BLA-LIVE-001-V2",
+      "evidence_hash": "sha256:0353568c0371352b3b09bcd480b45bc51060fd301d8e1ed37f86fa38a7f8dbd1",
+      "evidence_reviewed": [
+        {
+          "evidence_hash": "sha256:a34e4c5c09bd5e292c6df077e75fb3f4055d1055d910c0aa88e669632d647d68",
+          "key": "blueprint_section_14_1",
+          "note": "Placeholder evidence ref for pending record; real evidence reviewed at signoff time.",
+          "source_ref": "docs/04/pantheon_blueprint_2026-05-19.md#14-1",
+          "status": "not_applicable"
+        }
+      ],
+      "reason": "Human gate is not ready: readiness_packet_can_proceed=false, blocking_reason:pending_human_go_no_go, missing_signature:risk_owner, missing_signature:operator",
+      "required_roles": [
+        "risk_owner",
+        "operator"
+      ],
+      "schema_version": "HumanGateDecision.v1",
+      "signatures": [],
+      "status": "blocked",
+      "target_environment": "production",
+      "target_id": "BLA-LIVE-001-V2",
+      "target_type": "broker_live_activation",
+      "updated_at": "2026-05-21T00:32:59Z"
+    },
+    "HGD-CBL-LIVE-001-V2": {
+      "can_proceed": false,
+      "can_proceed_input": {
+        "blocking_reasons": [
+          "pending_human_go_no_go"
+        ],
+        "gate_results_blocking": [],
+        "missing_evidence": [],
+        "readiness_packet_can_proceed": false,
+        "required_evidence": [],
+        "unsafe_true_flags": []
+      },
+      "created_at": "2026-05-21T00:32:59Z",
+      "decision_id": "HGD-CBL-LIVE-001-V2",
+      "evidence_hash": "sha256:836a784402e00c04ea4eee418437b97b0a37da565dad1cc5ebae17efbd834175",
+      "evidence_reviewed": [
+        {
+          "evidence_hash": "sha256:773f865f7cb5a81c56368dd9ff0ea536f084353afb5a26a3272f0967b3d894c7",
+          "key": "blueprint_section_14_1",
+          "note": "Placeholder evidence ref for pending record; real evidence reviewed at signoff time.",
+          "source_ref": "docs/04/pantheon_blueprint_2026-05-19.md#14-1",
+          "status": "not_applicable"
+        }
+      ],
+      "reason": "Human gate is not ready: readiness_packet_can_proceed=false, blocking_reason:pending_human_go_no_go, missing_signature:risk_owner, missing_signature:operator",
+      "required_roles": [
+        "risk_owner",
+        "operator"
+      ],
+      "schema_version": "HumanGateDecision.v1",
+      "signatures": [],
+      "status": "blocked",
+      "target_environment": "production",
+      "target_id": "CBL-LIVE-001-V2",
+      "target_type": "capital_binding_live",
+      "updated_at": "2026-05-21T00:32:59Z"
+    },
+    "HGD-HA-PROD-001-V2": {
+      "can_proceed": false,
+      "can_proceed_input": {
+        "blocking_reasons": [
+          "pending_human_go_no_go"
+        ],
+        "gate_results_blocking": [],
+        "missing_evidence": [],
+        "readiness_packet_can_proceed": false,
+        "required_evidence": [],
+        "unsafe_true_flags": []
+      },
+      "created_at": "2026-05-21T00:32:59Z",
+      "decision_id": "HGD-HA-PROD-001-V2",
+      "evidence_hash": "sha256:b1e8a1c8c0d3038bb9c25deac765d312ca4ff4e25b3c5af948cd593a7d22c418",
+      "evidence_reviewed": [
+        {
+          "evidence_hash": "sha256:275873ecd2841a72a87bfc290fca3c30ee5f592d3a94e79a2e714e8d25351fa8",
+          "key": "blueprint_section_14_1",
+          "note": "Placeholder evidence ref for pending record; real evidence reviewed at signoff time.",
+          "source_ref": "docs/04/pantheon_blueprint_2026-05-19.md#14-1",
+          "status": "not_applicable"
+        }
+      ],
+      "reason": "Human gate is not ready: readiness_packet_can_proceed=false, blocking_reason:pending_human_go_no_go, missing_signature:risk_owner, missing_signature:operator",
+      "required_roles": [
+        "risk_owner",
+        "operator"
+      ],
+      "schema_version": "HumanGateDecision.v1",
+      "signatures": [],
+      "status": "blocked",
+      "target_environment": "production",
+      "target_id": "HA-PROD-001-V2",
+      "target_type": "bff_ha_cutover",
+      "updated_at": "2026-05-21T00:32:59Z"
+    },
+    "HGD-LIVE-SCALE-001-V2": {
+      "can_proceed": false,
+      "can_proceed_input": {
+        "blocking_reasons": [
+          "pending_human_go_no_go"
+        ],
+        "gate_results_blocking": [],
+        "missing_evidence": [],
+        "readiness_packet_can_proceed": false,
+        "required_evidence": [],
+        "unsafe_true_flags": []
+      },
+      "created_at": "2026-05-21T00:32:59Z",
+      "decision_id": "HGD-LIVE-SCALE-001-V2",
+      "evidence_hash": "sha256:865303aa1f197f4ec1858a499d117e5b238258a081f95bdda068eb2d5559eaa5",
+      "evidence_reviewed": [
+        {
+          "evidence_hash": "sha256:48f5e3c73698b52144739e6f2c7f6ceab3fa798b8f06e1ebf812e43fa5840c49",
+          "key": "blueprint_section_14_1",
+          "note": "Placeholder evidence ref for pending record; real evidence reviewed at signoff time.",
+          "source_ref": "docs/04/pantheon_blueprint_2026-05-19.md#14-1",
+          "status": "not_applicable"
+        }
+      ],
+      "reason": "Human gate is not ready: readiness_packet_can_proceed=false, blocking_reason:pending_human_go_no_go, missing_signature:risk_owner, missing_signature:operator",
+      "required_roles": [
+        "risk_owner",
+        "operator"
+      ],
+      "schema_version": "HumanGateDecision.v1",
+      "signatures": [],
+      "status": "blocked",
+      "target_environment": "production",
+      "target_id": "LIVE-SCALE-001-V2",
+      "target_type": "live_scale_up",
+      "updated_at": "2026-05-21T00:32:59Z"
+    },
+    "HGD-PROD-WRITES-001-V2": {
+      "can_proceed": false,
+      "can_proceed_input": {
+        "blocking_reasons": [
+          "pending_human_go_no_go"
+        ],
+        "gate_results_blocking": [],
+        "missing_evidence": [],
+        "readiness_packet_can_proceed": false,
+        "required_evidence": [],
+        "unsafe_true_flags": []
+      },
+      "created_at": "2026-05-21T00:32:59Z",
+      "decision_id": "HGD-PROD-WRITES-001-V2",
+      "evidence_hash": "sha256:19cb511535d69509ab97718a779891b643e82fc4a30a42f1922e2b5c4aa0864e",
+      "evidence_reviewed": [
+        {
+          "evidence_hash": "sha256:6b801be744b6492247bf90599b02f089c1d98f74f367c319c5e56504c0a8c4bf",
+          "key": "blueprint_section_14_1",
+          "note": "Placeholder evidence ref for pending record; real evidence reviewed at signoff time.",
+          "source_ref": "docs/04/pantheon_blueprint_2026-05-19.md#14-1",
+          "status": "not_applicable"
+        }
+      ],
+      "reason": "Human gate is not ready: readiness_packet_can_proceed=false, blocking_reason:pending_human_go_no_go, missing_signature:risk_owner, missing_signature:operator",
+      "required_roles": [
+        "risk_owner",
+        "operator"
+      ],
+      "schema_version": "HumanGateDecision.v1",
+      "signatures": [],
+      "status": "blocked",
+      "target_environment": "production",
+      "target_id": "PROD-WRITES-001-V2",
+      "target_type": "production_real_writes_enable",
+      "updated_at": "2026-05-21T00:32:59Z"
+    }
+  }
+}
