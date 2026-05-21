@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "No provider, queue, approval, review, or duplicate-sidecar blockers; execution backlog is empty until Sprint 9 tasks are materialized, so approval should no-op safely.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "OPS-PUBLISH-HEALTH-001",
+    "OPS-PROMOTE-MERGE-128",
+    "OPS-ZOMBIE-BRANCH-CLEANUP",
+    "SPRINT-9-TASK-MATERIALIZATION"
+  ]
+}
