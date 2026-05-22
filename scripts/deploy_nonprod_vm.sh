@@ -321,17 +321,23 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
   root)
     snapshot_remote_state pantheon docker-compose.yml
     prepare_deploy_worktree
-    # Profile-gated daemons that must run in dev alongside the default service set:
-    #   - openclaw                  (openclaw-gateway + openclaw-data-init)
-    #   - search-index-scheduler    (periodic search index rebuild worker)
-    #   - source-ingest-scheduler   (periodic source ingest worker)
-    # Other profiles (dormant-smoke, smoke, activation-ready-smoke,
-    # source-search-bounded, openclaw-activation-ready-e2e) intentionally
-    # remain off in dev — they are one-shot smoke tests, several have
-    # pre-existing Dockerfile build issues, and TRL/FinRL/Qlib/RLlib smoke
-    # containers are explicitly "deferred-prep scaffolds" gated behind
-    # activation approval (see services/learning/DEFERRED_OSS_ACTIVATION_MAP.md).
-    PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-openclaw,search-index-scheduler,source-ingest-scheduler}"
+    # Dev deploys activate every documented compose profile. Each profile is
+    # either a long-running daemon, an init container, or a one-shot smoke
+    # whose Dockerfile + smoke script have been verified to build and pass
+    # locally with stub backends (no real-money / no real-broker side effects).
+    #
+    # Profile inventory (alphabetical):
+    #   activation-ready-smoke       oss-activation-ready-smoke-matrix
+    #   dormant-smoke                experiments/finrl/qlib/rllib/ray-tune/trl
+    #   openclaw                     openclaw-gateway + openclaw-data-init
+    #   openclaw-activation-ready-e2e  openclaw-activation-ready-e2e
+    #   search-index-scheduler       search-index-scheduler
+    #   smoke                        smoke-stack (depends on full service set)
+    #   source-ingest-scheduler      source-ingest-scheduler
+    #   source-search-bounded        source-search-bounded-smoke
+    #
+    # Operators can narrow scope via PANTHEON_DEV_COMPOSE_PROFILES.
+    PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-activation-ready-smoke,dormant-smoke,openclaw,openclaw-activation-ready-e2e,search-index-scheduler,smoke,source-ingest-scheduler,source-search-bounded}"
     COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
       docker compose -p pantheon -f docker-compose.yml config --quiet
     COMPOSE_BAKE=false \

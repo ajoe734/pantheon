@@ -1340,7 +1340,7 @@ services:
     environment:
       PANTHEON_DEFERRED_PREP_GATE: "1"
       RLLIB_BACKEND: "stub"
-    command: ["python", "smoke_test.py", "--enable-deferred-prep", "--backend", "stub"]
+    command: ["python", "smoke_test.py", "--enable-deferred-prep", "--deferred-backend", "stub"]
     restart: "no"
 
   ray-tune-dormant-smoke:
