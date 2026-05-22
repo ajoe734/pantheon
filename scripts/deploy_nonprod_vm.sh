@@ -321,8 +321,21 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
   root)
     snapshot_remote_state pantheon docker-compose.yml
     prepare_deploy_worktree
-    docker compose -p pantheon -f docker-compose.yml config --quiet
+    # Profile-gated daemons that must run in dev alongside the default service set:
+    #   - openclaw                  (openclaw-gateway + openclaw-data-init)
+    #   - search-index-scheduler    (periodic search index rebuild worker)
+    #   - source-ingest-scheduler   (periodic source ingest worker)
+    # Other profiles (dormant-smoke, smoke, activation-ready-smoke,
+    # source-search-bounded, openclaw-activation-ready-e2e) intentionally
+    # remain off in dev — they are one-shot smoke tests, several have
+    # pre-existing Dockerfile build issues, and TRL/FinRL/Qlib/RLlib smoke
+    # containers are explicitly "deferred-prep scaffolds" gated behind
+    # activation approval (see services/learning/DEFERRED_OSS_ACTIVATION_MAP.md).
+    PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-openclaw,search-index-scheduler,source-ingest-scheduler}"
+    COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
+      docker compose -p pantheon -f docker-compose.yml config --quiet
     COMPOSE_BAKE=false \
+    COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
     PANTHEON_ENV=dev \
     PANTHEON_LIVE_BROKER_ENABLED=false \
     PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
