@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Idle capacity has no provider or queue blocker; approve future runnable non-human-gate sidecars only.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "PROD-WRITES-001-V2",
+    "LIVE-SCALE-001-V2"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "OPS-STALE-BLOCKER-SYNC",
+    "OPS-CLOSEOUT-AHEAD-RECON",
+    "OPS-BRANCH-CLEANUP-001",
+    "PLAN-BFF-P0-DISPATCH"
+  ]
+}
