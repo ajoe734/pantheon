@@ -21850,6 +21850,196 @@ def _pm12_persona_health_summary(persona: Dict[str, Any], sessions: Dict[str, An
     }
 
 
+_PM12_LEAGUE_SCORE_WEIGHTS = {
+    "pnl": 0.35,
+    "risk": 0.25,
+    "execution": 0.25,
+    "activity": 0.15,
+}
+_PM12_LEAGUE_RANKING_CRITERIA = {
+    "overall": ("overallScore", "Overall"),
+    "pnl": ("pnlScore", "PnL"),
+    "risk": ("riskScore", "Risk"),
+    "execution": ("executionScore", "Execution"),
+    "activity": ("activityScore", "Activity"),
+}
+_PM12_LEAGUE_TIER_DEFINITIONS = [
+    {
+        "id": "tier-1",
+        "tierId": "tier-1",
+        "tier_id": "tier-1",
+        "label": "League Leader",
+        "minScore": 85.0,
+        "min_score": 85.0,
+        "maxScore": 100.0,
+        "max_score": 100.0,
+        "governancePosture": "promotion_candidate",
+        "governance_posture": "promotion_candidate",
+    },
+    {
+        "id": "tier-2",
+        "tierId": "tier-2",
+        "tier_id": "tier-2",
+        "label": "Production Candidate",
+        "minScore": 70.0,
+        "min_score": 70.0,
+        "maxScore": 84.999,
+        "max_score": 84.999,
+        "governancePosture": "maintain_or_expand_paper",
+        "governance_posture": "maintain_or_expand_paper",
+    },
+    {
+        "id": "tier-3",
+        "tierId": "tier-3",
+        "tier_id": "tier-3",
+        "label": "Observation",
+        "minScore": 55.0,
+        "min_score": 55.0,
+        "maxScore": 69.999,
+        "max_score": 69.999,
+        "governancePosture": "continue_observation",
+        "governance_posture": "continue_observation",
+    },
+    {
+        "id": "tier-4",
+        "tierId": "tier-4",
+        "tier_id": "tier-4",
+        "label": "Incubation",
+        "minScore": 0.0,
+        "min_score": 0.0,
+        "maxScore": 54.999,
+        "max_score": 54.999,
+        "governancePosture": "research_only",
+        "governance_posture": "research_only",
+    },
+]
+
+
+def _pm12_clamp_score(value: float) -> float:
+    return round(max(0.0, min(100.0, value)), 6)
+
+
+def _pm12_persona_runtime_ids(row: Dict[str, Any]) -> List[str]:
+    sessions = row.get("sessions") if isinstance(row.get("sessions"), dict) else {}
+    raw_ids = sessions.get("runtimeBindingIds") or sessions.get("runtime_binding_ids") or []
+    values: List[str] = []
+    seen = set()
+    for raw_id in (raw_ids if isinstance(raw_ids, list) else []):
+        runtime_id = str(raw_id or "").strip()
+        if runtime_id and runtime_id not in seen:
+            values.append(runtime_id)
+            seen.add(runtime_id)
+    return values
+
+
+def _pm12_persona_telemetry_metrics(row: Dict[str, Any]) -> Dict[str, Any]:
+    runtime_ids = _pm12_persona_runtime_ids(row)
+    telemetry = [
+        summary
+        for runtime_id in runtime_ids
+        for summary in [read_store.get_telemetry_summary(runtime_id)]
+        if isinstance(summary, dict)
+    ]
+    telemetry = _sort_records_latest_first(telemetry, ("collected_at", "updated_at", "created_at"))
+    pnl_values = [
+        value
+        for value in (_management_number(item.get("pnl")) for item in telemetry)
+        if value is not None
+    ]
+    drawdown_values = [
+        value
+        for value in (_management_number(item.get("drawdown")) for item in telemetry)
+        if value is not None
+    ]
+    fill_rate_values = [
+        value
+        for value in (_management_number(item.get("fill_rate")) for item in telemetry)
+        if value is not None
+    ]
+    slippage_values = [
+        value
+        for value in (_management_number(item.get("avg_slippage_bps")) for item in telemetry)
+        if value is not None
+    ]
+    trade_values = [
+        value
+        for value in (_management_number(item.get("total_trades")) for item in telemetry)
+        if value is not None
+    ]
+    return {
+        "runtimeIds": runtime_ids,
+        "runtime_ids": runtime_ids,
+        "runtimeCount": len(runtime_ids),
+        "runtime_count": len(runtime_ids),
+        "telemetryCoverageCount": len(telemetry),
+        "telemetry_coverage_count": len(telemetry),
+        "pnl": round(sum(pnl_values), 6) if pnl_values else None,
+        "drawdown": max(drawdown_values) if drawdown_values else None,
+        "fillRate": _management_avg(fill_rate_values),
+        "fill_rate": _management_avg(fill_rate_values),
+        "avgSlippageBps": _management_avg(slippage_values),
+        "avg_slippage_bps": _management_avg(slippage_values),
+        "totalTrades": int(sum(trade_values)) if trade_values else 0,
+        "total_trades": int(sum(trade_values)) if trade_values else 0,
+        "latestTelemetryAt": telemetry[0].get("collected_at") if telemetry else None,
+        "latest_telemetry_at": telemetry[0].get("collected_at") if telemetry else None,
+    }
+
+
+def _pm12_persona_league_scores(row: Dict[str, Any], metrics: Dict[str, Any]) -> Dict[str, float]:
+    pnl = _management_number(metrics.get("pnl"))
+    drawdown = _management_number(metrics.get("drawdown"))
+    fill_rate = _management_number(metrics.get("fillRate"))
+    slippage = _management_number(metrics.get("avgSlippageBps"))
+    sessions = row.get("sessions") if isinstance(row.get("sessions"), dict) else {}
+    evaluations = row.get("evaluations") if isinstance(row.get("evaluations"), dict) else {}
+    capabilities = row.get("capabilities") if isinstance(row.get("capabilities"), dict) else {}
+
+    pnl_score = 50.0 if pnl is None else _pm12_clamp_score(50.0 + (pnl * 100.0))
+    risk_floor = {
+        "low": 90.0,
+        "medium": 70.0,
+        "high": 45.0,
+        "critical": 20.0,
+        "unknown": 60.0,
+    }.get(str(row.get("risk") or "unknown").lower(), 60.0)
+    drawdown_score = 65.0 if drawdown is None else _pm12_clamp_score(100.0 - (drawdown * 400.0))
+    risk_score = round((risk_floor + drawdown_score) / 2.0, 6)
+    execution_score = 50.0
+    if fill_rate is not None:
+        execution_score = fill_rate * 100.0
+        if slippage is not None:
+            execution_score -= slippage * 2.0
+    execution_score = _pm12_clamp_score(execution_score)
+    activity_score = _pm12_clamp_score(
+        (float(sessions.get("active") or 0) * 20.0)
+        + (float(evaluations.get("completed") or 0) * 15.0)
+        + (10.0 if capabilities.get("hasSnapshot") else 0.0)
+        + (float(row.get("routedStrategies") or 0) * 5.0)
+        + min(float((row.get("memory") or {}).get("total") or 0) * 2.0, 10.0)
+    )
+    overall = (
+        pnl_score * _PM12_LEAGUE_SCORE_WEIGHTS["pnl"]
+        + risk_score * _PM12_LEAGUE_SCORE_WEIGHTS["risk"]
+        + execution_score * _PM12_LEAGUE_SCORE_WEIGHTS["execution"]
+        + activity_score * _PM12_LEAGUE_SCORE_WEIGHTS["activity"]
+    )
+    return {
+        "overallScore": round(overall, 6),
+        "pnlScore": pnl_score,
+        "riskScore": risk_score,
+        "executionScore": execution_score,
+        "activityScore": activity_score,
+    }
+
+
+def _pm12_tier_for_score(score: float) -> Dict[str, Any]:
+    for tier in _PM12_LEAGUE_TIER_DEFINITIONS:
+        if score >= float(tier["minScore"]):
+            return tier
+    return _PM12_LEAGUE_TIER_DEFINITIONS[-1]
+
+
 def _project_persona_league_row(raw: Dict[str, Any]) -> Dict[str, Any]:
     persona_id = str(raw.get("persona_id") or raw.get("id") or "")
     routed = _routed_strategies_for_persona(persona_id)
@@ -21886,19 +22076,12 @@ def _project_persona_league_row(raw: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-@app.get("/bff/management/persona-league")
-async def bff_management_persona_league(
-    state: Optional[str] = None,
-    archetype: Optional[str] = None,
-    q: str = Query(default=""),
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=20, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: PM-12 persona-league table composed from persona-side read surfaces."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
+def _pm12_persona_league_rows(
+    *,
+    state: Optional[str],
+    archetype: Optional[str],
+    q: str,
+) -> List[Dict[str, Any]]:
     rows = [_project_persona_league_row(raw) for raw in _list_persona_records()]
     if state:
         normalized_state = _normalize_lifecycle_state(state)
@@ -21914,7 +22097,181 @@ async def bff_management_persona_league(
             or needle in str(row.get("owner") or "").lower()
             or needle in str(row.get("archetype") or "").lower()
         ]
-    rows = sorted(rows, key=lambda row: str(row.get("name") or row.get("id") or ""))
+    return sorted(rows, key=lambda row: str(row.get("name") or row.get("id") or ""))
+
+
+def _pm12_persona_league_source_surfaces(snapshot_at: str) -> Dict[str, Dict[str, Any]]:
+    return {
+        "personas": _dataset_surface_status("personas", snapshot_at=snapshot_at),
+        "route_policies": _composed_surface_status(snapshot_at=snapshot_at),
+        "capability_snapshots": _dataset_surface_status("capability_snapshots", snapshot_at=snapshot_at),
+        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at),
+        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
+        "telemetry_summaries": _dataset_surface_status("telemetry_summaries", snapshot_at=snapshot_at),
+        "persona_sessions": _dataset_surface_status("sessions", snapshot_at=snapshot_at),
+        "teaching_sessions": _dataset_surface_status("teaching_sessions", snapshot_at=snapshot_at),
+        "persona_memory": _composed_surface_status(snapshot_at=snapshot_at),
+    }
+
+
+def _pm12_persona_league_ranking_item(row: Dict[str, Any]) -> Dict[str, Any]:
+    metrics = _pm12_persona_telemetry_metrics(row)
+    scores = _pm12_persona_league_scores(row, metrics)
+    tier = _pm12_tier_for_score(scores["overallScore"])
+    components = {
+        **scores,
+        "overall_score": scores["overallScore"],
+        "pnl_score": scores["pnlScore"],
+        "risk_score": scores["riskScore"],
+        "execution_score": scores["executionScore"],
+        "activity_score": scores["activityScore"],
+    }
+    return {
+        "id": row.get("id"),
+        "personaId": row.get("personaId") or row.get("id"),
+        "persona_id": row.get("personaId") or row.get("id"),
+        "name": row.get("name"),
+        "owner": row.get("owner"),
+        "state": row.get("state"),
+        "risk": row.get("risk"),
+        "archetype": row.get("archetype"),
+        "tier": tier["id"],
+        "tierId": tier["id"],
+        "tier_id": tier["id"],
+        "tierLabel": tier["label"],
+        "tier_label": tier["label"],
+        "overallScore": scores["overallScore"],
+        "overall_score": scores["overallScore"],
+        "metrics": metrics,
+        "components": components,
+        "links": row.get("links") or {},
+    }
+
+
+def _pm12_persona_league_rankings(
+    rows: List[Dict[str, Any]],
+    *,
+    criteria: Optional[str],
+    limit: int,
+) -> List[Dict[str, Any]]:
+    requested = [
+        token.strip().lower()
+        for token in str(criteria or "").split(",")
+        if token.strip()
+    ]
+    criteria_keys = [
+        key for key in (requested or list(_PM12_LEAGUE_RANKING_CRITERIA.keys()))
+        if key in _PM12_LEAGUE_RANKING_CRITERIA
+    ] or list(_PM12_LEAGUE_RANKING_CRITERIA.keys())
+    base_items = [_pm12_persona_league_ranking_item(row) for row in rows]
+    blocks: List[Dict[str, Any]] = []
+    for criterion in criteria_keys:
+        score_key, label = _PM12_LEAGUE_RANKING_CRITERIA[criterion]
+        ranked = sorted(
+            base_items,
+            key=lambda item: (
+                _management_number((item.get("components") or {}).get(score_key)) or 0.0,
+                str(item.get("personaId") or ""),
+            ),
+            reverse=True,
+        )[:limit]
+        block_items: List[Dict[str, Any]] = []
+        for rank, item in enumerate(ranked, start=1):
+            score = _management_number((item.get("components") or {}).get(score_key)) or 0.0
+            block_items.append({
+                **item,
+                "rank": rank,
+                "score": score,
+                "scoreField": score_key,
+                "score_field": score_key,
+            })
+        blocks.append({
+            "id": f"persona-league-{criterion}",
+            "rankingId": f"persona-league-{criterion}",
+            "ranking_id": f"persona-league-{criterion}",
+            "criteria": criterion,
+            "label": label,
+            "formulaVersion": "pm12-default-v1",
+            "formula_version": "pm12-default-v1",
+            "weights": dict(_PM12_LEAGUE_SCORE_WEIGHTS),
+            "items": block_items,
+            "rankedCount": len(block_items),
+            "ranked_count": len(block_items),
+        })
+    return blocks
+
+
+def _pm12_persona_league_tier_payload(rows: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
+    ranking_items = [_pm12_persona_league_ranking_item(row) for row in rows]
+    ranking_items = sorted(
+        ranking_items,
+        key=lambda item: (
+            _management_number(item.get("overallScore")) or 0.0,
+            str(item.get("personaId") or ""),
+        ),
+        reverse=True,
+    )
+    assignments = [
+        {
+            "personaId": item.get("personaId"),
+            "persona_id": item.get("personaId"),
+            "name": item.get("name"),
+            "tier": item.get("tier"),
+            "tierId": item.get("tierId"),
+            "tier_id": item.get("tierId"),
+            "tierLabel": item.get("tierLabel"),
+            "tier_label": item.get("tierLabel"),
+            "overallScore": item.get("overallScore"),
+            "overall_score": item.get("overallScore"),
+            "metrics": item.get("metrics") or {},
+        }
+        for item in ranking_items
+    ]
+    by_tier: Dict[str, int] = {}
+    for assignment in assignments:
+        tier_id = str(assignment.get("tierId") or "unknown")
+        by_tier[tier_id] = by_tier.get(tier_id, 0) + 1
+    tiers: List[Dict[str, Any]] = []
+    for definition in _PM12_LEAGUE_TIER_DEFINITIONS:
+        tier_id = str(definition["id"])
+        tier_assignments = [item for item in assignments if item.get("tierId") == tier_id]
+        tiers.append({
+            **definition,
+            "personaCount": len(tier_assignments),
+            "persona_count": len(tier_assignments),
+            "personaIds": [item["personaId"] for item in tier_assignments],
+            "persona_ids": [item["personaId"] for item in tier_assignments],
+            "assignments": tier_assignments,
+        })
+    summary = {
+        "seasonId": "current",
+        "season_id": "current",
+        "formulaVersion": "pm12-default-v1",
+        "formula_version": "pm12-default-v1",
+        "personaCount": len(assignments),
+        "persona_count": len(assignments),
+        "tierCount": len(tiers),
+        "tier_count": len(tiers),
+        "byTier": by_tier,
+        "by_tier": by_tier,
+    }
+    return tiers, assignments, summary
+
+
+@app.get("/bff/management/persona-league")
+async def bff_management_persona_league(
+    state: Optional[str] = None,
+    archetype: Optional[str] = None,
+    q: str = Query(default=""),
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 persona-league table composed from persona-side read surfaces."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
     total = len(rows)
     page_items, next_page_token = _page_slice(rows, page_token, page_size)
     persona_surface = _dataset_surface_status("personas", snapshot_at=snapshot_at)
@@ -21946,6 +22303,106 @@ async def bff_management_persona_league(
                 "GET /bff/personas/{id}/memory",
                 "GET /bff/v5/execution/persona-health",
             ],
+        },
+    }
+
+
+@app.get("/bff/management/persona-league/rankings")
+async def bff_management_persona_league_rankings(
+    state: Optional[str] = None,
+    archetype: Optional[str] = None,
+    q: str = Query(default=""),
+    criteria: Optional[str] = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 persona-league ranking blocks computed from league rows."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
+    blocks = _pm12_persona_league_rankings(rows, criteria=criteria, limit=limit)
+    source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
+    rankings_surface = _aggregate_group_surface(
+        "persona_league_rankings",
+        list(source_surfaces.values()),
+        snapshot_at=snapshot_at,
+        unavailable_message="Persona league rankings aggregate unavailable.",
+        degraded_message="Persona league rankings are degraded because one or more source surfaces are degraded.",
+    )
+    top_item = (blocks[0].get("items") or [None])[0] if blocks else None
+    summary = {
+        "personaCount": len(rows),
+        "persona_count": len(rows),
+        "criteria": [block["criteria"] for block in blocks],
+        "topPersonaId": (top_item or {}).get("personaId") if isinstance(top_item, dict) else None,
+        "top_persona_id": (top_item or {}).get("personaId") if isinstance(top_item, dict) else None,
+    }
+    return {
+        "data": blocks,
+        "items": blocks,
+        "rankings": blocks,
+        "rankingBlocks": blocks,
+        "ranking_blocks": blocks,
+        "summary": summary,
+        "page_info": {"next_page_token": None, "total": len(blocks), "page_size": len(blocks)},
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": {
+                "persona_league_rankings": rankings_surface,
+                **source_surfaces,
+            },
+            "composition_sources": [
+                "GET /bff/management/persona-league",
+                "GET /bff/management/persona-league/tiers",
+                "GET /bff/personas",
+                "GET /bff/v5/execution/persona-health",
+            ],
+        },
+    }
+
+
+@app.get("/bff/management/persona-league/tiers")
+async def bff_management_persona_league_tiers(
+    state: Optional[str] = None,
+    archetype: Optional[str] = None,
+    q: str = Query(default=""),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 persona-league tier definitions and current season assignment."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
+    tiers, assignments, summary = _pm12_persona_league_tier_payload(rows)
+    source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
+    tiers_surface = _aggregate_group_surface(
+        "persona_league_tiers",
+        list(source_surfaces.values()),
+        snapshot_at=snapshot_at,
+        unavailable_message="Persona league tiers aggregate unavailable.",
+        degraded_message="Persona league tiers are degraded because one or more source surfaces are degraded.",
+    )
+    return {
+        "data": tiers,
+        "items": tiers,
+        "tiers": tiers,
+        "assignments": assignments,
+        "summary": summary,
+        "page_info": {"next_page_token": None, "total": len(tiers), "page_size": len(tiers)},
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": {
+                "persona_league_tiers": tiers_surface,
+                **source_surfaces,
+            },
+            "composition_sources": [
+                "GET /bff/management/persona-league",
+                "GET /bff/management/persona-league/rankings",
+                "GET /bff/personas",
+                "GET /bff/v5/execution/persona-health",
+            ],
+            "policy": "read_only_governance_advisory",
         },
     }
 
