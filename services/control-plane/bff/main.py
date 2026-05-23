@@ -19466,6 +19466,323 @@ def _project_persona_fleet_payload(
 
 # ---------------- /bff/management aggregate routes ----------------
 
+_HUMAN_INBOX_OPEN_APPROVAL_STATES = {
+    "pending",
+    "in_review",
+    "under_review",
+    "reviewed",
+    "proposed",
+}
+_HUMAN_INBOX_OPEN_INTERVENTION_STATUSES = {"pending", "escalated"}
+_HUMAN_INBOX_PRIORITY_RANK = {
+    "critical": 4,
+    "high": 3,
+    "medium": 2,
+    "low": 1,
+    "unknown": 0,
+}
+
+
+def _human_inbox_csv_filter(value: Optional[str]) -> Optional[set[str]]:
+    if not value:
+        return None
+    requested = {part.strip().lower() for part in value.split(",") if part.strip()}
+    return requested or None
+
+
+def _human_inbox_priority(value: Any, *, fallback: str = "medium") -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in _HUMAN_INBOX_PRIORITY_RANK:
+        return normalized
+    if normalized in {"sev1", "p0"}:
+        return "critical"
+    if normalized in {"sev2", "p1"}:
+        return "high"
+    if normalized in {"sev3", "p2"}:
+        return "medium"
+    return fallback
+
+
+def _human_inbox_approval_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    decision_id = _management_record_id(item, "decision_id", "id", "approval_decision_id")
+    if not decision_id:
+        return None
+    decision_type = str(item.get("decision_type") or item.get("target_type") or "ApprovalDecision").strip()
+    risk_level = str(item.get("risk_level") or "unknown").strip().lower() or "unknown"
+    state = str(item.get("decision_state") or item.get("state") or "pending").strip().lower() or "pending"
+    context = item.get("decision_context") if isinstance(item.get("decision_context"), dict) else {}
+    governance_chain = context.get("governance_chain") if isinstance(context.get("governance_chain"), dict) else {}
+    priority = _human_inbox_priority(item.get("priority") or risk_level, fallback="medium")
+    risk_summary = str(context.get("risk_summary") or "").strip()
+    target_type = str(governance_chain.get("target_type") or decision_type or "ApprovalDecision").strip()
+    target_id = str(governance_chain.get("target_id") or governance_chain.get("linked_review_item_id") or "").strip()
+    action_state = "pending" if state in _HUMAN_INBOX_OPEN_APPROVAL_STATES else "resolved"
+    return {
+        "id": f"approval:{decision_id}",
+        "inbox_id": f"approval:{decision_id}",
+        "inboxType": "approval",
+        "source_type": "approval",
+        "source_id": decision_id,
+        "approval_decision_id": decision_id,
+        "title": item.get("title") or f"{decision_type} approval",
+        "summary": risk_summary or "Approval decision awaiting human review.",
+        "priority": priority,
+        "risk_level": risk_level,
+        "status": state,
+        "action_state": action_state,
+        "created_at": item.get("submitted_at"),
+        "updated_at": item.get("updated_at") or item.get("submitted_at"),
+        "submitted_by": item.get("submitted_by"),
+        "target": {
+            "type": target_type,
+            "id": target_id or None,
+        },
+        "route": f"/management/approvals?approval={decision_id}",
+        "bff_detail_path": f"/bff/approvals/{decision_id}",
+        "decision_context": json.loads(json.dumps(context)),
+        "allowedActions": json.loads(json.dumps(item.get("allowedActions") or {})),
+    }
+
+
+def _human_inbox_intervention_item(record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    intervention_id = _management_record_id(record, "intervention_id", "id")
+    if not intervention_id:
+        return None
+    status = str(record.get("status") or "pending").strip().lower() or "pending"
+    kind = str(record.get("kind") or "hiq_sentinel").strip().lower() or "hiq_sentinel"
+    priority = _human_inbox_priority(
+        record.get("priority") or record.get("severity") or record.get("risk_level"),
+        fallback="critical" if status == "pending" and kind == "hiq_sentinel" else "high",
+    )
+    action_state = "pending" if status in _HUMAN_INBOX_OPEN_INTERVENTION_STATUSES else "resolved"
+    raw_allowed_actions = record.get("allowedActions") if isinstance(record.get("allowedActions"), dict) else {}
+    allowed_actions = {
+        "canClaim": status == "pending",
+        "canRelease": status == "claimed",
+        "canEscalate": status == "pending",
+        "canDecide": status in _HUMAN_INBOX_OPEN_INTERVENTION_STATUSES,
+        "canRemediate": status in _HUMAN_INBOX_OPEN_INTERVENTION_STATUSES,
+        **raw_allowed_actions,
+    }
+    return {
+        "id": f"intervention:{intervention_id}",
+        "inbox_id": f"intervention:{intervention_id}",
+        "inboxType": "intervention",
+        "source_type": "intervention",
+        "source_id": intervention_id,
+        "intervention_id": intervention_id,
+        "title": record.get("title") or f"{kind.replace('_', ' ').title()} intervention",
+        "summary": record.get("description") or "Human intervention is required before the loop can continue.",
+        "priority": priority,
+        "risk_level": str(record.get("risk_level") or priority).strip().lower(),
+        "status": status,
+        "action_state": action_state,
+        "created_at": record.get("triggered_at"),
+        "updated_at": record.get("remediated_at") or record.get("updated_at") or record.get("triggered_at"),
+        "triggered_by": record.get("triggered_by"),
+        "target": {
+            "type": record.get("target_type"),
+            "id": record.get("target_id"),
+        },
+        "route": f"/management/interventions?intervention={intervention_id}",
+        "bff_detail_path": f"/bff/v5/interventions/{intervention_id}",
+        "remediation_context": {
+            "kind": kind,
+            "remediation_action": record.get("remediation_action"),
+            "two_man_signature_id": record.get("two_man_signature_id"),
+            "correlation_id": record.get("correlation_id"),
+        },
+        "allowedActions": json.loads(json.dumps(allowed_actions)),
+    }
+
+
+def _human_inbox_all_items() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    approval_records = read_store.list_approval_queue_items() or []
+    intervention_records = _v5_intervention_records()
+    items: List[Dict[str, Any]] = []
+    for approval in approval_records:
+        projected = _human_inbox_approval_item(approval)
+        if projected is not None:
+            items.append(projected)
+    for intervention in intervention_records:
+        projected = _human_inbox_intervention_item(intervention)
+        if projected is not None:
+            items.append(projected)
+    items.sort(
+        key=lambda item: (
+            _HUMAN_INBOX_PRIORITY_RANK.get(str(item.get("priority") or "unknown"), 0),
+            str(item.get("created_at") or ""),
+            str(item.get("id") or ""),
+        ),
+        reverse=True,
+    )
+    return items, approval_records, intervention_records
+
+
+def _human_inbox_filter_items(
+    items: List[Dict[str, Any]],
+    *,
+    source_type: Optional[str] = None,
+    status: Optional[str] = None,
+    priority: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    source_types = _human_inbox_csv_filter(source_type)
+    statuses = _human_inbox_csv_filter(status)
+    priorities = _human_inbox_csv_filter(priority)
+    filtered = items
+    if source_types:
+        filtered = [
+            item for item in filtered
+            if str(item.get("source_type") or item.get("inboxType") or "").lower() in source_types
+        ]
+    if statuses:
+        filtered = [
+            item for item in filtered
+            if str(item.get("status") or "").lower() in statuses
+            or str(item.get("action_state") or "").lower() in statuses
+        ]
+    if priorities:
+        filtered = [
+            item for item in filtered
+            if str(item.get("priority") or "").lower() in priorities
+            or str(item.get("risk_level") or "").lower() in priorities
+        ]
+    return filtered
+
+
+def _human_inbox_summary(items: List[Dict[str, Any]], returned_count: int) -> Dict[str, Any]:
+    pending_items = [item for item in items if str(item.get("action_state") or "") == "pending"]
+    return {
+        "total_items": len(items),
+        "returned_items": returned_count,
+        "pending_items": len(pending_items),
+        "approval_count": len([item for item in items if item.get("source_type") == "approval"]),
+        "intervention_count": len([item for item in items if item.get("source_type") == "intervention"]),
+        "critical_count": len([item for item in items if item.get("priority") == "critical"]),
+        "high_count": len([item for item in items if item.get("priority") == "high"]),
+    }
+
+
+def _human_inbox_surfaces(
+    *,
+    snapshot_at: str,
+    approval_records: List[Dict[str, Any]],
+    intervention_records: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    approval_surface = _dataset_surface_status(
+        "approval_queue_items",
+        snapshot_at=snapshot_at,
+        has_data=bool(approval_records),
+        missing_message="Approval queue has no readable source records.",
+    )
+    intervention_surface = _dataset_surface_status(
+        "v5_interventions",
+        snapshot_at=snapshot_at,
+        has_data=bool(intervention_records),
+        missing_message="V5 interventions have no readable source records.",
+    )
+    if intervention_records and intervention_surface.get("status") == "unavailable":
+        intervention_surface = dict(_surface_status())
+        intervention_surface["source"] = "bff_local_registry"
+    source_available = (
+        approval_surface.get("status") != "unavailable"
+        or intervention_surface.get("status") != "unavailable"
+        or bool(approval_records)
+        or bool(intervention_records)
+    )
+    return {
+        "human_inbox": _composed_surface_status(
+            snapshot_at=snapshot_at,
+            available=source_available,
+            missing_message="Human inbox has no readable approval or intervention source records.",
+        ),
+        "approval_queue": approval_surface,
+        "v5_interventions": intervention_surface,
+    }
+
+
+def _human_inbox_detail_match(item: Dict[str, Any], item_id: str) -> bool:
+    clean = str(item_id or "").strip()
+    candidates = {
+        str(item.get("id") or ""),
+        str(item.get("inbox_id") or ""),
+        str(item.get("source_id") or ""),
+        str(item.get("approval_decision_id") or ""),
+        str(item.get("intervention_id") or ""),
+    }
+    return clean in candidates
+
+
+@app.get("/bff/management/human-inbox")
+async def bff_management_human_inbox(
+    source_type: Optional[str] = None,
+    status: Optional[str] = None,
+    priority: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: compose human-action inbox rows from approvals and interventions."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    items, approval_records, intervention_records = _human_inbox_all_items()
+    filtered = _human_inbox_filter_items(
+        items,
+        source_type=source_type,
+        status=status,
+        priority=priority,
+    )
+    total = len(filtered)
+    page_items, next_page_token = _page_slice(filtered, page_token, page_size)
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = _human_inbox_surfaces(
+        snapshot_at=snapshot_at,
+        approval_records=approval_records,
+        intervention_records=intervention_records,
+    )
+    return {
+        "data": page_items,
+        "items": page_items,
+        "summary": _human_inbox_summary(filtered, len(page_items)),
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": meta,
+    }
+
+
+@app.get("/bff/management/human-inbox/{item_id}")
+async def bff_management_human_inbox_detail(
+    item_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: detail for one composed human-action inbox row."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    items, approval_records, intervention_records = _human_inbox_all_items()
+    for item in items:
+        if _human_inbox_detail_match(item, item_id):
+            detail = json.loads(json.dumps(item))
+            meta = _snapshot_meta(snapshot_at)
+            meta["surfaces"] = _human_inbox_surfaces(
+                snapshot_at=snapshot_at,
+                approval_records=approval_records,
+                intervention_records=intervention_records,
+            )
+            return {"data": detail, "meta": meta}
+    raise _bff_error(
+        404,
+        ErrorCode.OBJECT_NOT_FOUND,
+        "Human inbox item not found",
+        f"Human inbox item {item_id} does not exist",
+    )
+
 @app.get("/bff/management/persona-fleet")
 async def bff_management_persona_fleet(
     state: Optional[str] = None,
