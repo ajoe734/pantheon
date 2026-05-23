@@ -372,6 +372,113 @@ export interface ManagementPersonaLeagueTiersResponse {
   };
 }
 
+export interface ManagementQuarterlyRankingQuery {
+  quarter?: string;
+  state?: string;
+  archetype?: string;
+  q?: string;
+  page_token?: string;
+  page_size?: number;
+}
+
+export interface ManagementQuarterlyRankingWindow {
+  quarter: string;
+  year: number;
+  quarterNumber: number;
+  quarter_number: number;
+  label: string;
+  startAt: string;
+  start_at: string;
+  endExclusiveAt: string;
+  end_exclusive_at: string;
+  timezone: "UTC" | string;
+  [key: string]: unknown;
+}
+
+export interface ManagementQuarterlyRankingFormula {
+  id: string;
+  formulaId: string;
+  formula_id: string;
+  version: string;
+  formulaVersion: string;
+  formula_version: string;
+  weights: Record<string, number>;
+  scoreField: string;
+  score_field: string;
+  components: Array<Record<string, unknown>>;
+  basis: string;
+  policy: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementQuarterlyRankingItem extends ManagementPersonaLeagueRankingItem {
+  quarter: string;
+  quarterWindow: ManagementQuarterlyRankingWindow;
+  quarter_window: ManagementQuarterlyRankingWindow;
+  formulaVersion: string;
+  formula_version: string;
+  basis: string;
+}
+
+export interface ManagementQuarterlyRankingSummary {
+  quarter: string;
+  formulaVersion: string;
+  formula_version: string;
+  personaCount: number;
+  persona_count: number;
+  rankedCount: number;
+  ranked_count: number;
+  returnedCount: number;
+  returned_count: number;
+  topPersonaId?: string | null;
+  top_persona_id?: string | null;
+  evidenceRefCount: number;
+  evidence_ref_count: number;
+  redactedEvidenceCount: number;
+  redacted_evidence_count: number;
+  basis: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementQuarterlyRankingData {
+  id: string;
+  quarter: string;
+  quarterWindow: ManagementQuarterlyRankingWindow;
+  quarter_window: ManagementQuarterlyRankingWindow;
+  formula: ManagementQuarterlyRankingFormula;
+  items: ManagementQuarterlyRankingItem[];
+  rankings: ManagementQuarterlyRankingItem[];
+  evidenceRefs: ManagementEvidenceItem[];
+  evidence_refs: ManagementEvidenceItem[];
+  summary: ManagementQuarterlyRankingSummary;
+  [key: string]: unknown;
+}
+
+export interface ManagementQuarterlyRankingResponse {
+  data: ManagementQuarterlyRankingData;
+  items: ManagementQuarterlyRankingItem[];
+  rankings: ManagementQuarterlyRankingItem[];
+  formula: ManagementQuarterlyRankingFormula;
+  quarterWindow: ManagementQuarterlyRankingWindow;
+  quarter_window: ManagementQuarterlyRankingWindow;
+  evidenceRefs: ManagementEvidenceItem[];
+  evidence_refs: ManagementEvidenceItem[];
+  summary: ManagementQuarterlyRankingSummary;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces?: Record<string, ManagementSurfaceRef>;
+    composition_sources?: string[];
+    policy?: string;
+    redacted_evidence_count?: number;
+    [key: string]: unknown;
+  };
+}
+
 export interface ManagementEvidenceItem {
   id: string;
   refId: string;
@@ -596,6 +703,12 @@ export function managementPersonaLeagueTiersPath(
   return withQuery(paths.managementPersonaLeagueTiers(), query);
 }
 
+export function managementQuarterlyRankingPath(
+  query?: ManagementQuarterlyRankingQuery,
+): string {
+  return withQuery(paths.managementQuarterlyRanking(), query);
+}
+
 export async function fetchManagementCockpit(
   init?: RequestInit,
   baseUrl = "",
@@ -725,4 +838,23 @@ export async function fetchManagementPersonaLeagueTiers(
     throw new Error(`GET ${path} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementPersonaLeagueTiersResponse>;
+}
+
+export async function fetchManagementQuarterlyRanking(
+  query?: ManagementQuarterlyRankingQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementQuarterlyRankingResponse> {
+  const path = managementQuarterlyRankingPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementQuarterlyRankingResponse>;
 }
