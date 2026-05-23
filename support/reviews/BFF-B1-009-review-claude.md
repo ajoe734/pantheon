@@ -1,9 +1,9 @@
 # Review: BFF-B1-009 — Confirm-token lifecycle 5 endpoints
 
-**Reviewer:** Claude  
-**Owner:** Codex2  
-**Review date:** 2026-05-23  
-**Commit reviewed:** d881a02a  
+**Reviewer:** Claude
+**Owner:** Codex2
+**Review date:** 2026-05-23
+**Commit reviewed:** d881a02a
 
 ---
 
