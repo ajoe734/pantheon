@@ -30225,25 +30225,151 @@ def _sem_final_generic_detail_for_path(path: str, entity_id: str) -> Optional[Di
     return None
 
 
+# ============================================================================
+# B2.3 Capabilities facade — dedicated GET handlers
+# Covers: mcp-servers, mcp-tools, channels, ranking-formulas (list + detail).
+# /bff/tools and /bff/skills already have dedicated handlers registered above.
+# ============================================================================
+
+@app.get("/bff/mcp-servers")
+async def bff_list_mcp_servers_facade(
+    status: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF B2.3: list MCP servers from the registry."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    records = _merged_mcp_server_records()
+    if status:
+        requested = {s.strip().lower() for s in status.split(",") if s.strip()}
+        records = [r for r in records if str(r.get("status") or "").lower() in requested]
+    return _sem_final_list_response(records, dataset="mcp_servers", surface_key="mcp_servers", source="bff_local_registry")
+
+
+@app.get("/bff/mcp-servers/{server_id}")
+async def bff_get_mcp_server_facade(
+    server_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF B2.3: get MCP server detail by server_id."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    clean_id = str(server_id or "").strip()
+    return _sem_final_registry_detail(
+        _find_record_by_id(_merged_mcp_server_records(), clean_id, ("server_id", "id")),
+        entity_id=clean_id,
+        label="MCP server",
+        surface_key="mcp_server_detail",
+    )
+
+
+@app.get("/bff/mcp-tools")
+async def bff_list_mcp_tools_facade(
+    status: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF B2.3: list MCP tools from the registry."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    records = _sem_final_mcp_tool_records()
+    if status:
+        requested = {s.strip().lower() for s in status.split(",") if s.strip()}
+        records = [r for r in records if str(r.get("status") or "").lower() in requested]
+    return _sem_final_list_response(records, dataset="mcp_tools", surface_key="mcp_tools", source="bff_local_registry")
+
+
+@app.get("/bff/mcp-tools/{tool_id}")
+async def bff_get_mcp_tool_facade(
+    tool_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF B2.3: get MCP tool detail by tool_id."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    clean_id = str(tool_id or "").strip()
+    return _sem_final_registry_detail(
+        _sem_final_mcp_tool_record(clean_id),
+        entity_id=clean_id,
+        label="MCP tool",
+        surface_key="mcp_tool_detail",
+    )
+
+
+@app.get("/bff/channels")
+async def bff_list_channels(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF B2.3: list SSE channels from the local registry."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _sem_final_list_response(
+        _sem_final_channel_records(),
+        dataset="channels",
+        surface_key="channels",
+        source="bff_local_registry",
+    )
+
+
+@app.get("/bff/channels/{channel_id}")
+async def bff_get_channel(
+    channel_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF B2.3: get SSE channel detail by channel_id."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    clean_id = str(channel_id or "").strip()
+    return _sem_final_registry_detail(
+        _sem_final_channel_record(clean_id),
+        entity_id=clean_id,
+        label="Channel",
+        surface_key="channel_detail",
+    )
+
+
+@app.get("/bff/ranking-formulas")
+async def bff_list_ranking_formulas_facade(
+    status: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF B2.3: list ranking formulas from the read surface store."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    records = read_store.list_ranking_formulas(status=status)
+    return _sem_final_list_response(records, dataset="ranking_formulas", surface_key="ranking_formulas")
+
+
+@app.get("/bff/ranking-formulas/{formula_id}")
+async def bff_get_ranking_formula_facade(
+    formula_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF B2.3: get ranking formula detail by formula_id."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    clean_id = str(formula_id or "").strip()
+    return _sem_final_read_model_detail(
+        read_store.get_ranking_formula(clean_id),
+        entity_id=clean_id,
+        label="Ranking formula",
+        dataset="ranking_formulas",
+        surface_key="ranking_formula_detail",
+    )
+
+
 # NOTE: /bff/artifacts, /bff/incidents, /bff/incidents/{id}, /bff/runtimes,
 # /bff/runtimes/{id}, /bff/v5/loop-runs, /bff/v5/loop-runs/{id}, and
-# /bff/v5/sentinel/findings/{id} have dedicated handlers registered in the
-# B2.2 facade block above and are intentionally excluded here.
+# /bff/v5/sentinel/findings/{id} have dedicated handlers in the B2.2 block.
+# /bff/channels, /bff/channels/{id}, /bff/mcp-servers, /bff/mcp-servers/{id},
+# /bff/mcp-tools, /bff/mcp-tools/{id}, /bff/ranking-formulas,
+# /bff/ranking-formulas/{id}, /bff/tools, /bff/tools/{id}, and /bff/skills/{id}
+# have dedicated handlers in the B2.3 block above; all excluded here.
 @app.get("/bff/agora/signals/{id}")
 @app.get("/bff/approvals/{id}")
 @app.get("/bff/artifacts/{id}")
-@app.get("/bff/channels")
-@app.get("/bff/channels/{id}")
 @app.get("/bff/events/stream")
-@app.get("/bff/mcp-servers")
-@app.get("/bff/mcp-servers/{id}")
-@app.get("/bff/mcp-tools")
-@app.get("/bff/mcp-tools/{id}")
-@app.get("/bff/ranking-formulas")
 @app.get("/bff/research-experiments")
 @app.get("/bff/research-analyses")
-@app.get("/bff/tools")
-@app.get("/bff/tools/{id}")
 @app.get("/bff/v5/control-room")
 @app.get("/bff/v5/execution/persona-health")
 @app.get("/bff/v5/execution/strategy-health")
@@ -30266,12 +30392,11 @@ async def sem_final_generic_read_alias(
 
 
 # NOTE: /bff/capital-pools/{id}, /bff/deployments/{id}, /bff/evolution-programs/{id},
-# /bff/jobs/{id}, /bff/personas/{id}, /bff/rebalances/{id}, and /bff/strategies/{id}
-# have dedicated handlers registered earlier in this file and are intentionally excluded here.
-@app.get("/bff/ranking-formulas/{id}")
+# /bff/jobs/{id}, /bff/personas/{id}, /bff/rebalances/{id}, /bff/strategies/{id},
+# /bff/ranking-formulas/{id}, and /bff/skills/{id} have dedicated handlers
+# registered earlier in this file and are intentionally excluded here.
 @app.get("/bff/research-analyses/{id}")
 @app.get("/bff/research-experiments/{id}")
-@app.get("/bff/skills/{id}")
 @app.get("/bff/v5/interventions/{id}")
 async def sem_final_id_named_read_alias(
     request: Request,
