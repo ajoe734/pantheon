@@ -865,6 +865,85 @@ Added the `managementQuarterlyRanking()` path builder resolving to
 
 ### Task
 
+BFF-PM12-008 — Owner: Codex2, Reviewer: Claude2
+
+---
+
+### PM-12 Quarterly Ranking Recommendations
+
+`GET /bff/management/quarterly-ranking/recommendations?quarter=YYYY-Qn`
+composes PM-12 governance recommendations from the quarterly ranking result.
+It is a read-only advisory aggregate: it never writes capital, personas, runtime
+bindings, or approvals directly.
+
+**File: `services/control-plane/bff/main.py`**
+
+The route accepts `quarter`, `state`, `archetype`, `q`, `page_token`, and
+`page_size`. Quarter parsing and invalid-quarter behavior match
+`GET /bff/management/quarterly-ranking`.
+
+Each recommendation carries a policy-safe action id from the B3.5 allow-list:
+
+```text
+promote_to_canary_candidate, increase_research_budget, grant_tool_access,
+reduce_capital_access, require_retraining, freeze_persona,
+suspend_persona, retire_persona
+```
+
+Every item sets `recommendationType=governance_advisory`,
+`requiresHumanGateDecision=true`, and `liveCapitalMutation=false`. Governance
+destinations are Human Inbox, Governance Queue, and HumanGateDecision; the route
+only exposes those destinations as routing metadata and does not enqueue or
+decide anything by itself.
+
+The response includes top-level `items` / `recommendations`,
+`data.recommendations`, `quarterWindow`, `formula`, `evidenceRefs`, `summary`,
+`page_info`, and `meta.surfaces.quarterly_ranking_recommendations`.
+
+The route advertises strict live composition sources:
+
+- `GET /bff/management/quarterly-ranking`
+- `GET /bff/management/persona-league`
+- `GET /bff/management/persona-league/rankings`
+- `GET /bff/management/persona-league/tiers`
+- `GET /api/v1/knowledge/evidence`
+- `GET /bff/management/human-inbox`
+- `GET /api/v1/operator/governance/approval-queue`
+
+**File: `execute-plans/src/lib/bff-v1/management.ts`**
+
+Added typed query/response contracts plus:
+
+- `managementQuarterlyRankingRecommendationsPath()`
+- `fetchManagementQuarterlyRankingRecommendations()`
+
+**File: `execute-plans/src/lib/bff-v1/paths.ts`**
+
+Added the `managementQuarterlyRankingRecommendations()` path builder resolving
+to `/bff/management/quarterly-ranking/recommendations`.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated `GET /bff/management/quarterly-ranking/recommendations` returns advisory recommendations, formula, quarter window, evidence refs, summary, page info, and source metadata | Implemented BFF-PM12-008 |
+| 2 | Recommendations only use B3.5 governance action ids and mark `liveCapitalMutation=false` | Implemented BFF-PM12-008 |
+| 3 | `quarter=YYYY-Qn` parsing and HTTP 422 invalid-quarter behavior match quarterly ranking | Implemented BFF-PM12-008 |
+| 4 | Missing auth returns HTTP 401 | Implemented BFF-PM12-008 |
+| 5 | Route is registered in the execute-plans final live wiring route inventory | Implemented BFF-PM12-008 |
+| 6 | execute-plans exposes typed path and fetch helpers for quarterly ranking recommendations | Implemented BFF-PM12-008 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_pm12_persona_league.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
 BFF-PM12-006 — Owner: Codex2, Reviewer: Claude2
 
 ---
