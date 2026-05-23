@@ -195,6 +195,62 @@ continues to return `CommandSubmissionResponse`; it is not changed to the final
 
 ---
 
+## §13.5 Decision Endpoints
+
+### Gap
+
+The execute-plans approval queue needs direct BFF decision endpoints for both a
+single approval decision and a batch of approval decisions. The single route existed
+for the legacy approval contract, but the final BFF gap requires the route to accept
+the frontend decision vocabulary and the batch route to return per-approval results
+instead of falling through to a generic create/action stub.
+
+| ID | Method | Path |
+|---|---|---|
+| B1-017 | POST | `/bff/approvals/{id}/decide` |
+| B1-018 | POST | `/bff/approvals/batch-decide` |
+
+### Fix
+
+**File: `services/control-plane/bff/main.py`**
+
+- Keep `POST /bff/approvals/{id}/decide` as the canonical single-decision route.
+- Accept `approve`, `reject`, `request_revision`, `request_changes`, `escalate`, and
+  `freeze`. `request_changes` is a frontend alias for the existing
+  `RequestApprovalRevision` command.
+- Preserve the approver/admin role gate and typed anonymous/auth failure envelopes.
+- Preserve header idempotency requirements and reject body-level `idempotencyKey` /
+  `idempotency_key` before command side effects.
+- Route accepted decisions through the shared command store used by
+  `/api/v1/operator/commands`.
+- Register `POST /bff/approvals/batch-decide` before the generic create stubs and
+  process a bounded list of decision items with derived per-item idempotency keys.
+- Return per-item `accepted` / `failed` results with `summary.total`,
+  `summary.accepted`, and `summary.failed`; mixed batches return HTTP 207 while fully
+  accepted batches return HTTP 202.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `POST /bff/approvals/{id}/decide` accepts approve/reject/request_revision/request_changes/escalate/freeze and records shared command-store receipts | Implemented in BFF-B1-010 |
+| 2 | Single decide preserves approver/admin role gate, typed validation failures, and header idempotency replay/conflict behavior | Implemented in BFF-B1-010 |
+| 3 | `POST /bff/approvals/batch-decide` accepts a non-empty bounded decision list and returns per-id result status | Implemented in BFF-B1-010 |
+| 4 | Batch decide rejects top-level body idempotency keys before writing commands | Implemented in BFF-B1-010 |
+| 5 | Batch decide records accepted items through the shared command store and isolates failures per item | Implemented in BFF-B1-010 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_approvals_decide_contract.py`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B1-010 — Owner: Codex, Reviewer: Claude
+
+---
+
 ## §14 Confirm-Token Lifecycle
 
 ### Gap
@@ -576,6 +632,73 @@ BFF-B1-006 — Owner: Codex2, Reviewer: Claude
 
 ---
 
+## B4 — P1 v5 Closed-Loop OS APIs {#b4--p1-v5-closed-loop-os-apis}
+
+### Gap
+
+The strict-mode frontend calls `POST /bff/v5/interventions/{id}/decide` when an
+operator decides a human intervention. The route was registered, but it shared the
+generic `V5InterventionAction` semantic-command handler with claim/escalate/release
+and therefore did not materialize the dedicated `DecideV5Intervention` command
+mapping required by `BFF_COMMAND_API_CONTRACT.md` §8.17. That left the decision
+action, audit event (`intervention.{decision}`), and route-level trace/idempotency
+metadata implicit.
+
+### Fix
+
+**File: `services/control-plane/bff/main.py`**
+
+- Split `POST /bff/v5/interventions/{id}/decide` into a dedicated handler.
+- Build a final command payload with `command = "DecideV5Intervention"`,
+  `target.type = "SentinelIntervention"`, `target.id = {id}`,
+  `action = "decide"`, and params containing `intervention_id`,
+  `interventionId`, normalized `decision`, `action_id = "decide"`, and
+  `audit_event = "intervention.{decision}"`.
+- Submit through the shared final-command admission path so
+  `Idempotency-Key` / `X-Idempotency-Key`, `X-Trace-Id`,
+  `X-Correlation-Id`, and `X-Request-Id` are persisted in the foundation command
+  context and command-store record.
+- Reject body-level `idempotencyKey` / `idempotency_key` before command-store
+  writes.
+- Validate operator/approver/admin role and allow bounded decisions:
+  `approve`, `reject`, `defer`, and `dismiss`.
+- Keep claim/escalate/release/two-man-sign on the existing
+  `V5InterventionAction` receipt path; only the decision path is specialized.
+
+**Files: `services/control-plane/bff/models.py` and
+`services/control-plane/bff/action_catalog.py`**
+
+- Add `CommandType.DECIDE_V5_INTERVENTION = "DecideV5Intervention"`.
+- Add a catalog row for `/bff/v5/interventions/{intervention_id}/decide` with
+  operator/approver roles and idempotency required.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated `POST /bff/v5/interventions/{id}/decide` returns HTTP 202 with `data.command = "DecideV5Intervention"` | ✅ test added |
+| 2 | Command-store record target is `SentinelIntervention:{id}` and params include `intervention_id`, `interventionId`, `decision`, and `audit_event = intervention.{decision}` | ✅ test added |
+| 3 | `Idempotency-Key`, trace, correlation, and request headers are persisted in foundation metadata | ✅ test added |
+| 4 | Same idempotency key and payload replays the original command receipt | ✅ test added |
+| 5 | Invalid decision returns HTTP 422 without a command-store write | ✅ test added |
+| 6 | Body-level idempotency keys are rejected before a command-store write | ✅ test added |
+| 7 | `DecideV5Intervention` is present in the action catalog and command enum | ✅ test added |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/models.py`
+- `services/control-plane/bff/action_catalog.py`
+- `services/control-plane/bff/test_v5_interventions.py`
+- `services/control-plane/bff/test_final_command_execution_bridge.py`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B1-011 — Owner: Codex2, Reviewer: Claude
+
+---
+
 ## §18 POST /bff/alerts/{id}/acknowledge — Alert Acknowledgement {#12-decision-endpoints}
 
 ### Gap
@@ -713,4 +836,3 @@ projection.
 ### Task
 
 BFF-B2-005 — Owner: Codex, Reviewer: Claude2
-

@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
+from command_queue import CommandStore
 from read_store import ReadSurfaceStore
 
 APPROVER_HEADERS = {"Authorization": "Bearer op-app001:approver"}
@@ -226,6 +227,21 @@ def test_bff_approvals_decide_request_revision_with_notes_returns_202() -> None:
             bff_main.read_store = original
 
 
+def test_bff_approvals_decide_request_changes_alias_returns_202() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client, _ = _fresh_client(td)
+            resp = client.post(
+                f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
+                json={"decision": "request_changes", "revision_notes": "Please attach more evidence"},
+                headers=_approver_headers(_idem()),
+            )
+            assert resp.status_code == 202, resp.text
+        finally:
+            bff_main.read_store = original
+
+
 def test_bff_approvals_decide_request_revision_without_notes_returns_422() -> None:
     with tempfile.TemporaryDirectory() as td:
         original = bff_main.read_store
@@ -239,6 +255,116 @@ def test_bff_approvals_decide_request_revision_without_notes_returns_422() -> No
             assert resp.status_code == 422, resp.text
         finally:
             bff_main.read_store = original
+
+
+# ---------------------------------------------------------------------------
+# Batch decide
+# ---------------------------------------------------------------------------
+
+def test_bff_approvals_batch_decide_accepts_list_and_records_commands() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_read_store = bff_main.read_store
+        original_command_store = bff_main.command_store
+        try:
+            client, _ = _fresh_client(td)
+            bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+
+            resp = client.post(
+                "/bff/approvals/batch-decide",
+                json={
+                    "decisions": [
+                        {"id": PENDING_APPROVAL_ID, "decision": "approve"},
+                        {
+                            "id": DECIDED_APPROVAL_ID,
+                            "decision": "request_changes",
+                            "revision_notes": "Attach final operator evidence",
+                        },
+                    ]
+                },
+                headers=_approver_headers(_idem()),
+            )
+
+            assert resp.status_code == 202, resp.text
+            body = resp.json()
+            assert body["status"] == "accepted"
+            assert body["summary"] == {"total": 2, "accepted": 2, "failed": 0}
+            assert [item["status"] for item in body["results"]] == ["accepted", "accepted"]
+            assert [item["id"] for item in body["results"]] == [PENDING_APPROVAL_ID, DECIDED_APPROVAL_ID]
+
+            records = bff_main.command_store._get_all_commands()
+            assert [record["type"] for record in records] == ["ApproveDecision", "RequestApprovalRevision"]
+            assert [record["target"]["id"] for record in records] == [
+                PENDING_APPROVAL_ID,
+                DECIDED_APPROVAL_ID,
+            ]
+        finally:
+            bff_main.read_store = original_read_store
+            bff_main.command_store = original_command_store
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+
+
+def test_bff_approvals_batch_decide_partial_failure_returns_per_item_status() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_read_store = bff_main.read_store
+        original_command_store = bff_main.command_store
+        try:
+            client, _ = _fresh_client(td)
+            bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+
+            resp = client.post(
+                "/bff/approvals/batch-decide",
+                json={
+                    "decisions": [
+                        {"id": PENDING_APPROVAL_ID, "decision": "approve"},
+                        {"id": UNKNOWN_ID, "decision": "approve"},
+                        {"id": DECIDED_APPROVAL_ID, "decision": "reject"},
+                    ]
+                },
+                headers=_approver_headers(_idem()),
+            )
+
+            assert resp.status_code == 207, resp.text
+            body = resp.json()
+            assert body["status"] == "partial"
+            assert body["summary"] == {"total": 3, "accepted": 1, "failed": 2}
+            assert [item["status"] for item in body["results"]] == ["accepted", "failed", "failed"]
+            assert body["results"][1]["error"]["code"] == "OBJECT_NOT_FOUND"
+            assert body["results"][2]["error"]["code"] == "INVALID_PARAMS"
+            assert bff_main.command_store._get_all_commands()[0]["target"]["id"] == PENDING_APPROVAL_ID
+        finally:
+            bff_main.read_store = original_read_store
+            bff_main.command_store = original_command_store
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+
+
+def test_bff_approvals_batch_decide_rejects_body_idempotency_before_commands() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_read_store = bff_main.read_store
+        original_command_store = bff_main.command_store
+        try:
+            client, _ = _fresh_client(td)
+            bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+
+            resp = client.post(
+                "/bff/approvals/batch-decide",
+                json={
+                    "idempotencyKey": "body-key-must-not-be-used",
+                    "decisions": [{"id": PENDING_APPROVAL_ID, "decision": "approve"}],
+                },
+                headers=_approver_headers(_idem()),
+            )
+
+            assert resp.status_code == 400, resp.text
+            detail = resp.json()["detail"]
+            assert detail["error"]["details"]["precondition_failed"] == "body_idempotency_key"
+            assert bff_main.command_store._get_all_commands() == []
+        finally:
+            bff_main.read_store = original_read_store
+            bff_main.command_store = original_command_store
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
 
 
 # ---------------------------------------------------------------------------

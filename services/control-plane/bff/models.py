@@ -66,6 +66,7 @@ class CommandType(str, Enum):
     CONFIRM_TOKEN_DELETE = "DeleteConfirmToken"
     CONFIRM_TOKEN_REDEEM = "RedeemConfirmToken"
     V5_INTERVENTION_ACTION = "V5InterventionAction"
+    DECIDE_V5_INTERVENTION = "DecideV5Intervention"
     SENTINEL_FINDING_STATUS = "SentinelFindingStatus"
     SENTINEL_REMEDIATION_BUILD = "SentinelRemediationBuild"
     SENTINEL_REMEDIATION_EXECUTE = "SentinelRemediationExecute"
