@@ -5922,6 +5922,108 @@ def _management_count_by(records: List[Dict[str, Any]], field: str) -> Dict[str,
     return counts
 
 
+_TRADING_PULSE_DRIFT_BREACH_STATUSES = {"breached", "blocked", "critical", "fail", "failed"}
+_TRADING_PULSE_DRIFT_WATCH_STATUSES = {"degraded", "warn", "warning", "watch"}
+
+
+def _management_json_clone(value: Any) -> Any:
+    return json.loads(json.dumps(value))
+
+
+def _trading_pulse_baseline_status(report: Optional[Dict[str, Any]]) -> str:
+    if not report:
+        return "unavailable"
+    threshold = report.get("threshold_evaluation")
+    if not isinstance(threshold, dict):
+        return "unknown"
+    status = str(threshold.get("overall_status") or threshold.get("status") or "").lower()
+    if status in _TRADING_PULSE_DRIFT_BREACH_STATUSES:
+        return "breached"
+    if status in _TRADING_PULSE_DRIFT_WATCH_STATUSES:
+        return "watch"
+    if status in {"ok", "pass", "passed", "within_threshold", "within-threshold"}:
+        return "ok"
+    return status or "unknown"
+
+
+def _trading_pulse_drift_metric_counts(drift_groups: Any) -> Dict[str, int]:
+    metric_count = 0
+    breached_metric_count = 0
+    watch_metric_count = 0
+    groups = drift_groups if isinstance(drift_groups, list) else []
+    for group in groups:
+        metrics = group.get("metrics") if isinstance(group, dict) else None
+        if not isinstance(metrics, list):
+            continue
+        for metric in metrics:
+            if not isinstance(metric, dict):
+                continue
+            metric_count += 1
+            status = str(metric.get("status") or "").lower()
+            if status in _TRADING_PULSE_DRIFT_BREACH_STATUSES:
+                breached_metric_count += 1
+            elif status in _TRADING_PULSE_DRIFT_WATCH_STATUSES:
+                watch_metric_count += 1
+    return {
+        "metricCount": metric_count,
+        "metric_count": metric_count,
+        "breachedMetricCount": breached_metric_count,
+        "breached_metric_count": breached_metric_count,
+        "watchMetricCount": watch_metric_count,
+        "watch_metric_count": watch_metric_count,
+    }
+
+
+def _build_trading_pulse_baseline_comparison(row: Dict[str, Any]) -> Dict[str, Any]:
+    runtime_id = str(row.get("runtime_id") or "").strip()
+    report = read_store.get_paper_live_drift_report(runtime_id)
+    status = _trading_pulse_baseline_status(report)
+    drift_groups = (report or {}).get("drift_groups") or []
+    metric_counts = _trading_pulse_drift_metric_counts(drift_groups)
+    threshold_evaluation = (
+        _management_json_clone((report or {}).get("threshold_evaluation"))
+        if report
+        else {
+            "overall_status": "unavailable",
+            "summary": "Paper/live baseline comparison unavailable for this runtime.",
+            "breached_metric_ids": [],
+        }
+    )
+    paper_live_drift = {
+        "available": report is not None,
+        "status": status,
+        "href": f"/api/v1/operator/paper-live-drift/{runtime_id}" if runtime_id else None,
+    }
+    return {
+        "runtimeId": runtime_id or None,
+        "runtime_id": runtime_id or None,
+        "runtimeBindingId": row.get("runtime_binding_id"),
+        "runtime_binding_id": row.get("runtime_binding_id"),
+        "deploymentStage": row.get("deployment_stage"),
+        "deployment_stage": row.get("deployment_stage"),
+        "status": status,
+        "paperLiveDrift": paper_live_drift,
+        "paper_live_drift": paper_live_drift,
+        "paperBaseline": _management_json_clone((report or {}).get("paper_baseline"))
+        if report
+        else None,
+        "paper_baseline": _management_json_clone((report or {}).get("paper_baseline"))
+        if report
+        else None,
+        "observedState": _management_json_clone((report or {}).get("observed_state"))
+        if report
+        else None,
+        "observed_state": _management_json_clone((report or {}).get("observed_state"))
+        if report
+        else None,
+        "driftGroups": _management_json_clone(drift_groups),
+        "drift_groups": _management_json_clone(drift_groups),
+        "thresholdEvaluation": threshold_evaluation,
+        "threshold_evaluation": threshold_evaluation,
+        **metric_counts,
+    }
+
+
 _MANAGEMENT_RISK_LEVEL_ORDER = {
     "low": 1,
     "medium": 2,
@@ -6104,6 +6206,17 @@ def _build_management_human_inbox_payload(snapshot_at: str) -> Dict[str, Any]:
 def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
     runtime_bindings = read_store.list_runtime_bindings()
     runtime_rows = [_project_operator_runtime_state_row(binding) for binding in runtime_bindings]
+    baseline_comparisons = [
+        _build_trading_pulse_baseline_comparison(row) for row in runtime_rows
+    ]
+    baseline_by_runtime_id = {
+        str(comparison.get("runtimeId") or comparison.get("runtime_id") or ""): comparison
+        for comparison in baseline_comparisons
+    }
+    for row in runtime_rows:
+        comparison = baseline_by_runtime_id.get(str(row.get("runtime_id") or ""))
+        row["baselineComparison"] = comparison
+        row["baseline_comparison"] = comparison
     telemetry_rows = [
         row.get("telemetry_summary")
         for row in runtime_rows
@@ -6139,6 +6252,7 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
     for row in runtime_rows:
         telemetry = row.get("telemetry_summary") if isinstance(row.get("telemetry_summary"), dict) else {}
         metrics = telemetry.get("metrics") if isinstance(telemetry.get("metrics"), dict) else {}
+        baseline_comparison = baseline_by_runtime_id.get(str(row.get("runtime_id") or "")) or {}
         rankings.append(
             {
                 "runtimeId": row.get("runtime_id"),
@@ -6160,6 +6274,10 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
                 "total_trades": metrics.get("total_trades"),
                 "lastUpdatedAt": row.get("last_updated_at"),
                 "last_updated_at": row.get("last_updated_at"),
+                "baselineComparisonStatus": baseline_comparison.get("status"),
+                "baseline_comparison_status": baseline_comparison.get("status"),
+                "breachedMetricCount": baseline_comparison.get("breachedMetricCount"),
+                "breached_metric_count": baseline_comparison.get("breached_metric_count"),
             }
         )
     rankings.sort(
@@ -6175,6 +6293,20 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
 
     by_status = _management_count_by(runtime_rows, "status")
     by_stage = _management_count_by(runtime_rows, "deployment_stage")
+    by_baseline_status = _management_count_by(baseline_comparisons, "status")
+    baseline_available_count = sum(
+        1
+        for comparison in baseline_comparisons
+        if (comparison.get("paper_live_drift") or {}).get("available")
+    )
+    baseline_breached_count = sum(
+        1 for comparison in baseline_comparisons
+        if comparison.get("status") == "breached"
+    )
+    baseline_watch_count = sum(
+        1 for comparison in baseline_comparisons
+        if comparison.get("status") == "watch"
+    )
     runtime_surface = _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at)
     telemetry_surface = _dataset_surface_status("telemetry_summaries", snapshot_at=snapshot_at)
     if runtime_rows and len(telemetry_rows) < len(runtime_rows) and telemetry_surface.get("status") == "ok":
@@ -6184,12 +6316,36 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
             "staleness",
             {"served_from": "unverifiable", "last_known_at": snapshot_at},
         )
+    paper_live_drift_surface = _dataset_surface_status(
+        "paper_live_drift_reports",
+        snapshot_at=snapshot_at,
+    )
+    if (
+        runtime_rows
+        and baseline_available_count < len(runtime_rows)
+        and paper_live_drift_surface.get("status") == "ok"
+    ):
+        paper_live_drift_surface["status"] = "degraded"
+        paper_live_drift_surface["message"] = (
+            "Paper/live baseline comparison missing for one or more cockpit runtimes."
+        )
+        paper_live_drift_surface.setdefault(
+            "staleness",
+            {"served_from": "unverifiable", "last_known_at": snapshot_at},
+        )
+    baseline_surface = _aggregate_group_surface(
+        "baseline_comparison",
+        [runtime_surface, paper_live_drift_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Trading pulse baseline comparison unavailable.",
+        degraded_message="Trading pulse baseline comparison is degraded because one or more paper/live drift reports are missing.",
+    )
     trading_surface = _aggregate_group_surface(
         "management_trading_pulse",
-        [runtime_surface, telemetry_surface],
+        [runtime_surface, telemetry_surface, baseline_surface],
         snapshot_at=snapshot_at,
         unavailable_message="Trading pulse aggregate unavailable.",
-        degraded_message="Trading pulse aggregate is available, but runtime or telemetry coverage is degraded.",
+        degraded_message="Trading pulse aggregate is available, but runtime, telemetry, or baseline coverage is degraded.",
     )
 
     summary = {
@@ -6211,6 +6367,14 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
         "worst_slippage_bps": max(slippage_values) if slippage_values else None,
         "totalTrades": int(sum(trade_values)) if trade_values else 0,
         "total_trades": int(sum(trade_values)) if trade_values else 0,
+        "baselineComparisonCount": baseline_available_count,
+        "baseline_comparison_count": baseline_available_count,
+        "baselineBreachedCount": baseline_breached_count,
+        "baseline_breached_count": baseline_breached_count,
+        "baselineWatchCount": baseline_watch_count,
+        "baseline_watch_count": baseline_watch_count,
+        "byBaselineStatus": by_baseline_status,
+        "by_baseline_status": by_baseline_status,
     }
     cards = [
         {
@@ -6241,12 +6405,24 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
             "value": summary["averageFillRate"],
             "details": {"worstSlippageBps": summary["worstSlippageBps"]},
         },
+        {
+            "cardId": "baseline-comparison",
+            "card_id": "baseline-comparison",
+            "label": "Baseline Comparison",
+            "value": summary["baselineBreachedCount"],
+            "details": {
+                "baselineComparisonCount": summary["baselineComparisonCount"],
+                "byBaselineStatus": by_baseline_status,
+            },
+        },
     ]
     meta = _snapshot_meta(snapshot_at)
     meta["surfaces"] = {
         "management_trading_pulse": trading_surface,
         "runtime_roster": runtime_surface,
         "telemetry_summary": telemetry_surface,
+        "paper_live_drift": paper_live_drift_surface,
+        "baseline_comparison": baseline_surface,
     }
     return {
         "summary": summary,
@@ -6254,6 +6430,8 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
         "rankings": rankings,
         "runtimeRows": runtime_rows,
         "runtime_rows": runtime_rows,
+        "baselineComparisons": baseline_comparisons,
+        "baseline_comparisons": baseline_comparisons,
         "meta": meta,
     }
 
@@ -6267,6 +6445,8 @@ def _build_management_trading_pulse_route_payload(snapshot_at: str) -> Dict[str,
         "rankings": payload["rankings"],
         "runtimeRows": payload["runtimeRows"],
         "runtime_rows": payload["runtime_rows"],
+        "baselineComparisons": payload["baselineComparisons"],
+        "baseline_comparisons": payload["baseline_comparisons"],
     }
     return {
         "data": data,
@@ -6275,6 +6455,8 @@ def _build_management_trading_pulse_route_payload(snapshot_at: str) -> Dict[str,
         "rankings": payload["rankings"],
         "runtimeRows": payload["runtimeRows"],
         "runtime_rows": payload["runtime_rows"],
+        "baselineComparisons": payload["baselineComparisons"],
+        "baseline_comparisons": payload["baseline_comparisons"],
         "summary": payload["summary"],
         "page_info": {
             "next_page_token": None,
@@ -6436,6 +6618,8 @@ def _build_management_trading_pulse_rankings_payload(
             surfaces.get("management_trading_pulse"),
             surfaces.get("runtime_roster"),
             surfaces.get("telemetry_summary"),
+            surfaces.get("paper_live_drift"),
+            surfaces.get("baseline_comparison"),
         )
         if isinstance(surface, dict)
     ]
@@ -6479,6 +6663,7 @@ def _build_management_trading_pulse_rankings_payload(
                 "GET /bff/management/trading-pulse",
                 "GET /bff/runtimes",
                 "telemetry_summaries",
+                "paper_live_drift_reports",
             ],
         },
     }

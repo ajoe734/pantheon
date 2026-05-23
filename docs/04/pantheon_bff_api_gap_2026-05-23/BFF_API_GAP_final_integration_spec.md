@@ -1889,12 +1889,15 @@ BFF-B3-003 — Owner: Codex, Reviewer: Claude
   - telemetry summaries for P&L, drawdown, Sharpe, fill rate, slippage, and
     trade count;
   - rollback summaries linked to each runtime;
+  - paper/live drift reports as the paper baseline vs observed-state
+    comparison for each runtime;
   - computed ranking rows and ranking blocks.
 - Return the standard BFF aggregate envelope with `data`, `items`, `summary`,
-  `page_info`, and `meta.surfaces`.
+  `page_info`, `baselineComparisons` / `baseline_comparisons`, and
+  `meta.surfaces`.
 - Preserve source surfaces in metadata (`runtime_roster`, `telemetry_summary`)
-  plus composed `management_trading_pulse` and
-  `management_trading_pulse_rankings` surfaces.
+  and `paper_live_drift`) plus composed `baseline_comparison`,
+  `management_trading_pulse`, and `management_trading_pulse_rankings` surfaces.
 
 **Files: `execute-plans/src/lib/bff-v1/paths.ts`,
 `execute-plans/src/lib/bff-v1/management.ts`, and
@@ -1912,11 +1915,11 @@ BFF-B3-003 — Owner: Codex, Reviewer: Claude
 
 | # | Criterion | Status |
 |---|---|---|
-| 1 | `GET /bff/management/trading-pulse` returns card summary, runtime rows, and runtime rankings composed from runtime bindings and telemetry summaries | ✅ test added in BFF-B3-004 |
-| 2 | Response includes `data`, `items`, `cards`, `rankings`, `summary`, `page_info`, and `meta.surfaces.management_trading_pulse` | ✅ test added in BFF-B3-004 |
+| 1 | `GET /bff/management/trading-pulse` returns card summary, runtime rows, runtime rankings, and baseline comparisons composed from runtime bindings, telemetry summaries, and paper/live drift reports | ✅ test added in BFF-B3-004 |
+| 2 | Response includes `data`, `items`, `cards`, `rankings`, `baselineComparisons`, `baseline_comparisons`, `summary`, `page_info`, `meta.surfaces.management_trading_pulse`, and `meta.surfaces.baseline_comparison` | ✅ test added in BFF-B3-004 |
 | 3 | `GET /bff/management/trading-pulse/rankings?limit=` returns computed ranking blocks with bounded limit support | ✅ test added in BFF-B3-004 |
 | 4 | Anonymous requests return HTTP 401 typed BFF error envelope | ✅ test added in BFF-B3-004 |
-| 5 | Frontend path/client contract exposes the live aggregate and rankings route without seed-list fanout | ✅ implemented in BFF-B3-004 |
+| 5 | Frontend path/client contract exposes the live aggregate, baseline comparison fields, and rankings route without seed-list fanout | ✅ implemented in BFF-B3-004 |
 
 ### Affected Files
 

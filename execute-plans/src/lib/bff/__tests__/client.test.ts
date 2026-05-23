@@ -484,18 +484,53 @@ describe("managementClient — Trading Pulse aggregate live adapter", () => {
               worst_slippage_bps: 4.8,
               totalTrades: 31,
               total_trades: 31,
+              baselineComparisonCount: 1,
+              baseline_comparison_count: 1,
+              baselineBreachedCount: 0,
+              baseline_breached_count: 0,
+              baselineWatchCount: 1,
+              baseline_watch_count: 1,
+              byBaselineStatus: { watch: 1 },
+              by_baseline_status: { watch: 1 },
             },
             cards: [{ cardId: "pnl", card_id: "pnl", label: "P&L", value: 0.42 }],
-            rankings: [{ runtimeId: "runtime-alpha", runtime_id: "runtime-alpha", rank: 1, pnl: 0.42 }],
-            runtimeRows: [{ runtime_id: "runtime-alpha", status: "running" }],
-            runtime_rows: [{ runtime_id: "runtime-alpha", status: "running" }],
+            rankings: [
+              {
+                runtimeId: "runtime-alpha",
+                runtime_id: "runtime-alpha",
+                rank: 1,
+                pnl: 0.42,
+                baselineComparisonStatus: "watch",
+                baseline_comparison_status: "watch",
+              },
+            ],
+            runtimeRows: [
+              {
+                runtime_id: "runtime-alpha",
+                status: "running",
+                baseline_comparison: { runtime_id: "runtime-alpha", status: "watch" },
+              },
+            ],
+            runtime_rows: [
+              {
+                runtime_id: "runtime-alpha",
+                status: "running",
+                baseline_comparison: { runtime_id: "runtime-alpha", status: "watch" },
+              },
+            ],
+            baselineComparisons: [{ runtimeId: "runtime-alpha", runtime_id: "runtime-alpha", status: "watch" }],
+            baseline_comparisons: [{ runtimeId: "runtime-alpha", runtime_id: "runtime-alpha", status: "watch" }],
           },
           items: [{ cardId: "pnl", card_id: "pnl", label: "P&L", value: 0.42 }],
+          baselineComparisons: [{ runtimeId: "runtime-alpha", runtime_id: "runtime-alpha", status: "watch" }],
+          baseline_comparisons: [{ runtimeId: "runtime-alpha", runtime_id: "runtime-alpha", status: "watch" }],
           page_info: { total: 1, page_size: 1, next_page_token: null },
           meta: {
             surfaces: {
               management_trading_pulse: { status: "ok", source: "bff_composed" },
               runtime_roster: { status: "ok", source: "canonical" },
+              paper_live_drift: { status: "ok", source: "service_store" },
+              baseline_comparison: { status: "ok", source: "bff_composed" },
             },
           },
         }), { status: 200, headers: { "Content-Type": "application/json" } }),
@@ -554,7 +589,9 @@ describe("managementClient — Trading Pulse aggregate live adapter", () => {
     );
     expect(pulse.cards[0].cardId).toBe("pnl");
     expect(pulse.summary.totalPnl).toBe(0.42);
+    expect(pulse.baselineComparisons[0].status).toBe("watch");
     expect(pulse.meta.surfaces.management_trading_pulse.source).toBe("bff_composed");
+    expect(pulse.meta.surfaces.baseline_comparison?.source).toBe("bff_composed");
     expect(rankings.rankingBlocks[0].items[0].runtimeId).toBe("runtime-alpha");
     expect(rankings.summary.criteria).toEqual(["pnl"]);
     expect(rankings.meta.surfaces.management_trading_pulse_rankings.source).toBe("bff_composed");
