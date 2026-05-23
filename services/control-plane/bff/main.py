@@ -22147,6 +22147,8 @@ _PM12_LEAGUE_RANKING_CRITERIA = {
     "execution": ("executionScore", "Execution"),
     "activity": ("activityScore", "Activity"),
 }
+_PM12_LEAGUE_FORMULA_VERSION = "pm12-default-v1"
+_PM12_QUARTER_PATTERN = re.compile(r"^(?P<year>\d{4})-Q(?P<quarter>[1-4])$", re.IGNORECASE)
 _PM12_LEAGUE_TIER_DEFINITIONS = [
     {
         "id": "tier-1",
@@ -22322,6 +22324,126 @@ def _pm12_tier_for_score(score: float) -> Dict[str, Any]:
         if score >= float(tier["minScore"]):
             return tier
     return _PM12_LEAGUE_TIER_DEFINITIONS[-1]
+
+
+def _pm12_current_quarter_id(snapshot_at: str) -> str:
+    timestamp = _audit_datetime(snapshot_at) or datetime.now(timezone.utc)
+    quarter = ((timestamp.month - 1) // 3) + 1
+    return f"{timestamp.year}-Q{quarter}"
+
+
+def _pm12_iso_z(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _pm12_quarter_window(quarter: Optional[str], snapshot_at: str) -> Dict[str, Any]:
+    raw_quarter = str(quarter or "").strip().upper() or _pm12_current_quarter_id(snapshot_at)
+    match = _PM12_QUARTER_PATTERN.match(raw_quarter)
+    if not match:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "invalid_quarter",
+                "message": "quarter must use YYYY-Qn format, for example 2026-Q2.",
+                "field": "quarter",
+            },
+        )
+    year = int(match.group("year"))
+    quarter_number = int(match.group("quarter"))
+    start_month = ((quarter_number - 1) * 3) + 1
+    start_at = datetime(year, start_month, 1, tzinfo=timezone.utc)
+    if quarter_number == 4:
+        end_exclusive_at = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+    else:
+        end_exclusive_at = datetime(year, start_month + 3, 1, tzinfo=timezone.utc)
+    quarter_id = f"{year}-Q{quarter_number}"
+    return {
+        "quarter": quarter_id,
+        "year": year,
+        "quarterNumber": quarter_number,
+        "quarter_number": quarter_number,
+        "label": f"{year} Q{quarter_number}",
+        "startAt": _pm12_iso_z(start_at),
+        "start_at": _pm12_iso_z(start_at),
+        "endExclusiveAt": _pm12_iso_z(end_exclusive_at),
+        "end_exclusive_at": _pm12_iso_z(end_exclusive_at),
+        "timezone": "UTC",
+    }
+
+
+def _pm12_quarter_formula_payload() -> Dict[str, Any]:
+    return {
+        "id": "pm12-quarterly-ranking-formula",
+        "formulaId": "pm12-quarterly-ranking-formula",
+        "formula_id": "pm12-quarterly-ranking-formula",
+        "version": _PM12_LEAGUE_FORMULA_VERSION,
+        "formulaVersion": _PM12_LEAGUE_FORMULA_VERSION,
+        "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
+        "weights": dict(_PM12_LEAGUE_SCORE_WEIGHTS),
+        "scoreField": "overallScore",
+        "score_field": "overallScore",
+        "components": [
+            {"key": "pnl", "label": "PnL", "weight": _PM12_LEAGUE_SCORE_WEIGHTS["pnl"]},
+            {"key": "risk", "label": "Risk", "weight": _PM12_LEAGUE_SCORE_WEIGHTS["risk"]},
+            {"key": "execution", "label": "Execution", "weight": _PM12_LEAGUE_SCORE_WEIGHTS["execution"]},
+            {"key": "activity", "label": "Activity", "weight": _PM12_LEAGUE_SCORE_WEIGHTS["activity"]},
+        ],
+        "basis": "latest_available_persona_league_metrics_with_quarter_window",
+        "policy": "read_only_governance_advisory",
+    }
+
+
+def _pm12_evidence_timestamp(item: Dict[str, Any]) -> Optional[datetime]:
+    source_document = item.get("source_document") if isinstance(item.get("source_document"), dict) else {}
+    return _audit_datetime(source_document.get("captured_at") or item.get("created_at"))
+
+
+def _pm12_quarter_evidence_refs(
+    evidence_refs: List[Dict[str, Any]],
+    quarter_window: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    start_at = _audit_datetime(quarter_window.get("startAt"))
+    end_exclusive_at = _audit_datetime(quarter_window.get("endExclusiveAt"))
+    if start_at is None or end_exclusive_at is None:
+        return []
+    return [
+        item
+        for item in evidence_refs
+        for timestamp in [_pm12_evidence_timestamp(item)]
+        if timestamp is not None and start_at <= timestamp < end_exclusive_at
+    ]
+
+
+def _pm12_quarterly_ranking_items(
+    rows: List[Dict[str, Any]],
+    *,
+    quarter_window: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    ranked = sorted(
+        (_pm12_persona_league_ranking_item(row) for row in rows),
+        key=lambda item: (
+            _management_number(item.get("overallScore")) or 0.0,
+            str(item.get("personaId") or ""),
+        ),
+        reverse=True,
+    )
+    items: List[Dict[str, Any]] = []
+    for rank, item in enumerate(ranked, start=1):
+        score = _management_number(item.get("overallScore")) or 0.0
+        items.append({
+            **item,
+            "rank": rank,
+            "score": score,
+            "scoreField": "overallScore",
+            "score_field": "overallScore",
+            "quarter": quarter_window["quarter"],
+            "quarterWindow": quarter_window,
+            "quarter_window": quarter_window,
+            "formulaVersion": _PM12_LEAGUE_FORMULA_VERSION,
+            "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
+            "basis": "latest_available_persona_league_metrics_with_quarter_window",
+        })
+    return items
 
 
 def _project_persona_league_row(raw: Dict[str, Any]) -> Dict[str, Any]:
@@ -22687,6 +22809,131 @@ async def bff_management_persona_league_tiers(
                 "GET /bff/v5/execution/persona-health",
             ],
             "policy": "read_only_governance_advisory",
+        },
+    }
+
+
+@app.get("/bff/management/quarterly-ranking")
+async def bff_management_quarterly_ranking(
+    quarter: Optional[str] = Query(default=None),
+    state: Optional[str] = None,
+    archetype: Optional[str] = None,
+    q: str = Query(default=""),
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 quarterly persona ranking composed from league rows and evidence."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    quarter_window = _pm12_quarter_window(quarter, snapshot_at)
+    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
+    ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
+    total = len(ranked_items)
+    page_items, next_page_token = _page_slice(ranked_items, page_token, page_size)
+
+    raw_evidence_refs = read_store.list_evidence_refs()
+    evidence_dataset_available = read_store.dataset_source("evidence_refs") != "missing"
+    quarter_evidence_refs = (
+        _pm12_quarter_evidence_refs(raw_evidence_refs, quarter_window)
+        if evidence_dataset_available
+        else []
+    )
+    try:
+        capabilities = _capabilities_for_identity(identity)
+    except Exception:
+        capabilities = None
+    processed_evidence_refs, redacted_count = redact_evidence_refs(
+        identity,
+        quarter_evidence_refs,
+        capabilities=capabilities,
+    )
+    public_evidence_refs = [
+        _management_evidence_public_item(item)
+        for item in processed_evidence_refs
+        if isinstance(item, dict)
+    ]
+
+    formula = _pm12_quarter_formula_payload()
+    source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
+    formula_surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
+    evidence_surface = _dataset_surface_status(
+        "evidence_refs",
+        snapshot_at=snapshot_at,
+        has_data=evidence_dataset_available,
+        missing_message="Evidence reference read surface is unavailable.",
+    )
+    quarterly_surface = _aggregate_group_surface(
+        "quarterly_ranking",
+        [*source_surfaces.values(), formula_surface, evidence_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Quarterly ranking aggregate unavailable.",
+        degraded_message="Quarterly ranking is degraded because one or more source surfaces are degraded.",
+    )
+    top_item = ranked_items[0] if ranked_items else None
+    summary = {
+        "quarter": quarter_window["quarter"],
+        "formulaVersion": formula["formulaVersion"],
+        "formula_version": formula["formula_version"],
+        "personaCount": len(rows),
+        "persona_count": len(rows),
+        "rankedCount": total,
+        "ranked_count": total,
+        "returnedCount": len(page_items),
+        "returned_count": len(page_items),
+        "topPersonaId": (top_item or {}).get("personaId") if isinstance(top_item, dict) else None,
+        "top_persona_id": (top_item or {}).get("personaId") if isinstance(top_item, dict) else None,
+        "evidenceRefCount": len(public_evidence_refs),
+        "evidence_ref_count": len(public_evidence_refs),
+        "redactedEvidenceCount": redacted_count,
+        "redacted_evidence_count": redacted_count,
+        "basis": formula["basis"],
+    }
+    data = {
+        "id": f"pm12-quarterly-ranking-{quarter_window['quarter'].lower()}",
+        "quarter": quarter_window["quarter"],
+        "quarterWindow": quarter_window,
+        "quarter_window": quarter_window,
+        "formula": formula,
+        "items": page_items,
+        "rankings": page_items,
+        "evidenceRefs": public_evidence_refs,
+        "evidence_refs": public_evidence_refs,
+        "summary": summary,
+    }
+    return {
+        "data": data,
+        "items": page_items,
+        "rankings": page_items,
+        "formula": formula,
+        "quarterWindow": quarter_window,
+        "quarter_window": quarter_window,
+        "evidenceRefs": public_evidence_refs,
+        "evidence_refs": public_evidence_refs,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "quarterly_ranking": quarterly_surface,
+                "formula": formula_surface,
+                "evidence_refs": evidence_surface,
+                "knowledge_evidence": evidence_surface,
+                **source_surfaces,
+            },
+            "composition_sources": [
+                "GET /bff/management/persona-league",
+                "GET /bff/management/persona-league/rankings",
+                "GET /bff/management/persona-league/tiers",
+                "GET /api/v1/knowledge/evidence",
+            ],
+            "policy": "read_only_governance_advisory",
+            "redacted_evidence_count": redacted_count,
         },
     }
 
