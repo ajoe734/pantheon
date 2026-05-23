@@ -641,10 +641,11 @@ BFF-B2-002 — Owner: Claude2, Reviewer: Codex2
 
 ### Gap
 
-Sprint BFF-2 requires that the capabilities surface — MCP servers, MCP tools,
-SSE channels, and ranking formulas — is served by dedicated GET handlers rather
-than the generic `sem_final_generic_read_alias` / `sem_final_id_named_read_alias`
-catch-alls. Prior to this sprint:
+Sprint BFF-2 closed two gaps in this section.
+
+**BFF-B2-003 (Capabilities facade):** The capabilities surface — MCP servers, MCP
+tools, SSE channels, and ranking formulas — was served by generic catch-all handlers.
+Prior to BFF-B2-003:
 
 - `GET /bff/mcp-servers` and `GET /bff/mcp-servers/{id}` were registered only
   on `sem_final_generic_read_alias`, returning an untyped stub with no source
@@ -658,15 +659,31 @@ catch-alls. Prior to this sprint:
   was registered on `sem_final_id_named_read_alias` as a stub.
 - `GET /bff/tools`, `GET /bff/tools/{id}`, and `GET /bff/skills/{id}` had
   already-dedicated handlers registered above the catch-all block, but dead
-  catch-all decorators for those paths still existed on the generic handlers,
-  creating ambiguous routing state and dead code.
+  catch-all decorators for those paths still existed on the generic handlers.
+
+**BFF-B2-004 (Research / Search):** `execute-plans@main` needed to consume the
+research-experiments read surface and the cross-entity search endpoint without
+falling back to mock data. Prior to BFF-B2-004:
+
+- `GET /bff/research-experiments` (list) was only registered on the generic
+  `sem_final_generic_read_alias` catch-all handler. It had no dedicated handler,
+  no `data` top-level alias (only `items`), and no explicit `page_info.total`
+  field.
+- `GET /bff/research-experiments/{id}` (detail) was similarly on the
+  `sem_final_id_named_read_alias` catch-all and on
+  `sem_final_generic_patch_alias` for PATCH, both of which return untyped stubs
+  without the standard BFF 404 envelope.
+- `GET /bff/search` already had a dedicated handler but was not formally specified
+  or covered by focused integration tests.
+- `GET /bff/capabilities` already had a dedicated handler but was not formally
+  specified.
 
 ### Fix
 
 **File: `services/control-plane/bff/main.py`**
 
-Eight dedicated handlers are added in a `B2.3 Capabilities facade` block and
-dead catch-all decorators removed:
+**BFF-B2-003** added eight dedicated handlers in a `B2.3 Capabilities facade` block
+and removed dead catch-all decorators:
 
 | # | Method | Path | Handler | Notes |
 |---|---|---|---|---|
@@ -679,20 +696,70 @@ dead catch-all decorators removed:
 | 7 | GET | `/bff/ranking-formulas` | `bff_list_ranking_formulas_facade` | status filter; read_store source |
 | 8 | GET | `/bff/ranking-formulas/{formula_id}` | `bff_get_ranking_formula_facade` | 404 on unknown id |
 
+**BFF-B2-004** added two dedicated GET handlers and formalized search/capabilities:
+
+1. `bff_list_research_experiments` — `GET /bff/research-experiments`: reads
+   `_list_bff_experiments()`, applies optional `?status=` and pagination
+   filters, returns the standard `_sem_final_list_response` envelope with
+   `data`, `items`, `page_info.total`, and `meta.surfaces.research_experiments`.
+2. `bff_get_research_experiment` — `GET /bff/research-experiments/{experiment_id}`:
+   reads `_get_bff_experiment(id)`, returns `_sem_final_read_model_detail`
+   envelope, HTTP 404 when not found.
+
 Dead catch-all entries removed:
 
-| Handler | Removed decorators |
-|---|---|
-| `sem_final_generic_read_alias` | `/bff/channels`, `/bff/channels/{id}`, `/bff/mcp-servers`, `/bff/mcp-servers/{id}`, `/bff/mcp-tools`, `/bff/mcp-tools/{id}`, `/bff/ranking-formulas`, `/bff/tools`, `/bff/tools/{id}` |
-| `sem_final_id_named_read_alias` | `/bff/ranking-formulas/{id}`, `/bff/skills/{id}` |
+| Handler | Removed decorators (BFF-B2-003) | Removed decorators (BFF-B2-004) |
+|---|---|---|
+| `sem_final_generic_read_alias` | `/bff/channels`, `/bff/channels/{id}`, `/bff/mcp-servers`, `/bff/mcp-servers/{id}`, `/bff/mcp-tools`, `/bff/mcp-tools/{id}`, `/bff/ranking-formulas`, `/bff/tools`, `/bff/tools/{id}` | `/bff/research-experiments` (list) |
+| `sem_final_id_named_read_alias` | `/bff/ranking-formulas/{id}`, `/bff/skills/{id}` | `/bff/research-experiments/{id}` |
+| `sem_final_generic_patch_alias` | — | `/bff/research-experiments/{id}` (note: PATCH for research-experiments remains in generic handler post-B2-004) |
 
-**Response envelope (list endpoints)**
+The 4 endpoints formalised by BFF-B2-004 in this section:
+
+| # | Method | Path | Handler | Notes |
+|---|---|---|---|---|
+| 1 | GET | `/bff/research-experiments` | `bff_list_research_experiments` | status, page_token, page_size filters |
+| 2 | GET | `/bff/research-experiments/{id}` | `bff_get_research_experiment` | 404 on unknown id |
+| 3 | GET | `/bff/search` | `bff_search` | q, types, page_size, page_token, limit (backward-compat alias for page_size) filters; cross-entity |
+| 4 | GET | `/bff/capabilities` | `sem_bff_capabilities` | feature-flags envelope |
+
+**Response envelope (`GET /bff/research-experiments`)**
+
+```json
+{ "data": [...], "items": [...], "page_info": { "next_page_token": null, "total": N }, "meta": { "snapshot_at": "...", "surfaces": { "research_experiments": { "status": "ok" } } } }
+```
+
+**Response envelope (`GET /bff/research-experiments/{id}`)**
+
+```json
+{ "data": { ...experiment fields... }, "meta": { "snapshot_at": "...", "surfaces": { "research_experiment_detail": { "status": "ok" } } } }
+```
+
+Unknown-id detail requests return HTTP 404 with typed BFF error envelope:
+
+```json
+{ "detail": { "error": { "code": "OBJECT_NOT_FOUND", ... } } }
+```
+
+**Response envelope (`GET /bff/search`)**
+
+```json
+{ "data": [...], "items": [...], "page_info": { "next_page_token": null, "total": N, "returned": N }, "meta": { "snapshot_at": "...", "surfaces": { ... } } }
+```
+
+Query parameters for `/bff/search`: `q` (string, case-insensitive match), `types` (comma-separated entity types), `page_size` (int 1–100, default 20), `page_token` (opaque cursor), `limit` (int 1–100; backward-compat alias for `page_size` — when both are supplied, `limit` takes precedence).
+
+**Response envelope (`GET /bff/capabilities`)**
+
+```json
+{ "data": { "feature_flags": { "executePlansBff": true, "sessionAuthMe": true, ... } }, "meta": { "snapshot_at": "..." } }
+```
+
+**Response envelopes (BFF-B2-003 list/detail endpoints)**
 
 ```json
 { "data": [...], "items": [...], "page_info": { "next_page_token": null, "total": N }, "meta": { "snapshot_at": "...", "surfaces": { "<surface_key>": { "status": "ok", "source": "bff_local_registry" } } } }
 ```
-
-**Response envelope (detail endpoints)**
 
 ```json
 { "data": { ...resource fields... }, "meta": { "snapshot_at": "...", "surfaces": { "<surface_key>": { "status": "ok" } } } }
@@ -701,6 +768,10 @@ Dead catch-all entries removed:
 Unknown-id detail requests return HTTP 404 with typed BFF error envelope.
 
 ### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+**BFF-B2-003 (Capabilities facade):**
 
 | # | Criterion | Status |
 |---|---|---|
@@ -720,15 +791,33 @@ Unknown-id detail requests return HTTP 404 with typed BFF error envelope.
 | 14 | `GET /bff/tools` and `GET /bff/skills` still served by their own dedicated handlers | Implemented BFF-B2-003 |
 | 15 | `pytest services/control-plane/bff/tests/test_bff_b2_003_capabilities.py` passes 23 tests | ✅ verified |
 
+**BFF-B2-004 (Research / Search):**
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated `GET /bff/research-experiments` returns `data` list + `items` + `page_info.total` + `meta.surfaces.research_experiments` | Implemented BFF-B2-004 |
+| 2 | `GET /bff/research-experiments` accepts `?status=` filter | Implemented BFF-B2-004 |
+| 3 | Authenticated `GET /bff/research-experiments/{id}` for existing id returns `data` with `experiment_id` | Implemented BFF-B2-004 |
+| 4 | `GET /bff/research-experiments/{id}` for unknown id returns HTTP 404 typed BFF error | Implemented BFF-B2-004 |
+| 5 | Authenticated `GET /bff/search` returns `data`, `items`, `page_info`, and `meta` envelope | Implemented BFF-B2-004 |
+| 6 | `GET /bff/search?types=strategy` returns only strategy-typed results | Implemented BFF-B2-004 |
+| 7 | Authenticated `GET /bff/capabilities` returns `data.feature_flags` with `executePlansBff` and `sessionAuthMe` keys | Implemented BFF-B2-004 |
+| 8 | All 4 endpoints return HTTP 401 when no Authorization header is provided | Implemented BFF-B2-004 |
+| 9 | Dead catch-all entries removed: `/bff/research-experiments` from `sem_final_generic_read_alias`; `/bff/research-experiments/{id}` from `sem_final_id_named_read_alias` | Implemented BFF-B2-004 |
+| 10 | `pytest services/control-plane/bff/tests/test_bff_b2_004_research_search.py` passes all cases | ✅ verified |
+| 11 | `GET /bff/search?limit=N` is a backward-compatible alias for `?page_size=N` and caps returned items to N | Implemented BFF-B2-004 |
+
 ### Affected Files
 
 - `services/control-plane/bff/main.py`
-- `services/control-plane/bff/tests/test_bff_b2_003_capabilities.py` (new)
+- `services/control-plane/bff/tests/test_bff_b2_003_capabilities.py` (new, BFF-B2-003)
+- `services/control-plane/bff/tests/test_bff_b2_004_research_search.py` (new, BFF-B2-004)
 - `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
 
 ### Task
 
 BFF-B2-003 — Owner: Claude, Reviewer: Codex2
+BFF-B2-004 — Owner: Claude2, Reviewer: Codex2
 
 ---
 

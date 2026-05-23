@@ -26891,12 +26891,24 @@ async def bff_persona_test_prompt(
 async def bff_search(
     q: str = Query(default=""),
     types: Optional[str] = Query(default=None),
-    limit: int = Query(default=20, ge=1, le=100),
+    page_size: int = Query(default=20, ge=1, le=100),
+    limit: Optional[int] = Query(default=None, ge=1, le=100),
+    page_token: Optional[str] = Query(default=None),
     authorization: Optional[str] = Header(default=None),
 ):
-    """BFF: cross-entity search across strategies, personas, and capital pools."""
+    """BFF: cross-entity search across strategies, personas, and capital pools.
+
+    Accepts page_token (opaque offset cursor) and page_size for cursor-style
+    pagination.  A non-null next_page_token in the response indicates more
+    results are available; pass it back as page_token on the next request.
+
+    `limit` is a backward-compatible alias for `page_size`; when both are
+    provided, `limit` takes precedence so legacy callers are not silently
+    truncated.
+    """
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+    effective_page_size = limit if limit is not None else page_size
     snapshot_at = utc_now()
     needle = q.strip().lower()
     requested_types: Optional[set[str]] = None
@@ -26956,14 +26968,14 @@ async def bff_search(
                     "updatedAt": pool.get("updated_at") or pool.get("created_at") or snapshot_at,
                 })
 
-    capped = results[:limit]
+    page_items, next_page_token = _page_slice(results, page_token, effective_page_size)
     return {
-        "data": capped,
-        "items": capped,
-        "page_info": {"next_page_token": None, "total": len(results), "returned": len(capped)},
+        "data": page_items,
+        "items": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": len(results), "returned": len(page_items)},
         "meta": _read_surface_meta(
             "personas", "search",
-            snapshot_at=snapshot_at, total=len(capped),
+            snapshot_at=snapshot_at, total=len(page_items),
         ),
     }
 
@@ -31534,6 +31546,61 @@ async def bff_get_experiment_artifacts(
     }
 
 
+# -- Research Experiments (BFF-B2-004 dedicated surface) ---------------------
+
+@app.get("/bff/research-experiments")
+async def bff_list_research_experiments(
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: list research experiments (execute-plans compatibility surface)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    items = _list_bff_experiments(status=status)
+    source = "bff_overlay" if _GOV_BFF_EXPERIMENT_OVERLAY else None
+    surface = _dataset_surface_status("research_experiments", snapshot_at=snapshot_at, source=source)
+    if surface.get("status") == "unavailable" and not _GOV_BFF_EXPERIMENT_OVERLAY:
+        items = []
+        next_page_token = None
+    else:
+        items, next_page_token = _page_slice(items, page_token, page_size)
+
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {"research_experiments": surface}
+    return {
+        "data": items,
+        "items": items,
+        "page_info": {"next_page_token": next_page_token, "total": len(items)},
+        "meta": meta,
+    }
+
+
+@app.get("/bff/research-experiments/{experiment_id}")
+async def bff_get_research_experiment(
+    experiment_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: get a research experiment by ID (execute-plans compatibility surface)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    clean_id = experiment_id.strip()
+    source = "bff_overlay" if _GOV_BFF_EXPERIMENT_OVERLAY else None
+    return _sem_final_read_model_detail(
+        _get_bff_experiment(clean_id),
+        entity_id=clean_id,
+        label="Research experiment",
+        dataset="research_experiments",
+        surface_key="research_experiment_detail",
+        source=source,
+        source_available=True if _GOV_BFF_EXPERIMENT_OVERLAY else None,
+    )
+
+
 # -- Jobs --------------------------------------------------------------------
 
 @app.get("/bff/jobs")
@@ -34635,7 +34702,6 @@ async def bff_v5_intervention_detail(
 @app.get("/bff/approvals/{id}")
 @app.get("/bff/artifacts/{id}")
 @app.get("/bff/events/stream")
-@app.get("/bff/research-experiments")
 @app.get("/bff/research-analyses")
 async def sem_final_generic_read_alias(
     request: Request,
@@ -34657,10 +34723,10 @@ async def sem_final_generic_read_alias(
 
 # NOTE: /bff/capital-pools/{id}, /bff/deployments/{id}, /bff/evolution-programs/{id},
 # /bff/jobs/{id}, /bff/personas/{id}, /bff/rebalances/{id}, /bff/strategies/{id},
-# /bff/ranking-formulas/{id}, /bff/skills/{id}, and /bff/v5/interventions/{id}
-# have dedicated handlers registered earlier in this file and are intentionally excluded here.
+# /bff/ranking-formulas/{id}, /bff/research-experiments/{id}, /bff/skills/{id},
+# and /bff/v5/interventions/{id} have dedicated handlers registered earlier in
+# this file and are intentionally excluded here.
 @app.get("/bff/research-analyses/{id}")
-@app.get("/bff/research-experiments/{id}")
 async def sem_final_id_named_read_alias(
     request: Request,
     id: str,
