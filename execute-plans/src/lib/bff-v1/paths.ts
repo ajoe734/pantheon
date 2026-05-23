@@ -140,6 +140,9 @@ export const paths = {
   v5InterventionDecision: (id: string) => `${BASE}/v5/interventions/${enc(id)}/decide`,
   v5ExecutionPersonaHealth: () => `${BASE}/v5/execution/persona-health`,
 
+  // ---- Management aggregate read surfaces ----
+  managementPersonaFleet: () => `${BASE}/management/persona-fleet`,
+
   // ---- Management OODA packet read surface ----
   oodaPackets: () => `${BASE}/ooda/packets`,
   oodaPacket: (id: string) => `${BASE}/ooda/packets/${enc(id)}`,

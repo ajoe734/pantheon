@@ -18275,6 +18275,400 @@ async def bff_management_portfolio_book(
     }
 
 
+def _sort_records_latest_first(
+    records: List[Dict[str, Any]],
+    fields: tuple[str, ...],
+) -> List[Dict[str, Any]]:
+    return sorted(
+        records,
+        key=lambda item: next(
+            (str(item.get(field) or "") for field in fields if item.get(field)),
+            "",
+        ),
+        reverse=True,
+    )
+
+
+def _persona_fleet_runtime_matches(
+    runtime_binding: Dict[str, Any],
+    *,
+    binding_ids: set[str],
+    capital_pool_ids: set[str],
+    runtime_refs: set[str],
+) -> bool:
+    runtime_ids = {
+        str(runtime_binding.get(key) or "").strip()
+        for key in ("id", "binding_id", "runtime_binding_id", "runtime_id")
+    }
+    runtime_ids.discard("")
+    if runtime_ids.intersection(runtime_refs):
+        return True
+
+    persona_binding_id = str(runtime_binding.get("persona_capital_binding_id") or "").strip()
+    if persona_binding_id and persona_binding_id in binding_ids:
+        return True
+
+    capital_pool_id = str(runtime_binding.get("capital_pool_id") or "").strip()
+    if capital_pool_id and capital_pool_id in capital_pool_ids:
+        return True
+
+    plan_id = str(runtime_binding.get("plan_id") or runtime_binding.get("deployment_plan_id") or "").strip()
+    if plan_id:
+        plan = read_store.get_deployment_plan(plan_id) or {}
+        plan_binding_ids = {
+            str(value).strip()
+            for value in (plan.get("binding_ids") or [])
+            if str(value).strip()
+        }
+        if plan_binding_ids.intersection(binding_ids):
+            return True
+        plan_pool_id = str(plan.get("capital_pool_id") or plan.get("target_pool_id") or "").strip()
+        if plan_pool_id and plan_pool_id in capital_pool_ids:
+            return True
+
+    return False
+
+
+def _project_persona_fleet_health(
+    *,
+    persona: Dict[str, Any],
+    runtime_bindings: List[Dict[str, Any]],
+    telemetry_summaries: List[Dict[str, Any]],
+    active_incidents: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    reasons: List[str] = []
+    lifecycle = str(persona.get("lifecycle_state") or persona.get("state") or "").lower()
+    if lifecycle and lifecycle not in {"active", "ready", "running"}:
+        reasons.append("persona_lifecycle_not_active")
+    if not runtime_bindings:
+        reasons.append("no_runtime_binding")
+    if active_incidents:
+        reasons.append("active_incident")
+
+    latest_telemetry = telemetry_summaries[0] if telemetry_summaries else {}
+    drawdown = latest_telemetry.get("drawdown")
+    pnl = latest_telemetry.get("pnl")
+    try:
+        if drawdown is not None and float(drawdown) >= 0.10:
+            reasons.append("drawdown_threshold")
+    except (TypeError, ValueError):
+        pass
+    try:
+        if pnl is not None and float(pnl) <= -0.05:
+            reasons.append("negative_pnl")
+    except (TypeError, ValueError):
+        pass
+
+    runtime_statuses = {
+        str(binding.get("status") or "").strip().lower()
+        for binding in runtime_bindings
+        if str(binding.get("status") or "").strip()
+    }
+    unhealthy_runtime_statuses = sorted(runtime_statuses.difference({"active", "ready", "running", "idle"}))
+    if unhealthy_runtime_statuses:
+        reasons.append("runtime_status_attention")
+
+    status = "healthy"
+    severity = "low"
+    if active_incidents or "drawdown_threshold" in reasons:
+        status = "critical"
+        severity = "high"
+    elif reasons:
+        status = "degraded"
+        severity = "medium"
+
+    score = max(0, 100 - (35 if status == "critical" else 0) - (15 * max(len(reasons) - 1, 0)))
+    return {
+        "status": status,
+        "severity": severity,
+        "score": score,
+        "reasons": reasons,
+        "runtime_statuses": sorted(runtime_statuses),
+        "latest_telemetry_at": latest_telemetry.get("collected_at"),
+        "active_incident_count": len(active_incidents),
+    }
+
+
+def _project_persona_fleet_item(
+    raw_persona: Dict[str, Any],
+    *,
+    all_runtime_bindings: List[Dict[str, Any]],
+    all_incidents: List[Dict[str, Any]],
+    all_evolution_decisions: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    persona_id = str(raw_persona.get("persona_id") or raw_persona.get("id") or "").strip()
+    overlay = _PERSONA_BFF_OVERLAY.get(persona_id)
+    routed = _routed_strategies_for_persona(persona_id)
+    persona_dto = _project_persona_dto(raw_persona, overlay=overlay, routed_strategies=routed)
+
+    bindings = list(read_store.get_bindings_for_persona(persona_id) or [])
+    binding_ids = {
+        str(binding.get("id") or binding.get("binding_id") or "").strip()
+        for binding in bindings
+        if str(binding.get("id") or binding.get("binding_id") or "").strip()
+    }
+    capital_pool_ids = {
+        str(binding.get("capital_pool_id") or "").strip()
+        for binding in bindings
+        if str(binding.get("capital_pool_id") or "").strip()
+    }
+
+    sessions = list(read_store.get_sessions_for_persona(persona_id) or [])
+    runtime_refs = {
+        str(session.get("runtime_binding_id") or session.get("runtime_id") or "").strip()
+        for session in sessions
+        if str(session.get("runtime_binding_id") or session.get("runtime_id") or "").strip()
+    }
+    runtime_bindings = [
+        binding
+        for binding in all_runtime_bindings
+        if _persona_fleet_runtime_matches(
+            binding,
+            binding_ids=binding_ids,
+            capital_pool_ids=capital_pool_ids,
+            runtime_refs=runtime_refs,
+        )
+    ]
+    runtime_ids = {
+        str(binding.get("runtime_id") or binding.get("runtime_binding_id") or binding.get("id") or "").strip()
+        for binding in runtime_bindings
+        if str(binding.get("runtime_id") or binding.get("runtime_binding_id") or binding.get("id") or "").strip()
+    }
+    artifact_ids = {
+        str(binding.get("artifact_id") or "").strip()
+        for binding in runtime_bindings
+        if str(binding.get("artifact_id") or "").strip()
+    }
+
+    telemetry_summaries = [
+        summary
+        for runtime_id in sorted(runtime_ids)
+        for summary in [read_store.get_telemetry_summary(runtime_id)]
+        if summary
+    ]
+    telemetry_summaries = _sort_records_latest_first(telemetry_summaries, ("collected_at", "updated_at", "created_at"))
+    latest_telemetry = telemetry_summaries[0] if telemetry_summaries else None
+
+    teaching_sessions = _sort_records_latest_first(
+        list(read_store.get_teaching_sessions_for_persona(persona_id) or []),
+        ("started_at", "created_at", "updated_at"),
+    )
+    latest_training = teaching_sessions[0] if teaching_sessions else None
+
+    active_incidents = [
+        incident
+        for incident in all_incidents
+        if str(incident.get("status") or "").lower() in {"open", "active", "investigating"}
+        and (
+            str(incident.get("persona_id") or "").strip() == persona_id
+            or str(incident.get("persona_capital_binding_id") or "").strip() in binding_ids
+            or str(incident.get("capital_pool_id") or incident.get("affected_pool_id") or "").strip() in capital_pool_ids
+            or str(incident.get("runtime_id") or "").strip() in runtime_ids
+        )
+    ]
+    incident_ids = {
+        str(incident.get("incident_id") or incident.get("id") or "").strip()
+        for incident in all_incidents
+        if str(incident.get("incident_id") or incident.get("id") or "").strip()
+        and (
+            str(incident.get("persona_id") or "").strip() == persona_id
+            or str(incident.get("persona_capital_binding_id") or "").strip() in binding_ids
+            or str(incident.get("capital_pool_id") or incident.get("affected_pool_id") or "").strip() in capital_pool_ids
+            or str(incident.get("runtime_id") or "").strip() in runtime_ids
+        )
+    }
+    evolution_decisions = [
+        decision
+        for decision in all_evolution_decisions
+        if str(decision.get("target_id") or "").strip() == persona_id
+        or str(decision.get("artifact_id") or "").strip() in artifact_ids
+        or str(decision.get("incident_ref") or decision.get("linked_incident_id") or "").strip() in incident_ids
+    ]
+    evolution_decisions = _sort_records_latest_first(evolution_decisions, ("updated_at", "created_at"))
+
+    capital_pools = [
+        pool
+        for pool_id in sorted(capital_pool_ids)
+        for pool in [read_store.get_capital_pool(pool_id)]
+        if pool
+    ]
+    enriched_bindings = [
+        {
+            **binding,
+            "capital_pool": read_store.get_capital_pool(str(binding.get("capital_pool_id") or "")),
+        }
+        for binding in bindings
+    ]
+    health = _project_persona_fleet_health(
+        persona=raw_persona,
+        runtime_bindings=runtime_bindings,
+        telemetry_summaries=telemetry_summaries,
+        active_incidents=active_incidents,
+    )
+    allowed_actions = read_store.get_persona_allowed_actions(persona_id) or {}
+
+    telemetry_summary = {
+        "latest": latest_telemetry,
+        "runtime_count": len(runtime_bindings),
+        "covered_runtime_count": len(telemetry_summaries),
+        "summaries": telemetry_summaries,
+    }
+    training_summary = {
+        "session_count": len(teaching_sessions),
+        "active_session_count": len([
+            session for session in teaching_sessions
+            if str(session.get("status") or "").lower() == "active"
+        ]),
+        "completed_session_count": len([
+            session for session in teaching_sessions
+            if str(session.get("status") or "").lower() == "completed"
+        ]),
+        "latest_session": latest_training,
+    }
+    evolution_summary = {
+        "decision_count": len(evolution_decisions),
+        "pending_decision_count": len([
+            decision for decision in evolution_decisions
+            if str(decision.get("status") or decision.get("decision_state") or "").lower()
+            in {"pending", "in_review", "reviewed", "under_review"}
+        ]),
+        "latest_decision": evolution_decisions[0] if evolution_decisions else None,
+        "decisions": evolution_decisions,
+    }
+
+    return {
+        "id": persona_id,
+        "persona_id": persona_id,
+        "persona": persona_dto,
+        "health": health,
+        "bindings": enriched_bindings,
+        "capitalPools": capital_pools,
+        "capital_pools": capital_pools,
+        "runtimeBindings": runtime_bindings,
+        "runtime_bindings": runtime_bindings,
+        "telemetrySummary": telemetry_summary,
+        "telemetry_summary": telemetry_summary,
+        "training": training_summary,
+        "evolution": evolution_summary,
+        "sessions": sessions,
+        "activeIncidents": active_incidents,
+        "active_incidents": active_incidents,
+        "allowedActions": allowed_actions,
+    }
+
+
+def _project_persona_fleet_payload(
+    *,
+    state: Optional[str],
+    health: Optional[str],
+    page_token: Optional[str],
+    page_size: int,
+) -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    personas = _list_persona_records()
+    runtime_bindings = list(read_store.list_runtime_bindings() or [])
+    incidents = list(read_store.list_incidents() or [])
+    evolution_decisions = list(read_store.list_evolution_decisions() or [])
+    items = [
+        _project_persona_fleet_item(
+            persona,
+            all_runtime_bindings=runtime_bindings,
+            all_incidents=incidents,
+            all_evolution_decisions=evolution_decisions,
+        )
+        for persona in personas
+    ]
+
+    if state:
+        requested_states = {token.strip().lower() for token in state.split(",") if token.strip()}
+        items = [
+            item for item in items
+            if str((item.get("persona") or {}).get("state") or "").lower() in requested_states
+        ]
+    if health:
+        requested_health = {token.strip().lower() for token in health.split(",") if token.strip()}
+        items = [
+            item for item in items
+            if str((item.get("health") or {}).get("status") or "").lower() in requested_health
+        ]
+
+    items = sorted(
+        items,
+        key=lambda item: (
+            str((item.get("health") or {}).get("severity") or ""),
+            str((item.get("persona") or {}).get("updatedAt") or ""),
+            str(item.get("id") or ""),
+        ),
+        reverse=True,
+    )
+    total = len(items)
+    page_items, next_page_token = _page_slice(items, page_token, page_size)
+
+    source_surfaces = {
+        "personas": _dataset_surface_status("personas", snapshot_at=snapshot_at),
+        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at),
+        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
+        "telemetry_summaries": _dataset_surface_status("telemetry_summaries", snapshot_at=snapshot_at),
+        "teaching_sessions": _dataset_surface_status("teaching_sessions", snapshot_at=snapshot_at),
+        "evolution_decisions": _dataset_surface_status("evolution_decisions", snapshot_at=snapshot_at),
+    }
+    persona_fleet_surface = _aggregate_group_surface(
+        "persona_fleet",
+        list(source_surfaces.values()),
+        snapshot_at=snapshot_at,
+        unavailable_message="Persona fleet aggregate unavailable.",
+        degraded_message="Persona fleet aggregate is degraded because one or more source surfaces are degraded.",
+    )
+
+    summary = {
+        "total_personas": total,
+        "returned_personas": len(page_items),
+        "critical_personas": len([item for item in items if item["health"]["status"] == "critical"]),
+        "degraded_personas": len([item for item in items if item["health"]["status"] == "degraded"]),
+        "healthy_personas": len([item for item in items if item["health"]["status"] == "healthy"]),
+        "bound_personas": len([item for item in items if item["bindings"]]),
+        "runtime_bound_personas": len([item for item in items if item["runtimeBindings"]]),
+    }
+    return {
+        "data": page_items,
+        "items": page_items,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "persona_fleet": persona_fleet_surface,
+                **source_surfaces,
+            },
+        },
+    }
+
+
+# ---------------- /bff/management aggregate routes ----------------
+
+@app.get("/bff/management/persona-fleet")
+async def bff_management_persona_fleet(
+    state: Optional[str] = None,
+    health: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: compose the Management Persona Fleet aggregate from read surfaces."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _project_persona_fleet_payload(
+        state=state,
+        health=health,
+        page_token=page_token,
+        page_size=page_size,
+    )
+
+
 # ---------------- /bff/strategies routes ----------------
 
 @app.get("/bff/strategies")
