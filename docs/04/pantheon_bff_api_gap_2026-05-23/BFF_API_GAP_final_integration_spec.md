@@ -395,40 +395,43 @@ BFF-B1-004 — Owner: Claude, Reviewer: Codex
 
 ### Gap
 
-The execute-plans Agora workbench still references six historical Agora route
-names that had only registry-level `implemented_by_alias` coverage. The canonical
-BFF read models already existed, but the legacy path names were not registered
-as live FastAPI routes. In strict/live mode this could make a frontend route
-probe see a 404 even though the canonical surface was available.
+The execute-plans Agora workbench depends on six strict/live read surfaces for
+its core bootstrap path. Most of the backing read models already existed, but
+the task needed one focused acceptance slice that proves the routes return BFF
+envelopes and that `/bff/agora/inbox` is not a single-dataset shortcut.
 
 ### Fix
 
 **File: `services/control-plane/bff/main.py`**
 
-Register the six historical Agora names as canonical read aliases on the
-existing handlers:
+Verify and preserve these six Agora compatibility reads:
 
 | Compatibility path | Canonical handler/source |
 |---|---|
-| `GET /bff/agora/markets` | `GET /bff/agora/watchlist` |
-| `GET /bff/agora/committee-sessions` | `GET /bff/agora/sessions` |
-| `GET /bff/agora/market-notes` | `GET /bff/agora/notes` |
-| `GET /bff/agora/decision-journal` | `GET /bff/agora/journal` |
-| `GET /bff/agora/research-tasks` | `GET /bff/research/tasks` |
-| `GET /bff/agora/incoming` | `GET /bff/agora/handoffs` |
+| `GET /bff/agora/ask/sessions` | `agora_sessions` filtered to `mode=quick_ask` |
+| `GET /bff/agora/ask/sessions/{id}` | `agora_sessions` detail / ask SSE resync route |
+| `GET /bff/agora/signals` | `agora_signals` |
+| `GET /bff/agora/journal` | `decision_journal_entries` |
+| `GET /bff/agora/postmortems` | `postmortems` |
+| `GET /bff/agora/inbox` | composed `insight_cards` + `agora_signals` + `research_tickets` |
 
-These aliases do not introduce new write authority, fallback data, or separate
-DTO projections. They share the canonical handler, auth gate, pagination
-parameters, response envelope, and read-surface metadata.
+The inbox route now returns a composed list with stable `inboxType` and
+`sourceDataset` markers while preserving the standard `data`, `items`,
+`page_info`, and `meta.surfaces` BFF envelope. The previously added historical
+read aliases (`/markets`, `/committee-sessions`, `/market-notes`,
+`/decision-journal`, `/research-tasks`, `/incoming`) remain registered on their
+canonical handlers; this task does not add write authority or a separate DTO
+projection.
 
 ### Acceptance Criteria
 
 | # | Criterion | Status |
 |---|---|---|
-| 1 | All six B7 compatibility paths are registered in FastAPI and return HTTP 200 with seeded local read-store data | ✅ test added |
-| 2 | Each alias returns the same item IDs as its canonical route | ✅ test added |
-| 3 | Each alias reports the same read-surface `status` and `source` as its canonical route | ✅ test added |
-| 4 | Aliases preserve the existing read-role auth gate and do not add write authority | ✅ implemented by shared handlers |
+| 1 | `/bff/agora/ask/sessions` and `/bff/agora/ask/sessions/{id}` return live envelopes from the existing Agora session store | ✅ test added |
+| 2 | `/bff/agora/signals`, `/bff/agora/journal`, and `/bff/agora/postmortems` return BFF read envelopes with seeded local read-store data | ✅ test added |
+| 3 | `/bff/agora/inbox` composes insight cards, signals, and research tasks with per-source surface metadata | ✅ implemented and tested |
+| 4 | Historical Agora read aliases still share their canonical handler outputs and read-surface metadata | ✅ preserved by existing test |
+| 5 | Compatibility reads preserve the existing read-role auth gate and do not add write authority | ✅ implemented by shared handlers |
 
 ### Affected Files
 
