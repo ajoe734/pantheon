@@ -21,6 +21,21 @@ pytest services/control-plane/bff/tests/test_bff_b2_004_research_search.py -q
 
 Verified at closeout after merging origin/dev (commit 82b91de3).
 
+Redispatch repair by Codex2 (2026-05-23T11:52:32Z):
+
+- Refreshed PR #466 after `origin/dev` advanced to `a0705dda`.
+- Resolved the `services/control-plane/bff/main.py` catch-all conflict by keeping
+  both dedicated surfaces out of `sem_final_id_named_read_alias`:
+  `/bff/research-experiments/{id}` (BFF-B2-004) and
+  `/bff/v5/interventions/{id}` (BFF-B2-006).
+- Merge repair commit: `40332910`.
+- Validation:
+
+```
+pytest services/control-plane/bff/tests/test_bff_b2_004_research_search.py services/control-plane/bff/tests/test_bff_b2_003_capabilities.py services/control-plane/bff/tests/test_bff_b2_006_v5_closed_loop_reads.py -q
+53 passed, 3 warnings in 13.22s
+```
+
 ## Delivered Endpoints
 
 | # | Method | Path | Handler |
