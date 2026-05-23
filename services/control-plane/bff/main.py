@@ -1360,6 +1360,7 @@ _OPERATOR_HEALTH_STATUS_ROUTE = "/operator/health-status"
 _OPERATOR_POST_INCIDENT_REVIEW_ROUTE = "/operator/post-incident-review"
 _OPERATOR_RUNTIME_STATE_ROUTE = "/operator/runtime-state"
 _MANAGEMENT_COCKPIT_ROUTE = "/management/cockpit"
+_MANAGEMENT_READINESS_BASE_ROUTE = "/management/readiness"
 _CONSULTATION_WORKBENCH_ROUTE = "/consultation"
 _KNOWLEDGE_WORKBENCH_ROUTE = "/knowledge"
 _TRAINER_WORKBENCH_ROUTE = "/trainer"
@@ -6604,6 +6605,591 @@ def _build_management_evidence_payload(
         },
         "meta": meta,
     }
+
+
+_READINESS_EP5_EVIDENCE_REFS = [
+    ("support/evidence/EP5-001-V2/closeout.md", "PromotionReadinessPacket schema closeout"),
+    ("support/evidence/EP5-002-V2/owner-closeout.md", "Promotion readiness validator closeout"),
+    ("support/evidence/EP5-003-V2/owner-closeout.md", "Human gate signoff closeout"),
+    ("support/evidence/EP5-006-V2/owner-closeout.md", "EP5 dry-run API closeout"),
+    ("support/evidence/EP5-007-V2/rollback-drill.json", "Rollback drill evidence"),
+    ("support/evidence/EP5-008-V2/kill-switch-demo.json", "Kill-switch demo evidence"),
+    (
+        "docs/deployment/evidence/ep5-broker-tw-002/20260517T054748Z/evidence-packet/shioaji-sandbox-evidence-packet.json",
+        "Broker sandbox evidence packet",
+    ),
+]
+_READINESS_STRICT_PUBLISH_AUDIT = "support/evidence/lsp-final-audit/strict-publish-audit.json"
+_READINESS_STRICT_PUBLISH_REPORT = "support/evidence/lsp-final-audit/strict-publish-audit.md"
+_READINESS_BFF_HA_PACKET = "support/evidence/bff-ha-failover-demo/README.md"
+_READINESS_BFF_HA_REVIEW = "support/evidence/bff-ha-failover-demo/review-ha-010-v2.md"
+_READINESS_NO_REAL_CAPITAL_EVIDENCE = "support/evidence/MGMT-BROKER-003/no-real-capital-evidence.json"
+_READINESS_BROKER_LIVE_DISABLED = (
+    "docs/deployment/evidence/ep5-broker-tw-002/20260517T054748Z/sandbox-smoke/live-disabled.json"
+)
+
+
+def _repo_artifact_path(rel_path: str) -> str:
+    return os.path.join(_REPO_ROOT, rel_path)
+
+
+def _read_repo_json_artifact(rel_path: str) -> Optional[Dict[str, Any]]:
+    path = _repo_artifact_path(rel_path)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        return payload if isinstance(payload, dict) else None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _read_repo_text_artifact(rel_path: str) -> str:
+    path = _repo_artifact_path(rel_path)
+    if not os.path.exists(path):
+        return ""
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return handle.read()
+    except OSError:
+        return ""
+
+
+def _readiness_evidence_ref(rel_path: str, label: str) -> Dict[str, Any]:
+    exists = os.path.exists(_repo_artifact_path(rel_path))
+    return {
+        "id": re.sub(r"[^a-z0-9]+", "-", rel_path.lower()).strip("-"),
+        "label": label,
+        "path": rel_path,
+        "href": f"/{rel_path}",
+        "exists": exists,
+    }
+
+
+def _readiness_artifact_surface(
+    surface_key: str,
+    rel_path: str,
+    *,
+    snapshot_at: str,
+    label: str,
+) -> Dict[str, Any]:
+    exists = os.path.exists(_repo_artifact_path(rel_path))
+    surface = dict(_surface_status())
+    surface["source"] = "repo_artifact" if exists else "missing"
+    surface["artifact_path"] = rel_path
+    if not exists:
+        surface["status"] = "unavailable"
+        surface["message"] = f"{label} artifact is unavailable."
+        surface.setdefault(
+            "staleness",
+            {"served_from": "unverifiable", "last_known_at": snapshot_at},
+        )
+    return surface
+
+
+def _readiness_check(
+    check_id: str,
+    label: str,
+    status: str,
+    *,
+    blocking: bool,
+    message: str,
+    evidence_refs: Optional[List[str]] = None,
+    details: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "id": check_id,
+        "label": label,
+        "status": status,
+        "blocking": blocking,
+        "message": message,
+    }
+    if evidence_refs:
+        payload["evidence_refs"] = evidence_refs
+    if details:
+        payload["details"] = details
+    return payload
+
+
+def _readiness_summary(checks: List[Dict[str, Any]]) -> Dict[str, Any]:
+    by_status = _management_count_by(checks, "status")
+    blocking_reasons = [
+        str(check.get("id"))
+        for check in checks
+        if bool(check.get("blocking")) and str(check.get("status") or "") != "pass"
+    ]
+    can_proceed = not blocking_reasons
+    readiness_status = "ready" if can_proceed else "blocked"
+    return {
+        "readinessStatus": readiness_status,
+        "readiness_status": readiness_status,
+        "canProceed": can_proceed,
+        "can_proceed": can_proceed,
+        "checkCount": len(checks),
+        "check_count": len(checks),
+        "passedCheckCount": by_status.get("pass", 0),
+        "passed_check_count": by_status.get("pass", 0),
+        "blockingReasonCount": len(blocking_reasons),
+        "blocking_reason_count": len(blocking_reasons),
+        "blockingReasons": blocking_reasons,
+        "blocking_reasons": blocking_reasons,
+        "byStatus": by_status,
+        "by_status": by_status,
+    }
+
+
+def _readiness_response(
+    *,
+    readiness_id: str,
+    title: str,
+    checks: List[Dict[str, Any]],
+    evidence_refs: List[Dict[str, Any]],
+    source_surfaces: Dict[str, Dict[str, Any]],
+    snapshot_at: str,
+    details: Optional[Dict[str, Any]] = None,
+    links: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
+    summary = _readiness_summary(checks)
+    surface_key = f"management_readiness_{readiness_id.replace('-', '_')}"
+    aggregate_surface = _aggregate_group_surface(
+        surface_key,
+        list(source_surfaces.values()) or [_composed_surface_status(snapshot_at=snapshot_at)],
+        snapshot_at=snapshot_at,
+        unavailable_message=f"{title} readiness aggregate unavailable.",
+        degraded_message=f"{title} readiness aggregate is available, but one or more evidence surfaces are degraded.",
+    )
+    aggregate_surface["readiness_status"] = summary["readiness_status"]
+    aggregate_surface["can_proceed"] = summary["can_proceed"]
+
+    surfaces = {surface_key: aggregate_surface}
+    surfaces.update(source_surfaces)
+    data = {
+        "id": readiness_id,
+        "readinessId": readiness_id,
+        "readiness_id": readiness_id,
+        "title": title,
+        "readinessStatus": summary["readinessStatus"],
+        "readiness_status": summary["readiness_status"],
+        "canProceed": summary["canProceed"],
+        "can_proceed": summary["can_proceed"],
+        "blockingReasons": summary["blockingReasons"],
+        "blocking_reasons": summary["blocking_reasons"],
+        "checks": checks,
+        "evidenceRefs": evidence_refs,
+        "evidence_refs": evidence_refs,
+        "links": links or {},
+        "details": details or {},
+    }
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = surfaces
+    return {
+        "data": data,
+        "summary": summary,
+        "checks": checks,
+        "items": checks,
+        "evidence_refs": evidence_refs,
+        "meta": meta,
+    }
+
+
+def _build_management_strict_publish_readiness_payload() -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    audit = _read_repo_json_artifact(_READINESS_STRICT_PUBLISH_AUDIT) or {}
+    component_status = audit.get("component_status") if isinstance(audit.get("component_status"), dict) else {}
+    forbidden_scan = (
+        (audit.get("components") or {}).get("forbidden_path_scan")
+        if isinstance(audit.get("components"), dict)
+        else {}
+    )
+    forbidden_signals = (
+        forbidden_scan.get("forbidden_signals")
+        if isinstance(forbidden_scan, dict) and isinstance(forbidden_scan.get("forbidden_signals"), list)
+        else []
+    )
+    passed = bool(audit.get("passed"))
+    checked_at = audit.get("checked_at")
+    evidence_refs = [
+        _readiness_evidence_ref(_READINESS_STRICT_PUBLISH_AUDIT, "Strict publish audit JSON"),
+        _readiness_evidence_ref(_READINESS_STRICT_PUBLISH_REPORT, "Strict publish audit report"),
+    ]
+    audit_surface = _readiness_artifact_surface(
+        "strict_publish_audit",
+        _READINESS_STRICT_PUBLISH_AUDIT,
+        snapshot_at=snapshot_at,
+        label="Strict publish audit",
+    )
+    checks = [
+        _readiness_check(
+            "browser_probe",
+            "Browser health and /bff/me probe",
+            "pass" if component_status.get("LSP-002-V2") is True else "fail",
+            blocking=True,
+            message="Hosted browser probe must pass before strict publish can proceed.",
+            evidence_refs=[_READINESS_STRICT_PUBLISH_AUDIT],
+        ),
+        _readiness_check(
+            "bundle_hash_capture",
+            "Hosted bundle hash capture",
+            "pass" if component_status.get("LSP-003-V2") is True else "fail",
+            blocking=True,
+            message="Hosted bundle hash capture must pass before strict publish can proceed.",
+            evidence_refs=[_READINESS_STRICT_PUBLISH_AUDIT],
+        ),
+        _readiness_check(
+            "forbidden_path_scan",
+            "Forbidden mock/seed runtime path scan",
+            "pass" if component_status.get("LSP-004-V2") is True else "fail",
+            blocking=True,
+            message="Strict publish remains blocked while deployed bundles contain forbidden mock/seed signals.",
+            evidence_refs=[_READINESS_STRICT_PUBLISH_AUDIT],
+            details={"forbidden_signal_count": len(forbidden_signals)},
+        ),
+    ]
+    return _readiness_response(
+        readiness_id="strict-publish",
+        title="Strict Publish Audit",
+        checks=checks,
+        evidence_refs=evidence_refs,
+        source_surfaces={"strict_publish_audit": audit_surface},
+        snapshot_at=snapshot_at,
+        details={
+            "passed": passed,
+            "checked_at": checked_at,
+            "deployment_url": audit.get("deployment_url"),
+            "browser_probe_base_url": audit.get("browser_probe_base_url"),
+            "errors": audit.get("errors") if isinstance(audit.get("errors"), list) else [],
+        },
+        links={
+            "self": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/strict-publish",
+            "audit": f"/{_READINESS_STRICT_PUBLISH_REPORT}",
+        },
+    )
+
+
+def _build_management_bff_ha_readiness_payload() -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    packet_text = _read_repo_text_artifact(_READINESS_BFF_HA_PACKET)
+    review_text = _read_repo_text_artifact(_READINESS_BFF_HA_REVIEW)
+    packet_exists = bool(packet_text)
+    review_approved = "Status: **approved**" in review_text or "Approved." in review_text
+    evidence_refs = [
+        _readiness_evidence_ref(_READINESS_BFF_HA_PACKET, "BFF HA failover demo packet"),
+        _readiness_evidence_ref(_READINESS_BFF_HA_REVIEW, "BFF HA failover demo review"),
+    ]
+    packet_surface = _readiness_artifact_surface(
+        "bff_ha_failover_demo",
+        _READINESS_BFF_HA_PACKET,
+        snapshot_at=snapshot_at,
+        label="BFF HA failover demo",
+    )
+    checks = [
+        _readiness_check(
+            "dev_failover_demo_packet",
+            "Dev failover demo packet recorded",
+            "pass" if packet_exists else "fail",
+            blocking=True,
+            message="The BFF HA readiness page requires the dev failover demo packet.",
+            evidence_refs=[_READINESS_BFF_HA_PACKET],
+        ),
+        _readiness_check(
+            "dev_failover_demo_review",
+            "Dev failover demo review approved",
+            "pass" if review_approved else "fail",
+            blocking=True,
+            message="The dev failover demo must have reviewer approval.",
+            evidence_refs=[_READINESS_BFF_HA_REVIEW],
+        ),
+        _readiness_check(
+            "production_ha_topology",
+            "Production HA topology and LB cutover",
+            "blocked",
+            blocking=True,
+            message="Current evidence is dev-only; production BFF HA/LB topology remains a separate gate.",
+            evidence_refs=[_READINESS_BFF_HA_PACKET],
+            details={
+                "dev_only": True,
+                "production_topology_ready": False,
+                "l1_policy_changed": False,
+            },
+        ),
+    ]
+    return _readiness_response(
+        readiness_id="bff-ha",
+        title="BFF HA Readiness",
+        checks=checks,
+        evidence_refs=evidence_refs,
+        source_surfaces={"bff_ha_failover_demo": packet_surface},
+        snapshot_at=snapshot_at,
+        details={
+            "dev_demo_ready": packet_exists and review_approved,
+            "production_topology_ready": False,
+        },
+        links={
+            "self": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/bff-ha",
+            "evidence": f"/{_READINESS_BFF_HA_PACKET}",
+        },
+    )
+
+
+def _build_management_broker_live_readiness_payload() -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    broker_surface = read_store.get_openclaw_broker_adapter_readiness()
+    service_surface = (
+        broker_surface.get("service_status")
+        if isinstance(broker_surface.get("service_status"), dict)
+        else _composed_surface_status(snapshot_at=snapshot_at)
+    )
+    live_gate_enabled = _bool_from_env("PANTHEON_LIVE_BROKER_ENABLED", default=False)
+    live_execution_enabled = bool(broker_surface.get("live_execution_enabled"))
+    live_adapter_state = str(broker_surface.get("live_adapter_state") or "unknown").lower()
+    broker_live_ready = (
+        live_gate_enabled
+        and live_execution_enabled
+        and live_adapter_state in {"enabled", "active"}
+    )
+    evidence_refs = [
+        _readiness_evidence_ref(
+            "docs/deployment/evidence/ep5-broker-tw-002/20260517T054748Z/evidence-packet/shioaji-sandbox-evidence-packet.json",
+            "Broker sandbox evidence packet",
+        ),
+        _readiness_evidence_ref(_READINESS_BROKER_LIVE_DISABLED, "Broker live-disabled smoke"),
+    ]
+    live_disabled_surface = _readiness_artifact_surface(
+        "broker_live_disabled_smoke",
+        _READINESS_BROKER_LIVE_DISABLED,
+        snapshot_at=snapshot_at,
+        label="Broker live-disabled smoke",
+    )
+    checks = [
+        _readiness_check(
+            "openclaw_broker_readiness_surface",
+            "OpenClaw broker readiness surface",
+            "pass" if broker_surface.get("overall_status") != "unavailable" else "fail",
+            blocking=True,
+            message="Broker live readiness requires the OpenClaw broker readiness surface.",
+            details={"overall_status": broker_surface.get("overall_status")},
+        ),
+        _readiness_check(
+            "live_broker_gate",
+            "Live broker gate",
+            "pass" if broker_live_ready else "blocked",
+            blocking=True,
+            message="Live broker execution is fail-closed until explicit live broker gates and adapter state are enabled.",
+            evidence_refs=[_READINESS_BROKER_LIVE_DISABLED],
+            details={
+                "PANTHEON_LIVE_BROKER_ENABLED": live_gate_enabled,
+                "live_execution_enabled": live_execution_enabled,
+                "live_adapter_state": live_adapter_state,
+            },
+        ),
+        _readiness_check(
+            "no_real_capital_side_effects",
+            "No real capital side effects",
+            "pass"
+            if broker_surface.get("is_real_capital") is False and broker_surface.get("is_real_order") is False
+            else "fail",
+            blocking=True,
+            message="Broker readiness must not report real capital or real orders before live approval.",
+            details={
+                "is_real_capital": broker_surface.get("is_real_capital"),
+                "is_real_order": broker_surface.get("is_real_order"),
+            },
+        ),
+    ]
+    return _readiness_response(
+        readiness_id="broker-live",
+        title="Broker Live Readiness",
+        checks=checks,
+        evidence_refs=evidence_refs,
+        source_surfaces={
+            "openclaw_broker_adapter_readiness": service_surface,
+            "broker_live_disabled_smoke": live_disabled_surface,
+        },
+        snapshot_at=snapshot_at,
+        details={
+            "broker_readiness": broker_surface,
+            "live_broker_enabled": broker_live_ready,
+            "fail_closed": not broker_live_ready,
+        },
+        links={
+            "self": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/broker-live",
+            "operator_surface": "/api/v1/operator/openclaw/broker/adapter-readiness",
+        },
+    )
+
+
+def _build_management_capital_binding_live_readiness_payload() -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    bindings = read_store.list_bindings()
+    runtime_bindings = read_store.list_runtime_bindings()
+    active_bindings = [
+        binding
+        for binding in bindings
+        if str(binding.get("validity") or binding.get("status") or "").lower() in {"active", "valid"}
+    ]
+    live_runtime_bindings = [
+        binding
+        for binding in runtime_bindings
+        if str(binding.get("deployment_stage") or binding.get("deployment_mode") or "").lower()
+        in {"canary", "live", "production", "staging-live"}
+    ]
+    gate_enabled = (
+        _bool_from_env("OPENCLAW_CAPITAL_BINDING_ENABLED", default=False)
+        or _bool_from_env("PANTHEON_CAPITAL_BINDING_LIVE_ENABLED", default=False)
+    )
+    evidence_refs = [
+        _readiness_evidence_ref(_READINESS_NO_REAL_CAPITAL_EVIDENCE, "No real capital evidence"),
+        _readiness_evidence_ref(_READINESS_BROKER_LIVE_DISABLED, "Broker live-disabled smoke"),
+    ]
+    capital_surface = _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at)
+    runtime_surface = _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at)
+    no_real_capital_surface = _readiness_artifact_surface(
+        "no_real_capital_evidence",
+        _READINESS_NO_REAL_CAPITAL_EVIDENCE,
+        snapshot_at=snapshot_at,
+        label="No real capital evidence",
+    )
+    checks = [
+        _readiness_check(
+            "capital_binding_live_gate",
+            "Capital binding live gate",
+            "pass" if gate_enabled else "blocked",
+            blocking=True,
+            message="Live capital binding remains fail-closed until explicit capital-binding live gates are enabled.",
+            evidence_refs=[_READINESS_NO_REAL_CAPITAL_EVIDENCE],
+            details={
+                "OPENCLAW_CAPITAL_BINDING_ENABLED": _bool_from_env("OPENCLAW_CAPITAL_BINDING_ENABLED", default=False),
+                "PANTHEON_CAPITAL_BINDING_LIVE_ENABLED": _bool_from_env(
+                    "PANTHEON_CAPITAL_BINDING_LIVE_ENABLED",
+                    default=False,
+                ),
+            },
+        ),
+        _readiness_check(
+            "active_persona_capital_bindings",
+            "Active persona-capital binding records",
+            "pass" if active_bindings else "warn",
+            blocking=False,
+            message="Active persona-capital bindings are visible to the BFF read surface.",
+            details={
+                "active_binding_count": len(active_bindings),
+                "binding_count": len(bindings),
+            },
+        ),
+        _readiness_check(
+            "live_runtime_binding_absence",
+            "No live runtime binding activated by this BFF",
+            "pass" if not live_runtime_bindings else "fail",
+            blocking=True,
+            message="Readiness publication must not silently materialize live runtime bindings.",
+            details={"live_runtime_binding_count": len(live_runtime_bindings)},
+        ),
+    ]
+    return _readiness_response(
+        readiness_id="capital-binding-live",
+        title="Capital Binding Live Readiness",
+        checks=checks,
+        evidence_refs=evidence_refs,
+        source_surfaces={
+            "persona_bindings": capital_surface,
+            "runtime_bindings": runtime_surface,
+            "no_real_capital_evidence": no_real_capital_surface,
+        },
+        snapshot_at=snapshot_at,
+        details={
+            "capital_binding_live_enabled": gate_enabled,
+            "active_binding_count": len(active_bindings),
+            "live_runtime_binding_count": len(live_runtime_bindings),
+            "fail_closed": not gate_enabled,
+        },
+        links={"self": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/capital-binding-live"},
+    )
+
+
+def _build_management_ep5_readiness_payload() -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    broker = _build_management_broker_live_readiness_payload()
+    capital = _build_management_capital_binding_live_readiness_payload()
+    bff_ha = _build_management_bff_ha_readiness_payload()
+    strict_publish = _build_management_strict_publish_readiness_payload()
+    evidence_refs = [
+        _readiness_evidence_ref(rel_path, label)
+        for rel_path, label in _READINESS_EP5_EVIDENCE_REFS
+    ]
+    ep5_surfaces = {
+        f"ep5_evidence_{index}": _readiness_artifact_surface(
+            f"ep5_evidence_{index}",
+            ref["path"],
+            snapshot_at=snapshot_at,
+            label=ref["label"],
+        )
+        for index, ref in enumerate(evidence_refs, start=1)
+    }
+    family_payloads = {
+        "broker-live": broker,
+        "capital-binding-live": capital,
+        "bff-ha": bff_ha,
+        "strict-publish": strict_publish,
+    }
+    checks = [
+        _readiness_check(
+            "ep5_evidence_bundle",
+            "EP5 prerequisite evidence bundle",
+            "pass" if all(ref.get("exists") for ref in evidence_refs) else "fail",
+            blocking=True,
+            message="EP5 readiness requires the prerequisite evidence bundle to be present in repo.",
+            evidence_refs=[ref["path"] for ref in evidence_refs],
+            details={
+                "available_evidence_count": len([ref for ref in evidence_refs if ref.get("exists")]),
+                "required_evidence_count": len(evidence_refs),
+            },
+        )
+    ]
+    for family_id, payload in family_payloads.items():
+        summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+        checks.append(
+            _readiness_check(
+                f"{family_id}-readiness",
+                f"{family_id} readiness",
+                "pass" if summary.get("can_proceed") is True else "blocked",
+                blocking=True,
+                message=f"{family_id} must be ready before EP5 can proceed.",
+                details={
+                    "readiness_status": summary.get("readiness_status"),
+                    "blocking_reasons": summary.get("blocking_reasons"),
+                },
+            )
+        )
+    return _readiness_response(
+        readiness_id="ep5",
+        title="EP5 Readiness",
+        checks=checks,
+        evidence_refs=evidence_refs,
+        source_surfaces=ep5_surfaces,
+        snapshot_at=snapshot_at,
+        details={
+            "families": {
+                family_id: {
+                    "readiness_status": payload["summary"]["readiness_status"],
+                    "can_proceed": payload["summary"]["can_proceed"],
+                    "blocking_reasons": payload["summary"]["blocking_reasons"],
+                }
+                for family_id, payload in family_payloads.items()
+            },
+        },
+        links={
+            "self": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/ep5",
+            "brokerLive": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/broker-live",
+            "broker_live": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/broker-live",
+            "capitalBindingLive": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/capital-binding-live",
+            "capital_binding_live": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/capital-binding-live",
+            "bffHa": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/bff-ha",
+            "bff_ha": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/bff-ha",
+            "strictPublish": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/strict-publish",
+            "strict_publish": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/strict-publish",
+        },
+    )
 
 
 def _build_management_cockpit_payload(snapshot_at: str) -> Dict[str, Any]:
@@ -21219,6 +21805,56 @@ async def bff_management_evidence(
         page_token=page_token,
         page_size=page_size,
     )
+
+
+@app.get("/bff/management/readiness/ep5")
+async def bff_management_readiness_ep5(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: compose EP5 readiness status from task evidence and live gates."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _build_management_ep5_readiness_payload()
+
+
+@app.get("/bff/management/readiness/broker-live")
+async def bff_management_readiness_broker_live(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: expose broker-live readiness while preserving fail-closed gates."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _build_management_broker_live_readiness_payload()
+
+
+@app.get("/bff/management/readiness/capital-binding-live")
+async def bff_management_readiness_capital_binding_live(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: expose capital-binding-live readiness without enabling writes."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _build_management_capital_binding_live_readiness_payload()
+
+
+@app.get("/bff/management/readiness/bff-ha")
+async def bff_management_readiness_bff_ha(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: expose BFF HA readiness evidence and production topology gap."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _build_management_bff_ha_readiness_payload()
+
+
+@app.get("/bff/management/readiness/strict-publish")
+async def bff_management_readiness_strict_publish(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: expose strict-publish audit readiness and blockers."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _build_management_strict_publish_readiness_payload()
 
 
 # ---------------- /bff/strategies routes ----------------
