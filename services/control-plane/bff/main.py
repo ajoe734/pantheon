@@ -18800,6 +18800,52 @@ def _management_as_float(value: Any) -> Optional[float]:
         return None
 
 
+def _management_first_non_empty(*values: Any) -> Any:
+    for value in values:
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _management_dict_value(record: Dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = record.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _management_nested_dict(record: Dict[str, Any], *keys: str) -> Dict[str, Any]:
+    for key in keys:
+        value = record.get(key)
+        if isinstance(value, dict):
+            return value
+    return {}
+
+
+def _management_position_records(telemetry: Dict[str, Any]) -> List[Dict[str, Any]]:
+    for key in ("positions", "holdings", "position_snapshots"):
+        raw_items = telemetry.get(key)
+        if isinstance(raw_items, list):
+            items = [item for item in raw_items if isinstance(item, dict)]
+            if items:
+                return items
+    for key in ("position", "holding"):
+        raw_item = telemetry.get(key)
+        if isinstance(raw_item, dict):
+            return [raw_item]
+    return []
+
+
+def _management_sum_numeric(items: List[Dict[str, Any]], field: str) -> Optional[float]:
+    values = [
+        value
+        for value in (_management_as_float(item.get(field)) for item in items)
+        if value is not None
+    ]
+    return round(sum(values), 6) if values else None
+
+
 def _management_nested_value(record: Dict[str, Any], path: str) -> Any:
     value: Any = record
     for part in path.split("."):
@@ -18943,6 +18989,16 @@ def _management_exposure_payload(
             "maxDrawdownPct": max_drawdown_pct,
         },
     }
+
+
+def _management_latest_timestamp(items: List[Dict[str, Any]], *fields: str) -> Optional[str]:
+    latest: Optional[str] = None
+    for item in items:
+        for field in fields:
+            value = str(item.get(field) or "").strip()
+            if value and (latest is None or value > latest):
+                latest = value
+    return latest
 
 
 def _management_telemetry_rollup(records: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -19151,6 +19207,293 @@ def _management_portfolio_book_pool_sources(
         "runtime_bindings": runtime_bindings,
         "telemetry_by_runtime_id": telemetry_by_runtime_id,
         "entries": sorted(entries, key=lambda entry: str(entry.get("pool_id") or "")),
+    }
+
+
+def _management_link(path: str, record_id: Optional[str]) -> Optional[str]:
+    if not record_id:
+        return None
+    return f"{path}/{record_id}"
+
+
+def _management_portfolio_holding_entry(
+    runtime: Dict[str, Any],
+    position: Dict[str, Any],
+    *,
+    position_index: int,
+    plan: Dict[str, Any],
+    persona_binding: Dict[str, Any],
+    capital_pool: Dict[str, Any],
+    telemetry: Dict[str, Any],
+) -> Dict[str, Any]:
+    summary = telemetry.get("summary") if isinstance(telemetry.get("summary"), dict) else {}
+    instrument = _management_nested_dict(position, "instrument", "asset", "contract")
+    mark = _management_nested_dict(position, "mark", "mark_price", "market_price")
+
+    runtime_id = _management_record_id(runtime, "runtime_id", "id", "binding_id")
+    runtime_binding_id = _management_record_id(runtime, "runtime_binding_id", "binding_id", "id")
+    plan_id = _management_record_id(runtime, "plan_id", "deployment_plan_id") or _management_record_id(plan, "plan_id", "id")
+    persona_binding_id = (
+        _management_record_id(runtime, "persona_capital_binding_id")
+        or _management_record_id(persona_binding, "binding_id", "id", "persona_capital_binding_id")
+    )
+    capital_pool_id = str(
+        _management_first_non_empty(
+            _management_dict_value(position, "capital_pool_id", "pool_id"),
+            _management_dict_value(runtime, "capital_pool_id", "pool_id"),
+            _management_dict_value(plan, "capital_pool_id", "target_pool_id", "pool_id"),
+            _management_dict_value(persona_binding, "capital_pool_id", "pool_id"),
+        )
+        or ""
+    )
+    persona_id = str(
+        _management_first_non_empty(
+            _management_dict_value(position, "persona_id"),
+            _management_dict_value(runtime, "persona_id"),
+            _management_dict_value(plan, "persona_id"),
+            _management_dict_value(persona_binding, "persona_id"),
+        )
+        or ""
+    )
+    strategy_id = str(
+        _management_first_non_empty(
+            _management_dict_value(position, "strategy_id", "strategy_ref"),
+            _management_dict_value(runtime, "strategy_id", "strategy_ref"),
+            _management_dict_value(plan, "strategy_id", "strategy_ref"),
+            _management_dict_value(persona_binding, "strategy_id"),
+        )
+        or ""
+    )
+    artifact_id = str(
+        _management_first_non_empty(
+            _management_dict_value(position, "artifact_id"),
+            _management_dict_value(runtime, "artifact_id"),
+            _management_dict_value(plan, "artifact_id"),
+        )
+        or ""
+    )
+    artifact_version = str(
+        _management_first_non_empty(
+            _management_dict_value(position, "artifact_version", "version"),
+            _management_dict_value(runtime, "artifact_version", "version"),
+            _management_dict_value(plan, "artifact_version", "version"),
+        )
+        or ""
+    )
+
+    symbol = str(
+        _management_first_non_empty(
+            _management_dict_value(position, "symbol", "instrument_id", "asset_id", "contract_id"),
+            _management_dict_value(instrument, "symbol", "instrument_id", "asset_id", "contract_id"),
+            _management_dict_value(telemetry, "symbol", "instrument_id", "asset_id", "contract_id"),
+        )
+        or ""
+    )
+    asset_class = _management_first_non_empty(
+        _management_dict_value(position, "asset_class"),
+        _management_dict_value(instrument, "asset_class"),
+        _management_dict_value(telemetry, "asset_class"),
+    )
+    currency = _management_first_non_empty(
+        _management_dict_value(position, "currency"),
+        _management_dict_value(instrument, "currency"),
+        _management_dict_value(telemetry, "currency"),
+    )
+    quantity = _management_as_float(
+        _management_first_non_empty(
+            _management_dict_value(position, "quantity", "qty", "net_quantity", "position_quantity"),
+            _management_dict_value(telemetry, "quantity", "position_quantity"),
+            _management_dict_value(summary, "quantity", "position_quantity"),
+        )
+    )
+    mark_price = _management_as_float(
+        _management_first_non_empty(
+            _management_dict_value(position, "mark_price", "market_price", "last_price"),
+            _management_dict_value(mark, "price", "mark_price", "market_price", "last_price"),
+            _management_dict_value(telemetry, "mark_price", "market_price", "last_price"),
+            _management_dict_value(summary, "mark_price", "market_price", "last_price"),
+        )
+    )
+    average_price = _management_as_float(
+        _management_first_non_empty(
+            _management_dict_value(position, "average_price", "avg_price", "cost_basis"),
+            _management_dict_value(telemetry, "average_price", "avg_price", "cost_basis"),
+            _management_dict_value(summary, "average_price", "avg_price", "cost_basis"),
+        )
+    )
+    market_value = _management_as_float(
+        _management_first_non_empty(
+            _management_dict_value(position, "market_value", "value"),
+            _management_dict_value(telemetry, "market_value"),
+            _management_dict_value(summary, "market_value"),
+        )
+    )
+    if market_value is None and quantity is not None and mark_price is not None:
+        market_value = round(quantity * mark_price, 6)
+    notional = _management_as_float(
+        _management_first_non_empty(
+            _management_dict_value(position, "notional", "gross_notional"),
+            _management_dict_value(telemetry, "notional", "gross_notional"),
+            _management_dict_value(summary, "notional", "gross_notional"),
+        )
+    )
+    if notional is None and market_value is not None:
+        notional = abs(market_value)
+    exposure = _management_as_float(
+        _management_first_non_empty(
+            _management_dict_value(position, "exposure", "gross_exposure"),
+            _management_dict_value(telemetry, "exposure", "gross_exposure"),
+            _management_dict_value(summary, "exposure", "gross_exposure"),
+        )
+    )
+    weight = _management_as_float(
+        _management_first_non_empty(
+            _management_dict_value(position, "weight", "portfolio_weight"),
+            _management_dict_value(telemetry, "weight", "portfolio_weight"),
+            _management_dict_value(summary, "weight", "portfolio_weight"),
+        )
+    )
+    runtime_pnl = _management_as_float(
+        _management_first_non_empty(
+            _management_dict_value(telemetry, "pnl"),
+            _management_dict_value(summary, "total_pnl"),
+        )
+    )
+    total_pnl = _management_as_float(
+        _management_first_non_empty(
+            _management_dict_value(position, "total_pnl", "pnl"),
+            runtime_pnl,
+        )
+    )
+    unrealized_pnl = _management_as_float(
+        _management_first_non_empty(
+            _management_dict_value(position, "unrealized_pnl", "unrealized"),
+            _management_dict_value(telemetry, "unrealized_pnl"),
+            _management_dict_value(summary, "unrealized_pnl"),
+        )
+    )
+    realized_pnl = _management_as_float(
+        _management_first_non_empty(
+            _management_dict_value(position, "realized_pnl", "realized"),
+            _management_dict_value(telemetry, "realized_pnl"),
+            _management_dict_value(summary, "realized_pnl"),
+        )
+    )
+    side = str(
+        _management_first_non_empty(
+            _management_dict_value(position, "side", "direction"),
+            _management_dict_value(telemetry, "side", "direction"),
+        )
+        or ""
+    ).lower()
+    if not side and quantity is not None:
+        side = "long" if quantity > 0 else "short" if quantity < 0 else "flat"
+    if not side:
+        side = "unknown"
+
+    holding_key = str(
+        _management_first_non_empty(
+            _management_dict_value(position, "holding_id", "position_id", "id"),
+            symbol,
+            artifact_id,
+            position_index,
+        )
+    )
+    holding_id = f"{runtime_id}:{holding_key}" if runtime_id else holding_key
+    deployment_stage = str(runtime.get("deployment_stage") or runtime.get("deployment_mode") or plan.get("target_stage") or "")
+    status = str(_management_first_non_empty(position.get("status"), runtime.get("status"), "unknown") or "unknown")
+    last_mark_at = str(
+        _management_first_non_empty(
+            _management_dict_value(position, "marked_at", "mark_time", "updated_at", "collected_at"),
+            _management_dict_value(mark, "marked_at", "mark_time", "updated_at", "collected_at"),
+            _management_dict_value(telemetry, "collected_at", "updated_at"),
+            _management_dict_value(summary, "collected_at", "updated_at"),
+        )
+        or ""
+    )
+
+    return {
+        "id": holding_id,
+        "holding_id": holding_id,
+        "runtime_id": runtime_id,
+        "runtime_binding_id": runtime_binding_id,
+        "deployment_plan_id": plan_id,
+        "capital_pool_id": capital_pool_id,
+        "capitalPoolId": capital_pool_id,
+        "capital_pool": {
+            "id": capital_pool_id,
+            "name": capital_pool.get("name") or capital_pool_id,
+            "status": capital_pool.get("status"),
+            "risk_policy_ref": capital_pool.get("risk_policy_ref"),
+        },
+        "persona_id": persona_id,
+        "personaId": persona_id,
+        "persona_capital_binding_id": persona_binding_id,
+        "strategy_id": strategy_id,
+        "strategyId": strategy_id,
+        "artifact_id": artifact_id,
+        "artifact_version": artifact_version,
+        "deployment_stage": deployment_stage,
+        "deploymentStage": deployment_stage,
+        "status": status,
+        "instrument": {
+            "symbol": symbol,
+            "asset_class": asset_class,
+            "currency": currency,
+            "market": _management_first_non_empty(
+                _management_dict_value(position, "market"),
+                _management_dict_value(instrument, "market"),
+                _management_dict_value(telemetry, "market"),
+            ),
+        },
+        "symbol": symbol,
+        "side": side,
+        "quantity": quantity,
+        "average_price": average_price,
+        "avgPrice": average_price,
+        "mark_price": mark_price,
+        "markPrice": mark_price,
+        "market_value": market_value,
+        "marketValue": market_value,
+        "notional": notional,
+        "exposure": exposure,
+        "weight": weight,
+        "pnl": {
+            "total": total_pnl,
+            "runtime": runtime_pnl,
+            "unrealized": unrealized_pnl,
+            "realized": realized_pnl,
+            "drawdown": _management_as_float(
+                _management_first_non_empty(telemetry.get("drawdown"), summary.get("max_drawdown"))
+            ),
+            "fill_rate": _management_as_float(
+                _management_first_non_empty(telemetry.get("fill_rate"), summary.get("fill_rate"))
+            ),
+            "total_trades": _management_as_float(
+                _management_first_non_empty(telemetry.get("total_trades"), summary.get("total_trades"))
+            ),
+        },
+        "total_pnl": total_pnl,
+        "unrealized_pnl": unrealized_pnl,
+        "realized_pnl": realized_pnl,
+        "last_mark_at": last_mark_at or None,
+        "telemetry": {
+            "runtime_id": telemetry.get("runtime_id") or runtime_id,
+            "window": telemetry.get("window"),
+            "collected_at": telemetry.get("collected_at"),
+            "drawdown": telemetry.get("drawdown"),
+            "fill_rate": telemetry.get("fill_rate"),
+            "avg_slippage_bps": telemetry.get("avg_slippage_bps"),
+            "total_trades": telemetry.get("total_trades"),
+        },
+        "links": {
+            "runtime": _management_link("/bff/runtimes", runtime_id),
+            "capitalPool": _management_link("/bff/capital-pools", capital_pool_id),
+            "capital_pool": _management_link("/bff/capital-pools", capital_pool_id),
+            "persona": _management_link("/bff/personas", persona_id),
+            "strategy": _management_link("/bff/strategies", strategy_id),
+            "deployment": _management_link("/bff/deployments", plan_id),
+        },
     }
 
 
@@ -19372,6 +19715,224 @@ async def bff_management_portfolio_book_pools(
                 "GET /api/v1/telemetry/{runtime_id}/summary",
             ],
         },
+    }
+
+
+@app.get("/bff/management/portfolio-book/holdings")
+async def bff_management_portfolio_book_holdings(
+    capital_pool_id: Optional[str] = None,
+    persona_id: Optional[str] = None,
+    runtime_id: Optional[str] = None,
+    deployment_stage: Optional[str] = None,
+    status: Optional[str] = None,
+    q: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 global holdings table composed from runtime and telemetry surfaces."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    runtime_bindings = read_store.list_runtime_bindings() or []
+    deployment_plans = read_store.list_deployment_plans() or []
+    bindings = read_store.list_bindings() or []
+    capital_pools = read_store.list_capital_pools() or []
+
+    plans_by_id = {
+        _management_record_id(plan, "plan_id", "id"): plan
+        for plan in deployment_plans
+        if _management_record_id(plan, "plan_id", "id")
+    }
+    bindings_by_id = {
+        _management_record_id(binding, "binding_id", "id", "persona_capital_binding_id"): binding
+        for binding in bindings
+        if _management_record_id(binding, "binding_id", "id", "persona_capital_binding_id")
+    }
+    pools_by_id = {
+        _management_record_id(pool, "pool_id", "id"): pool
+        for pool in capital_pools
+        if _management_record_id(pool, "pool_id", "id")
+    }
+
+    telemetry_by_runtime_id: Dict[str, Dict[str, Any]] = {}
+    for runtime in runtime_bindings:
+        rid = _management_record_id(runtime, "runtime_id", "id", "binding_id")
+        if not rid:
+            continue
+        telemetry = read_store.get_telemetry_summary(rid)
+        if telemetry is not None:
+            telemetry_by_runtime_id[rid] = telemetry
+
+    holdings: List[Dict[str, Any]] = []
+    for runtime in runtime_bindings:
+        rid = _management_record_id(runtime, "runtime_id", "id", "binding_id")
+        telemetry = telemetry_by_runtime_id.get(rid, {})
+        plan = plans_by_id.get(_management_record_id(runtime, "plan_id", "deployment_plan_id"), {})
+        plan_binding_ids = [
+            str(value).strip()
+            for value in (plan.get("binding_ids") or [])
+            if str(value).strip()
+        ]
+        persona_binding_id = (
+            _management_record_id(runtime, "persona_capital_binding_id")
+            or (plan_binding_ids[0] if plan_binding_ids else "")
+        )
+        persona_binding = bindings_by_id.get(persona_binding_id, {})
+        pool_id = str(
+            _management_first_non_empty(
+                runtime.get("capital_pool_id"),
+                plan.get("capital_pool_id"),
+                plan.get("target_pool_id"),
+                persona_binding.get("capital_pool_id"),
+            )
+            or ""
+        )
+        capital_pool = pools_by_id.get(pool_id, {})
+        positions = _management_position_records(telemetry) or [{}]
+        for index, position in enumerate(positions):
+            holdings.append(
+                _management_portfolio_holding_entry(
+                    runtime,
+                    position,
+                    position_index=index,
+                    plan=plan,
+                    persona_binding=persona_binding,
+                    capital_pool=capital_pool,
+                    telemetry=telemetry,
+                )
+            )
+
+    if capital_pool_id:
+        requested = {item.strip() for item in capital_pool_id.split(",") if item.strip()}
+        holdings = [item for item in holdings if str(item.get("capital_pool_id") or "") in requested]
+    if persona_id:
+        requested = {item.strip() for item in persona_id.split(",") if item.strip()}
+        holdings = [item for item in holdings if str(item.get("persona_id") or "") in requested]
+    if runtime_id:
+        requested = {item.strip() for item in runtime_id.split(",") if item.strip()}
+        holdings = [item for item in holdings if str(item.get("runtime_id") or "") in requested]
+    if deployment_stage:
+        requested = {item.strip().lower() for item in deployment_stage.split(",") if item.strip()}
+        holdings = [item for item in holdings if str(item.get("deployment_stage") or "").lower() in requested]
+    if status:
+        requested = {item.strip().lower() for item in status.split(",") if item.strip()}
+        holdings = [item for item in holdings if str(item.get("status") or "").lower() in requested]
+    if q:
+        needle = q.strip().lower()
+        holdings = [
+            item
+            for item in holdings
+            if needle in " ".join(
+                str(value or "").lower()
+                for value in (
+                    item.get("holding_id"),
+                    item.get("symbol"),
+                    item.get("runtime_id"),
+                    item.get("capital_pool_id"),
+                    item.get("persona_id"),
+                    item.get("strategy_id"),
+                    item.get("artifact_id"),
+                )
+            )
+        ]
+
+    holdings = sorted(
+        holdings,
+        key=lambda item: (
+            str(item.get("capital_pool_id") or ""),
+            str(item.get("runtime_id") or ""),
+            str(item.get("symbol") or ""),
+            str(item.get("holding_id") or ""),
+        ),
+    )
+    total = len(holdings)
+    page_items, next_page_token = _page_slice(holdings, page_token, page_size)
+    active_statuses = {"active", "running", "healthy", "bound"}
+    summary = {
+        "holding_count": total,
+        "returned_holding_count": len(page_items),
+        "active_holding_count": len([
+            item for item in holdings if str(item.get("status") or "").lower() in active_statuses
+        ]),
+        "paper_holding_count": len([
+            item for item in holdings if str(item.get("deployment_stage") or "").lower() == "paper"
+        ]),
+        "live_holding_count": len([
+            item for item in holdings if str(item.get("deployment_stage") or "").lower() == "live"
+        ]),
+        "runtime_count": len({
+            str(item.get("runtime_id") or "")
+            for item in holdings
+            if str(item.get("runtime_id") or "")
+        }),
+        "telemetry_runtime_count": len({
+            str(item.get("runtime_id") or "")
+            for item in holdings
+            if str(item.get("runtime_id") or "") in telemetry_by_runtime_id
+        }),
+        "total_notional": _management_sum_numeric(holdings, "notional"),
+        "total_market_value": _management_sum_numeric(holdings, "market_value"),
+        "total_unrealized_pnl": _management_sum_numeric(holdings, "unrealized_pnl"),
+        "total_realized_pnl": _management_sum_numeric(holdings, "realized_pnl"),
+        "total_pnl": _management_sum_numeric(holdings, "total_pnl"),
+        "latest_mark_at": _management_latest_timestamp(holdings, "last_mark_at"),
+    }
+
+    surfaces = {
+        "portfolio_book_holdings": _composed_surface_status(
+            snapshot_at=snapshot_at,
+            available=bool(runtime_bindings),
+            missing_message="Portfolio-book holdings composition has no runtime binding source records.",
+        ),
+        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
+        "telemetry_summaries": _dataset_surface_status(
+            "telemetry_summaries",
+            snapshot_at=snapshot_at,
+            has_data=bool(telemetry_by_runtime_id) if runtime_bindings else None,
+            missing_message="Telemetry summaries unavailable for portfolio-book holdings runtimes.",
+        ),
+        "deployment_plans": _dataset_surface_status("deployment_plans", snapshot_at=snapshot_at),
+        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at),
+        "capital_pools": _dataset_surface_status("capital_pools", snapshot_at=snapshot_at),
+    }
+    if any(
+        surface.get("status") == "unavailable"
+        for key, surface in surfaces.items()
+        if key != "portfolio_book_holdings"
+    ):
+        surfaces["portfolio_book_holdings"] = _composed_surface_status(
+            snapshot_at=snapshot_at,
+            available=False,
+            missing_message="Portfolio-book holdings composition is degraded because one or more source surfaces are unavailable.",
+        )
+
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = surfaces
+    meta["total"] = total
+    meta["composition_sources"] = [
+        "GET /bff/runtimes",
+        "GET /api/v1/telemetry/{runtime_id}/summary",
+        "GET /bff/deployments",
+        "GET /bff/capital-pools",
+        "GET /bff/personas",
+    ]
+    meta["summary"] = {
+        "source_mode": "bff_composed",
+        "task": "BFF-PM12-002",
+    }
+
+    return {
+        "data": {
+            "summary": summary,
+            "items": page_items,
+            "holdings": page_items,
+        },
+        "items": page_items,
+        "summary": summary,
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": meta,
     }
 
 
@@ -19749,6 +20310,323 @@ def _project_persona_fleet_payload(
 
 
 # ---------------- /bff/management aggregate routes ----------------
+
+_HUMAN_INBOX_OPEN_APPROVAL_STATES = {
+    "pending",
+    "in_review",
+    "under_review",
+    "reviewed",
+    "proposed",
+}
+_HUMAN_INBOX_OPEN_INTERVENTION_STATUSES = {"pending", "escalated"}
+_HUMAN_INBOX_PRIORITY_RANK = {
+    "critical": 4,
+    "high": 3,
+    "medium": 2,
+    "low": 1,
+    "unknown": 0,
+}
+
+
+def _human_inbox_csv_filter(value: Optional[str]) -> Optional[set[str]]:
+    if not value:
+        return None
+    requested = {part.strip().lower() for part in value.split(",") if part.strip()}
+    return requested or None
+
+
+def _human_inbox_priority(value: Any, *, fallback: str = "medium") -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in _HUMAN_INBOX_PRIORITY_RANK:
+        return normalized
+    if normalized in {"sev1", "p0"}:
+        return "critical"
+    if normalized in {"sev2", "p1"}:
+        return "high"
+    if normalized in {"sev3", "p2"}:
+        return "medium"
+    return fallback
+
+
+def _human_inbox_approval_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    decision_id = _management_record_id(item, "decision_id", "id", "approval_decision_id")
+    if not decision_id:
+        return None
+    decision_type = str(item.get("decision_type") or item.get("target_type") or "ApprovalDecision").strip()
+    risk_level = str(item.get("risk_level") or "unknown").strip().lower() or "unknown"
+    state = str(item.get("decision_state") or item.get("state") or "pending").strip().lower() or "pending"
+    context = item.get("decision_context") if isinstance(item.get("decision_context"), dict) else {}
+    governance_chain = context.get("governance_chain") if isinstance(context.get("governance_chain"), dict) else {}
+    priority = _human_inbox_priority(item.get("priority") or risk_level, fallback="medium")
+    risk_summary = str(context.get("risk_summary") or "").strip()
+    target_type = str(governance_chain.get("target_type") or decision_type or "ApprovalDecision").strip()
+    target_id = str(governance_chain.get("target_id") or governance_chain.get("linked_review_item_id") or "").strip()
+    action_state = "pending" if state in _HUMAN_INBOX_OPEN_APPROVAL_STATES else "resolved"
+    return {
+        "id": f"approval:{decision_id}",
+        "inbox_id": f"approval:{decision_id}",
+        "inboxType": "approval",
+        "source_type": "approval",
+        "source_id": decision_id,
+        "approval_decision_id": decision_id,
+        "title": item.get("title") or f"{decision_type} approval",
+        "summary": risk_summary or "Approval decision awaiting human review.",
+        "priority": priority,
+        "risk_level": risk_level,
+        "status": state,
+        "action_state": action_state,
+        "created_at": item.get("submitted_at"),
+        "updated_at": item.get("updated_at") or item.get("submitted_at"),
+        "submitted_by": item.get("submitted_by"),
+        "target": {
+            "type": target_type,
+            "id": target_id or None,
+        },
+        "route": f"/management/approvals?approval={decision_id}",
+        "bff_detail_path": f"/bff/approvals/{decision_id}",
+        "decision_context": json.loads(json.dumps(context)),
+        "allowedActions": json.loads(json.dumps(item.get("allowedActions") or {})),
+    }
+
+
+def _human_inbox_intervention_item(record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    intervention_id = _management_record_id(record, "intervention_id", "id")
+    if not intervention_id:
+        return None
+    status = str(record.get("status") or "pending").strip().lower() or "pending"
+    kind = str(record.get("kind") or "hiq_sentinel").strip().lower() or "hiq_sentinel"
+    priority = _human_inbox_priority(
+        record.get("priority") or record.get("severity") or record.get("risk_level"),
+        fallback="critical" if status == "pending" and kind == "hiq_sentinel" else "high",
+    )
+    action_state = "pending" if status in _HUMAN_INBOX_OPEN_INTERVENTION_STATUSES else "resolved"
+    raw_allowed_actions = record.get("allowedActions") if isinstance(record.get("allowedActions"), dict) else {}
+    allowed_actions = {
+        "canClaim": status == "pending",
+        "canRelease": status == "claimed",
+        "canEscalate": status == "pending",
+        "canDecide": status in _HUMAN_INBOX_OPEN_INTERVENTION_STATUSES,
+        "canRemediate": status in _HUMAN_INBOX_OPEN_INTERVENTION_STATUSES,
+        **raw_allowed_actions,
+    }
+    return {
+        "id": f"intervention:{intervention_id}",
+        "inbox_id": f"intervention:{intervention_id}",
+        "inboxType": "intervention",
+        "source_type": "intervention",
+        "source_id": intervention_id,
+        "intervention_id": intervention_id,
+        "title": record.get("title") or f"{kind.replace('_', ' ').title()} intervention",
+        "summary": record.get("description") or "Human intervention is required before the loop can continue.",
+        "priority": priority,
+        "risk_level": str(record.get("risk_level") or priority).strip().lower(),
+        "status": status,
+        "action_state": action_state,
+        "created_at": record.get("triggered_at"),
+        "updated_at": record.get("remediated_at") or record.get("updated_at") or record.get("triggered_at"),
+        "triggered_by": record.get("triggered_by"),
+        "target": {
+            "type": record.get("target_type"),
+            "id": record.get("target_id"),
+        },
+        "route": f"/management/interventions?intervention={intervention_id}",
+        "bff_detail_path": f"/bff/v5/interventions/{intervention_id}",
+        "remediation_context": {
+            "kind": kind,
+            "remediation_action": record.get("remediation_action"),
+            "two_man_signature_id": record.get("two_man_signature_id"),
+            "correlation_id": record.get("correlation_id"),
+        },
+        "allowedActions": json.loads(json.dumps(allowed_actions)),
+    }
+
+
+def _human_inbox_all_items() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    approval_records = read_store.list_approval_queue_items() or []
+    intervention_records = _v5_intervention_records()
+    items: List[Dict[str, Any]] = []
+    for approval in approval_records:
+        projected = _human_inbox_approval_item(approval)
+        if projected is not None:
+            items.append(projected)
+    for intervention in intervention_records:
+        projected = _human_inbox_intervention_item(intervention)
+        if projected is not None:
+            items.append(projected)
+    items.sort(
+        key=lambda item: (
+            _HUMAN_INBOX_PRIORITY_RANK.get(str(item.get("priority") or "unknown"), 0),
+            str(item.get("created_at") or ""),
+            str(item.get("id") or ""),
+        ),
+        reverse=True,
+    )
+    return items, approval_records, intervention_records
+
+
+def _human_inbox_filter_items(
+    items: List[Dict[str, Any]],
+    *,
+    source_type: Optional[str] = None,
+    status: Optional[str] = None,
+    priority: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    source_types = _human_inbox_csv_filter(source_type)
+    statuses = _human_inbox_csv_filter(status)
+    priorities = _human_inbox_csv_filter(priority)
+    filtered = items
+    if source_types:
+        filtered = [
+            item for item in filtered
+            if str(item.get("source_type") or item.get("inboxType") or "").lower() in source_types
+        ]
+    if statuses:
+        filtered = [
+            item for item in filtered
+            if str(item.get("status") or "").lower() in statuses
+            or str(item.get("action_state") or "").lower() in statuses
+        ]
+    if priorities:
+        filtered = [
+            item for item in filtered
+            if str(item.get("priority") or "").lower() in priorities
+            or str(item.get("risk_level") or "").lower() in priorities
+        ]
+    return filtered
+
+
+def _human_inbox_summary(items: List[Dict[str, Any]], returned_count: int) -> Dict[str, Any]:
+    pending_items = [item for item in items if str(item.get("action_state") or "") == "pending"]
+    return {
+        "total_items": len(items),
+        "returned_items": returned_count,
+        "pending_items": len(pending_items),
+        "approval_count": len([item for item in items if item.get("source_type") == "approval"]),
+        "intervention_count": len([item for item in items if item.get("source_type") == "intervention"]),
+        "critical_count": len([item for item in items if item.get("priority") == "critical"]),
+        "high_count": len([item for item in items if item.get("priority") == "high"]),
+    }
+
+
+def _human_inbox_surfaces(
+    *,
+    snapshot_at: str,
+    approval_records: List[Dict[str, Any]],
+    intervention_records: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    approval_surface = _dataset_surface_status(
+        "approval_queue_items",
+        snapshot_at=snapshot_at,
+        has_data=bool(approval_records),
+        missing_message="Approval queue has no readable source records.",
+    )
+    intervention_surface = _dataset_surface_status(
+        "v5_interventions",
+        snapshot_at=snapshot_at,
+        has_data=bool(intervention_records),
+        missing_message="V5 interventions have no readable source records.",
+    )
+    if intervention_records and intervention_surface.get("status") == "unavailable":
+        intervention_surface = dict(_surface_status())
+        intervention_surface["source"] = "bff_local_registry"
+    source_available = (
+        approval_surface.get("status") != "unavailable"
+        or intervention_surface.get("status") != "unavailable"
+        or bool(approval_records)
+        or bool(intervention_records)
+    )
+    return {
+        "human_inbox": _composed_surface_status(
+            snapshot_at=snapshot_at,
+            available=source_available,
+            missing_message="Human inbox has no readable approval or intervention source records.",
+        ),
+        "approval_queue": approval_surface,
+        "v5_interventions": intervention_surface,
+    }
+
+
+def _human_inbox_detail_match(item: Dict[str, Any], item_id: str) -> bool:
+    clean = str(item_id or "").strip()
+    candidates = {
+        str(item.get("id") or ""),
+        str(item.get("inbox_id") or ""),
+        str(item.get("source_id") or ""),
+        str(item.get("approval_decision_id") or ""),
+        str(item.get("intervention_id") or ""),
+    }
+    return clean in candidates
+
+
+@app.get("/bff/management/human-inbox")
+async def bff_management_human_inbox(
+    source_type: Optional[str] = None,
+    status: Optional[str] = None,
+    priority: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: compose human-action inbox rows from approvals and interventions."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    items, approval_records, intervention_records = _human_inbox_all_items()
+    filtered = _human_inbox_filter_items(
+        items,
+        source_type=source_type,
+        status=status,
+        priority=priority,
+    )
+    total = len(filtered)
+    page_items, next_page_token = _page_slice(filtered, page_token, page_size)
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = _human_inbox_surfaces(
+        snapshot_at=snapshot_at,
+        approval_records=approval_records,
+        intervention_records=intervention_records,
+    )
+    return {
+        "data": page_items,
+        "items": page_items,
+        "summary": _human_inbox_summary(filtered, len(page_items)),
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": meta,
+    }
+
+
+@app.get("/bff/management/human-inbox/{item_id}")
+async def bff_management_human_inbox_detail(
+    item_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: detail for one composed human-action inbox row."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    items, approval_records, intervention_records = _human_inbox_all_items()
+    for item in items:
+        if _human_inbox_detail_match(item, item_id):
+            detail = json.loads(json.dumps(item))
+            meta = _snapshot_meta(snapshot_at)
+            meta["surfaces"] = _human_inbox_surfaces(
+                snapshot_at=snapshot_at,
+                approval_records=approval_records,
+                intervention_records=intervention_records,
+            )
+            return {"data": detail, "meta": meta}
+    raise _bff_error(
+        404,
+        ErrorCode.OBJECT_NOT_FOUND,
+        "Human inbox item not found",
+        f"Human inbox item {item_id} does not exist",
+    )
 
 @app.get("/bff/management/persona-fleet")
 async def bff_management_persona_fleet(

@@ -109,6 +109,7 @@ export const paths = {
   managementEvidence: () => `${BASE}/management/evidence`,
   managementPortfolioBook: () => `${BASE}/management/portfolio-book`,
   managementPortfolioBookPools: () => `${BASE}/management/portfolio-book/pools`,
+  managementPortfolioBookHoldings: () => `${BASE}/management/portfolio-book/holdings`,
 
   // ---- Research ----
   researchExperiments: () => `${BASE}/research-experiments`,
@@ -148,6 +149,8 @@ export const paths = {
 
   // ---- Management aggregate read surfaces ----
   managementPersonaFleet: () => `${BASE}/management/persona-fleet`,
+  managementHumanInbox: () => `${BASE}/management/human-inbox`,
+  managementHumanInboxItem: (id: string) => `${BASE}/management/human-inbox/${enc(id)}`,
 
   // ---- Management OODA packet read surface ----
   oodaPackets: () => `${BASE}/ooda/packets`,
