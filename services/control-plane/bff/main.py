@@ -27821,7 +27821,8 @@ async def bff_get_alert(
             f"Alert {alert_id!r} does not exist",
             precondition_failed="alert_id",
         )
-    return {"data": match, "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()}}
+    detail_meta = payload.get("meta", {"snapshot_at": snapshot_at, "staleness": _meta_staleness()})
+    return {"data": match, "meta": detail_meta}
 
 
 @app.post("/bff/alerts/{alert_id}/acknowledge", status_code=202)
