@@ -316,6 +316,94 @@ class WorkerCommitWrapperTests(unittest.TestCase):
         finally:
             import shutil; shutil.rmtree(root)
 
+    def test_directory_scope_does_not_force_add_ignored_children(self) -> None:
+        root = self._setup_repo()
+        try:
+            (root / ".gitignore").write_text("*.log\n")
+            (root / "src").mkdir()
+            (root / "src" / "kept.py").write_text("a\n")
+            (root / "src" / "debug.log").write_text("ignored\n")
+            msg = root / "msg.txt"
+            msg.write_text("BAR-003: directory scope\n\nLLM-Agent: B\nTask-ID: BAR-003\nReviewer: A\n")
+            proc = self._wrapper(
+                root,
+                "--task-id", "BAR-003",
+                "--message-file", str(msg),
+                "--scope", "src",
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stderr + proc.stdout)
+            last_files = _git(root, "show", "--name-only", "--format=", "HEAD").stdout.split()
+            self.assertIn("src/kept.py", last_files)
+            self.assertNotIn("src/debug.log", last_files)
+        finally:
+            import shutil; shutil.rmtree(root)
+
+    def test_explicit_ignored_file_scope_can_be_force_added(self) -> None:
+        root = self._setup_repo()
+        try:
+            (root / ".gitignore").write_text("ignored/\n")
+            (root / "ignored").mkdir()
+            (root / "ignored" / "artifact.txt").write_text("artifact\n")
+            msg = root / "msg.txt"
+            msg.write_text("BAR-004: ignored file\n\nLLM-Agent: B\nTask-ID: BAR-004\nReviewer: A\n")
+            proc = self._wrapper(
+                root,
+                "--task-id", "BAR-004",
+                "--message-file", str(msg),
+                "--scope", "ignored/artifact.txt",
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stderr + proc.stdout)
+            last_files = _git(root, "show", "--name-only", "--format=", "HEAD").stdout.split()
+            self.assertIn("ignored/artifact.txt", last_files)
+        finally:
+            import shutil; shutil.rmtree(root)
+
+    def test_tracked_ignored_file_scope_can_be_updated(self) -> None:
+        root = self._setup_repo()
+        try:
+            (root / ".gitignore").write_text("ignored/\n")
+            (root / "ignored").mkdir()
+            (root / "ignored" / "artifact.txt").write_text("old\n")
+            _git(root, "add", ".gitignore")
+            _git(root, "add", "-f", "ignored/artifact.txt")
+            _git(root, "commit", "-m", "Track ignored artifact")
+            (root / "ignored" / "artifact.txt").write_text("new\n")
+            msg = root / "msg.txt"
+            msg.write_text("BAR-005: tracked ignored file\n\nLLM-Agent: B\nTask-ID: BAR-005\nReviewer: A\n")
+            proc = self._wrapper(
+                root,
+                "--task-id", "BAR-005",
+                "--message-file", str(msg),
+                "--scope", "ignored/artifact.txt",
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stderr + proc.stdout)
+            committed = _git(root, "show", "HEAD:ignored/artifact.txt").stdout
+            self.assertEqual(committed, "new\n")
+        finally:
+            import shutil; shutil.rmtree(root)
+
+    def test_rejects_ignored_directory_scope(self) -> None:
+        root = self._setup_repo()
+        try:
+            (root / ".gitignore").write_text("ignored/\n")
+            (root / "ignored").mkdir()
+            (root / "ignored" / "artifact.txt").write_text("artifact\n")
+            msg = root / "msg.txt"
+            msg.write_text("BAR-006: ignored directory\n\nLLM-Agent: B\nTask-ID: BAR-006\nReviewer: A\n")
+            before = _git(root, "rev-parse", "HEAD").stdout.strip()
+            proc = self._wrapper(
+                root,
+                "--task-id", "BAR-006",
+                "--message-file", str(msg),
+                "--scope", "ignored",
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("Refusing to force-add ignored directory scope", proc.stderr)
+            after = _git(root, "rev-parse", "HEAD").stdout.strip()
+            self.assertEqual(before, after)
+        finally:
+            import shutil; shutil.rmtree(root)
+
     def test_worker_commit_audit_respects_status_root(self) -> None:
         root = self._setup_repo()
         status_root = Path(tempfile.mkdtemp())

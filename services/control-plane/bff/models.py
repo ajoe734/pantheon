@@ -71,6 +71,12 @@ class CommandType(str, Enum):
     SENTINEL_REMEDIATION_BUILD = "SentinelRemediationBuild"
     SENTINEL_REMEDIATION_EXECUTE = "SentinelRemediationExecute"
     ALERT_ACKNOWLEDGE = "AlertAcknowledge"
+    HUMAN_GATE_APPROVE = "HumanGateApprove"
+    HUMAN_GATE_REJECT = "HumanGateReject"
+    HUMAN_GATE_REQUEST_MORE_EVIDENCE = "HumanGateRequestMoreEvidence"
+    HUMAN_GATE_REVOKE = "HumanGateRevoke"
+    HUMAN_GATE_EXTEND_TTL = "HumanGateExtendTtl"
+    QUARTERLY_RANKING_RECOMMENDATION_SUBMIT = "QuarterlyRankingRecommendationSubmit"
 
 
 class ObjectType(str, Enum):
@@ -108,6 +114,7 @@ class ObjectType(str, Enum):
     CONFIRM_TOKEN = "ConfirmToken"
     SENTINEL_FINDING = "SentinelFinding"
     SENTINEL_REMEDIATION = "SentinelRemediation"
+    HUMAN_GATE_ITEM = "HumanGateItem"
 
 
 class CommandStatus(str, Enum):
