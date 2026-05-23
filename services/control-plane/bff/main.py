@@ -19552,6 +19552,288 @@ async def bff_get_persona_capabilities_surface(
     }
 
 
+def _pm12_status_counts(items: List[Dict[str, Any]]) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for item in items:
+        status = str(
+            item.get("status")
+            or item.get("state")
+            or item.get("lifecycle_state")
+            or "unknown"
+        ).strip().lower() or "unknown"
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def _pm12_latest_timestamp(items: List[Dict[str, Any]], keys: tuple[str, ...]) -> Optional[str]:
+    values: List[str] = []
+    for item in items:
+        for key in keys:
+            value = item.get(key)
+            if value not in (None, ""):
+                values.append(str(value))
+                break
+    return max(values) if values else None
+
+
+def _pm12_compact_ids(items: List[Dict[str, Any]], keys: tuple[str, ...]) -> List[str]:
+    values: List[str] = []
+    seen = set()
+    for item in items:
+        for key in keys:
+            value = item.get(key)
+            if value in (None, ""):
+                continue
+            text = str(value)
+            if text not in seen:
+                values.append(text)
+                seen.add(text)
+            break
+    return values
+
+
+def _pm12_memory_items_for_persona(persona_id: str) -> List[Dict[str, Any]]:
+    fetcher = getattr(read_store, "list_memory_updates_for_persona", None)
+    if not callable(fetcher):
+        return []
+    items = fetcher(persona_id) or []
+    return [dict(item) for item in items if isinstance(item, dict)]
+
+
+def _pm12_persona_route_summary(persona_id: str) -> Dict[str, Any]:
+    policy = read_store.get_route_policy_for_persona(persona_id) or {}
+    rules = policy.get("rules") if isinstance(policy.get("rules"), list) else []
+    consult_policy = policy.get("consult_policy") if isinstance(policy.get("consult_policy"), dict) else {}
+    trigger_rules = (
+        consult_policy.get("trigger_rules")
+        if isinstance(consult_policy.get("trigger_rules"), list)
+        else []
+    )
+    blocking_count = 0
+    for rule in list(rules) + list(trigger_rules):
+        if not isinstance(rule, dict):
+            continue
+        mode = str(rule.get("mode") or rule.get("decision_mode") or "").lower()
+        if mode in {"blocking", "block", "hard_gate", "consult_required"}:
+            blocking_count += 1
+    return {
+        "version": policy.get("version") or consult_policy.get("version"),
+        "ruleCount": len(rules),
+        "consultRuleCount": len(trigger_rules),
+        "blockingRuleCount": blocking_count,
+        "hasPolicy": bool(policy or consult_policy),
+    }
+
+
+def _pm12_persona_capability_summary(persona_id: str) -> Dict[str, Any]:
+    snapshot = read_store.get_capability_snapshot_for_persona(persona_id) or {}
+    skills = list(snapshot.get("effective_skills") or [])
+    tools = list(snapshot.get("effective_tools") or [])
+    workflows = list(snapshot.get("effective_workflows") or [])
+    restrictions = list(snapshot.get("restrictions") or [])
+    return {
+        "snapshotId": snapshot.get("snapshot_id") or snapshot.get("id"),
+        "generatedAt": snapshot.get("generated_at"),
+        "skillCount": len(skills),
+        "toolCount": len(tools),
+        "workflowCount": len(workflows),
+        "restrictionCount": len(restrictions),
+        "sourceRefCount": len(snapshot.get("source_refs") or []),
+        "hasSnapshot": bool(snapshot),
+    }
+
+
+def _pm12_persona_binding_summary(persona_id: str) -> Dict[str, Any]:
+    bindings = read_store.get_bindings_for_persona(persona_id) or []
+    pool_ids = _pm12_compact_ids(bindings, ("capital_pool_id", "pool_id"))
+    pool_refs: List[Dict[str, Any]] = []
+    for pool_id in pool_ids:
+        pool = read_store.get_capital_pool(pool_id) or {}
+        pool_refs.append({
+            "id": pool_id,
+            "name": pool.get("name") or pool_id,
+            "status": pool.get("status"),
+        })
+    active_count = 0
+    deployment_scopes: List[str] = []
+    for binding in bindings:
+        status = str(binding.get("status") or binding.get("validity") or "").lower()
+        if status in {"active", "ready", "bound"}:
+            active_count += 1
+        scope = binding.get("allowed_deployment_scope") or binding.get("deployment_stage")
+        if scope not in (None, "") and str(scope) not in deployment_scopes:
+            deployment_scopes.append(str(scope))
+    return {
+        "total": len(bindings),
+        "active": active_count,
+        "capitalPoolIds": pool_ids,
+        "capitalPools": pool_refs,
+        "deploymentScopes": deployment_scopes,
+        "statusCounts": _pm12_status_counts(bindings),
+    }
+
+
+def _pm12_persona_session_summary(persona_id: str) -> Dict[str, Any]:
+    sessions = read_store.get_sessions_for_persona(persona_id) or []
+    active = [s for s in sessions if str(s.get("status") or "").lower() == "active"]
+    return {
+        "total": len(sessions),
+        "active": len(active),
+        "lastHeartbeatAt": _pm12_latest_timestamp(
+            sessions,
+            ("last_heartbeat_at", "updated_at", "started_at"),
+        ),
+        "runtimeBindingIds": _pm12_compact_ids(sessions, ("runtime_binding_id", "runtime_id")),
+        "poolScopes": _pm12_compact_ids(sessions, ("pool_scope", "capital_pool_id")),
+        "statusCounts": _pm12_status_counts(sessions),
+    }
+
+
+def _pm12_persona_evaluation_summary(persona_id: str) -> Dict[str, Any]:
+    teaching = read_store.get_teaching_sessions_for_persona(persona_id) or []
+    completed = [
+        item for item in teaching
+        if str(item.get("status") or "").lower() in {"completed", "complete", "passed"}
+    ]
+    outcome_count = 0
+    for item in teaching:
+        outcomes = item.get("outcomes")
+        if isinstance(outcomes, list):
+            outcome_count += len(outcomes)
+    return {
+        "total": len(teaching),
+        "completed": len(completed),
+        "latestAt": _pm12_latest_timestamp(
+            teaching,
+            ("completed_at", "updated_at", "started_at", "created_at"),
+        ),
+        "outcomeCount": outcome_count,
+        "statusCounts": _pm12_status_counts(teaching),
+    }
+
+
+def _pm12_persona_memory_summary(persona_id: str) -> Dict[str, Any]:
+    memory = _pm12_memory_items_for_persona(persona_id)
+    return {
+        "total": len(memory),
+        "latestAt": _pm12_latest_timestamp(memory, ("updated_at", "created_at", "recorded_at")),
+        "statusCounts": _pm12_status_counts(memory),
+    }
+
+
+def _pm12_persona_health_summary(persona: Dict[str, Any], sessions: Dict[str, Any], capabilities: Dict[str, Any]) -> Dict[str, Any]:
+    state = str(persona.get("lifecycle_state") or persona.get("state") or "").lower()
+    health = "healthy" if state == "active" else "degraded"
+    if state == "active" and capabilities.get("hasSnapshot") is False:
+        health = "degraded"
+    return {
+        "health": health,
+        "lifecycleState": state or "unknown",
+        "activeSessionCount": sessions.get("active", 0),
+        "hasCapabilitySnapshot": bool(capabilities.get("hasSnapshot")),
+    }
+
+
+def _project_persona_league_row(raw: Dict[str, Any]) -> Dict[str, Any]:
+    persona_id = str(raw.get("persona_id") or raw.get("id") or "")
+    routed = _routed_strategies_for_persona(persona_id)
+    dto = _project_persona_dto(raw, routed_strategies=routed)
+    route_policy = _pm12_persona_route_summary(persona_id)
+    capabilities = _pm12_persona_capability_summary(persona_id)
+    bindings = _pm12_persona_binding_summary(persona_id)
+    sessions = _pm12_persona_session_summary(persona_id)
+    evaluations = _pm12_persona_evaluation_summary(persona_id)
+    memory = _pm12_persona_memory_summary(persona_id)
+    health = _pm12_persona_health_summary(raw, sessions, capabilities)
+    allowed_actions = read_store.get_persona_allowed_actions(persona_id) or {}
+    return {
+        **dto,
+        "personaId": persona_id,
+        "mandate": raw.get("mandate"),
+        "strategyFamily": raw.get("strategy_family"),
+        "routePolicy": route_policy,
+        "capabilities": capabilities,
+        "bindings": bindings,
+        "sessions": sessions,
+        "evaluations": evaluations,
+        "memory": memory,
+        "health": health,
+        "allowedActions": allowed_actions,
+        "links": {
+            "detail": f"/bff/personas/{persona_id}",
+            "routePolicy": f"/bff/personas/{persona_id}/route-policy",
+            "capabilities": f"/bff/personas/{persona_id}/capabilities",
+            "evaluations": f"/bff/personas/{persona_id}/evaluations",
+            "memory": f"/bff/personas/{persona_id}/memory",
+            "activity": f"/bff/personas/{persona_id}/activity",
+        },
+    }
+
+
+@app.get("/bff/management/persona-league")
+async def bff_management_persona_league(
+    state: Optional[str] = None,
+    archetype: Optional[str] = None,
+    q: str = Query(default=""),
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 persona-league table composed from persona-side read surfaces."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    rows = [_project_persona_league_row(raw) for raw in _list_persona_records()]
+    if state:
+        normalized_state = _normalize_lifecycle_state(state)
+        rows = [row for row in rows if row.get("state") == normalized_state]
+    if archetype:
+        rows = [row for row in rows if str(row.get("archetype") or "") == archetype]
+    needle = q.strip().lower()
+    if needle:
+        rows = [
+            row for row in rows
+            if needle in str(row.get("id") or "").lower()
+            or needle in str(row.get("name") or "").lower()
+            or needle in str(row.get("owner") or "").lower()
+            or needle in str(row.get("archetype") or "").lower()
+        ]
+    rows = sorted(rows, key=lambda row: str(row.get("name") or row.get("id") or ""))
+    total = len(rows)
+    page_items, next_page_token = _page_slice(rows, page_token, page_size)
+    persona_surface = _dataset_surface_status("personas", snapshot_at=snapshot_at)
+    surfaces = {
+        "persona_league": _composed_surface_status(snapshot_at=snapshot_at),
+        "personas": persona_surface,
+        "route_policies": _composed_surface_status(snapshot_at=snapshot_at),
+        "capability_snapshots": _dataset_surface_status("capability_snapshots", snapshot_at=snapshot_at),
+        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at),
+        "persona_sessions": _dataset_surface_status("sessions", snapshot_at=snapshot_at),
+        "teaching_sessions": _dataset_surface_status("teaching_sessions", snapshot_at=snapshot_at),
+        "persona_memory": _composed_surface_status(snapshot_at=snapshot_at),
+        "persona_health": dict(persona_surface),
+    }
+    return {
+        "data": page_items,
+        "items": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "total": total,
+            "surfaces": surfaces,
+            "composition_sources": [
+                "GET /bff/personas",
+                "GET /bff/personas/{id}/route-policy",
+                "GET /bff/personas/{id}/capabilities",
+                "GET /bff/personas/{id}/activity",
+                "GET /bff/personas/{id}/evaluations",
+                "GET /bff/personas/{id}/memory",
+                "GET /bff/v5/execution/persona-health",
+            ],
+        },
+    }
+
+
 @app.post("/bff/personas/{persona_id}/actions/{action_id}", status_code=202)
 async def bff_persona_action(
     persona_id: str,

@@ -505,6 +505,105 @@ BFF-B2-001 — Owner: Claude2, Reviewer: Codex2
 
 ---
 
+## §B3.4 PM-12 Composition Sources {#b34-pm-12-composition-sources}
+
+### Gap
+
+The Management Persona League table needs a single BFF read that already joins
+the persona registry row with the persona-side drilldown sources used by the
+Management console. Without this composed route, `execute-plans` has to fan out
+from `GET /bff/personas` into per-persona route policy, capability, activity,
+evaluation, memory, binding, and health reads before rendering one table.
+
+### Fix
+
+**File: `services/control-plane/bff/main.py`**
+
+Added `GET /bff/management/persona-league`, a read-only composed table route
+that returns a canonical list envelope:
+
+```json
+{
+  "data": [],
+  "items": [],
+  "page_info": { "next_page_token": null, "total": 0 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": []
+  }
+}
+```
+
+Each row preserves the execute-plans persona list DTO fields (`id`, `name`,
+`owner`, `updatedAt`, `state`, `risk`, `archetype`, `routedStrategies`,
+`successRate`) and adds table-ready composition blocks:
+
+- `routePolicy`: route-policy / consult-policy rule counts.
+- `capabilities`: capability snapshot counts and snapshot metadata.
+- `bindings`: persona-capital binding counts, capital pool refs, deployment
+  scopes, and status counts.
+- `sessions`: persona session totals, active count, runtime refs, pool scopes,
+  heartbeat timestamp, and status counts.
+- `evaluations`: teaching/evaluation totals, completed count, latest timestamp,
+  outcomes, and status counts.
+- `memory`: memory item totals and status counts. This remains an empty
+  composed summary until a first-class persona-memory read-store method exists.
+- `health`: persona health derived from lifecycle state, active sessions, and
+  capability snapshot presence.
+- `allowedActions` and `links`: backend-shaped persona action authority and
+  route links for drilldown navigation.
+
+Supported query parameters:
+
+| Parameter | Notes |
+|---|---|
+| `state` | Filters normalized persona lifecycle state. |
+| `archetype` | Filters the projected persona archetype. |
+| `q` | Case-insensitive search across id, name, owner, and archetype. |
+| `page_token` / `page_size` | Uses the same offset paging convention as the other BFF list routes. |
+
+### Composition Sources
+
+The route declares these source surfaces in `meta.composition_sources`:
+
+- `GET /bff/personas`
+- `GET /bff/personas/{id}/route-policy`
+- `GET /bff/personas/{id}/capabilities`
+- `GET /bff/personas/{id}/activity`
+- `GET /bff/personas/{id}/evaluations`
+- `GET /bff/personas/{id}/memory`
+- `GET /bff/v5/execution/persona-health`
+
+`meta.surfaces` includes `persona_league`, `personas`, `route_policies`,
+`capability_snapshots`, `persona_bindings`, `persona_sessions`,
+`teaching_sessions`, `persona_memory`, and `persona_health` so the UI can keep
+strict fallback behavior without guessing which underlying read source degraded.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated `GET /bff/management/persona-league` returns `data` + `items` list envelope and `page_info` | Implemented BFF-PM12-004 |
+| 2 | Rows include execute-plans persona DTO fields plus `routePolicy`, `capabilities`, `bindings`, `sessions`, `evaluations`, `memory`, `health`, `allowedActions`, and `links` | Implemented BFF-PM12-004 |
+| 3 | Route supports `state`, `archetype`, `q`, `page_token`, and `page_size` | Implemented BFF-PM12-004 |
+| 4 | Response advertises composition sources and per-source surface status in `meta` | Implemented BFF-PM12-004 |
+| 5 | Missing auth returns HTTP 401 | Implemented BFF-PM12-004 |
+| 6 | Route is registered in the execute-plans final live wiring route inventory | Implemented BFF-PM12-004 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_pm12_persona_league.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-PM12-004 — Owner: Codex2, Reviewer: Claude2
+
+---
+
 ## §16 PATCH /bff/me/locale — Operator Locale Preference
 
 ### Gap
