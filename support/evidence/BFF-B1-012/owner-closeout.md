@@ -74,3 +74,14 @@ After this closeout evidence PR was opened, GitHub reported PR #468 as
 
 This file was updated after the refresh so the branch tip remains a
 Codex-authored BFF-B1-012 commit with the required trailers.
+
+PR #468 later became `BEHIND` again after `origin/dev` advanced through
+BFF-PM12-005 closeout.
+
+- Second dev head composed into this branch: `8ac6af1c`
+- Second non-interactive dev refresh merge commit:
+  `2cc596db8e2215228153c336f324fcdf87d434f6`
+- Imported file was unrelated BFF-PM12-005 owner closeout evidence.
+
+This file was updated again after the second refresh so the branch tip remains
+a Codex-authored BFF-B1-012 commit with the required trailers.
