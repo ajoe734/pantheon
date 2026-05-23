@@ -5509,11 +5509,15 @@ def _build_operator_alerts_payload(snapshot_at: str) -> Dict[str, Any]:
         key=_alert_sort_key,
         reverse=True,
     )
+    alerts = [
+        a for a in alerts
+        if str(a.get("alert_id") or a.get("id") or "") not in _ACKNOWLEDGED_ALERTS
+    ]
     if alerts_surface.get("status") == "unavailable":
         alerts = []
 
     meta = _snapshot_meta(snapshot_at)
-    meta["acknowledgement_supported"] = False
+    meta["acknowledgement_supported"] = True
     meta["surfaces"] = {
         "alerts": alerts_surface,
         "incident_feed": incident_surface,
@@ -21994,6 +21998,7 @@ async def bff_skill_sandbox_eval(
 # In-process idempotency ledger for action operations on these surfaces.
 _GOV_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 _GOV_BFF_INCIDENT_OVERLAY: Dict[str, Dict[str, Any]] = {}
+_ACKNOWLEDGED_ALERTS: Dict[str, Dict[str, Any]] = {}
 
 _INCIDENT_CASE_ALIAS_FIELDS = {
     "binding_id": ("binding_id", "runtime_binding_id"),
@@ -23022,6 +23027,12 @@ async def bff_alert_acknowledge(
             "note": ack_note,
         },
     )
+
+    _ACKNOWLEDGED_ALERTS[clean_id] = {
+        "acknowledged_by": identity.operator_id,
+        "acknowledged_at": submitted_at,
+        "note": ack_note,
+    }
 
     result = _project_final_command_response(
         command_id=command_id,

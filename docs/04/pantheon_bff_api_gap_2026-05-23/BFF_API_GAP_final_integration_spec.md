@@ -612,6 +612,12 @@ existence validation.
   - Caches result in `_GOV_BFF_IDEMPOTENCY` so duplicate requests within the process
     lifetime replay the original receipt or raise HTTP 409 `IDEMPOTENCY_CONFLICT` on hash
     mismatch.
+  - Writes `acknowledged_by`, `acknowledged_at`, and optional `note` to `_ACKNOWLEDGED_ALERTS`
+    (in-process dict keyed by alert ID) so that subsequent `GET /bff/alerts` calls suppress
+    the acknowledged alert from the active list.
+- `_build_operator_alerts_payload` now filters out any alert whose ID appears in
+  `_ACKNOWLEDGED_ALERTS` before returning the sorted alert list.
+- `_build_operator_alerts_payload` sets `meta.acknowledgement_supported = True`.
 - Added dedicated `GET /bff/alerts/{alert_id}` handler (`bff_get_alert`) that projects the
   alert from `_build_operator_alerts_payload` and returns HTTP 404 for unknown IDs, keeping
   parity with the existing `GET /bff/risk/alerts/{alert_id}` handler.
@@ -621,6 +627,11 @@ existence validation.
 **File: `services/control-plane/bff/models.py`**
 
 - Added `ALERT_ACKNOWLEDGE = "AlertAcknowledge"` to `CommandType`.
+
+**File: `services/control-plane/bff/command_executor.py`**
+
+- Added `CommandType.ALERT_ACKNOWLEDGE: _execute_bff_action_adapter` to `_EXECUTORS` dispatch
+  table so that `execute_command_with_status` can route acknowledge commands.
 
 ### Acceptance Criteria
 
@@ -632,12 +643,16 @@ existence validation.
 | 4 | Anonymous request returns HTTP 401 | ✅ test added |
 | 5 | Unknown alert ID returns HTTP 404 `OBJECT_NOT_FOUND` when alerts surface is available | ✅ test added |
 | 6 | Body-level idempotency key rejected with HTTP 400 `INVALID_REQUEST` before command-store write | ✅ test added |
-| 7 | `pytest services/control-plane/bff/tests/test_bff_alerts_acknowledge.py` passes 7 tests | ✅ verified |
+| 7 | `pytest services/control-plane/bff/tests/test_bff_alerts_acknowledge.py` passes 9 tests | ✅ verified |
+| 8 | `POST /bff/alerts/{id}/acknowledge` transitions alert state: `_ACKNOWLEDGED_ALERTS` is populated with `acknowledged_by` and `acknowledged_at`; subsequent `_build_operator_alerts_payload` excludes the alert | ✅ test added |
+| 9 | `GET /bff/alerts` returns `meta.acknowledgement_supported = true` | ✅ test added |
+| 10 | `CommandType.ALERT_ACKNOWLEDGE` registered in `command_executor._EXECUTORS` dispatch table | ✅ implemented |
 
 ### Affected Files
 
 - `services/control-plane/bff/main.py`
 - `services/control-plane/bff/models.py`
+- `services/control-plane/bff/command_executor.py`
 - `services/control-plane/bff/tests/test_bff_alerts_acknowledge.py`
 - `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
 

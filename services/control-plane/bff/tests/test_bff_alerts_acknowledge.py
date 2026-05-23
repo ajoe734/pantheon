@@ -31,8 +31,10 @@ def _client(monkeypatch) -> TestClient:
 @pytest.fixture(autouse=True)
 def clear_idempotency_store():
     bff_main._GOV_BFF_IDEMPOTENCY.clear()
+    bff_main._ACKNOWLEDGED_ALERTS.clear()
     yield
     bff_main._GOV_BFF_IDEMPOTENCY.clear()
+    bff_main._ACKNOWLEDGED_ALERTS.clear()
 
 
 @pytest.fixture()
@@ -141,3 +143,29 @@ def test_acknowledge_response_has_tracking_url(monkeypatch, seeded_alerts) -> No
     assert resp.status_code == 202, resp.text
     data = resp.json()["data"]
     assert data.get("trackingUrl") or data.get("tracking_url"), "Response must include a trackingUrl"
+
+
+def test_acknowledge_populates_ack_store(monkeypatch, seeded_alerts) -> None:
+    """POST /bff/alerts/{id}/acknowledge must write to _ACKNOWLEDGED_ALERTS."""
+    client = _client(monkeypatch)
+    resp = client.post(
+        f"/bff/alerts/{seeded_alerts}/acknowledge",
+        json={"note": "ack store test"},
+        headers={"Authorization": _OPERATOR_AUTH, "Idempotency-Key": "ack-store-key"},
+    )
+    assert resp.status_code == 202, resp.text
+    assert seeded_alerts in bff_main._ACKNOWLEDGED_ALERTS
+    ack = bff_main._ACKNOWLEDGED_ALERTS[seeded_alerts]
+    assert "acknowledged_by" in ack
+    assert "acknowledged_at" in ack
+
+
+def test_alerts_list_meta_acknowledgement_supported(monkeypatch) -> None:
+    """GET /bff/alerts must return meta.acknowledgement_supported = true."""
+    client = _client(monkeypatch)
+    resp = client.get("/bff/alerts", headers={"Authorization": _OPERATOR_AUTH})
+    assert resp.status_code == 200, resp.text
+    meta = resp.json().get("meta", {})
+    assert meta.get("acknowledgement_supported") is True, (
+        f"meta.acknowledgement_supported should be True, got {meta.get('acknowledgement_supported')!r}"
+    )
