@@ -3434,6 +3434,29 @@ def _first_nonblank(*values: Any) -> Optional[str]:
     return None
 
 
+def _bff_me_correlation_id(x_correlation_id: Optional[str]) -> str:
+    return str(x_correlation_id or "").strip() or f"bff-me-{uuid.uuid4().hex}"
+
+
+def _bff_me_error_with_correlation(exc: HTTPException, correlation_id: str) -> HTTPException:
+    headers = dict(exc.headers or {})
+    headers["X-Correlation-Id"] = correlation_id
+    detail = exc.detail
+    if isinstance(detail, dict):
+        detail = dict(detail)
+        detail["correlationId"] = correlation_id
+        error = detail.get("error")
+        if isinstance(error, dict):
+            error = dict(error)
+            details = error.get("details")
+            if isinstance(details, dict):
+                details = dict(details)
+                details["correlationId"] = correlation_id
+                error["details"] = details
+            detail["error"] = error
+    return HTTPException(status_code=exc.status_code, detail=detail, headers=headers)
+
+
 def _env_csv(name: str) -> List[str]:
     return _dedupe_nonblank_strings(_split_claim_string(os.getenv(name, "")))
 
@@ -3696,51 +3719,71 @@ def _sem_session_state(identity: OperatorIdentity) -> Dict[str, Any]:
 
 @app.get("/bff/me")
 async def bff_me(
+    response: Response,
     tenant_id: Optional[str] = Query(default=None),
     authorization: Optional[str] = Header(default=None),
     pantheon_session: Optional[str] = Cookie(default=None),
     x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
     x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+    x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
     x_locale: Optional[str] = Header(default=None, alias="X-Locale"),
     accept_language: Optional[str] = Header(default=None, alias="Accept-Language"),
 ):
     """BFF current-user/session DTO consumed by execute-plans."""
-    identity = _extract_identity(authorization, mfa_token=x_mfa_token, session_cookie=pantheon_session)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    session_state = _sem_session_state(identity)
-    requested_header_tenant = _first_nonblank(x_tenant_id, x_pantheon_tenant, tenant_id)
-    requested_tenant = _first_nonblank(requested_header_tenant, session_state.get("tenant_id"))
-    tenant = _bff_me_tenant_payload(identity, requested_tenant=requested_tenant)
-    tenant["source"] = "request" if requested_header_tenant else ("session" if session_state.get("tenant_id") else "default")
-    locale = _resolve_bff_me_locale(
-        identity,
-        x_locale=x_locale,
-        accept_language=accept_language,
-    )
-    if not _first_nonblank(x_locale, accept_language) and session_state.get("locale"):
-        locale["resolved"] = session_state["locale"]
-        locale["source"] = "session"
-    else:
-        locale["source"] = "header" if x_locale else ("accept_language" if accept_language else "default")
-    user = _bff_me_user_payload(identity)
-    session = _bff_me_session_payload(identity, checked_at=snapshot_at)
-    session["state"] = str(session_state.get("state") or "active")
-    if session_state.get("state") == "logged_out":
-        session["authenticated"] = False
-        session["fresh"] = False
-        session["logged_out_at"] = session_state.get("logged_out_at")
+    correlation_id = _bff_me_correlation_id(x_correlation_id)
+    response.headers["X-Correlation-Id"] = correlation_id
+    try:
+        identity = _extract_identity(authorization, mfa_token=x_mfa_token, session_cookie=pantheon_session)
+        _require_read_role(identity)
+        snapshot_at = utc_now()
+        session_state = _sem_session_state(identity)
+        requested_header_tenant = _first_nonblank(x_tenant_id, x_pantheon_tenant, tenant_id)
+        requested_tenant = _first_nonblank(requested_header_tenant, session_state.get("tenant_id"))
+        tenant = _bff_me_tenant_payload(identity, requested_tenant=requested_tenant)
+        tenant["source"] = (
+            "request" if requested_header_tenant else ("session" if session_state.get("tenant_id") else "default")
+        )
+        locale = _resolve_bff_me_locale(
+            identity,
+            x_locale=x_locale,
+            accept_language=accept_language,
+        )
+        if not _first_nonblank(x_locale, accept_language) and session_state.get("locale"):
+            locale["resolved"] = session_state["locale"]
+            locale["source"] = "session"
+        else:
+            locale["source"] = "header" if x_locale else ("accept_language" if accept_language else "default")
+        user = _bff_me_user_payload(identity)
+        session = _bff_me_session_payload(identity, checked_at=snapshot_at)
+        session["state"] = str(session_state.get("state") or "active")
+        if session_state.get("state") == "logged_out":
+            session["authenticated"] = False
+            session["fresh"] = False
+            session["logged_out_at"] = session_state.get("logged_out_at")
+    except HTTPException as exc:
+        raise _bff_me_error_with_correlation(exc, correlation_id) from exc
+    feature_flags = _bff_me_feature_flags(identity)
+    session_kind = str(session.get("session_kind") or _resolve_session_kind(identity))
+    allowed_tenants = tenant["allowed_ids"]
     data = {
+        "operator_id": user["operator_id"],
+        "operatorId": user["operator_id"],
         "user": user,
         "current_user": user,
         "currentUser": user,
         "tenant": tenant,
         "tenant_id": tenant["id"],
+        "tenantId": tenant["id"],
+        "allowed_tenants": allowed_tenants,
+        "allowedTenants": allowed_tenants,
         "locale": locale,
         "environment": _bff_me_environment_payload(),
-        "feature_flags": _bff_me_feature_flags(identity),
+        "feature_flags": feature_flags,
+        "featureFlags": feature_flags,
         "session": session,
+        "session_kind": session_kind,
+        "sessionKind": session_kind,
         "roles": user["roles"],
         "capabilities": user["capabilities"],
     }
@@ -3749,6 +3792,7 @@ async def bff_me(
         "meta": {
             "route": "GET /bff/me",
             "contract": "BFF-LUV-GAP-009",
+            "correlationId": correlation_id,
             "snapshot_at": snapshot_at,
         },
     }
