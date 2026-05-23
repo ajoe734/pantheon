@@ -1346,6 +1346,8 @@ _VALID_SPONSOR_DECISIONS = {"approved", "rejected", "conditional"}
 
 _REMEDIATE_SENTINEL_REQUIRED = {"intervention_id", "remediation_action"}
 _VALID_REMEDIATION_ACTIONS = {"resolve", "dismiss", "escalate"}
+_DECIDE_V5_INTERVENTION_REQUIRED = {"intervention_id", "decision"}
+_VALID_V5_INTERVENTION_DECISIONS = {"approve", "reject", "defer", "dismiss"}
 
 _EXECUTE_EVO_REQUIRED = {"evolution_decision_id", "action_type"}
 _VALID_EVO_ACTION_TYPES = {"freeze", "retrain", "revalidate", "mutate", "retire"}
@@ -3244,6 +3246,36 @@ def _validate_remediate_sentinel_intervention(params: Dict[str, Any], identity: 
         )
 
 
+def _validate_decide_v5_intervention(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    missing = _DECIDE_V5_INTERVENTION_REQUIRED - params.keys()
+    if missing:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Missing required params for DecideV5Intervention",
+            f"Missing fields: {sorted(missing)}",
+            precondition_failed="decision",
+        )
+    decision = str(params.get("decision") or "").strip().lower()
+    if decision not in _VALID_V5_INTERVENTION_DECISIONS:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid intervention decision value",
+            f"decision must be one of {sorted(_VALID_V5_INTERVENTION_DECISIONS)}",
+            precondition_failed="decision",
+        )
+    if not {"operator", "approver", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.INSUFFICIENT_ROLE,
+            "DecideV5Intervention requires 'operator', 'approver', or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with operator, approver, or admin role",
+        )
+
+
 _VALIDATORS = {
     CommandType.APPROVE_DEPLOYMENT: _validate_approve_deployment,
     CommandType.APPROVE_DECISION: _validate_approve_decision,
@@ -3266,6 +3298,7 @@ _VALIDATORS = {
     CommandType.REJECT_MUTATION: _validate_reject_mutation,
     CommandType.RECORD_SPONSOR_DECISION: _validate_record_sponsor_decision,
     CommandType.REMEDIATE_SENTINEL_INTERVENTION: _validate_remediate_sentinel_intervention,
+    CommandType.DECIDE_V5_INTERVENTION: _validate_decide_v5_intervention,
 }
 
 # --------------------------------------------------------------------------- #
@@ -24857,8 +24890,82 @@ async def sem_delete_confirm_token_command(
     )
 
 
-@app.post("/bff/v5/interventions/{id}/claim", status_code=202)
 @app.post("/bff/v5/interventions/{id}/decide", status_code=202)
+async def sem_v5_intervention_decide_command(
+    id: str,
+    background_tasks: BackgroundTasks,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+    x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
+    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+    x_confirm_token: Optional[str] = Header(default=None, alias="X-Confirm-Token"),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: decide a v5 intervention through the canonical command admission facade."""
+    clean_id = str(id or "").strip()
+    if not clean_id:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Intervention id is required",
+            "id must be a non-empty string",
+            precondition_failed="intervention_id",
+        )
+
+    payload = dict(payload or {})
+    _reject_body_idempotency_key(payload)
+    decision = str(payload.get("decision") or payload.get("outcome") or "").strip().lower()
+    reason = str(payload.get("reason") or payload.get("memo") or f"intervention.{decision or 'decide'}").strip()
+    incident_id = str(payload.get("incident_id") or payload.get("incidentId") or "").strip() or None
+    audit_event = f"intervention.{decision or 'decide'}"
+    params = {
+        **payload,
+        "intervention_id": clean_id,
+        "interventionId": clean_id,
+        "decision": decision,
+        "action_id": "decide",
+        "audit_event": audit_event,
+    }
+    command_payload = {
+        "command": CommandType.DECIDE_V5_INTERVENTION.value,
+        "target": {
+            "type": ObjectType.SENTINEL_INTERVENTION.value,
+            "id": clean_id,
+        },
+        "action": "decide",
+        "params": params,
+        "audit_context": {
+            "reason": reason or "intervention.decide",
+            "incident_id": incident_id,
+        },
+    }
+    return _submit_final_command_admission(
+        background_tasks=background_tasks,
+        payload=command_payload,
+        authorization=authorization,
+        x_mfa_token=x_mfa_token,
+        x_trace_id=x_trace_id,
+        x_correlation_id=x_correlation_id,
+        x_request_id=x_request_id,
+        x_confirm_token=x_confirm_token,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+        route="POST /bff/v5/interventions/{id}/decide",
+        audit_extra={
+            "action_id": "decide",
+            "entity_type": ObjectType.SENTINEL_INTERVENTION.value,
+            "entity_id": clean_id,
+            "audit_event": audit_event,
+        },
+        enqueue=False,
+        include_durable_meta=True,
+    )
+
+
+@app.post("/bff/v5/interventions/{id}/claim", status_code=202)
 @app.post("/bff/v5/interventions/{id}/escalate", status_code=202)
 @app.post("/bff/v5/interventions/{id}/release", status_code=202)
 @app.post("/bff/v5/interventions/{id}/two-man-sign", status_code=202)
