@@ -980,6 +980,61 @@ BFF-B3-001 — Owner: Codex, Reviewer: Claude
 
 ---
 
+### B3-008 Evidence Explorer Aggregate
+
+**File: `services/control-plane/bff/main.py`**
+
+- Add `GET /bff/management/evidence` as the PM-Live Evidence Explorer aggregate route.
+- Require the existing BFF read-role authentication gate; anonymous requests
+  return the typed BFF 401 envelope.
+- Adapt the existing `/api/v1/knowledge/evidence` read model into a Management
+  aggregate envelope with `data`, `items`, `summary`, `facets`, `page_info`,
+  and `meta.surfaces`.
+- Preserve knowledge evidence filters for `ref_id`, `linked_entity_type`,
+  `linked_entity_ref`, `link_type`, `credibility_tier`, `verified`,
+  `page_token`, and bounded `page_size`.
+- Preserve evidence capability redaction and expose
+  `meta.redacted_evidence_count`.
+- Preserve source surface metadata for the composed `management_evidence`
+  aggregate and the underlying `evidence_refs` read surface.
+
+**Files: `execute-plans/src/lib/bff-v1/paths.ts`,
+`execute-plans/src/lib/bff-v1/management.ts`, and
+`execute-plans/src/lib/bff/client.ts`**
+
+- Add the canonical `/bff/management/evidence` path.
+- Export Evidence Explorer query, item, summary, response, path, and fetch
+  helper types.
+- Add `managementClient.evidenceExplorer.list()` using the same strict/hybrid
+  live transport policy as the other Management aggregate reads.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated `GET /bff/management/evidence` returns an Evidence Explorer aggregate envelope with `data`, `items`, `summary`, `facets`, `page_info`, and `meta.surfaces.management_evidence` | ✅ test added in BFF-B3-006 |
+| 2 | Evidence filters and bounded pagination are accepted by the backend route | ✅ test added in BFF-B3-006 |
+| 3 | Evidence capability redaction is preserved and reported through `meta.redacted_evidence_count` | ✅ test added in BFF-B3-006 |
+| 4 | Anonymous request returns HTTP 401 typed BFF error envelope | ✅ test added in BFF-B3-006 |
+| 5 | Execute-plans exposes the live aggregate path, response contract, fetch helper, and strict/hybrid management client adapter | ✅ implemented in BFF-B3-006 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_b3_management_evidence.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/src/lib/bff/client.ts`
+- `execute-plans/src/lib/bff/__tests__/client.test.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B3-006 — Owner: Codex, Reviewer: Claude
+
+---
+
 ## B4 — P1 v5 Closed-Loop OS APIs {#b4--p1-v5-closed-loop-os-apis}
 
 ### Gap
