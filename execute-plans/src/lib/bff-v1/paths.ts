@@ -145,6 +145,8 @@ export const paths = {
 
   // ---- Management aggregate read surfaces ----
   managementPersonaFleet: () => `${BASE}/management/persona-fleet`,
+  managementHumanInbox: () => `${BASE}/management/human-inbox`,
+  managementHumanInboxItem: (id: string) => `${BASE}/management/human-inbox/${enc(id)}`,
 
   // ---- Management OODA packet read surface ----
   oodaPackets: () => `${BASE}/ooda/packets`,

@@ -1059,11 +1059,11 @@ BFF-B2-005 — Owner: Codex, Reviewer: Claude2
 
 ### Gap
 
-The execute-plans Persona Fleet page needs one strict/live aggregate read so the
-frontend does not fan out across persona, binding, runtime, telemetry, trainer,
-and evolution read surfaces. The page can already read the B2.1 list/detail
-facade, but the live Persona Fleet view requires a backend-owned composition that
-keeps source-surface health visible and preserves fail-closed auth semantics.
+The execute-plans Management pages need strict/live aggregate reads so the
+frontend does not fan out across lower-level governance, persona, runtime,
+telemetry, trainer, and evolution read surfaces. These aggregates are
+backend-owned compositions that keep source-surface health visible and preserve
+fail-closed auth semantics.
 
 ### B3.3 GET `/bff/management/persona-fleet`
 
@@ -1123,3 +1123,57 @@ keeps source-surface health visible and preserves fail-closed auth semantics.
 ### Task
 
 BFF-B3-002 — Owner: Codex, Reviewer: Claude
+
+### B3.4 GET `/bff/management/human-inbox`
+
+**File: `services/control-plane/bff/main.py`**
+
+- Add `GET /bff/management/human-inbox` as a read-only Management aggregate.
+- Add `GET /bff/management/human-inbox/{item_id}` for composed inbox detail.
+- Require the existing BFF read-role authentication gate; anonymous requests
+  return the typed BFF 401 envelope.
+- Compose human-action rows from:
+  - governance approval queue items;
+  - v5 intervention records.
+- Return the standard BFF aggregate envelope: `data`, `items`, `summary`,
+  `page_info`, and `meta.surfaces`.
+- Support `source_type`, `status`, `priority`, `page_token`, and bounded
+  `page_size` filters.
+- Preserve source surfaces in metadata (`approval_queue`, `v5_interventions`)
+  plus a composed `human_inbox` surface.
+
+**File: `execute-plans/src/lib/bff-v1/paths.ts`**
+
+- Add `paths.managementHumanInbox()` resolving to
+  `/bff/management/human-inbox`.
+- Add `paths.managementHumanInboxItem(id)` resolving to
+  `/bff/management/human-inbox/{id}`.
+
+**File: `execute-plans/src/lib/bff/client.ts`**
+
+- Add `managementClient.humanInbox.list()` and
+  `managementClient.humanInbox.get()` as live aggregate readers using the same
+  strict/hybrid transport policy as OODA and mutation-review live reads.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `GET /bff/management/human-inbox` returns rows composed from approval queue items and v5 interventions | ✅ test added |
+| 2 | Response includes `data`, `items`, `summary`, `page_info`, and `meta.surfaces.human_inbox` | ✅ test added |
+| 3 | `source_type`, `status`, pagination filters, and detail lookup are accepted by the backend route | ✅ test added |
+| 4 | Anonymous request returns HTTP 401 typed BFF error envelope | ✅ test added |
+| 5 | Frontend path/client contract exposes the live aggregate and detail route without seed-list fanout | ✅ test added |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_b3_human_inbox.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff/client.ts`
+- `execute-plans/src/lib/bff/__tests__/client.test.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B3-003 — Owner: Codex, Reviewer: Claude
