@@ -43,6 +43,9 @@ import type {
   ManagementEvidenceItem,
   ManagementEvidenceQuery,
   ManagementEvidenceResponse,
+  ManagementEvolutionJournalItem,
+  ManagementEvolutionJournalQuery,
+  ManagementEvolutionJournalResponse,
 } from "@/lib/bff-v1/management";
 import type {
   Strategy,
@@ -399,6 +402,53 @@ function emptyManagementEvidenceAggregate(): ManagementEvidenceResponse {
   };
 }
 
+function emptyManagementEvolutionJournalAggregate(): ManagementEvolutionJournalResponse {
+  return {
+    data: [],
+    items: [],
+    summary: {
+      total_items: 0,
+      returned_items: 0,
+      decision_count: 0,
+      mutation_review_count: 0,
+      postmortem_count: 0,
+      rollback_count: 0,
+      freeze_order_count: 0,
+      pending_review_count: 0,
+      active_freeze_count: 0,
+      completed_rollback_count: 0,
+      latest_at: null,
+      byType: {},
+      by_type: {},
+      byStatus: {},
+      by_status: {},
+      byRiskLevel: {},
+      by_risk_level: {},
+    },
+    page_info: {
+      next_page_token: null,
+      total: 0,
+      page_size: 0,
+    },
+    meta: {
+      surfaces: {
+        management_evolution_journal: {
+          status: "unavailable",
+          source: "mock",
+          reason: "Evolution Journal aggregate is served by the Pantheon BFF management aggregate.",
+        },
+      },
+      composition_sources: [
+        "evolution_decisions",
+        "postmortems",
+        "mutation_review",
+        "rollbacks",
+        "freeze_orders",
+      ],
+    },
+  };
+}
+
 function adaptOodaPacketDetail(body: unknown): OodaPacketDetail | undefined {
   const envelope = asObject(body);
   const rawPacket = asObject(strictDataFrom(body) ?? body);
@@ -521,6 +571,48 @@ function adaptManagementEvidenceAggregate(body: unknown): ManagementEvidenceResp
     },
     pagination: pagination as ManagementEvidenceResponse["pagination"],
     meta: meta as ManagementEvidenceResponse["meta"],
+  };
+}
+
+function adaptManagementEvolutionJournalAggregate(body: unknown): ManagementEvolutionJournalResponse {
+  const envelope = asObject(body);
+  const rawItems = Array.isArray(envelope.items)
+    ? envelope.items
+    : Array.isArray(envelope.data)
+      ? envelope.data
+      : [];
+  const items = rawItems.filter((item) => item && typeof item === "object") as ManagementEvolutionJournalItem[];
+  const summary = asObject(envelope.summary);
+  const pageInfo = asObject(envelope.page_info);
+  const meta = asObject(envelope.meta);
+  return {
+    data: items,
+    items,
+    summary: {
+      total_items: Number(summary.total_items ?? items.length),
+      returned_items: Number(summary.returned_items ?? items.length),
+      decision_count: Number(summary.decision_count ?? 0),
+      mutation_review_count: Number(summary.mutation_review_count ?? 0),
+      postmortem_count: Number(summary.postmortem_count ?? 0),
+      rollback_count: Number(summary.rollback_count ?? 0),
+      freeze_order_count: Number(summary.freeze_order_count ?? 0),
+      pending_review_count: Number(summary.pending_review_count ?? 0),
+      active_freeze_count: Number(summary.active_freeze_count ?? 0),
+      completed_rollback_count: Number(summary.completed_rollback_count ?? 0),
+      latest_at: typeof summary.latest_at === "string" ? summary.latest_at : null,
+      byType: asObject(summary.byType ?? summary.by_type) as Record<string, number>,
+      by_type: asObject(summary.by_type ?? summary.byType) as Record<string, number>,
+      byStatus: asObject(summary.byStatus ?? summary.by_status) as Record<string, number>,
+      by_status: asObject(summary.by_status ?? summary.byStatus) as Record<string, number>,
+      byRiskLevel: asObject(summary.byRiskLevel ?? summary.by_risk_level) as Record<string, number>,
+      by_risk_level: asObject(summary.by_risk_level ?? summary.byRiskLevel) as Record<string, number>,
+    },
+    page_info: {
+      next_page_token: typeof pageInfo.next_page_token === "string" ? pageInfo.next_page_token : null,
+      total: Number(pageInfo.total ?? items.length),
+      page_size: Number(pageInfo.page_size ?? items.length),
+    },
+    meta: meta as ManagementEvolutionJournalResponse["meta"],
   };
 }
 
@@ -869,6 +961,19 @@ const evidenceExplorer = {
     ),
 };
 
+const evolutionJournal = {
+  list: (query?: ManagementEvolutionJournalQuery): Promise<ManagementEvolutionJournalResponse> =>
+    withStrictLiveOrMock<ManagementEvolutionJournalResponse, unknown>(
+      {
+        method: "GET",
+        path: paths.managementEvolutionJournal(),
+        query: query as Record<string, string | number | undefined> | undefined,
+      },
+      async () => emptyManagementEvolutionJournalAggregate(),
+      adaptManagementEvolutionJournalAggregate,
+    ),
+};
+
 // ---------- Public surface ----------
 
 /** Canonical Management Console read surface — list + detail per family,
@@ -899,6 +1004,7 @@ export const managementClient = {
   personaFleet,
   humanInbox,
   evidenceExplorer,
+  evolutionJournal,
 } as const;
 
 export type ManagementFamily = keyof typeof managementClient;
@@ -909,7 +1015,7 @@ export const MANAGEMENT_FAMILIES: readonly ManagementFamily[] = [
   "rebalances", "deployments", "evolution", "research", "artifacts",
   "tools", "mcpServers", "mcpTools", "skills", "channels",
   "jobs", "runtimes", "alerts", "incidents", "approvals", "audit",
-  "oodaPackets", "humanInbox", "evidenceExplorer",
+  "oodaPackets", "humanInbox", "evidenceExplorer", "evolutionJournal",
 ] as const;
 
 /** Snapshot of the current live-status, useful for UI banners that show
