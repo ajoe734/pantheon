@@ -17961,6 +17961,320 @@ def _list_persona_records() -> List[Dict[str, Any]]:
     return items
 
 
+def _management_record_id(record: Dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = record.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def _management_normalized_status(record: Dict[str, Any]) -> str:
+    return str(record.get("status") or record.get("state") or "unknown").strip().lower() or "unknown"
+
+
+def _management_as_float(value: Any) -> Optional[float]:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _management_telemetry_rollup(records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    if not records:
+        return {
+            "runtime_count": 0,
+            "total_pnl": None,
+            "max_drawdown": None,
+            "average_fill_rate": None,
+            "total_trades": 0,
+            "latest_collected_at": None,
+        }
+
+    pnl_values: List[float] = []
+    drawdown_values: List[float] = []
+    fill_rates: List[float] = []
+    total_trades = 0
+    latest_collected_at: Optional[str] = None
+
+    for record in records:
+        summary = record.get("summary") if isinstance(record.get("summary"), dict) else {}
+        pnl = _management_as_float(record.get("pnl") or summary.get("total_pnl"))
+        drawdown = _management_as_float(record.get("drawdown") or summary.get("max_drawdown"))
+        fill_rate = _management_as_float(record.get("fill_rate") or summary.get("fill_rate"))
+        trades = _management_as_float(record.get("total_trades") or summary.get("total_trades"))
+        collected_at = str(record.get("collected_at") or "").strip()
+        if pnl is not None:
+            pnl_values.append(pnl)
+        if drawdown is not None:
+            drawdown_values.append(drawdown)
+        if fill_rate is not None:
+            fill_rates.append(fill_rate)
+        if trades is not None:
+            total_trades += int(trades)
+        if collected_at and (latest_collected_at is None or collected_at > latest_collected_at):
+            latest_collected_at = collected_at
+
+    return {
+        "runtime_count": len(records),
+        "total_pnl": round(sum(pnl_values), 6) if pnl_values else None,
+        "max_drawdown": max(drawdown_values) if drawdown_values else None,
+        "average_fill_rate": round(sum(fill_rates) / len(fill_rates), 6) if fill_rates else None,
+        "total_trades": total_trades,
+        "latest_collected_at": latest_collected_at,
+    }
+
+
+def _management_portfolio_book_entry(
+    pool: Dict[str, Any],
+    *,
+    bindings: List[Dict[str, Any]],
+    deployment_plans: List[Dict[str, Any]],
+    runtime_bindings: List[Dict[str, Any]],
+    telemetry_by_runtime_id: Dict[str, Dict[str, Any]],
+) -> Dict[str, Any]:
+    pool_id = _management_record_id(pool, "pool_id", "id")
+    pool_bindings = [
+        binding
+        for binding in bindings
+        if _management_record_id(binding, "capital_pool_id", "pool_id") == pool_id
+    ]
+    pool_binding_ids = {
+        _management_record_id(binding, "binding_id", "id", "persona_capital_binding_id")
+        for binding in pool_bindings
+    }
+    pool_binding_ids.discard("")
+    pool_plans = [
+        plan
+        for plan in deployment_plans
+        if _management_record_id(plan, "capital_pool_id", "target_pool_id", "pool_id") == pool_id
+        or bool(pool_binding_ids.intersection(str(v) for v in (plan.get("binding_ids") or [])))
+    ]
+    pool_plan_ids = {_management_record_id(plan, "plan_id", "id") for plan in pool_plans}
+    pool_plan_ids.discard("")
+
+    pool_runtimes = [
+        runtime
+        for runtime in runtime_bindings
+        if _management_record_id(runtime, "capital_pool_id", "pool_id") == pool_id
+        or _management_record_id(runtime, "plan_id", "deployment_plan_id") in pool_plan_ids
+    ]
+    telemetry_records = [
+        telemetry_by_runtime_id[runtime_id]
+        for runtime_id in (
+            _management_record_id(runtime, "runtime_id", "id", "binding_id")
+            for runtime in pool_runtimes
+        )
+        if runtime_id in telemetry_by_runtime_id
+    ]
+    telemetry = _management_telemetry_rollup(telemetry_records)
+
+    active_bindings = [
+        binding
+        for binding in pool_bindings
+        if _management_normalized_status(binding) == "active"
+        or str(binding.get("validity") or "").strip().lower() == "active"
+    ]
+    approved_plans = [
+        plan
+        for plan in pool_plans
+        if _management_normalized_status(plan) in {"approved", "executing", "executed", "active"}
+    ]
+    active_runtimes = [
+        runtime
+        for runtime in pool_runtimes
+        if _management_normalized_status(runtime) in {"active", "running", "healthy"}
+    ]
+
+    deployment_stages = sorted({
+        stage
+        for stage in (
+            [
+                str(plan.get("target_stage") or plan.get("stage") or plan.get("deployment_stage") or "").strip()
+                for plan in pool_plans
+            ]
+            + [
+                str(runtime.get("deployment_stage") or runtime.get("deployment_mode") or "").strip()
+                for runtime in pool_runtimes
+            ]
+        )
+        if stage
+    })
+
+    return {
+        "id": pool_id,
+        "pool_id": pool_id,
+        "name": pool.get("name") or pool_id,
+        "status": pool.get("status") or "unknown",
+        "risk_policy_ref": pool.get("risk_policy_ref"),
+        "owner": {
+            "id": pool.get("owner_id") or pool.get("owner"),
+            "type": pool.get("owner_type"),
+        },
+        "binding_count": len(pool_bindings),
+        "active_binding_count": len(active_bindings),
+        "deployment_count": len(pool_plans),
+        "approved_deployment_count": len(approved_plans),
+        "runtime_count": len(pool_runtimes),
+        "active_runtime_count": len(active_runtimes),
+        "paper_runtime_count": len([
+            runtime
+            for runtime in pool_runtimes
+            if str(runtime.get("deployment_stage") or runtime.get("deployment_mode") or "").lower() == "paper"
+        ]),
+        "live_runtime_count": len([
+            runtime
+            for runtime in pool_runtimes
+            if str(runtime.get("deployment_stage") or runtime.get("deployment_mode") or "").lower() == "live"
+        ]),
+        "deployment_stages": deployment_stages,
+        "binding_ids": sorted(pool_binding_ids),
+        "deployment_ids": sorted(pool_plan_ids),
+        "runtime_ids": sorted({
+            _management_record_id(runtime, "runtime_id", "id", "binding_id")
+            for runtime in pool_runtimes
+            if _management_record_id(runtime, "runtime_id", "id", "binding_id")
+        }),
+        "telemetry": telemetry,
+    }
+
+
+@app.get("/bff/management/portfolio-book")
+async def bff_management_portfolio_book(
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: composed portfolio-book summary for Management Console PM-12."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    capital_pools = read_store.list_capital_pools() or []
+    bindings = read_store.list_bindings() or []
+    deployment_plans = read_store.list_deployment_plans() or []
+    runtime_bindings = read_store.list_runtime_bindings() or []
+
+    telemetry_by_runtime_id: Dict[str, Dict[str, Any]] = {}
+    for runtime in runtime_bindings:
+        runtime_id = _management_record_id(runtime, "runtime_id", "id", "binding_id")
+        if not runtime_id:
+            continue
+        telemetry = read_store.get_telemetry_summary(runtime_id)
+        if telemetry is not None:
+            telemetry_by_runtime_id[runtime_id] = telemetry
+
+    entries = [
+        _management_portfolio_book_entry(
+            pool,
+            bindings=bindings,
+            deployment_plans=deployment_plans,
+            runtime_bindings=runtime_bindings,
+            telemetry_by_runtime_id=telemetry_by_runtime_id,
+        )
+        for pool in capital_pools
+    ]
+    entries = sorted(entries, key=lambda entry: str(entry.get("pool_id") or ""))
+    total = len(entries)
+    page_items, next_page_token = _page_slice(entries, page_token, page_size)
+    portfolio_telemetry = _management_telemetry_rollup(list(telemetry_by_runtime_id.values()))
+
+    active_pool_count = len([
+        pool for pool in capital_pools if _management_normalized_status(pool) in {"active", "ready"}
+    ])
+    active_binding_count = len([
+        binding
+        for binding in bindings
+        if _management_normalized_status(binding) == "active"
+        or str(binding.get("validity") or "").strip().lower() == "active"
+    ])
+    approved_deployment_count = len([
+        plan
+        for plan in deployment_plans
+        if _management_normalized_status(plan) in {"approved", "executing", "executed", "active"}
+    ])
+    active_runtime_count = len([
+        runtime
+        for runtime in runtime_bindings
+        if _management_normalized_status(runtime) in {"active", "running", "healthy"}
+    ])
+    paper_runtime_count = len([
+        runtime
+        for runtime in runtime_bindings
+        if str(runtime.get("deployment_stage") or runtime.get("deployment_mode") or "").lower() == "paper"
+    ])
+    live_runtime_count = len([
+        runtime
+        for runtime in runtime_bindings
+        if str(runtime.get("deployment_stage") or runtime.get("deployment_mode") or "").lower() == "live"
+    ])
+
+    summary = {
+        "portfolio_book_status": "ready" if total else "empty",
+        "capital_pool_count": len(capital_pools),
+        "active_capital_pool_count": active_pool_count,
+        "binding_count": len(bindings),
+        "active_binding_count": active_binding_count,
+        "deployment_count": len(deployment_plans),
+        "approved_deployment_count": approved_deployment_count,
+        "runtime_count": len(runtime_bindings),
+        "active_runtime_count": active_runtime_count,
+        "paper_runtime_count": paper_runtime_count,
+        "live_runtime_count": live_runtime_count,
+        "telemetry_runtime_count": portfolio_telemetry["runtime_count"],
+        "total_pnl": portfolio_telemetry["total_pnl"],
+        "max_drawdown": portfolio_telemetry["max_drawdown"],
+        "average_fill_rate": portfolio_telemetry["average_fill_rate"],
+        "total_trades": portfolio_telemetry["total_trades"],
+        "latest_telemetry_at": portfolio_telemetry["latest_collected_at"],
+    }
+
+    surfaces = {
+        "portfolio_book": _composed_surface_status(
+            snapshot_at=snapshot_at,
+            available=bool(capital_pools or bindings or deployment_plans or runtime_bindings),
+            missing_message="Portfolio-book composition has no readable source records.",
+        ),
+        "capital_pools": _dataset_surface_status("capital_pools", snapshot_at=snapshot_at),
+        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at),
+        "deployment_plans": _dataset_surface_status("deployment_plans", snapshot_at=snapshot_at),
+        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
+        "telemetry_summaries": _dataset_surface_status(
+            "telemetry_summaries",
+            snapshot_at=snapshot_at,
+            has_data=bool(telemetry_by_runtime_id) if runtime_bindings else None,
+            missing_message="Telemetry summaries unavailable for portfolio-book runtimes.",
+        ),
+    }
+    if any(surface.get("status") == "unavailable" for key, surface in surfaces.items() if key != "portfolio_book"):
+        surfaces["portfolio_book"] = _composed_surface_status(
+            snapshot_at=snapshot_at,
+            available=False,
+            missing_message="Portfolio-book composition is degraded because one or more source surfaces are unavailable.",
+        )
+
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = surfaces
+    meta["total"] = total
+    meta["summary"] = {
+        "source_mode": "bff_composed",
+        "task": "BFF-PM12-001",
+    }
+
+    return {
+        "data": {
+            "summary": summary,
+            "items": page_items,
+            "pools": page_items,
+        },
+        "items": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": meta,
+    }
+
+
 # ---------------- /bff/strategies routes ----------------
 
 @app.get("/bff/strategies")
