@@ -32,6 +32,14 @@ python3 -m pytest services/control-plane/bff/test_bff_pm12_portfolio_book_contra
 # 31 passed, 3 warnings in 10.79s
 ```
 
+Final gate re-run after merging `origin/dev` at `d51cb2c2` into
+`task/BFF-PM12-009`:
+
+```bash
+python3 -m pytest services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_bff_pm12_persona_league.py -q
+# 31 passed, 3 warnings in 13.40s
+```
+
 ## Reviewer Approval
 
 Review artifact: `support/reviews/BFF-PM12-009-review-claude2.md`
@@ -44,5 +52,5 @@ tests passing, live wiring registered, and the spec updated.
 - Task branch: `task/BFF-PM12-009`
 - Implementation commit: `a2028832` (`BFF-PM12-009: add performance attribution`)
 - Implementation PR: #477, merged at `3ea63959b5b7c931d5f4f985fa9142d9308de75a`
-- Closeout evidence PR: pending from this finalization commit
+- Closeout evidence PR: #483
 - Target: `dev`
