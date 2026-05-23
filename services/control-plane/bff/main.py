@@ -3589,18 +3589,23 @@ def _epoch_to_iso(value: Any) -> Optional[str]:
     return datetime.fromtimestamp(epoch, tz=timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def _bff_me_session_payload(identity: OperatorIdentity, *, checked_at: str) -> Dict[str, Any]:
+def _sem_session_id(identity: OperatorIdentity) -> str:
     claims = identity.claims if isinstance(identity.claims, dict) else {}
-    exp = _epoch_claim_seconds(claims.get("exp"))
-    now = time.time()
-    freshness_seconds = max(0, int(exp - now)) if exp is not None else None
-    session_id = _first_nonblank(
+    return _first_nonblank(
         claims.get("sid"),
         claims.get("session_id"),
         claims.get("jti"),
         os.getenv("PANTHEON_SESSION_ID"),
         f"bff-session-{identity.operator_id}",
     )
+
+
+def _bff_me_session_payload(identity: OperatorIdentity, *, checked_at: str) -> Dict[str, Any]:
+    claims = identity.claims if isinstance(identity.claims, dict) else {}
+    exp = _epoch_claim_seconds(claims.get("exp"))
+    now = time.time()
+    freshness_seconds = max(0, int(exp - now)) if exp is not None else None
+    session_id = _sem_session_id(identity)
     return {
         "id": session_id,
         "authenticated": True,
@@ -3710,11 +3715,40 @@ def _bff_me_tenant_payload(
 
 
 def _sem_session_key(identity: OperatorIdentity) -> str:
+    return f"operator:{identity.operator_id}:session:{_sem_session_id(identity)}"
+
+
+def _sem_legacy_operator_session_key(identity: OperatorIdentity) -> str:
     return f"operator:{identity.operator_id}"
 
 
 def _sem_session_state(identity: OperatorIdentity) -> Dict[str, Any]:
-    return session_lifecycle_store.get_session(_sem_session_key(identity))
+    state = session_lifecycle_store.get_session(_sem_session_key(identity))
+    if state:
+        return state
+    return session_lifecycle_store.get_session(_sem_legacy_operator_session_key(identity))
+
+
+def _raise_if_session_logged_out(identity: OperatorIdentity) -> None:
+    state = _sem_session_state(identity)
+    if state.get("state") != "logged_out":
+        return
+    raise _bff_error(
+        401,
+        ErrorCode.INVALID_TOKEN,
+        "Session has been logged out",
+        "SESSION_LOGGED_OUT",
+        precondition_failed="session_state",
+        suggestion="Re-authenticate before calling BFF session endpoints",
+        details_extra={
+            "sessionState": "logged_out",
+            "loggedOutAt": state.get("logged_out_at"),
+        },
+    )
+
+
+def _clear_pantheon_session_cookie(response: Response) -> None:
+    response.delete_cookie("pantheon_session", path="/")
 
 
 @app.get("/bff/me")
@@ -3736,6 +3770,7 @@ async def bff_me(
     try:
         identity = _extract_identity(authorization, mfa_token=x_mfa_token, session_cookie=pantheon_session)
         _require_read_role(identity)
+        _raise_if_session_logged_out(identity)
         snapshot_at = utc_now()
         session_state = _sem_session_state(identity)
         requested_header_tenant = _first_nonblank(x_tenant_id, x_pantheon_tenant, tenant_id)
@@ -3856,7 +3891,7 @@ def _sem_session_idempotency_key(route: str, identity: OperatorIdentity, key: Op
     clean = str(key or "").strip()
     if not clean:
         return None
-    return f"{route}:{identity.operator_id}:{clean}"
+    return f"{route}:{identity.operator_id}:{_sem_session_id(identity)}:{clean}"
 
 
 def _sem_optional_idempotency_key(
@@ -3877,6 +3912,7 @@ async def bff_auth_refresh(
 ):
     identity = _extract_identity(authorization, mfa_token=x_mfa_token, session_cookie=pantheon_session)
     _require_read_role(identity)
+    _raise_if_session_logged_out(identity)
     resolved_key = _sem_optional_idempotency_key(idempotency_key, x_idempotency_key)
     record_key = _sem_session_idempotency_key("POST /bff/auth/refresh", identity, resolved_key)
     request_hash = _stable_json_hash({"route": "POST /bff/auth/refresh", "payload": payload or {}})
@@ -3908,6 +3944,7 @@ async def bff_auth_refresh(
 
 @app.post("/bff/logout")
 async def bff_logout(
+    response: Response,
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
     pantheon_session: Optional[str] = Cookie(default=None),
@@ -3933,6 +3970,7 @@ async def bff_logout(
                 )
             result = dict(cached["result"])
             result.setdefault("meta", {}).setdefault("idempotency", {})["replayed"] = True
+            _clear_pantheon_session_cookie(response)
             return result
     now = utc_now()
     result = _sem_session_current_response(
@@ -3943,6 +3981,7 @@ async def bff_logout(
     )
     if record_key:
         session_lifecycle_store.put_idempotency(record_key, request_hash=request_hash, result=result, now=now)
+    _clear_pantheon_session_cookie(response)
     return result
 
 
@@ -3953,6 +3992,7 @@ async def bff_switch_tenant(
 ):
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+    _raise_if_session_logged_out(identity)
     tenant_id = str(payload.get("tenantId") or payload.get("tenant_id") or "").strip()
     tenant = _bff_me_tenant_payload(identity, requested_tenant=tenant_id)
     tenant["source"] = "session"
@@ -3967,6 +4007,7 @@ async def bff_update_locale(
 ):
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+    _raise_if_session_logged_out(identity)
     locale_value = _normalize_locale(payload.get("locale"))
     if not locale_value:
         raise _bff_error(
