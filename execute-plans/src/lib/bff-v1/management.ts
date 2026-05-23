@@ -67,6 +67,168 @@ export interface ManagementCockpitResponse {
   meta: ManagementCockpitMeta;
 }
 
+export interface ManagementTradingPulseSummary {
+  runtimeCount: number;
+  runtime_count: number;
+  telemetryCoverageCount: number;
+  telemetry_coverage_count: number;
+  byStatus: Record<string, number>;
+  by_status: Record<string, number>;
+  byStage: Record<string, number>;
+  by_stage: Record<string, number>;
+  totalPnl?: number | null;
+  total_pnl?: number | null;
+  worstDrawdown?: number | null;
+  worst_drawdown?: number | null;
+  averageFillRate?: number | null;
+  average_fill_rate?: number | null;
+  worstSlippageBps?: number | null;
+  worst_slippage_bps?: number | null;
+  totalTrades: number;
+  total_trades: number;
+  [key: string]: unknown;
+}
+
+export interface ManagementTradingPulseCard {
+  cardId: string;
+  card_id: string;
+  label: string;
+  value?: number | string | boolean | null;
+  details?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface ManagementTradingPulseRuntimeRow {
+  runtime_id?: string;
+  runtime_binding_id?: string;
+  deployment_stage?: string;
+  status?: string;
+  telemetry_summary?: Record<string, unknown> | null;
+  rollback_summary?: Record<string, unknown> | null;
+  last_updated_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface ManagementTradingPulseRankingItem {
+  runtimeId?: string | null;
+  runtime_id?: string | null;
+  runtimeBindingId?: string | null;
+  runtime_binding_id?: string | null;
+  deploymentStage?: string | null;
+  deployment_stage?: string | null;
+  status?: string | null;
+  rank: number;
+  pnl?: number | null;
+  drawdown?: number | null;
+  sharpeRatio?: number | null;
+  sharpe_ratio?: number | null;
+  fillRate?: number | null;
+  fill_rate?: number | null;
+  avgSlippageBps?: number | null;
+  avg_slippage_bps?: number | null;
+  totalTrades?: number | null;
+  total_trades?: number | null;
+  lastUpdatedAt?: string | null;
+  last_updated_at?: string | null;
+  rankingBlockId?: string;
+  ranking_block_id?: string;
+  rankingMetric?: string;
+  ranking_metric?: string;
+  rankingMetricValue?: number | null;
+  ranking_metric_value?: number | null;
+  [key: string]: unknown;
+}
+
+export interface ManagementTradingPulseData {
+  id: "management-trading-pulse" | string;
+  summary: ManagementTradingPulseSummary;
+  cards: ManagementTradingPulseCard[];
+  rankings: ManagementTradingPulseRankingItem[];
+  runtimeRows: ManagementTradingPulseRuntimeRow[];
+  runtime_rows: ManagementTradingPulseRuntimeRow[];
+  [key: string]: unknown;
+}
+
+export interface ManagementTradingPulseResponse {
+  data: ManagementTradingPulseData;
+  items: ManagementTradingPulseCard[];
+  cards: ManagementTradingPulseCard[];
+  rankings: ManagementTradingPulseRankingItem[];
+  runtimeRows: ManagementTradingPulseRuntimeRow[];
+  runtime_rows: ManagementTradingPulseRuntimeRow[];
+  summary: ManagementTradingPulseSummary;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces: {
+      management_trading_pulse: ManagementSurfaceRef;
+      runtime_roster?: ManagementSurfaceRef;
+      telemetry_summary?: ManagementSurfaceRef;
+      [key: string]: ManagementSurfaceRef | undefined;
+    };
+    [key: string]: unknown;
+  };
+}
+
+export interface ManagementTradingPulseRankingsQuery {
+  limit?: number;
+}
+
+export interface ManagementTradingPulseRankingBlock {
+  blockId: string;
+  block_id: string;
+  label: string;
+  metric: string;
+  secondaryMetric?: string;
+  secondary_metric?: string;
+  sortOrder: "asc" | "desc" | string;
+  sort_order: "asc" | "desc" | string;
+  items: ManagementTradingPulseRankingItem[];
+  [key: string]: unknown;
+}
+
+export interface ManagementTradingPulseRankingsResponse {
+  data: ManagementTradingPulseRankingBlock[];
+  items: ManagementTradingPulseRankingBlock[];
+  rankings: ManagementTradingPulseRankingBlock[];
+  rankingBlocks: ManagementTradingPulseRankingBlock[];
+  ranking_blocks: ManagementTradingPulseRankingBlock[];
+  summary: {
+    runtimeCount: number;
+    runtime_count: number;
+    rankingBlockCount: number;
+    ranking_block_count: number;
+    rankedItemCount: number;
+    ranked_item_count: number;
+    criteria: string[];
+    limit: number;
+    topRuntimeId?: string | null;
+    top_runtime_id?: string | null;
+    [key: string]: unknown;
+  };
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces: {
+      management_trading_pulse_rankings: ManagementSurfaceRef;
+      management_trading_pulse?: ManagementSurfaceRef;
+      runtime_roster?: ManagementSurfaceRef;
+      telemetry_summary?: ManagementSurfaceRef;
+      [key: string]: ManagementSurfaceRef | undefined;
+    };
+    composition_sources?: string[];
+    [key: string]: unknown;
+  };
+}
+
 export interface ManagementEvidenceQuery {
   ref_id?: string;
   linked_entity_type?: string;
@@ -1082,6 +1244,16 @@ export function managementCockpitPath(): string {
   return paths.managementCockpit();
 }
 
+export function managementTradingPulsePath(): string {
+  return paths.managementTradingPulse();
+}
+
+export function managementTradingPulseRankingsPath(
+  query?: ManagementTradingPulseRankingsQuery,
+): string {
+  return withQuery(paths.managementTradingPulseRankings(), query);
+}
+
 export function managementEvidencePath(query?: ManagementEvidenceQuery): string {
   return withQuery(paths.managementEvidence(), query);
 }
@@ -1171,6 +1343,43 @@ export async function fetchManagementCockpit(
     throw new Error(`GET ${managementCockpitPath()} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementCockpitResponse>;
+}
+
+export async function fetchManagementTradingPulse(
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementTradingPulseResponse> {
+  const path = managementTradingPulsePath();
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementTradingPulseResponse>;
+}
+
+export async function fetchManagementTradingPulseRankings(
+  query?: ManagementTradingPulseRankingsQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementTradingPulseRankingsResponse> {
+  const path = managementTradingPulseRankingsPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementTradingPulseRankingsResponse>;
 }
 
 export async function fetchManagementEvidence(

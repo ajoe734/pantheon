@@ -6258,6 +6258,232 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
     }
 
 
+def _build_management_trading_pulse_route_payload(snapshot_at: str) -> Dict[str, Any]:
+    payload = _build_management_trading_pulse_payload(snapshot_at)
+    data = {
+        "id": "management-trading-pulse",
+        "summary": payload["summary"],
+        "cards": payload["cards"],
+        "rankings": payload["rankings"],
+        "runtimeRows": payload["runtimeRows"],
+        "runtime_rows": payload["runtime_rows"],
+    }
+    return {
+        "data": data,
+        "items": payload["cards"],
+        "cards": payload["cards"],
+        "rankings": payload["rankings"],
+        "runtimeRows": payload["runtimeRows"],
+        "runtime_rows": payload["runtime_rows"],
+        "summary": payload["summary"],
+        "page_info": {
+            "next_page_token": None,
+            "total": len(payload["cards"]),
+            "page_size": len(payload["cards"]),
+        },
+        "meta": payload["meta"],
+    }
+
+
+_TRADING_PULSE_RANKING_METRIC_FIELDS = {
+    "pnl": ("pnl",),
+    "drawdown": ("drawdown",),
+    "sharpe_ratio": ("sharpeRatio", "sharpe_ratio"),
+    "fill_rate": ("fillRate", "fill_rate"),
+    "avg_slippage_bps": ("avgSlippageBps", "avg_slippage_bps"),
+    "total_trades": ("totalTrades", "total_trades"),
+}
+
+
+def _trading_pulse_metric_value(
+    item: Dict[str, Any],
+    metric: str,
+) -> Optional[float]:
+    for field in _TRADING_PULSE_RANKING_METRIC_FIELDS.get(metric, (metric,)):
+        value = _management_number(item.get(field))
+        if value is not None:
+            return value
+    return None
+
+
+def _trading_pulse_ranked_items(
+    rankings: List[Dict[str, Any]],
+    *,
+    metric: str,
+    descending: bool,
+    limit: int,
+    block_id: str,
+) -> List[Dict[str, Any]]:
+    present = [
+        item for item in rankings
+        if _trading_pulse_metric_value(item, metric) is not None
+    ]
+    missing = [
+        item for item in rankings
+        if _trading_pulse_metric_value(item, metric) is None
+    ]
+    ordered_present = sorted(
+        present,
+        key=lambda item: (
+            _trading_pulse_metric_value(item, metric) or 0.0,
+            str(item.get("runtimeId") or item.get("runtime_id") or ""),
+        ),
+        reverse=descending,
+    )
+    ordered_missing = sorted(
+        missing,
+        key=lambda item: str(item.get("runtimeId") or item.get("runtime_id") or ""),
+    )
+
+    ranked: List[Dict[str, Any]] = []
+    for index, item in enumerate((ordered_present + ordered_missing)[:limit], start=1):
+        projected = dict(item)
+        projected["rank"] = index
+        projected["rankingBlockId"] = block_id
+        projected["ranking_block_id"] = block_id
+        projected["rankingMetric"] = metric
+        projected["ranking_metric"] = metric
+        projected["rankingMetricValue"] = _trading_pulse_metric_value(item, metric)
+        projected["ranking_metric_value"] = projected["rankingMetricValue"]
+        ranked.append(projected)
+    return ranked
+
+
+def _build_management_trading_pulse_ranking_blocks(
+    rankings: List[Dict[str, Any]],
+    *,
+    limit: int,
+) -> List[Dict[str, Any]]:
+    return [
+        {
+            "blockId": "pnl-leaders",
+            "block_id": "pnl-leaders",
+            "label": "P&L Leaders",
+            "metric": "pnl",
+            "sortOrder": "desc",
+            "sort_order": "desc",
+            "items": _trading_pulse_ranked_items(
+                rankings,
+                metric="pnl",
+                descending=True,
+                limit=limit,
+                block_id="pnl-leaders",
+            ),
+        },
+        {
+            "blockId": "drawdown-control",
+            "block_id": "drawdown-control",
+            "label": "Drawdown Control",
+            "metric": "drawdown",
+            "sortOrder": "asc",
+            "sort_order": "asc",
+            "items": _trading_pulse_ranked_items(
+                rankings,
+                metric="drawdown",
+                descending=False,
+                limit=limit,
+                block_id="drawdown-control",
+            ),
+        },
+        {
+            "blockId": "execution-quality",
+            "block_id": "execution-quality",
+            "label": "Execution Quality",
+            "metric": "fill_rate",
+            "secondaryMetric": "avg_slippage_bps",
+            "secondary_metric": "avg_slippage_bps",
+            "sortOrder": "desc",
+            "sort_order": "desc",
+            "items": _trading_pulse_ranked_items(
+                rankings,
+                metric="fill_rate",
+                descending=True,
+                limit=limit,
+                block_id="execution-quality",
+            ),
+        },
+        {
+            "blockId": "sharpe-leaders",
+            "block_id": "sharpe-leaders",
+            "label": "Sharpe Leaders",
+            "metric": "sharpe_ratio",
+            "sortOrder": "desc",
+            "sort_order": "desc",
+            "items": _trading_pulse_ranked_items(
+                rankings,
+                metric="sharpe_ratio",
+                descending=True,
+                limit=limit,
+                block_id="sharpe-leaders",
+            ),
+        },
+    ]
+
+
+def _build_management_trading_pulse_rankings_payload(
+    snapshot_at: str,
+    *,
+    limit: int,
+) -> Dict[str, Any]:
+    trading_pulse = _build_management_trading_pulse_payload(snapshot_at)
+    blocks = _build_management_trading_pulse_ranking_blocks(
+        list(trading_pulse.get("rankings") or []),
+        limit=limit,
+    )
+    surfaces = dict((trading_pulse.get("meta") or {}).get("surfaces") or {})
+    source_surfaces = [
+        surface for surface in (
+            surfaces.get("management_trading_pulse"),
+            surfaces.get("runtime_roster"),
+            surfaces.get("telemetry_summary"),
+        )
+        if isinstance(surface, dict)
+    ]
+    surfaces["management_trading_pulse_rankings"] = _aggregate_group_surface(
+        "management_trading_pulse_rankings",
+        source_surfaces,
+        snapshot_at=snapshot_at,
+        unavailable_message="Trading pulse rankings aggregate unavailable.",
+        degraded_message="Trading pulse rankings are degraded because runtime or telemetry coverage is degraded.",
+    )
+    top_item = (blocks[0].get("items") or [None])[0] if blocks else None
+    ranked_item_count = sum(len(block.get("items") or []) for block in blocks)
+    summary = {
+        "runtimeCount": int((trading_pulse.get("summary") or {}).get("runtimeCount") or 0),
+        "runtime_count": int((trading_pulse.get("summary") or {}).get("runtime_count") or 0),
+        "rankingBlockCount": len(blocks),
+        "ranking_block_count": len(blocks),
+        "rankedItemCount": ranked_item_count,
+        "ranked_item_count": ranked_item_count,
+        "criteria": [str(block.get("metric") or "") for block in blocks],
+        "limit": limit,
+        "topRuntimeId": (top_item or {}).get("runtimeId") if isinstance(top_item, dict) else None,
+        "top_runtime_id": (top_item or {}).get("runtime_id") if isinstance(top_item, dict) else None,
+    }
+    return {
+        "data": blocks,
+        "items": blocks,
+        "rankings": blocks,
+        "rankingBlocks": blocks,
+        "ranking_blocks": blocks,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": None,
+            "total": len(blocks),
+            "page_size": len(blocks),
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": surfaces,
+            "composition_sources": [
+                "GET /bff/management/trading-pulse",
+                "GET /bff/runtimes",
+                "telemetry_summaries",
+            ],
+        },
+    }
+
+
 def _build_management_anomalies_payload(snapshot_at: str) -> Dict[str, Any]:
     runtime_alerts, runtime_surfaces = _build_runtime_alerts(snapshot_at)
     sentinel_available, sentinel_findings = read_store.list_sentinel_findings()
@@ -11467,6 +11693,31 @@ async def bff_management_cockpit(
 
     snapshot_at = utc_now()
     return _build_management_cockpit_payload(snapshot_at)
+
+
+@app.get("/bff/management/trading-pulse")
+async def bff_management_trading_pulse(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF-B3-004: Management Trading Pulse card aggregate."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    return _build_management_trading_pulse_route_payload(snapshot_at)
+
+
+@app.get("/bff/management/trading-pulse/rankings")
+async def bff_management_trading_pulse_rankings(
+    limit: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF-B3-004: Management Trading Pulse ranking blocks."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    return _build_management_trading_pulse_rankings_payload(snapshot_at, limit=limit)
 
 
 @app.get("/api/v1/operator/paper-live-drift/{runtime_id}")
