@@ -23467,6 +23467,89 @@ _MGMT_NL_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 
 _MGMT_NL_VALID_FOCUS = {"cockpit", "trading_pulse", "portfolio", "persona_fleet", "all"}
 
+# BFF-B6-003: high-risk action pattern sets for NL refusal policy.
+_MGMT_NL_HIGH_RISK_PATTERNS: List[tuple[str, List[str], str]] = [
+    # (category_key, trigger_terms, safe_alternatives_hint)
+    (
+        "live_capital_mutation",
+        [
+            "allocate capital", "transfer capital", "move capital", "reallocate capital",
+            "transfer funds", "move funds", "allocate funds", "withdraw funds",
+            "increase allocation", "decrease allocation", "change allocation",
+            "rebalance capital", "rebalance portfolio", "set capital", "add capital",
+            "remove capital", "fund the pool", "capital injection",
+        ],
+        "Use POST /bff/capital-pools/{id} or the governance approval flow to mutate capital allocations.",
+    ),
+    (
+        "broker_activation",
+        [
+            "enable live broker", "enable broker", "connect broker", "activate broker",
+            "enable the live broker", "connect the live broker", "activate the live broker",
+            "start broker", "enable shioaji", "connect shioaji", "enable ibkr",
+            "connect ibkr", "enable pantheon_live_broker", "set pantheon_live_broker",
+            "turn on broker", "activate live trading",
+        ],
+        "Live broker activation requires operator dual-signoff via the human gate. Use PROD-WRITES-001-V2.",
+    ),
+    (
+        "strategy_deployment",
+        [
+            "deploy strategy", "retire strategy", "promote strategy", "activate strategy",
+            "rollback strategy", "deprecate strategy", "publish strategy",
+            "make strategy live", "push strategy", "deactivate strategy",
+        ],
+        "Use POST /bff/strategies/{id}/actions with a confirm-token for strategy lifecycle changes.",
+    ),
+    (
+        "persona_activation",
+        [
+            "activate persona", "deploy persona", "enable persona", "launch persona",
+            "start persona", "run persona", "make persona live", "promote persona",
+            "deactivate persona", "disable persona", "stop persona",
+        ],
+        "Use POST /bff/personas/{id}/actions with a confirm-token for persona lifecycle changes.",
+    ),
+    (
+        "runtime_control",
+        [
+            "restart runtime", "stop runtime", "start runtime", "kill runtime",
+            "pause runtime", "resume runtime", "terminate runtime", "shut down runtime",
+            "shutdown runtime", "reset runtime", "reboot runtime",
+        ],
+        "Use POST /bff/runtimes/{id}/actions with appropriate governance gates for runtime control.",
+    ),
+    (
+        "system_mutation",
+        [
+            "enable live", "disable live", "toggle feature", "enable feature flag",
+            "disable feature flag", "set feature flag", "change feature flag",
+            "modify production", "update production config", "change production",
+            "enable production writes", "disable production writes",
+            "set vite_bff_real_writes", "set pantheon_env",
+        ],
+        "System-wide mutations require operator gate approval. Use the appropriate governance route.",
+    ),
+]
+
+
+def _mgmt_nl_high_risk_classify(question: str) -> Optional[Dict[str, Any]]:
+    """BFF-B6-003: classify a free-text NL question for high-risk action patterns.
+
+    Returns a dict with category, matched_pattern, and safe_alternatives when
+    the question matches, or None when it is safe to proceed.
+    """
+    q_lower = question.strip().lower()
+    for category_key, trigger_terms, safe_alternatives in _MGMT_NL_HIGH_RISK_PATTERNS:
+        for term in trigger_terms:
+            if term in q_lower:
+                return {
+                    "matched_category": category_key,
+                    "matched_pattern": term,
+                    "safe_alternatives": safe_alternatives,
+                }
+    return None
+
 
 def _mgmt_nl_idempotency_check(resolved_key: str, request_hash: str) -> Optional[Dict[str, Any]]:
     existing = _MGMT_NL_IDEMPOTENCY.get(resolved_key)
@@ -23643,12 +23726,36 @@ async def bff_management_nl_ask(
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
-    """BFF-B6-001: POST /bff/management/nl/ask — Management natural language query endpoint."""
+    """BFF-B6-001/BFF-B6-003: POST /bff/management/nl/ask — Management NL query endpoint."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     _reject_body_idempotency_key(payload)
 
     question = _agora_required_text(payload, "question")
+
+    # BFF-B6-003: high-risk refusal policy — must run before idempotency, surface
+    # collection, session creation, or SSE emission.
+    risk = _mgmt_nl_high_risk_classify(question)
+    if risk is not None:
+        raise _bff_error(
+            403,
+            ErrorCode.HIGH_RISK_QUERY_REFUSED,
+            "NL query matches high-risk action pattern and was refused by policy",
+            (
+                f"The question contains the pattern {risk['matched_pattern']!r} "
+                f"which falls under the high-risk category '{risk['matched_category']}'. "
+                "This endpoint is read-only and cannot execute management mutations."
+            ),
+            precondition_failed="high_risk_nl_policy",
+            suggestion=risk["safe_alternatives"],
+            details_extra={
+                "refused": True,
+                "matched_category": risk["matched_category"],
+                "matched_pattern": risk["matched_pattern"],
+                "safe_alternatives": risk["safe_alternatives"],
+            },
+        )
+
     focus = str(payload.get("focus") or "all").strip().lower()
     if focus not in _MGMT_NL_VALID_FOCUS:
         focus = "all"

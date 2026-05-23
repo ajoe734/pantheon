@@ -2363,3 +2363,75 @@ attribution.
 ### Task
 
 BFF-B6-001 — Owner: Claude, Reviewer: Codex
+
+---
+
+## B6-003 — NL High-Risk Refusal Policy {#b6-003--nl-high-risk-refusal-policy}
+
+### Gap
+
+The `POST /bff/management/nl/ask` endpoint (BFF-B6-001) accepts any free-text
+question and synthesises an answer from read-only management surface data. It
+does not inspect whether the operator's question is requesting a high-risk
+mutating operation — e.g. "execute a trade", "enable the live broker", "deploy
+strategy X", "allocate capital", "activate persona Y". A question of this form
+cannot be safely answered with a read-only surface and must be refused with a
+structured policy response before any synthesis or surface-query occurs.
+
+### Fix
+
+**File: `services/control-plane/bff/main.py`**
+
+- Add a `_mgmt_nl_high_risk_classify(question: str) -> Optional[Dict[str, Any]]`
+  classifier that returns a non-`None` classification dict when the question
+  matches one or more high-risk action patterns, and `None` otherwise.
+- Define pattern sets covering the high-risk categories:
+  - `live_capital_mutation` — questions requesting capital transfers, allocations,
+    rebalances, increases/decreases, or withdrawals.
+  - `broker_activation` — questions requesting live broker enable, connect,
+    activate, or credential injection.
+  - `strategy_deployment` — questions requesting strategy deploy, retire,
+    promote, activate, or rollback.
+  - `persona_activation` — questions requesting persona activate, deploy,
+    enable, or launch.
+  - `runtime_control` — questions requesting runtime start, stop, kill, restart,
+    or pause.
+  - `system_mutation` — questions requesting system-wide flag changes, feature
+    toggles, or production reconfigurations.
+- When `_mgmt_nl_high_risk_classify` returns a non-`None` result, raise a
+  typed HTTP 403 BFF error **before** idempotency resolution, surface collection,
+  or answer synthesis:
+  - `code`: `HIGH_RISK_QUERY_REFUSED`
+  - `message`: `"NL query matches high-risk action pattern and was refused by policy"`
+  - `precondition_failed`: `"high_risk_nl_policy"`
+  - `details.matched_category`: the matched category key (e.g. `"live_capital_mutation"`)
+  - `details.matched_pattern`: a representative matched term from the question
+  - `details.safe_alternatives`: a short guidance string directing the operator
+    to the appropriate mutation endpoint instead of the NL surface
+- The check must be case-insensitive and applied against the stripped question
+  text before any other processing in `bff_management_nl_ask`.
+- The refusal must not store an idempotency record, must not create or append to
+  an `agora_session`, and must not emit an SSE event.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | A question containing live-capital mutation keywords (e.g. "allocate capital", "transfer funds") returns HTTP 403 with `code=HIGH_RISK_QUERY_REFUSED` and `precondition_failed=high_risk_nl_policy` | ✅ test added |
+| 2 | A question asking to enable the live broker returns HTTP 403 with `matched_category=broker_activation` | ✅ test added |
+| 3 | A question asking to deploy or retire a strategy returns HTTP 403 with `matched_category=strategy_deployment` | ✅ test added |
+| 4 | A question asking to activate or launch a persona returns HTTP 403 with `matched_category=persona_activation` | ✅ test added |
+| 5 | A question asking to stop or restart a runtime returns HTTP 403 with `matched_category=runtime_control` | ✅ test added |
+| 6 | A read-only question (e.g. "What is the current PnL?") is not refused and returns HTTP 202 as before | ✅ test added |
+| 7 | The refused response does not create an `agora_session` record and does not emit an SSE event | ✅ test added |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/models.py`
+- `services/control-plane/bff/tests/test_bff_b6_003_nl_high_risk_refusal.py`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B6-003 — Owner: Codex, Reviewer: Claude
