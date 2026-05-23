@@ -22878,6 +22878,162 @@ async def bff_list_alerts(
     return _build_operator_alerts_payload(snapshot_at)
 
 
+@app.get("/bff/alerts/{alert_id}")
+async def bff_get_alert(
+    alert_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: get a specific operator alert by ID."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    payload = _build_operator_alerts_payload(snapshot_at)
+    clean_id = alert_id.strip()
+    match = next(
+        (a for a in payload.get("alerts", []) if str(a.get("alert_id") or a.get("id") or "") == clean_id),
+        None,
+    )
+    if not match:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Alert not found",
+            f"Alert {alert_id!r} does not exist",
+            precondition_failed="alert_id",
+        )
+    return {"data": match, "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()}}
+
+
+@app.post("/bff/alerts/{alert_id}/acknowledge", status_code=202)
+async def bff_alert_acknowledge(
+    alert_id: str,
+    request: Request,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: acknowledge an operator alert — suppresses the alert for the current operator session."""
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+
+    payload: Dict[str, Any] = {}
+    try:
+        payload = await request.json()
+    except Exception:
+        pass
+
+    _reject_body_idempotency_key(payload)
+
+    clean_id = alert_id.strip()
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+
+    # Idempotency pre-check
+    request_hash = _stable_json_hash(
+        {"alert_id": clean_id, "action": "acknowledge", "payload": payload}
+    )
+    existing = _GOV_BFF_IDEMPOTENCY.get(resolved_key)
+    if existing is not None:
+        if existing.get("request_hash") != request_hash:
+            raise _bff_error(
+                409,
+                ErrorCode.IDEMPOTENCY_CONFLICT,
+                "Idempotency key was already used with a different payload",
+                f"Key {resolved_key!r} is bound to a different request hash",
+                precondition_failed="idempotency_conflict",
+                suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+            )
+        return existing["result"]
+
+    # Best-effort alert existence check; alerts are dynamic so we tolerate missing data
+    snapshot_at = utc_now()
+    alerts_payload = _build_operator_alerts_payload(snapshot_at)
+    alert_record = next(
+        (a for a in alerts_payload.get("alerts", []) if str(a.get("alert_id") or a.get("id") or "") == clean_id),
+        None,
+    )
+    if alert_record is None:
+        # Only 404 when the alerts surface is available; tolerate degraded/unavailable surfaces
+        alert_surface = (alerts_payload.get("meta") or {}).get("surfaces", {}).get("alerts", {})
+        if alert_surface.get("status") not in {"degraded", "unavailable", "missing"}:
+            raise _bff_error(
+                404,
+                ErrorCode.OBJECT_NOT_FOUND,
+                "Alert not found",
+                f"Alert {alert_id!r} does not exist or is no longer active",
+                precondition_failed="alert_id",
+            )
+
+    staleness_warning = _check_read_surface_state()
+    command_id = str(uuid.uuid4())
+    submitted_at = utc_now()
+    target = TargetObject(type=ObjectType.RISK_ALERT, id=clean_id)
+    ack_note = str(payload.get("note") or payload.get("reason") or "").strip() or None
+    audit_action = _foundation_audit_for_command_record(
+        identity=identity,
+        command_type=CommandType.ALERT_ACKNOWLEDGE,
+        target_type=ObjectType.RISK_ALERT,
+        target_id=clean_id,
+        payload={**payload, "alert_id": clean_id, "action": "acknowledge"},
+        reason=ack_note or "acknowledge",
+        command_id=command_id,
+        idempotency_key=resolved_key,
+        route=f"POST /bff/alerts/{clean_id}/acknowledge",
+        metadata={"action": "acknowledge"},
+    )
+    audit_record = {
+        "operator_id": identity.operator_id,
+        "roles_at_submission": identity.roles,
+        "action": "acknowledge",
+        "preconditions_checked": ["authentication", "authorization", "idempotency"],
+        "timestamp": submitted_at,
+        "idempotency_key": resolved_key,
+        "request_hash": request_hash,
+    }
+    idempotency_record = IdempotencyRecord.reserve(
+        idempotency_key=resolved_key,
+        operation_type=f"bff.{CommandType.ALERT_ACKNOWLEDGE.value}",
+        target_ref=f"{ObjectType.RISK_ALERT.value}:{clean_id}",
+        request_payload={"alert_id": clean_id, "action": "acknowledge", "payload": payload},
+        trace_id=command_id,
+    )
+    foundation_ctx = {
+        "idempotency_record": idempotency_record.to_dict(),
+        "audit_action": audit_action.to_dict(),
+    }
+    audit_record["foundation"] = foundation_ctx
+    command_store.submit_command(
+        command_id=command_id,
+        command_type=CommandType.ALERT_ACKNOWLEDGE,
+        target=target,
+        submitted_at=submitted_at,
+        params={"alert_id": clean_id, "action": "acknowledge", **payload},
+        audit_context=audit_record,
+        foundation_context=foundation_ctx,
+    )
+
+    _publish_event(
+        _sse_buffers["system"],
+        _sse_subscribers["system"],
+        "alert.acknowledged",
+        {
+            "alert_id": clean_id,
+            "acknowledged_by": identity.operator_id,
+            "acknowledged_at": submitted_at,
+            "note": ack_note,
+        },
+    )
+
+    result = _project_final_command_response(
+        command_id=command_id,
+        command=CommandType.ALERT_ACKNOWLEDGE,
+        accepted_at=submitted_at,
+        status=CommandStatus.SUBMITTED,
+        staleness_warning=staleness_warning,
+    )
+    _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
 # -- Audit -------------------------------------------------------------------
 
 @app.get("/bff/audit")
@@ -26416,8 +26572,6 @@ def _sem_final_generic_detail_for_path(path: str, entity_id: str) -> Optional[Di
     return None
 
 
-@app.get("/bff/alerts")
-@app.get("/bff/alerts/{id}")
 @app.get("/bff/agora/signals/{id}")
 @app.get("/bff/approvals/{id}")
 @app.get("/bff/artifacts")
@@ -26645,7 +26799,6 @@ async def bff_approvals_decide(
     )
 
 
-@app.post("/bff/alerts/{id}/acknowledge", status_code=202)
 @app.post("/bff/alerts/{id}/escalate-incident", status_code=202)
 @app.post("/bff/incidents/{id}/append-postmortem", status_code=202)
 @app.post("/bff/incidents/{id}/resolve", status_code=202)
