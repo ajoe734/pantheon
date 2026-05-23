@@ -63,6 +63,128 @@ BFF-B1-003 — Owner: Codex, Reviewer: Claude
 
 ---
 
+## §12 POST /bff/auth/refresh — Cookie or Bearer Refresh
+
+### Gap
+
+The strict-mode frontend can call `POST /bff/auth/refresh` from either a browser
+cookie session or an injected bearer-token session. The prior route only refreshed
+after the shared auth facade accepted the current request credential directly, but
+it did not make refresh credential resolution explicit and could not distinguish
+"no refresh path" from a generic auth failure.
+
+### Fix
+
+**File: `services/control-plane/bff/main.py`**
+
+- Resolve refresh credentials in this order: request body `refresh_token` /
+  `refreshToken`, `X-Refresh-Token`, `pantheon_refresh` /
+  `pantheon_refresh_token` cookie, `pantheon_session` cookie, then
+  `Authorization: Bearer ...` for backwards compatibility.
+- Validate the selected credential through the existing BFF auth facade and keep
+  `_require_read_role` as the role gate.
+- Preserve the `BFF-LUV-SEM-001` current-session DTO envelope, idempotency replay,
+  and idempotency conflict behaviour.
+- Persist `last_refreshed_at` and `last_refresh_credential_source` in the BFF
+  session lifecycle store so refresh source and session freshness are visible in
+  the response.
+- Return a typed HTTP 401 `INVALID_TOKEN` error with
+  `details.reason = "AUTH_REFRESH_CREDENTIAL_REQUIRED"` and
+  `precondition_failed = "refresh_credential"` when no body/header/cookie/bearer
+  refresh path is present.
+- Add `X-Refresh-Token` to the CORS allow-header list for browser refresh-token
+  handoff.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Bearer refresh credential returns HTTP 200, `operation.type = "refresh"`, and records refresh credential source as `bearer` | ✅ test added |
+| 2 | Cookie refresh credential returns HTTP 200 with `session.session_kind = "cookie"` and records refresh credential source as `refresh_cookie` | ✅ test added |
+| 3 | Missing body/header/cookie/bearer refresh credential returns typed HTTP 401 without a raw 500 | ✅ test added |
+| 4 | Existing `pantheon_session` cookie and `Authorization: Bearer ...` compatibility paths remain covered by the session auth contract tests | ✅ preserved |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_auth_refresh.py`
+- `services/control-plane/bff/test_bff_session_auth_me_contract.py`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B1-005 — Owner: Codex2, Reviewer: Claude
+
+---
+
+## §14 Confirm-Token Lifecycle
+
+### Gap
+
+The execute-plans high-risk action flow needs the confirm-token lifecycle to be
+observable through both the canonical token routes and the legacy
+command-confirmation compatibility routes. The backend already had command-store-backed
+token create/read/redeem/delete behavior, but the BFF gap inventory requires the P0
+five-endpoint surface to be explicit:
+
+| ID | Method | Path |
+|---|---|---|
+| B1-012 | POST | `/bff/confirm-tokens` |
+| B1-013 | GET | `/bff/confirm-tokens/{tokenId}` |
+| B1-014 | POST | `/bff/confirm-tokens/{tokenId}/redeem` |
+| B1-015 | POST | `/bff/command-confirmations` |
+| B1-016 | GET | `/bff/command-confirmations/{token}` |
+
+The compatibility route also needed a read endpoint, and expired issued tokens needed
+to fail closed with a typed HTTP 410 envelope instead of falling through as an
+unstructured server error.
+
+### Fix
+
+**File: `services/control-plane/bff/main.py`**
+
+- Kept `POST /bff/confirm-tokens` as the canonical token issue route and preserved
+  stable replay semantics for server-generated token IDs.
+- Projected `GET /bff/confirm-tokens/{tokenId}` from the command store with lifecycle
+  states: `available`, `created`, `redeemed`, `deleted`, or `expired`.
+- Updated `POST /bff/confirm-tokens/{tokenId}/redeem` to return token lifecycle fields
+  (`data.id`, `data.tokenId`, `data.status=redeemed`, `data.redeemed=true`) while
+  preserving the accepted command receipt envelope.
+- Added `GET /bff/command-confirmations/{token}`.
+- Updated `POST /bff/command-confirmations` to accept `confirm_token`/`confirmToken`
+  aliases, write a matching confirm-token redeem record, and return token lifecycle
+  fields while preserving the legacy flat response shape.
+- Added typed expired-token handling for token read/redeem and command-confirmation
+  read/write paths: HTTP 410 with `INVALID_STATE` and
+  `precondition_failed=confirm_token_expired`.
+
+`DELETE /bff/confirm-tokens/{tokenId}` remains available as an existing compatibility
+route and now also returns `data.tokenId`, `data.status=deleted`, and `data.deleted=true`.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `POST /bff/confirm-tokens` issues a token and returns `data.tokenId` / `data.status=created` | Implemented in BFF-B1-009 |
+| 2 | `GET /bff/confirm-tokens/{tokenId}` returns the current token lifecycle state | Implemented in BFF-B1-009 |
+| 3 | `POST /bff/confirm-tokens/{tokenId}/redeem` marks the token redeemed and preserves the command receipt | Implemented in BFF-B1-009 |
+| 4 | `POST /bff/command-confirmations` mirrors the lifecycle by marking the token redeemed | Implemented in BFF-B1-009 |
+| 5 | `GET /bff/command-confirmations/{token}` returns the mirrored confirmation lifecycle state | Implemented in BFF-B1-009 |
+| 6 | Expired issued tokens return typed HTTP 410 (`INVALID_STATE`, `confirm_token_expired`) on read/redeem/confirmation paths | Implemented in BFF-B1-009 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_confirm_token_lifecycle.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B1-009 — Owner: Codex2, Reviewer: Claude
+
+---
+
 ## §15 CORS — Lovable Preview and Published Origins
 
 ### Gap
@@ -200,3 +322,54 @@ durable across page loads.
 ### Task
 
 BFF-B1-004 — Owner: Claude, Reviewer: Codex
+
+---
+
+## B7 — Agora Compatibility APIs
+
+### Gap
+
+The execute-plans Agora workbench still references six historical Agora route
+names that had only registry-level `implemented_by_alias` coverage. The canonical
+BFF read models already existed, but the legacy path names were not registered
+as live FastAPI routes. In strict/live mode this could make a frontend route
+probe see a 404 even though the canonical surface was available.
+
+### Fix
+
+**File: `services/control-plane/bff/main.py`**
+
+Register the six historical Agora names as canonical read aliases on the
+existing handlers:
+
+| Compatibility path | Canonical handler/source |
+|---|---|
+| `GET /bff/agora/markets` | `GET /bff/agora/watchlist` |
+| `GET /bff/agora/committee-sessions` | `GET /bff/agora/sessions` |
+| `GET /bff/agora/market-notes` | `GET /bff/agora/notes` |
+| `GET /bff/agora/decision-journal` | `GET /bff/agora/journal` |
+| `GET /bff/agora/research-tasks` | `GET /bff/research/tasks` |
+| `GET /bff/agora/incoming` | `GET /bff/agora/handoffs` |
+
+These aliases do not introduce new write authority, fallback data, or separate
+DTO projections. They share the canonical handler, auth gate, pagination
+parameters, response envelope, and read-surface metadata.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | All six B7 compatibility paths are registered in FastAPI and return HTTP 200 with seeded local read-store data | ✅ test added |
+| 2 | Each alias returns the same item IDs as its canonical route | ✅ test added |
+| 3 | Each alias reports the same read-surface `status` and `source` as its canonical route | ✅ test added |
+| 4 | Aliases preserve the existing read-role auth gate and do not add write authority | ✅ implemented by shared handlers |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_b2_005_agora_canonical_aliases.py`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B2-005 — Owner: Codex, Reviewer: Claude2
