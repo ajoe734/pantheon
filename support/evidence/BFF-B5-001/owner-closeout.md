@@ -74,3 +74,21 @@ Results:
   cleared with `git restore --staged -- support/reviews/BFF-B5-001-review-claude.md`
   before owner closeout work continued.
 - The materialized task brief is included as a task-scoped closeout artifact.
+
+## Publication Refresh
+
+After the owner closeout evidence commit, `origin/dev` had advanced with
+BFF-PM12-008 and BFF-PM12-009 closeout merges. The task branch was refreshed
+with `origin/dev` using a non-interactive merge on 2026-05-23.
+
+- Dev refresh merge commit:
+  `b0d17bd624a90043b994078a69a1a2ebf5608742`
+- Refresh source: `origin/dev` at
+  `e84d7fb550a955568635659ce75bd20ba3860e86`
+- Branch diff after refresh remains task-scoped to:
+  `.orchestrator/task-briefs/bff_b5_001.md`,
+  `support/evidence/BFF-B5-001/owner-closeout.md`, and
+  `support/reviews/BFF-B5-001-review-claude.md`.
+- Post-refresh verification:
+  `PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=services/control-plane/bff python3 -m pytest services/control-plane/bff/tests/test_bff_b5_humangate_commands.py services/control-plane/bff/tests/test_bff_b3_human_inbox.py services/control-plane/bff/tests/test_bff_pm12_persona_league.py -q`
+  reported 17 passed in 8.24s.
