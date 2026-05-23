@@ -63,6 +63,60 @@ BFF-B1-003 — Owner: Codex, Reviewer: Claude
 
 ---
 
+## §12 POST /bff/auth/refresh — Cookie or Bearer Refresh
+
+### Gap
+
+The strict-mode frontend can call `POST /bff/auth/refresh` from either a browser
+cookie session or an injected bearer-token session. The prior route only refreshed
+after the shared auth facade accepted the current request credential directly, but
+it did not make refresh credential resolution explicit and could not distinguish
+"no refresh path" from a generic auth failure.
+
+### Fix
+
+**File: `services/control-plane/bff/main.py`**
+
+- Resolve refresh credentials in this order: request body `refresh_token` /
+  `refreshToken`, `X-Refresh-Token`, `pantheon_refresh` /
+  `pantheon_refresh_token` cookie, `pantheon_session` cookie, then
+  `Authorization: Bearer ...` for backwards compatibility.
+- Validate the selected credential through the existing BFF auth facade and keep
+  `_require_read_role` as the role gate.
+- Preserve the `BFF-LUV-SEM-001` current-session DTO envelope, idempotency replay,
+  and idempotency conflict behaviour.
+- Persist `last_refreshed_at` and `last_refresh_credential_source` in the BFF
+  session lifecycle store so refresh source and session freshness are visible in
+  the response.
+- Return a typed HTTP 401 `INVALID_TOKEN` error with
+  `details.reason = "AUTH_REFRESH_CREDENTIAL_REQUIRED"` and
+  `precondition_failed = "refresh_credential"` when no body/header/cookie/bearer
+  refresh path is present.
+- Add `X-Refresh-Token` to the CORS allow-header list for browser refresh-token
+  handoff.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Bearer refresh credential returns HTTP 200, `operation.type = "refresh"`, and records refresh credential source as `bearer` | ✅ test added |
+| 2 | Cookie refresh credential returns HTTP 200 with `session.session_kind = "cookie"` and records refresh credential source as `refresh_cookie` | ✅ test added |
+| 3 | Missing body/header/cookie/bearer refresh credential returns typed HTTP 401 without a raw 500 | ✅ test added |
+| 4 | Existing `pantheon_session` cookie and `Authorization: Bearer ...` compatibility paths remain covered by the session auth contract tests | ✅ preserved |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_auth_refresh.py`
+- `services/control-plane/bff/test_bff_session_auth_me_contract.py`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B1-005 — Owner: Codex2, Reviewer: Claude
+
+---
+
 ## §14 Confirm-Token Lifecycle
 
 ### Gap

@@ -254,6 +254,7 @@ _CORS_ALLOW_HEADERS = [
     "X-Idempotency-Key",
     "X-MFA-Token",
     "X-Request-Id",
+    "X-Refresh-Token",
     "X-Trace-Id",
 ]
 _CORS_EXPOSE_HEADERS = [
@@ -3717,6 +3718,55 @@ def _sem_session_state(identity: OperatorIdentity) -> Dict[str, Any]:
     return session_lifecycle_store.get_session(_sem_session_key(identity))
 
 
+def _sem_bearer_token(authorization: Optional[str]) -> Optional[str]:
+    clean = str(authorization or "").strip()
+    if not clean:
+        return None
+    parts = clean.split(None, 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        return None
+    token = parts[1].strip()
+    return token or None
+
+
+def _sem_refresh_credential(
+    payload: Dict[str, Any],
+    *,
+    authorization: Optional[str],
+    pantheon_session: Optional[str],
+    pantheon_refresh: Optional[str],
+    pantheon_refresh_token: Optional[str],
+    x_refresh_token: Optional[str],
+) -> Dict[str, str]:
+    body = payload if isinstance(payload, dict) else {}
+    candidates = [
+        ("body", _first_nonblank(body.get("refresh_token"), body.get("refreshToken"))),
+        ("header", x_refresh_token),
+        ("refresh_cookie", _first_nonblank(pantheon_refresh, pantheon_refresh_token)),
+        ("session_cookie", pantheon_session),
+        ("bearer", _sem_bearer_token(authorization)),
+    ]
+    for source, token in candidates:
+        clean = str(token or "").strip()
+        if clean:
+            return {"source": source, "token": clean}
+    raise _bff_error(
+        401,
+        ErrorCode.INVALID_TOKEN,
+        "Refresh credential is required",
+        "AUTH_REFRESH_CREDENTIAL_REQUIRED",
+        precondition_failed="refresh_credential",
+        suggestion="Send a valid refresh token, Authorization bearer token, or Pantheon session cookie",
+    )
+
+
+def _sem_refresh_identity(credential: Dict[str, str], *, mfa_token: Optional[str]) -> OperatorIdentity:
+    identity = _extract_identity(f"Bearer {credential['token']}", mfa_token=mfa_token)
+    if credential["source"] in {"refresh_cookie", "session_cookie"}:
+        identity = identity.model_copy(update={"token_kind": "cookie"})
+    return identity
+
+
 @app.get("/bff/me")
 async def bff_me(
     response: Response,
@@ -3807,6 +3857,9 @@ def _sem_session_current_response(
     session_patch: Optional[Dict[str, Any]] = None,
     idempotency_key: Optional[str] = None,
     replayed: bool = False,
+    operation_extra: Optional[Dict[str, Any]] = None,
+    data_extra: Optional[Dict[str, Any]] = None,
+    meta_extra: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     now = utc_now()
     state = _sem_session_state(identity)
@@ -3815,6 +3868,10 @@ def _sem_session_current_response(
     user = _bff_me_user_payload(identity)
     session = _bff_me_session_payload(identity, checked_at=now)
     session["state"] = str(state.get("state") or "active")
+    if state.get("last_refreshed_at"):
+        session["last_refreshed_at"] = state.get("last_refreshed_at")
+    if state.get("last_refresh_credential_source"):
+        session["last_refresh_credential_source"] = state.get("last_refresh_credential_source")
     if state.get("state") == "logged_out":
         session["authenticated"] = False
         session["fresh"] = False
@@ -3826,12 +3883,19 @@ def _sem_session_current_response(
     if state.get("locale"):
         selected_locale["resolved"] = state["locale"]
         selected_locale["source"] = "session"
+    feature_flags = _bff_me_feature_flags(identity)
+    operation = {
+        "type": operation_type,
+        "operation_id": f"{operation_type}-{uuid.uuid4().hex[:12]}",
+        "performed_at": now,
+    }
+    if operation_extra:
+        operation.update(operation_extra)
+    session_kind = str(session.get("session_kind") or _resolve_session_kind(identity))
     data = {
-        "operation": {
-            "type": operation_type,
-            "operation_id": f"{operation_type}-{uuid.uuid4().hex[:12]}",
-            "performed_at": now,
-        },
+        "operation": operation,
+        "operator_id": user["operator_id"],
+        "operatorId": user["operator_id"],
         "user": user,
         "currentUser": user,
         "current_user": user,
@@ -3839,16 +3903,26 @@ def _sem_session_current_response(
         "capabilities": user["capabilities"],
         "tenant": selected_tenant,
         "tenant_id": selected_tenant["id"],
+        "tenantId": selected_tenant["id"],
+        "allowed_tenants": selected_tenant["allowed_ids"],
+        "allowedTenants": selected_tenant["allowed_ids"],
         "locale": selected_locale,
         "environment": _bff_me_environment_payload(),
-        "feature_flags": _bff_me_feature_flags(identity),
+        "feature_flags": feature_flags,
+        "featureFlags": feature_flags,
         "session": session,
+        "session_kind": session_kind,
+        "sessionKind": session_kind,
     }
+    if data_extra:
+        data.update(data_extra)
     meta: Dict[str, Any] = {
         "contract": "BFF-LUV-SEM-001",
         "snapshot_at": now,
         "idempotency": {"idempotencyKey": idempotency_key, "replayed": replayed},
     }
+    if meta_extra:
+        meta.update(meta_extra)
     return {"data": data, "meta": meta}
 
 
@@ -3871,15 +3945,32 @@ async def bff_auth_refresh(
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
     pantheon_session: Optional[str] = Cookie(default=None),
+    pantheon_refresh: Optional[str] = Cookie(default=None),
+    pantheon_refresh_token: Optional[str] = Cookie(default=None),
     x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+    x_refresh_token: Optional[str] = Header(default=None, alias="X-Refresh-Token"),
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
-    identity = _extract_identity(authorization, mfa_token=x_mfa_token, session_cookie=pantheon_session)
+    credential = _sem_refresh_credential(
+        payload,
+        authorization=authorization,
+        pantheon_session=pantheon_session,
+        pantheon_refresh=pantheon_refresh,
+        pantheon_refresh_token=pantheon_refresh_token,
+        x_refresh_token=x_refresh_token,
+    )
+    identity = _sem_refresh_identity(credential, mfa_token=x_mfa_token)
     _require_read_role(identity)
     resolved_key = _sem_optional_idempotency_key(idempotency_key, x_idempotency_key)
     record_key = _sem_session_idempotency_key("POST /bff/auth/refresh", identity, resolved_key)
-    request_hash = _stable_json_hash({"route": "POST /bff/auth/refresh", "payload": payload or {}})
+    request_hash = _stable_json_hash(
+        {
+            "route": "POST /bff/auth/refresh",
+            "payload": payload or {},
+            "refresh_credential_source": credential["source"],
+        }
+    )
     if record_key:
         cached = session_lifecycle_store.get_idempotency(record_key)
         if cached:
@@ -3895,12 +3986,35 @@ async def bff_auth_refresh(
             result.setdefault("meta", {}).setdefault("idempotency", {})["replayed"] = True
             return result
     now = utc_now()
-    session_lifecycle_store.upsert_session(
-        _sem_session_key(identity),
-        {"state": "active", "last_refreshed_at": now},
-        now=now,
+    session_kind = _resolve_session_kind(identity)
+    refresh_descriptor = {
+        "source": credential["source"],
+        "session_kind": session_kind,
+        "sessionKind": session_kind,
+        "token_kind": identity.token_kind,
+        "tokenKind": identity.token_kind,
+    }
+    result = _sem_session_current_response(
+        identity,
+        operation_type="refresh",
+        session_patch={
+            "state": "active",
+            "last_refreshed_at": now,
+            "last_refresh_credential_source": credential["source"],
+        },
+        idempotency_key=resolved_key,
+        operation_extra={
+            "refresh_credential": refresh_descriptor,
+            "refreshCredential": refresh_descriptor,
+        },
+        data_extra={
+            "auth": {
+                "refresh_credential": refresh_descriptor,
+                "refreshCredential": refresh_descriptor,
+            }
+        },
+        meta_extra={"auth": {"refreshCredentialSource": credential["source"], "sessionKind": session_kind}},
     )
-    result = _sem_session_current_response(identity, operation_type="refresh", idempotency_key=resolved_key)
     if record_key:
         session_lifecycle_store.put_idempotency(record_key, request_hash=request_hash, result=result, now=now)
     return result
