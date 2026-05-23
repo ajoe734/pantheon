@@ -63,3 +63,21 @@ Results:
   from `services/control-plane/bff/read_store.py`.
 - GitHub PR #471 is merged into `dev`; visible Branch CI Gate and Orchestrator
   Sync checks on the PR were successful.
+
+## Publication Refresh
+
+Closeout PR #475 initially reported `BEHIND` after `origin/dev` advanced with
+BFF-B3-007 work. The task branch was refreshed with `origin/dev` using a
+non-interactive merge on 2026-05-23.
+
+- Dev refresh merge commit: `3495e37832a47055d6e449e8eadd9f218499c1d0`
+- Refresh source: `origin/dev` at
+  `9fbf5098e64b82c03f731a48d960ad4a5f25dcb3`
+- Post-refresh verification:
+  `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+  passed, and
+  `PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q`
+  reported 16 passed in 6.98s with the same 3 existing
+  `datetime.utcnow()` deprecation warnings from `read_store.py`.
+- This file was updated after the dev refresh so the branch tip remains a
+  BFF-PM12-007 owner commit with the required Codex2 closeout trailers.
