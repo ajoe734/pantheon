@@ -22119,6 +22119,440 @@ def _evolution_journal_surfaces(
     }
 
 
+_PERSONA_INTENT_SOURCE_ALIASES = {
+    "trace": "persona_trace",
+    "persona_trace": "persona_trace",
+    "persona_traces": "persona_trace",
+    "session": "persona_trace",
+    "sessions": "persona_trace",
+    "trainer": "trainer_session",
+    "trainer_session": "trainer_session",
+    "trainer_sessions": "trainer_session",
+    "teaching": "trainer_session",
+    "teaching_session": "trainer_session",
+    "agora": "agora_session",
+    "agora_session": "agora_session",
+    "agora_sessions": "agora_session",
+}
+
+
+def _persona_intent_csv_filter(value: Optional[str]) -> Optional[set[str]]:
+    if not value:
+        return None
+    requested = {part.strip().lower() for part in value.split(",") if part.strip()}
+    return requested or None
+
+
+def _persona_intent_source_filter(value: Optional[str]) -> Optional[set[str]]:
+    requested = _persona_intent_csv_filter(value)
+    if not requested:
+        return None
+    return {
+        _PERSONA_INTENT_SOURCE_ALIASES.get(source_type, source_type)
+        for source_type in requested
+    }
+
+
+def _persona_intent_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _persona_intent_timestamp(record: Dict[str, Any]) -> str:
+    return str(
+        _management_first_non_empty(
+            record.get("updated_at"),
+            record.get("updatedAt"),
+            record.get("last_heartbeat_at"),
+            record.get("completed_at"),
+            record.get("ended_at"),
+            record.get("created_at"),
+            record.get("createdAt"),
+            record.get("started_at"),
+        )
+        or ""
+    )
+
+
+def _persona_intent_persona_label(persona_id: str) -> Optional[str]:
+    persona = read_store.get_persona(persona_id)
+    if not persona:
+        return None
+    return persona.get("name") or persona.get("display_name") or persona_id
+
+
+def _persona_intent_capability_summary(session: Dict[str, Any]) -> Dict[str, Any]:
+    snapshot_id = _persona_intent_text(session.get("capability_snapshot_id"))
+    snapshot = read_store.get_capability_snapshot(snapshot_id) if snapshot_id else None
+    if not snapshot:
+        persona_id = _persona_intent_text(session.get("persona_id"))
+        snapshot = read_store.get_capability_snapshot_for_persona(persona_id)
+        snapshot_id = _persona_intent_text((snapshot or {}).get("snapshot_id") or snapshot_id)
+    if not snapshot:
+        return {
+            "snapshot_id": snapshot_id or None,
+            "available": False,
+            "effective_tool_count": 0,
+            "effective_skill_count": 0,
+            "restriction_count": 0,
+        }
+    return {
+        "snapshot_id": snapshot_id or snapshot.get("snapshot_id") or snapshot.get("id"),
+        "available": True,
+        "effective_tool_count": len(snapshot.get("effective_tools") or []),
+        "effective_skill_count": len(snapshot.get("effective_skills") or []),
+        "effective_workflow_count": len(snapshot.get("effective_workflows") or []),
+        "restriction_count": len(snapshot.get("restrictions") or []),
+        "generated_at": snapshot.get("generated_at"),
+    }
+
+
+def _persona_intent_redaction(fields: List[str]) -> Dict[str, Any]:
+    return {
+        "is_redacted": True,
+        "redacted": True,
+        "policy": "management_persona_intent_public_summary",
+        "redacted_fields": fields,
+    }
+
+
+def _persona_intent_trace_item(session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    session_id = _management_record_id(session, "session_id", "id")
+    if not session_id:
+        return None
+    persona_id = _persona_intent_text(session.get("persona_id"))
+    session_type = _persona_intent_text(session.get("session_type") or "persona_session")
+    status = _persona_intent_text(session.get("status") or "unknown").lower() or "unknown"
+    occurred_at = _persona_intent_timestamp(session)
+    item_id = f"persona_trace:{session_id}"
+    trace = {
+        "session_id": session_id,
+        "trace_id": session.get("trace_id"),
+        "request_id": session.get("request_id"),
+        "runtime_binding_id": session.get("runtime_binding_id"),
+        "deployment_stage": session.get("deployment_stage"),
+        "capital_pool_id": session.get("capital_pool_id"),
+        "last_heartbeat_at": session.get("last_heartbeat_at"),
+        "capability_summary": _persona_intent_capability_summary(session),
+    }
+    return {
+        "id": item_id,
+        "intent_id": item_id,
+        "sourceType": "persona_trace",
+        "source_type": "persona_trace",
+        "source_id": session_id,
+        "personaId": persona_id or None,
+        "persona_id": persona_id or None,
+        "persona_label": _persona_intent_persona_label(persona_id) if persona_id else None,
+        "intent": session_type,
+        "title": f"Persona trace {session_id}",
+        "summary": f"{session_type.replace('_', ' ').title()} session intent summary.",
+        "status": status,
+        "created_at": session.get("started_at") or session.get("created_at"),
+        "updated_at": session.get("last_heartbeat_at") or session.get("updated_at"),
+        "occurred_at": occurred_at,
+        "trace": trace,
+        "redacted": True,
+        "redaction": _persona_intent_redaction(
+            ["capability_snapshot", "tools_enabled", "memory_trace", "reasoning_trace"]
+        ),
+        "route": "/management/persona-intent?source_type=persona_trace",
+        "bff_detail_path": f"/api/v1/sessions/{session_id}",
+    }
+
+
+def _persona_intent_trainer_item(session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    session_id = _management_record_id(session, "session_id", "id")
+    if not session_id:
+        return None
+    persona_id = _persona_intent_text(session.get("persona_id"))
+    status = _persona_intent_text(session.get("status") or "unknown").lower() or "unknown"
+    raw_events = [event for event in (session.get("events") or []) if isinstance(event, dict)]
+    latest_event = None
+    if raw_events:
+        latest_event = sorted(
+            raw_events,
+            key=lambda event: int(event.get("sequence_number") or 0),
+        )[-1]
+    outcomes = list(session.get("outcomes") or [])
+    objective = _persona_intent_text(session.get("objective") or session.get("topic"))
+    occurred_at = _persona_intent_timestamp(session)
+    item_id = f"trainer_session:{session_id}"
+    trainer_summary = {
+        "session_id": session_id,
+        "objective": objective or None,
+        "mode": session.get("mode") or session.get("session_type") or "trainer",
+        "status": status,
+        "started_at": session.get("started_at"),
+        "ended_at": session.get("ended_at") or session.get("completed_at"),
+        "current_control_state": session.get("current_control_state"),
+        "event_count": len(raw_events),
+        "outcome_count": len(outcomes),
+        "latest_outcome_signal": (latest_event or {}).get("outcome_signal"),
+        "artifact_count": len(session.get("session_artifacts") or session.get("artifacts") or []),
+    }
+    return {
+        "id": item_id,
+        "intent_id": item_id,
+        "sourceType": "trainer_session",
+        "source_type": "trainer_session",
+        "source_id": session_id,
+        "personaId": persona_id or None,
+        "persona_id": persona_id or None,
+        "persona_label": _persona_intent_persona_label(persona_id) if persona_id else None,
+        "intent": trainer_summary["mode"],
+        "title": f"Trainer session {session_id}",
+        "summary": objective or "Trainer session intent summary.",
+        "status": status,
+        "created_at": session.get("started_at") or session.get("created_at"),
+        "updated_at": session.get("ended_at") or session.get("completed_at") or session.get("updated_at"),
+        "occurred_at": occurred_at,
+        "trainer": trainer_summary,
+        "redacted": True,
+        "redaction": _persona_intent_redaction(["events", "message_body", "raw_control_diff"]),
+        "route": "/management/persona-intent?source_type=trainer_session",
+        "bff_detail_path": f"/api/v1/trainer/sessions/{session_id}",
+    }
+
+
+def _persona_intent_agora_persona_ids(session: Dict[str, Any]) -> List[str]:
+    persona_ids: List[str] = []
+    for participant in session.get("participants") or []:
+        if not isinstance(participant, dict):
+            continue
+        actor_id = _persona_intent_text(
+            participant.get("actorId") or participant.get("actor_id") or participant.get("persona_id")
+        )
+        if actor_id.startswith("persona-") or actor_id.startswith("p-"):
+            persona_ids.append(actor_id)
+    for ref in session.get("contextRefs") or session.get("context_refs") or []:
+        if not isinstance(ref, dict):
+            continue
+        ref_type = _persona_intent_text(ref.get("ref_type") or ref.get("type")).lower()
+        ref_id = _persona_intent_text(ref.get("ref_id") or ref.get("id"))
+        if ref_type == "persona" and ref_id:
+            persona_ids.append(ref_id)
+    seen: set[str] = set()
+    ordered: List[str] = []
+    for persona_id in persona_ids:
+        if persona_id and persona_id not in seen:
+            ordered.append(persona_id)
+            seen.add(persona_id)
+    return ordered
+
+
+def _persona_intent_agora_item(session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    session_id = _management_record_id(session, "sessionId", "session_id", "id")
+    if not session_id:
+        return None
+    status = _persona_intent_text(session.get("status") or "unknown").lower() or "unknown"
+    mode = _persona_intent_text(session.get("mode") or session.get("sessionType") or "agora_session")
+    messages = [message for message in (session.get("messages") or []) if isinstance(message, dict)]
+    latest_message_at = max(
+        [
+            _persona_intent_text(message.get("createdAt") or message.get("created_at"))
+            for message in messages
+            if _persona_intent_text(message.get("createdAt") or message.get("created_at"))
+        ],
+        default=None,
+    )
+    context_refs = [
+        ref for ref in (session.get("contextRefs") or session.get("context_refs") or [])
+        if isinstance(ref, dict)
+    ]
+    persona_ids = _persona_intent_agora_persona_ids(session)
+    topic = _persona_intent_text(session.get("topic") or session.get("title"))
+    occurred_at = _persona_intent_timestamp(session)
+    item_id = f"agora_session:{session_id}"
+    agora_summary = {
+        "sessionId": session_id,
+        "session_id": session_id,
+        "mode": mode,
+        "status": status,
+        "topic": topic or None,
+        "participant_count": len(session.get("participants") or []),
+        "context_ref_count": len(context_refs),
+        "message_count": len(messages),
+        "latest_message_at": latest_message_at,
+        "persona_ids": persona_ids,
+        "sse_topic": session.get("sse_topic"),
+    }
+    return {
+        "id": item_id,
+        "intent_id": item_id,
+        "sourceType": "agora_session",
+        "source_type": "agora_session",
+        "source_id": session_id,
+        "personaId": persona_ids[0] if persona_ids else None,
+        "persona_id": persona_ids[0] if persona_ids else None,
+        "persona_ids": persona_ids,
+        "intent": mode,
+        "title": session.get("title") or f"Agora session {session_id}",
+        "summary": topic or "Agora session intent summary.",
+        "status": status,
+        "created_at": session.get("createdAt") or session.get("created_at"),
+        "updated_at": session.get("updatedAt") or session.get("updated_at") or latest_message_at,
+        "occurred_at": occurred_at,
+        "agora": agora_summary,
+        "redacted": True,
+        "redaction": _persona_intent_redaction(["messages", "message_content", "raw_transcript"]),
+        "route": "/management/persona-intent?source_type=agora_session",
+        "bff_detail_path": f"/bff/agora/ask/sessions/{session_id}",
+    }
+
+
+def _persona_intent_all_items() -> tuple[
+    List[Dict[str, Any]],
+    List[Dict[str, Any]],
+    List[Dict[str, Any]],
+    List[Dict[str, Any]],
+]:
+    personas = _list_persona_records()
+    items: List[Dict[str, Any]] = []
+    persona_sessions: List[Dict[str, Any]] = []
+    trainer_sessions: List[Dict[str, Any]] = []
+    for persona in personas:
+        persona_id = _persona_intent_text(persona.get("persona_id") or persona.get("id"))
+        for session in read_store.get_sessions_for_persona(persona_id) or []:
+            persona_sessions.append(session)
+            item = _persona_intent_trace_item(session)
+            if item is not None:
+                items.append(item)
+        for session in read_store.get_teaching_sessions_for_persona(persona_id) or []:
+            trainer_sessions.append(session)
+            item = _persona_intent_trainer_item(session)
+            if item is not None:
+                items.append(item)
+
+    agora_sessions = list(read_store.list_agora_sessions() or [])
+    for session in agora_sessions:
+        item = _persona_intent_agora_item(session)
+        if item is not None:
+            items.append(item)
+
+    items.sort(
+        key=lambda item: (
+            str(item.get("occurred_at") or ""),
+            str(item.get("id") or ""),
+        ),
+        reverse=True,
+    )
+    return items, persona_sessions, trainer_sessions, agora_sessions
+
+
+def _persona_intent_filter_items(
+    items: List[Dict[str, Any]],
+    *,
+    source_type: Optional[str],
+    persona_id: Optional[str],
+    status: Optional[str],
+    intent: Optional[str],
+) -> List[Dict[str, Any]]:
+    source_types = _persona_intent_source_filter(source_type)
+    persona_ids = _persona_intent_csv_filter(persona_id)
+    statuses = _persona_intent_csv_filter(status)
+    intents = _persona_intent_csv_filter(intent)
+    filtered = items
+    if source_types:
+        filtered = [
+            item for item in filtered
+            if str(item.get("source_type") or item.get("sourceType") or "").lower() in source_types
+        ]
+    if persona_ids:
+        filtered = [
+            item for item in filtered
+            if str(item.get("persona_id") or "").lower() in persona_ids
+            or any(str(pid or "").lower() in persona_ids for pid in (item.get("persona_ids") or []))
+        ]
+    if statuses:
+        filtered = [
+            item for item in filtered
+            if str(item.get("status") or "").lower() in statuses
+        ]
+    if intents:
+        filtered = [
+            item for item in filtered
+            if str(item.get("intent") or "").lower() in intents
+            or any(token in str(item.get("summary") or "").lower() for token in intents)
+            or any(token in str(item.get("title") or "").lower() for token in intents)
+        ]
+    return filtered
+
+
+def _persona_intent_summary(items: List[Dict[str, Any]], returned_count: int) -> Dict[str, Any]:
+    by_source_type = _management_count_by(items, "source_type")
+    by_status = _management_count_by(items, "status")
+    by_intent = _management_count_by(items, "intent")
+    persona_ids = sorted(
+        {
+            str(pid)
+            for item in items
+            for pid in [item.get("persona_id"), *(item.get("persona_ids") or [])]
+            if str(pid or "").strip()
+        }
+    )
+    latest_at = max(
+        [str(item.get("occurred_at") or "") for item in items if item.get("occurred_at")],
+        default=None,
+    )
+    return {
+        "total_items": len(items),
+        "returned_items": returned_count,
+        "persona_trace_count": by_source_type.get("persona_trace", 0),
+        "trainer_session_count": by_source_type.get("trainer_session", 0),
+        "agora_session_count": by_source_type.get("agora_session", 0),
+        "redacted_item_count": len([item for item in items if item.get("redacted")]),
+        "persona_count": len(persona_ids),
+        "persona_ids": persona_ids,
+        "latest_at": latest_at,
+        "bySourceType": by_source_type,
+        "by_source_type": by_source_type,
+        "byStatus": by_status,
+        "by_status": by_status,
+        "byIntent": by_intent,
+        "by_intent": by_intent,
+    }
+
+
+def _persona_intent_surfaces(
+    *,
+    snapshot_at: str,
+) -> Dict[str, Any]:
+    source_surfaces = {
+        "personas": _dataset_surface_status("personas", snapshot_at=snapshot_at),
+        "persona_sessions": _dataset_surface_status("sessions", snapshot_at=snapshot_at),
+        "capability_snapshots": _dataset_surface_status("capability_snapshots", snapshot_at=snapshot_at),
+        "teaching_sessions": _dataset_surface_status("teaching_sessions", snapshot_at=snapshot_at),
+        "agora_sessions": _dataset_surface_status("agora_sessions", snapshot_at=snapshot_at),
+    }
+    persona_trace_surface = _aggregate_group_surface(
+        "persona_traces",
+        [
+            source_surfaces["personas"],
+            source_surfaces["persona_sessions"],
+            source_surfaces["capability_snapshots"],
+        ],
+        snapshot_at=snapshot_at,
+        unavailable_message="Persona trace intent summaries are unavailable.",
+        degraded_message="Persona trace intent summaries are degraded because one or more source surfaces are degraded.",
+    )
+    persona_intent_surface = _aggregate_group_surface(
+        "management_persona_intent",
+        [
+            persona_trace_surface,
+            source_surfaces["teaching_sessions"],
+            source_surfaces["agora_sessions"],
+        ],
+        snapshot_at=snapshot_at,
+        unavailable_message="Persona Intent aggregate unavailable.",
+        degraded_message="Persona Intent aggregate is degraded because one or more source surfaces are degraded.",
+    )
+    return {
+        "management_persona_intent": persona_intent_surface,
+        "persona_traces": persona_trace_surface,
+        **source_surfaces,
+    }
+
+
 @app.get("/bff/management/human-inbox")
 async def bff_management_human_inbox(
     source_type: Optional[str] = None,
@@ -22285,6 +22719,53 @@ async def bff_management_evidence(
         page_token=page_token,
         page_size=page_size,
     )
+
+
+@app.get("/bff/management/persona-intent")
+async def bff_management_persona_intent(
+    source_type: Optional[str] = None,
+    persona_id: Optional[str] = None,
+    status: Optional[str] = None,
+    intent: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: compose redacted Persona Intent trace, trainer, and Agora summaries."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    items, _persona_sessions, _trainer_sessions, _agora_sessions = _persona_intent_all_items()
+    filtered = _persona_intent_filter_items(
+        items,
+        source_type=source_type,
+        persona_id=persona_id,
+        status=status,
+        intent=intent,
+    )
+    total = len(filtered)
+    page_items, next_page_token = _page_slice(filtered, page_token, page_size)
+    summary = _persona_intent_summary(filtered, len(page_items))
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = _persona_intent_surfaces(snapshot_at=snapshot_at)
+    meta["composition_sources"] = [
+        "persona_traces",
+        "teaching_sessions",
+        "agora_sessions",
+    ]
+    meta["redacted_item_count"] = summary["redacted_item_count"]
+    return {
+        "data": page_items,
+        "items": page_items,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": meta,
+    }
 
 
 @app.get("/bff/management/readiness/ep5")

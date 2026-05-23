@@ -2053,3 +2053,60 @@ BFF-B3-004 — Owner: Codex, Reviewer: Codex2
 ### Task
 
 BFF-B3-005 — Owner: Codex, Reviewer: Claude
+
+### B3-009 GET `/bff/management/persona-intent`
+
+**File: `services/control-plane/bff/main.py`**
+
+- Add `GET /bff/management/persona-intent` as a read-only Management aggregate.
+- Require the existing BFF read-role authentication gate; anonymous requests
+  return the typed BFF 401 envelope.
+- Compose redacted intent rows from:
+  - persona session trace summaries;
+  - trainer / teaching session summaries;
+  - Agora session summaries.
+- Return the standard BFF aggregate envelope: `data`, `items`, `summary`,
+  `page_info`, and `meta.surfaces`.
+- Support `source_type`, `persona_id`, `status`, `intent`, `page_token`, and
+  bounded `page_size` filters.
+- Preserve source surfaces in metadata (`persona_traces`, `persona_sessions`,
+  `capability_snapshots`, `teaching_sessions`, `agora_sessions`) plus a
+  composed `management_persona_intent` surface.
+- Redact raw transcripts, message bodies, tool lists, and capability internals;
+  expose only safe counts, IDs, timestamps, status, and summary fields.
+
+**Files: `execute-plans/src/lib/bff-v1/paths.ts`,
+`execute-plans/src/lib/bff-v1/management.ts`, and
+`execute-plans/src/lib/bff/client.ts`**
+
+- Add the canonical `/bff/management/persona-intent` path.
+- Export Persona Intent query, item, summary, response, path, and fetch helper
+  types.
+- Add `managementClient.personaIntent.list()` using the same strict/hybrid
+  live transport policy as the other Management aggregate reads.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `GET /bff/management/persona-intent` returns rows composed from persona traces, trainer sessions, and Agora sessions | ✅ test added in BFF-B3-007 |
+| 2 | Response includes `data`, `items`, `summary`, `page_info`, and `meta.surfaces.management_persona_intent` | ✅ test added in BFF-B3-007 |
+| 3 | `source_type`, `persona_id`, `status`, `intent`, and pagination filters are accepted by the backend route | ✅ test added in BFF-B3-007 |
+| 4 | Raw message bodies, transcript content, tool lists, and capability internals are redacted from aggregate rows | ✅ test added in BFF-B3-007 |
+| 5 | Anonymous request returns HTTP 401 typed BFF error envelope | ✅ test added in BFF-B3-007 |
+| 6 | Frontend path/client contract exposes the live aggregate route without seed-list fanout | ✅ test added in BFF-B3-007 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_b3_persona_intent.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/src/lib/bff/client.ts`
+- `execute-plans/src/lib/bff/__tests__/client.test.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B3-007 — Owner: Codex, Reviewer: Claude
