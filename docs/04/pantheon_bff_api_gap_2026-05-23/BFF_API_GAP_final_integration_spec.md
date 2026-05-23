@@ -154,6 +154,13 @@ execution is not explicitly enabled.
   `IDEMPOTENCY_CONFLICT` when the same key is reused with a different body.
 - Preserve the live broker fail-closed gate: payloads or runtime targets that signal
   live broker scope return HTTP 403 unless `PANTHEON_LIVE_BROKER_ENABLED=true`.
+- Keep the deprecated action compatibility facade
+  `POST /bff/actions/{entityType}/{entityId}/{actionId}` live. It must translate
+  the path and body into the final command envelope, persist through the same command
+  store, mark `admission_route=POST /bff/v1/commands`, preserve
+  `source_route=POST /bff/actions/{entityType}/{entityId}/{actionId}` for audit,
+  emit deprecation headers/body metadata, and reject body-level idempotency keys
+  with no command side effect.
 
 `/api/v1/operator/commands` remains available as the legacy foundation route and
 continues to return `CommandSubmissionResponse`; it is not changed to the final
@@ -170,16 +177,21 @@ continues to return `CommandSubmissionResponse`; it is not changed to the final
 | 5 | Duplicate idempotency key with a different payload returns HTTP 409 `IDEMPOTENCY_CONFLICT` | Implemented in BFF-B1-007 |
 | 6 | Live broker scope remains fail-closed when `PANTHEON_LIVE_BROKER_ENABLED` is false | Implemented in BFF-B1-007 |
 | 7 | Legacy `/api/v1/operator/commands` remains unaffected and keeps `CommandSubmissionResponse` | Implemented in BFF-B1-007 |
+| 8 | `POST /bff/actions/{entityType}/{entityId}/{actionId}` remains route-discoverable and adapts accepted calls through the final command admission facade with deprecation metadata | Implemented in BFF-B1-008 |
+| 9 | Action facade requests honor `Idempotency-Key` / `X-Idempotency-Key`, persist the resolved key in foundation context, and reject body-level idempotency keys before command-store writes | Implemented in BFF-B1-008 |
+| 10 | Action facade policy denials preserve final-command foundation error/audit metadata with `source_route=POST /bff/actions/{entityType}/{entityId}/{actionId}` | Implemented in BFF-B1-008 |
 
 ### Affected Files
 
 - `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_actions_to_commands_adapter.py`
 - `services/control-plane/bff/test_governance_command_submission.py`
 - `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
 
 ### Task
 
-BFF-B1-007 — Owner: Codex, Reviewer: Claude
+- BFF-B1-007 — Owner: Codex, Reviewer: Claude
+- BFF-B1-008 — Owner: Codex, Reviewer: Claude
 
 ---
 
@@ -494,6 +506,73 @@ durable across page loads.
 ### Task
 
 BFF-B1-004 — Owner: Claude, Reviewer: Codex
+
+---
+
+## §17 POST /bff/logout — Clear Session
+
+### Gap
+
+The BFF session surface lacked a specified, tested logout endpoint. The `POST /bff/logout`
+route existed in `main.py` but had no spec section and no test coverage, leaving the
+session-clear behaviour undocumented and unverified against the acceptance bar required
+by Sprint BFF-1.
+
+### Fix
+
+**File: `services/control-plane/bff/main.py`**
+
+The `POST /bff/logout` endpoint is implemented with the following behaviour:
+
+- Requires a valid Bearer token or cookie session with at least the `operator` role
+  (via `_require_read_role`).
+- Accepts an optional JSON body (ignored beyond idempotency-key hashing).
+- Accepts optional `Idempotency-Key` / `X-Idempotency-Key` headers for safe retries.
+- Writes `{"state": "logged_out", "logged_out_at": <iso-timestamp>}` into the
+  session-scoped lifecycle store entry for the caller.
+- Clears the `pantheon_session` cookie with `Set-Cookie: ... Max-Age=0`.
+- Returns the full `_sem_session_current_response` envelope with:
+  - `data.operation.type = "logout"`
+  - `data.session.state = "logged_out"`
+  - `data.session.authenticated = false`
+  - `data.session.fresh = false`
+  - `data.session.logged_out_at = <iso-timestamp>`
+  - `meta.idempotency.idempotencyKey` and `meta.idempotency.replayed` for replay tracking.
+- Subsequent `GET /bff/me` from the same bearer/cookie session returns HTTP 401 with
+  typed BFF error reason `SESSION_LOGGED_OUT`; the BFF no longer bootstraps a
+  logged-out DTO as an authenticated session.
+- If an idempotency key is reused with a different payload, returns HTTP 409
+  `IDEMPOTENCY_CONFLICT`.
+
+**File: `services/control-plane/bff/tests/test_bff_logout.py`** (new)
+
+Seven focused tests covering the acceptance criteria below, plus the existing
+session lifecycle contract tests updated for cookie clearing and logged-out 401
+semantics.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated `POST /bff/logout` returns HTTP 200 with `data.operation.type = "logout"`, `data.session.state = "logged_out"`, and `data.session.authenticated = false` | ✅ test added |
+| 2 | A subsequent `GET /bff/me` from the same bearer/session returns HTTP 401 `INVALID_TOKEN` with reason `SESSION_LOGGED_OUT` | ✅ test added |
+| 3 | Anonymous `POST /bff/logout` returns HTTP 401 | ✅ test added |
+| 4 | Idempotent logout: same idempotency key returns the same response with `meta.idempotency.replayed = true` | ✅ test added |
+| 5 | Reusing an idempotency key with a different payload returns HTTP 409 `IDEMPOTENCY_CONFLICT` | ✅ test added |
+| 6 | Response `data.session.logged_out_at` is present and `data.session.fresh` is `false` | ✅ test added |
+| 7 | Cookie-backed logout clears `pantheon_session` and a follow-up `GET /bff/me` returns HTTP 401 | ✅ test added |
+| 8 | `pytest services/control-plane/bff/tests/test_bff_logout.py services/control-plane/bff/test_bff_session_auth_me_contract.py` passes | ✅ verified |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_logout.py`
+- `services/control-plane/bff/test_bff_session_auth_me_contract.py`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B1-006 — Owner: Codex2, Reviewer: Claude
 
 ---
 

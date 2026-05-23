@@ -268,6 +268,10 @@ def test_bff_logout_is_idempotent_session_lifecycle(monkeypatch) -> None:
     assert second_payload["data"]["operation"]["operation_id"] == first_payload["data"]["operation"]["operation_id"]
     assert second_payload["data"]["session"]["logged_out_at"] == first_payload["data"]["session"]["logged_out_at"]
 
+    me = client.get("/bff/me", headers={"Authorization": OPERATOR_TOKEN})
+    assert me.status_code == 401, me.text
+    assert me.json()["detail"]["error"]["details"]["reason"] == "SESSION_LOGGED_OUT"
+
 
 def test_bff_logout_accepts_cookie_session_in_strict_mode(monkeypatch) -> None:
     _strict_auth_env(monkeypatch)
@@ -292,6 +296,10 @@ def test_bff_logout_accepts_cookie_session_in_strict_mode(monkeypatch) -> None:
     assert data["session"]["session_kind"] == "cookie"
     assert data["session"]["id"] == "session-cookie-logout"
     assert data["session"]["logged_out_at"]
+    assert "max-age=0" in response.headers.get("set-cookie", "").lower()
+
+    me = client.get("/bff/me")
+    assert me.status_code == 401, me.text
 
 
 def test_bff_session_lifecycle_routes_are_visible_in_openapi(monkeypatch) -> None:
