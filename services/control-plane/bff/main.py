@@ -22883,7 +22883,13 @@ async def bff_command_confirmation(
 
     _reject_body_idempotency_key(payload)
 
-    confirm_token = str(payload.get("confirm_token") or "").strip()
+    confirm_token = str(
+        payload.get("confirm_token")
+        or payload.get("confirmToken")
+        or payload.get("tokenId")
+        or payload.get("token")
+        or ""
+    ).strip()
     if not confirm_token:
         raise _bff_error(
             400,
@@ -22919,13 +22925,27 @@ async def bff_command_confirmation(
             )
         return existing["result"]
 
+    _raise_if_confirm_token_expired(confirm_token)
     staleness_warning = _check_read_surface_state()
     confirmation_id = str(uuid.uuid4())
     confirmed_at = utc_now()
+    _record_command_confirmation_redeem(
+        token_id=confirm_token,
+        command_id=original_command_id,
+        confirmation_id=confirmation_id,
+        confirmed_at=confirmed_at,
+        identity=identity,
+        idempotency_key=resolved_key,
+        request_hash=req_hash,
+    )
     result = {
         "confirmation_id": confirmation_id,
         "command_id": original_command_id,
+        "token": confirm_token,
+        "tokenId": confirm_token,
         "status": "accepted",
+        "lifecycleStatus": "redeemed",
+        "redeemed": True,
         "confirmed_at": confirmed_at,
         "confirmed_by": identity.operator_id,
     }
@@ -22936,6 +22956,39 @@ async def bff_command_confirmation(
         }
     _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": req_hash, "result": result}
     return result
+
+
+@app.get("/bff/command-confirmations/{token}")
+async def bff_command_confirmation_status(
+    token: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """
+    BFF: read the command-confirmation lifecycle state for a token.
+
+    This compatibility route mirrors the confirm-token lifecycle state so older
+    clients can resync confirmation status without writing a new command.
+    """
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _raise_if_confirm_token_expired(token)
+    token_state = _confirm_token_lifecycle_payload(token)
+    confirmation = _latest_command_confirmation_payload(token)
+    return {
+        "data": {
+            **confirmation,
+            "token": token,
+            "tokenId": token,
+            "status": token_state["status"],
+            "lifecycleStatus": token_state["status"],
+            "redeemed": token_state["status"] == "redeemed",
+            "deleted": token_state["status"] == "deleted",
+        },
+        "meta": {
+            "contract": "BFF-B1-009",
+            "snapshot_at": utc_now(),
+        },
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -24352,6 +24405,180 @@ async def sem_audit_export_command(
     )
 
 
+def _confirm_token_records(token_id: str) -> List[Dict[str, Any]]:
+    return [
+        record
+        for record in command_store._get_all_commands()
+        if isinstance(record.get("target"), dict)
+        and record["target"].get("type") == ObjectType.CONFIRM_TOKEN.value
+        and record["target"].get("id") == token_id
+    ]
+
+
+def _confirm_token_expiry_from_record(record: Dict[str, Any]) -> Optional[datetime]:
+    params = record.get("params") if isinstance(record.get("params"), dict) else {}
+    absolute = params.get("expiresAt") or params.get("expires_at")
+    parsed_absolute = _audit_datetime(absolute)
+    if parsed_absolute is not None:
+        return parsed_absolute
+
+    raw_ttl = params.get("ttlSeconds", params.get("ttl_seconds", params.get("ttl")))
+    if raw_ttl in (None, ""):
+        return None
+    try:
+        ttl_seconds = float(raw_ttl)
+    except (TypeError, ValueError):
+        return None
+    submitted_at = _audit_datetime(record.get("submitted_at"))
+    if submitted_at is None:
+        return None
+    return submitted_at + timedelta(seconds=ttl_seconds)
+
+
+def _confirm_token_lifecycle_payload(token_id: str) -> Dict[str, Any]:
+    status = "available"
+    expires_at: Optional[datetime] = None
+    latest_record: Optional[Dict[str, Any]] = None
+    for record in _confirm_token_records(token_id):
+        record_type = record.get("type")
+        if record_type == CommandType.CONFIRM_TOKEN_CREATE.value:
+            status = "created"
+            expires_at = _confirm_token_expiry_from_record(record)
+        elif record_type == CommandType.CONFIRM_TOKEN_REDEEM.value:
+            status = "redeemed"
+        elif record_type == CommandType.CONFIRM_TOKEN_DELETE.value:
+            status = "deleted"
+        latest_record = record
+
+    expired = False
+    if expires_at is not None and status == "created":
+        expired = expires_at <= datetime.now(timezone.utc)
+        if expired:
+            status = "expired"
+
+    payload: Dict[str, Any] = {
+        "id": token_id,
+        "tokenId": token_id,
+        "status": status,
+        "expired": expired,
+    }
+    if expires_at is not None:
+        payload["expiresAt"] = expires_at.isoformat().replace("+00:00", "Z")
+        payload["expires_at"] = payload["expiresAt"]
+    if latest_record is not None:
+        payload["commandId"] = latest_record.get("command_id")
+        payload["command_id"] = latest_record.get("command_id")
+    return payload
+
+
+def _raise_if_confirm_token_expired(token_id: str) -> None:
+    state = _confirm_token_lifecycle_payload(token_id)
+    if state.get("status") != "expired":
+        return
+    raise _bff_error(
+        410,
+        ErrorCode.INVALID_STATE,
+        "Confirm token expired",
+        f"Confirm token {token_id} expired before it could be used",
+        precondition_failed="confirm_token_expired",
+        suggestion="Issue a fresh confirm token and retry the guarded command",
+        details_extra={"tokenId": token_id, "expiresAt": state.get("expiresAt")},
+    )
+
+
+def _confirm_token_lifecycle_response(
+    response: JSONResponse,
+    *,
+    token_id: str,
+    status: str,
+    flag_field: Optional[str] = None,
+    status_code: int = 202,
+) -> JSONResponse:
+    content = json.loads(response.body.decode("utf-8"))
+    data = content.setdefault("data", {})
+    data["id"] = token_id
+    data["tokenId"] = token_id
+    data["status"] = status
+    if flag_field:
+        data[flag_field] = True
+    return JSONResponse(status_code=status_code, content=content)
+
+
+def _latest_command_confirmation_payload(token_id: str) -> Dict[str, Any]:
+    confirmation: Dict[str, Any] = {}
+    for record in _confirm_token_records(token_id):
+        if record.get("type") != CommandType.CONFIRM_TOKEN_REDEEM.value:
+            continue
+        params = record.get("params") if isinstance(record.get("params"), dict) else {}
+        confirmation = {
+            "confirmation_id": params.get("confirmation_id"),
+            "command_id": params.get("command_id") or record.get("command_id"),
+            "confirmed_at": params.get("confirmed_at") or record.get("submitted_at"),
+            "confirmed_by": params.get("confirmed_by"),
+        }
+    return {key: value for key, value in confirmation.items() if value is not None}
+
+
+def _record_command_confirmation_redeem(
+    *,
+    token_id: str,
+    command_id: str,
+    confirmation_id: str,
+    confirmed_at: str,
+    identity: OperatorIdentity,
+    idempotency_key: str,
+    request_hash: str,
+) -> None:
+    existing_record = command_store.get_command_by_idempotency_key(idempotency_key)
+    if existing_record:
+        stored_hash = (
+            (existing_record.get("foundation") or {})
+            .get("idempotency_record", {})
+            .get("request_hash")
+        )
+        if stored_hash and stored_hash != request_hash:
+            raise _bff_error(
+                409,
+                ErrorCode.IDEMPOTENCY_CONFLICT,
+                "Idempotency key already used with a different payload",
+                f"Key {idempotency_key!r} is bound to a different confirmation request",
+                precondition_failed="idempotency_conflict",
+                suggestion="Use a new Idempotency-Key or resubmit the original confirmation unchanged",
+            )
+        return
+
+    foundation_ctx = {
+        "idempotency_record": {
+            "idempotency_key": idempotency_key,
+            "request_hash": request_hash,
+            "status": "succeeded",
+        }
+    }
+    command_store.submit_command(
+        command_id=f"cmd-{uuid.uuid4().hex[:16]}",
+        command_type=CommandType.CONFIRM_TOKEN_REDEEM,
+        target=TargetObject(type=ObjectType.CONFIRM_TOKEN, id=token_id),
+        submitted_at=confirmed_at,
+        params={
+            "confirm_token": token_id,
+            "command_id": command_id,
+            "confirmation_id": confirmation_id,
+            "confirmed_at": confirmed_at,
+            "confirmed_by": identity.operator_id,
+        },
+        audit_context={
+            "actor": identity.operator_id,
+            "reason": "Command confirmation",
+            "command_id": command_id,
+            "confirmation_id": confirmation_id,
+            "confirmed_at": confirmed_at,
+            "confirmed_by": identity.operator_id,
+            "foundation": foundation_ctx,
+        },
+        foundation_context=foundation_ctx,
+    )
+
+
 @app.post("/bff/confirm-tokens", status_code=201)
 async def sem_create_confirm_token_command(
     payload: Dict[str, Any] = Body(default_factory=dict),
@@ -24403,17 +24630,11 @@ async def sem_create_confirm_token_command(
 async def sem_get_confirm_token(tokenId: str, authorization: Optional[str] = Header(default=None)):
     identity = _extract_identity(authorization)
     _require_read_role(identity)
-    status = "available"
-    for record in command_store._get_all_commands():
-        target = record.get("target") if isinstance(record.get("target"), dict) else {}
-        if target.get("type") != ObjectType.CONFIRM_TOKEN.value or target.get("id") != tokenId:
-            continue
-        status = {
-            CommandType.CONFIRM_TOKEN_CREATE.value: "created",
-            CommandType.CONFIRM_TOKEN_REDEEM.value: "redeemed",
-            CommandType.CONFIRM_TOKEN_DELETE.value: "deleted",
-        }.get(record.get("type"), status)
-    return {"data": {"id": tokenId, "tokenId": tokenId, "status": status}, "meta": {"contract": "BFF-LUV-SEM-002", "snapshot_at": utc_now()}}
+    _raise_if_confirm_token_expired(tokenId)
+    return {
+        "data": _confirm_token_lifecycle_payload(tokenId),
+        "meta": {"contract": "BFF-LUV-SEM-002", "snapshot_at": utc_now()},
+    }
 
 
 @app.post("/bff/confirm-tokens/{tokenId}/redeem", status_code=202)
@@ -24426,7 +24647,8 @@ async def sem_redeem_confirm_token_command(
 ):
     identity = _extract_identity(authorization)
     _require_read_role(identity)
-    return _sem_command_response(
+    _raise_if_confirm_token_expired(tokenId)
+    response = _sem_command_response(
         command_type=CommandType.CONFIRM_TOKEN_REDEEM,
         target_type=ObjectType.CONFIRM_TOKEN,
         target_id=tokenId,
@@ -24434,6 +24656,13 @@ async def sem_redeem_confirm_token_command(
         identity=identity,
         idempotency_key=idempotency_key,
         x_idempotency_key=x_idempotency_key,
+    )
+    return _confirm_token_lifecycle_response(
+        response,
+        token_id=tokenId,
+        status="redeemed",
+        flag_field="redeemed",
+        status_code=202,
     )
 
 
@@ -24447,7 +24676,7 @@ async def sem_delete_confirm_token_command(
 ):
     identity = _extract_identity(authorization)
     _require_read_role(identity)
-    return _sem_command_response(
+    response = _sem_command_response(
         command_type=CommandType.CONFIRM_TOKEN_DELETE,
         target_type=ObjectType.CONFIRM_TOKEN,
         target_id=tokenId,
@@ -24455,6 +24684,13 @@ async def sem_delete_confirm_token_command(
         identity=identity,
         idempotency_key=idempotency_key,
         x_idempotency_key=x_idempotency_key,
+    )
+    return _confirm_token_lifecycle_response(
+        response,
+        token_id=tokenId,
+        status="deleted",
+        flag_field="deleted",
+        status_code=202,
     )
 
 
