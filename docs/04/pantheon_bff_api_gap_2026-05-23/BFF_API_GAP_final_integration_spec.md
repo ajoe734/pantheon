@@ -63,6 +63,74 @@ BFF-B1-003 — Owner: Codex, Reviewer: Claude
 
 ---
 
+## §14 Confirm-Token Lifecycle
+
+### Gap
+
+The execute-plans high-risk action flow needs the confirm-token lifecycle to be
+observable through both the canonical token routes and the legacy
+command-confirmation compatibility routes. The backend already had command-store-backed
+token create/read/redeem/delete behavior, but the BFF gap inventory requires the P0
+five-endpoint surface to be explicit:
+
+| ID | Method | Path |
+|---|---|---|
+| B1-012 | POST | `/bff/confirm-tokens` |
+| B1-013 | GET | `/bff/confirm-tokens/{tokenId}` |
+| B1-014 | POST | `/bff/confirm-tokens/{tokenId}/redeem` |
+| B1-015 | POST | `/bff/command-confirmations` |
+| B1-016 | GET | `/bff/command-confirmations/{token}` |
+
+The compatibility route also needed a read endpoint, and expired issued tokens needed
+to fail closed with a typed HTTP 410 envelope instead of falling through as an
+unstructured server error.
+
+### Fix
+
+**File: `services/control-plane/bff/main.py`**
+
+- Kept `POST /bff/confirm-tokens` as the canonical token issue route and preserved
+  stable replay semantics for server-generated token IDs.
+- Projected `GET /bff/confirm-tokens/{tokenId}` from the command store with lifecycle
+  states: `available`, `created`, `redeemed`, `deleted`, or `expired`.
+- Updated `POST /bff/confirm-tokens/{tokenId}/redeem` to return token lifecycle fields
+  (`data.id`, `data.tokenId`, `data.status=redeemed`, `data.redeemed=true`) while
+  preserving the accepted command receipt envelope.
+- Added `GET /bff/command-confirmations/{token}`.
+- Updated `POST /bff/command-confirmations` to accept `confirm_token`/`confirmToken`
+  aliases, write a matching confirm-token redeem record, and return token lifecycle
+  fields while preserving the legacy flat response shape.
+- Added typed expired-token handling for token read/redeem and command-confirmation
+  read/write paths: HTTP 410 with `INVALID_STATE` and
+  `precondition_failed=confirm_token_expired`.
+
+`DELETE /bff/confirm-tokens/{tokenId}` remains available as an existing compatibility
+route and now also returns `data.tokenId`, `data.status=deleted`, and `data.deleted=true`.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `POST /bff/confirm-tokens` issues a token and returns `data.tokenId` / `data.status=created` | Implemented in BFF-B1-009 |
+| 2 | `GET /bff/confirm-tokens/{tokenId}` returns the current token lifecycle state | Implemented in BFF-B1-009 |
+| 3 | `POST /bff/confirm-tokens/{tokenId}/redeem` marks the token redeemed and preserves the command receipt | Implemented in BFF-B1-009 |
+| 4 | `POST /bff/command-confirmations` mirrors the lifecycle by marking the token redeemed | Implemented in BFF-B1-009 |
+| 5 | `GET /bff/command-confirmations/{token}` returns the mirrored confirmation lifecycle state | Implemented in BFF-B1-009 |
+| 6 | Expired issued tokens return typed HTTP 410 (`INVALID_STATE`, `confirm_token_expired`) on read/redeem/confirmation paths | Implemented in BFF-B1-009 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_confirm_token_lifecycle.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B1-009 — Owner: Codex2, Reviewer: Claude
+
+---
+
 ## §15 CORS — Lovable Preview and Published Origins
 
 ### Gap
