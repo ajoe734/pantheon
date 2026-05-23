@@ -106,3 +106,11 @@ grounding fields (auditRef, evidenceRefs, meta.redactedEvidenceCount) are now
 implemented, tested, and verified. Evidence refs carry canonical
 `/api/v1/knowledge/evidence/{ref_id}` hrefs. The redacted evidence count flows
 from `redact_evidence_refs` via `_capabilities_for_identity`.
+
+## Closeout Verification (2026-05-23)
+
+- PR #490 merged into dev at c1bcfb88
+- Codex re-review approved: 18 focused tests (B6-002 + B6-003 combined) and py_compile verified
+- Owner closeout: 11 focused B6-002 tests pass, py_compile clean
+- Worktree clean; no unrelated dirty files folded into closeout commit
+- Status: ready for `done`
