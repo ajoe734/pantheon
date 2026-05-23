@@ -26501,11 +26501,15 @@ _BFF_APPROVAL_DECIDE_COMMANDS: Dict[str, CommandType] = {
     "approve": CommandType.APPROVE_DECISION,
     "reject": CommandType.REJECT_DECISION,
     "request_revision": CommandType.REQUEST_APPROVAL_REVISION,
+    "request_changes": CommandType.REQUEST_APPROVAL_REVISION,
 }
 
 # Decisions that emit approval.stage.changed rather than approval.decided.
 # escalate and freeze are stage transitions despite mapping to APPROVE_DECISION command type.
-_APPROVAL_STAGE_CHANGE_DECISIONS: frozenset = frozenset({"request_revision", "escalate", "freeze"})
+_APPROVAL_STAGE_CHANGE_DECISIONS: frozenset = frozenset(
+    {"request_revision", "request_changes", "escalate", "freeze"}
+)
+_BFF_APPROVAL_DECIDE_VALUES = "approve, reject, request_revision, request_changes, escalate, freeze"
 
 
 @app.post("/bff/approvals/{id}/decide", status_code=202)
@@ -26549,7 +26553,7 @@ async def bff_approvals_decide(
                 422,
                 ErrorCode.INVALID_PARAMS,
                 "Invalid decision value",
-                f"decision={raw_decision!r} is not one of approve, reject, request_revision, escalate, freeze",
+                f"decision={raw_decision!r} is not one of {_BFF_APPROVAL_DECIDE_VALUES}",
                 precondition_failed="decision",
             )
 
@@ -26645,6 +26649,194 @@ async def bff_approvals_decide(
     )
 
 
+_BFF_BATCH_DECIDE_MAX = 50
+
+
+@app.post("/bff/approvals/batch-decide", status_code=202)
+async def bff_approvals_batch_decide(
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: batch decide multiple pending approvals — approve / reject / request_revision / escalate / freeze."""
+    identity = _extract_identity(authorization)
+    if not {"approver", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.INSUFFICIENT_ROLE,
+            "Approval batch-decide requires 'approver' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with approver or admin role",
+        )
+
+    decisions = payload.get("decisions") if isinstance(payload.get("decisions"), list) else None
+    if not decisions:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "decisions must be a non-empty list",
+            "The 'decisions' field must be a non-empty array of decision items",
+            precondition_failed="decisions",
+        )
+
+    if len(decisions) > _BFF_BATCH_DECIDE_MAX:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            f"batch-decide accepts at most {_BFF_BATCH_DECIDE_MAX} items per request",
+            f"Received {len(decisions)} items; split into smaller batches",
+            precondition_failed="decisions",
+        )
+
+    # Reject top-level body idempotency keys before deriving per-item command keys.
+    _reject_body_idempotency_key(payload)
+
+    # Batch-level idempotency key; per-item keys are derived as "{batch_key}::{index}::{id}".
+    batch_idem_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+
+    results: List[Dict[str, Any]] = []
+    has_failures = False
+
+    for idx, item in enumerate(decisions):
+        if not isinstance(item, dict):
+            results.append({
+                "index": idx,
+                "id": None,
+                "status": "failed",
+                "error": {"code": "INVALID_PARAMS", "message": "each decision item must be an object"},
+            })
+            has_failures = True
+            continue
+
+        item_id = str(item.get("id") or "").strip()
+        if not item_id:
+            results.append({
+                "index": idx,
+                "id": None,
+                "status": "failed",
+                "error": {"code": "INVALID_PARAMS", "message": "id is required for each decision item"},
+            })
+            has_failures = True
+            continue
+
+        raw_decision = str(item.get("decision") or "").strip().lower()
+        command_type = _BFF_APPROVAL_DECIDE_COMMANDS.get(raw_decision)
+
+        if command_type is None:
+            if raw_decision in {"escalate", "freeze"}:
+                command_type = CommandType.APPROVE_DECISION
+            elif not raw_decision:
+                if str(item.get("rejection_reason") or "").strip():
+                    command_type = CommandType.REJECT_DECISION
+                elif str(item.get("revision_notes") or "").strip():
+                    command_type = CommandType.REQUEST_APPROVAL_REVISION
+                else:
+                    command_type = CommandType.APPROVE_DECISION
+            else:
+                results.append({
+                    "index": idx,
+                    "id": item_id,
+                    "status": "failed",
+                    "error": {
+                        "code": "INVALID_PARAMS",
+                        "message": f"decision={raw_decision!r} is not one of {_BFF_APPROVAL_DECIDE_VALUES}",
+                    },
+                })
+                has_failures = True
+                continue
+
+        if command_type == CommandType.REJECT_DECISION:
+            if not str(item.get("rejection_reason") or "").strip():
+                results.append({
+                    "index": idx,
+                    "id": item_id,
+                    "status": "failed",
+                    "error": {"code": "INVALID_PARAMS", "message": "rejection_reason is required for reject decision"},
+                })
+                has_failures = True
+                continue
+        elif command_type == CommandType.REQUEST_APPROVAL_REVISION:
+            if not str(item.get("revision_notes") or "").strip():
+                results.append({
+                    "index": idx,
+                    "id": item_id,
+                    "status": "failed",
+                    "error": {"code": "INVALID_PARAMS", "message": "revision_notes is required for request_revision decision"},
+                })
+                has_failures = True
+                continue
+
+        decision_record = read_store.get_approval_decision(item_id)
+        if decision_record is None and read_store.dataset_source("approval_decisions") != "missing":
+            results.append({
+                "index": idx,
+                "id": item_id,
+                "status": "failed",
+                "error": {"code": "OBJECT_NOT_FOUND", "message": f"approval_id={item_id!r} does not exist"},
+            })
+            has_failures = True
+            continue
+
+        item_idem_key = f"{batch_idem_key}::{idx}::{item_id}"
+        item_payload = {k: v for k, v in item.items() if k != "id"}
+        item_payload["decision_id"] = item_id
+
+        try:
+            cmd_resp = _sem_command_response(
+                command_type=command_type,
+                target_type=ObjectType.APPROVAL_DECISION,
+                target_id=item_id,
+                payload=item_payload,
+                identity=identity,
+                idempotency_key=item_idem_key,
+                x_idempotency_key=None,
+            )
+            cmd_data = json.loads(cmd_resp.body)
+            results.append({
+                "index": idx,
+                "id": item_id,
+                "status": "accepted",
+                "command_id": (cmd_data.get("data") or {}).get("command_id"),
+                "commandId": (cmd_data.get("data") or {}).get("commandId"),
+            })
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
+            error_payload = detail.get("error") or {}
+            err_code = str(error_payload.get("code") or "COMMAND_FAILED")
+            err_msg = str(error_payload.get("message") or "Command failed")
+            results.append({
+                "index": idx,
+                "id": item_id,
+                "status": "failed",
+                "error": {"code": err_code, "message": err_msg, "http_status": exc.status_code},
+            })
+            has_failures = True
+
+    accepted = sum(1 for r in results if r.get("status") == "accepted")
+    failed = sum(1 for r in results if r.get("status") == "failed")
+    overall = "accepted" if not has_failures else ("partial" if accepted > 0 else "failed")
+    http_status = 202 if not has_failures else 207
+
+    return JSONResponse(
+        status_code=http_status,
+        content={
+            "status": overall,
+            "results": results,
+            "summary": {
+                "total": len(decisions),
+                "accepted": accepted,
+                "failed": failed,
+            },
+            "meta": {
+                "snapshot_at": utc_now(),
+                "batch_idempotency_key": batch_idem_key,
+            },
+        },
+    )
+
+
 @app.post("/bff/alerts/{id}/acknowledge", status_code=202)
 @app.post("/bff/alerts/{id}/escalate-incident", status_code=202)
 @app.post("/bff/incidents/{id}/append-postmortem", status_code=202)
@@ -26657,7 +26849,6 @@ async def sem_final_generic_id_command_alias(id: str, payload: Dict[str, Any] = 
     return JSONResponse(status_code=202, content={"status": "accepted", "data": {"id": id, "status": "accepted"}, "meta": {"snapshot_at": utc_now()}})
 
 
-@app.post("/bff/approvals/batch-decide", status_code=202)
 @app.post("/bff/artifacts", status_code=201)
 @app.post("/bff/personas", status_code=201)
 @app.post("/bff/ranking-formulas", status_code=201)
