@@ -46,6 +46,9 @@ import type {
   ManagementEvolutionJournalItem,
   ManagementEvolutionJournalQuery,
   ManagementEvolutionJournalResponse,
+  ManagementTradingPulseRankingsQuery,
+  ManagementTradingPulseRankingsResponse,
+  ManagementTradingPulseResponse,
 } from "@/lib/bff-v1/management";
 import type {
   Strategy,
