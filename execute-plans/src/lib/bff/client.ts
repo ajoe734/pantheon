@@ -43,6 +43,10 @@ import type {
   ManagementEvidenceItem,
   ManagementEvidenceQuery,
   ManagementEvidenceResponse,
+  ManagementEvolutionJournalItem,
+  ManagementEvolutionJournalQuery,
+  ManagementEvolutionJournalResponse,
+  ManagementReadinessResponse,
 } from "@/lib/bff-v1/management";
 import type {
   Strategy,
@@ -104,6 +108,61 @@ export interface PersonaFleetAggregate {
     healthy_personas: number;
     bound_personas: number;
     runtime_bound_personas: number;
+  };
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces?: Record<string, unknown>;
+    [key: string]: unknown;
+  };
+}
+
+export type HumanInboxSourceType = "approval" | "intervention";
+export type HumanInboxPriority = "critical" | "high" | "medium" | "low" | "unknown";
+
+export interface HumanInboxItem {
+  id: string;
+  inbox_id: string;
+  inboxType: HumanInboxSourceType;
+  source_type: HumanInboxSourceType;
+  source_id: string;
+  title: string;
+  summary: string;
+  priority: HumanInboxPriority;
+  risk_level: string;
+  status: string;
+  action_state: "pending" | "resolved" | string;
+  created_at?: string | null;
+  updated_at?: string | null;
+  target: {
+    type?: string | null;
+    id?: string | null;
+  };
+  route: string;
+  bff_detail_path: string;
+  allowedActions: Record<string, unknown>;
+  approval_decision_id?: string;
+  intervention_id?: string;
+  decision_context?: Record<string, unknown>;
+  remediation_context?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface HumanInboxAggregate {
+  data: HumanInboxItem[];
+  items: HumanInboxItem[];
+  summary: {
+    total_items: number;
+    returned_items: number;
+    pending_items: number;
+    approval_count: number;
+    intervention_count: number;
+    critical_count: number;
+    high_count: number;
   };
   page_info: {
     next_page_token: string | null;
@@ -261,6 +320,36 @@ function emptyPersonaFleetAggregate(): PersonaFleetAggregate {
   };
 }
 
+function emptyHumanInboxAggregate(): HumanInboxAggregate {
+  return {
+    data: [],
+    items: [],
+    summary: {
+      total_items: 0,
+      returned_items: 0,
+      pending_items: 0,
+      approval_count: 0,
+      intervention_count: 0,
+      critical_count: 0,
+      high_count: 0,
+    },
+    page_info: {
+      next_page_token: null,
+      total: 0,
+      page_size: 0,
+    },
+    meta: {
+      surfaces: {
+        human_inbox: {
+          status: "unavailable",
+          source: "mock",
+          reason: "Human Inbox aggregate is served only by the Pantheon BFF management aggregate.",
+        },
+      },
+    },
+  };
+}
+
 function emptyManagementEvidenceAggregate(): ManagementEvidenceResponse {
   return {
     data: [],
@@ -314,6 +403,104 @@ function emptyManagementEvidenceAggregate(): ManagementEvidenceResponse {
   };
 }
 
+function emptyManagementReadinessAggregate(id: string): ManagementReadinessResponse {
+  const surfaceKey = `management_readiness_${id.replace(/-/g, "_")}`;
+  return {
+    data: {
+      id,
+      readinessId: id,
+      readiness_id: id,
+      title: id,
+      readinessStatus: "unknown",
+      readiness_status: "unknown",
+      canProceed: false,
+      can_proceed: false,
+      blockingReasons: ["mock_unavailable"],
+      blocking_reasons: ["mock_unavailable"],
+      checks: [],
+      evidenceRefs: [],
+      evidence_refs: [],
+      links: {},
+      details: {},
+    },
+    summary: {
+      readinessStatus: "unknown",
+      readiness_status: "unknown",
+      canProceed: false,
+      can_proceed: false,
+      checkCount: 0,
+      check_count: 0,
+      passedCheckCount: 0,
+      passed_check_count: 0,
+      blockingReasonCount: 1,
+      blocking_reason_count: 1,
+      blockingReasons: ["mock_unavailable"],
+      blocking_reasons: ["mock_unavailable"],
+      byStatus: {},
+      by_status: {},
+    },
+    checks: [],
+    items: [],
+    evidence_refs: [],
+    meta: {
+      surfaces: {
+        [surfaceKey]: {
+          status: "unavailable",
+          source: "mock",
+          reason: "Management readiness aggregates are served only by the Pantheon BFF.",
+        },
+      },
+    },
+  };
+}
+
+function emptyManagementEvolutionJournalAggregate(): ManagementEvolutionJournalResponse {
+  return {
+    data: [],
+    items: [],
+    summary: {
+      total_items: 0,
+      returned_items: 0,
+      decision_count: 0,
+      mutation_review_count: 0,
+      postmortem_count: 0,
+      rollback_count: 0,
+      freeze_order_count: 0,
+      pending_review_count: 0,
+      active_freeze_count: 0,
+      completed_rollback_count: 0,
+      latest_at: null,
+      byType: {},
+      by_type: {},
+      byStatus: {},
+      by_status: {},
+      byRiskLevel: {},
+      by_risk_level: {},
+    },
+    page_info: {
+      next_page_token: null,
+      total: 0,
+      page_size: 0,
+    },
+    meta: {
+      surfaces: {
+        management_evolution_journal: {
+          status: "unavailable",
+          source: "mock",
+          reason: "Evolution Journal aggregate is served by the Pantheon BFF management aggregate.",
+        },
+      },
+      composition_sources: [
+        "evolution_decisions",
+        "postmortems",
+        "mutation_review",
+        "rollbacks",
+        "freeze_orders",
+      ],
+    },
+  };
+}
+
 function adaptOodaPacketDetail(body: unknown): OodaPacketDetail | undefined {
   const envelope = asObject(body);
   const rawPacket = asObject(strictDataFrom(body) ?? body);
@@ -352,6 +539,38 @@ function adaptPersonaFleetAggregate(body: unknown): PersonaFleetAggregate {
       healthy_personas: Number(summary.healthy_personas ?? 0),
       bound_personas: Number(summary.bound_personas ?? 0),
       runtime_bound_personas: Number(summary.runtime_bound_personas ?? 0),
+    },
+    page_info: {
+      next_page_token: typeof pageInfo.next_page_token === "string" ? pageInfo.next_page_token : null,
+      total: Number(pageInfo.total ?? items.length),
+      page_size: Number(pageInfo.page_size ?? items.length),
+    },
+    meta,
+  };
+}
+
+function adaptHumanInboxAggregate(body: unknown): HumanInboxAggregate {
+  const envelope = asObject(body);
+  const rawItems = Array.isArray(envelope.items)
+    ? envelope.items
+    : Array.isArray(envelope.data)
+      ? envelope.data
+      : [];
+  const items = rawItems.filter((item) => item && typeof item === "object") as HumanInboxItem[];
+  const summary = asObject(envelope.summary);
+  const pageInfo = asObject(envelope.page_info);
+  const meta = asObject(envelope.meta);
+  return {
+    data: items,
+    items,
+    summary: {
+      total_items: Number(summary.total_items ?? items.length),
+      returned_items: Number(summary.returned_items ?? items.length),
+      pending_items: Number(summary.pending_items ?? 0),
+      approval_count: Number(summary.approval_count ?? 0),
+      intervention_count: Number(summary.intervention_count ?? 0),
+      critical_count: Number(summary.critical_count ?? 0),
+      high_count: Number(summary.high_count ?? 0),
     },
     page_info: {
       next_page_token: typeof pageInfo.next_page_token === "string" ? pageInfo.next_page_token : null,
@@ -407,6 +626,116 @@ function adaptManagementEvidenceAggregate(body: unknown): ManagementEvidenceResp
   };
 }
 
+function adaptManagementReadinessAggregate(body: unknown, fallbackId: string): ManagementReadinessResponse {
+  const envelope = asObject(body);
+  const rawData = asObject(envelope.data);
+  const rawChecks = Array.isArray(envelope.checks)
+    ? envelope.checks
+    : Array.isArray(rawData.checks)
+      ? rawData.checks
+      : [];
+  const checks = rawChecks.filter((item) => item && typeof item === "object") as ManagementReadinessResponse["checks"];
+  const rawEvidenceRefs = Array.isArray(envelope.evidence_refs)
+    ? envelope.evidence_refs
+    : Array.isArray(rawData.evidence_refs)
+      ? rawData.evidence_refs
+      : Array.isArray(rawData.evidenceRefs)
+        ? rawData.evidenceRefs
+        : [];
+  const evidenceRefs = rawEvidenceRefs.filter((item) => item && typeof item === "object") as ManagementReadinessResponse["evidence_refs"];
+  const summary = asObject(envelope.summary);
+  const readinessStatus = String(
+    summary.readinessStatus ?? summary.readiness_status ?? rawData.readinessStatus ?? rawData.readiness_status ?? "unknown",
+  );
+  const canProceed = Boolean(summary.canProceed ?? summary.can_proceed ?? rawData.canProceed ?? rawData.can_proceed);
+  const blockingReasons = Array.isArray(summary.blockingReasons)
+    ? summary.blockingReasons.map(String)
+    : Array.isArray(summary.blocking_reasons)
+      ? summary.blocking_reasons.map(String)
+      : [];
+  const data = {
+    ...rawData,
+    id: String(rawData.id ?? fallbackId),
+    readinessId: String(rawData.readinessId ?? rawData.readiness_id ?? rawData.id ?? fallbackId),
+    readiness_id: String(rawData.readiness_id ?? rawData.readinessId ?? rawData.id ?? fallbackId),
+    title: String(rawData.title ?? fallbackId),
+    readinessStatus,
+    readiness_status: readinessStatus,
+    canProceed,
+    can_proceed: canProceed,
+    blockingReasons,
+    blocking_reasons: blockingReasons,
+    checks,
+    evidenceRefs,
+    evidence_refs: evidenceRefs,
+  } as ManagementReadinessResponse["data"];
+  return {
+    data,
+    summary: {
+      readinessStatus,
+      readiness_status: readinessStatus,
+      canProceed,
+      can_proceed: canProceed,
+      checkCount: Number(summary.checkCount ?? summary.check_count ?? checks.length),
+      check_count: Number(summary.check_count ?? summary.checkCount ?? checks.length),
+      passedCheckCount: Number(summary.passedCheckCount ?? summary.passed_check_count ?? 0),
+      passed_check_count: Number(summary.passed_check_count ?? summary.passedCheckCount ?? 0),
+      blockingReasonCount: Number(summary.blockingReasonCount ?? summary.blocking_reason_count ?? blockingReasons.length),
+      blocking_reason_count: Number(summary.blocking_reason_count ?? summary.blockingReasonCount ?? blockingReasons.length),
+      blockingReasons,
+      blocking_reasons: blockingReasons,
+      byStatus: asObject(summary.byStatus ?? summary.by_status) as Record<string, number>,
+      by_status: asObject(summary.by_status ?? summary.byStatus) as Record<string, number>,
+    },
+    checks,
+    items: checks,
+    evidence_refs: evidenceRefs,
+    meta: asObject(envelope.meta) as ManagementReadinessResponse["meta"],
+  };
+}
+
+function adaptManagementEvolutionJournalAggregate(body: unknown): ManagementEvolutionJournalResponse {
+  const envelope = asObject(body);
+  const rawItems = Array.isArray(envelope.items)
+    ? envelope.items
+    : Array.isArray(envelope.data)
+      ? envelope.data
+      : [];
+  const items = rawItems.filter((item) => item && typeof item === "object") as ManagementEvolutionJournalItem[];
+  const summary = asObject(envelope.summary);
+  const pageInfo = asObject(envelope.page_info);
+  const meta = asObject(envelope.meta);
+  return {
+    data: items,
+    items,
+    summary: {
+      total_items: Number(summary.total_items ?? items.length),
+      returned_items: Number(summary.returned_items ?? items.length),
+      decision_count: Number(summary.decision_count ?? 0),
+      mutation_review_count: Number(summary.mutation_review_count ?? 0),
+      postmortem_count: Number(summary.postmortem_count ?? 0),
+      rollback_count: Number(summary.rollback_count ?? 0),
+      freeze_order_count: Number(summary.freeze_order_count ?? 0),
+      pending_review_count: Number(summary.pending_review_count ?? 0),
+      active_freeze_count: Number(summary.active_freeze_count ?? 0),
+      completed_rollback_count: Number(summary.completed_rollback_count ?? 0),
+      latest_at: typeof summary.latest_at === "string" ? summary.latest_at : null,
+      byType: asObject(summary.byType ?? summary.by_type) as Record<string, number>,
+      by_type: asObject(summary.by_type ?? summary.byType) as Record<string, number>,
+      byStatus: asObject(summary.byStatus ?? summary.by_status) as Record<string, number>,
+      by_status: asObject(summary.by_status ?? summary.byStatus) as Record<string, number>,
+      byRiskLevel: asObject(summary.byRiskLevel ?? summary.by_risk_level) as Record<string, number>,
+      by_risk_level: asObject(summary.by_risk_level ?? summary.byRiskLevel) as Record<string, number>,
+    },
+    page_info: {
+      next_page_token: typeof pageInfo.next_page_token === "string" ? pageInfo.next_page_token : null,
+      total: Number(pageInfo.total ?? items.length),
+      page_size: Number(pageInfo.page_size ?? items.length),
+    },
+    meta: meta as ManagementEvolutionJournalResponse["meta"],
+  };
+}
+
 function managementEvidenceQueryParams(
   query?: ManagementEvidenceQuery,
 ): Record<string, string | number | undefined> | undefined {
@@ -430,6 +759,14 @@ export type OodaPacketListQuery = {
 export type PersonaFleetQuery = {
   state?: string;
   health?: string;
+  page_token?: string;
+  page_size?: number;
+};
+
+export type HumanInboxQuery = {
+  source_type?: HumanInboxSourceType | string;
+  status?: string;
+  priority?: HumanInboxPriority | string;
   page_token?: string;
   page_size?: number;
 };
@@ -540,6 +877,22 @@ function evolutionReviewDetail(decisionId: string): Promise<EvolutionReviewProje
     { method: "GET", path: paths.evolutionMutationReview(decisionId) },
     async () => undefined,
     adaptEvolutionReview,
+    strictNotFoundAsUndefined,
+  );
+}
+
+function adaptHumanInboxDetail(body: unknown): HumanInboxItem | undefined {
+  const raw = strictDataFrom(body) ?? body;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const item = raw as HumanInboxItem;
+  return typeof item.id === "string" && item.id ? item : undefined;
+}
+
+function humanInboxDetail(itemId: string): Promise<HumanInboxItem | undefined> {
+  return withStrictLiveOrMock<HumanInboxItem | undefined, unknown>(
+    { method: "GET", path: paths.managementHumanInboxItem(itemId) },
+    async () => undefined,
+    adaptHumanInboxDetail,
     strictNotFoundAsUndefined,
   );
 }
@@ -701,6 +1054,20 @@ const personaFleet = {
     ),
 };
 
+const humanInbox = {
+  list: (query?: HumanInboxQuery): Promise<HumanInboxAggregate> =>
+    withStrictLiveOrMock<HumanInboxAggregate, unknown>(
+      {
+        method: "GET",
+        path: paths.managementHumanInbox(),
+        query: query as Record<string, string | number | undefined> | undefined,
+      },
+      async () => emptyHumanInboxAggregate(),
+      adaptHumanInboxAggregate,
+    ),
+  get: humanInboxDetail,
+};
+
 const evidenceExplorer = {
   list: (query?: ManagementEvidenceQuery): Promise<ManagementEvidenceResponse> =>
     withStrictLiveOrMock<ManagementEvidenceResponse, unknown>(
@@ -711,6 +1078,67 @@ const evidenceExplorer = {
       },
       async () => emptyManagementEvidenceAggregate(),
       adaptManagementEvidenceAggregate,
+    ),
+};
+
+const readiness = {
+  ep5: (): Promise<ManagementReadinessResponse> =>
+    withStrictLiveOrMock<ManagementReadinessResponse, unknown>(
+      {
+        method: "GET",
+        path: paths.managementReadinessEp5(),
+      },
+      async () => emptyManagementReadinessAggregate("ep5"),
+      (body) => adaptManagementReadinessAggregate(body, "ep5"),
+    ),
+  brokerLive: (): Promise<ManagementReadinessResponse> =>
+    withStrictLiveOrMock<ManagementReadinessResponse, unknown>(
+      {
+        method: "GET",
+        path: paths.managementReadinessBrokerLive(),
+      },
+      async () => emptyManagementReadinessAggregate("broker-live"),
+      (body) => adaptManagementReadinessAggregate(body, "broker-live"),
+    ),
+  capitalBindingLive: (): Promise<ManagementReadinessResponse> =>
+    withStrictLiveOrMock<ManagementReadinessResponse, unknown>(
+      {
+        method: "GET",
+        path: paths.managementReadinessCapitalBindingLive(),
+      },
+      async () => emptyManagementReadinessAggregate("capital-binding-live"),
+      (body) => adaptManagementReadinessAggregate(body, "capital-binding-live"),
+    ),
+  bffHa: (): Promise<ManagementReadinessResponse> =>
+    withStrictLiveOrMock<ManagementReadinessResponse, unknown>(
+      {
+        method: "GET",
+        path: paths.managementReadinessBffHa(),
+      },
+      async () => emptyManagementReadinessAggregate("bff-ha"),
+      (body) => adaptManagementReadinessAggregate(body, "bff-ha"),
+    ),
+  strictPublish: (): Promise<ManagementReadinessResponse> =>
+    withStrictLiveOrMock<ManagementReadinessResponse, unknown>(
+      {
+        method: "GET",
+        path: paths.managementReadinessStrictPublish(),
+      },
+      async () => emptyManagementReadinessAggregate("strict-publish"),
+      (body) => adaptManagementReadinessAggregate(body, "strict-publish"),
+    ),
+};
+
+const evolutionJournal = {
+  list: (query?: ManagementEvolutionJournalQuery): Promise<ManagementEvolutionJournalResponse> =>
+    withStrictLiveOrMock<ManagementEvolutionJournalResponse, unknown>(
+      {
+        method: "GET",
+        path: paths.managementEvolutionJournal(),
+        query: query as Record<string, string | number | undefined> | undefined,
+      },
+      async () => emptyManagementEvolutionJournalAggregate(),
+      adaptManagementEvolutionJournalAggregate,
     ),
 };
 
@@ -742,7 +1170,10 @@ export const managementClient = {
   oodaPackets,
   evolutionReviews,
   personaFleet,
+  humanInbox,
   evidenceExplorer,
+  readiness,
+  evolutionJournal,
 } as const;
 
 export type ManagementFamily = keyof typeof managementClient;
@@ -753,7 +1184,7 @@ export const MANAGEMENT_FAMILIES: readonly ManagementFamily[] = [
   "rebalances", "deployments", "evolution", "research", "artifacts",
   "tools", "mcpServers", "mcpTools", "skills", "channels",
   "jobs", "runtimes", "alerts", "incidents", "approvals", "audit",
-  "oodaPackets",
+  "oodaPackets", "humanInbox", "evidenceExplorer", "evolutionJournal",
 ] as const;
 
 /** Snapshot of the current live-status, useful for UI banners that show
