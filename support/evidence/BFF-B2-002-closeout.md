@@ -1,15 +1,24 @@
 # BFF-B2-002 Closeout Evidence
 
 Task: BFF-B2-002 — Evolution + Operations facade (B2.2 13 endpoints)
-Owner: Claude2
+Owner: Codex
 Reviewer: Codex2
 Phase: Sprint BFF-2 / EPIC-BFF-GAP-CORE
+
+Finalization owner note: implementation and first evidence anchor were prepared
+by Claude2; Codex took over owner closeout after the 2026-05-23T09:19:45Z
+reassignment.
 
 ## Delivery
 
 PR #443 merged to `dev` on 2026-05-23T09:00:42Z.
 PR title: `BFF-B2-002: anchor evolution+jobs+ops facade`
 Implementation commit: `a4a49931 BFF-B2-002: anchor evolution+jobs+ops facade`
+
+Closeout PR #452 records this evidence packet and the final task brief update.
+The branch was refreshed with `origin/dev` after PR #452 reported `BEHIND`;
+post-refresh diff against `origin/dev` is limited to this task brief and this
+evidence packet.
 
 ## Endpoints Delivered (B2.2 — 13 primary + 2 dedicated sub-routes)
 
@@ -58,6 +67,13 @@ python3 -m pytest tests/test_bff_b2_002_evolution_jobs_ops.py -q
 
 python3 -m pytest tests/test_bff_b2_002_evolution_jobs_ops.py tests/test_bff_b2_list_detail_facade.py -q
 # Result: 70 passed (B2.1 + B2.2, no regressions)
+```
+
+Commands run during Codex finalization after refreshing with latest `origin/dev`:
+
+```
+python3 -m pytest tests/test_bff_b2_002_evolution_jobs_ops.py tests/test_bff_b2_list_detail_facade.py -q
+# Result: 70 passed in 14.24s
 ```
 
 PR #443 state: MERGED to `dev` (confirmed via `gh pr view 443`).
