@@ -240,6 +240,87 @@ export interface ManagementEvidenceQuery {
   page_size?: number;
 }
 
+export type ManagementReadinessId =
+  | "ep5"
+  | "broker-live"
+  | "capital-binding-live"
+  | "bff-ha"
+  | "strict-publish"
+  | string;
+
+export type ManagementReadinessStatus = "ready" | "blocked" | "degraded" | "unknown" | string;
+
+export interface ManagementReadinessCheck {
+  id: string;
+  label: string;
+  status: "pass" | "fail" | "blocked" | "warn" | "unknown" | string;
+  blocking: boolean;
+  message: string;
+  evidence_refs?: string[];
+  details?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface ManagementReadinessEvidenceRef {
+  id: string;
+  label: string;
+  path: string;
+  href?: string;
+  exists?: boolean;
+  [key: string]: unknown;
+}
+
+export interface ManagementReadinessSummary {
+  readinessStatus: ManagementReadinessStatus;
+  readiness_status: ManagementReadinessStatus;
+  canProceed: boolean;
+  can_proceed: boolean;
+  checkCount: number;
+  check_count: number;
+  passedCheckCount: number;
+  passed_check_count: number;
+  blockingReasonCount: number;
+  blocking_reason_count: number;
+  blockingReasons: string[];
+  blocking_reasons: string[];
+  byStatus: Record<string, number>;
+  by_status: Record<string, number>;
+  [key: string]: unknown;
+}
+
+export interface ManagementReadinessData {
+  id: ManagementReadinessId;
+  readinessId: ManagementReadinessId;
+  readiness_id: ManagementReadinessId;
+  title: string;
+  readinessStatus: ManagementReadinessStatus;
+  readiness_status: ManagementReadinessStatus;
+  canProceed: boolean;
+  can_proceed: boolean;
+  blockingReasons: string[];
+  blocking_reasons: string[];
+  checks: ManagementReadinessCheck[];
+  evidenceRefs: ManagementReadinessEvidenceRef[];
+  evidence_refs: ManagementReadinessEvidenceRef[];
+  links?: Record<string, string>;
+  details?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface ManagementReadinessResponse {
+  data: ManagementReadinessData;
+  summary: ManagementReadinessSummary;
+  checks: ManagementReadinessCheck[];
+  items?: ManagementReadinessCheck[];
+  evidence_refs: ManagementReadinessEvidenceRef[];
+  meta: {
+    snapshot_at?: string;
+    staleness?: Record<string, unknown>;
+    surfaces: Record<string, ManagementSurfaceRef>;
+    [key: string]: unknown;
+  };
+}
+
 export interface ManagementPortfolioBookHolding {
   id: string;
   holding_id: string;
@@ -557,6 +638,32 @@ export interface ManagementQuarterlyRankingWindow {
   [key: string]: unknown;
 }
 
+export interface ManagementQuarterlyRankingFormulaVersion {
+  id: string;
+  version: string;
+  formulaVersion: string;
+  formula_version: string;
+  effectiveAt: string;
+  effective_at: string;
+  changeType: string;
+  change_type: string;
+  governanceEvidenceRefs: string[];
+  governance_evidence_refs: string[];
+  description?: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementQuarterlyRankingFormulaChangeControl {
+  versionPolicy: string;
+  version_policy: string;
+  requiresGovernanceEvidence: boolean;
+  requires_governance_evidence: boolean;
+  governanceEvidenceRefs: string[];
+  governance_evidence_refs: string[];
+  authority: string;
+  [key: string]: unknown;
+}
+
 export interface ManagementQuarterlyRankingFormula {
   id: string;
   formulaId: string;
@@ -570,7 +677,47 @@ export interface ManagementQuarterlyRankingFormula {
   components: Array<Record<string, unknown>>;
   basis: string;
   policy: string;
+  governanceEvidenceRefs: string[];
+  governance_evidence_refs: string[];
+  versionHistory: ManagementQuarterlyRankingFormulaVersion[];
+  version_history: ManagementQuarterlyRankingFormulaVersion[];
+  changeControl: ManagementQuarterlyRankingFormulaChangeControl;
+  change_control: ManagementQuarterlyRankingFormulaChangeControl;
   [key: string]: unknown;
+}
+
+export interface ManagementQuarterlyRankingFormulaSummary {
+  formulaId: string;
+  formula_id: string;
+  formulaVersion: string;
+  formula_version: string;
+  componentCount: number;
+  component_count: number;
+  weightTotal: number;
+  weight_total: number;
+  evidenceRefCount: number;
+  evidence_ref_count: number;
+  basis: string;
+  policy: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementQuarterlyRankingFormulaResponse {
+  data: ManagementQuarterlyRankingFormula;
+  formula: ManagementQuarterlyRankingFormula;
+  versionHistory: ManagementQuarterlyRankingFormulaVersion[];
+  version_history: ManagementQuarterlyRankingFormulaVersion[];
+  evidenceRefs: ManagementEvidenceItem[];
+  evidence_refs: ManagementEvidenceItem[];
+  summary: ManagementQuarterlyRankingFormulaSummary;
+  meta: {
+    snapshot_at?: string;
+    surfaces?: Record<string, ManagementSurfaceRef>;
+    composition_sources?: string[];
+    policy?: string;
+    version_policy?: string;
+    [key: string]: unknown;
+  };
 }
 
 export interface ManagementQuarterlyRankingItem extends ManagementPersonaLeagueRankingItem {
@@ -947,6 +1094,26 @@ export function managementEvolutionJournalPath(query?: ManagementEvolutionJourna
   return withQuery(paths.managementEvolutionJournal(), query);
 }
 
+export function managementReadinessEp5Path(): string {
+  return paths.managementReadinessEp5();
+}
+
+export function managementReadinessBrokerLivePath(): string {
+  return paths.managementReadinessBrokerLive();
+}
+
+export function managementReadinessCapitalBindingLivePath(): string {
+  return paths.managementReadinessCapitalBindingLive();
+}
+
+export function managementReadinessBffHaPath(): string {
+  return paths.managementReadinessBffHa();
+}
+
+export function managementReadinessStrictPublishPath(): string {
+  return paths.managementReadinessStrictPublish();
+}
+
 export function managementPortfolioBookPath(): string {
   return paths.managementPortfolioBook();
 }
@@ -981,6 +1148,10 @@ export function managementQuarterlyRankingPath(
   query?: ManagementQuarterlyRankingQuery,
 ): string {
   return withQuery(paths.managementQuarterlyRanking(), query);
+}
+
+export function managementQuarterlyRankingFormulaPath(): string {
+  return paths.managementQuarterlyRankingFormula();
 }
 
 export async function fetchManagementCockpit(
@@ -1073,6 +1244,59 @@ export async function fetchManagementEvolutionJournal(
     throw new Error(`GET ${path} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementEvolutionJournalResponse>;
+}
+
+export async function fetchManagementReadiness(
+  path: string,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementReadinessResponse> {
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementReadinessResponse>;
+}
+
+export async function fetchManagementReadinessEp5(
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementReadinessResponse> {
+  return fetchManagementReadiness(managementReadinessEp5Path(), init, baseUrl);
+}
+
+export async function fetchManagementReadinessBrokerLive(
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementReadinessResponse> {
+  return fetchManagementReadiness(managementReadinessBrokerLivePath(), init, baseUrl);
+}
+
+export async function fetchManagementReadinessCapitalBindingLive(
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementReadinessResponse> {
+  return fetchManagementReadiness(managementReadinessCapitalBindingLivePath(), init, baseUrl);
+}
+
+export async function fetchManagementReadinessBffHa(
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementReadinessResponse> {
+  return fetchManagementReadiness(managementReadinessBffHaPath(), init, baseUrl);
+}
+
+export async function fetchManagementReadinessStrictPublish(
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementReadinessResponse> {
+  return fetchManagementReadiness(managementReadinessStrictPublishPath(), init, baseUrl);
 }
 
 export async function fetchManagementPortfolioBookPools(
@@ -1187,4 +1411,22 @@ export async function fetchManagementQuarterlyRanking(
     throw new Error(`GET ${path} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementQuarterlyRankingResponse>;
+}
+
+export async function fetchManagementQuarterlyRankingFormula(
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementQuarterlyRankingFormulaResponse> {
+  const path = managementQuarterlyRankingFormulaPath();
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementQuarterlyRankingFormulaResponse>;
 }

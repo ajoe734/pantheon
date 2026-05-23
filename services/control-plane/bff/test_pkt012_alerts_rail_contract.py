@@ -110,7 +110,7 @@ def test_pkt012_alerts_rail_returns_backend_owned_alert_feed() -> None:
                     "runtime": 1,
                 },
             }
-            assert payload["meta"]["acknowledgement_supported"] is False
+            assert payload["meta"]["acknowledgement_supported"] is True
             assert payload["meta"]["surfaces"]["alerts"]["status"] == "degraded"
             assert payload["meta"]["surfaces"]["incident_feed"]["status"] == "ok"
             assert payload["meta"]["surfaces"]["review_queue"]["status"] == "degraded"

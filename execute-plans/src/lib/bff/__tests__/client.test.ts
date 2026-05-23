@@ -561,6 +561,104 @@ describe("managementClient — Trading Pulse aggregate live adapter", () => {
   });
 });
 
+describe("managementClient — readiness aggregate live adapters", () => {
+  const realFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    vi.stubEnv("VITE_BFF_BASE_URL", "https://example.test");
+    liveStatus._reset({ mode: "live", effective: "live", baseUrl: "https://example.test" });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    vi.unstubAllEnvs();
+    liveStatus._reset();
+  });
+
+  it("reads strict-publish readiness without mock fallback in live transport", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        data: {
+          id: "strict-publish",
+          readinessId: "strict-publish",
+          readiness_id: "strict-publish",
+          title: "Strict Publish Audit",
+          readinessStatus: "blocked",
+          readiness_status: "blocked",
+          canProceed: false,
+          can_proceed: false,
+          blockingReasons: ["forbidden_path_scan"],
+          blocking_reasons: ["forbidden_path_scan"],
+          checks: [
+            {
+              id: "forbidden_path_scan",
+              label: "Forbidden mock/seed runtime path scan",
+              status: "fail",
+              blocking: true,
+              message: "Strict publish remains blocked.",
+              details: { forbidden_signal_count: 84 },
+            },
+          ],
+          evidenceRefs: [],
+          evidence_refs: [],
+          links: {},
+          details: { passed: false },
+        },
+        summary: {
+          readinessStatus: "blocked",
+          readiness_status: "blocked",
+          canProceed: false,
+          can_proceed: false,
+          checkCount: 1,
+          check_count: 1,
+          passedCheckCount: 0,
+          passed_check_count: 0,
+          blockingReasonCount: 1,
+          blocking_reason_count: 1,
+          blockingReasons: ["forbidden_path_scan"],
+          blocking_reasons: ["forbidden_path_scan"],
+          byStatus: { fail: 1 },
+          by_status: { fail: 1 },
+        },
+        checks: [
+          {
+            id: "forbidden_path_scan",
+            label: "Forbidden mock/seed runtime path scan",
+            status: "fail",
+            blocking: true,
+            message: "Strict publish remains blocked.",
+          },
+        ],
+        evidence_refs: [],
+        meta: {
+          surfaces: {
+            management_readiness_strict_publish: { status: "ok", source: "bff_composed" },
+          },
+        },
+      }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    );
+    globalThis.fetch = fetchMock;
+
+    const aggregate = await managementClient.readiness.strictPublish();
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://example.test/bff/management/readiness/strict-publish",
+    );
+    expect(aggregate.data.id).toBe("strict-publish");
+    expect(aggregate.summary.canProceed).toBe(false);
+    expect(aggregate.checks[0].id).toBe("forbidden_path_scan");
+    expect(aggregate.meta.surfaces.management_readiness_strict_publish.source).toBe("bff_composed");
+  });
+
+  it("exposes all five readiness readers", () => {
+    expect(typeof managementClient.readiness.ep5).toBe("function");
+    expect(typeof managementClient.readiness.brokerLive).toBe("function");
+    expect(typeof managementClient.readiness.capitalBindingLive).toBe("function");
+    expect(typeof managementClient.readiness.bffHa).toBe("function");
+    expect(typeof managementClient.readiness.strictPublish).toBe("function");
+  });
+});
+
 describe("managementClient — Evolution Journal aggregate live adapter", () => {
   const realFetch = globalThis.fetch;
 

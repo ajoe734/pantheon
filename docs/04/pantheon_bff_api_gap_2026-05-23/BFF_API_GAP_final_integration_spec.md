@@ -869,6 +869,70 @@ BFF-PM12-006 — Owner: Codex2, Reviewer: Claude2
 
 ---
 
+### PM-12 Quarterly Ranking Formula
+
+`GET /bff/management/quarterly-ranking/formula` exposes the PM-12 quarterly
+ranking formula as a read-only Management aggregate. It is the standalone source
+for formula weights, current version, component metadata, and version governance
+traceability used by the quarterly ranking response.
+
+**File: `services/control-plane/bff/main.py`**
+
+The route returns top-level `data` / `formula`, `versionHistory`,
+`evidenceRefs`, `summary`, and `meta`. The `data` payload is the same formula
+shape embedded in `GET /bff/management/quarterly-ranking`, including:
+
+- `weights` and `components` for `pnl`, `risk`, `execution`, and `activity`;
+- `formulaVersion` / `formula_version`;
+- `basis` and `policy`;
+- `changeControl` / `change_control` stating that formula version changes
+  require governance evidence;
+- `governanceEvidenceRefs` / `governance_evidence_refs` and version-history
+  entries that link the current version back to the PM-12 integration spec.
+
+The route advertises strict live composition sources:
+
+- `GET /bff/management/persona-league/rankings`
+- `GET /api/v1/knowledge/evidence`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#b34-pm-12-composition-sources`
+
+**File: `execute-plans/src/lib/bff-v1/management.ts`**
+
+Added typed response contracts plus:
+
+- `managementQuarterlyRankingFormulaPath()`
+- `fetchManagementQuarterlyRankingFormula()`
+
+**File: `execute-plans/src/lib/bff-v1/paths.ts`**
+
+Added the `managementQuarterlyRankingFormula()` path builder resolving to
+`/bff/management/quarterly-ranking/formula`.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated `GET /bff/management/quarterly-ranking/formula` returns formula weights and version | Implemented BFF-PM12-007 |
+| 2 | Formula version history and change-control fields trace version increments to governance evidence | Implemented BFF-PM12-007 |
+| 3 | Missing auth returns HTTP 401 | Implemented BFF-PM12-007 |
+| 4 | Route is registered in the execute-plans final live wiring route inventory | Implemented BFF-PM12-007 |
+| 5 | execute-plans exposes typed path and fetch helper for quarterly ranking formula | Implemented BFF-PM12-007 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_pm12_persona_league.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-PM12-007 — Owner: Codex2, Reviewer: Claude2
+
+---
+
 ### PM-12 Portfolio-Book Holdings
 
 `GET /bff/management/portfolio-book/holdings` is the global holdings table for
@@ -1252,6 +1316,59 @@ BFF-B3-001 — Owner: Codex, Reviewer: Claude
 ### Task
 
 BFF-B3-006 — Owner: Codex, Reviewer: Claude
+
+---
+
+### B3-010..014 Readiness Aggregates
+
+**File: `services/control-plane/bff/main.py`**
+
+- Add read-only Management readiness routes:
+  - `GET /bff/management/readiness/ep5`
+  - `GET /bff/management/readiness/broker-live`
+  - `GET /bff/management/readiness/capital-binding-live`
+  - `GET /bff/management/readiness/bff-ha`
+  - `GET /bff/management/readiness/strict-publish`
+- Require the existing BFF read-role authentication gate; anonymous requests
+  return the typed BFF 401 envelope.
+- Return a consistent readiness envelope with `data`, `summary`, `checks`,
+  `evidence_refs`, and `meta.surfaces`.
+- Preserve fail-closed truth: broker live, capital binding live, production BFF
+  HA, and strict publish must not be reported as proceedable while their current
+  gates/evidence remain blocked.
+
+**Files: `execute-plans/src/lib/bff-v1/paths.ts`,
+`execute-plans/src/lib/bff-v1/management.ts`, and
+`execute-plans/src/lib/bff/client.ts`**
+
+- Add canonical paths and typed response contracts for the five readiness
+  aggregates.
+- Add strict/hybrid Management client adapters for the five readiness reads.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated readiness routes return `data`, `summary`, `checks`, `evidence_refs`, and `meta.surfaces.management_readiness_*` | ✅ test added in BFF-B3-008 |
+| 2 | Broker live readiness reports live broker execution fail-closed and no real-capital/order side effects | ✅ test added in BFF-B3-008 |
+| 3 | Strict publish readiness exposes the current forbidden-path scan blocker from the audit packet | ✅ test added in BFF-B3-008 |
+| 4 | Anonymous readiness requests return HTTP 401 typed BFF error envelope | ✅ test added in BFF-B3-008 |
+| 5 | Execute-plans exposes the five readiness paths, response contract, fetch helpers, and strict/hybrid client adapter | ✅ implemented in BFF-B3-008 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_b3_readiness.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/src/lib/bff/client.ts`
+- `execute-plans/src/lib/bff/__tests__/client.test.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B3-008 — Owner: Codex, Reviewer: Claude
 
 ---
 
