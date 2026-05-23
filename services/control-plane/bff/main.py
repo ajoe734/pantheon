@@ -6348,6 +6348,264 @@ def _build_management_anomalies_payload(snapshot_at: str) -> Dict[str, Any]:
     }
 
 
+def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    ref_id = str(item.get("ref_id") or item.get("id") or "").strip()
+    display_label = item.get("display_label") or ref_id
+    if item.get("redacted"):
+        required_capability = item.get("required_capability")
+        return {
+            "id": ref_id,
+            "refId": ref_id,
+            "ref_id": ref_id,
+            "displayLabel": display_label,
+            "display_label": display_label,
+            "kind": item.get("kind"),
+            "requiredCapability": required_capability,
+            "required_capability": required_capability,
+            "reason": item.get("reason"),
+            "redacted": True,
+        }
+
+    source_document = item.get("source_document") if isinstance(item.get("source_document"), dict) else {}
+    linked_summary = (
+        item.get("linked_object_summary")
+        if isinstance(item.get("linked_object_summary"), dict)
+        else {}
+    )
+    resolved_link = item.get("resolved_link") if isinstance(item.get("resolved_link"), dict) else {}
+    credibility = item.get("credibility") if isinstance(item.get("credibility"), dict) else {}
+    source_type = source_document.get("source_type")
+    source_ref = source_document.get("source_ref")
+    captured_at = source_document.get("captured_at")
+    link_type = item.get("link_type")
+    route_href = item.get("route_href") or (f"/knowledge/evidence/{ref_id}" if ref_id else None)
+    title = source_document.get("title") or display_label
+    return {
+        "id": ref_id,
+        "refId": ref_id,
+        "ref_id": ref_id,
+        "title": title,
+        "displayLabel": display_label,
+        "display_label": display_label,
+        "sourceType": source_type,
+        "source_type": source_type,
+        "sourceRef": source_ref,
+        "source_ref": source_ref,
+        "capturedAt": captured_at,
+        "captured_at": captured_at,
+        "linkType": link_type,
+        "link_type": link_type,
+        "credibility": json.loads(json.dumps(credibility)),
+        "linkedObjectSummary": json.loads(json.dumps(linked_summary)),
+        "linked_object_summary": json.loads(json.dumps(linked_summary)),
+        "resolvedLink": json.loads(json.dumps(resolved_link)),
+        "resolved_link": json.loads(json.dumps(resolved_link)),
+        "routeHref": route_href,
+        "route_href": route_href,
+        "managementHref": f"/management/evidence?ref_id={ref_id}" if ref_id else None,
+        "management_href": f"/management/evidence?ref_id={ref_id}" if ref_id else None,
+        "redacted": False,
+    }
+
+
+def _management_count_by_nested(
+    records: List[Dict[str, Any]],
+    *fields: str,
+) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for record in records:
+        value: Any = record
+        for field in fields:
+            value = value.get(field) if isinstance(value, dict) else None
+        key = str(value or "unknown").strip() or "unknown"
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _management_evidence_summary(
+    *,
+    filtered_total: int,
+    page_items: List[Dict[str, Any]],
+    redacted_count: int,
+) -> Dict[str, Any]:
+    visible_items = [item for item in page_items if not item.get("redacted")]
+    verified_count = len(
+        [
+            item
+            for item in visible_items
+            if bool((item.get("credibility") or {}).get("verified"))
+        ]
+    )
+    by_source_type = _management_count_by_nested(visible_items, "source_document", "source_type")
+    by_link_type = _management_count_by(visible_items, "link_type")
+    by_credibility_tier = _management_count_by_nested(visible_items, "credibility", "tier")
+    return {
+        "totalEvidence": filtered_total,
+        "total_evidence": filtered_total,
+        "returnedEvidence": len(page_items),
+        "returned_evidence": len(page_items),
+        "visibleEvidence": len(visible_items),
+        "visible_evidence": len(visible_items),
+        "redactedEvidence": redacted_count,
+        "redacted_evidence": redacted_count,
+        "verifiedEvidence": verified_count,
+        "verified_evidence": verified_count,
+        "bySourceType": by_source_type,
+        "by_source_type": by_source_type,
+        "byLinkType": by_link_type,
+        "by_link_type": by_link_type,
+        "byCredibilityTier": by_credibility_tier,
+        "by_credibility_tier": by_credibility_tier,
+    }
+
+
+def _build_management_evidence_payload(
+    *,
+    identity: OperatorIdentity,
+    ref_id: Optional[str],
+    linked_entity_type: Optional[str],
+    linked_entity_ref: Optional[str],
+    link_type: Optional[str],
+    credibility_tier: Optional[str],
+    verified: Optional[bool],
+    page_token: Optional[str],
+    page_size: int,
+) -> Dict[str, Any]:
+    validated_linked_entity_type = None
+    if linked_entity_type is not None:
+        validated_linked_entity_type = _kw03_validate_linked_entity_type(linked_entity_type)
+    if linked_entity_ref is not None and validated_linked_entity_type is None:
+        raise _kw03_bad_request(
+            "Invalid linked_entity_ref filter",
+            "linked_entity_ref requires linked_entity_type to be set",
+            "linked_entity_ref",
+        )
+
+    validated_link_type = _kw03_validate_link_type(link_type) if link_type is not None else None
+    validated_credibility_tier = (
+        _kw03_validate_credibility_tier(credibility_tier)
+        if credibility_tier is not None
+        else None
+    )
+
+    snapshot_at = utc_now()
+    evidence_refs = read_store.list_evidence_refs()
+    evidence_dataset_available = read_store.dataset_source("evidence_refs") != "missing"
+
+    clean_ref_id = str(ref_id or "").strip()
+    if clean_ref_id:
+        evidence_refs = [
+            item for item in evidence_refs if str(item.get("ref_id") or "") == clean_ref_id
+        ]
+    if validated_linked_entity_type:
+        evidence_refs = [
+            item
+            for item in evidence_refs
+            if str(((item.get("linked_object_summary") or {}).get("entity_type")) or "")
+            == validated_linked_entity_type
+        ]
+    if linked_entity_ref is not None:
+        evidence_refs = [
+            item
+            for item in evidence_refs
+            if str(((item.get("linked_object_summary") or {}).get("entity_ref")) or "")
+            == str(linked_entity_ref)
+        ]
+    if validated_link_type:
+        evidence_refs = [
+            item
+            for item in evidence_refs
+            if str(item.get("link_type") or "") == validated_link_type
+        ]
+    if validated_credibility_tier:
+        evidence_refs = [
+            item
+            for item in evidence_refs
+            if str(((item.get("credibility") or {}).get("tier")) or "")
+            == validated_credibility_tier
+        ]
+    if verified is not None:
+        evidence_refs = [
+            item
+            for item in evidence_refs
+            if bool((item.get("credibility") or {}).get("verified")) is verified
+        ]
+
+    evidence_surface = _dataset_surface_status(
+        "evidence_refs",
+        snapshot_at=snapshot_at,
+        has_data=evidence_dataset_available,
+        missing_message="Evidence reference read surface is unavailable.",
+    )
+    management_surface = _aggregate_group_surface(
+        "management_evidence",
+        [evidence_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Management evidence aggregate unavailable.",
+        degraded_message="Management evidence aggregate is available, but the evidence read surface is degraded.",
+    )
+
+    total = len(evidence_refs)
+    if evidence_surface.get("status") == "unavailable":
+        page_items = []
+        next_page_token = None
+    else:
+        page_items, next_page_token = _page_slice(evidence_refs, page_token, page_size)
+
+    try:
+        capabilities = _capabilities_for_identity(identity)
+    except Exception:
+        capabilities = None
+    processed_items, redacted_count = redact_evidence_refs(
+        identity,
+        list(page_items),
+        capabilities=capabilities,
+    )
+    public_items = [
+        _management_evidence_public_item(item)
+        for item in processed_items
+        if isinstance(item, dict)
+    ]
+    summary = _management_evidence_summary(
+        filtered_total=total,
+        page_items=processed_items,
+        redacted_count=redacted_count,
+    )
+    facets = {
+        "sourceTypes": summary["bySourceType"],
+        "source_types": summary["by_source_type"],
+        "linkTypes": summary["byLinkType"],
+        "link_types": summary["by_link_type"],
+        "credibilityTiers": summary["byCredibilityTier"],
+        "credibility_tiers": summary["by_credibility_tier"],
+    }
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {
+        "management_evidence": management_surface,
+        "evidence_refs": evidence_surface,
+        "knowledge_evidence": evidence_surface,
+    }
+    meta["redacted_evidence_count"] = redacted_count
+
+    return {
+        "data": public_items,
+        "items": public_items,
+        "summary": summary,
+        "facets": facets,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "pagination": {
+            "next_page_token": next_page_token,
+            "has_more": next_page_token is not None,
+            "page_size": page_size,
+        },
+        "meta": meta,
+    }
+
+
 def _build_management_cockpit_payload(snapshot_at: str) -> Dict[str, Any]:
     operator_home = _build_operator_home_payload(snapshot_at)
     runtime_health = _build_operator_health_status_payload(snapshot_at)
@@ -19539,6 +19797,34 @@ async def bff_management_persona_fleet(
     return _project_persona_fleet_payload(
         state=state,
         health=health,
+        page_token=page_token,
+        page_size=page_size,
+    )
+
+
+@app.get("/bff/management/evidence")
+async def bff_management_evidence(
+    ref_id: Optional[str] = None,
+    linked_entity_type: Optional[str] = None,
+    linked_entity_ref: Optional[str] = None,
+    link_type: Optional[str] = None,
+    credibility_tier: Optional[str] = None,
+    verified: Optional[bool] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=100),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: adapt knowledge evidence refs into the Management Evidence Explorer."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _build_management_evidence_payload(
+        identity=identity,
+        ref_id=ref_id,
+        linked_entity_type=linked_entity_type,
+        linked_entity_ref=linked_entity_ref,
+        link_type=link_type,
+        credibility_tier=credibility_tier,
+        verified=verified,
         page_token=page_token,
         page_size=page_size,
     )

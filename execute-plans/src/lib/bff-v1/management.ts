@@ -67,8 +67,124 @@ export interface ManagementCockpitResponse {
   meta: ManagementCockpitMeta;
 }
 
+export interface ManagementEvidenceQuery {
+  ref_id?: string;
+  linked_entity_type?: string;
+  linked_entity_ref?: string;
+  link_type?: string;
+  credibility_tier?: string;
+  verified?: boolean;
+  page_token?: string;
+  page_size?: number;
+}
+
+export interface ManagementEvidenceItem {
+  id: string;
+  refId: string;
+  ref_id: string;
+  title?: string;
+  displayLabel?: string;
+  display_label?: string;
+  sourceType?: string;
+  source_type?: string;
+  sourceRef?: string;
+  source_ref?: string;
+  capturedAt?: string;
+  captured_at?: string;
+  linkType?: string;
+  link_type?: string;
+  credibility?: Record<string, unknown>;
+  linkedObjectSummary?: Record<string, unknown>;
+  linked_object_summary?: Record<string, unknown>;
+  resolvedLink?: Record<string, unknown>;
+  resolved_link?: Record<string, unknown>;
+  routeHref?: string;
+  route_href?: string;
+  managementHref?: string;
+  management_href?: string;
+  kind?: string;
+  requiredCapability?: string;
+  required_capability?: string;
+  reason?: string;
+  redacted?: boolean;
+  [key: string]: unknown;
+}
+
+export interface ManagementEvidenceSummary {
+  totalEvidence: number;
+  total_evidence: number;
+  returnedEvidence: number;
+  returned_evidence: number;
+  visibleEvidence: number;
+  visible_evidence: number;
+  redactedEvidence: number;
+  redacted_evidence: number;
+  verifiedEvidence: number;
+  verified_evidence: number;
+  bySourceType: Record<string, number>;
+  by_source_type: Record<string, number>;
+  byLinkType: Record<string, number>;
+  by_link_type: Record<string, number>;
+  byCredibilityTier: Record<string, number>;
+  by_credibility_tier: Record<string, number>;
+  [key: string]: unknown;
+}
+
+export interface ManagementEvidenceResponse {
+  data: ManagementEvidenceItem[];
+  items: ManagementEvidenceItem[];
+  summary: ManagementEvidenceSummary;
+  facets: {
+    sourceTypes?: Record<string, number>;
+    source_types?: Record<string, number>;
+    linkTypes?: Record<string, number>;
+    link_types?: Record<string, number>;
+    credibilityTiers?: Record<string, number>;
+    credibility_tiers?: Record<string, number>;
+    [key: string]: unknown;
+  };
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  pagination?: {
+    next_page_token?: string | null;
+    has_more?: boolean;
+    page_size?: number;
+    [key: string]: unknown;
+  };
+  meta: {
+    snapshot_at?: string;
+    staleness?: Record<string, unknown>;
+    surfaces: {
+      management_evidence: ManagementSurfaceRef;
+      evidence_refs?: ManagementSurfaceRef;
+      knowledge_evidence?: ManagementSurfaceRef;
+      [key: string]: ManagementSurfaceRef | undefined;
+    };
+    redacted_evidence_count?: number;
+    [key: string]: unknown;
+  };
+}
+
+function withQuery(path: string, query?: ManagementEvidenceQuery): string {
+  if (!query) return path;
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value === undefined || value === null || value === "") continue;
+    params.set(key, String(value));
+  }
+  const suffix = params.toString();
+  return suffix ? `${path}?${suffix}` : path;
+}
+
 export function managementCockpitPath(): string {
   return paths.managementCockpit();
+}
+
+export function managementEvidencePath(query?: ManagementEvidenceQuery): string {
+  return withQuery(paths.managementEvidence(), query);
 }
 
 export async function fetchManagementCockpit(
@@ -86,4 +202,23 @@ export async function fetchManagementCockpit(
     throw new Error(`GET ${managementCockpitPath()} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementCockpitResponse>;
+}
+
+export async function fetchManagementEvidence(
+  query?: ManagementEvidenceQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementEvidenceResponse> {
+  const path = managementEvidencePath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementEvidenceResponse>;
 }

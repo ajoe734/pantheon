@@ -29,7 +29,7 @@ describe("managementClient — coverage", () => {
       "rebalances", "deployments", "evolution", "research", "artifacts",
       "tools", "mcpServers", "mcpTools", "skills", "channels",
       "jobs", "runtimes", "alerts", "incidents", "approvals", "audit",
-      "oodaPackets", "humanInbox",
+      "oodaPackets", "humanInbox", "evidenceExplorer",
     ] as const;
     for (const family of required) {
       expect(managementClient).toHaveProperty(family);
@@ -353,6 +353,95 @@ describe("managementClient — Human Inbox aggregate live adapter", () => {
     expect(aggregate.meta.surfaces?.human_inbox).toEqual({ status: "ok", source: "bff_composed" });
     expect(detail?.intervention_id).toBe("intv-human-001");
     expect(detail?.allowedActions.canRemediate).toBe(true);
+  });
+});
+
+describe("managementClient — Evidence Explorer aggregate live adapter", () => {
+  const realFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    vi.stubEnv("VITE_BFF_BASE_URL", "https://example.test");
+    liveStatus._reset({ mode: "live", effective: "live", baseUrl: "https://example.test" });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    vi.unstubAllEnvs();
+    liveStatus._reset();
+  });
+
+  it("reads /bff/management/evidence with explorer filters and preserves redaction meta", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        items: [
+          {
+            id: "evref-b3-metric-001",
+            refId: "evref-b3-metric-001",
+            ref_id: "evref-b3-metric-001",
+            title: "Runtime performance window",
+            sourceType: "metric",
+            source_type: "metric",
+            linkType: "supporting_evidence",
+            link_type: "supporting_evidence",
+            credibility: { tier: "primary", verified: true },
+            linkedObjectSummary: { entity_type: "experiment", entity_ref: "exp-b3-alpha" },
+            linked_object_summary: { entity_type: "experiment", entity_ref: "exp-b3-alpha" },
+            routeHref: "/knowledge/evidence/evref-b3-metric-001",
+            redacted: false,
+          },
+        ],
+        summary: {
+          totalEvidence: 1,
+          total_evidence: 1,
+          returnedEvidence: 1,
+          returned_evidence: 1,
+          visibleEvidence: 1,
+          visible_evidence: 1,
+          redactedEvidence: 0,
+          redacted_evidence: 0,
+          verifiedEvidence: 1,
+          verified_evidence: 1,
+          bySourceType: { metric: 1 },
+          by_source_type: { metric: 1 },
+          byLinkType: { supporting_evidence: 1 },
+          by_link_type: { supporting_evidence: 1 },
+          byCredibilityTier: { primary: 1 },
+          by_credibility_tier: { primary: 1 },
+        },
+        facets: {
+          sourceTypes: { metric: 1 },
+          source_types: { metric: 1 },
+          linkTypes: { supporting_evidence: 1 },
+          link_types: { supporting_evidence: 1 },
+          credibilityTiers: { primary: 1 },
+          credibility_tiers: { primary: 1 },
+        },
+        page_info: { total: 1, page_size: 2, next_page_token: null },
+        meta: {
+          redacted_evidence_count: 0,
+          surfaces: {
+            management_evidence: { status: "ok", source: "bff_composed" },
+            evidence_refs: { status: "ok", source: "service_store" },
+          },
+        },
+      }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    );
+    globalThis.fetch = fetchMock;
+
+    const aggregate = await managementClient.evidenceExplorer.list({
+      linked_entity_type: "experiment",
+      verified: true,
+      page_size: 2,
+    });
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://example.test/bff/management/evidence?linked_entity_type=experiment&verified=true&page_size=2",
+    );
+    expect(aggregate.items[0].refId).toBe("evref-b3-metric-001");
+    expect(aggregate.summary.totalEvidence).toBe(1);
+    expect(aggregate.facets.sourceTypes).toEqual({ metric: 1 });
+    expect(aggregate.meta.redacted_evidence_count).toBe(0);
+    expect(aggregate.meta.surfaces.management_evidence.source).toBe("bff_composed");
   });
 });
 
