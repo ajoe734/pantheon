@@ -62,6 +62,56 @@ import type {
   AuditEvent,
 } from "@/lib/bff/types";
 
+export type PersonaFleetHealthStatus = "healthy" | "degraded" | "critical";
+
+export interface PersonaFleetItem {
+  id: string;
+  persona_id: string;
+  persona: Record<string, unknown>;
+  health: {
+    status: PersonaFleetHealthStatus;
+    severity: string;
+    score: number;
+    reasons: string[];
+    latest_telemetry_at?: string | null;
+    active_incident_count: number;
+  };
+  bindings: Array<Record<string, unknown>>;
+  capitalPools: Array<Record<string, unknown>>;
+  capital_pools: Array<Record<string, unknown>>;
+  runtimeBindings: Array<Record<string, unknown>>;
+  runtime_bindings: Array<Record<string, unknown>>;
+  telemetrySummary: Record<string, unknown>;
+  telemetry_summary: Record<string, unknown>;
+  training: Record<string, unknown>;
+  evolution: Record<string, unknown>;
+  allowedActions: Record<string, unknown>;
+}
+
+export interface PersonaFleetAggregate {
+  data: PersonaFleetItem[];
+  items: PersonaFleetItem[];
+  summary: {
+    total_personas: number;
+    returned_personas: number;
+    critical_personas: number;
+    degraded_personas: number;
+    healthy_personas: number;
+    bound_personas: number;
+    runtime_bound_personas: number;
+  };
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces?: Record<string, unknown>;
+    [key: string]: unknown;
+  };
+}
+
 // ---------- Mode helpers ----------
 
 export type ManagementMode = "mock" | "hybrid" | "real";
@@ -133,6 +183,79 @@ function emptyOodaPacketList(): ListEnvelope<OodaLoopPacket> {
   };
 }
 
+function emptyPersonaFleetAggregate(): PersonaFleetAggregate {
+  const items = seed.personas.map((persona) => ({
+    id: persona.id,
+    persona_id: persona.id,
+    persona,
+    health: {
+      status: "degraded",
+      severity: "medium",
+      score: 0,
+      reasons: ["mock_persona_fleet_unavailable"],
+      latest_telemetry_at: null,
+      active_incident_count: 0,
+    },
+    bindings: [],
+    capitalPools: [],
+    capital_pools: [],
+    runtimeBindings: [],
+    runtime_bindings: [],
+    telemetrySummary: {
+      latest: null,
+      runtime_count: 0,
+      covered_runtime_count: 0,
+      summaries: [],
+    },
+    telemetry_summary: {
+      latest: null,
+      runtime_count: 0,
+      covered_runtime_count: 0,
+      summaries: [],
+    },
+    training: {
+      session_count: 0,
+      active_session_count: 0,
+      completed_session_count: 0,
+      latest_session: null,
+    },
+    evolution: {
+      decision_count: 0,
+      pending_decision_count: 0,
+      latest_decision: null,
+      decisions: [],
+    },
+    allowedActions: {},
+  })) as PersonaFleetItem[];
+  return {
+    data: items,
+    items,
+    summary: {
+      total_personas: items.length,
+      returned_personas: items.length,
+      critical_personas: 0,
+      degraded_personas: items.length,
+      healthy_personas: 0,
+      bound_personas: 0,
+      runtime_bound_personas: 0,
+    },
+    page_info: {
+      next_page_token: null,
+      total: items.length,
+      page_size: items.length,
+    },
+    meta: {
+      surfaces: {
+        persona_fleet: {
+          status: "unavailable",
+          source: "mock",
+          reason: "Persona Fleet aggregate is served by the Pantheon BFF management aggregate.",
+        },
+      },
+    },
+  };
+}
+
 function adaptOodaPacketDetail(body: unknown): OodaPacketDetail | undefined {
   const envelope = asObject(body);
   const rawPacket = asObject(strictDataFrom(body) ?? body);
@@ -149,12 +272,51 @@ function adaptOodaPacketDetail(body: unknown): OodaPacketDetail | undefined {
   };
 }
 
+function adaptPersonaFleetAggregate(body: unknown): PersonaFleetAggregate {
+  const envelope = asObject(body);
+  const rawItems = Array.isArray(envelope.items)
+    ? envelope.items
+    : Array.isArray(envelope.data)
+      ? envelope.data
+      : [];
+  const items = rawItems.filter((item) => item && typeof item === "object") as PersonaFleetItem[];
+  const summary = asObject(envelope.summary);
+  const pageInfo = asObject(envelope.page_info);
+  const meta = asObject(envelope.meta);
+  return {
+    data: items,
+    items,
+    summary: {
+      total_personas: Number(summary.total_personas ?? items.length),
+      returned_personas: Number(summary.returned_personas ?? items.length),
+      critical_personas: Number(summary.critical_personas ?? 0),
+      degraded_personas: Number(summary.degraded_personas ?? 0),
+      healthy_personas: Number(summary.healthy_personas ?? 0),
+      bound_personas: Number(summary.bound_personas ?? 0),
+      runtime_bound_personas: Number(summary.runtime_bound_personas ?? 0),
+    },
+    page_info: {
+      next_page_token: typeof pageInfo.next_page_token === "string" ? pageInfo.next_page_token : null,
+      total: Number(pageInfo.total ?? items.length),
+      page_size: Number(pageInfo.page_size ?? items.length),
+    },
+    meta,
+  };
+}
+
 export type OodaPacketListQuery = {
   status?: string;
   stage?: string;
   strategy_id?: string;
   runtime_id?: string;
   evolution_program_id?: string;
+  page_token?: string;
+  page_size?: number;
+};
+
+export type PersonaFleetQuery = {
+  state?: string;
+  health?: string;
   page_token?: string;
   page_size?: number;
 };
@@ -413,6 +575,19 @@ const evolutionReviews = {
   get: evolutionReviewDetail,
 };
 
+const personaFleet = {
+  list: (query?: PersonaFleetQuery): Promise<PersonaFleetAggregate> =>
+    withStrictLiveOrMock<PersonaFleetAggregate, unknown>(
+      {
+        method: "GET",
+        path: paths.managementPersonaFleet(),
+        query: query as Record<string, string | number | undefined> | undefined,
+      },
+      async () => emptyPersonaFleetAggregate(),
+      adaptPersonaFleetAggregate,
+    ),
+};
+
 // ---------- Public surface ----------
 
 /** Canonical Management Console read surface — list + detail per family,
@@ -440,6 +615,7 @@ export const managementClient = {
   audit,
   oodaPackets,
   evolutionReviews,
+  personaFleet,
 } as const;
 
 export type ManagementFamily = keyof typeof managementClient;

@@ -1052,3 +1052,74 @@ projection.
 ### Task
 
 BFF-B2-005 — Owner: Codex, Reviewer: Claude2
+
+---
+
+## B3 — P1 Management Aggregate APIs
+
+### Gap
+
+The execute-plans Persona Fleet page needs one strict/live aggregate read so the
+frontend does not fan out across persona, binding, runtime, telemetry, trainer,
+and evolution read surfaces. The page can already read the B2.1 list/detail
+facade, but the live Persona Fleet view requires a backend-owned composition that
+keeps source-surface health visible and preserves fail-closed auth semantics.
+
+### B3.3 GET `/bff/management/persona-fleet`
+
+**File: `services/control-plane/bff/main.py`**
+
+- Add `GET /bff/management/persona-fleet` as a read-only Management aggregate.
+- Require the existing BFF read-role authentication gate; anonymous requests
+  return the typed BFF 401 envelope.
+- Compose each persona with:
+  - execute-plans Persona DTO projection;
+  - persona-capital bindings and capital-pool enrichment;
+  - runtime bindings linked by persona binding, capital pool, deployment plan,
+    or persona session runtime reference;
+  - telemetry summaries keyed by runtime;
+  - trainer/teaching session summary;
+  - related evolution decisions via persona target, runtime artifact, or linked
+    incident;
+  - derived persona health with status, score, reasons, runtime statuses, latest
+    telemetry timestamp, and active incident count.
+- Return the standard BFF aggregate envelope: `data`, `items`, `summary`,
+  `page_info`, and `meta.surfaces`.
+- Support `state`, `health`, `page_token`, and bounded `page_size` filters.
+- Preserve source surfaces in metadata (`personas`, `persona_bindings`,
+  `runtime_bindings`, `telemetry_summaries`, `teaching_sessions`,
+  `evolution_decisions`) plus a composed `persona_fleet` surface.
+
+**File: `execute-plans/src/lib/bff-v1/paths.ts`**
+
+- Add `paths.managementPersonaFleet()` resolving to
+  `/bff/management/persona-fleet`.
+
+**File: `execute-plans/src/lib/bff/client.ts`**
+
+- Add `managementClient.personaFleet.list()` as the live aggregate reader using
+  the same strict/hybrid transport policy as OODA and mutation-review live reads,
+  with the Persona Fleet aggregate DTO exported from the tracked client module.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `GET /bff/management/persona-fleet` returns persona rows composed from personas, persona-capital bindings, runtime bindings, telemetry summaries, trainer sessions, and evolution decisions | ✅ test added |
+| 2 | Response includes `data`, `items`, `summary`, `page_info`, and `meta.surfaces.persona_fleet` | ✅ test added |
+| 3 | `health` and pagination filters are accepted by the backend route | ✅ test added |
+| 4 | Anonymous request returns HTTP 401 typed BFF error envelope | ✅ test added |
+| 5 | Frontend path/client contract exposes the live aggregate route without seed-list fanout | ✅ test added |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_b3_persona_fleet.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff/client.ts`
+- `execute-plans/src/lib/bff/__tests__/client.test.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B3-002 — Owner: Codex, Reviewer: Claude
