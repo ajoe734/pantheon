@@ -1122,6 +1122,59 @@ BFF-B3-006 — Owner: Codex, Reviewer: Claude
 
 ---
 
+### B3-010..014 Readiness Aggregates
+
+**File: `services/control-plane/bff/main.py`**
+
+- Add read-only Management readiness routes:
+  - `GET /bff/management/readiness/ep5`
+  - `GET /bff/management/readiness/broker-live`
+  - `GET /bff/management/readiness/capital-binding-live`
+  - `GET /bff/management/readiness/bff-ha`
+  - `GET /bff/management/readiness/strict-publish`
+- Require the existing BFF read-role authentication gate; anonymous requests
+  return the typed BFF 401 envelope.
+- Return a consistent readiness envelope with `data`, `summary`, `checks`,
+  `evidence_refs`, and `meta.surfaces`.
+- Preserve fail-closed truth: broker live, capital binding live, production BFF
+  HA, and strict publish must not be reported as proceedable while their current
+  gates/evidence remain blocked.
+
+**Files: `execute-plans/src/lib/bff-v1/paths.ts`,
+`execute-plans/src/lib/bff-v1/management.ts`, and
+`execute-plans/src/lib/bff/client.ts`**
+
+- Add canonical paths and typed response contracts for the five readiness
+  aggregates.
+- Add strict/hybrid Management client adapters for the five readiness reads.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated readiness routes return `data`, `summary`, `checks`, `evidence_refs`, and `meta.surfaces.management_readiness_*` | ✅ test added in BFF-B3-008 |
+| 2 | Broker live readiness reports live broker execution fail-closed and no real-capital/order side effects | ✅ test added in BFF-B3-008 |
+| 3 | Strict publish readiness exposes the current forbidden-path scan blocker from the audit packet | ✅ test added in BFF-B3-008 |
+| 4 | Anonymous readiness requests return HTTP 401 typed BFF error envelope | ✅ test added in BFF-B3-008 |
+| 5 | Execute-plans exposes the five readiness paths, response contract, fetch helpers, and strict/hybrid client adapter | ✅ implemented in BFF-B3-008 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_b3_readiness.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/src/lib/bff/client.ts`
+- `execute-plans/src/lib/bff/__tests__/client.test.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B3-008 — Owner: Codex, Reviewer: Claude
+
+---
+
 ## B4 — P1 v5 Closed-Loop OS APIs {#b4--p1-v5-closed-loop-os-apis}
 
 ### Gap

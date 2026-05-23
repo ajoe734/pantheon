@@ -78,6 +78,87 @@ export interface ManagementEvidenceQuery {
   page_size?: number;
 }
 
+export type ManagementReadinessId =
+  | "ep5"
+  | "broker-live"
+  | "capital-binding-live"
+  | "bff-ha"
+  | "strict-publish"
+  | string;
+
+export type ManagementReadinessStatus = "ready" | "blocked" | "degraded" | "unknown" | string;
+
+export interface ManagementReadinessCheck {
+  id: string;
+  label: string;
+  status: "pass" | "fail" | "blocked" | "warn" | "unknown" | string;
+  blocking: boolean;
+  message: string;
+  evidence_refs?: string[];
+  details?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface ManagementReadinessEvidenceRef {
+  id: string;
+  label: string;
+  path: string;
+  href?: string;
+  exists?: boolean;
+  [key: string]: unknown;
+}
+
+export interface ManagementReadinessSummary {
+  readinessStatus: ManagementReadinessStatus;
+  readiness_status: ManagementReadinessStatus;
+  canProceed: boolean;
+  can_proceed: boolean;
+  checkCount: number;
+  check_count: number;
+  passedCheckCount: number;
+  passed_check_count: number;
+  blockingReasonCount: number;
+  blocking_reason_count: number;
+  blockingReasons: string[];
+  blocking_reasons: string[];
+  byStatus: Record<string, number>;
+  by_status: Record<string, number>;
+  [key: string]: unknown;
+}
+
+export interface ManagementReadinessData {
+  id: ManagementReadinessId;
+  readinessId: ManagementReadinessId;
+  readiness_id: ManagementReadinessId;
+  title: string;
+  readinessStatus: ManagementReadinessStatus;
+  readiness_status: ManagementReadinessStatus;
+  canProceed: boolean;
+  can_proceed: boolean;
+  blockingReasons: string[];
+  blocking_reasons: string[];
+  checks: ManagementReadinessCheck[];
+  evidenceRefs: ManagementReadinessEvidenceRef[];
+  evidence_refs: ManagementReadinessEvidenceRef[];
+  links?: Record<string, string>;
+  details?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface ManagementReadinessResponse {
+  data: ManagementReadinessData;
+  summary: ManagementReadinessSummary;
+  checks: ManagementReadinessCheck[];
+  items?: ManagementReadinessCheck[];
+  evidence_refs: ManagementReadinessEvidenceRef[];
+  meta: {
+    snapshot_at?: string;
+    staleness?: Record<string, unknown>;
+    surfaces: Record<string, ManagementSurfaceRef>;
+    [key: string]: unknown;
+  };
+}
+
 export interface ManagementPortfolioBookHolding {
   id: string;
   holding_id: string;
@@ -279,6 +360,26 @@ export function managementEvidencePath(query?: ManagementEvidenceQuery): string 
   return withQuery(paths.managementEvidence(), query);
 }
 
+export function managementReadinessEp5Path(): string {
+  return paths.managementReadinessEp5();
+}
+
+export function managementReadinessBrokerLivePath(): string {
+  return paths.managementReadinessBrokerLive();
+}
+
+export function managementReadinessCapitalBindingLivePath(): string {
+  return paths.managementReadinessCapitalBindingLive();
+}
+
+export function managementReadinessBffHaPath(): string {
+  return paths.managementReadinessBffHa();
+}
+
+export function managementReadinessStrictPublishPath(): string {
+  return paths.managementReadinessStrictPublish();
+}
+
 export function managementPortfolioBookHoldingsPath(
   query?: ManagementPortfolioBookHoldingsQuery,
 ): string {
@@ -319,6 +420,59 @@ export async function fetchManagementEvidence(
     throw new Error(`GET ${path} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementEvidenceResponse>;
+}
+
+export async function fetchManagementReadiness(
+  path: string,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementReadinessResponse> {
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementReadinessResponse>;
+}
+
+export async function fetchManagementReadinessEp5(
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementReadinessResponse> {
+  return fetchManagementReadiness(managementReadinessEp5Path(), init, baseUrl);
+}
+
+export async function fetchManagementReadinessBrokerLive(
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementReadinessResponse> {
+  return fetchManagementReadiness(managementReadinessBrokerLivePath(), init, baseUrl);
+}
+
+export async function fetchManagementReadinessCapitalBindingLive(
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementReadinessResponse> {
+  return fetchManagementReadiness(managementReadinessCapitalBindingLivePath(), init, baseUrl);
+}
+
+export async function fetchManagementReadinessBffHa(
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementReadinessResponse> {
+  return fetchManagementReadiness(managementReadinessBffHaPath(), init, baseUrl);
+}
+
+export async function fetchManagementReadinessStrictPublish(
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementReadinessResponse> {
+  return fetchManagementReadiness(managementReadinessStrictPublishPath(), init, baseUrl);
 }
 
 export async function fetchManagementPortfolioBookHoldings(
