@@ -54,3 +54,15 @@ Results:
   not include an execute-plans package manifest or local JavaScript test runner.
   The closeout therefore revalidates frontend wiring through the committed
   Python live wiring contract and records the TypeScript review artifact.
+
+## Done-Gate Refresh
+
+Closeout artifact PR #457 merged to `dev` at
+`a958e553430f84c24cdbe66fcfc02ffd2ebbc82e` on 2026-05-23T09:48:43Z. This
+final note keeps the task branch tip on an owner-authored BFF-B3-006 commit
+after the merge refresh, so the canonical `done` command can record task
+trailers from the latest task commit.
+
+PR #459 was refreshed after `dev` advanced through PR #458
+(`eda6826185b1bcfdb619b2a51fad6adff5869542`). The branch tip is again an
+owner-authored BFF-B3-006 evidence commit after composing that `dev` update.
