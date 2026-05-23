@@ -48,6 +48,18 @@ pytest services/control-plane/bff/tests/test_bff_b2_004_research_search.py -q
 17 passed in 4.58s
 ```
 
+Second follow-up dev sync by Codex2 (2026-05-23T11:56:54Z):
+
+- Merged `origin/dev` at `1192589b`; incoming changes were BFF-B6-001
+  management NL ask surface updates.
+- Merge sync commit: `36d16299`.
+- Validation:
+
+```
+pytest services/control-plane/bff/tests/test_bff_b2_004_research_search.py services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py -q
+25 passed in 9.20s
+```
+
 ## Delivered Endpoints
 
 | # | Method | Path | Handler |
