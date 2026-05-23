@@ -1194,6 +1194,97 @@ BFF-PM12-002 — Owner: Codex2, Reviewer: Claude2
 
 ---
 
+### PM-12 Performance Attribution
+
+`GET /bff/management/performance-attribution?dimension=&period=` is the PM-12
+performance attribution table. It is a read-only BFF composition route and does
+not create a new performance source of truth.
+
+**File: `services/control-plane/bff/main.py`**
+
+The route composes attribution facts from existing read surfaces:
+
+- runtime bindings as the runtime anchor;
+- telemetry summaries for PnL, drawdown, fill rate, slippage, trade count, and
+  position snapshots;
+- deployment plans for strategy/deployment context;
+- persona-capital bindings for persona and capital-pool ownership;
+- capital pools, personas, and strategy specs for table labels and drilldown
+  links.
+
+The route accepts `dimension`, `period`, `page_token`, and `page_size`.
+`dimension` may be omitted, `all`, or a comma-separated subset of:
+
+```text
+persona, strategy, pool, asset, broker, runtime, regime
+```
+
+The response uses the standard aggregate envelope:
+
+```json
+{
+  "data": {
+    "period": "latest",
+    "dimensions": [],
+    "items": [],
+    "rows": [],
+    "summary": {}
+  },
+  "items": [],
+  "rows": [],
+  "summary": {},
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 50 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": []
+  }
+}
+```
+
+Each row includes `dimension`, `dimensionKey` / `dimension_key`, `label`,
+`rank`, `period`, top-level PnL contribution fields, nested `metrics`,
+`sourceRefs` / `source_refs`, and drilldown `links` when the dimension maps to a
+BFF entity route. Missing telemetry degrades the attribution surface while still
+emitting runtime-level rows so strict live rendering can show source gaps.
+
+**File: `execute-plans/src/lib/bff-v1/paths.ts`**
+
+Added `managementPerformanceAttribution()` resolving to
+`/bff/management/performance-attribution`.
+
+**File: `execute-plans/src/lib/bff-v1/management.ts`**
+
+Added `ManagementPerformanceAttribution*` query/row/summary/response contracts,
+`managementPerformanceAttributionPath()`, and
+`fetchManagementPerformanceAttribution()`.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated `GET /bff/management/performance-attribution` accepts `dimension` and `period` query parameters | Implemented BFF-PM12-009 |
+| 2 | Rows support attribution by persona, strategy, pool, asset, broker, runtime, and regime | Implemented BFF-PM12-009 |
+| 3 | Response advertises source surfaces and composition sources for strict live rendering | Implemented BFF-PM12-009 |
+| 4 | Missing auth returns HTTP 401 and invalid dimensions return HTTP 422 | Implemented BFF-PM12-009 |
+| 5 | Route is registered in OpenAPI and execute-plans final live wiring route inventory | Implemented BFF-PM12-009 |
+| 6 | execute-plans exposes typed path and fetch helpers for the Performance Attribution table | Implemented BFF-PM12-009 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-PM12-009 — Owner: Codex2, Reviewer: Claude2
+
+---
+
 ## §16 PATCH /bff/me/locale — Operator Locale Preference
 
 ### Gap
@@ -1699,6 +1790,72 @@ BFF-B1-012 — Owner: Claude, Reviewer: Codex
 
 ---
 
+## B5 — P15 / P2 HumanGate Write APIs {#b5--p15--p2-humangate-write-apis}
+
+### Gap
+
+The Management Human Inbox and PM-12 quarterly ranking recommendations exposed
+read-side HumanGate work, but the write intents were not first-class final
+commands. Frontend flows could inspect approvals, interventions, and quarterly
+recommendations, yet lacked canonical command names for approve/reject,
+request-more-evidence, revoke, TTL extension, and recommendation submission.
+
+### Fix
+
+**File: `services/control-plane/bff/models.py`**
+
+- Added final command enum values:
+  `HumanGateApprove`, `HumanGateReject`,
+  `HumanGateRequestMoreEvidence`, `HumanGateRevoke`,
+  `HumanGateExtendTtl`, and `QuarterlyRankingRecommendationSubmit`.
+- Added `HumanGateItem` as the command target object type.
+
+**File: `services/control-plane/bff/main.py`**
+
+- Normalizes HumanGate commands submitted to `POST /bff/v1/commands` so
+  `target.id` becomes `human_gate_item_id` / `itemId`, infers `source_type`
+  from `approval:` or `intervention:` item ids, and records
+  `human_gate.{decision}` audit events.
+- Validates HumanGate target type, role gates, bounded decisions, and positive
+  TTL for `HumanGateExtendTtl`.
+- Normalizes `QuarterlyRankingRecommendationSubmit` so the recommendation id,
+  recommendation action id, command action, and audit event are persisted in the
+  command-store params while preserving `liveCapitalSideEffects=false` in the
+  standard `CommandResponse<T>` envelope.
+
+**Files: `services/control-plane/bff/action_catalog.py` and
+`services/control-plane/bff/command_executor.py`**
+
+- Registers all B5 command names in the action catalog with
+  `/bff/v1/commands` as the endpoint.
+- Routes B5 commands through the adapter-only executor path so they are admitted
+  and auditable without direct live capital mutation.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `POST /bff/v1/commands` admits `HumanGateApprove`, `HumanGateReject`, `HumanGateRequestMoreEvidence`, `HumanGateRevoke`, `HumanGateExtendTtl`, and `QuarterlyRankingRecommendationSubmit` | Implemented BFF-B5-001 |
+| 2 | Each command returns the standard `CommandResponse<T>` with command id, tracking URL, receipt dual-write data, and durable idempotency metadata | Implemented BFF-B5-001 |
+| 3 | Human Inbox decision flow can approve, reject, and request more evidence by using the composed inbox item id as a `HumanGateItem` target | Implemented BFF-B5-001 |
+| 4 | Quarterly ranking recommendation submission records governance intent and remains `liveCapitalSideEffects=false` / no direct live capital mutation | Implemented BFF-B5-001 |
+| 5 | B5 command names are present in the action catalog and command executor dispatch table | Implemented BFF-B5-001 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/models.py`
+- `services/control-plane/bff/action_catalog.py`
+- `services/control-plane/bff/command_executor.py`
+- `services/control-plane/bff/tests/test_bff_b5_humangate_commands.py`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B5-001 — Owner: Codex, Reviewer: Claude
+
+---
+
 ## B7 — Agora Compatibility APIs
 
 ### Gap
@@ -1990,3 +2147,60 @@ BFF-B3-004 — Owner: Codex, Reviewer: Codex2
 ### Task
 
 BFF-B3-005 — Owner: Codex, Reviewer: Claude
+
+### B3-009 GET `/bff/management/persona-intent`
+
+**File: `services/control-plane/bff/main.py`**
+
+- Add `GET /bff/management/persona-intent` as a read-only Management aggregate.
+- Require the existing BFF read-role authentication gate; anonymous requests
+  return the typed BFF 401 envelope.
+- Compose redacted intent rows from:
+  - persona session trace summaries;
+  - trainer / teaching session summaries;
+  - Agora session summaries.
+- Return the standard BFF aggregate envelope: `data`, `items`, `summary`,
+  `page_info`, and `meta.surfaces`.
+- Support `source_type`, `persona_id`, `status`, `intent`, `page_token`, and
+  bounded `page_size` filters.
+- Preserve source surfaces in metadata (`persona_traces`, `persona_sessions`,
+  `capability_snapshots`, `teaching_sessions`, `agora_sessions`) plus a
+  composed `management_persona_intent` surface.
+- Redact raw transcripts, message bodies, tool lists, and capability internals;
+  expose only safe counts, IDs, timestamps, status, and summary fields.
+
+**Files: `execute-plans/src/lib/bff-v1/paths.ts`,
+`execute-plans/src/lib/bff-v1/management.ts`, and
+`execute-plans/src/lib/bff/client.ts`**
+
+- Add the canonical `/bff/management/persona-intent` path.
+- Export Persona Intent query, item, summary, response, path, and fetch helper
+  types.
+- Add `managementClient.personaIntent.list()` using the same strict/hybrid
+  live transport policy as the other Management aggregate reads.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `GET /bff/management/persona-intent` returns rows composed from persona traces, trainer sessions, and Agora sessions | ✅ test added in BFF-B3-007 |
+| 2 | Response includes `data`, `items`, `summary`, `page_info`, and `meta.surfaces.management_persona_intent` | ✅ test added in BFF-B3-007 |
+| 3 | `source_type`, `persona_id`, `status`, `intent`, and pagination filters are accepted by the backend route | ✅ test added in BFF-B3-007 |
+| 4 | Raw message bodies, transcript content, tool lists, and capability internals are redacted from aggregate rows | ✅ test added in BFF-B3-007 |
+| 5 | Anonymous request returns HTTP 401 typed BFF error envelope | ✅ test added in BFF-B3-007 |
+| 6 | Frontend path/client contract exposes the live aggregate route without seed-list fanout | ✅ test added in BFF-B3-007 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_b3_persona_intent.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/src/lib/bff/client.ts`
+- `execute-plans/src/lib/bff/__tests__/client.test.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B3-007 — Owner: Codex, Reviewer: Claude
