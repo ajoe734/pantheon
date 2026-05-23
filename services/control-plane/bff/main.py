@@ -23673,6 +23673,28 @@ async def bff_management_nl_ask(
     confidence = _mgmt_nl_surface_confidence(surfaces)
     source_keys = list(snippets.keys())
 
+    try:
+        nl_capabilities = _capabilities_for_identity(identity)
+    except Exception:
+        nl_capabilities = None
+    raw_evidence_refs = list(read_store.list_evidence_refs() or [])
+    for _eref in raw_evidence_refs:
+        if isinstance(_eref, dict):
+            _eid = str(_eref.get("ref_id") or _eref.get("id") or "").strip()
+            if _eid:
+                _eref.setdefault("href", f"/api/v1/knowledge/evidence/{_eid}")
+    processed_evidence_refs, redacted_evidence_count = redact_evidence_refs(
+        identity, raw_evidence_refs, capabilities=nl_capabilities
+    )
+
+    audit_ref = {
+        "targetType": "ManagementNLExchange",
+        "target_type": "ManagementNLExchange",
+        "targetId": message_id,
+        "target_id": message_id,
+        "href": f"/bff/audit/entities/ManagementNLExchange/{message_id}",
+    }
+
     session = read_store.get_agora_session(session_id)
     if session is None:
         session = read_store.create_agora_session(
@@ -23718,11 +23740,17 @@ async def bff_management_nl_ask(
             "sources": source_keys,
             "confidence": confidence,
             "summary_context": snippets,
+            "auditRef": audit_ref,
+            "audit_ref": audit_ref,
+            "evidenceRefs": processed_evidence_refs,
+            "evidence_refs": processed_evidence_refs,
         },
         "meta": {
             "snapshot_at": now,
             "surfaces": surfaces,
             "idempotency": {"idempotencyKey": resolved_key, "replayed": False},
+            "redactedEvidenceCount": redacted_evidence_count,
+            "redacted_evidence_count": redacted_evidence_count,
         },
     }
     _MGMT_NL_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
