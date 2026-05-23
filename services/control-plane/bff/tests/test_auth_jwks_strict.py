@@ -274,3 +274,85 @@ def test_jwks_strict_refreshes_once_for_rotated_kid(monkeypatch) -> None:
     assert identity.operator_id == "op-rotated"
     assert fetch.call_count == 2
     assert fetch.call_args_list[1].kwargs["force_refresh"] is True
+
+
+# BFF-B1-001: CORS fix for Lovable preview and published origins
+
+
+def test_execute_plans_lovableproject_in_default_origins(monkeypatch) -> None:
+    monkeypatch.delenv("PANTHEON_BFF_CORS_ORIGINS", raising=False)
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+
+    origins = bff_main._cors_origins_from_env()
+
+    assert "https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com" in origins
+
+
+def test_execute_plans_lovableproject_filtered_in_strict_mode(monkeypatch) -> None:
+    monkeypatch.delenv("PANTHEON_BFF_CORS_ORIGINS", raising=False)
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_ENV", "production")
+
+    origins = bff_main._cors_origins_from_env()
+
+    assert "https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com" not in origins
+
+
+def test_preview_regex_allows_known_uuid_with_commit_hash(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_CORS_ORIGINS", "https://pantheon-dev.lovable.app")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+
+    preview_origin = "https://id-preview-a7067bd5--140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovable.app"
+    resp = _cors_preflight(preview_origin)
+
+    assert resp.status_code == 200
+    assert resp.headers.get("access-control-allow-origin") == preview_origin
+
+
+def test_preview_regex_allows_old_project_uuid_with_commit_hash(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_CORS_ORIGINS", "https://pantheon-dev.lovable.app")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+
+    preview_origin = "https://id-preview-deadbeef--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app"
+    resp = _cors_preflight(preview_origin)
+
+    assert resp.status_code == 200
+    assert resp.headers.get("access-control-allow-origin") == preview_origin
+
+
+def test_preview_regex_rejects_unknown_uuid(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_CORS_ORIGINS", "https://pantheon-dev.lovable.app")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+
+    evil_origin = "https://id-preview-deadbeef--aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.lovable.app"
+    resp = _cors_preflight(evil_origin)
+
+    assert "access-control-allow-origin" not in resp.headers
+
+
+def test_preview_regex_blocked_in_production_strict_mode(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_CORS_ORIGINS", "https://pantheon-ai-system-front-staging-live.lovable.app")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_ENV", "production")
+
+    preview_origin = "https://id-preview-a7067bd5--140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovable.app"
+    resp = _cors_preflight(preview_origin)
+
+    assert "access-control-allow-origin" not in resp.headers
+
+
+def test_cors_origin_allowed_includes_preview_regex(monkeypatch) -> None:
+    monkeypatch.delenv("PANTHEON_BFF_CORS_ORIGINS", raising=False)
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+
+    assert bff_main._cors_origin_allowed(
+        "https://id-preview-a7067bd5--140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovable.app"
+    )
+    assert not bff_main._cors_origin_allowed(
+        "https://id-preview-a7067bd5--aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.lovable.app"
+    )
