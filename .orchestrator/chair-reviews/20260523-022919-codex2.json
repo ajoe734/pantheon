@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Idle workers and no global guardrail; current human-gate parents should not receive sidecars.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "PROD-WRITES-001-V2",
+    "LIVE-SCALE-001-V2"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "OPS-STATUS-BLOCKER-RECONCILE",
+    "OPS-HUMAN-GATE-DEPENDENCY-AUDIT",
+    "OPS-PUBLISH-WORKFLOW-TRIAGE",
+    "OPS-BRANCH-CLEANUP",
+    "OPS-CLOSEOUT-PUSH-METADATA-AUDIT",
+    "SPRINT-9-PLANNING"
+  ]
+}
