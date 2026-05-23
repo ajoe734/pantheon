@@ -679,6 +679,7 @@ _EXECUTORS = {
     CommandType.EVOLUTION_PROGRAM_ACTION: _execute_bff_action_adapter,
     CommandType.EXPERIMENT_ACTION: _execute_bff_action_adapter,
     CommandType.JOB_ACTION: _execute_bff_action_adapter,
+    CommandType.ALERT_ACKNOWLEDGE: _execute_bff_action_adapter,
 }
 
 

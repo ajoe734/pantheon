@@ -70,6 +70,7 @@ class CommandType(str, Enum):
     SENTINEL_FINDING_STATUS = "SentinelFindingStatus"
     SENTINEL_REMEDIATION_BUILD = "SentinelRemediationBuild"
     SENTINEL_REMEDIATION_EXECUTE = "SentinelRemediationExecute"
+    ALERT_ACKNOWLEDGE = "AlertAcknowledge"
 
 
 class ObjectType(str, Enum):

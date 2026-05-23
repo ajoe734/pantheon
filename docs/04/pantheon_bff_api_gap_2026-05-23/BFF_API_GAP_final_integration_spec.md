@@ -699,6 +699,92 @@ BFF-B1-011 — Owner: Codex2, Reviewer: Claude
 
 ---
 
+## §18 POST /bff/alerts/{id}/acknowledge — Alert Acknowledgement {#12-decision-endpoints}
+
+### Gap
+
+The operator alerts surface at `/bff/alerts` provided a read-only view of active system alerts
+(incidents, governance bottlenecks, kill-switch state, runtime anomalies). No write path
+existed: operators could not record that an alert had been reviewed or suppressed from their
+active session. The endpoint `POST /bff/alerts/{id}/acknowledge` was registered as a
+generic stub (`sem_final_generic_id_command_alias`) that returned a bare `{"status":
+"accepted"}` payload with no command receipt, no idempotency, no SSE propagation, and no
+existence validation.
+
+### Fix
+
+**File: `services/control-plane/bff/main.py`**
+
+- Added `ALERT_ACKNOWLEDGE = "AlertAcknowledge"` to `CommandType` in
+  `services/control-plane/bff/models.py`.
+- Removed `POST /bff/alerts/{id}/acknowledge` from `sem_final_generic_id_command_alias`.
+- Implemented dedicated `bff_alert_acknowledge` handler:
+  - Requires operator role via `_require_operator_role`.
+  - Resolves idempotency key from `Idempotency-Key` / `X-Idempotency-Key` headers.
+  - Rejects body-level idempotency keys via `_reject_body_idempotency_key` before any
+    side effects.
+  - Performs a best-effort alert existence check against `_build_operator_alerts_payload`;
+    returns HTTP 404 `OBJECT_NOT_FOUND` with `precondition_failed=alert_id` when the alert
+    ID is not found and the alerts surface is not degraded or unavailable.
+  - Persists the command through the shared command store with `CommandType.ALERT_ACKNOWLEDGE`
+    and `ObjectType.RISK_ALERT` target, carrying full foundation audit and idempotency context.
+  - Publishes `alert.acknowledged` SSE event to the `system` channel with `alert_id`,
+    `acknowledged_by`, `acknowledged_at`, and optional `note`.
+  - Returns `CommandResponse<T>` via `_project_final_command_response` with `status=accepted`,
+    `command_id`/`commandId`, `trackingUrl`, and replay-safe idempotency envelope.
+  - Caches result in `_GOV_BFF_IDEMPOTENCY` so duplicate requests within the process
+    lifetime replay the original receipt or raise HTTP 409 `IDEMPOTENCY_CONFLICT` on hash
+    mismatch.
+  - Writes `acknowledged_by`, `acknowledged_at`, and optional `note` to `_ACKNOWLEDGED_ALERTS`
+    (in-process dict keyed by alert ID) so that subsequent `GET /bff/alerts` calls suppress
+    the acknowledged alert from the active list.
+- `_build_operator_alerts_payload` now filters out any alert whose ID appears in
+  `_ACKNOWLEDGED_ALERTS` before returning the sorted alert list.
+- `_build_operator_alerts_payload` sets `meta.acknowledgement_supported = True`.
+- Added dedicated `GET /bff/alerts/{alert_id}` handler (`bff_get_alert`) that projects the
+  alert from `_build_operator_alerts_payload` and returns HTTP 404 for unknown IDs, keeping
+  parity with the existing `GET /bff/risk/alerts/{alert_id}` handler.
+- Removed the now-redundant `@app.get("/bff/alerts/{id}")` decorator from
+  `sem_final_generic_read_alias` catch-all.
+
+**File: `services/control-plane/bff/models.py`**
+
+- Added `ALERT_ACKNOWLEDGE = "AlertAcknowledge"` to `CommandType`.
+
+**File: `services/control-plane/bff/command_executor.py`**
+
+- Added `CommandType.ALERT_ACKNOWLEDGE: _execute_bff_action_adapter` to `_EXECUTORS` dispatch
+  table so that `execute_command_with_status` can route acknowledge commands.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated `POST /bff/alerts/{id}/acknowledge` returns HTTP 202 with `data.status=accepted`, `data.command_id`, and `data.trackingUrl` | ✅ test added |
+| 2 | Duplicate `Idempotency-Key` with identical payload replays the original receipt | ✅ test added |
+| 3 | Duplicate `Idempotency-Key` with a different payload returns HTTP 409 `IDEMPOTENCY_CONFLICT` | ✅ test added |
+| 4 | Anonymous request returns HTTP 401 | ✅ test added |
+| 5 | Unknown alert ID returns HTTP 404 `OBJECT_NOT_FOUND` when alerts surface is available | ✅ test added |
+| 6 | Body-level idempotency key rejected with HTTP 400 `INVALID_REQUEST` before command-store write | ✅ test added |
+| 7 | `pytest services/control-plane/bff/tests/test_bff_alerts_acknowledge.py` passes 9 tests | ✅ verified |
+| 8 | `POST /bff/alerts/{id}/acknowledge` transitions alert state: `_ACKNOWLEDGED_ALERTS` is populated with `acknowledged_by` and `acknowledged_at`; subsequent `_build_operator_alerts_payload` excludes the alert | ✅ test added |
+| 9 | `GET /bff/alerts` returns `meta.acknowledgement_supported = true` | ✅ test added |
+| 10 | `CommandType.ALERT_ACKNOWLEDGE` registered in `command_executor._EXECUTORS` dispatch table | ✅ implemented |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/models.py`
+- `services/control-plane/bff/command_executor.py`
+- `services/control-plane/bff/tests/test_bff_alerts_acknowledge.py`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B1-012 — Owner: Claude, Reviewer: Codex
+
+---
+
 ## B7 — Agora Compatibility APIs
 
 ### Gap
