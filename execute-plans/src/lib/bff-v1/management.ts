@@ -78,6 +78,96 @@ export interface ManagementEvidenceQuery {
   page_size?: number;
 }
 
+export interface ManagementPortfolioBookHolding {
+  id: string;
+  holding_id: string;
+  runtime_id?: string;
+  runtime_binding_id?: string;
+  deployment_plan_id?: string;
+  capital_pool_id?: string;
+  capitalPoolId?: string;
+  persona_id?: string;
+  personaId?: string;
+  strategy_id?: string;
+  strategyId?: string;
+  artifact_id?: string;
+  artifact_version?: string;
+  deployment_stage?: string;
+  deploymentStage?: string;
+  status?: string;
+  symbol?: string;
+  side?: string;
+  quantity?: number | null;
+  average_price?: number | null;
+  avgPrice?: number | null;
+  mark_price?: number | null;
+  markPrice?: number | null;
+  market_value?: number | null;
+  marketValue?: number | null;
+  notional?: number | null;
+  exposure?: number | null;
+  weight?: number | null;
+  total_pnl?: number | null;
+  unrealized_pnl?: number | null;
+  realized_pnl?: number | null;
+  last_mark_at?: string | null;
+  instrument?: Record<string, unknown>;
+  capital_pool?: Record<string, unknown>;
+  pnl?: Record<string, unknown>;
+  telemetry?: Record<string, unknown>;
+  links?: Record<string, string | null | undefined>;
+  [key: string]: unknown;
+}
+
+export interface ManagementPortfolioBookHoldingsSummary {
+  holding_count: number;
+  returned_holding_count: number;
+  active_holding_count: number;
+  paper_holding_count: number;
+  live_holding_count: number;
+  runtime_count: number;
+  telemetry_runtime_count: number;
+  total_notional?: number | null;
+  total_market_value?: number | null;
+  total_unrealized_pnl?: number | null;
+  total_realized_pnl?: number | null;
+  total_pnl?: number | null;
+  latest_mark_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface ManagementPortfolioBookHoldingsResponse {
+  data: {
+    summary: ManagementPortfolioBookHoldingsSummary;
+    items: ManagementPortfolioBookHolding[];
+    holdings: ManagementPortfolioBookHolding[];
+    [key: string]: unknown;
+  };
+  items: ManagementPortfolioBookHolding[];
+  summary: ManagementPortfolioBookHoldingsSummary;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces?: Record<string, ManagementSurfaceRef>;
+    composition_sources?: string[];
+    [key: string]: unknown;
+  };
+}
+
+export interface ManagementPortfolioBookHoldingsQuery {
+  capital_pool_id?: string;
+  persona_id?: string;
+  runtime_id?: string;
+  deployment_stage?: string;
+  status?: string;
+  q?: string;
+  page_token?: string;
+  page_size?: number;
+}
+
 export interface ManagementEvidenceItem {
   id: string;
   refId: string;
@@ -168,10 +258,12 @@ export interface ManagementEvidenceResponse {
   };
 }
 
-function withQuery(path: string, query?: ManagementEvidenceQuery): string {
+type ManagementQueryValue = string | number | boolean | undefined | null;
+
+function withQuery(path: string, query?: object): string {
   if (!query) return path;
   const params = new URLSearchParams();
-  for (const [key, value] of Object.entries(query)) {
+  for (const [key, value] of Object.entries(query as Record<string, ManagementQueryValue>)) {
     if (value === undefined || value === null || value === "") continue;
     params.set(key, String(value));
   }
@@ -185,6 +277,12 @@ export function managementCockpitPath(): string {
 
 export function managementEvidencePath(query?: ManagementEvidenceQuery): string {
   return withQuery(paths.managementEvidence(), query);
+}
+
+export function managementPortfolioBookHoldingsPath(
+  query?: ManagementPortfolioBookHoldingsQuery,
+): string {
+  return withQuery(paths.managementPortfolioBookHoldings(), query);
 }
 
 export async function fetchManagementCockpit(
@@ -221,4 +319,23 @@ export async function fetchManagementEvidence(
     throw new Error(`GET ${path} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementEvidenceResponse>;
+}
+
+export async function fetchManagementPortfolioBookHoldings(
+  query?: ManagementPortfolioBookHoldingsQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementPortfolioBookHoldingsResponse> {
+  const path = managementPortfolioBookHoldingsPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementPortfolioBookHoldingsResponse>;
 }

@@ -736,6 +736,93 @@ BFF-PM12-004 — Owner: Codex2, Reviewer: Claude2
 
 ---
 
+### PM-12 Portfolio-Book Holdings
+
+`GET /bff/management/portfolio-book/holdings` is the global holdings table for
+the PM-12 portfolio book. It is a read-only BFF composition route rather than a
+new source of truth.
+
+**File: `services/control-plane/bff/main.py`**
+
+The route composes holdings from existing read surfaces:
+
+- runtime bindings as the primary row anchor;
+- telemetry summaries for position snapshots, mark prices, quantity, PnL, fill
+  and trade metrics;
+- deployment plans for strategy/deployment context;
+- persona-capital bindings for persona and capital-pool ownership;
+- capital pools for pool labels and risk-policy refs.
+
+When telemetry exposes `positions`, `holdings`, `position_snapshots`,
+`position`, or `holding`, each nested record becomes one table row. When a
+runtime has no nested position snapshot yet, the BFF still emits one degraded
+runtime-level row so the UI can show the runtime/pool/persona link and the
+missing telemetry surface instead of silently falling back to mock holdings.
+
+The response uses the standard aggregate envelope:
+
+```json
+{
+  "data": {
+    "summary": {},
+    "items": [],
+    "holdings": []
+  },
+  "items": [],
+  "summary": {},
+  "page_info": { "next_page_token": null, "total": 0 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": []
+  }
+}
+```
+
+Each row includes runtime, deployment, capital-pool, persona, strategy, artifact,
+instrument, mark, exposure, PnL, telemetry, and drilldown `links` fields. The
+route supports `capital_pool_id`, `persona_id`, `runtime_id`,
+`deployment_stage`, `status`, `q`, `page_token`, and `page_size`.
+
+**File: `execute-plans/src/lib/bff-v1/paths.ts`**
+
+Added `managementPortfolioBook()` and `managementPortfolioBookHoldings()` path
+builders.
+
+**File: `execute-plans/src/lib/bff-v1/management.ts`**
+
+Added `ManagementPortfolioBookHolding`,
+`ManagementPortfolioBookHoldingsSummary`,
+`ManagementPortfolioBookHoldingsResponse`,
+`ManagementPortfolioBookHoldingsQuery`,
+`managementPortfolioBookHoldingsPath()`, and
+`fetchManagementPortfolioBookHoldings()`.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated `GET /bff/management/portfolio-book/holdings` returns `data`, `items`, `summary`, `page_info`, and `meta` | Implemented BFF-PM12-002 |
+| 2 | Rows include runtime/capital/persona/strategy links plus instrument, mark, exposure, PnL, and telemetry fields | Implemented BFF-PM12-002 |
+| 3 | Route supports PM12 table filters and offset paging | Implemented BFF-PM12-002 |
+| 4 | Missing telemetry degrades the holdings surface without hiding runtime-level rows | Implemented BFF-PM12-002 |
+| 5 | Missing auth returns HTTP 401 | Implemented BFF-PM12-002 |
+| 6 | Route is registered in OpenAPI and exposed through execute-plans BFF v1 path/fetch helpers | Implemented BFF-PM12-002 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-PM12-002 — Owner: Codex2, Reviewer: Claude2
+
+---
+
 ## §16 PATCH /bff/me/locale — Operator Locale Preference
 
 ### Gap
