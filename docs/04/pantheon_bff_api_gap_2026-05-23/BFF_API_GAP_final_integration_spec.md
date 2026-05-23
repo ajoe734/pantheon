@@ -2364,6 +2364,10 @@ attribution.
 
 BFF-B6-001 — Owner: Claude, Reviewer: Codex
 
+BFF-B6-002 — NL audit and evidence grounding — Owner: Claude, Reviewer: Codex
+Evidence: `support/evidence/BFF-B6-002/audit.md`
+Verified: 11 passed (2026-05-23)
+
 ---
 
 ## B6-003 — NL High-Risk Refusal Policy {#b6-003--nl-high-risk-refusal-policy}

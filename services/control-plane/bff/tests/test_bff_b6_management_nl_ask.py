@@ -1,5 +1,5 @@
 """
-BFF-B6-001: contract tests for POST /bff/management/nl/ask.
+BFF-B6-001/002: contract tests for POST /bff/management/nl/ask.
 
 Acceptance criteria covered:
 1. Authenticated POST with `question` returns HTTP 202 with data.answer,
@@ -11,12 +11,22 @@ Acceptance criteria covered:
 5. Missing `question` field returns HTTP 422 typed BFF error envelope.
 6. session_id supplied in body is echoed in data.session_id; omitted
    session_id generates a new one.
+
+BFF-B6-002 audit/evidence grounding fields:
+7. Response includes data.auditRef with targetType/targetId/href.
+8. Response includes data.evidenceRefs as a list; when evidence is seeded,
+   each ref carries an href pointing to /api/v1/knowledge/evidence/{ref_id}.
+9. Response includes meta.redactedEvidenceCount as a non-negative integer.
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Iterator
 
 from fastapi.testclient import TestClient
 
@@ -245,6 +255,137 @@ def test_nl_ask_focus_persona_fleet_populates_context() -> None:
             summary_ctx = body["data"].get("summary_context") or {}
             assert "persona_fleet" in summary_ctx, (
                 "persona_fleet missing from summary_context"
+            )
+        finally:
+            bff_main.read_store = original
+
+
+# ---------------------------------------------------------------------------
+# Helpers for BFF-B6-002 audit/evidence grounding tests
+# ---------------------------------------------------------------------------
+
+@contextmanager
+def _nl_evidence_client() -> Iterator[TestClient]:
+    """Client with a seeded evidence_refs store for B6-002 grounding tests."""
+    tracked_env = {
+        "PANTHEON_BFF_EVIDENCE_REF_STORE": os.environ.get("PANTHEON_BFF_EVIDENCE_REF_STORE"),
+    }
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        evidence_store = root / "evidence_refs.json"
+        evidence_store.write_text(
+            json.dumps(
+                {
+                    "evref-b6-alert-001": {
+                        "ref_id": "evref-b6-alert-001",
+                        # Use alert evidence type — operator role has risk.alert.read,
+                        # so this ref will not be redacted and will keep its href.
+                        "evidence_type": "alert",
+                        "link_type": "supporting_evidence",
+                        "source_document": {
+                            "title": "NL management grounding alert",
+                            "source_type": "alert",
+                            "source_ref": "alert://mgmt-nl/risk-window",
+                            "captured_at": "2026-05-23T10:00:00Z",
+                        },
+                        "credibility": {"tier": "primary", "verified": True},
+                    },
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        os.environ["PANTHEON_BFF_EVIDENCE_REF_STORE"] = str(evidence_store)
+        original_store = bff_main.read_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        try:
+            bff_main.read_store = ReadSurfaceStore(
+                str(root / "read_surfaces.json"),
+                allow_local_snapshot_fallback=True,
+            )
+            yield TestClient(bff_main.app)
+        finally:
+            bff_main.read_store = original_store
+            for key, value in tracked_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+
+# ---------------------------------------------------------------------------
+# AC#7 — response includes data.auditRef with required fields
+# ---------------------------------------------------------------------------
+
+def test_nl_ask_response_includes_audit_ref() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            resp = client.post(
+                "/bff/management/nl/ask",
+                json={"question": "Audit ref test?"},
+                headers={**OPERATOR_HEADERS, "Idempotency-Key": "ik-audit-ref-001"},
+            )
+            assert resp.status_code == 202, resp.text
+            body = resp.json()
+            audit_ref = body["data"].get("auditRef") or body["data"].get("audit_ref")
+            assert audit_ref is not None, "auditRef missing from data"
+            assert audit_ref.get("targetType") == "ManagementNLExchange" or audit_ref.get("target_type") == "ManagementNLExchange"
+            target_id = audit_ref.get("targetId") or audit_ref.get("target_id")
+            assert isinstance(target_id, str) and target_id, "auditRef.targetId must be non-empty string"
+            href = audit_ref.get("href")
+            assert isinstance(href, str) and "ManagementNLExchange" in href, (
+                f"auditRef.href must reference ManagementNLExchange, got: {href}"
+            )
+        finally:
+            bff_main.read_store = original
+
+
+# ---------------------------------------------------------------------------
+# AC#8 — data.evidenceRefs is a list; seeded refs carry /api/v1/knowledge/evidence href
+# ---------------------------------------------------------------------------
+
+def test_nl_ask_response_includes_evidence_refs_with_api_href() -> None:
+    with _nl_evidence_client() as client:
+        resp = client.post(
+            "/bff/management/nl/ask",
+            json={"question": "Evidence refs test?"},
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "ik-evref-001"},
+        )
+        assert resp.status_code == 202, resp.text
+        body = resp.json()
+        evidence_refs = body["data"].get("evidenceRefs") or body["data"].get("evidence_refs")
+        assert isinstance(evidence_refs, list), "evidenceRefs must be a list"
+        assert len(evidence_refs) >= 1, "At least one seeded evidence ref must appear"
+        ref = evidence_refs[0]
+        href = ref.get("href")
+        assert isinstance(href, str) and href.startswith("/api/v1/knowledge/evidence/"), (
+            f"evidenceRef href must point to /api/v1/knowledge/evidence/, got: {href}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# AC#9 — meta.redactedEvidenceCount is a non-negative integer
+# ---------------------------------------------------------------------------
+
+def test_nl_ask_response_includes_redacted_evidence_count() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            resp = client.post(
+                "/bff/management/nl/ask",
+                json={"question": "Redacted count test?"},
+                headers={**OPERATOR_HEADERS, "Idempotency-Key": "ik-redact-count-001"},
+            )
+            assert resp.status_code == 202, resp.text
+            body = resp.json()
+            meta = body.get("meta", {})
+            count = meta.get("redactedEvidenceCount") if "redactedEvidenceCount" in meta else meta.get("redacted_evidence_count")
+            assert count is not None, "meta.redactedEvidenceCount must be present"
+            assert isinstance(count, int) and count >= 0, (
+                f"meta.redactedEvidenceCount must be non-negative int, got: {count!r}"
             )
         finally:
             bff_main.read_store = original
