@@ -29,7 +29,7 @@ describe("managementClient — coverage", () => {
       "rebalances", "deployments", "evolution", "research", "artifacts",
       "tools", "mcpServers", "mcpTools", "skills", "channels",
       "jobs", "runtimes", "alerts", "incidents", "approvals", "audit",
-      "oodaPackets", "humanInbox", "evidenceExplorer",
+      "oodaPackets", "humanInbox", "tradingPulse", "evidenceExplorer", "evolutionJournal",
     ] as const;
     for (const family of required) {
       expect(managementClient).toHaveProperty(family);
@@ -442,6 +442,302 @@ describe("managementClient — Evidence Explorer aggregate live adapter", () => 
     expect(aggregate.facets.sourceTypes).toEqual({ metric: 1 });
     expect(aggregate.meta.redacted_evidence_count).toBe(0);
     expect(aggregate.meta.surfaces.management_evidence.source).toBe("bff_composed");
+  });
+});
+
+describe("managementClient — Trading Pulse aggregate live adapter", () => {
+  const realFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    vi.stubEnv("VITE_BFF_BASE_URL", "https://example.test");
+    liveStatus._reset({ mode: "live", effective: "live", baseUrl: "https://example.test" });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    vi.unstubAllEnvs();
+    liveStatus._reset();
+  });
+
+  it("reads trading-pulse cards and ranking blocks from live aggregate routes", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          data: {
+            id: "management-trading-pulse",
+            summary: {
+              runtimeCount: 1,
+              runtime_count: 1,
+              telemetryCoverageCount: 1,
+              telemetry_coverage_count: 1,
+              byStatus: { running: 1 },
+              by_status: { running: 1 },
+              byStage: { paper: 1 },
+              by_stage: { paper: 1 },
+              totalPnl: 0.42,
+              total_pnl: 0.42,
+              worstDrawdown: 0.11,
+              worst_drawdown: 0.11,
+              averageFillRate: 0.9,
+              average_fill_rate: 0.9,
+              worstSlippageBps: 4.8,
+              worst_slippage_bps: 4.8,
+              totalTrades: 31,
+              total_trades: 31,
+            },
+            cards: [{ cardId: "pnl", card_id: "pnl", label: "P&L", value: 0.42 }],
+            rankings: [{ runtimeId: "runtime-alpha", runtime_id: "runtime-alpha", rank: 1, pnl: 0.42 }],
+            runtimeRows: [{ runtime_id: "runtime-alpha", status: "running" }],
+            runtime_rows: [{ runtime_id: "runtime-alpha", status: "running" }],
+          },
+          items: [{ cardId: "pnl", card_id: "pnl", label: "P&L", value: 0.42 }],
+          page_info: { total: 1, page_size: 1, next_page_token: null },
+          meta: {
+            surfaces: {
+              management_trading_pulse: { status: "ok", source: "bff_composed" },
+              runtime_roster: { status: "ok", source: "canonical" },
+            },
+          },
+        }), { status: 200, headers: { "Content-Type": "application/json" } }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          items: [
+            {
+              blockId: "pnl-leaders",
+              block_id: "pnl-leaders",
+              label: "P&L Leaders",
+              metric: "pnl",
+              sortOrder: "desc",
+              sort_order: "desc",
+              items: [
+                {
+                  runtimeId: "runtime-alpha",
+                  runtime_id: "runtime-alpha",
+                  rank: 1,
+                  pnl: 0.42,
+                  rankingMetric: "pnl",
+                  ranking_metric: "pnl",
+                },
+              ],
+            },
+          ],
+          summary: {
+            runtimeCount: 1,
+            runtime_count: 1,
+            rankingBlockCount: 1,
+            ranking_block_count: 1,
+            rankedItemCount: 1,
+            ranked_item_count: 1,
+            criteria: ["pnl"],
+            limit: 1,
+            topRuntimeId: "runtime-alpha",
+            top_runtime_id: "runtime-alpha",
+          },
+          page_info: { total: 1, page_size: 1, next_page_token: null },
+          meta: {
+            surfaces: {
+              management_trading_pulse_rankings: { status: "ok", source: "bff_composed" },
+              management_trading_pulse: { status: "ok", source: "bff_composed" },
+            },
+          },
+        }), { status: 200, headers: { "Content-Type": "application/json" } }),
+      );
+    globalThis.fetch = fetchMock;
+
+    const pulse = await managementClient.tradingPulse.list();
+    const rankings = await managementClient.tradingPulse.rankings({ limit: 1 });
+
+    expect(fetchMock.mock.calls[0][0]).toBe("https://example.test/bff/management/trading-pulse");
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      "https://example.test/bff/management/trading-pulse/rankings?limit=1",
+    );
+    expect(pulse.cards[0].cardId).toBe("pnl");
+    expect(pulse.summary.totalPnl).toBe(0.42);
+    expect(pulse.meta.surfaces.management_trading_pulse.source).toBe("bff_composed");
+    expect(rankings.rankingBlocks[0].items[0].runtimeId).toBe("runtime-alpha");
+    expect(rankings.summary.criteria).toEqual(["pnl"]);
+    expect(rankings.meta.surfaces.management_trading_pulse_rankings.source).toBe("bff_composed");
+  });
+});
+
+describe("managementClient — readiness aggregate live adapters", () => {
+  const realFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    vi.stubEnv("VITE_BFF_BASE_URL", "https://example.test");
+    liveStatus._reset({ mode: "live", effective: "live", baseUrl: "https://example.test" });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    vi.unstubAllEnvs();
+    liveStatus._reset();
+  });
+
+  it("reads strict-publish readiness without mock fallback in live transport", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        data: {
+          id: "strict-publish",
+          readinessId: "strict-publish",
+          readiness_id: "strict-publish",
+          title: "Strict Publish Audit",
+          readinessStatus: "blocked",
+          readiness_status: "blocked",
+          canProceed: false,
+          can_proceed: false,
+          blockingReasons: ["forbidden_path_scan"],
+          blocking_reasons: ["forbidden_path_scan"],
+          checks: [
+            {
+              id: "forbidden_path_scan",
+              label: "Forbidden mock/seed runtime path scan",
+              status: "fail",
+              blocking: true,
+              message: "Strict publish remains blocked.",
+              details: { forbidden_signal_count: 84 },
+            },
+          ],
+          evidenceRefs: [],
+          evidence_refs: [],
+          links: {},
+          details: { passed: false },
+        },
+        summary: {
+          readinessStatus: "blocked",
+          readiness_status: "blocked",
+          canProceed: false,
+          can_proceed: false,
+          checkCount: 1,
+          check_count: 1,
+          passedCheckCount: 0,
+          passed_check_count: 0,
+          blockingReasonCount: 1,
+          blocking_reason_count: 1,
+          blockingReasons: ["forbidden_path_scan"],
+          blocking_reasons: ["forbidden_path_scan"],
+          byStatus: { fail: 1 },
+          by_status: { fail: 1 },
+        },
+        checks: [
+          {
+            id: "forbidden_path_scan",
+            label: "Forbidden mock/seed runtime path scan",
+            status: "fail",
+            blocking: true,
+            message: "Strict publish remains blocked.",
+          },
+        ],
+        evidence_refs: [],
+        meta: {
+          surfaces: {
+            management_readiness_strict_publish: { status: "ok", source: "bff_composed" },
+          },
+        },
+      }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    );
+    globalThis.fetch = fetchMock;
+
+    const aggregate = await managementClient.readiness.strictPublish();
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://example.test/bff/management/readiness/strict-publish",
+    );
+    expect(aggregate.data.id).toBe("strict-publish");
+    expect(aggregate.summary.canProceed).toBe(false);
+    expect(aggregate.checks[0].id).toBe("forbidden_path_scan");
+    expect(aggregate.meta.surfaces.management_readiness_strict_publish.source).toBe("bff_composed");
+  });
+
+  it("exposes all five readiness readers", () => {
+    expect(typeof managementClient.readiness.ep5).toBe("function");
+    expect(typeof managementClient.readiness.brokerLive).toBe("function");
+    expect(typeof managementClient.readiness.capitalBindingLive).toBe("function");
+    expect(typeof managementClient.readiness.bffHa).toBe("function");
+    expect(typeof managementClient.readiness.strictPublish).toBe("function");
+  });
+});
+
+describe("managementClient — Evolution Journal aggregate live adapter", () => {
+  const realFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    vi.stubEnv("VITE_BFF_BASE_URL", "https://example.test");
+    liveStatus._reset({ mode: "live", effective: "live", baseUrl: "https://example.test" });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    vi.unstubAllEnvs();
+    liveStatus._reset();
+  });
+
+  it("reads /bff/management/evolution-journal with journal filters", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        items: [
+          {
+            id: "mutation_review:evo-dec-88f3a2c1",
+            journal_id: "mutation_review:evo-dec-88f3a2c1",
+            entryType: "mutation_review",
+            entry_type: "mutation_review",
+            source_id: "evo-dec-88f3a2c1",
+            title: "Mutation review: evo-dec-88f3a2c1",
+            summary: "Freeze candidate artifact at canary stage.",
+            status: "reviewed",
+            risk_level: "medium",
+            action_type: "freeze_canary",
+            target: { type: "candidate_artifact", id: "artifact-44d7e9b0", version: "v3.1.2" },
+            mutationReview: {
+              decision_id: "evo-dec-88f3a2c1",
+              allowedActions: { canApproveMutation: true },
+            },
+          },
+        ],
+        summary: {
+          total_items: 1,
+          returned_items: 1,
+          decision_count: 0,
+          mutation_review_count: 1,
+          postmortem_count: 0,
+          rollback_count: 0,
+          freeze_order_count: 0,
+          pending_review_count: 1,
+          active_freeze_count: 0,
+          completed_rollback_count: 0,
+          latest_at: "2026-04-18T11:05:00Z",
+          byType: { mutation_review: 1 },
+          by_type: { mutation_review: 1 },
+          byStatus: { reviewed: 1 },
+          by_status: { reviewed: 1 },
+          byRiskLevel: { medium: 1 },
+          by_risk_level: { medium: 1 },
+        },
+        page_info: { total: 1, page_size: 1, next_page_token: null },
+        meta: {
+          surfaces: {
+            management_evolution_journal: { status: "ok", source: "bff_composed" },
+            mutation_review: { status: "ok", source: "bff_composed" },
+          },
+        },
+      }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    );
+    globalThis.fetch = fetchMock;
+
+    const aggregate = await managementClient.evolutionJournal.list({
+      source_type: "mutation_review",
+      status: "reviewed",
+      page_size: 1,
+    });
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://example.test/bff/management/evolution-journal?source_type=mutation_review&status=reviewed&page_size=1",
+    );
+    expect(aggregate.items[0].entry_type).toBe("mutation_review");
+    expect(aggregate.items[0].mutationReview?.decision_id).toBe("evo-dec-88f3a2c1");
+    expect(aggregate.summary.mutation_review_count).toBe(1);
+    expect(aggregate.meta.surfaces.management_evolution_journal.source).toBe("bff_composed");
   });
 });
 

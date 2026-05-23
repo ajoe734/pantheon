@@ -1360,6 +1360,7 @@ _OPERATOR_HEALTH_STATUS_ROUTE = "/operator/health-status"
 _OPERATOR_POST_INCIDENT_REVIEW_ROUTE = "/operator/post-incident-review"
 _OPERATOR_RUNTIME_STATE_ROUTE = "/operator/runtime-state"
 _MANAGEMENT_COCKPIT_ROUTE = "/management/cockpit"
+_MANAGEMENT_READINESS_BASE_ROUTE = "/management/readiness"
 _CONSULTATION_WORKBENCH_ROUTE = "/consultation"
 _KNOWLEDGE_WORKBENCH_ROUTE = "/knowledge"
 _TRAINER_WORKBENCH_ROUTE = "/trainer"
@@ -6257,6 +6258,232 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
     }
 
 
+def _build_management_trading_pulse_route_payload(snapshot_at: str) -> Dict[str, Any]:
+    payload = _build_management_trading_pulse_payload(snapshot_at)
+    data = {
+        "id": "management-trading-pulse",
+        "summary": payload["summary"],
+        "cards": payload["cards"],
+        "rankings": payload["rankings"],
+        "runtimeRows": payload["runtimeRows"],
+        "runtime_rows": payload["runtime_rows"],
+    }
+    return {
+        "data": data,
+        "items": payload["cards"],
+        "cards": payload["cards"],
+        "rankings": payload["rankings"],
+        "runtimeRows": payload["runtimeRows"],
+        "runtime_rows": payload["runtime_rows"],
+        "summary": payload["summary"],
+        "page_info": {
+            "next_page_token": None,
+            "total": len(payload["cards"]),
+            "page_size": len(payload["cards"]),
+        },
+        "meta": payload["meta"],
+    }
+
+
+_TRADING_PULSE_RANKING_METRIC_FIELDS = {
+    "pnl": ("pnl",),
+    "drawdown": ("drawdown",),
+    "sharpe_ratio": ("sharpeRatio", "sharpe_ratio"),
+    "fill_rate": ("fillRate", "fill_rate"),
+    "avg_slippage_bps": ("avgSlippageBps", "avg_slippage_bps"),
+    "total_trades": ("totalTrades", "total_trades"),
+}
+
+
+def _trading_pulse_metric_value(
+    item: Dict[str, Any],
+    metric: str,
+) -> Optional[float]:
+    for field in _TRADING_PULSE_RANKING_METRIC_FIELDS.get(metric, (metric,)):
+        value = _management_number(item.get(field))
+        if value is not None:
+            return value
+    return None
+
+
+def _trading_pulse_ranked_items(
+    rankings: List[Dict[str, Any]],
+    *,
+    metric: str,
+    descending: bool,
+    limit: int,
+    block_id: str,
+) -> List[Dict[str, Any]]:
+    present = [
+        item for item in rankings
+        if _trading_pulse_metric_value(item, metric) is not None
+    ]
+    missing = [
+        item for item in rankings
+        if _trading_pulse_metric_value(item, metric) is None
+    ]
+    ordered_present = sorted(
+        present,
+        key=lambda item: (
+            _trading_pulse_metric_value(item, metric) or 0.0,
+            str(item.get("runtimeId") or item.get("runtime_id") or ""),
+        ),
+        reverse=descending,
+    )
+    ordered_missing = sorted(
+        missing,
+        key=lambda item: str(item.get("runtimeId") or item.get("runtime_id") or ""),
+    )
+
+    ranked: List[Dict[str, Any]] = []
+    for index, item in enumerate((ordered_present + ordered_missing)[:limit], start=1):
+        projected = dict(item)
+        projected["rank"] = index
+        projected["rankingBlockId"] = block_id
+        projected["ranking_block_id"] = block_id
+        projected["rankingMetric"] = metric
+        projected["ranking_metric"] = metric
+        projected["rankingMetricValue"] = _trading_pulse_metric_value(item, metric)
+        projected["ranking_metric_value"] = projected["rankingMetricValue"]
+        ranked.append(projected)
+    return ranked
+
+
+def _build_management_trading_pulse_ranking_blocks(
+    rankings: List[Dict[str, Any]],
+    *,
+    limit: int,
+) -> List[Dict[str, Any]]:
+    return [
+        {
+            "blockId": "pnl-leaders",
+            "block_id": "pnl-leaders",
+            "label": "P&L Leaders",
+            "metric": "pnl",
+            "sortOrder": "desc",
+            "sort_order": "desc",
+            "items": _trading_pulse_ranked_items(
+                rankings,
+                metric="pnl",
+                descending=True,
+                limit=limit,
+                block_id="pnl-leaders",
+            ),
+        },
+        {
+            "blockId": "drawdown-control",
+            "block_id": "drawdown-control",
+            "label": "Drawdown Control",
+            "metric": "drawdown",
+            "sortOrder": "asc",
+            "sort_order": "asc",
+            "items": _trading_pulse_ranked_items(
+                rankings,
+                metric="drawdown",
+                descending=False,
+                limit=limit,
+                block_id="drawdown-control",
+            ),
+        },
+        {
+            "blockId": "execution-quality",
+            "block_id": "execution-quality",
+            "label": "Execution Quality",
+            "metric": "fill_rate",
+            "secondaryMetric": "avg_slippage_bps",
+            "secondary_metric": "avg_slippage_bps",
+            "sortOrder": "desc",
+            "sort_order": "desc",
+            "items": _trading_pulse_ranked_items(
+                rankings,
+                metric="fill_rate",
+                descending=True,
+                limit=limit,
+                block_id="execution-quality",
+            ),
+        },
+        {
+            "blockId": "sharpe-leaders",
+            "block_id": "sharpe-leaders",
+            "label": "Sharpe Leaders",
+            "metric": "sharpe_ratio",
+            "sortOrder": "desc",
+            "sort_order": "desc",
+            "items": _trading_pulse_ranked_items(
+                rankings,
+                metric="sharpe_ratio",
+                descending=True,
+                limit=limit,
+                block_id="sharpe-leaders",
+            ),
+        },
+    ]
+
+
+def _build_management_trading_pulse_rankings_payload(
+    snapshot_at: str,
+    *,
+    limit: int,
+) -> Dict[str, Any]:
+    trading_pulse = _build_management_trading_pulse_payload(snapshot_at)
+    blocks = _build_management_trading_pulse_ranking_blocks(
+        list(trading_pulse.get("rankings") or []),
+        limit=limit,
+    )
+    surfaces = dict((trading_pulse.get("meta") or {}).get("surfaces") or {})
+    source_surfaces = [
+        surface for surface in (
+            surfaces.get("management_trading_pulse"),
+            surfaces.get("runtime_roster"),
+            surfaces.get("telemetry_summary"),
+        )
+        if isinstance(surface, dict)
+    ]
+    surfaces["management_trading_pulse_rankings"] = _aggregate_group_surface(
+        "management_trading_pulse_rankings",
+        source_surfaces,
+        snapshot_at=snapshot_at,
+        unavailable_message="Trading pulse rankings aggregate unavailable.",
+        degraded_message="Trading pulse rankings are degraded because runtime or telemetry coverage is degraded.",
+    )
+    top_item = (blocks[0].get("items") or [None])[0] if blocks else None
+    ranked_item_count = sum(len(block.get("items") or []) for block in blocks)
+    summary = {
+        "runtimeCount": int((trading_pulse.get("summary") or {}).get("runtimeCount") or 0),
+        "runtime_count": int((trading_pulse.get("summary") or {}).get("runtime_count") or 0),
+        "rankingBlockCount": len(blocks),
+        "ranking_block_count": len(blocks),
+        "rankedItemCount": ranked_item_count,
+        "ranked_item_count": ranked_item_count,
+        "criteria": [str(block.get("metric") or "") for block in blocks],
+        "limit": limit,
+        "topRuntimeId": (top_item or {}).get("runtimeId") if isinstance(top_item, dict) else None,
+        "top_runtime_id": (top_item or {}).get("runtime_id") if isinstance(top_item, dict) else None,
+    }
+    return {
+        "data": blocks,
+        "items": blocks,
+        "rankings": blocks,
+        "rankingBlocks": blocks,
+        "ranking_blocks": blocks,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": None,
+            "total": len(blocks),
+            "page_size": len(blocks),
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": surfaces,
+            "composition_sources": [
+                "GET /bff/management/trading-pulse",
+                "GET /bff/runtimes",
+                "telemetry_summaries",
+            ],
+        },
+    }
+
+
 def _build_management_anomalies_payload(snapshot_at: str) -> Dict[str, Any]:
     runtime_alerts, runtime_surfaces = _build_runtime_alerts(snapshot_at)
     sentinel_available, sentinel_findings = read_store.list_sentinel_findings()
@@ -6604,6 +6831,591 @@ def _build_management_evidence_payload(
         },
         "meta": meta,
     }
+
+
+_READINESS_EP5_EVIDENCE_REFS = [
+    ("support/evidence/EP5-001-V2/closeout.md", "PromotionReadinessPacket schema closeout"),
+    ("support/evidence/EP5-002-V2/owner-closeout.md", "Promotion readiness validator closeout"),
+    ("support/evidence/EP5-003-V2/owner-closeout.md", "Human gate signoff closeout"),
+    ("support/evidence/EP5-006-V2/owner-closeout.md", "EP5 dry-run API closeout"),
+    ("support/evidence/EP5-007-V2/rollback-drill.json", "Rollback drill evidence"),
+    ("support/evidence/EP5-008-V2/kill-switch-demo.json", "Kill-switch demo evidence"),
+    (
+        "docs/deployment/evidence/ep5-broker-tw-002/20260517T054748Z/evidence-packet/shioaji-sandbox-evidence-packet.json",
+        "Broker sandbox evidence packet",
+    ),
+]
+_READINESS_STRICT_PUBLISH_AUDIT = "support/evidence/lsp-final-audit/strict-publish-audit.json"
+_READINESS_STRICT_PUBLISH_REPORT = "support/evidence/lsp-final-audit/strict-publish-audit.md"
+_READINESS_BFF_HA_PACKET = "support/evidence/bff-ha-failover-demo/README.md"
+_READINESS_BFF_HA_REVIEW = "support/evidence/bff-ha-failover-demo/review-ha-010-v2.md"
+_READINESS_NO_REAL_CAPITAL_EVIDENCE = "support/evidence/MGMT-BROKER-003/no-real-capital-evidence.json"
+_READINESS_BROKER_LIVE_DISABLED = (
+    "docs/deployment/evidence/ep5-broker-tw-002/20260517T054748Z/sandbox-smoke/live-disabled.json"
+)
+
+
+def _repo_artifact_path(rel_path: str) -> str:
+    return os.path.join(_REPO_ROOT, rel_path)
+
+
+def _read_repo_json_artifact(rel_path: str) -> Optional[Dict[str, Any]]:
+    path = _repo_artifact_path(rel_path)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        return payload if isinstance(payload, dict) else None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _read_repo_text_artifact(rel_path: str) -> str:
+    path = _repo_artifact_path(rel_path)
+    if not os.path.exists(path):
+        return ""
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return handle.read()
+    except OSError:
+        return ""
+
+
+def _readiness_evidence_ref(rel_path: str, label: str) -> Dict[str, Any]:
+    exists = os.path.exists(_repo_artifact_path(rel_path))
+    return {
+        "id": re.sub(r"[^a-z0-9]+", "-", rel_path.lower()).strip("-"),
+        "label": label,
+        "path": rel_path,
+        "href": f"/{rel_path}",
+        "exists": exists,
+    }
+
+
+def _readiness_artifact_surface(
+    surface_key: str,
+    rel_path: str,
+    *,
+    snapshot_at: str,
+    label: str,
+) -> Dict[str, Any]:
+    exists = os.path.exists(_repo_artifact_path(rel_path))
+    surface = dict(_surface_status())
+    surface["source"] = "repo_artifact" if exists else "missing"
+    surface["artifact_path"] = rel_path
+    if not exists:
+        surface["status"] = "unavailable"
+        surface["message"] = f"{label} artifact is unavailable."
+        surface.setdefault(
+            "staleness",
+            {"served_from": "unverifiable", "last_known_at": snapshot_at},
+        )
+    return surface
+
+
+def _readiness_check(
+    check_id: str,
+    label: str,
+    status: str,
+    *,
+    blocking: bool,
+    message: str,
+    evidence_refs: Optional[List[str]] = None,
+    details: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "id": check_id,
+        "label": label,
+        "status": status,
+        "blocking": blocking,
+        "message": message,
+    }
+    if evidence_refs:
+        payload["evidence_refs"] = evidence_refs
+    if details:
+        payload["details"] = details
+    return payload
+
+
+def _readiness_summary(checks: List[Dict[str, Any]]) -> Dict[str, Any]:
+    by_status = _management_count_by(checks, "status")
+    blocking_reasons = [
+        str(check.get("id"))
+        for check in checks
+        if bool(check.get("blocking")) and str(check.get("status") or "") != "pass"
+    ]
+    can_proceed = not blocking_reasons
+    readiness_status = "ready" if can_proceed else "blocked"
+    return {
+        "readinessStatus": readiness_status,
+        "readiness_status": readiness_status,
+        "canProceed": can_proceed,
+        "can_proceed": can_proceed,
+        "checkCount": len(checks),
+        "check_count": len(checks),
+        "passedCheckCount": by_status.get("pass", 0),
+        "passed_check_count": by_status.get("pass", 0),
+        "blockingReasonCount": len(blocking_reasons),
+        "blocking_reason_count": len(blocking_reasons),
+        "blockingReasons": blocking_reasons,
+        "blocking_reasons": blocking_reasons,
+        "byStatus": by_status,
+        "by_status": by_status,
+    }
+
+
+def _readiness_response(
+    *,
+    readiness_id: str,
+    title: str,
+    checks: List[Dict[str, Any]],
+    evidence_refs: List[Dict[str, Any]],
+    source_surfaces: Dict[str, Dict[str, Any]],
+    snapshot_at: str,
+    details: Optional[Dict[str, Any]] = None,
+    links: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
+    summary = _readiness_summary(checks)
+    surface_key = f"management_readiness_{readiness_id.replace('-', '_')}"
+    aggregate_surface = _aggregate_group_surface(
+        surface_key,
+        list(source_surfaces.values()) or [_composed_surface_status(snapshot_at=snapshot_at)],
+        snapshot_at=snapshot_at,
+        unavailable_message=f"{title} readiness aggregate unavailable.",
+        degraded_message=f"{title} readiness aggregate is available, but one or more evidence surfaces are degraded.",
+    )
+    aggregate_surface["readiness_status"] = summary["readiness_status"]
+    aggregate_surface["can_proceed"] = summary["can_proceed"]
+
+    surfaces = {surface_key: aggregate_surface}
+    surfaces.update(source_surfaces)
+    data = {
+        "id": readiness_id,
+        "readinessId": readiness_id,
+        "readiness_id": readiness_id,
+        "title": title,
+        "readinessStatus": summary["readinessStatus"],
+        "readiness_status": summary["readiness_status"],
+        "canProceed": summary["canProceed"],
+        "can_proceed": summary["can_proceed"],
+        "blockingReasons": summary["blockingReasons"],
+        "blocking_reasons": summary["blocking_reasons"],
+        "checks": checks,
+        "evidenceRefs": evidence_refs,
+        "evidence_refs": evidence_refs,
+        "links": links or {},
+        "details": details or {},
+    }
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = surfaces
+    return {
+        "data": data,
+        "summary": summary,
+        "checks": checks,
+        "items": checks,
+        "evidence_refs": evidence_refs,
+        "meta": meta,
+    }
+
+
+def _build_management_strict_publish_readiness_payload() -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    audit = _read_repo_json_artifact(_READINESS_STRICT_PUBLISH_AUDIT) or {}
+    component_status = audit.get("component_status") if isinstance(audit.get("component_status"), dict) else {}
+    forbidden_scan = (
+        (audit.get("components") or {}).get("forbidden_path_scan")
+        if isinstance(audit.get("components"), dict)
+        else {}
+    )
+    forbidden_signals = (
+        forbidden_scan.get("forbidden_signals")
+        if isinstance(forbidden_scan, dict) and isinstance(forbidden_scan.get("forbidden_signals"), list)
+        else []
+    )
+    passed = bool(audit.get("passed"))
+    checked_at = audit.get("checked_at")
+    evidence_refs = [
+        _readiness_evidence_ref(_READINESS_STRICT_PUBLISH_AUDIT, "Strict publish audit JSON"),
+        _readiness_evidence_ref(_READINESS_STRICT_PUBLISH_REPORT, "Strict publish audit report"),
+    ]
+    audit_surface = _readiness_artifact_surface(
+        "strict_publish_audit",
+        _READINESS_STRICT_PUBLISH_AUDIT,
+        snapshot_at=snapshot_at,
+        label="Strict publish audit",
+    )
+    checks = [
+        _readiness_check(
+            "browser_probe",
+            "Browser health and /bff/me probe",
+            "pass" if component_status.get("LSP-002-V2") is True else "fail",
+            blocking=True,
+            message="Hosted browser probe must pass before strict publish can proceed.",
+            evidence_refs=[_READINESS_STRICT_PUBLISH_AUDIT],
+        ),
+        _readiness_check(
+            "bundle_hash_capture",
+            "Hosted bundle hash capture",
+            "pass" if component_status.get("LSP-003-V2") is True else "fail",
+            blocking=True,
+            message="Hosted bundle hash capture must pass before strict publish can proceed.",
+            evidence_refs=[_READINESS_STRICT_PUBLISH_AUDIT],
+        ),
+        _readiness_check(
+            "forbidden_path_scan",
+            "Forbidden mock/seed runtime path scan",
+            "pass" if component_status.get("LSP-004-V2") is True else "fail",
+            blocking=True,
+            message="Strict publish remains blocked while deployed bundles contain forbidden mock/seed signals.",
+            evidence_refs=[_READINESS_STRICT_PUBLISH_AUDIT],
+            details={"forbidden_signal_count": len(forbidden_signals)},
+        ),
+    ]
+    return _readiness_response(
+        readiness_id="strict-publish",
+        title="Strict Publish Audit",
+        checks=checks,
+        evidence_refs=evidence_refs,
+        source_surfaces={"strict_publish_audit": audit_surface},
+        snapshot_at=snapshot_at,
+        details={
+            "passed": passed,
+            "checked_at": checked_at,
+            "deployment_url": audit.get("deployment_url"),
+            "browser_probe_base_url": audit.get("browser_probe_base_url"),
+            "errors": audit.get("errors") if isinstance(audit.get("errors"), list) else [],
+        },
+        links={
+            "self": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/strict-publish",
+            "audit": f"/{_READINESS_STRICT_PUBLISH_REPORT}",
+        },
+    )
+
+
+def _build_management_bff_ha_readiness_payload() -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    packet_text = _read_repo_text_artifact(_READINESS_BFF_HA_PACKET)
+    review_text = _read_repo_text_artifact(_READINESS_BFF_HA_REVIEW)
+    packet_exists = bool(packet_text)
+    review_approved = "Status: **approved**" in review_text or "Approved." in review_text
+    evidence_refs = [
+        _readiness_evidence_ref(_READINESS_BFF_HA_PACKET, "BFF HA failover demo packet"),
+        _readiness_evidence_ref(_READINESS_BFF_HA_REVIEW, "BFF HA failover demo review"),
+    ]
+    packet_surface = _readiness_artifact_surface(
+        "bff_ha_failover_demo",
+        _READINESS_BFF_HA_PACKET,
+        snapshot_at=snapshot_at,
+        label="BFF HA failover demo",
+    )
+    checks = [
+        _readiness_check(
+            "dev_failover_demo_packet",
+            "Dev failover demo packet recorded",
+            "pass" if packet_exists else "fail",
+            blocking=True,
+            message="The BFF HA readiness page requires the dev failover demo packet.",
+            evidence_refs=[_READINESS_BFF_HA_PACKET],
+        ),
+        _readiness_check(
+            "dev_failover_demo_review",
+            "Dev failover demo review approved",
+            "pass" if review_approved else "fail",
+            blocking=True,
+            message="The dev failover demo must have reviewer approval.",
+            evidence_refs=[_READINESS_BFF_HA_REVIEW],
+        ),
+        _readiness_check(
+            "production_ha_topology",
+            "Production HA topology and LB cutover",
+            "blocked",
+            blocking=True,
+            message="Current evidence is dev-only; production BFF HA/LB topology remains a separate gate.",
+            evidence_refs=[_READINESS_BFF_HA_PACKET],
+            details={
+                "dev_only": True,
+                "production_topology_ready": False,
+                "l1_policy_changed": False,
+            },
+        ),
+    ]
+    return _readiness_response(
+        readiness_id="bff-ha",
+        title="BFF HA Readiness",
+        checks=checks,
+        evidence_refs=evidence_refs,
+        source_surfaces={"bff_ha_failover_demo": packet_surface},
+        snapshot_at=snapshot_at,
+        details={
+            "dev_demo_ready": packet_exists and review_approved,
+            "production_topology_ready": False,
+        },
+        links={
+            "self": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/bff-ha",
+            "evidence": f"/{_READINESS_BFF_HA_PACKET}",
+        },
+    )
+
+
+def _build_management_broker_live_readiness_payload() -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    broker_surface = read_store.get_openclaw_broker_adapter_readiness()
+    service_surface = (
+        broker_surface.get("service_status")
+        if isinstance(broker_surface.get("service_status"), dict)
+        else _composed_surface_status(snapshot_at=snapshot_at)
+    )
+    live_gate_enabled = _bool_from_env("PANTHEON_LIVE_BROKER_ENABLED", default=False)
+    live_execution_enabled = bool(broker_surface.get("live_execution_enabled"))
+    live_adapter_state = str(broker_surface.get("live_adapter_state") or "unknown").lower()
+    broker_live_ready = (
+        live_gate_enabled
+        and live_execution_enabled
+        and live_adapter_state in {"enabled", "active"}
+    )
+    evidence_refs = [
+        _readiness_evidence_ref(
+            "docs/deployment/evidence/ep5-broker-tw-002/20260517T054748Z/evidence-packet/shioaji-sandbox-evidence-packet.json",
+            "Broker sandbox evidence packet",
+        ),
+        _readiness_evidence_ref(_READINESS_BROKER_LIVE_DISABLED, "Broker live-disabled smoke"),
+    ]
+    live_disabled_surface = _readiness_artifact_surface(
+        "broker_live_disabled_smoke",
+        _READINESS_BROKER_LIVE_DISABLED,
+        snapshot_at=snapshot_at,
+        label="Broker live-disabled smoke",
+    )
+    checks = [
+        _readiness_check(
+            "openclaw_broker_readiness_surface",
+            "OpenClaw broker readiness surface",
+            "pass" if broker_surface.get("overall_status") != "unavailable" else "fail",
+            blocking=True,
+            message="Broker live readiness requires the OpenClaw broker readiness surface.",
+            details={"overall_status": broker_surface.get("overall_status")},
+        ),
+        _readiness_check(
+            "live_broker_gate",
+            "Live broker gate",
+            "pass" if broker_live_ready else "blocked",
+            blocking=True,
+            message="Live broker execution is fail-closed until explicit live broker gates and adapter state are enabled.",
+            evidence_refs=[_READINESS_BROKER_LIVE_DISABLED],
+            details={
+                "PANTHEON_LIVE_BROKER_ENABLED": live_gate_enabled,
+                "live_execution_enabled": live_execution_enabled,
+                "live_adapter_state": live_adapter_state,
+            },
+        ),
+        _readiness_check(
+            "no_real_capital_side_effects",
+            "No real capital side effects",
+            "pass"
+            if broker_surface.get("is_real_capital") is False and broker_surface.get("is_real_order") is False
+            else "fail",
+            blocking=True,
+            message="Broker readiness must not report real capital or real orders before live approval.",
+            details={
+                "is_real_capital": broker_surface.get("is_real_capital"),
+                "is_real_order": broker_surface.get("is_real_order"),
+            },
+        ),
+    ]
+    return _readiness_response(
+        readiness_id="broker-live",
+        title="Broker Live Readiness",
+        checks=checks,
+        evidence_refs=evidence_refs,
+        source_surfaces={
+            "openclaw_broker_adapter_readiness": service_surface,
+            "broker_live_disabled_smoke": live_disabled_surface,
+        },
+        snapshot_at=snapshot_at,
+        details={
+            "broker_readiness": broker_surface,
+            "live_broker_enabled": broker_live_ready,
+            "fail_closed": not broker_live_ready,
+        },
+        links={
+            "self": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/broker-live",
+            "operator_surface": "/api/v1/operator/openclaw/broker/adapter-readiness",
+        },
+    )
+
+
+def _build_management_capital_binding_live_readiness_payload() -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    bindings = read_store.list_bindings()
+    runtime_bindings = read_store.list_runtime_bindings()
+    active_bindings = [
+        binding
+        for binding in bindings
+        if str(binding.get("validity") or binding.get("status") or "").lower() in {"active", "valid"}
+    ]
+    live_runtime_bindings = [
+        binding
+        for binding in runtime_bindings
+        if str(binding.get("deployment_stage") or binding.get("deployment_mode") or "").lower()
+        in {"canary", "live", "production", "staging-live"}
+    ]
+    gate_enabled = (
+        _bool_from_env("OPENCLAW_CAPITAL_BINDING_ENABLED", default=False)
+        or _bool_from_env("PANTHEON_CAPITAL_BINDING_LIVE_ENABLED", default=False)
+    )
+    evidence_refs = [
+        _readiness_evidence_ref(_READINESS_NO_REAL_CAPITAL_EVIDENCE, "No real capital evidence"),
+        _readiness_evidence_ref(_READINESS_BROKER_LIVE_DISABLED, "Broker live-disabled smoke"),
+    ]
+    capital_surface = _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at)
+    runtime_surface = _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at)
+    no_real_capital_surface = _readiness_artifact_surface(
+        "no_real_capital_evidence",
+        _READINESS_NO_REAL_CAPITAL_EVIDENCE,
+        snapshot_at=snapshot_at,
+        label="No real capital evidence",
+    )
+    checks = [
+        _readiness_check(
+            "capital_binding_live_gate",
+            "Capital binding live gate",
+            "pass" if gate_enabled else "blocked",
+            blocking=True,
+            message="Live capital binding remains fail-closed until explicit capital-binding live gates are enabled.",
+            evidence_refs=[_READINESS_NO_REAL_CAPITAL_EVIDENCE],
+            details={
+                "OPENCLAW_CAPITAL_BINDING_ENABLED": _bool_from_env("OPENCLAW_CAPITAL_BINDING_ENABLED", default=False),
+                "PANTHEON_CAPITAL_BINDING_LIVE_ENABLED": _bool_from_env(
+                    "PANTHEON_CAPITAL_BINDING_LIVE_ENABLED",
+                    default=False,
+                ),
+            },
+        ),
+        _readiness_check(
+            "active_persona_capital_bindings",
+            "Active persona-capital binding records",
+            "pass" if active_bindings else "warn",
+            blocking=False,
+            message="Active persona-capital bindings are visible to the BFF read surface.",
+            details={
+                "active_binding_count": len(active_bindings),
+                "binding_count": len(bindings),
+            },
+        ),
+        _readiness_check(
+            "live_runtime_binding_absence",
+            "No live runtime binding activated by this BFF",
+            "pass" if not live_runtime_bindings else "fail",
+            blocking=True,
+            message="Readiness publication must not silently materialize live runtime bindings.",
+            details={"live_runtime_binding_count": len(live_runtime_bindings)},
+        ),
+    ]
+    return _readiness_response(
+        readiness_id="capital-binding-live",
+        title="Capital Binding Live Readiness",
+        checks=checks,
+        evidence_refs=evidence_refs,
+        source_surfaces={
+            "persona_bindings": capital_surface,
+            "runtime_bindings": runtime_surface,
+            "no_real_capital_evidence": no_real_capital_surface,
+        },
+        snapshot_at=snapshot_at,
+        details={
+            "capital_binding_live_enabled": gate_enabled,
+            "active_binding_count": len(active_bindings),
+            "live_runtime_binding_count": len(live_runtime_bindings),
+            "fail_closed": not gate_enabled,
+        },
+        links={"self": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/capital-binding-live"},
+    )
+
+
+def _build_management_ep5_readiness_payload() -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    broker = _build_management_broker_live_readiness_payload()
+    capital = _build_management_capital_binding_live_readiness_payload()
+    bff_ha = _build_management_bff_ha_readiness_payload()
+    strict_publish = _build_management_strict_publish_readiness_payload()
+    evidence_refs = [
+        _readiness_evidence_ref(rel_path, label)
+        for rel_path, label in _READINESS_EP5_EVIDENCE_REFS
+    ]
+    ep5_surfaces = {
+        f"ep5_evidence_{index}": _readiness_artifact_surface(
+            f"ep5_evidence_{index}",
+            ref["path"],
+            snapshot_at=snapshot_at,
+            label=ref["label"],
+        )
+        for index, ref in enumerate(evidence_refs, start=1)
+    }
+    family_payloads = {
+        "broker-live": broker,
+        "capital-binding-live": capital,
+        "bff-ha": bff_ha,
+        "strict-publish": strict_publish,
+    }
+    checks = [
+        _readiness_check(
+            "ep5_evidence_bundle",
+            "EP5 prerequisite evidence bundle",
+            "pass" if all(ref.get("exists") for ref in evidence_refs) else "fail",
+            blocking=True,
+            message="EP5 readiness requires the prerequisite evidence bundle to be present in repo.",
+            evidence_refs=[ref["path"] for ref in evidence_refs],
+            details={
+                "available_evidence_count": len([ref for ref in evidence_refs if ref.get("exists")]),
+                "required_evidence_count": len(evidence_refs),
+            },
+        )
+    ]
+    for family_id, payload in family_payloads.items():
+        summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+        checks.append(
+            _readiness_check(
+                f"{family_id}-readiness",
+                f"{family_id} readiness",
+                "pass" if summary.get("can_proceed") is True else "blocked",
+                blocking=True,
+                message=f"{family_id} must be ready before EP5 can proceed.",
+                details={
+                    "readiness_status": summary.get("readiness_status"),
+                    "blocking_reasons": summary.get("blocking_reasons"),
+                },
+            )
+        )
+    return _readiness_response(
+        readiness_id="ep5",
+        title="EP5 Readiness",
+        checks=checks,
+        evidence_refs=evidence_refs,
+        source_surfaces=ep5_surfaces,
+        snapshot_at=snapshot_at,
+        details={
+            "families": {
+                family_id: {
+                    "readiness_status": payload["summary"]["readiness_status"],
+                    "can_proceed": payload["summary"]["can_proceed"],
+                    "blocking_reasons": payload["summary"]["blocking_reasons"],
+                }
+                for family_id, payload in family_payloads.items()
+            },
+        },
+        links={
+            "self": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/ep5",
+            "brokerLive": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/broker-live",
+            "broker_live": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/broker-live",
+            "capitalBindingLive": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/capital-binding-live",
+            "capital_binding_live": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/capital-binding-live",
+            "bffHa": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/bff-ha",
+            "bff_ha": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/bff-ha",
+            "strictPublish": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/strict-publish",
+            "strict_publish": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/strict-publish",
+        },
+    )
 
 
 def _build_management_cockpit_payload(snapshot_at: str) -> Dict[str, Any]:
@@ -10881,6 +11693,31 @@ async def bff_management_cockpit(
 
     snapshot_at = utc_now()
     return _build_management_cockpit_payload(snapshot_at)
+
+
+@app.get("/bff/management/trading-pulse")
+async def bff_management_trading_pulse(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF-B3-004: Management Trading Pulse card aggregate."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    return _build_management_trading_pulse_route_payload(snapshot_at)
+
+
+@app.get("/bff/management/trading-pulse/rankings")
+async def bff_management_trading_pulse_rankings(
+    limit: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF-B3-004: Management Trading Pulse ranking blocks."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    return _build_management_trading_pulse_rankings_payload(snapshot_at, limit=limit)
 
 
 @app.get("/api/v1/operator/paper-live-drift/{runtime_id}")
@@ -20558,6 +21395,501 @@ def _human_inbox_detail_match(item: Dict[str, Any], item_id: str) -> bool:
     return clean in candidates
 
 
+_EVOLUTION_JOURNAL_TYPE_ALIASES = {
+    "decision": "evolution_decision",
+    "evolution": "evolution_decision",
+    "evolution_decision": "evolution_decision",
+    "evolution_decisions": "evolution_decision",
+    "mutation": "mutation_review",
+    "mutation_review": "mutation_review",
+    "mutation_reviews": "mutation_review",
+    "postmortem": "postmortem",
+    "postmortems": "postmortem",
+    "rollback": "rollback",
+    "rollbacks": "rollback",
+    "freeze": "freeze_order",
+    "freeze_order": "freeze_order",
+    "freeze_orders": "freeze_order",
+}
+
+
+def _evolution_journal_csv_filter(value: Optional[str]) -> Optional[set[str]]:
+    if not value:
+        return None
+    requested = {part.strip().lower() for part in value.split(",") if part.strip()}
+    return requested or None
+
+
+def _evolution_journal_type_filter(value: Optional[str]) -> Optional[set[str]]:
+    requested = _evolution_journal_csv_filter(value)
+    if not requested:
+        return None
+    return {
+        _EVOLUTION_JOURNAL_TYPE_ALIASES.get(entry_type, entry_type)
+        for entry_type in requested
+    }
+
+
+def _evolution_journal_status(record: Dict[str, Any]) -> str:
+    return str(
+        _management_first_non_empty(
+            record.get("status"),
+            record.get("decision_state"),
+            record.get("state"),
+            "unknown",
+        )
+        or "unknown"
+    ).strip().lower()
+
+
+def _evolution_journal_timestamp(record: Dict[str, Any]) -> str:
+    return str(
+        _management_first_non_empty(
+            record.get("updated_at"),
+            record.get("updatedAt"),
+            record.get("published_at"),
+            record.get("completed_at"),
+            record.get("executed_at"),
+            record.get("initiated_at"),
+            record.get("issued_at"),
+            record.get("created_at"),
+            record.get("createdAt"),
+            record.get("triggered_at"),
+        )
+        or ""
+    )
+
+
+def _evolution_journal_target(
+    *,
+    target_type: Any = None,
+    target_id: Any = None,
+    target_version: Any = None,
+    incident_id: Any = None,
+    runtime_id: Any = None,
+    artifact_id: Any = None,
+) -> Dict[str, Any]:
+    resolved_type = str(
+        _management_first_non_empty(
+            target_type,
+            "incident" if incident_id else None,
+            "runtime" if runtime_id else None,
+            "artifact" if artifact_id else None,
+        )
+        or ""
+    ).strip()
+    resolved_id = _management_first_non_empty(target_id, incident_id, runtime_id, artifact_id)
+    return {
+        "type": resolved_type or None,
+        "id": resolved_id,
+        "version": target_version,
+    }
+
+
+def _evolution_journal_base_item(
+    *,
+    entry_type: str,
+    source_id: str,
+    title: str,
+    summary: str,
+    status: str,
+    created_at: Any = None,
+    updated_at: Any = None,
+    occurred_at: Any = None,
+    risk_level: Any = None,
+    action_type: Any = None,
+    target: Optional[Dict[str, Any]] = None,
+    route: Optional[str] = None,
+    bff_detail_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    journal_id = f"{entry_type}:{source_id}"
+    return {
+        "id": journal_id,
+        "journal_id": journal_id,
+        "entryType": entry_type,
+        "entry_type": entry_type,
+        "source_id": source_id,
+        "title": title,
+        "summary": summary,
+        "status": status,
+        "risk_level": risk_level,
+        "action_type": action_type,
+        "target": target or {},
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "occurred_at": occurred_at or updated_at or created_at,
+        "route": route,
+        "bff_detail_path": bff_detail_path,
+    }
+
+
+def _evolution_journal_decision_item(decision: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    decision_id = _management_record_id(decision, "decision_id", "id", "evolution_decision_id")
+    if not decision_id:
+        return None
+    status = _evolution_journal_status(decision)
+    title = str(
+        _management_first_non_empty(
+            decision.get("title"),
+            f"{str(decision.get('action_type') or 'Evolution').replace('_', ' ').title()} decision",
+        )
+    )
+    summary = str(
+        _management_first_non_empty(
+            decision.get("summary"),
+            decision.get("notes"),
+            decision.get("rationale"),
+            (decision.get("risk_assessment") or {}).get("risk_summary")
+            if isinstance(decision.get("risk_assessment"), dict)
+            else None,
+            "Evolution decision recorded.",
+        )
+    )
+    item = _evolution_journal_base_item(
+        entry_type="evolution_decision",
+        source_id=decision_id,
+        title=title,
+        summary=summary,
+        status=status,
+        created_at=decision.get("created_at"),
+        updated_at=decision.get("updated_at"),
+        occurred_at=_evolution_journal_timestamp(decision),
+        risk_level=decision.get("risk_level"),
+        action_type=decision.get("action_type"),
+        target=_evolution_journal_target(
+            target_type=decision.get("target_type"),
+            target_id=_management_first_non_empty(decision.get("target_id"), decision.get("artifact_id")),
+            target_version=decision.get("target_version") or decision.get("artifact_version"),
+            incident_id=decision.get("incident_ref") or decision.get("linked_incident_id"),
+        ),
+        route=f"/management/evolution-journal?decision={decision_id}",
+        bff_detail_path=f"/api/v1/evolution-decisions/{decision_id}",
+    )
+    item["decision"] = json.loads(json.dumps(decision))
+    item["record"] = item["decision"]
+    return item
+
+
+def _evolution_journal_mutation_review_item(
+    decision: Dict[str, Any],
+    *,
+    identity: OperatorIdentity,
+    snapshot_at: str,
+) -> Optional[Dict[str, Any]]:
+    decision_id = _management_record_id(decision, "decision_id", "id", "evolution_decision_id")
+    if not decision_id:
+        return None
+    if not any(
+        decision.get(field) is not None
+        for field in (
+            "approval_decision_id",
+            "proposed_changes",
+            "risk_assessment",
+            "required_approvals",
+            "review_chain",
+            "threshold_snapshots",
+        )
+    ):
+        return None
+
+    _, approval_decision, linked_incident, linked_postmortem = _mutation_review_inputs(decision_id)
+    projection = _mutation_review_projection(
+        decision,
+        approval_decision=approval_decision,
+        linked_incident=linked_incident,
+        linked_postmortem=linked_postmortem,
+        identity=identity,
+        snapshot_at=snapshot_at,
+    )
+    item = _evolution_journal_base_item(
+        entry_type="mutation_review",
+        source_id=decision_id,
+        title=f"Mutation review: {decision_id}",
+        summary=str((projection.get("proposed_changes") or {}).get("summary") or decision.get("rationale") or ""),
+        status=str(projection.get("decision_state") or "unknown").lower(),
+        created_at=projection.get("created_at"),
+        updated_at=decision.get("updated_at"),
+        occurred_at=_evolution_journal_timestamp(decision),
+        risk_level=projection.get("risk_level"),
+        action_type=projection.get("action_type"),
+        target=_evolution_journal_target(
+            target_type=projection.get("target_type"),
+            target_id=projection.get("target_id"),
+            target_version=projection.get("target_version"),
+        ),
+        route=f"/management/evolution-journal?mutation_review={decision_id}",
+        bff_detail_path=f"/api/v1/operator/mutation-review/{decision_id}",
+    )
+    item["mutationReview"] = json.loads(json.dumps(projection))
+    item["mutation_review"] = item["mutationReview"]
+    item["record"] = item["mutationReview"]
+    return item
+
+
+def _evolution_journal_postmortem_item(postmortem: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    postmortem_id = _management_record_id(postmortem, "postmortem_id", "report_id", "id")
+    if not postmortem_id:
+        return None
+    summary = str(
+        _management_first_non_empty(
+            postmortem.get("summary"),
+            postmortem.get("root_cause"),
+            postmortem.get("title"),
+            "Postmortem record published.",
+        )
+    )
+    item = _evolution_journal_base_item(
+        entry_type="postmortem",
+        source_id=postmortem_id,
+        title=str(postmortem.get("title") or f"Postmortem {postmortem_id}"),
+        summary=summary,
+        status=_evolution_journal_status(postmortem),
+        created_at=postmortem.get("created_at"),
+        updated_at=postmortem.get("published_at") or postmortem.get("updated_at"),
+        occurred_at=_evolution_journal_timestamp(postmortem),
+        action_type="postmortem",
+        target=_evolution_journal_target(
+            target_type="incident",
+            target_id=postmortem.get("incident_id"),
+            runtime_id=postmortem.get("runtime_id"),
+            artifact_id=postmortem.get("artifact_id"),
+        ),
+        route=f"/management/evolution-journal?postmortem={postmortem_id}",
+        bff_detail_path=f"/api/v1/postmortems/{postmortem_id}",
+    )
+    item["postmortem"] = json.loads(json.dumps(postmortem))
+    item["record"] = item["postmortem"]
+    return item
+
+
+def _evolution_journal_freeze_order_item(order: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    freeze_order_id = _management_record_id(order, "freeze_order_id", "id")
+    if not freeze_order_id:
+        return None
+    projected = _project_freeze_order_contract(order)
+    item = _evolution_journal_base_item(
+        entry_type="freeze_order",
+        source_id=freeze_order_id,
+        title=str(order.get("title") or f"Freeze order {freeze_order_id}"),
+        summary=str(order.get("reason") or "Freeze order recorded."),
+        status=_evolution_journal_status(order),
+        created_at=order.get("created_at"),
+        updated_at=order.get("updated_at") or order.get("issued_at"),
+        occurred_at=_evolution_journal_timestamp(projected),
+        action_type="freeze",
+        target=_evolution_journal_target(
+            target_type=order.get("scope") or "freeze_scope",
+            target_id=order.get("target_id"),
+            incident_id=order.get("incident_ref"),
+        ),
+        route=f"/management/evolution-journal?freeze_order={freeze_order_id}",
+        bff_detail_path=f"/api/v1/freeze-orders?status={order.get('status') or ''}",
+    )
+    item["freezeOrder"] = json.loads(json.dumps(projected))
+    item["freeze_order"] = item["freezeOrder"]
+    item["record"] = item["freezeOrder"]
+    return item
+
+
+def _evolution_journal_rollback_item(rollback: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    rollback_id = _management_record_id(rollback, "rollback_id", "id")
+    if not rollback_id:
+        return None
+    projected = _project_rollback_contract(rollback)
+    item = _evolution_journal_base_item(
+        entry_type="rollback",
+        source_id=rollback_id,
+        title=str(rollback.get("title") or f"Rollback {rollback_id}"),
+        summary=str(rollback.get("reason") or "Rollback record completed."),
+        status=_evolution_journal_status(rollback),
+        created_at=rollback.get("initiated_at") or rollback.get("created_at"),
+        updated_at=rollback.get("completed_at") or rollback.get("executed_at"),
+        occurred_at=_evolution_journal_timestamp(projected),
+        action_type=rollback.get("action_type") or "rollback",
+        target=_evolution_journal_target(
+            target_type="runtime",
+            target_id=rollback.get("runtime_id"),
+            target_version=rollback.get("to_version"),
+            incident_id=rollback.get("incident_ref"),
+        ),
+        route=f"/management/evolution-journal?rollback={rollback_id}",
+        bff_detail_path="/api/v1/rollbacks",
+    )
+    item["rollback"] = json.loads(json.dumps(projected))
+    item["record"] = item["rollback"]
+    return item
+
+
+def _evolution_journal_filter_items(
+    items: List[Dict[str, Any]],
+    *,
+    source_type: Optional[str] = None,
+    status: Optional[str] = None,
+    action_type: Optional[str] = None,
+    risk_level: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    source_types = _evolution_journal_type_filter(source_type)
+    statuses = _evolution_journal_csv_filter(status)
+    action_types = _evolution_journal_csv_filter(action_type)
+    risk_levels = _evolution_journal_csv_filter(risk_level)
+    filtered = items
+    if source_types:
+        filtered = [
+            item for item in filtered
+            if str(item.get("entry_type") or item.get("entryType") or "").lower() in source_types
+        ]
+    if statuses:
+        filtered = [
+            item for item in filtered
+            if str(item.get("status") or "").lower() in statuses
+        ]
+    if action_types:
+        filtered = [
+            item for item in filtered
+            if str(item.get("action_type") or "").lower() in action_types
+        ]
+    if risk_levels:
+        filtered = [
+            item for item in filtered
+            if str(item.get("risk_level") or "").lower() in risk_levels
+        ]
+    return filtered
+
+
+def _evolution_journal_summary(items: List[Dict[str, Any]], returned_count: int) -> Dict[str, Any]:
+    by_type = _management_count_by(items, "entry_type")
+    by_status = _management_count_by(items, "status")
+    by_risk_level = _management_count_by(items, "risk_level")
+    latest_at = max(
+        [str(item.get("occurred_at") or "") for item in items if item.get("occurred_at")],
+        default=None,
+    )
+    return {
+        "total_items": len(items),
+        "returned_items": returned_count,
+        "decision_count": by_type.get("evolution_decision", 0),
+        "mutation_review_count": by_type.get("mutation_review", 0),
+        "postmortem_count": by_type.get("postmortem", 0),
+        "rollback_count": by_type.get("rollback", 0),
+        "freeze_order_count": by_type.get("freeze_order", 0),
+        "pending_review_count": len([
+            item for item in items
+            if item.get("entry_type") == "mutation_review"
+            and str(item.get("status") or "").lower() in {"pending", "reviewed", "under_review", "in_review"}
+        ]),
+        "active_freeze_count": len([
+            item for item in items
+            if item.get("entry_type") == "freeze_order"
+            and str(item.get("status") or "").lower() == "active"
+        ]),
+        "completed_rollback_count": len([
+            item for item in items
+            if item.get("entry_type") == "rollback"
+            and str(item.get("status") or "").lower() == "completed"
+        ]),
+        "latest_at": latest_at,
+        "byType": by_type,
+        "by_type": by_type,
+        "byStatus": by_status,
+        "by_status": by_status,
+        "byRiskLevel": by_risk_level,
+        "by_risk_level": by_risk_level,
+    }
+
+
+def _evolution_journal_items(
+    *,
+    identity: OperatorIdentity,
+    snapshot_at: str,
+) -> tuple[
+    List[Dict[str, Any]],
+    List[Dict[str, Any]],
+    List[Dict[str, Any]],
+    List[Dict[str, Any]],
+    List[Dict[str, Any]],
+]:
+    decisions = list(read_store.list_evolution_decisions() or [])
+    postmortems = list(read_store.list_postmortems() or [])
+    freeze_orders = list(read_store.list_freeze_orders() or [])
+    rollbacks = list(read_store.list_all_rollbacks() or [])
+
+    items: List[Dict[str, Any]] = []
+    for decision in decisions:
+        decision_item = _evolution_journal_decision_item(decision)
+        if decision_item is not None:
+            items.append(decision_item)
+        mutation_item = _evolution_journal_mutation_review_item(
+            decision,
+            identity=identity,
+            snapshot_at=snapshot_at,
+        )
+        if mutation_item is not None:
+            items.append(mutation_item)
+    for postmortem in postmortems:
+        item = _evolution_journal_postmortem_item(postmortem)
+        if item is not None:
+            items.append(item)
+    for order in freeze_orders:
+        item = _evolution_journal_freeze_order_item(order)
+        if item is not None:
+            items.append(item)
+    for rollback in rollbacks:
+        item = _evolution_journal_rollback_item(rollback)
+        if item is not None:
+            items.append(item)
+
+    items.sort(
+        key=lambda item: (
+            str(item.get("occurred_at") or ""),
+            str(item.get("id") or ""),
+        ),
+        reverse=True,
+    )
+    return items, decisions, postmortems, freeze_orders, rollbacks
+
+
+def _evolution_journal_surfaces(
+    *,
+    snapshot_at: str,
+) -> Dict[str, Any]:
+    source_surfaces = {
+        "evolution_decisions": _dataset_surface_status("evolution_decisions", snapshot_at=snapshot_at),
+        "postmortems": _dataset_surface_status("postmortems", snapshot_at=snapshot_at),
+        "freeze_orders": _dataset_surface_status("freeze_orders", snapshot_at=snapshot_at),
+        "rollbacks": _dataset_surface_status("all_rollbacks", snapshot_at=snapshot_at),
+        "approval_decisions": _dataset_surface_status("approval_decisions", snapshot_at=snapshot_at),
+    }
+    mutation_surface = _aggregate_group_surface(
+        "mutation_review",
+        [
+            source_surfaces["evolution_decisions"],
+            source_surfaces["approval_decisions"],
+            source_surfaces["postmortems"],
+        ],
+        snapshot_at=snapshot_at,
+        unavailable_message="Mutation review journal records are unavailable.",
+        degraded_message="Mutation review journal records are degraded because one or more source surfaces are degraded.",
+    )
+    journal_surface = _aggregate_group_surface(
+        "management_evolution_journal",
+        [
+            source_surfaces["evolution_decisions"],
+            source_surfaces["postmortems"],
+            source_surfaces["freeze_orders"],
+            source_surfaces["rollbacks"],
+            mutation_surface,
+        ],
+        snapshot_at=snapshot_at,
+        unavailable_message="Evolution Journal aggregate unavailable.",
+        degraded_message="Evolution Journal aggregate is degraded because one or more source surfaces are degraded.",
+    )
+    return {
+        "management_evolution_journal": journal_surface,
+        "mutation_review": mutation_surface,
+        **source_surfaces,
+    }
+
+
 @app.get("/bff/management/human-inbox")
 async def bff_management_human_inbox(
     source_type: Optional[str] = None,
@@ -20628,6 +21960,57 @@ async def bff_management_human_inbox_detail(
         f"Human inbox item {item_id} does not exist",
     )
 
+
+@app.get("/bff/management/evolution-journal")
+async def bff_management_evolution_journal(
+    source_type: Optional[str] = None,
+    status: Optional[str] = None,
+    action_type: Optional[str] = None,
+    risk_level: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: compose Management Evolution Journal aggregate rows."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    items, _decisions, _postmortems, _freeze_orders, _rollbacks = _evolution_journal_items(
+        identity=identity,
+        snapshot_at=snapshot_at,
+    )
+    filtered = _evolution_journal_filter_items(
+        items,
+        source_type=source_type,
+        status=status,
+        action_type=action_type,
+        risk_level=risk_level,
+    )
+    total = len(filtered)
+    page_items, next_page_token = _page_slice(filtered, page_token, page_size)
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = _evolution_journal_surfaces(snapshot_at=snapshot_at)
+    meta["composition_sources"] = [
+        "evolution_decisions",
+        "postmortems",
+        "mutation_review",
+        "rollbacks",
+        "freeze_orders",
+    ]
+    return {
+        "data": page_items,
+        "items": page_items,
+        "summary": _evolution_journal_summary(filtered, len(page_items)),
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": meta,
+    }
+
+
 @app.get("/bff/management/persona-fleet")
 async def bff_management_persona_fleet(
     state: Optional[str] = None,
@@ -20673,6 +22056,56 @@ async def bff_management_evidence(
         page_token=page_token,
         page_size=page_size,
     )
+
+
+@app.get("/bff/management/readiness/ep5")
+async def bff_management_readiness_ep5(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: compose EP5 readiness status from task evidence and live gates."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _build_management_ep5_readiness_payload()
+
+
+@app.get("/bff/management/readiness/broker-live")
+async def bff_management_readiness_broker_live(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: expose broker-live readiness while preserving fail-closed gates."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _build_management_broker_live_readiness_payload()
+
+
+@app.get("/bff/management/readiness/capital-binding-live")
+async def bff_management_readiness_capital_binding_live(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: expose capital-binding-live readiness without enabling writes."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _build_management_capital_binding_live_readiness_payload()
+
+
+@app.get("/bff/management/readiness/bff-ha")
+async def bff_management_readiness_bff_ha(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: expose BFF HA readiness evidence and production topology gap."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _build_management_bff_ha_readiness_payload()
+
+
+@app.get("/bff/management/readiness/strict-publish")
+async def bff_management_readiness_strict_publish(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: expose strict-publish audit readiness and blockers."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _build_management_strict_publish_readiness_payload()
 
 
 # ---------------- /bff/strategies routes ----------------
@@ -22147,6 +23580,84 @@ _PM12_LEAGUE_RANKING_CRITERIA = {
     "execution": ("executionScore", "Execution"),
     "activity": ("activityScore", "Activity"),
 }
+_PM12_LEAGUE_FORMULA_VERSION = "pm12-default-v1"
+_PM12_QUARTERLY_FORMULA_DOC_REF = (
+    "docs/04/pantheon_bff_api_gap_2026-05-23/"
+    "BFF_API_GAP_final_integration_spec.md#b34-pm-12-composition-sources"
+)
+_PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID = (
+    "pm12-quarterly-ranking-formula-v1-governance"
+)
+_PM12_QUARTERLY_FORMULA_EFFECTIVE_AT = "2026-05-23T00:00:00Z"
+_PM12_QUARTER_PATTERN = re.compile(r"^(?P<year>\d{4})-Q(?P<quarter>[1-4])$", re.IGNORECASE)
+_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER = (
+    "promote_to_canary_candidate",
+    "increase_research_budget",
+    "grant_tool_access",
+    "reduce_capital_access",
+    "require_retraining",
+    "freeze_persona",
+    "suspend_persona",
+    "retire_persona",
+)
+_PM12_QUARTERLY_RECOMMENDATION_ACTIONS = {
+    "promote_to_canary_candidate": {
+        "label": "Promote to canary candidate",
+        "priority": "high",
+        "riskLevel": "medium",
+        "risk_level": "medium",
+        "rationale": "Quarterly score and risk posture support canary-review consideration.",
+    },
+    "increase_research_budget": {
+        "label": "Increase research budget",
+        "priority": "medium",
+        "riskLevel": "low",
+        "risk_level": "low",
+        "rationale": "Quarterly score supports additional research-only budget.",
+    },
+    "grant_tool_access": {
+        "label": "Grant tool access",
+        "priority": "medium",
+        "riskLevel": "low",
+        "risk_level": "low",
+        "rationale": "Quarterly score and execution posture support expanded tool access review.",
+    },
+    "reduce_capital_access": {
+        "label": "Reduce capital access",
+        "priority": "high",
+        "riskLevel": "high",
+        "risk_level": "high",
+        "rationale": "Risk or overall score calls for capital-access reduction review.",
+    },
+    "require_retraining": {
+        "label": "Require retraining",
+        "priority": "medium",
+        "riskLevel": "medium",
+        "risk_level": "medium",
+        "rationale": "Quarterly component scores indicate retraining should be reviewed.",
+    },
+    "freeze_persona": {
+        "label": "Freeze persona",
+        "priority": "critical",
+        "riskLevel": "critical",
+        "risk_level": "critical",
+        "rationale": "Quarterly score is below the freeze-review threshold.",
+    },
+    "suspend_persona": {
+        "label": "Suspend persona",
+        "priority": "critical",
+        "riskLevel": "critical",
+        "risk_level": "critical",
+        "rationale": "Quarterly score is below the suspension-review threshold.",
+    },
+    "retire_persona": {
+        "label": "Retire persona",
+        "priority": "critical",
+        "riskLevel": "critical",
+        "risk_level": "critical",
+        "rationale": "Quarterly score is below the retirement-review threshold.",
+    },
+}
 _PM12_LEAGUE_TIER_DEFINITIONS = [
     {
         "id": "tier-1",
@@ -22322,6 +23833,419 @@ def _pm12_tier_for_score(score: float) -> Dict[str, Any]:
         if score >= float(tier["minScore"]):
             return tier
     return _PM12_LEAGUE_TIER_DEFINITIONS[-1]
+
+
+def _pm12_current_quarter_id(snapshot_at: str) -> str:
+    timestamp = _audit_datetime(snapshot_at) or datetime.now(timezone.utc)
+    quarter = ((timestamp.month - 1) // 3) + 1
+    return f"{timestamp.year}-Q{quarter}"
+
+
+def _pm12_iso_z(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _pm12_quarter_window(quarter: Optional[str], snapshot_at: str) -> Dict[str, Any]:
+    raw_quarter = str(quarter or "").strip().upper() or _pm12_current_quarter_id(snapshot_at)
+    match = _PM12_QUARTER_PATTERN.match(raw_quarter)
+    if not match:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "invalid_quarter",
+                "message": "quarter must use YYYY-Qn format, for example 2026-Q2.",
+                "field": "quarter",
+            },
+        )
+    year = int(match.group("year"))
+    quarter_number = int(match.group("quarter"))
+    start_month = ((quarter_number - 1) * 3) + 1
+    start_at = datetime(year, start_month, 1, tzinfo=timezone.utc)
+    if quarter_number == 4:
+        end_exclusive_at = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+    else:
+        end_exclusive_at = datetime(year, start_month + 3, 1, tzinfo=timezone.utc)
+    quarter_id = f"{year}-Q{quarter_number}"
+    return {
+        "quarter": quarter_id,
+        "year": year,
+        "quarterNumber": quarter_number,
+        "quarter_number": quarter_number,
+        "label": f"{year} Q{quarter_number}",
+        "startAt": _pm12_iso_z(start_at),
+        "start_at": _pm12_iso_z(start_at),
+        "endExclusiveAt": _pm12_iso_z(end_exclusive_at),
+        "end_exclusive_at": _pm12_iso_z(end_exclusive_at),
+        "timezone": "UTC",
+    }
+
+
+def _pm12_quarter_formula_governance_evidence_refs() -> List[Dict[str, Any]]:
+    return [
+        {
+            "id": _PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID,
+            "refId": _PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID,
+            "ref_id": _PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID,
+            "title": "PM-12 quarterly ranking formula governance baseline",
+            "displayLabel": "PM-12 quarterly ranking formula governance baseline",
+            "display_label": "PM-12 quarterly ranking formula governance baseline",
+            "sourceType": "governance_record",
+            "source_type": "governance_record",
+            "sourceRef": _PM12_QUARTERLY_FORMULA_DOC_REF,
+            "source_ref": _PM12_QUARTERLY_FORMULA_DOC_REF,
+            "capturedAt": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
+            "captured_at": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
+            "linkType": "formula_version_governance",
+            "link_type": "formula_version_governance",
+            "credibility": {
+                "tier": "primary",
+                "verified": True,
+                "last_verified_at": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
+                "verification_method": "task_review",
+            },
+            "linkedObjectSummary": {
+                "entity_type": "ranking_formula",
+                "entity_ref": "pm12-quarterly-ranking-formula",
+                "display_label": "PM-12 quarterly ranking formula",
+            },
+            "linked_object_summary": {
+                "entity_type": "ranking_formula",
+                "entity_ref": "pm12-quarterly-ranking-formula",
+                "display_label": "PM-12 quarterly ranking formula",
+            },
+            "resolvedLink": {
+                "availability": "available",
+                "route_href": _PM12_QUARTERLY_FORMULA_DOC_REF,
+                "display_label": "Open PM-12 integration spec",
+                "open_in_new_tab": False,
+            },
+            "resolved_link": {
+                "availability": "available",
+                "route_href": _PM12_QUARTERLY_FORMULA_DOC_REF,
+                "display_label": "Open PM-12 integration spec",
+                "open_in_new_tab": False,
+            },
+            "routeHref": _PM12_QUARTERLY_FORMULA_DOC_REF,
+            "route_href": _PM12_QUARTERLY_FORMULA_DOC_REF,
+        }
+    ]
+
+
+def _pm12_quarter_formula_version_history() -> List[Dict[str, Any]]:
+    evidence_ref_ids = [
+        ref["ref_id"] for ref in _pm12_quarter_formula_governance_evidence_refs()
+    ]
+    return [
+        {
+            "id": f"pm12-quarterly-ranking-formula-{_PM12_LEAGUE_FORMULA_VERSION}",
+            "version": _PM12_LEAGUE_FORMULA_VERSION,
+            "formulaVersion": _PM12_LEAGUE_FORMULA_VERSION,
+            "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
+            "effectiveAt": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
+            "effective_at": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
+            "changeType": "baseline",
+            "change_type": "baseline",
+            "governanceEvidenceRefs": evidence_ref_ids,
+            "governance_evidence_refs": evidence_ref_ids,
+            "description": "Baseline formula accepted for PM-12 quarterly ranking reads.",
+        }
+    ]
+
+
+def _pm12_quarter_formula_payload() -> Dict[str, Any]:
+    evidence_ref_ids = [
+        ref["ref_id"] for ref in _pm12_quarter_formula_governance_evidence_refs()
+    ]
+    version_history = _pm12_quarter_formula_version_history()
+    change_control = {
+        "versionPolicy": "formula_version_changes_require_governance_evidence",
+        "version_policy": "formula_version_changes_require_governance_evidence",
+        "requiresGovernanceEvidence": True,
+        "requires_governance_evidence": True,
+        "governanceEvidenceRefs": evidence_ref_ids,
+        "governance_evidence_refs": evidence_ref_ids,
+        "authority": "read_only_governance_advisory",
+    }
+    return {
+        "id": "pm12-quarterly-ranking-formula",
+        "formulaId": "pm12-quarterly-ranking-formula",
+        "formula_id": "pm12-quarterly-ranking-formula",
+        "version": _PM12_LEAGUE_FORMULA_VERSION,
+        "formulaVersion": _PM12_LEAGUE_FORMULA_VERSION,
+        "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
+        "weights": dict(_PM12_LEAGUE_SCORE_WEIGHTS),
+        "scoreField": "overallScore",
+        "score_field": "overallScore",
+        "components": [
+            {"key": "pnl", "label": "PnL", "weight": _PM12_LEAGUE_SCORE_WEIGHTS["pnl"]},
+            {"key": "risk", "label": "Risk", "weight": _PM12_LEAGUE_SCORE_WEIGHTS["risk"]},
+            {"key": "execution", "label": "Execution", "weight": _PM12_LEAGUE_SCORE_WEIGHTS["execution"]},
+            {"key": "activity", "label": "Activity", "weight": _PM12_LEAGUE_SCORE_WEIGHTS["activity"]},
+        ],
+        "basis": "latest_available_persona_league_metrics_with_quarter_window",
+        "policy": "read_only_governance_advisory",
+        "governanceEvidenceRefs": evidence_ref_ids,
+        "governance_evidence_refs": evidence_ref_ids,
+        "versionHistory": version_history,
+        "version_history": version_history,
+        "changeControl": change_control,
+        "change_control": change_control,
+    }
+
+
+def _pm12_evidence_timestamp(item: Dict[str, Any]) -> Optional[datetime]:
+    source_document = item.get("source_document") if isinstance(item.get("source_document"), dict) else {}
+    return _audit_datetime(source_document.get("captured_at") or item.get("created_at"))
+
+
+def _pm12_quarter_evidence_refs(
+    evidence_refs: List[Dict[str, Any]],
+    quarter_window: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    start_at = _audit_datetime(quarter_window.get("startAt"))
+    end_exclusive_at = _audit_datetime(quarter_window.get("endExclusiveAt"))
+    if start_at is None or end_exclusive_at is None:
+        return []
+    return [
+        item
+        for item in evidence_refs
+        for timestamp in [_pm12_evidence_timestamp(item)]
+        if timestamp is not None and start_at <= timestamp < end_exclusive_at
+    ]
+
+
+def _pm12_public_quarter_evidence_refs(
+    identity: OperatorIdentity,
+    quarter_window: Dict[str, Any],
+) -> tuple[List[Dict[str, Any]], int, bool]:
+    raw_evidence_refs = read_store.list_evidence_refs()
+    evidence_dataset_available = read_store.dataset_source("evidence_refs") != "missing"
+    quarter_evidence_refs = (
+        _pm12_quarter_evidence_refs(raw_evidence_refs, quarter_window)
+        if evidence_dataset_available
+        else []
+    )
+    try:
+        capabilities = _capabilities_for_identity(identity)
+    except Exception:
+        capabilities = None
+    processed_evidence_refs, redacted_count = redact_evidence_refs(
+        identity,
+        quarter_evidence_refs,
+        capabilities=capabilities,
+    )
+    return (
+        [
+            _management_evidence_public_item(item)
+            for item in processed_evidence_refs
+            if isinstance(item, dict)
+        ],
+        redacted_count,
+        evidence_dataset_available,
+    )
+
+
+def _pm12_quarterly_ranking_items(
+    rows: List[Dict[str, Any]],
+    *,
+    quarter_window: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    ranked = sorted(
+        (_pm12_persona_league_ranking_item(row) for row in rows),
+        key=lambda item: (
+            _management_number(item.get("overallScore")) or 0.0,
+            str(item.get("personaId") or ""),
+        ),
+        reverse=True,
+    )
+    items: List[Dict[str, Any]] = []
+    for rank, item in enumerate(ranked, start=1):
+        score = _management_number(item.get("overallScore")) or 0.0
+        items.append({
+            **item,
+            "rank": rank,
+            "score": score,
+            "scoreField": "overallScore",
+            "score_field": "overallScore",
+            "quarter": quarter_window["quarter"],
+            "quarterWindow": quarter_window,
+            "quarter_window": quarter_window,
+            "formulaVersion": _PM12_LEAGUE_FORMULA_VERSION,
+            "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
+            "basis": "latest_available_persona_league_metrics_with_quarter_window",
+        })
+    return items
+
+
+def _pm12_add_recommendation_action(action_ids: List[str], action_id: str) -> None:
+    if action_id in _PM12_QUARTERLY_RECOMMENDATION_ACTIONS and action_id not in action_ids:
+        action_ids.append(action_id)
+
+
+def _pm12_recommendation_action_ids(item: Dict[str, Any]) -> List[str]:
+    components = item.get("components") if isinstance(item.get("components"), dict) else {}
+    overall = _management_number(item.get("score")) or _management_number(item.get("overallScore")) or 0.0
+    risk_score = _management_number(components.get("riskScore"))
+    execution_score = _management_number(components.get("executionScore"))
+    activity_score = _management_number(components.get("activityScore"))
+    action_ids: List[str] = []
+
+    if overall >= 85.0 and (risk_score is None or risk_score >= 70.0) and (
+        execution_score is None or execution_score >= 65.0
+    ):
+        _pm12_add_recommendation_action(action_ids, "promote_to_canary_candidate")
+        _pm12_add_recommendation_action(action_ids, "increase_research_budget")
+        _pm12_add_recommendation_action(action_ids, "grant_tool_access")
+    elif overall >= 70.0 and (risk_score is None or risk_score >= 60.0):
+        _pm12_add_recommendation_action(action_ids, "increase_research_budget")
+        _pm12_add_recommendation_action(action_ids, "grant_tool_access")
+
+    if risk_score is not None and risk_score < 55.0:
+        _pm12_add_recommendation_action(action_ids, "reduce_capital_access")
+    if (execution_score is not None and execution_score < 55.0) or (
+        activity_score is not None and activity_score < 45.0
+    ):
+        _pm12_add_recommendation_action(action_ids, "require_retraining")
+    if overall < 55.0:
+        _pm12_add_recommendation_action(action_ids, "require_retraining")
+        _pm12_add_recommendation_action(action_ids, "reduce_capital_access")
+    if overall < 45.0:
+        _pm12_add_recommendation_action(action_ids, "freeze_persona")
+    if overall < 35.0:
+        _pm12_add_recommendation_action(action_ids, "suspend_persona")
+    if overall < 25.0:
+        _pm12_add_recommendation_action(action_ids, "retire_persona")
+
+    if not action_ids:
+        _pm12_add_recommendation_action(action_ids, "require_retraining")
+    return [
+        action_id
+        for action_id in _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER
+        if action_id in action_ids
+    ]
+
+
+def _pm12_quarterly_recommendation_item(
+    item: Dict[str, Any],
+    *,
+    action_id: str,
+    quarter_window: Dict[str, Any],
+    evidence_refs: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    action = _PM12_QUARTERLY_RECOMMENDATION_ACTIONS[action_id]
+    persona_id = str(item.get("personaId") or item.get("persona_id") or item.get("id") or "")
+    score = _management_number(item.get("score")) or _management_number(item.get("overallScore")) or 0.0
+    evidence_sample = evidence_refs[:5]
+    evidence_ref_ids = [
+        str(ref.get("refId") or ref.get("ref_id") or ref.get("id"))
+        for ref in evidence_sample
+        if ref.get("refId") or ref.get("ref_id") or ref.get("id")
+    ]
+    recommendation_id = f"pm12-{quarter_window['quarter'].lower()}-{persona_id}-{action_id}"
+    governance = {
+        "requiresHumanGateDecision": True,
+        "requires_human_gate_decision": True,
+        "destinations": ["human_inbox", "governance_queue", "human_gate_decision"],
+        "humanInboxRoute": "/bff/management/human-inbox",
+        "human_inbox_route": "/bff/management/human-inbox",
+        "governanceQueueRoute": "/api/v1/operator/governance/approval-queue",
+        "governance_queue_route": "/api/v1/operator/governance/approval-queue",
+        "decisionType": "HumanGateDecision",
+        "decision_type": "HumanGateDecision",
+        "liveCapitalMutation": False,
+        "live_capital_mutation": False,
+    }
+    return {
+        "id": recommendation_id,
+        "recommendationId": recommendation_id,
+        "recommendation_id": recommendation_id,
+        "quarter": quarter_window["quarter"],
+        "quarterWindow": quarter_window,
+        "quarter_window": quarter_window,
+        "personaId": persona_id,
+        "persona_id": persona_id,
+        "name": item.get("name"),
+        "owner": item.get("owner"),
+        "state": item.get("state"),
+        "risk": item.get("risk"),
+        "rank": item.get("rank"),
+        "score": score,
+        "tier": item.get("tier"),
+        "tierId": item.get("tierId"),
+        "tier_id": item.get("tier_id"),
+        "tierLabel": item.get("tierLabel"),
+        "tier_label": item.get("tier_label"),
+        "formulaVersion": item.get("formulaVersion") or _PM12_LEAGUE_FORMULA_VERSION,
+        "formula_version": item.get("formula_version") or _PM12_LEAGUE_FORMULA_VERSION,
+        "actionId": action_id,
+        "action_id": action_id,
+        "actionLabel": action["label"],
+        "action_label": action["label"],
+        "recommendationType": "governance_advisory",
+        "recommendation_type": "governance_advisory",
+        "status": "recommended",
+        "priority": action["priority"],
+        "riskLevel": action["riskLevel"],
+        "risk_level": action["risk_level"],
+        "target": {"type": "persona", "id": persona_id},
+        "rationale": f"{action['rationale']} Score={score:.2f}; tier={item.get('tier') or 'unknown'}.",
+        "rationaleCodes": [
+            f"tier:{item.get('tier') or 'unknown'}",
+            f"action:{action_id}",
+            "policy:no_direct_live_capital",
+        ],
+        "rationale_codes": [
+            f"tier:{item.get('tier') or 'unknown'}",
+            f"action:{action_id}",
+            "policy:no_direct_live_capital",
+        ],
+        "metrics": item.get("metrics") or {},
+        "components": item.get("components") or {},
+        "evidenceRefs": evidence_sample,
+        "evidence_refs": evidence_sample,
+        "evidenceRefIds": evidence_ref_ids,
+        "evidence_ref_ids": evidence_ref_ids,
+        "governance": governance,
+        "requiresHumanGateDecision": True,
+        "requires_human_gate_decision": True,
+        "liveCapitalMutation": False,
+        "live_capital_mutation": False,
+        "policy": "read_only_governance_advisory",
+        "links": {
+            "persona": f"/bff/personas/{persona_id}",
+            "humanInbox": "/bff/management/human-inbox",
+            "governanceQueue": "/api/v1/operator/governance/approval-queue",
+        },
+    }
+
+
+def _pm12_quarterly_recommendations(
+    ranked_items: List[Dict[str, Any]],
+    *,
+    quarter_window: Dict[str, Any],
+    evidence_refs: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    recommendations: List[Dict[str, Any]] = []
+    for item in ranked_items:
+        for action_id in _pm12_recommendation_action_ids(item):
+            recommendations.append(
+                _pm12_quarterly_recommendation_item(
+                    item,
+                    action_id=action_id,
+                    quarter_window=quarter_window,
+                    evidence_refs=evidence_refs,
+                )
+            )
+    recommendations.sort(
+        key=lambda entry: (
+            _HUMAN_INBOX_PRIORITY_RANK.get(str(entry.get("priority") or "unknown"), 0),
+            -int(entry.get("rank") or 0),
+            str(entry.get("actionId") or ""),
+            str(entry.get("personaId") or ""),
+        ),
+        reverse=True,
+    )
+    return recommendations
 
 
 def _project_persona_league_row(raw: Dict[str, Any]) -> Dict[str, Any]:
@@ -22687,6 +24611,339 @@ async def bff_management_persona_league_tiers(
                 "GET /bff/v5/execution/persona-health",
             ],
             "policy": "read_only_governance_advisory",
+        },
+    }
+
+
+@app.get("/bff/management/quarterly-ranking/formula")
+async def bff_management_quarterly_ranking_formula(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 quarterly ranking formula weights, version, and governance trace."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    formula = _pm12_quarter_formula_payload()
+    evidence_refs = _pm12_quarter_formula_governance_evidence_refs()
+    version_history = list(formula.get("versionHistory") or [])
+    formula_surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
+    evidence_surface = _composed_surface_status(
+        snapshot_at=snapshot_at,
+        available=bool(evidence_refs),
+        missing_message="Quarterly ranking formula governance evidence is unavailable.",
+    )
+    weights = formula.get("weights") if isinstance(formula.get("weights"), dict) else {}
+    summary = {
+        "formulaId": formula["formulaId"],
+        "formula_id": formula["formula_id"],
+        "formulaVersion": formula["formulaVersion"],
+        "formula_version": formula["formula_version"],
+        "componentCount": len(formula.get("components") or []),
+        "component_count": len(formula.get("components") or []),
+        "weightTotal": round(sum(_management_number(value) or 0.0 for value in weights.values()), 6),
+        "weight_total": round(sum(_management_number(value) or 0.0 for value in weights.values()), 6),
+        "evidenceRefCount": len(evidence_refs),
+        "evidence_ref_count": len(evidence_refs),
+        "basis": formula["basis"],
+        "policy": formula["policy"],
+    }
+    return {
+        "data": formula,
+        "formula": formula,
+        "versionHistory": version_history,
+        "version_history": version_history,
+        "evidenceRefs": evidence_refs,
+        "evidence_refs": evidence_refs,
+        "summary": summary,
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "quarterly_ranking_formula": formula_surface,
+                "formula": formula_surface,
+                "governance_evidence": evidence_surface,
+            },
+            "composition_sources": [
+                "GET /bff/management/persona-league/rankings",
+                "GET /api/v1/knowledge/evidence",
+                _PM12_QUARTERLY_FORMULA_DOC_REF,
+            ],
+            "policy": formula["policy"],
+            "version_policy": "formula_version_changes_require_governance_evidence",
+        },
+    }
+
+
+@app.get("/bff/management/quarterly-ranking")
+async def bff_management_quarterly_ranking(
+    quarter: Optional[str] = Query(default=None),
+    state: Optional[str] = None,
+    archetype: Optional[str] = None,
+    q: str = Query(default=""),
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 quarterly persona ranking composed from league rows and evidence."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    quarter_window = _pm12_quarter_window(quarter, snapshot_at)
+    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
+    ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
+    total = len(ranked_items)
+    page_items, next_page_token = _page_slice(ranked_items, page_token, page_size)
+
+    public_evidence_refs, redacted_count, evidence_dataset_available = _pm12_public_quarter_evidence_refs(
+        identity,
+        quarter_window,
+    )
+
+    formula = _pm12_quarter_formula_payload()
+    source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
+    formula_surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
+    evidence_surface = _dataset_surface_status(
+        "evidence_refs",
+        snapshot_at=snapshot_at,
+        has_data=evidence_dataset_available,
+        missing_message="Evidence reference read surface is unavailable.",
+    )
+    quarterly_surface = _aggregate_group_surface(
+        "quarterly_ranking",
+        [*source_surfaces.values(), formula_surface, evidence_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Quarterly ranking aggregate unavailable.",
+        degraded_message="Quarterly ranking is degraded because one or more source surfaces are degraded.",
+    )
+    top_item = ranked_items[0] if ranked_items else None
+    summary = {
+        "quarter": quarter_window["quarter"],
+        "formulaVersion": formula["formulaVersion"],
+        "formula_version": formula["formula_version"],
+        "personaCount": len(rows),
+        "persona_count": len(rows),
+        "rankedCount": total,
+        "ranked_count": total,
+        "returnedCount": len(page_items),
+        "returned_count": len(page_items),
+        "topPersonaId": (top_item or {}).get("personaId") if isinstance(top_item, dict) else None,
+        "top_persona_id": (top_item or {}).get("personaId") if isinstance(top_item, dict) else None,
+        "evidenceRefCount": len(public_evidence_refs),
+        "evidence_ref_count": len(public_evidence_refs),
+        "redactedEvidenceCount": redacted_count,
+        "redacted_evidence_count": redacted_count,
+        "basis": formula["basis"],
+    }
+    data = {
+        "id": f"pm12-quarterly-ranking-{quarter_window['quarter'].lower()}",
+        "quarter": quarter_window["quarter"],
+        "quarterWindow": quarter_window,
+        "quarter_window": quarter_window,
+        "formula": formula,
+        "items": page_items,
+        "rankings": page_items,
+        "evidenceRefs": public_evidence_refs,
+        "evidence_refs": public_evidence_refs,
+        "summary": summary,
+    }
+    return {
+        "data": data,
+        "items": page_items,
+        "rankings": page_items,
+        "formula": formula,
+        "quarterWindow": quarter_window,
+        "quarter_window": quarter_window,
+        "evidenceRefs": public_evidence_refs,
+        "evidence_refs": public_evidence_refs,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "quarterly_ranking": quarterly_surface,
+                "formula": formula_surface,
+                "evidence_refs": evidence_surface,
+                "knowledge_evidence": evidence_surface,
+                **source_surfaces,
+            },
+            "composition_sources": [
+                "GET /bff/management/persona-league",
+                "GET /bff/management/persona-league/rankings",
+                "GET /bff/management/persona-league/tiers",
+                "GET /api/v1/knowledge/evidence",
+            ],
+            "policy": "read_only_governance_advisory",
+            "redacted_evidence_count": redacted_count,
+        },
+    }
+
+
+@app.get("/bff/management/quarterly-ranking/recommendations")
+async def bff_management_quarterly_ranking_recommendations(
+    quarter: Optional[str] = Query(default=None),
+    state: Optional[str] = None,
+    archetype: Optional[str] = None,
+    q: str = Query(default=""),
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 quarterly governance recommendations without live mutations."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    quarter_window = _pm12_quarter_window(quarter, snapshot_at)
+    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
+    ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
+    public_evidence_refs, redacted_count, evidence_dataset_available = _pm12_public_quarter_evidence_refs(
+        identity,
+        quarter_window,
+    )
+    recommendations = _pm12_quarterly_recommendations(
+        ranked_items,
+        quarter_window=quarter_window,
+        evidence_refs=public_evidence_refs,
+    )
+    total = len(recommendations)
+    page_items, next_page_token = _page_slice(recommendations, page_token, page_size)
+
+    formula = _pm12_quarter_formula_payload()
+    action_counts = {
+        action_id: len([item for item in recommendations if item.get("actionId") == action_id])
+        for action_id in _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER
+    }
+    top_item = ranked_items[0] if ranked_items else None
+    summary = {
+        "quarter": quarter_window["quarter"],
+        "formulaVersion": formula["formulaVersion"],
+        "formula_version": formula["formula_version"],
+        "personaCount": len(rows),
+        "persona_count": len(rows),
+        "rankedCount": len(ranked_items),
+        "ranked_count": len(ranked_items),
+        "recommendationCount": total,
+        "recommendation_count": total,
+        "returnedCount": len(page_items),
+        "returned_count": len(page_items),
+        "topPersonaId": (top_item or {}).get("personaId") if isinstance(top_item, dict) else None,
+        "top_persona_id": (top_item or {}).get("personaId") if isinstance(top_item, dict) else None,
+        "humanGateDecisionCount": total,
+        "human_gate_decision_count": total,
+        "liveCapitalMutationCount": 0,
+        "live_capital_mutation_count": 0,
+        "evidenceRefCount": len(public_evidence_refs),
+        "evidence_ref_count": len(public_evidence_refs),
+        "redactedEvidenceCount": redacted_count,
+        "redacted_evidence_count": redacted_count,
+        "byAction": action_counts,
+        "by_action": action_counts,
+        "allowedActions": list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER),
+        "allowed_actions": list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER),
+        "basis": formula["basis"],
+        "policy": "read_only_governance_advisory",
+    }
+
+    source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
+    formula_surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
+    evidence_surface = _dataset_surface_status(
+        "evidence_refs",
+        snapshot_at=snapshot_at,
+        has_data=evidence_dataset_available,
+        missing_message="Evidence reference read surface is unavailable.",
+    )
+    approval_queue_surface = _dataset_surface_status("approval_queue_items", snapshot_at=snapshot_at)
+    human_gate_surface = _dataset_surface_status("approval_decisions", snapshot_at=snapshot_at)
+    human_inbox_surface = _composed_surface_status(
+        snapshot_at=snapshot_at,
+        available=(
+            approval_queue_surface.get("status") != "unavailable"
+            or human_gate_surface.get("status") != "unavailable"
+        ),
+        missing_message="Human Inbox and HumanGateDecision read surfaces are unavailable.",
+    )
+    quarterly_surface = _aggregate_group_surface(
+        "quarterly_ranking",
+        [*source_surfaces.values(), formula_surface, evidence_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Quarterly ranking aggregate unavailable.",
+        degraded_message="Quarterly ranking is degraded because one or more source surfaces are degraded.",
+    )
+    recommendations_surface = _aggregate_group_surface(
+        "quarterly_ranking_recommendations",
+        [
+            quarterly_surface,
+            formula_surface,
+            evidence_surface,
+            approval_queue_surface,
+            human_gate_surface,
+            human_inbox_surface,
+        ],
+        snapshot_at=snapshot_at,
+        unavailable_message="Quarterly ranking recommendations aggregate unavailable.",
+        degraded_message="Quarterly ranking recommendations are degraded because one or more governance source surfaces are degraded.",
+    )
+    governance_destinations = ["human_inbox", "governance_queue", "human_gate_decision"]
+    data = {
+        "id": f"pm12-quarterly-ranking-recommendations-{quarter_window['quarter'].lower()}",
+        "quarter": quarter_window["quarter"],
+        "quarterWindow": quarter_window,
+        "quarter_window": quarter_window,
+        "formula": formula,
+        "items": page_items,
+        "recommendations": page_items,
+        "evidenceRefs": public_evidence_refs,
+        "evidence_refs": public_evidence_refs,
+        "summary": summary,
+        "policy": "read_only_governance_advisory",
+        "governanceDestinations": governance_destinations,
+        "governance_destinations": governance_destinations,
+        "allowedActions": list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER),
+        "allowed_actions": list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER),
+    }
+    return {
+        "data": data,
+        "items": page_items,
+        "recommendations": page_items,
+        "formula": formula,
+        "quarterWindow": quarter_window,
+        "quarter_window": quarter_window,
+        "evidenceRefs": public_evidence_refs,
+        "evidence_refs": public_evidence_refs,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "quarterly_ranking_recommendations": recommendations_surface,
+                "quarterly_ranking": quarterly_surface,
+                "formula": formula_surface,
+                "evidence_refs": evidence_surface,
+                "knowledge_evidence": evidence_surface,
+                "human_inbox": human_inbox_surface,
+                "governance_queue": approval_queue_surface,
+                "human_gate_decision": human_gate_surface,
+                **source_surfaces,
+            },
+            "composition_sources": [
+                "GET /bff/management/quarterly-ranking",
+                "GET /bff/management/persona-league",
+                "GET /bff/management/persona-league/rankings",
+                "GET /bff/management/persona-league/tiers",
+                "GET /api/v1/knowledge/evidence",
+                "GET /bff/management/human-inbox",
+                "GET /api/v1/operator/governance/approval-queue",
+            ],
+            "policy": "read_only_governance_advisory",
+            "governance_destinations": governance_destinations,
+            "redacted_evidence_count": redacted_count,
+            "live_capital_mutation": False,
         },
     }
 
@@ -26392,7 +28649,8 @@ async def bff_get_alert(
             f"Alert {alert_id!r} does not exist",
             precondition_failed="alert_id",
         )
-    return {"data": match, "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()}}
+    detail_meta = payload.get("meta", {"snapshot_at": snapshot_at, "staleness": _meta_staleness()})
+    return {"data": match, "meta": detail_meta}
 
 
 @app.post("/bff/alerts/{alert_id}/acknowledge", status_code=202)
