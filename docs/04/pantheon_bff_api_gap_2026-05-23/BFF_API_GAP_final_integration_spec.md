@@ -505,6 +505,138 @@ BFF-B2-001 — Owner: Claude2, Reviewer: Codex2
 
 ---
 
+## §B2.2 Evolution / Jobs / Ops — read facade {#b22-evolution--jobs--ops}
+
+### Gap
+
+Sprint BFF-2 requires that `execute-plans@main` can consume the evolution
+programs, jobs, and operational read surfaces (alerts, incidents, audit,
+artifacts, runtimes, loop-runs) without falling back to mock data. Prior to this
+sprint:
+
+- `GET /bff/v5/loop-runs` (list) and `GET /bff/v5/loop-runs/{id}` (detail) were
+  only registered on the generic `sem_final_generic_read_alias` catch-all handler
+  which returns an untyped stub envelope — no source-aware surface metadata, no
+  proper `data`/`items`/`page_info` structure, and no dedicated auth path.
+- `GET /bff/v5/sentinel/findings/{id}` (detail) was similarly stub-only; the list
+  had a dedicated handler (`bff_v5_sentinel_findings_list`) but the detail did not.
+- `GET /bff/artifacts` (list) had no dedicated handler at all.
+- The catch-all `sem_final_generic_read_alias` carried dead decorator entries for
+  `/bff/incidents`, `/bff/incidents/{id}`, `/bff/runtimes`, and `/bff/runtimes/{id}`
+  — all of which have earlier dedicated handlers, creating ambiguous routing state.
+- The catch-all `sem_final_id_named_read_alias` carried dead entries for
+  `/bff/evolution-programs/{id}` and `/bff/jobs/{id}`.
+- The catch-all `sem_final_generic_patch_alias` carried a dead entry for
+  `/bff/evolution-programs/{id}`.
+
+### Fix
+
+**File: `services/control-plane/bff/main.py`**
+
+Four dedicated handlers are added and catch-all dead entries removed:
+
+1. `bff_list_loop_runs` — `GET /bff/v5/loop-runs`: reads `read_store.list_loop_runs()`,
+   applies optional `?status=` filter, returns source-aware
+   `_sem_final_list_response` envelope.
+2. `bff_get_loop_run` — `GET /bff/v5/loop-runs/{loop_run_id}`: reads
+   `read_store.get_loop_run(id)`, returns `_sem_final_read_model_detail`
+   envelope, HTTP 404 when not found.
+3. `bff_get_sentinel_finding` — `GET /bff/v5/sentinel/findings/{finding_id}`:
+   reads `read_store.get_sentinel_finding(id)`, returns source-aware detail
+   envelope, HTTP 404 when not found.
+4. `bff_list_artifacts` — `GET /bff/artifacts`: reads
+   `read_store.list_research_artifacts()`, returns `_sem_final_list_response`
+   envelope.
+
+Dead catch-all entries removed:
+
+| Handler | Removed decorators |
+|---|---|
+| `sem_final_generic_read_alias` | `/bff/artifacts` (list), `/bff/incidents`, `/bff/incidents/{id}`, `/bff/runtimes`, `/bff/runtimes/{id}`, `/bff/v5/loop-runs`, `/bff/v5/loop-runs/{id}`, `/bff/v5/sentinel/findings/{id}` |
+| `sem_final_id_named_read_alias` | `/bff/evolution-programs/{id}`, `/bff/jobs/{id}` |
+| `sem_final_generic_patch_alias` | `/bff/evolution-programs/{id}` |
+
+The 13 endpoints formalised in this section:
+
+| # | Method | Path | Handler | Notes |
+|---|---|---|---|---|
+| 1 | GET | `/bff/evolution-programs` | `bff_list_evolution_programs` | page_token, page_size, status filters |
+| 2 | GET | `/bff/evolution-programs/{id}` | `bff_get_evolution_program` | 404 on unknown id |
+| 3 | GET | `/bff/evolution-programs/{id}/runs` | `bff_list_evolution_program_runs` | run list for program |
+| 4 | GET | `/bff/evolution-programs/{id}/candidates` | `bff_list_evolution_program_candidates` | candidate list |
+| 5 | GET | `/bff/jobs` | `bff_list_jobs` | status, job_type filters |
+| 6 | GET | `/bff/jobs/{id}` | `bff_get_job` | 404 on unknown id |
+| 7 | GET | `/bff/alerts` | `bff_list_alerts` | operator alert read surface |
+| 8 | GET | `/bff/incidents` | `bff_list_incidents` | incident read surface |
+| 9 | GET | `/bff/audit` | `bff_audit_list` | governance audit trail |
+| 10 | GET | `/bff/artifacts` | `bff_list_artifacts` | research artifacts list (new) |
+| 11 | GET | `/bff/runtimes` | `bff_list_runtimes` | runtime binding list |
+| 12 | GET | `/bff/runtimes/{id}` | `bff_get_runtime` | 404 on unknown id |
+| 13 | GET | `/bff/v5/loop-runs` | `bff_list_loop_runs` | loop-run list (new dedicated) |
+
+Bonus dedicated handlers added in the same block (extend coverage beyond the 13):
+
+| Method | Path | Handler | Notes |
+|---|---|---|---|
+| GET | `/bff/v5/loop-runs/{id}` | `bff_get_loop_run` | 404 on unknown id (new) |
+| GET | `/bff/v5/sentinel/findings/{id}` | `bff_get_sentinel_finding` | 404 on unknown id (new) |
+
+**Response envelope (all 13 list endpoints)**
+
+```json
+{ "data": [...], "items": [...], "page_info": { "next_page_token": null, "total": N }, "meta": { "snapshot_at": "...", "surfaces": { "<surface_key>": { "status": "ok", "source": "..." } } } }
+```
+
+**Response envelope (detail endpoints)**
+
+```json
+{ "data": { ...resource fields... }, "meta": { "snapshot_at": "...", "surfaces": { "<surface_key>": { "status": "ok" } } } }
+```
+
+Unknown-id detail requests return HTTP 404 with typed BFF error envelope:
+```json
+{ "detail": { "error": { "code": "OBJECT_NOT_FOUND", ... } } }
+```
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated `GET /bff/evolution-programs` returns `meta` + list envelope | Implemented BFF-B2-002 |
+| 2 | Authenticated `GET /bff/evolution-programs/{id}` for existing id returns `data` with `program_id` | Implemented BFF-B2-002 |
+| 3 | `GET /bff/evolution-programs/{id}` for unknown id returns HTTP 404 | Implemented BFF-B2-002 |
+| 4 | Authenticated `GET /bff/evolution-programs/{id}/runs` returns list envelope | Implemented BFF-B2-002 |
+| 5 | `GET /bff/evolution-programs/{id}/runs` for unknown program returns HTTP 404 | Implemented BFF-B2-002 |
+| 6 | Authenticated `GET /bff/evolution-programs/{id}/candidates` returns list envelope | Implemented BFF-B2-002 |
+| 7 | Authenticated `GET /bff/jobs` returns `meta` + list envelope | Implemented BFF-B2-002 |
+| 8 | Authenticated `GET /bff/jobs/{id}` for existing id returns `data` + `meta` | Implemented BFF-B2-002 |
+| 9 | `GET /bff/jobs/{id}` for unknown id returns HTTP 404 | Implemented BFF-B2-002 |
+| 10 | Authenticated `GET /bff/alerts` returns `meta` envelope | Implemented BFF-B2-002 |
+| 11 | Authenticated `GET /bff/incidents` returns `meta` envelope | Implemented BFF-B2-002 |
+| 12 | Authenticated `GET /bff/audit` returns `meta` envelope | Implemented BFF-B2-002 |
+| 13 | Authenticated `GET /bff/artifacts` returns `meta` + list envelope (`data`/`items`) | Implemented BFF-B2-002 |
+| 14 | Authenticated `GET /bff/runtimes` returns `meta` + list envelope | Implemented BFF-B2-002 |
+| 15 | `GET /bff/runtimes/{id}` for unknown id returns HTTP 404 | Implemented BFF-B2-002 |
+| 16 | Authenticated `GET /bff/v5/loop-runs` returns `data`/`items` + `page_info` + `meta` | Implemented BFF-B2-002 |
+| 17 | `GET /bff/v5/loop-runs/{id}` for unknown id returns HTTP 404 | Implemented BFF-B2-002 |
+| 18 | `GET /bff/v5/sentinel/findings/{id}` for unknown id returns HTTP 404 | Implemented BFF-B2-002 |
+| 19 | All 13 primary endpoints return HTTP 401 when no Authorization header | Implemented BFF-B2-002 |
+| 20 | Dead catch-all entries removed: `/bff/v5/loop-runs`, `/bff/v5/loop-runs/{id}`, `/bff/v5/sentinel/findings/{id}` from `sem_final_generic_read_alias` | Implemented BFF-B2-002 |
+| 21 | Dead catch-all entries removed: `/bff/evolution-programs/{id}`, `/bff/jobs/{id}` from `sem_final_id_named_read_alias` | Implemented BFF-B2-002 |
+| 22 | `pytest services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py` passes all cases | ✅ verified |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py` (new)
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B2-002 — Owner: Claude2, Reviewer: Codex2
+
+---
+
 ## §B3.4 PM-12 Composition Sources {#b34-pm-12-composition-sources}
 
 ### Gap

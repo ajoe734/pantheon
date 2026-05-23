@@ -26827,6 +26827,88 @@ async def bff_v5_sentinel_findings_list(
     return _sem_final_list_response(records, dataset=src_dataset, surface_key="sentinel_findings", source=source)
 
 
+# -- V5 Loop-runs ------------------------------------------------------------
+
+@app.get("/bff/v5/loop-runs")
+async def bff_list_loop_runs(
+    status: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF B2.2: list v5 loop runs from the read surface store."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    available, records = read_store.list_loop_runs()
+    if status:
+        requested = {s.strip().lower() for s in status.split(",") if s.strip()}
+        records = [r for r in records if str(r.get("status") or "").lower() in requested]
+    src_dataset = "loop_runs" if available and read_store.dataset_source("incidents") == "missing" else "incidents"
+    source = None if available else "missing"
+    return _sem_final_list_response(records, dataset=src_dataset, surface_key="loop_runs", source=source)
+
+
+@app.get("/bff/v5/loop-runs/{loop_run_id}")
+async def bff_get_loop_run(
+    loop_run_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF B2.2: get a v5 loop run by ID."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    clean_id = loop_run_id.strip()
+    available, record = read_store.get_loop_run(clean_id)
+    lr_src_dataset = "loop_runs" if available and read_store.dataset_source("incidents") == "missing" else "incidents"
+    return _sem_final_read_model_detail(
+        record,
+        entity_id=clean_id,
+        label="Loop run",
+        dataset=lr_src_dataset,
+        surface_key="loop_run_detail",
+        source=None if available else "missing",
+        source_available=None if available else False,
+    )
+
+
+# -- V5 Sentinel finding detail ----------------------------------------------
+
+@app.get("/bff/v5/sentinel/findings/{finding_id}")
+async def bff_get_sentinel_finding(
+    finding_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF B2.2: get a v5 sentinel finding by ID."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    clean_id = finding_id.strip()
+    available, record = read_store.get_sentinel_finding(clean_id)
+    sf_src_dataset = "sentinel_findings" if available and read_store.dataset_source("incidents") == "missing" else "incidents"
+    return _sem_final_read_model_detail(
+        record,
+        entity_id=clean_id,
+        label="Sentinel finding",
+        dataset=sf_src_dataset,
+        surface_key="sentinel_finding_detail",
+        source=None if available else "missing",
+        source_available=None if available else False,
+    )
+
+
+# -- Research artifacts list -------------------------------------------------
+
+@app.get("/bff/artifacts")
+async def bff_list_artifacts(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF B2.2: list research artifacts from the read surface store."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    artifacts = read_store.list_research_artifacts()
+    return _sem_final_list_response(
+        artifacts if isinstance(artifacts, list) else list(artifacts),
+        dataset="research_artifacts",
+        surface_key="artifacts",
+    )
+
+
 def _sem_local_records(dataset: str) -> tuple[str, List[Dict[str, Any]]]:
     data = getattr(read_store, "_data", {})
     raw = data.get(dataset) if isinstance(data, dict) else None
@@ -28238,21 +28320,20 @@ def _sem_final_generic_detail_for_path(path: str, entity_id: str) -> Optional[Di
     return None
 
 
+# NOTE: /bff/artifacts, /bff/incidents, /bff/incidents/{id}, /bff/runtimes,
+# /bff/runtimes/{id}, /bff/v5/loop-runs, /bff/v5/loop-runs/{id}, and
+# /bff/v5/sentinel/findings/{id} have dedicated handlers registered in the
+# B2.2 facade block above and are intentionally excluded here.
 @app.get("/bff/agora/signals/{id}")
 @app.get("/bff/approvals/{id}")
-@app.get("/bff/artifacts")
 @app.get("/bff/artifacts/{id}")
 @app.get("/bff/channels")
 @app.get("/bff/channels/{id}")
 @app.get("/bff/events/stream")
-@app.get("/bff/incidents")
-@app.get("/bff/incidents/{id}")
 @app.get("/bff/mcp-servers")
 @app.get("/bff/mcp-servers/{id}")
 @app.get("/bff/mcp-tools")
 @app.get("/bff/mcp-tools/{id}")
-@app.get("/bff/runtimes")
-@app.get("/bff/runtimes/{id}")
 @app.get("/bff/ranking-formulas")
 @app.get("/bff/research-experiments")
 @app.get("/bff/research-analyses")
@@ -28261,9 +28342,6 @@ def _sem_final_generic_detail_for_path(path: str, entity_id: str) -> Optional[Di
 @app.get("/bff/v5/control-room")
 @app.get("/bff/v5/execution/persona-health")
 @app.get("/bff/v5/execution/strategy-health")
-@app.get("/bff/v5/loop-runs")
-@app.get("/bff/v5/loop-runs/{id}")
-@app.get("/bff/v5/sentinel/findings/{id}")
 async def sem_final_generic_read_alias(
     request: Request,
     id: Optional[str] = None,
@@ -28282,12 +28360,9 @@ async def sem_final_generic_read_alias(
     return _sem_empty_final_list("execute_plans")
 
 
-# NOTE: /bff/capital-pools/{id}, /bff/deployments/{id}, /bff/personas/{id},
-# /bff/rebalances/{id}, and /bff/strategies/{id} have dedicated handlers registered
-# earlier in this file (bff_get_capital_pool, bff_get_deployment, bff_get_persona,
-# bff_get_rebalance, bff_get_strategy) and are intentionally excluded here.
-@app.get("/bff/evolution-programs/{id}")
-@app.get("/bff/jobs/{id}")
+# NOTE: /bff/capital-pools/{id}, /bff/deployments/{id}, /bff/evolution-programs/{id},
+# /bff/jobs/{id}, /bff/personas/{id}, /bff/rebalances/{id}, and /bff/strategies/{id}
+# have dedicated handlers registered earlier in this file and are intentionally excluded here.
 @app.get("/bff/ranking-formulas/{id}")
 @app.get("/bff/research-analyses/{id}")
 @app.get("/bff/research-experiments/{id}")
@@ -28305,11 +28380,10 @@ async def sem_final_id_named_read_alias(
     return {"data": {"id": id}, "meta": {"snapshot_at": utc_now()}}
 
 
-# NOTE: /bff/capital-pools/{id}, /bff/personas/{id}, and /bff/strategies/{id}
-# have dedicated PATCH handlers (bff_patch_capital_pool, bff_patch_persona,
-# bff_patch_strategy) registered earlier and are intentionally excluded here.
+# NOTE: /bff/capital-pools/{id}, /bff/evolution-programs/{id}, /bff/personas/{id},
+# and /bff/strategies/{id} have dedicated PATCH handlers registered earlier
+# and are intentionally excluded here.
 @app.patch("/bff/artifacts/{id}")
-@app.patch("/bff/evolution-programs/{id}")
 @app.patch("/bff/ranking-formulas/{id}")
 @app.patch("/bff/research-experiments/{id}")
 async def sem_final_generic_patch_alias(id: str, payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None)):
