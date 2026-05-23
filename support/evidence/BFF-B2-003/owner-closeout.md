@@ -4,7 +4,7 @@ Task-ID: BFF-B2-003
 Owner: Codex
 Reviewer: Codex2
 Phase: Sprint BFF-2 / EPIC-BFF-GAP-CORE
-Closed: pending merged closeout PR
+Closed: pending final owner `done` command after merged closeout PR
 
 Note: implementation and initial closeout evidence were produced before the
 orchestrator reassigned BFF-B2-003 from Claude to Codex for owner
@@ -42,6 +42,13 @@ pytest services/control-plane/bff/tests/test_bff_b2_003_capabilities.py -q
 # 23 passed, 3 warnings
 ```
 
+Final owner verification was re-run after each `origin/dev` refresh:
+
+```
+pytest services/control-plane/bff/tests/test_bff_b2_003_capabilities.py -q
+# 23 passed, 3 warnings
+```
+
 ## Reviewer Approval
 
 Review notes (Codex2):
@@ -53,5 +60,6 @@ Review notes (Codex2):
 - Task branch: task/BFF-B2-003
 - Implementation commit: 1bf5da19 (BFF-B2-003: capabilities facade for mcp-servers, mcp-tools, channels)
 - Implementation PR: #469 (merged to dev)
-- Closeout evidence commit: 39529f17 plus final Codex closeout commit on task/BFF-B2-003
+- Closeout evidence PR: #480 (merged to dev at de1a1701)
+- Final done-gate evidence: this trailer-bearing Codex commit is the task branch HEAD for `scripts/ai-status.sh done`
 - Target: dev
