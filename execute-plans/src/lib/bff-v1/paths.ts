@@ -109,6 +109,9 @@ export const paths = {
   managementEvidence: () => `${BASE}/management/evidence`,
   managementPortfolioBook: () => `${BASE}/management/portfolio-book`,
   managementPortfolioBookHoldings: () => `${BASE}/management/portfolio-book/holdings`,
+  managementPersonaLeague: () => `${BASE}/management/persona-league`,
+  managementPersonaLeagueRankings: () => `${BASE}/management/persona-league/rankings`,
+  managementPersonaLeagueTiers: () => `${BASE}/management/persona-league/tiers`,
 
   // ---- Research ----
   researchExperiments: () => `${BASE}/research-experiments`,
