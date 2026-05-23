@@ -61,3 +61,16 @@ Results:
 - This evidence note keeps the final branch tip on a Codex-authored
   BFF-B1-012 commit with the required task trailers for the canonical `done`
   gate.
+
+## PR #468 Dev Refresh
+
+After this closeout evidence PR was opened, GitHub reported PR #468 as
+`BEHIND` because `origin/dev` advanced through BFF-PM12-006 closeout.
+
+- Dev head composed into this branch: `10b887b4`
+- Non-interactive dev refresh merge commit: `d66fd6f426eb16ea5b9e6a7241e16307fc6180ea`
+- Imported files were unrelated BFF-PM12-006 task brief, review, and closeout
+  evidence artifacts.
+
+This file was updated after the refresh so the branch tip remains a
+Codex-authored BFF-B1-012 commit with the required trailers.
