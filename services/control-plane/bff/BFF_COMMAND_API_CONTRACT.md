@@ -39,7 +39,8 @@ canonical control-plane authorities. The BFF does not become a canonical store.
 | Route | Method | Purpose |
 |---|---:|---|
 | `/bff/v1/commands` | POST | Submit a governed operator command (final contract); returns `CommandResponse<T>`. |
-| `/bff/actions/{type}/{id}/{action}` | POST | Deprecated generic action adapter; dual-writes through final command admission and returns a deprecated receipt marker. The legacy named template `/bff/actions/{entityType}/{entityId}/{actionId}` remains a schema-hidden compatibility alias. |
+| `/bff/actions/{entityType}/{entityId}/{actionId}` | POST | Deprecated named action adapter used by the frontend path inventory; dual-writes through final command admission and returns a deprecated receipt marker. |
+| `/bff/actions/{type}/{id}/{action}` | POST | Deprecated generic action adapter alias; dual-writes through final command admission and returns a deprecated receipt marker. |
 | `/api/v1/operator/commands` | POST | Legacy command submission; returns `CommandSubmissionResponse`. Kept for adapter compatibility. |
 | `/api/v1/operator/commands/{command_id}` | GET | Poll command status, result, error, and audit record. |
 
@@ -64,16 +65,18 @@ Key differences:
 | Body `idempotencyKey` | Rejected with 400 `INVALID_REQUEST` | Not checked |
 | Response shape | `CommandResponse<T>` with `status` and `data` | `CommandSubmissionResponse` with flat `receipt_id` |
 
-### Deprecated Generic Action Adapter
+### Deprecated Action Adapter Templates
 
-`POST /bff/actions/{type}/{id}/{action}` is deprecated as of 2026-05-14.
-It is retained as a compatibility adapter until at least 2026-06-15 while downstream audit
-and replay tooling finishes consuming the final command receipt.
+`POST /bff/actions/{type}/{id}/{action}` and
+`POST /bff/actions/{entityType}/{entityId}/{actionId}` are deprecated as of
+2026-05-14. They are retained as compatibility adapters until at least
+2026-06-15 while downstream audit and replay tooling finishes consuming the
+final command receipt.
 
-The old named template `POST /bff/actions/{entityType}/{entityId}/{actionId}` remains
-accepted as a schema-hidden alias for clients and audit tooling that still use the
-former parameter names. OpenAPI exposes only `{type}/{id}/{action}` for the
-generic action adapter.
+OpenAPI exposes both templates with distinct operation IDs. The named template
+matches the frontend path inventory and keeps generator-driven clients able to
+discover the route, while the generic template remains visible as a deprecated
+alias for existing compatibility checks.
 
 Compatibility responses must still be successful `CommandResponse<T>` envelopes on accepted
 commands, but they also include:
@@ -224,10 +227,11 @@ codes include:
 
 ## 8. Command Adapter Mapping
 
-This section maps every `/bff/actions/{type}/{id}/{action}` call that
-`runAction.ts` emits (plus special-path decision writes and confirm-token lifecycle
-calls) to the equivalent `/bff/v1/commands` envelope fields required by
-BFF-CONSOL-019's command adapter implementation.
+This section maps every `/bff/actions/{entityType}/{entityId}/{actionId}` call
+that `runAction.ts` emits, plus the compact `/bff/actions/{type}/{id}/{action}`
+alias, special-path decision writes, and confirm-token lifecycle calls, to the
+equivalent `/bff/v1/commands` envelope fields required by BFF-CONSOL-019's
+command adapter implementation.
 
 Sources for the action vocabulary:
 - `execute-plans/src/lib/bff/runAction.ts` `KIND_TO_ENTITY_TYPE` and `paths.action()`

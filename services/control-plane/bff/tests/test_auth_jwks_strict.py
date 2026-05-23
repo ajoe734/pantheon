@@ -81,6 +81,50 @@ def test_strict_cors_rejects_unlisted_origin(monkeypatch) -> None:
     assert "access-control-allow-origin" not in rejected.headers
 
 
+def test_cors_exposes_bff_client_response_headers(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_CORS_ORIGINS", "https://pantheon-dev.lovable.app")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+
+    client = TestClient(bff_main._build_bff_app())
+    response = client.get("/any-route", headers={"Origin": "https://pantheon-dev.lovable.app"})
+
+    exposed = {
+        header.strip()
+        for header in response.headers["access-control-expose-headers"].split(",")
+    }
+    assert exposed == set(bff_main._CORS_EXPOSE_HEADERS)
+
+
+def test_lovable_cors_preflight_accepts_bff_client_headers(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_CORS_ORIGINS", "https://pantheon-dev.lovable.app")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+
+    client = TestClient(bff_main._build_bff_app())
+    response = client.options(
+        "/bff/me",
+        headers={
+            "Origin": "https://pantheon-dev.lovable.app",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": (
+                "Authorization, Accept, Accept-Language, Content-Type, "
+                "X-BFF-Api-Version, X-Correlation-Id, X-Request-Id, "
+                "X-Idempotency-Key, Idempotency-Key, X-Confirm-Token, "
+                "X-MFA-Token, Last-Event-ID"
+            ),
+        },
+    )
+
+    allowed = {
+        header.strip().lower()
+        for header in response.headers["access-control-allow-headers"].split(",")
+    }
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://pantheon-dev.lovable.app"
+    assert {header.lower() for header in bff_main._CORS_ALLOW_HEADERS}.issubset(allowed)
+
+
 def test_production_strict_mode_filters_dev_cors_override(monkeypatch) -> None:
     monkeypatch.setenv(
         "PANTHEON_BFF_CORS_ORIGINS",

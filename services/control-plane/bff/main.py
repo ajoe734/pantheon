@@ -231,6 +231,7 @@ def _build_bff_app() -> FastAPI:
             allow_credentials=True,
             allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
             allow_headers=_CORS_ALLOW_HEADERS,
+            expose_headers=_CORS_EXPOSE_HEADERS,
         )
         if preview_regex:
             middleware_kwargs["allow_origin_regex"] = preview_regex
@@ -254,6 +255,11 @@ _CORS_ALLOW_HEADERS = [
     "X-MFA-Token",
     "X-Request-Id",
     "X-Trace-Id",
+]
+_CORS_EXPOSE_HEADERS = [
+    "X-BFF-Api-Version",
+    "X-Correlation-Id",
+    "X-Request-Id",
 ]
 app = _build_bff_app()
 
@@ -24128,7 +24134,13 @@ def _submit_canonical_action_command(
     )
 
 
-@app.post("/bff/actions/{type}/{id}/{action}", status_code=202)
+@app.post(
+    "/bff/actions/{type}/{id}/{action}",
+    status_code=202,
+    deprecated=True,
+    operation_id="submit_bff_action_generic",
+    summary="Submit deprecated generic BFF action",
+)
 async def sem_canonical_action_command(
     background_tasks: BackgroundTasks,
     response: Response,
@@ -24163,7 +24175,13 @@ async def sem_canonical_action_command(
     )
 
 
-@app.post("/bff/actions/{entityType}/{entityId}/{actionId}", status_code=202, include_in_schema=False)
+@app.post(
+    "/bff/actions/{entityType}/{entityId}/{actionId}",
+    status_code=202,
+    deprecated=True,
+    operation_id="submit_bff_action_named",
+    summary="Submit BFF action by entity and action id",
+)
 async def sem_legacy_named_action_command(
     background_tasks: BackgroundTasks,
     response: Response,

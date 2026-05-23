@@ -34,15 +34,22 @@ def _isolated_action_adapter() -> Iterator[TestClient]:
             bff_main.command_store = original_command_store
 
 
-def test_bff_actions_openapi_uses_canonical_type_id_action_template() -> None:
+def test_bff_actions_openapi_exposes_frontend_and_generic_action_templates() -> None:
     bff_main.app.openapi_schema = None
     schema = bff_main.app.openapi()
 
     assert "/bff/actions/{type}/{id}/{action}" in schema["paths"]
-    assert "/bff/actions/{entityType}/{entityId}/{actionId}" not in schema["paths"]
-    parameters = schema["paths"]["/bff/actions/{type}/{id}/{action}"]["post"]["parameters"]
-    path_params = [param["name"] for param in parameters if param.get("in") == "path"]
-    assert path_params == ["type", "id", "action"]
+    assert "/bff/actions/{entityType}/{entityId}/{actionId}" in schema["paths"]
+    generic = schema["paths"]["/bff/actions/{type}/{id}/{action}"]["post"]
+    named = schema["paths"]["/bff/actions/{entityType}/{entityId}/{actionId}"]["post"]
+    generic_path_params = [param["name"] for param in generic["parameters"] if param.get("in") == "path"]
+    named_path_params = [param["name"] for param in named["parameters"] if param.get("in") == "path"]
+    assert generic_path_params == ["type", "id", "action"]
+    assert named_path_params == ["entityType", "entityId", "actionId"]
+    assert generic["operationId"] == "submit_bff_action_generic"
+    assert named["operationId"] == "submit_bff_action_named"
+    assert generic["deprecated"] is True
+    assert named["deprecated"] is True
 
 
 def test_bff_actions_adapter_records_final_command_foundation_context() -> None:
