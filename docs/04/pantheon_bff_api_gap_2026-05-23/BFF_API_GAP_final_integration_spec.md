@@ -63,6 +63,194 @@ BFF-B1-003 — Owner: Codex, Reviewer: Claude
 
 ---
 
+## §12 POST /bff/auth/refresh — Cookie or Bearer Refresh
+
+### Gap
+
+The strict-mode frontend can call `POST /bff/auth/refresh` from either a browser
+cookie session or an injected bearer-token session. The prior route only refreshed
+after the shared auth facade accepted the current request credential directly, but
+it did not make refresh credential resolution explicit and could not distinguish
+"no refresh path" from a generic auth failure.
+
+### Fix
+
+**File: `services/control-plane/bff/main.py`**
+
+- Resolve refresh credentials in this order: request body `refresh_token` /
+  `refreshToken`, `X-Refresh-Token`, `pantheon_refresh` /
+  `pantheon_refresh_token` cookie, `pantheon_session` cookie, then
+  `Authorization: Bearer ...` for backwards compatibility.
+- Validate the selected credential through the existing BFF auth facade and keep
+  `_require_read_role` as the role gate.
+- Preserve the `BFF-LUV-SEM-001` current-session DTO envelope, idempotency replay,
+  and idempotency conflict behaviour.
+- Persist `last_refreshed_at` and `last_refresh_credential_source` in the BFF
+  session lifecycle store so refresh source and session freshness are visible in
+  the response.
+- Return a typed HTTP 401 `INVALID_TOKEN` error with
+  `details.reason = "AUTH_REFRESH_CREDENTIAL_REQUIRED"` and
+  `precondition_failed = "refresh_credential"` when no body/header/cookie/bearer
+  refresh path is present.
+- Add `X-Refresh-Token` to the CORS allow-header list for browser refresh-token
+  handoff.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Bearer refresh credential returns HTTP 200, `operation.type = "refresh"`, and records refresh credential source as `bearer` | ✅ test added |
+| 2 | Cookie refresh credential returns HTTP 200 with `session.session_kind = "cookie"` and records refresh credential source as `refresh_cookie` | ✅ test added |
+| 3 | Missing body/header/cookie/bearer refresh credential returns typed HTTP 401 without a raw 500 | ✅ test added |
+| 4 | Existing `pantheon_session` cookie and `Authorization: Bearer ...` compatibility paths remain covered by the session auth contract tests | ✅ preserved |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_auth_refresh.py`
+- `services/control-plane/bff/test_bff_session_auth_me_contract.py`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B1-005 — Owner: Codex2, Reviewer: Claude
+
+---
+
+## §13 Command / Action Compatibility
+
+### Gap
+
+The execute-plans strict-mode write path needs `POST /bff/v1/commands` to be the
+canonical command admission facade while legacy `/api/v1/operator/commands` status
+polling and `/bff/actions/*` compatibility remain intact. The facade must accept the
+frontend command schema, preserve idempotency and trace headers, project a
+`CommandResponse<T>` envelope, and fail closed for live broker scope when live broker
+execution is not explicitly enabled.
+
+### Fix
+
+**File: `services/control-plane/bff/main.py`**
+
+- Keep `POST /bff/v1/commands` as the final BFF command admission route.
+- Accept the final command payload shape:
+  `command`, `target`, optional `action`, `params`, `audit_context`, and
+  top-level precondition aliases `confirmToken`, `approvalDecisionId`, and
+  `twoManSignatureId` (with snake_case aliases also supported).
+- Require operator authentication and a header idempotency key. `Idempotency-Key`
+  is canonical; `X-Idempotency-Key` remains a temporary compatibility alias when
+  the canonical header is absent.
+- Reject `idempotencyKey` / `idempotency_key` in the body.
+- Propagate `X-Correlation-Id`, `X-Request-Id`, `X-Trace-Id`, and the resolved
+  idempotency key into the foundation command trace and persisted audit record.
+- Persist commands through the shared command store used by
+  `/api/v1/operator/commands`; the response `trackingUrl` points to
+  `GET /api/v1/operator/commands/{command_id}` so existing operator polling stays
+  compatible.
+- Return `CommandResponse<T>` with `status=accepted`, `data.receipt_id`,
+  `data.command_id` / `data.commandId`, `data.trackingUrl`, and
+  `meta.idempotency`.
+- Replay duplicate idempotency keys with the same request hash and return HTTP 409
+  `IDEMPOTENCY_CONFLICT` when the same key is reused with a different body.
+- Preserve the live broker fail-closed gate: payloads or runtime targets that signal
+  live broker scope return HTTP 403 unless `PANTHEON_LIVE_BROKER_ENABLED=true`.
+
+`/api/v1/operator/commands` remains available as the legacy foundation route and
+continues to return `CommandSubmissionResponse`; it is not changed to the final
+`CommandResponse<T>` shape.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `POST /bff/v1/commands` accepts final command schema fields (`command`, `target`, `action`, `params`, `audit_context`, `confirmToken`, `approvalDecisionId`, `twoManSignatureId`) | Implemented in BFF-B1-007 |
+| 2 | `Authorization`, `X-Correlation-Id`, `X-Request-Id`, and resolved `Idempotency-Key` / `X-Idempotency-Key` are honored and persisted in command foundation trace/audit | Implemented in BFF-B1-007 |
+| 3 | Response is `CommandResponse<T>` with accepted status, command receipt identifiers, `trackingUrl`, and `meta.idempotency` | Implemented in BFF-B1-007 |
+| 4 | Duplicate idempotency key with the same payload replays the original receipt | Implemented in BFF-B1-007 |
+| 5 | Duplicate idempotency key with a different payload returns HTTP 409 `IDEMPOTENCY_CONFLICT` | Implemented in BFF-B1-007 |
+| 6 | Live broker scope remains fail-closed when `PANTHEON_LIVE_BROKER_ENABLED` is false | Implemented in BFF-B1-007 |
+| 7 | Legacy `/api/v1/operator/commands` remains unaffected and keeps `CommandSubmissionResponse` | Implemented in BFF-B1-007 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_governance_command_submission.py`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B1-007 — Owner: Codex, Reviewer: Claude
+
+---
+
+## §14 Confirm-Token Lifecycle
+
+### Gap
+
+The execute-plans high-risk action flow needs the confirm-token lifecycle to be
+observable through both the canonical token routes and the legacy
+command-confirmation compatibility routes. The backend already had command-store-backed
+token create/read/redeem/delete behavior, but the BFF gap inventory requires the P0
+five-endpoint surface to be explicit:
+
+| ID | Method | Path |
+|---|---|---|
+| B1-012 | POST | `/bff/confirm-tokens` |
+| B1-013 | GET | `/bff/confirm-tokens/{tokenId}` |
+| B1-014 | POST | `/bff/confirm-tokens/{tokenId}/redeem` |
+| B1-015 | POST | `/bff/command-confirmations` |
+| B1-016 | GET | `/bff/command-confirmations/{token}` |
+
+The compatibility route also needed a read endpoint, and expired issued tokens needed
+to fail closed with a typed HTTP 410 envelope instead of falling through as an
+unstructured server error.
+
+### Fix
+
+**File: `services/control-plane/bff/main.py`**
+
+- Kept `POST /bff/confirm-tokens` as the canonical token issue route and preserved
+  stable replay semantics for server-generated token IDs.
+- Projected `GET /bff/confirm-tokens/{tokenId}` from the command store with lifecycle
+  states: `available`, `created`, `redeemed`, `deleted`, or `expired`.
+- Updated `POST /bff/confirm-tokens/{tokenId}/redeem` to return token lifecycle fields
+  (`data.id`, `data.tokenId`, `data.status=redeemed`, `data.redeemed=true`) while
+  preserving the accepted command receipt envelope.
+- Added `GET /bff/command-confirmations/{token}`.
+- Updated `POST /bff/command-confirmations` to accept `confirm_token`/`confirmToken`
+  aliases, write a matching confirm-token redeem record, and return token lifecycle
+  fields while preserving the legacy flat response shape.
+- Added typed expired-token handling for token read/redeem and command-confirmation
+  read/write paths: HTTP 410 with `INVALID_STATE` and
+  `precondition_failed=confirm_token_expired`.
+
+`DELETE /bff/confirm-tokens/{tokenId}` remains available as an existing compatibility
+route and now also returns `data.tokenId`, `data.status=deleted`, and `data.deleted=true`.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `POST /bff/confirm-tokens` issues a token and returns `data.tokenId` / `data.status=created` | Implemented in BFF-B1-009 |
+| 2 | `GET /bff/confirm-tokens/{tokenId}` returns the current token lifecycle state | Implemented in BFF-B1-009 |
+| 3 | `POST /bff/confirm-tokens/{tokenId}/redeem` marks the token redeemed and preserves the command receipt | Implemented in BFF-B1-009 |
+| 4 | `POST /bff/command-confirmations` mirrors the lifecycle by marking the token redeemed | Implemented in BFF-B1-009 |
+| 5 | `GET /bff/command-confirmations/{token}` returns the mirrored confirmation lifecycle state | Implemented in BFF-B1-009 |
+| 6 | Expired issued tokens return typed HTTP 410 (`INVALID_STATE`, `confirm_token_expired`) on read/redeem/confirmation paths | Implemented in BFF-B1-009 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_confirm_token_lifecycle.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B1-009 — Owner: Codex2, Reviewer: Claude
+
+---
+
 ## §15 CORS — Lovable Preview and Published Origins
 
 ### Gap
@@ -261,8 +449,63 @@ semantics.
 
 - `services/control-plane/bff/main.py`
 - `services/control-plane/bff/tests/test_bff_logout.py`
+- `services/control-plane/bff/test_bff_session_auth_me_contract.py`
 - `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
 
 ### Task
 
 BFF-B1-006 — Owner: Codex2, Reviewer: Claude
+
+---
+
+## B7 — Agora Compatibility APIs
+
+### Gap
+
+The execute-plans Agora workbench depends on six strict/live read surfaces for
+its core bootstrap path. Most of the backing read models already existed, but
+the task needed one focused acceptance slice that proves the routes return BFF
+envelopes and that `/bff/agora/inbox` is not a single-dataset shortcut.
+
+### Fix
+
+**File: `services/control-plane/bff/main.py`**
+
+Verify and preserve these six Agora compatibility reads:
+
+| Compatibility path | Canonical handler/source |
+|---|---|
+| `GET /bff/agora/ask/sessions` | `agora_sessions` filtered to `mode=quick_ask` |
+| `GET /bff/agora/ask/sessions/{id}` | `agora_sessions` detail / ask SSE resync route |
+| `GET /bff/agora/signals` | `agora_signals` |
+| `GET /bff/agora/journal` | `decision_journal_entries` |
+| `GET /bff/agora/postmortems` | `postmortems` |
+| `GET /bff/agora/inbox` | composed `insight_cards` + `agora_signals` + `research_tickets` |
+
+The inbox route now returns a composed list with stable `inboxType` and
+`sourceDataset` markers while preserving the standard `data`, `items`,
+`page_info`, and `meta.surfaces` BFF envelope. The previously added historical
+read aliases (`/markets`, `/committee-sessions`, `/market-notes`,
+`/decision-journal`, `/research-tasks`, `/incoming`) remain registered on their
+canonical handlers; this task does not add write authority or a separate DTO
+projection.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `/bff/agora/ask/sessions` and `/bff/agora/ask/sessions/{id}` return live envelopes from the existing Agora session store | ✅ test added |
+| 2 | `/bff/agora/signals`, `/bff/agora/journal`, and `/bff/agora/postmortems` return BFF read envelopes with seeded local read-store data | ✅ test added |
+| 3 | `/bff/agora/inbox` composes insight cards, signals, and research tasks with per-source surface metadata | ✅ implemented and tested |
+| 4 | Historical Agora read aliases still share their canonical handler outputs and read-surface metadata | ✅ preserved by existing test |
+| 5 | Compatibility reads preserve the existing read-role auth gate and do not add write authority | ✅ implemented by shared handlers |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_b2_005_agora_canonical_aliases.py`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B2-005 — Owner: Codex, Reviewer: Claude2

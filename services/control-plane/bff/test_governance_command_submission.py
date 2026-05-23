@@ -535,6 +535,8 @@ def test_bff_v1_commands_accepts_idempotency_key_header() -> None:
                 headers={
                     "Authorization": APPROVER_TOKEN,
                     "Idempotency-Key": "final-key-001",
+                    "X-Correlation-Id": "corr-final-key-001",
+                    "X-Request-Id": "req-final-key-001",
                 },
                 json=_FINAL_BODY,
             )
@@ -542,6 +544,14 @@ def test_bff_v1_commands_accepts_idempotency_key_header() -> None:
             payload = response.json()
             assert payload["status"] in ("accepted", "queued", "completed")
             assert "data" in payload
+            assert payload["meta"]["idempotency"]["idempotencyKey"] == "final-key-001"
+            assert payload["meta"]["idempotency"]["replayed"] is False
+
+            records = bff_main.command_store._get_all_commands()
+            assert len(records) == 1
+            trace = records[0]["foundation"]["trace_context"]
+            assert trace["correlation_id"] == "corr-final-key-001"
+            assert trace["request_id"] == "req-final-key-001"
         finally:
             bff_main.command_store = original_store
             bff_main._process_command_stub = original_worker
@@ -568,6 +578,7 @@ def test_bff_v1_commands_accepts_x_idempotency_key_as_alias() -> None:
             assert response.status_code == 202, response.text
             payload = response.json()
             assert "data" in payload
+            assert payload["meta"]["idempotency"]["idempotencyKey"] == "final-alias-key-001"
         finally:
             bff_main.command_store = original_store
             bff_main._process_command_stub = original_worker
@@ -690,6 +701,9 @@ def test_bff_v1_commands_replay_returns_command_response() -> None:
             assert "data" in first_data
             assert "data" in second_data
             assert first_data["data"]["receipt_id"] == second_data["data"]["receipt_id"]
+            assert first_data["meta"]["idempotency"]["replayed"] is False
+            assert second_data["meta"]["idempotency"]["idempotencyKey"] == "final-replay-key-001"
+            assert second_data["meta"]["idempotency"]["replayed"] is True
 
             records = bff_main.command_store._get_all_commands()
             assert len(records) == 1
@@ -753,6 +767,15 @@ def test_bff_v1_commands_returns_command_response_envelope() -> None:
             assert "data" in payload
             assert payload["data"] is not None
             assert "receipt_id" in payload["data"]
+            command_id = payload["data"]["receipt_id"]
+            tracking_url = f"/api/v1/operator/commands/{command_id}"
+            assert payload["data"]["command_id"] == command_id
+            assert payload["data"]["commandId"] == command_id
+            assert payload["data"]["tracking_url"] == tracking_url
+            assert payload["data"]["trackingUrl"] == tracking_url
+            assert payload["data"]["receipt"]["command_id"] == command_id
+            assert payload["data"]["receipt"]["trackingUrl"] == tracking_url
+            assert payload["meta"]["idempotency"]["idempotencyKey"] == "final-envelope-key-001"
         finally:
             bff_main.command_store = original_store
             bff_main._process_command_stub = original_worker
