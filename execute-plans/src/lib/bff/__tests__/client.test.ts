@@ -29,7 +29,7 @@ describe("managementClient — coverage", () => {
       "rebalances", "deployments", "evolution", "research", "artifacts",
       "tools", "mcpServers", "mcpTools", "skills", "channels",
       "jobs", "runtimes", "alerts", "incidents", "approvals", "audit",
-      "oodaPackets", "humanInbox", "evidenceExplorer",
+      "oodaPackets", "humanInbox", "evidenceExplorer", "evolutionJournal",
     ] as const;
     for (const family of required) {
       expect(managementClient).toHaveProperty(family);
@@ -442,6 +442,88 @@ describe("managementClient — Evidence Explorer aggregate live adapter", () => 
     expect(aggregate.facets.sourceTypes).toEqual({ metric: 1 });
     expect(aggregate.meta.redacted_evidence_count).toBe(0);
     expect(aggregate.meta.surfaces.management_evidence.source).toBe("bff_composed");
+  });
+});
+
+describe("managementClient — Evolution Journal aggregate live adapter", () => {
+  const realFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    vi.stubEnv("VITE_BFF_BASE_URL", "https://example.test");
+    liveStatus._reset({ mode: "live", effective: "live", baseUrl: "https://example.test" });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    vi.unstubAllEnvs();
+    liveStatus._reset();
+  });
+
+  it("reads /bff/management/evolution-journal with journal filters", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        items: [
+          {
+            id: "mutation_review:evo-dec-88f3a2c1",
+            journal_id: "mutation_review:evo-dec-88f3a2c1",
+            entryType: "mutation_review",
+            entry_type: "mutation_review",
+            source_id: "evo-dec-88f3a2c1",
+            title: "Mutation review: evo-dec-88f3a2c1",
+            summary: "Freeze candidate artifact at canary stage.",
+            status: "reviewed",
+            risk_level: "medium",
+            action_type: "freeze_canary",
+            target: { type: "candidate_artifact", id: "artifact-44d7e9b0", version: "v3.1.2" },
+            mutationReview: {
+              decision_id: "evo-dec-88f3a2c1",
+              allowedActions: { canApproveMutation: true },
+            },
+          },
+        ],
+        summary: {
+          total_items: 1,
+          returned_items: 1,
+          decision_count: 0,
+          mutation_review_count: 1,
+          postmortem_count: 0,
+          rollback_count: 0,
+          freeze_order_count: 0,
+          pending_review_count: 1,
+          active_freeze_count: 0,
+          completed_rollback_count: 0,
+          latest_at: "2026-04-18T11:05:00Z",
+          byType: { mutation_review: 1 },
+          by_type: { mutation_review: 1 },
+          byStatus: { reviewed: 1 },
+          by_status: { reviewed: 1 },
+          byRiskLevel: { medium: 1 },
+          by_risk_level: { medium: 1 },
+        },
+        page_info: { total: 1, page_size: 1, next_page_token: null },
+        meta: {
+          surfaces: {
+            management_evolution_journal: { status: "ok", source: "bff_composed" },
+            mutation_review: { status: "ok", source: "bff_composed" },
+          },
+        },
+      }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    );
+    globalThis.fetch = fetchMock;
+
+    const aggregate = await managementClient.evolutionJournal.list({
+      source_type: "mutation_review",
+      status: "reviewed",
+      page_size: 1,
+    });
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://example.test/bff/management/evolution-journal?source_type=mutation_review&status=reviewed&page_size=1",
+    );
+    expect(aggregate.items[0].entry_type).toBe("mutation_review");
+    expect(aggregate.items[0].mutationReview?.decision_id).toBe("evo-dec-88f3a2c1");
+    expect(aggregate.summary.mutation_review_count).toBe(1);
+    expect(aggregate.meta.surfaces.management_evolution_journal.source).toBe("bff_composed");
   });
 });
 

@@ -462,6 +462,104 @@ export interface ManagementEvidenceResponse {
   };
 }
 
+export interface ManagementEvolutionJournalQuery {
+  source_type?: string;
+  status?: string;
+  action_type?: string;
+  risk_level?: string;
+  page_token?: string;
+  page_size?: number;
+}
+
+export type ManagementEvolutionJournalEntryType =
+  | "evolution_decision"
+  | "mutation_review"
+  | "postmortem"
+  | "rollback"
+  | "freeze_order"
+  | string;
+
+export interface ManagementEvolutionJournalItem {
+  id: string;
+  journal_id: string;
+  entryType: ManagementEvolutionJournalEntryType;
+  entry_type: ManagementEvolutionJournalEntryType;
+  source_id: string;
+  title: string;
+  summary: string;
+  status: string;
+  risk_level?: string | null;
+  action_type?: string | null;
+  target?: {
+    type?: string | null;
+    id?: string | null;
+    version?: string | null;
+    [key: string]: unknown;
+  };
+  created_at?: string | null;
+  updated_at?: string | null;
+  occurred_at?: string | null;
+  route?: string | null;
+  bff_detail_path?: string | null;
+  decision?: Record<string, unknown>;
+  mutationReview?: Record<string, unknown>;
+  mutation_review?: Record<string, unknown>;
+  postmortem?: Record<string, unknown>;
+  rollback?: Record<string, unknown>;
+  freezeOrder?: Record<string, unknown>;
+  freeze_order?: Record<string, unknown>;
+  record?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface ManagementEvolutionJournalSummary {
+  total_items: number;
+  returned_items: number;
+  decision_count: number;
+  mutation_review_count: number;
+  postmortem_count: number;
+  rollback_count: number;
+  freeze_order_count: number;
+  pending_review_count: number;
+  active_freeze_count: number;
+  completed_rollback_count: number;
+  latest_at?: string | null;
+  byType: Record<string, number>;
+  by_type: Record<string, number>;
+  byStatus: Record<string, number>;
+  by_status: Record<string, number>;
+  byRiskLevel: Record<string, number>;
+  by_risk_level: Record<string, number>;
+  [key: string]: unknown;
+}
+
+export interface ManagementEvolutionJournalResponse {
+  data: ManagementEvolutionJournalItem[];
+  items: ManagementEvolutionJournalItem[];
+  summary: ManagementEvolutionJournalSummary;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    staleness?: Record<string, unknown>;
+    surfaces: {
+      management_evolution_journal: ManagementSurfaceRef;
+      mutation_review?: ManagementSurfaceRef;
+      evolution_decisions?: ManagementSurfaceRef;
+      postmortems?: ManagementSurfaceRef;
+      freeze_orders?: ManagementSurfaceRef;
+      rollbacks?: ManagementSurfaceRef;
+      approval_decisions?: ManagementSurfaceRef;
+      [key: string]: ManagementSurfaceRef | undefined;
+    };
+    composition_sources?: string[];
+    [key: string]: unknown;
+  };
+}
+
 export interface ManagementPortfolioBookPoolQuery {
   status?: string;
   risk_policy_ref?: string;
@@ -566,6 +664,10 @@ export function managementEvidencePath(query?: ManagementEvidenceQuery): string 
   return withQuery(paths.managementEvidence(), query);
 }
 
+export function managementEvolutionJournalPath(query?: ManagementEvolutionJournalQuery): string {
+  return withQuery(paths.managementEvolutionJournal(), query);
+}
+
 export function managementPortfolioBookPath(): string {
   return paths.managementPortfolioBook();
 }
@@ -630,6 +732,25 @@ export async function fetchManagementEvidence(
     throw new Error(`GET ${path} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementEvidenceResponse>;
+}
+
+export async function fetchManagementEvolutionJournal(
+  query?: ManagementEvolutionJournalQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementEvolutionJournalResponse> {
+  const path = managementEvolutionJournalPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementEvolutionJournalResponse>;
 }
 
 export async function fetchManagementPortfolioBookPools(

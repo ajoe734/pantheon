@@ -1520,3 +1520,59 @@ BFF-B3-002 — Owner: Codex, Reviewer: Claude
 ### Task
 
 BFF-B3-003 — Owner: Codex, Reviewer: Claude
+
+### B3-007 GET `/bff/management/evolution-journal`
+
+**File: `services/control-plane/bff/main.py`**
+
+- Add `GET /bff/management/evolution-journal` as a read-only Management aggregate.
+- Require the existing BFF read-role authentication gate; anonymous requests
+  return the typed BFF 401 envelope.
+- Compose journal rows from:
+  - evolution decisions;
+  - postmortems;
+  - mutation-review projections;
+  - rollback records;
+  - freeze orders.
+- Return the standard BFF aggregate envelope: `data`, `items`, `summary`,
+  `page_info`, and `meta.surfaces`.
+- Support `source_type`, `status`, `action_type`, `risk_level`, `page_token`,
+  and bounded `page_size` filters.
+- Preserve source surfaces in metadata (`evolution_decisions`, `postmortems`,
+  `mutation_review`, `rollbacks`, `freeze_orders`, `approval_decisions`) plus
+  a composed `management_evolution_journal` surface.
+
+**Files: `execute-plans/src/lib/bff-v1/paths.ts`,
+`execute-plans/src/lib/bff-v1/management.ts`, and
+`execute-plans/src/lib/bff/client.ts`**
+
+- Add the canonical `/bff/management/evolution-journal` path.
+- Export Evolution Journal query, item, summary, response, path, and fetch
+  helper types.
+- Add `managementClient.evolutionJournal.list()` using the same strict/hybrid
+  live transport policy as the other Management aggregate reads.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `GET /bff/management/evolution-journal` returns rows composed from evolution decisions, postmortems, mutation review projections, rollbacks, and freeze orders | ✅ test added in BFF-B3-005 |
+| 2 | Response includes `data`, `items`, `summary`, `page_info`, and `meta.surfaces.management_evolution_journal` | ✅ test added in BFF-B3-005 |
+| 3 | `source_type`, `status`, `risk_level`, and pagination filters are accepted by the backend route | ✅ test added in BFF-B3-005 |
+| 4 | Anonymous request returns HTTP 401 typed BFF error envelope | ✅ test added in BFF-B3-005 |
+| 5 | Frontend path/client contract exposes the live aggregate route without seed-list fanout | ✅ implemented in BFF-B3-005 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_b3_evolution_journal.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/src/lib/bff/client.ts`
+- `execute-plans/src/lib/bff/__tests__/client.test.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B3-005 — Owner: Codex, Reviewer: Claude
