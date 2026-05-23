@@ -45,3 +45,14 @@ Results:
 - No L1 canonical architecture or policy document was changed.
 - During owner finalization, the shared worktree index had a stale staged deletion for the already committed review artifact while the identical file existed on disk. This was fixed with `git restore --staged -- support/reviews/BFF-B3-003-review-claude.md` before creating the closeout commit.
 - A final owner closeout commit is required because the previous branch tip recorded the reviewer artifact and therefore did not carry `LLM-Agent: Codex` as the latest commit trailer expected by the `done` gate.
+
+## Publication Refresh
+
+After the owner closeout commit was pushed, GitHub reported PR #448 as
+`BEHIND` relative to `origin/dev`. The task branch was refreshed with
+`origin/dev` using a non-interactive merge on 2026-05-23.
+
+- Dev refresh merge commit: `b47adfc3`
+- Post-refresh verification: `python3 -m pytest services/control-plane/bff/tests/test_bff_b3_human_inbox.py` - 4 passed.
+- This file was updated after the dev refresh so the branch tip remains a
+  BFF-B3-003 owner commit with the required Codex closeout trailers.
