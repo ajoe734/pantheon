@@ -29,7 +29,7 @@ describe("managementClient — coverage", () => {
       "rebalances", "deployments", "evolution", "research", "artifacts",
       "tools", "mcpServers", "mcpTools", "skills", "channels",
       "jobs", "runtimes", "alerts", "incidents", "approvals", "audit",
-      "oodaPackets", "humanInbox", "tradingPulse", "evidenceExplorer", "evolutionJournal",
+      "oodaPackets", "humanInbox", "tradingPulse", "evidenceExplorer", "evolutionJournal", "personaIntent",
     ] as const;
     for (const family of required) {
       expect(managementClient).toHaveProperty(family);
@@ -738,6 +738,94 @@ describe("managementClient — Evolution Journal aggregate live adapter", () => 
     expect(aggregate.items[0].mutationReview?.decision_id).toBe("evo-dec-88f3a2c1");
     expect(aggregate.summary.mutation_review_count).toBe(1);
     expect(aggregate.meta.surfaces.management_evolution_journal.source).toBe("bff_composed");
+  });
+});
+
+describe("managementClient — Persona Intent aggregate live adapter", () => {
+  const realFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    vi.stubEnv("VITE_BFF_BASE_URL", "https://example.test");
+    liveStatus._reset({ mode: "live", effective: "live", baseUrl: "https://example.test" });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    vi.unstubAllEnvs();
+    liveStatus._reset();
+  });
+
+  it("reads /bff/management/persona-intent with redacted intent filters", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        items: [
+          {
+            id: "persona_trace:sess-001",
+            intent_id: "persona_trace:sess-001",
+            sourceType: "persona_trace",
+            source_type: "persona_trace",
+            source_id: "sess-001",
+            personaId: "persona-alpha",
+            persona_id: "persona-alpha",
+            intent: "interactive",
+            title: "Persona trace sess-001",
+            summary: "Interactive session intent summary.",
+            status: "active",
+            occurred_at: "2026-04-11T11:55:00Z",
+            trace: {
+              trace_id: "trace-sess-001",
+              capability_summary: { effective_tool_count: 3 },
+            },
+            redacted: true,
+            redaction: {
+              policy: "management_persona_intent_public_summary",
+              redacted_fields: ["capability_snapshot", "tools_enabled"],
+            },
+          },
+        ],
+        summary: {
+          total_items: 1,
+          returned_items: 1,
+          persona_trace_count: 1,
+          trainer_session_count: 0,
+          agora_session_count: 0,
+          redacted_item_count: 1,
+          persona_count: 1,
+          persona_ids: ["persona-alpha"],
+          latest_at: "2026-04-11T11:55:00Z",
+          bySourceType: { persona_trace: 1 },
+          by_source_type: { persona_trace: 1 },
+          byStatus: { active: 1 },
+          by_status: { active: 1 },
+          byIntent: { interactive: 1 },
+          by_intent: { interactive: 1 },
+        },
+        page_info: { total: 1, page_size: 1, next_page_token: null },
+        meta: {
+          redacted_item_count: 1,
+          surfaces: {
+            management_persona_intent: { status: "ok", source: "bff_composed" },
+            persona_traces: { status: "ok", source: "bff_composed" },
+          },
+        },
+      }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    );
+    globalThis.fetch = fetchMock;
+
+    const aggregate = await managementClient.personaIntent.list({
+      source_type: "persona_trace",
+      persona_id: "persona-alpha",
+      status: "active",
+      page_size: 1,
+    });
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://example.test/bff/management/persona-intent?source_type=persona_trace&persona_id=persona-alpha&status=active&page_size=1",
+    );
+    expect(aggregate.items[0].source_type).toBe("persona_trace");
+    expect(aggregate.items[0].redaction.policy).toBe("management_persona_intent_public_summary");
+    expect(aggregate.summary.redacted_item_count).toBe(1);
+    expect(aggregate.meta.surfaces.management_persona_intent.source).toBe("bff_composed");
   });
 });
 

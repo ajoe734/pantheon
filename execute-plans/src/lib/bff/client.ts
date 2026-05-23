@@ -46,6 +46,9 @@ import type {
   ManagementEvolutionJournalItem,
   ManagementEvolutionJournalQuery,
   ManagementEvolutionJournalResponse,
+  ManagementPersonaIntentItem,
+  ManagementPersonaIntentQuery,
+  ManagementPersonaIntentResponse,
   ManagementTradingPulseRankingsQuery,
   ManagementTradingPulseRankingsResponse,
   ManagementTradingPulseResponse,
@@ -597,6 +600,50 @@ function emptyManagementEvolutionJournalAggregate(): ManagementEvolutionJournalR
   };
 }
 
+function emptyManagementPersonaIntentAggregate(): ManagementPersonaIntentResponse {
+  return {
+    data: [],
+    items: [],
+    summary: {
+      total_items: 0,
+      returned_items: 0,
+      persona_trace_count: 0,
+      trainer_session_count: 0,
+      agora_session_count: 0,
+      redacted_item_count: 0,
+      persona_count: 0,
+      persona_ids: [],
+      latest_at: null,
+      bySourceType: {},
+      by_source_type: {},
+      byStatus: {},
+      by_status: {},
+      byIntent: {},
+      by_intent: {},
+    },
+    page_info: {
+      next_page_token: null,
+      total: 0,
+      page_size: 0,
+    },
+    meta: {
+      surfaces: {
+        management_persona_intent: {
+          status: "unavailable",
+          source: "mock",
+          reason: "Persona Intent aggregate is served by the Pantheon BFF management aggregate.",
+        },
+      },
+      composition_sources: [
+        "persona_traces",
+        "teaching_sessions",
+        "agora_sessions",
+      ],
+      redacted_item_count: 0,
+    },
+  };
+}
+
 function adaptOodaPacketDetail(body: unknown): OodaPacketDetail | undefined {
   const envelope = asObject(body);
   const rawPacket = asObject(strictDataFrom(body) ?? body);
@@ -933,6 +980,46 @@ function adaptManagementEvolutionJournalAggregate(body: unknown): ManagementEvol
       page_size: Number(pageInfo.page_size ?? items.length),
     },
     meta: meta as ManagementEvolutionJournalResponse["meta"],
+  };
+}
+
+function adaptManagementPersonaIntentAggregate(body: unknown): ManagementPersonaIntentResponse {
+  const envelope = asObject(body);
+  const rawItems = Array.isArray(envelope.items)
+    ? envelope.items
+    : Array.isArray(envelope.data)
+      ? envelope.data
+      : [];
+  const items = rawItems.filter((item) => item && typeof item === "object") as ManagementPersonaIntentItem[];
+  const summary = asObject(envelope.summary);
+  const pageInfo = asObject(envelope.page_info);
+  const meta = asObject(envelope.meta);
+  return {
+    data: items,
+    items,
+    summary: {
+      total_items: Number(summary.total_items ?? items.length),
+      returned_items: Number(summary.returned_items ?? items.length),
+      persona_trace_count: Number(summary.persona_trace_count ?? 0),
+      trainer_session_count: Number(summary.trainer_session_count ?? 0),
+      agora_session_count: Number(summary.agora_session_count ?? 0),
+      redacted_item_count: Number(summary.redacted_item_count ?? 0),
+      persona_count: Number(summary.persona_count ?? 0),
+      persona_ids: Array.isArray(summary.persona_ids) ? summary.persona_ids.map(String) : [],
+      latest_at: typeof summary.latest_at === "string" ? summary.latest_at : null,
+      bySourceType: asObject(summary.bySourceType ?? summary.by_source_type) as Record<string, number>,
+      by_source_type: asObject(summary.by_source_type ?? summary.bySourceType) as Record<string, number>,
+      byStatus: asObject(summary.byStatus ?? summary.by_status) as Record<string, number>,
+      by_status: asObject(summary.by_status ?? summary.byStatus) as Record<string, number>,
+      byIntent: asObject(summary.byIntent ?? summary.by_intent) as Record<string, number>,
+      by_intent: asObject(summary.by_intent ?? summary.byIntent) as Record<string, number>,
+    },
+    page_info: {
+      next_page_token: typeof pageInfo.next_page_token === "string" ? pageInfo.next_page_token : null,
+      total: Number(pageInfo.total ?? items.length),
+      page_size: Number(pageInfo.page_size ?? items.length),
+    },
+    meta: meta as ManagementPersonaIntentResponse["meta"],
   };
 }
 
@@ -1364,6 +1451,19 @@ const evolutionJournal = {
     ),
 };
 
+const personaIntent = {
+  list: (query?: ManagementPersonaIntentQuery): Promise<ManagementPersonaIntentResponse> =>
+    withStrictLiveOrMock<ManagementPersonaIntentResponse, unknown>(
+      {
+        method: "GET",
+        path: paths.managementPersonaIntent(),
+        query: query as Record<string, string | number | undefined> | undefined,
+      },
+      async () => emptyManagementPersonaIntentAggregate(),
+      adaptManagementPersonaIntentAggregate,
+    ),
+};
+
 // ---------- Public surface ----------
 
 /** Canonical Management Console read surface — list + detail per family,
@@ -1397,6 +1497,7 @@ export const managementClient = {
   evidenceExplorer,
   readiness,
   evolutionJournal,
+  personaIntent,
 } as const;
 
 export type ManagementFamily = keyof typeof managementClient;
@@ -1407,7 +1508,7 @@ export const MANAGEMENT_FAMILIES: readonly ManagementFamily[] = [
   "rebalances", "deployments", "evolution", "research", "artifacts",
   "tools", "mcpServers", "mcpTools", "skills", "channels",
   "jobs", "runtimes", "alerts", "incidents", "approvals", "audit",
-  "oodaPackets", "humanInbox", "tradingPulse", "evidenceExplorer", "evolutionJournal",
+  "oodaPackets", "humanInbox", "tradingPulse", "evidenceExplorer", "evolutionJournal", "personaIntent",
 ] as const;
 
 /** Snapshot of the current live-status, useful for UI banners that show
