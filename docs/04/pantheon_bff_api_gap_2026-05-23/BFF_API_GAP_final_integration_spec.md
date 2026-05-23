@@ -637,6 +637,101 @@ BFF-B2-002 — Owner: Claude2, Reviewer: Codex2
 
 ---
 
+## §B2.3 Capabilities / Research / Search {#b23-capabilities--research--search}
+
+### Gap
+
+Sprint BFF-2 requires that the capabilities surface — MCP servers, MCP tools,
+SSE channels, and ranking formulas — is served by dedicated GET handlers rather
+than the generic `sem_final_generic_read_alias` / `sem_final_id_named_read_alias`
+catch-alls. Prior to this sprint:
+
+- `GET /bff/mcp-servers` and `GET /bff/mcp-servers/{id}` were registered only
+  on `sem_final_generic_read_alias`, returning an untyped stub with no source
+  metadata, no proper `data` / `items` / `page_info` structure, and no status
+  filter support.
+- `GET /bff/mcp-tools` and `GET /bff/mcp-tools/{id}` had the same stub-only
+  problem.
+- `GET /bff/channels` and `GET /bff/channels/{id}` were similarly registered on
+  the catch-all with no registry-backed envelope or 404 guard.
+- `GET /bff/ranking-formulas` was catch-all only; `GET /bff/ranking-formulas/{id}`
+  was registered on `sem_final_id_named_read_alias` as a stub.
+- `GET /bff/tools`, `GET /bff/tools/{id}`, and `GET /bff/skills/{id}` had
+  already-dedicated handlers registered above the catch-all block, but dead
+  catch-all decorators for those paths still existed on the generic handlers,
+  creating ambiguous routing state and dead code.
+
+### Fix
+
+**File: `services/control-plane/bff/main.py`**
+
+Eight dedicated handlers are added in a `B2.3 Capabilities facade` block and
+dead catch-all decorators removed:
+
+| # | Method | Path | Handler | Notes |
+|---|---|---|---|---|
+| 1 | GET | `/bff/mcp-servers` | `bff_list_mcp_servers_facade` | status filter; `bff_local_registry` source |
+| 2 | GET | `/bff/mcp-servers/{server_id}` | `bff_get_mcp_server_facade` | 404 on unknown id |
+| 3 | GET | `/bff/mcp-tools` | `bff_list_mcp_tools_facade` | status filter; `bff_local_registry` source |
+| 4 | GET | `/bff/mcp-tools/{tool_id}` | `bff_get_mcp_tool_facade` | 404 on unknown id |
+| 5 | GET | `/bff/channels` | `bff_list_channels` | full SSE_CHANNEL_CATALOG; `bff_local_registry` source |
+| 6 | GET | `/bff/channels/{channel_id}` | `bff_get_channel` | 404 on unknown id |
+| 7 | GET | `/bff/ranking-formulas` | `bff_list_ranking_formulas_facade` | status filter; read_store source |
+| 8 | GET | `/bff/ranking-formulas/{formula_id}` | `bff_get_ranking_formula_facade` | 404 on unknown id |
+
+Dead catch-all entries removed:
+
+| Handler | Removed decorators |
+|---|---|
+| `sem_final_generic_read_alias` | `/bff/channels`, `/bff/channels/{id}`, `/bff/mcp-servers`, `/bff/mcp-servers/{id}`, `/bff/mcp-tools`, `/bff/mcp-tools/{id}`, `/bff/ranking-formulas`, `/bff/tools`, `/bff/tools/{id}` |
+| `sem_final_id_named_read_alias` | `/bff/ranking-formulas/{id}`, `/bff/skills/{id}` |
+
+**Response envelope (list endpoints)**
+
+```json
+{ "data": [...], "items": [...], "page_info": { "next_page_token": null, "total": N }, "meta": { "snapshot_at": "...", "surfaces": { "<surface_key>": { "status": "ok", "source": "bff_local_registry" } } } }
+```
+
+**Response envelope (detail endpoints)**
+
+```json
+{ "data": { ...resource fields... }, "meta": { "snapshot_at": "...", "surfaces": { "<surface_key>": { "status": "ok" } } } }
+```
+
+Unknown-id detail requests return HTTP 404 with typed BFF error envelope.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated `GET /bff/mcp-servers` returns `data` + `items` + `page_info` + `meta` | Implemented BFF-B2-003 |
+| 2 | `GET /bff/mcp-servers/{id}` for known server returns `data` with server record | Implemented BFF-B2-003 |
+| 3 | `GET /bff/mcp-servers/{id}` for unknown id returns HTTP 404 | Implemented BFF-B2-003 |
+| 4 | Authenticated `GET /bff/mcp-tools` returns `data` + `items` + `page_info` + `meta` | Implemented BFF-B2-003 |
+| 5 | `GET /bff/mcp-tools/{id}` for unknown id returns HTTP 404 | Implemented BFF-B2-003 |
+| 6 | Authenticated `GET /bff/channels` returns all `SSE_CHANNEL_CATALOG` entries with `id`, `channel_id`, and `status` | Implemented BFF-B2-003 |
+| 7 | `GET /bff/channels/{id}` for known channel returns `data` with channel record | Implemented BFF-B2-003 |
+| 8 | `GET /bff/channels/{id}` for unknown id returns HTTP 404 | Implemented BFF-B2-003 |
+| 9 | Authenticated `GET /bff/ranking-formulas` returns `data` + `items` + `page_info` + `meta` | Implemented BFF-B2-003 |
+| 10 | `GET /bff/ranking-formulas/{id}` for known formula returns `data` with formula record | Implemented BFF-B2-003 |
+| 11 | `GET /bff/ranking-formulas/{id}` for unknown id returns HTTP 404 (requires source to be non-missing) | Implemented BFF-B2-003 |
+| 12 | All 8 new endpoints return HTTP 401 when no Authorization header is provided | Implemented BFF-B2-003 |
+| 13 | Dead catch-all decorators for tools, skills, channels, mcp-servers, mcp-tools, ranking-formulas removed | Implemented BFF-B2-003 |
+| 14 | `GET /bff/tools` and `GET /bff/skills` still served by their own dedicated handlers | Implemented BFF-B2-003 |
+| 15 | `pytest services/control-plane/bff/tests/test_bff_b2_003_capabilities.py` passes 23 tests | ✅ verified |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_b2_003_capabilities.py` (new)
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B2-003 — Owner: Claude, Reviewer: Codex2
+
+---
+
 ## §B3.4 PM-12 Composition Sources {#b34-pm-12-composition-sources}
 
 ### Gap
@@ -1892,3 +1987,60 @@ BFF-B3-004 — Owner: Codex, Reviewer: Codex2
 ### Task
 
 BFF-B3-005 — Owner: Codex, Reviewer: Claude
+
+### B3-009 GET `/bff/management/persona-intent`
+
+**File: `services/control-plane/bff/main.py`**
+
+- Add `GET /bff/management/persona-intent` as a read-only Management aggregate.
+- Require the existing BFF read-role authentication gate; anonymous requests
+  return the typed BFF 401 envelope.
+- Compose redacted intent rows from:
+  - persona session trace summaries;
+  - trainer / teaching session summaries;
+  - Agora session summaries.
+- Return the standard BFF aggregate envelope: `data`, `items`, `summary`,
+  `page_info`, and `meta.surfaces`.
+- Support `source_type`, `persona_id`, `status`, `intent`, `page_token`, and
+  bounded `page_size` filters.
+- Preserve source surfaces in metadata (`persona_traces`, `persona_sessions`,
+  `capability_snapshots`, `teaching_sessions`, `agora_sessions`) plus a
+  composed `management_persona_intent` surface.
+- Redact raw transcripts, message bodies, tool lists, and capability internals;
+  expose only safe counts, IDs, timestamps, status, and summary fields.
+
+**Files: `execute-plans/src/lib/bff-v1/paths.ts`,
+`execute-plans/src/lib/bff-v1/management.ts`, and
+`execute-plans/src/lib/bff/client.ts`**
+
+- Add the canonical `/bff/management/persona-intent` path.
+- Export Persona Intent query, item, summary, response, path, and fetch helper
+  types.
+- Add `managementClient.personaIntent.list()` using the same strict/hybrid
+  live transport policy as the other Management aggregate reads.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `GET /bff/management/persona-intent` returns rows composed from persona traces, trainer sessions, and Agora sessions | ✅ test added in BFF-B3-007 |
+| 2 | Response includes `data`, `items`, `summary`, `page_info`, and `meta.surfaces.management_persona_intent` | ✅ test added in BFF-B3-007 |
+| 3 | `source_type`, `persona_id`, `status`, `intent`, and pagination filters are accepted by the backend route | ✅ test added in BFF-B3-007 |
+| 4 | Raw message bodies, transcript content, tool lists, and capability internals are redacted from aggregate rows | ✅ test added in BFF-B3-007 |
+| 5 | Anonymous request returns HTTP 401 typed BFF error envelope | ✅ test added in BFF-B3-007 |
+| 6 | Frontend path/client contract exposes the live aggregate route without seed-list fanout | ✅ test added in BFF-B3-007 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_b3_persona_intent.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/src/lib/bff/client.ts`
+- `execute-plans/src/lib/bff/__tests__/client.test.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B3-007 — Owner: Codex, Reviewer: Claude
