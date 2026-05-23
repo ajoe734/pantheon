@@ -107,6 +107,7 @@ export const paths = {
   // ---- P1 Management aggregate APIs ----
   managementCockpit: () => `${BASE}/management/cockpit`,
   managementEvidence: () => `${BASE}/management/evidence`,
+  managementEvolutionJournal: () => `${BASE}/management/evolution-journal`,
   managementReadinessEp5: () => `${BASE}/management/readiness/ep5`,
   managementReadinessBrokerLive: () => `${BASE}/management/readiness/broker-live`,
   managementReadinessCapitalBindingLive: () => `${BASE}/management/readiness/capital-binding-live`,
@@ -118,6 +119,7 @@ export const paths = {
   managementPersonaLeague: () => `${BASE}/management/persona-league`,
   managementPersonaLeagueRankings: () => `${BASE}/management/persona-league/rankings`,
   managementPersonaLeagueTiers: () => `${BASE}/management/persona-league/tiers`,
+  managementQuarterlyRanking: () => `${BASE}/management/quarterly-ranking`,
 
   // ---- Research ----
   researchExperiments: () => `${BASE}/research-experiments`,

@@ -453,6 +453,113 @@ export interface ManagementPersonaLeagueTiersResponse {
   };
 }
 
+export interface ManagementQuarterlyRankingQuery {
+  quarter?: string;
+  state?: string;
+  archetype?: string;
+  q?: string;
+  page_token?: string;
+  page_size?: number;
+}
+
+export interface ManagementQuarterlyRankingWindow {
+  quarter: string;
+  year: number;
+  quarterNumber: number;
+  quarter_number: number;
+  label: string;
+  startAt: string;
+  start_at: string;
+  endExclusiveAt: string;
+  end_exclusive_at: string;
+  timezone: "UTC" | string;
+  [key: string]: unknown;
+}
+
+export interface ManagementQuarterlyRankingFormula {
+  id: string;
+  formulaId: string;
+  formula_id: string;
+  version: string;
+  formulaVersion: string;
+  formula_version: string;
+  weights: Record<string, number>;
+  scoreField: string;
+  score_field: string;
+  components: Array<Record<string, unknown>>;
+  basis: string;
+  policy: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementQuarterlyRankingItem extends ManagementPersonaLeagueRankingItem {
+  quarter: string;
+  quarterWindow: ManagementQuarterlyRankingWindow;
+  quarter_window: ManagementQuarterlyRankingWindow;
+  formulaVersion: string;
+  formula_version: string;
+  basis: string;
+}
+
+export interface ManagementQuarterlyRankingSummary {
+  quarter: string;
+  formulaVersion: string;
+  formula_version: string;
+  personaCount: number;
+  persona_count: number;
+  rankedCount: number;
+  ranked_count: number;
+  returnedCount: number;
+  returned_count: number;
+  topPersonaId?: string | null;
+  top_persona_id?: string | null;
+  evidenceRefCount: number;
+  evidence_ref_count: number;
+  redactedEvidenceCount: number;
+  redacted_evidence_count: number;
+  basis: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementQuarterlyRankingData {
+  id: string;
+  quarter: string;
+  quarterWindow: ManagementQuarterlyRankingWindow;
+  quarter_window: ManagementQuarterlyRankingWindow;
+  formula: ManagementQuarterlyRankingFormula;
+  items: ManagementQuarterlyRankingItem[];
+  rankings: ManagementQuarterlyRankingItem[];
+  evidenceRefs: ManagementEvidenceItem[];
+  evidence_refs: ManagementEvidenceItem[];
+  summary: ManagementQuarterlyRankingSummary;
+  [key: string]: unknown;
+}
+
+export interface ManagementQuarterlyRankingResponse {
+  data: ManagementQuarterlyRankingData;
+  items: ManagementQuarterlyRankingItem[];
+  rankings: ManagementQuarterlyRankingItem[];
+  formula: ManagementQuarterlyRankingFormula;
+  quarterWindow: ManagementQuarterlyRankingWindow;
+  quarter_window: ManagementQuarterlyRankingWindow;
+  evidenceRefs: ManagementEvidenceItem[];
+  evidence_refs: ManagementEvidenceItem[];
+  summary: ManagementQuarterlyRankingSummary;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces?: Record<string, ManagementSurfaceRef>;
+    composition_sources?: string[];
+    policy?: string;
+    redacted_evidence_count?: number;
+    [key: string]: unknown;
+  };
+}
+
 export interface ManagementEvidenceItem {
   id: string;
   refId: string;
@@ -539,6 +646,104 @@ export interface ManagementEvidenceResponse {
       [key: string]: ManagementSurfaceRef | undefined;
     };
     redacted_evidence_count?: number;
+    [key: string]: unknown;
+  };
+}
+
+export interface ManagementEvolutionJournalQuery {
+  source_type?: string;
+  status?: string;
+  action_type?: string;
+  risk_level?: string;
+  page_token?: string;
+  page_size?: number;
+}
+
+export type ManagementEvolutionJournalEntryType =
+  | "evolution_decision"
+  | "mutation_review"
+  | "postmortem"
+  | "rollback"
+  | "freeze_order"
+  | string;
+
+export interface ManagementEvolutionJournalItem {
+  id: string;
+  journal_id: string;
+  entryType: ManagementEvolutionJournalEntryType;
+  entry_type: ManagementEvolutionJournalEntryType;
+  source_id: string;
+  title: string;
+  summary: string;
+  status: string;
+  risk_level?: string | null;
+  action_type?: string | null;
+  target?: {
+    type?: string | null;
+    id?: string | null;
+    version?: string | null;
+    [key: string]: unknown;
+  };
+  created_at?: string | null;
+  updated_at?: string | null;
+  occurred_at?: string | null;
+  route?: string | null;
+  bff_detail_path?: string | null;
+  decision?: Record<string, unknown>;
+  mutationReview?: Record<string, unknown>;
+  mutation_review?: Record<string, unknown>;
+  postmortem?: Record<string, unknown>;
+  rollback?: Record<string, unknown>;
+  freezeOrder?: Record<string, unknown>;
+  freeze_order?: Record<string, unknown>;
+  record?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface ManagementEvolutionJournalSummary {
+  total_items: number;
+  returned_items: number;
+  decision_count: number;
+  mutation_review_count: number;
+  postmortem_count: number;
+  rollback_count: number;
+  freeze_order_count: number;
+  pending_review_count: number;
+  active_freeze_count: number;
+  completed_rollback_count: number;
+  latest_at?: string | null;
+  byType: Record<string, number>;
+  by_type: Record<string, number>;
+  byStatus: Record<string, number>;
+  by_status: Record<string, number>;
+  byRiskLevel: Record<string, number>;
+  by_risk_level: Record<string, number>;
+  [key: string]: unknown;
+}
+
+export interface ManagementEvolutionJournalResponse {
+  data: ManagementEvolutionJournalItem[];
+  items: ManagementEvolutionJournalItem[];
+  summary: ManagementEvolutionJournalSummary;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    staleness?: Record<string, unknown>;
+    surfaces: {
+      management_evolution_journal: ManagementSurfaceRef;
+      mutation_review?: ManagementSurfaceRef;
+      evolution_decisions?: ManagementSurfaceRef;
+      postmortems?: ManagementSurfaceRef;
+      freeze_orders?: ManagementSurfaceRef;
+      rollbacks?: ManagementSurfaceRef;
+      approval_decisions?: ManagementSurfaceRef;
+      [key: string]: ManagementSurfaceRef | undefined;
+    };
+    composition_sources?: string[];
     [key: string]: unknown;
   };
 }
@@ -647,6 +852,10 @@ export function managementEvidencePath(query?: ManagementEvidenceQuery): string 
   return withQuery(paths.managementEvidence(), query);
 }
 
+export function managementEvolutionJournalPath(query?: ManagementEvolutionJournalQuery): string {
+  return withQuery(paths.managementEvolutionJournal(), query);
+}
+
 export function managementReadinessEp5Path(): string {
   return paths.managementReadinessEp5();
 }
@@ -697,6 +906,12 @@ export function managementPersonaLeagueTiersPath(
   return withQuery(paths.managementPersonaLeagueTiers(), query);
 }
 
+export function managementQuarterlyRankingPath(
+  query?: ManagementQuarterlyRankingQuery,
+): string {
+  return withQuery(paths.managementQuarterlyRanking(), query);
+}
+
 export async function fetchManagementCockpit(
   init?: RequestInit,
   baseUrl = "",
@@ -731,6 +946,25 @@ export async function fetchManagementEvidence(
     throw new Error(`GET ${path} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementEvidenceResponse>;
+}
+
+export async function fetchManagementEvolutionJournal(
+  query?: ManagementEvolutionJournalQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementEvolutionJournalResponse> {
+  const path = managementEvolutionJournalPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementEvolutionJournalResponse>;
 }
 
 export async function fetchManagementReadiness(
@@ -879,4 +1113,23 @@ export async function fetchManagementPersonaLeagueTiers(
     throw new Error(`GET ${path} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementPersonaLeagueTiersResponse>;
+}
+
+export async function fetchManagementQuarterlyRanking(
+  query?: ManagementQuarterlyRankingQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementQuarterlyRankingResponse> {
+  const path = managementQuarterlyRankingPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementQuarterlyRankingResponse>;
 }

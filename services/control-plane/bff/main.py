@@ -21144,6 +21144,501 @@ def _human_inbox_detail_match(item: Dict[str, Any], item_id: str) -> bool:
     return clean in candidates
 
 
+_EVOLUTION_JOURNAL_TYPE_ALIASES = {
+    "decision": "evolution_decision",
+    "evolution": "evolution_decision",
+    "evolution_decision": "evolution_decision",
+    "evolution_decisions": "evolution_decision",
+    "mutation": "mutation_review",
+    "mutation_review": "mutation_review",
+    "mutation_reviews": "mutation_review",
+    "postmortem": "postmortem",
+    "postmortems": "postmortem",
+    "rollback": "rollback",
+    "rollbacks": "rollback",
+    "freeze": "freeze_order",
+    "freeze_order": "freeze_order",
+    "freeze_orders": "freeze_order",
+}
+
+
+def _evolution_journal_csv_filter(value: Optional[str]) -> Optional[set[str]]:
+    if not value:
+        return None
+    requested = {part.strip().lower() for part in value.split(",") if part.strip()}
+    return requested or None
+
+
+def _evolution_journal_type_filter(value: Optional[str]) -> Optional[set[str]]:
+    requested = _evolution_journal_csv_filter(value)
+    if not requested:
+        return None
+    return {
+        _EVOLUTION_JOURNAL_TYPE_ALIASES.get(entry_type, entry_type)
+        for entry_type in requested
+    }
+
+
+def _evolution_journal_status(record: Dict[str, Any]) -> str:
+    return str(
+        _management_first_non_empty(
+            record.get("status"),
+            record.get("decision_state"),
+            record.get("state"),
+            "unknown",
+        )
+        or "unknown"
+    ).strip().lower()
+
+
+def _evolution_journal_timestamp(record: Dict[str, Any]) -> str:
+    return str(
+        _management_first_non_empty(
+            record.get("updated_at"),
+            record.get("updatedAt"),
+            record.get("published_at"),
+            record.get("completed_at"),
+            record.get("executed_at"),
+            record.get("initiated_at"),
+            record.get("issued_at"),
+            record.get("created_at"),
+            record.get("createdAt"),
+            record.get("triggered_at"),
+        )
+        or ""
+    )
+
+
+def _evolution_journal_target(
+    *,
+    target_type: Any = None,
+    target_id: Any = None,
+    target_version: Any = None,
+    incident_id: Any = None,
+    runtime_id: Any = None,
+    artifact_id: Any = None,
+) -> Dict[str, Any]:
+    resolved_type = str(
+        _management_first_non_empty(
+            target_type,
+            "incident" if incident_id else None,
+            "runtime" if runtime_id else None,
+            "artifact" if artifact_id else None,
+        )
+        or ""
+    ).strip()
+    resolved_id = _management_first_non_empty(target_id, incident_id, runtime_id, artifact_id)
+    return {
+        "type": resolved_type or None,
+        "id": resolved_id,
+        "version": target_version,
+    }
+
+
+def _evolution_journal_base_item(
+    *,
+    entry_type: str,
+    source_id: str,
+    title: str,
+    summary: str,
+    status: str,
+    created_at: Any = None,
+    updated_at: Any = None,
+    occurred_at: Any = None,
+    risk_level: Any = None,
+    action_type: Any = None,
+    target: Optional[Dict[str, Any]] = None,
+    route: Optional[str] = None,
+    bff_detail_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    journal_id = f"{entry_type}:{source_id}"
+    return {
+        "id": journal_id,
+        "journal_id": journal_id,
+        "entryType": entry_type,
+        "entry_type": entry_type,
+        "source_id": source_id,
+        "title": title,
+        "summary": summary,
+        "status": status,
+        "risk_level": risk_level,
+        "action_type": action_type,
+        "target": target or {},
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "occurred_at": occurred_at or updated_at or created_at,
+        "route": route,
+        "bff_detail_path": bff_detail_path,
+    }
+
+
+def _evolution_journal_decision_item(decision: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    decision_id = _management_record_id(decision, "decision_id", "id", "evolution_decision_id")
+    if not decision_id:
+        return None
+    status = _evolution_journal_status(decision)
+    title = str(
+        _management_first_non_empty(
+            decision.get("title"),
+            f"{str(decision.get('action_type') or 'Evolution').replace('_', ' ').title()} decision",
+        )
+    )
+    summary = str(
+        _management_first_non_empty(
+            decision.get("summary"),
+            decision.get("notes"),
+            decision.get("rationale"),
+            (decision.get("risk_assessment") or {}).get("risk_summary")
+            if isinstance(decision.get("risk_assessment"), dict)
+            else None,
+            "Evolution decision recorded.",
+        )
+    )
+    item = _evolution_journal_base_item(
+        entry_type="evolution_decision",
+        source_id=decision_id,
+        title=title,
+        summary=summary,
+        status=status,
+        created_at=decision.get("created_at"),
+        updated_at=decision.get("updated_at"),
+        occurred_at=_evolution_journal_timestamp(decision),
+        risk_level=decision.get("risk_level"),
+        action_type=decision.get("action_type"),
+        target=_evolution_journal_target(
+            target_type=decision.get("target_type"),
+            target_id=_management_first_non_empty(decision.get("target_id"), decision.get("artifact_id")),
+            target_version=decision.get("target_version") or decision.get("artifact_version"),
+            incident_id=decision.get("incident_ref") or decision.get("linked_incident_id"),
+        ),
+        route=f"/management/evolution-journal?decision={decision_id}",
+        bff_detail_path=f"/api/v1/evolution-decisions/{decision_id}",
+    )
+    item["decision"] = json.loads(json.dumps(decision))
+    item["record"] = item["decision"]
+    return item
+
+
+def _evolution_journal_mutation_review_item(
+    decision: Dict[str, Any],
+    *,
+    identity: OperatorIdentity,
+    snapshot_at: str,
+) -> Optional[Dict[str, Any]]:
+    decision_id = _management_record_id(decision, "decision_id", "id", "evolution_decision_id")
+    if not decision_id:
+        return None
+    if not any(
+        decision.get(field) is not None
+        for field in (
+            "approval_decision_id",
+            "proposed_changes",
+            "risk_assessment",
+            "required_approvals",
+            "review_chain",
+            "threshold_snapshots",
+        )
+    ):
+        return None
+
+    _, approval_decision, linked_incident, linked_postmortem = _mutation_review_inputs(decision_id)
+    projection = _mutation_review_projection(
+        decision,
+        approval_decision=approval_decision,
+        linked_incident=linked_incident,
+        linked_postmortem=linked_postmortem,
+        identity=identity,
+        snapshot_at=snapshot_at,
+    )
+    item = _evolution_journal_base_item(
+        entry_type="mutation_review",
+        source_id=decision_id,
+        title=f"Mutation review: {decision_id}",
+        summary=str((projection.get("proposed_changes") or {}).get("summary") or decision.get("rationale") or ""),
+        status=str(projection.get("decision_state") or "unknown").lower(),
+        created_at=projection.get("created_at"),
+        updated_at=decision.get("updated_at"),
+        occurred_at=_evolution_journal_timestamp(decision),
+        risk_level=projection.get("risk_level"),
+        action_type=projection.get("action_type"),
+        target=_evolution_journal_target(
+            target_type=projection.get("target_type"),
+            target_id=projection.get("target_id"),
+            target_version=projection.get("target_version"),
+        ),
+        route=f"/management/evolution-journal?mutation_review={decision_id}",
+        bff_detail_path=f"/api/v1/operator/mutation-review/{decision_id}",
+    )
+    item["mutationReview"] = json.loads(json.dumps(projection))
+    item["mutation_review"] = item["mutationReview"]
+    item["record"] = item["mutationReview"]
+    return item
+
+
+def _evolution_journal_postmortem_item(postmortem: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    postmortem_id = _management_record_id(postmortem, "postmortem_id", "report_id", "id")
+    if not postmortem_id:
+        return None
+    summary = str(
+        _management_first_non_empty(
+            postmortem.get("summary"),
+            postmortem.get("root_cause"),
+            postmortem.get("title"),
+            "Postmortem record published.",
+        )
+    )
+    item = _evolution_journal_base_item(
+        entry_type="postmortem",
+        source_id=postmortem_id,
+        title=str(postmortem.get("title") or f"Postmortem {postmortem_id}"),
+        summary=summary,
+        status=_evolution_journal_status(postmortem),
+        created_at=postmortem.get("created_at"),
+        updated_at=postmortem.get("published_at") or postmortem.get("updated_at"),
+        occurred_at=_evolution_journal_timestamp(postmortem),
+        action_type="postmortem",
+        target=_evolution_journal_target(
+            target_type="incident",
+            target_id=postmortem.get("incident_id"),
+            runtime_id=postmortem.get("runtime_id"),
+            artifact_id=postmortem.get("artifact_id"),
+        ),
+        route=f"/management/evolution-journal?postmortem={postmortem_id}",
+        bff_detail_path=f"/api/v1/postmortems/{postmortem_id}",
+    )
+    item["postmortem"] = json.loads(json.dumps(postmortem))
+    item["record"] = item["postmortem"]
+    return item
+
+
+def _evolution_journal_freeze_order_item(order: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    freeze_order_id = _management_record_id(order, "freeze_order_id", "id")
+    if not freeze_order_id:
+        return None
+    projected = _project_freeze_order_contract(order)
+    item = _evolution_journal_base_item(
+        entry_type="freeze_order",
+        source_id=freeze_order_id,
+        title=str(order.get("title") or f"Freeze order {freeze_order_id}"),
+        summary=str(order.get("reason") or "Freeze order recorded."),
+        status=_evolution_journal_status(order),
+        created_at=order.get("created_at"),
+        updated_at=order.get("updated_at") or order.get("issued_at"),
+        occurred_at=_evolution_journal_timestamp(projected),
+        action_type="freeze",
+        target=_evolution_journal_target(
+            target_type=order.get("scope") or "freeze_scope",
+            target_id=order.get("target_id"),
+            incident_id=order.get("incident_ref"),
+        ),
+        route=f"/management/evolution-journal?freeze_order={freeze_order_id}",
+        bff_detail_path=f"/api/v1/freeze-orders?status={order.get('status') or ''}",
+    )
+    item["freezeOrder"] = json.loads(json.dumps(projected))
+    item["freeze_order"] = item["freezeOrder"]
+    item["record"] = item["freezeOrder"]
+    return item
+
+
+def _evolution_journal_rollback_item(rollback: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    rollback_id = _management_record_id(rollback, "rollback_id", "id")
+    if not rollback_id:
+        return None
+    projected = _project_rollback_contract(rollback)
+    item = _evolution_journal_base_item(
+        entry_type="rollback",
+        source_id=rollback_id,
+        title=str(rollback.get("title") or f"Rollback {rollback_id}"),
+        summary=str(rollback.get("reason") or "Rollback record completed."),
+        status=_evolution_journal_status(rollback),
+        created_at=rollback.get("initiated_at") or rollback.get("created_at"),
+        updated_at=rollback.get("completed_at") or rollback.get("executed_at"),
+        occurred_at=_evolution_journal_timestamp(projected),
+        action_type=rollback.get("action_type") or "rollback",
+        target=_evolution_journal_target(
+            target_type="runtime",
+            target_id=rollback.get("runtime_id"),
+            target_version=rollback.get("to_version"),
+            incident_id=rollback.get("incident_ref"),
+        ),
+        route=f"/management/evolution-journal?rollback={rollback_id}",
+        bff_detail_path="/api/v1/rollbacks",
+    )
+    item["rollback"] = json.loads(json.dumps(projected))
+    item["record"] = item["rollback"]
+    return item
+
+
+def _evolution_journal_filter_items(
+    items: List[Dict[str, Any]],
+    *,
+    source_type: Optional[str] = None,
+    status: Optional[str] = None,
+    action_type: Optional[str] = None,
+    risk_level: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    source_types = _evolution_journal_type_filter(source_type)
+    statuses = _evolution_journal_csv_filter(status)
+    action_types = _evolution_journal_csv_filter(action_type)
+    risk_levels = _evolution_journal_csv_filter(risk_level)
+    filtered = items
+    if source_types:
+        filtered = [
+            item for item in filtered
+            if str(item.get("entry_type") or item.get("entryType") or "").lower() in source_types
+        ]
+    if statuses:
+        filtered = [
+            item for item in filtered
+            if str(item.get("status") or "").lower() in statuses
+        ]
+    if action_types:
+        filtered = [
+            item for item in filtered
+            if str(item.get("action_type") or "").lower() in action_types
+        ]
+    if risk_levels:
+        filtered = [
+            item for item in filtered
+            if str(item.get("risk_level") or "").lower() in risk_levels
+        ]
+    return filtered
+
+
+def _evolution_journal_summary(items: List[Dict[str, Any]], returned_count: int) -> Dict[str, Any]:
+    by_type = _management_count_by(items, "entry_type")
+    by_status = _management_count_by(items, "status")
+    by_risk_level = _management_count_by(items, "risk_level")
+    latest_at = max(
+        [str(item.get("occurred_at") or "") for item in items if item.get("occurred_at")],
+        default=None,
+    )
+    return {
+        "total_items": len(items),
+        "returned_items": returned_count,
+        "decision_count": by_type.get("evolution_decision", 0),
+        "mutation_review_count": by_type.get("mutation_review", 0),
+        "postmortem_count": by_type.get("postmortem", 0),
+        "rollback_count": by_type.get("rollback", 0),
+        "freeze_order_count": by_type.get("freeze_order", 0),
+        "pending_review_count": len([
+            item for item in items
+            if item.get("entry_type") == "mutation_review"
+            and str(item.get("status") or "").lower() in {"pending", "reviewed", "under_review", "in_review"}
+        ]),
+        "active_freeze_count": len([
+            item for item in items
+            if item.get("entry_type") == "freeze_order"
+            and str(item.get("status") or "").lower() == "active"
+        ]),
+        "completed_rollback_count": len([
+            item for item in items
+            if item.get("entry_type") == "rollback"
+            and str(item.get("status") or "").lower() == "completed"
+        ]),
+        "latest_at": latest_at,
+        "byType": by_type,
+        "by_type": by_type,
+        "byStatus": by_status,
+        "by_status": by_status,
+        "byRiskLevel": by_risk_level,
+        "by_risk_level": by_risk_level,
+    }
+
+
+def _evolution_journal_items(
+    *,
+    identity: OperatorIdentity,
+    snapshot_at: str,
+) -> tuple[
+    List[Dict[str, Any]],
+    List[Dict[str, Any]],
+    List[Dict[str, Any]],
+    List[Dict[str, Any]],
+    List[Dict[str, Any]],
+]:
+    decisions = list(read_store.list_evolution_decisions() or [])
+    postmortems = list(read_store.list_postmortems() or [])
+    freeze_orders = list(read_store.list_freeze_orders() or [])
+    rollbacks = list(read_store.list_all_rollbacks() or [])
+
+    items: List[Dict[str, Any]] = []
+    for decision in decisions:
+        decision_item = _evolution_journal_decision_item(decision)
+        if decision_item is not None:
+            items.append(decision_item)
+        mutation_item = _evolution_journal_mutation_review_item(
+            decision,
+            identity=identity,
+            snapshot_at=snapshot_at,
+        )
+        if mutation_item is not None:
+            items.append(mutation_item)
+    for postmortem in postmortems:
+        item = _evolution_journal_postmortem_item(postmortem)
+        if item is not None:
+            items.append(item)
+    for order in freeze_orders:
+        item = _evolution_journal_freeze_order_item(order)
+        if item is not None:
+            items.append(item)
+    for rollback in rollbacks:
+        item = _evolution_journal_rollback_item(rollback)
+        if item is not None:
+            items.append(item)
+
+    items.sort(
+        key=lambda item: (
+            str(item.get("occurred_at") or ""),
+            str(item.get("id") or ""),
+        ),
+        reverse=True,
+    )
+    return items, decisions, postmortems, freeze_orders, rollbacks
+
+
+def _evolution_journal_surfaces(
+    *,
+    snapshot_at: str,
+) -> Dict[str, Any]:
+    source_surfaces = {
+        "evolution_decisions": _dataset_surface_status("evolution_decisions", snapshot_at=snapshot_at),
+        "postmortems": _dataset_surface_status("postmortems", snapshot_at=snapshot_at),
+        "freeze_orders": _dataset_surface_status("freeze_orders", snapshot_at=snapshot_at),
+        "rollbacks": _dataset_surface_status("all_rollbacks", snapshot_at=snapshot_at),
+        "approval_decisions": _dataset_surface_status("approval_decisions", snapshot_at=snapshot_at),
+    }
+    mutation_surface = _aggregate_group_surface(
+        "mutation_review",
+        [
+            source_surfaces["evolution_decisions"],
+            source_surfaces["approval_decisions"],
+            source_surfaces["postmortems"],
+        ],
+        snapshot_at=snapshot_at,
+        unavailable_message="Mutation review journal records are unavailable.",
+        degraded_message="Mutation review journal records are degraded because one or more source surfaces are degraded.",
+    )
+    journal_surface = _aggregate_group_surface(
+        "management_evolution_journal",
+        [
+            source_surfaces["evolution_decisions"],
+            source_surfaces["postmortems"],
+            source_surfaces["freeze_orders"],
+            source_surfaces["rollbacks"],
+            mutation_surface,
+        ],
+        snapshot_at=snapshot_at,
+        unavailable_message="Evolution Journal aggregate unavailable.",
+        degraded_message="Evolution Journal aggregate is degraded because one or more source surfaces are degraded.",
+    )
+    return {
+        "management_evolution_journal": journal_surface,
+        "mutation_review": mutation_surface,
+        **source_surfaces,
+    }
+
+
 @app.get("/bff/management/human-inbox")
 async def bff_management_human_inbox(
     source_type: Optional[str] = None,
@@ -21213,6 +21708,57 @@ async def bff_management_human_inbox_detail(
         "Human inbox item not found",
         f"Human inbox item {item_id} does not exist",
     )
+
+
+@app.get("/bff/management/evolution-journal")
+async def bff_management_evolution_journal(
+    source_type: Optional[str] = None,
+    status: Optional[str] = None,
+    action_type: Optional[str] = None,
+    risk_level: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: compose Management Evolution Journal aggregate rows."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    items, _decisions, _postmortems, _freeze_orders, _rollbacks = _evolution_journal_items(
+        identity=identity,
+        snapshot_at=snapshot_at,
+    )
+    filtered = _evolution_journal_filter_items(
+        items,
+        source_type=source_type,
+        status=status,
+        action_type=action_type,
+        risk_level=risk_level,
+    )
+    total = len(filtered)
+    page_items, next_page_token = _page_slice(filtered, page_token, page_size)
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = _evolution_journal_surfaces(snapshot_at=snapshot_at)
+    meta["composition_sources"] = [
+        "evolution_decisions",
+        "postmortems",
+        "mutation_review",
+        "rollbacks",
+        "freeze_orders",
+    ]
+    return {
+        "data": page_items,
+        "items": page_items,
+        "summary": _evolution_journal_summary(filtered, len(page_items)),
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": meta,
+    }
+
 
 @app.get("/bff/management/persona-fleet")
 async def bff_management_persona_fleet(
@@ -22783,6 +23329,8 @@ _PM12_LEAGUE_RANKING_CRITERIA = {
     "execution": ("executionScore", "Execution"),
     "activity": ("activityScore", "Activity"),
 }
+_PM12_LEAGUE_FORMULA_VERSION = "pm12-default-v1"
+_PM12_QUARTER_PATTERN = re.compile(r"^(?P<year>\d{4})-Q(?P<quarter>[1-4])$", re.IGNORECASE)
 _PM12_LEAGUE_TIER_DEFINITIONS = [
     {
         "id": "tier-1",
@@ -22958,6 +23506,126 @@ def _pm12_tier_for_score(score: float) -> Dict[str, Any]:
         if score >= float(tier["minScore"]):
             return tier
     return _PM12_LEAGUE_TIER_DEFINITIONS[-1]
+
+
+def _pm12_current_quarter_id(snapshot_at: str) -> str:
+    timestamp = _audit_datetime(snapshot_at) or datetime.now(timezone.utc)
+    quarter = ((timestamp.month - 1) // 3) + 1
+    return f"{timestamp.year}-Q{quarter}"
+
+
+def _pm12_iso_z(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _pm12_quarter_window(quarter: Optional[str], snapshot_at: str) -> Dict[str, Any]:
+    raw_quarter = str(quarter or "").strip().upper() or _pm12_current_quarter_id(snapshot_at)
+    match = _PM12_QUARTER_PATTERN.match(raw_quarter)
+    if not match:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "invalid_quarter",
+                "message": "quarter must use YYYY-Qn format, for example 2026-Q2.",
+                "field": "quarter",
+            },
+        )
+    year = int(match.group("year"))
+    quarter_number = int(match.group("quarter"))
+    start_month = ((quarter_number - 1) * 3) + 1
+    start_at = datetime(year, start_month, 1, tzinfo=timezone.utc)
+    if quarter_number == 4:
+        end_exclusive_at = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+    else:
+        end_exclusive_at = datetime(year, start_month + 3, 1, tzinfo=timezone.utc)
+    quarter_id = f"{year}-Q{quarter_number}"
+    return {
+        "quarter": quarter_id,
+        "year": year,
+        "quarterNumber": quarter_number,
+        "quarter_number": quarter_number,
+        "label": f"{year} Q{quarter_number}",
+        "startAt": _pm12_iso_z(start_at),
+        "start_at": _pm12_iso_z(start_at),
+        "endExclusiveAt": _pm12_iso_z(end_exclusive_at),
+        "end_exclusive_at": _pm12_iso_z(end_exclusive_at),
+        "timezone": "UTC",
+    }
+
+
+def _pm12_quarter_formula_payload() -> Dict[str, Any]:
+    return {
+        "id": "pm12-quarterly-ranking-formula",
+        "formulaId": "pm12-quarterly-ranking-formula",
+        "formula_id": "pm12-quarterly-ranking-formula",
+        "version": _PM12_LEAGUE_FORMULA_VERSION,
+        "formulaVersion": _PM12_LEAGUE_FORMULA_VERSION,
+        "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
+        "weights": dict(_PM12_LEAGUE_SCORE_WEIGHTS),
+        "scoreField": "overallScore",
+        "score_field": "overallScore",
+        "components": [
+            {"key": "pnl", "label": "PnL", "weight": _PM12_LEAGUE_SCORE_WEIGHTS["pnl"]},
+            {"key": "risk", "label": "Risk", "weight": _PM12_LEAGUE_SCORE_WEIGHTS["risk"]},
+            {"key": "execution", "label": "Execution", "weight": _PM12_LEAGUE_SCORE_WEIGHTS["execution"]},
+            {"key": "activity", "label": "Activity", "weight": _PM12_LEAGUE_SCORE_WEIGHTS["activity"]},
+        ],
+        "basis": "latest_available_persona_league_metrics_with_quarter_window",
+        "policy": "read_only_governance_advisory",
+    }
+
+
+def _pm12_evidence_timestamp(item: Dict[str, Any]) -> Optional[datetime]:
+    source_document = item.get("source_document") if isinstance(item.get("source_document"), dict) else {}
+    return _audit_datetime(source_document.get("captured_at") or item.get("created_at"))
+
+
+def _pm12_quarter_evidence_refs(
+    evidence_refs: List[Dict[str, Any]],
+    quarter_window: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    start_at = _audit_datetime(quarter_window.get("startAt"))
+    end_exclusive_at = _audit_datetime(quarter_window.get("endExclusiveAt"))
+    if start_at is None or end_exclusive_at is None:
+        return []
+    return [
+        item
+        for item in evidence_refs
+        for timestamp in [_pm12_evidence_timestamp(item)]
+        if timestamp is not None and start_at <= timestamp < end_exclusive_at
+    ]
+
+
+def _pm12_quarterly_ranking_items(
+    rows: List[Dict[str, Any]],
+    *,
+    quarter_window: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    ranked = sorted(
+        (_pm12_persona_league_ranking_item(row) for row in rows),
+        key=lambda item: (
+            _management_number(item.get("overallScore")) or 0.0,
+            str(item.get("personaId") or ""),
+        ),
+        reverse=True,
+    )
+    items: List[Dict[str, Any]] = []
+    for rank, item in enumerate(ranked, start=1):
+        score = _management_number(item.get("overallScore")) or 0.0
+        items.append({
+            **item,
+            "rank": rank,
+            "score": score,
+            "scoreField": "overallScore",
+            "score_field": "overallScore",
+            "quarter": quarter_window["quarter"],
+            "quarterWindow": quarter_window,
+            "quarter_window": quarter_window,
+            "formulaVersion": _PM12_LEAGUE_FORMULA_VERSION,
+            "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
+            "basis": "latest_available_persona_league_metrics_with_quarter_window",
+        })
+    return items
 
 
 def _project_persona_league_row(raw: Dict[str, Any]) -> Dict[str, Any]:
@@ -23323,6 +23991,131 @@ async def bff_management_persona_league_tiers(
                 "GET /bff/v5/execution/persona-health",
             ],
             "policy": "read_only_governance_advisory",
+        },
+    }
+
+
+@app.get("/bff/management/quarterly-ranking")
+async def bff_management_quarterly_ranking(
+    quarter: Optional[str] = Query(default=None),
+    state: Optional[str] = None,
+    archetype: Optional[str] = None,
+    q: str = Query(default=""),
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 quarterly persona ranking composed from league rows and evidence."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    quarter_window = _pm12_quarter_window(quarter, snapshot_at)
+    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
+    ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
+    total = len(ranked_items)
+    page_items, next_page_token = _page_slice(ranked_items, page_token, page_size)
+
+    raw_evidence_refs = read_store.list_evidence_refs()
+    evidence_dataset_available = read_store.dataset_source("evidence_refs") != "missing"
+    quarter_evidence_refs = (
+        _pm12_quarter_evidence_refs(raw_evidence_refs, quarter_window)
+        if evidence_dataset_available
+        else []
+    )
+    try:
+        capabilities = _capabilities_for_identity(identity)
+    except Exception:
+        capabilities = None
+    processed_evidence_refs, redacted_count = redact_evidence_refs(
+        identity,
+        quarter_evidence_refs,
+        capabilities=capabilities,
+    )
+    public_evidence_refs = [
+        _management_evidence_public_item(item)
+        for item in processed_evidence_refs
+        if isinstance(item, dict)
+    ]
+
+    formula = _pm12_quarter_formula_payload()
+    source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
+    formula_surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
+    evidence_surface = _dataset_surface_status(
+        "evidence_refs",
+        snapshot_at=snapshot_at,
+        has_data=evidence_dataset_available,
+        missing_message="Evidence reference read surface is unavailable.",
+    )
+    quarterly_surface = _aggregate_group_surface(
+        "quarterly_ranking",
+        [*source_surfaces.values(), formula_surface, evidence_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Quarterly ranking aggregate unavailable.",
+        degraded_message="Quarterly ranking is degraded because one or more source surfaces are degraded.",
+    )
+    top_item = ranked_items[0] if ranked_items else None
+    summary = {
+        "quarter": quarter_window["quarter"],
+        "formulaVersion": formula["formulaVersion"],
+        "formula_version": formula["formula_version"],
+        "personaCount": len(rows),
+        "persona_count": len(rows),
+        "rankedCount": total,
+        "ranked_count": total,
+        "returnedCount": len(page_items),
+        "returned_count": len(page_items),
+        "topPersonaId": (top_item or {}).get("personaId") if isinstance(top_item, dict) else None,
+        "top_persona_id": (top_item or {}).get("personaId") if isinstance(top_item, dict) else None,
+        "evidenceRefCount": len(public_evidence_refs),
+        "evidence_ref_count": len(public_evidence_refs),
+        "redactedEvidenceCount": redacted_count,
+        "redacted_evidence_count": redacted_count,
+        "basis": formula["basis"],
+    }
+    data = {
+        "id": f"pm12-quarterly-ranking-{quarter_window['quarter'].lower()}",
+        "quarter": quarter_window["quarter"],
+        "quarterWindow": quarter_window,
+        "quarter_window": quarter_window,
+        "formula": formula,
+        "items": page_items,
+        "rankings": page_items,
+        "evidenceRefs": public_evidence_refs,
+        "evidence_refs": public_evidence_refs,
+        "summary": summary,
+    }
+    return {
+        "data": data,
+        "items": page_items,
+        "rankings": page_items,
+        "formula": formula,
+        "quarterWindow": quarter_window,
+        "quarter_window": quarter_window,
+        "evidenceRefs": public_evidence_refs,
+        "evidence_refs": public_evidence_refs,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "quarterly_ranking": quarterly_surface,
+                "formula": formula_surface,
+                "evidence_refs": evidence_surface,
+                "knowledge_evidence": evidence_surface,
+                **source_surfaces,
+            },
+            "composition_sources": [
+                "GET /bff/management/persona-league",
+                "GET /bff/management/persona-league/rankings",
+                "GET /bff/management/persona-league/tiers",
+                "GET /api/v1/knowledge/evidence",
+            ],
+            "policy": "read_only_governance_advisory",
+            "redacted_evidence_count": redacted_count,
         },
     }
 
