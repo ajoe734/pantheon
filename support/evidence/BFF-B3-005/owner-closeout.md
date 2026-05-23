@@ -18,7 +18,7 @@ Date: 2026-05-23
 
 Confirmed the approved Evolution Journal aggregate is present in the current
 worktree after composing with `origin/dev` at
-`10b887b49aa20a9ad6824f0434e2826bca421dc3`.
+`2c60565d8c6c0049165de92ee1fd1a533f084918`.
 
 - `services/control-plane/bff/main.py` registers authenticated
   `GET /bff/management/evolution-journal`.
@@ -55,13 +55,22 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_exec
 Results:
 
 - `services/control-plane/bff/main.py` compiled cleanly.
-- BFF-B3-005 Evolution Journal contract tests: 3 passed in 2.26s.
-- Execute-plans final live wiring contract tests: 7 passed in 4.02s with 3
+- BFF-B3-005 Evolution Journal contract tests: 3 passed in 2.30s.
+- Execute-plans final live wiring contract tests: 7 passed in 4.12s with 3
   existing `datetime.utcnow()` deprecation warnings from
   `services/control-plane/bff/read_store.py`.
 - PR #460 is merged and its visible Branch CI Gate checks
   (`Commit trailers`, `Runtime mirror guard`, `Smoke acceptance`) and
   Orchestrator Sync check are successful.
+
+## Dev Refresh
+
+After the first owner closeout evidence commit, `origin/dev` advanced through
+PR #467 and PR #468. The task branch merged `origin/dev` at
+`2c60565d8c6c0049165de92ee1fd1a533f084918`; that refresh only added other
+tasks' owner-closeout evidence files and did not change BFF implementation or
+execute-plans contract code. The focused verification above was rerun after
+this merge.
 
 ## Closeout Notes
 
