@@ -1,0 +1,182 @@
+"""
+BFF-B3-004: contract tests for Trading Pulse management aggregates.
+
+The routes are read-only Management aggregates. They compose runtime binding
+status with telemetry summaries, then expose cards and computed ranking blocks
+without frontend fanout across lower-level runtime and telemetry surfaces.
+"""
+from __future__ import annotations
+
+import os
+import sys
+import tempfile
+
+from fastapi.testclient import TestClient
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+import main as bff_main
+from read_store import ReadSurfaceStore
+
+OPERATOR_HEADERS = {"Authorization": "Bearer op-b3-trading:operator,reviewer"}
+
+
+def _fresh_client(td: str) -> TestClient:
+    store = ReadSurfaceStore(
+        os.path.join(td, "read_surfaces.json"),
+        allow_local_snapshot_fallback=False,
+    )
+    store.list_runtime_bindings = lambda: [
+        {
+            "id": "binding-alpha",
+            "binding_id": "binding-alpha",
+            "runtime_id": "runtime-alpha",
+            "deployment_stage": "paper",
+            "status": "running",
+            "plan_id": "plan-alpha",
+            "artifact_id": "artifact-alpha",
+            "artifact_version": "v1",
+        },
+        {
+            "id": "binding-beta",
+            "binding_id": "binding-beta",
+            "runtime_id": "runtime-beta",
+            "deployment_stage": "canary",
+            "status": "paused",
+            "plan_id": "plan-beta",
+            "artifact_id": "artifact-beta",
+            "artifact_version": "v2",
+        },
+    ]
+    telemetry_summaries = {
+        "runtime-alpha": {
+            "runtime_id": "runtime-alpha",
+            "runtime_binding_id": "binding-alpha",
+            "deployment_stage": "paper",
+            "state": "active",
+            "window": "1h",
+            "pnl": 0.42,
+            "drawdown": 0.11,
+            "sharpe_ratio": 1.7,
+            "fill_rate": 0.9,
+            "avg_slippage_bps": 4.8,
+            "total_trades": 31,
+            "collected_at": "2026-05-23T08:10:00Z",
+            "last_heartbeat_at": "2026-05-23T08:10:00Z",
+        },
+        "runtime-beta": {
+            "runtime_id": "runtime-beta",
+            "runtime_binding_id": "binding-beta",
+            "deployment_stage": "canary",
+            "state": "paused",
+            "window": "1h",
+            "pnl": -0.12,
+            "drawdown": 0.04,
+            "sharpe_ratio": 0.8,
+            "fill_rate": 0.88,
+            "avg_slippage_bps": 3.1,
+            "total_trades": 11,
+            "collected_at": "2026-05-23T08:08:00Z",
+            "last_heartbeat_at": "2026-05-23T08:08:00Z",
+        },
+    }
+    store.get_telemetry_summary = lambda runtime_id: telemetry_summaries.get(runtime_id)
+    store.get_rollbacks = lambda runtime_id: []
+    store.dataset_source = lambda dataset, **kwargs: {
+        "runtime_bindings": "canonical",
+        "telemetry_summaries": "service_store",
+        "rollbacks": "service_store",
+    }.get(dataset, "missing")
+    bff_main.read_store = store
+    return TestClient(bff_main.app)
+
+
+def test_trading_pulse_returns_card_aggregate_and_runtime_rankings() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            resp = client.get("/bff/management/trading-pulse", headers=OPERATOR_HEADERS)
+
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["data"]["id"] == "management-trading-pulse"
+            assert body["items"] == body["cards"]
+            assert body["summary"]["runtimeCount"] == 2
+            assert body["summary"]["telemetryCoverageCount"] == 2
+            assert body["summary"]["totalPnl"] == 0.3
+            assert body["summary"]["worstDrawdown"] == 0.11
+            assert body["summary"]["averageFillRate"] == 0.89
+            assert body["summary"]["worstSlippageBps"] == 4.8
+            assert body["summary"]["totalTrades"] == 42
+            assert body["summary"]["byStatus"] == {"running": 1, "paused": 1}
+            assert body["summary"]["byStage"] == {"paper": 1, "canary": 1}
+
+            assert len(body["cards"]) == 4
+            assert body["rankings"][0]["runtimeId"] == "runtime-alpha"
+            assert body["rankings"][0]["rank"] == 1
+            assert body["runtimeRows"][0]["telemetry_summary"]["metrics"]["pnl"] == 0.42
+            assert body["page_info"] == {
+                "next_page_token": None,
+                "total": 4,
+                "page_size": 4,
+            }
+            assert body["meta"]["surfaces"]["management_trading_pulse"]["source"] == "bff_composed"
+            assert body["meta"]["surfaces"]["runtime_roster"]["source"] == "canonical"
+            assert body["meta"]["surfaces"]["telemetry_summary"]["source"] == "service_store"
+        finally:
+            bff_main.read_store = original_store
+
+
+def test_trading_pulse_rankings_returns_computed_blocks_with_limit() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            resp = client.get(
+                "/bff/management/trading-pulse/rankings?limit=1",
+                headers=OPERATOR_HEADERS,
+            )
+
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["data"] == body["items"] == body["rankings"]
+            assert body["summary"]["runtimeCount"] == 2
+            assert body["summary"]["rankingBlockCount"] == 4
+            assert body["summary"]["rankedItemCount"] == 4
+            assert body["summary"]["limit"] == 1
+            assert body["page_info"] == {
+                "next_page_token": None,
+                "total": 4,
+                "page_size": 4,
+            }
+
+            blocks = {block["blockId"]: block for block in body["rankingBlocks"]}
+            assert blocks["pnl-leaders"]["items"][0]["runtimeId"] == "runtime-alpha"
+            assert blocks["pnl-leaders"]["items"][0]["rankingMetric"] == "pnl"
+            assert blocks["drawdown-control"]["items"][0]["runtimeId"] == "runtime-beta"
+            assert blocks["execution-quality"]["items"][0]["rankingMetric"] == "fill_rate"
+            assert blocks["sharpe-leaders"]["items"][0]["runtimeId"] == "runtime-alpha"
+            assert (
+                body["meta"]["surfaces"]["management_trading_pulse_rankings"]["source"]
+                == "bff_composed"
+            )
+        finally:
+            bff_main.read_store = original_store
+
+
+def test_trading_pulse_routes_require_read_authentication() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            for path in (
+                "/bff/management/trading-pulse",
+                "/bff/management/trading-pulse/rankings",
+            ):
+                resp = client.get(path)
+
+                assert resp.status_code == 401, resp.text
+                assert resp.json()["detail"]["error"]["code"] == "INVALID_TOKEN"
+        finally:
+            bff_main.read_store = original_store

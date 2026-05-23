@@ -171,6 +171,86 @@ def test_pm12_quarterly_ranking_returns_formula_window_and_evidence() -> None:
             bff_main.read_store = original
 
 
+def test_pm12_quarterly_ranking_formula_returns_weights_and_governance_trace() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            response = client.get(
+                "/bff/management/quarterly-ranking/formula",
+                headers=HEADERS,
+            )
+
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert body["data"] == body["formula"]
+            assert body["formula"]["formulaVersion"] == "pm12-default-v1"
+            assert body["formula"]["weights"] == {
+                "pnl": 0.35,
+                "risk": 0.25,
+                "execution": 0.25,
+                "activity": 0.15,
+            }
+            assert body["summary"]["weightTotal"] == 1.0
+            assert body["summary"]["evidenceRefCount"] == len(body["evidenceRefs"])
+            assert body["versionHistory"][0]["formulaVersion"] == "pm12-default-v1"
+            assert body["versionHistory"][0]["governanceEvidenceRefs"]
+            assert body["formula"]["changeControl"]["requiresGovernanceEvidence"] is True
+            assert body["meta"]["version_policy"] == "formula_version_changes_require_governance_evidence"
+            assert body["meta"]["surfaces"]["quarterly_ranking_formula"]["status"] == "ok"
+        finally:
+            bff_main.read_store = original
+
+
+def test_pm12_quarterly_ranking_recommendations_are_governance_only() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            response = client.get(
+                "/bff/management/quarterly-ranking/recommendations",
+                headers=HEADERS,
+                params={"quarter": "2026-Q1", "page_size": 3},
+            )
+
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert body["items"] == body["data"]["recommendations"]
+            assert body["recommendations"] == body["items"]
+            assert body["summary"]["quarter"] == "2026-Q1"
+            assert body["quarterWindow"]["startAt"] == "2026-01-01T00:00:00Z"
+            assert body["page_info"]["page_size"] == 3
+            assert body["page_info"]["total"] >= len(body["items"]) >= 1
+            assert body["meta"]["policy"] == "read_only_governance_advisory"
+            assert body["meta"]["live_capital_mutation"] is False
+            assert body["summary"]["liveCapitalMutationCount"] == 0
+            assert body["summary"]["humanGateDecisionCount"] == body["page_info"]["total"]
+            assert "human_gate_decision" in body["meta"]["governance_destinations"]
+            assert "GET /bff/management/human-inbox" in body["meta"]["composition_sources"]
+            assert body["meta"]["surfaces"]["quarterly_ranking_recommendations"]["status"] in {"ok", "degraded"}
+
+            allowed = set(body["summary"]["allowedActions"])
+            assert allowed == {
+                "promote_to_canary_candidate",
+                "increase_research_budget",
+                "grant_tool_access",
+                "reduce_capital_access",
+                "require_retraining",
+                "freeze_persona",
+                "suspend_persona",
+                "retire_persona",
+            }
+            for recommendation in body["items"]:
+                assert recommendation["actionId"] in allowed
+                assert recommendation["recommendationType"] == "governance_advisory"
+                assert recommendation["requiresHumanGateDecision"] is True
+                assert recommendation["liveCapitalMutation"] is False
+                assert recommendation["governance"]["liveCapitalMutation"] is False
+                assert "human_inbox" in recommendation["governance"]["destinations"]
+        finally:
+            bff_main.read_store = original
+
+
 def test_pm12_quarterly_ranking_rejects_invalid_quarter() -> None:
     with tempfile.TemporaryDirectory() as td:
         original = bff_main.read_store
@@ -184,6 +264,15 @@ def test_pm12_quarterly_ranking_rejects_invalid_quarter() -> None:
 
             assert response.status_code == 422, response.text
             assert response.json()["detail"]["error"] == "invalid_quarter"
+
+            recommendations = client.get(
+                "/bff/management/quarterly-ranking/recommendations",
+                headers=HEADERS,
+                params={"quarter": "2026-05"},
+            )
+
+            assert recommendations.status_code == 422, recommendations.text
+            assert recommendations.json()["detail"]["error"] == "invalid_quarter"
         finally:
             bff_main.read_store = original
 
@@ -205,5 +294,11 @@ def test_pm12_persona_league_requires_auth() -> None:
 
             quarterly = client.get("/bff/management/quarterly-ranking")
             assert quarterly.status_code == 401, quarterly.text
+
+            recommendations = client.get("/bff/management/quarterly-ranking/recommendations")
+            assert recommendations.status_code == 401, recommendations.text
+
+            formula = client.get("/bff/management/quarterly-ranking/formula")
+            assert formula.status_code == 401, formula.text
         finally:
             bff_main.read_store = original

@@ -6258,6 +6258,232 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
     }
 
 
+def _build_management_trading_pulse_route_payload(snapshot_at: str) -> Dict[str, Any]:
+    payload = _build_management_trading_pulse_payload(snapshot_at)
+    data = {
+        "id": "management-trading-pulse",
+        "summary": payload["summary"],
+        "cards": payload["cards"],
+        "rankings": payload["rankings"],
+        "runtimeRows": payload["runtimeRows"],
+        "runtime_rows": payload["runtime_rows"],
+    }
+    return {
+        "data": data,
+        "items": payload["cards"],
+        "cards": payload["cards"],
+        "rankings": payload["rankings"],
+        "runtimeRows": payload["runtimeRows"],
+        "runtime_rows": payload["runtime_rows"],
+        "summary": payload["summary"],
+        "page_info": {
+            "next_page_token": None,
+            "total": len(payload["cards"]),
+            "page_size": len(payload["cards"]),
+        },
+        "meta": payload["meta"],
+    }
+
+
+_TRADING_PULSE_RANKING_METRIC_FIELDS = {
+    "pnl": ("pnl",),
+    "drawdown": ("drawdown",),
+    "sharpe_ratio": ("sharpeRatio", "sharpe_ratio"),
+    "fill_rate": ("fillRate", "fill_rate"),
+    "avg_slippage_bps": ("avgSlippageBps", "avg_slippage_bps"),
+    "total_trades": ("totalTrades", "total_trades"),
+}
+
+
+def _trading_pulse_metric_value(
+    item: Dict[str, Any],
+    metric: str,
+) -> Optional[float]:
+    for field in _TRADING_PULSE_RANKING_METRIC_FIELDS.get(metric, (metric,)):
+        value = _management_number(item.get(field))
+        if value is not None:
+            return value
+    return None
+
+
+def _trading_pulse_ranked_items(
+    rankings: List[Dict[str, Any]],
+    *,
+    metric: str,
+    descending: bool,
+    limit: int,
+    block_id: str,
+) -> List[Dict[str, Any]]:
+    present = [
+        item for item in rankings
+        if _trading_pulse_metric_value(item, metric) is not None
+    ]
+    missing = [
+        item for item in rankings
+        if _trading_pulse_metric_value(item, metric) is None
+    ]
+    ordered_present = sorted(
+        present,
+        key=lambda item: (
+            _trading_pulse_metric_value(item, metric) or 0.0,
+            str(item.get("runtimeId") or item.get("runtime_id") or ""),
+        ),
+        reverse=descending,
+    )
+    ordered_missing = sorted(
+        missing,
+        key=lambda item: str(item.get("runtimeId") or item.get("runtime_id") or ""),
+    )
+
+    ranked: List[Dict[str, Any]] = []
+    for index, item in enumerate((ordered_present + ordered_missing)[:limit], start=1):
+        projected = dict(item)
+        projected["rank"] = index
+        projected["rankingBlockId"] = block_id
+        projected["ranking_block_id"] = block_id
+        projected["rankingMetric"] = metric
+        projected["ranking_metric"] = metric
+        projected["rankingMetricValue"] = _trading_pulse_metric_value(item, metric)
+        projected["ranking_metric_value"] = projected["rankingMetricValue"]
+        ranked.append(projected)
+    return ranked
+
+
+def _build_management_trading_pulse_ranking_blocks(
+    rankings: List[Dict[str, Any]],
+    *,
+    limit: int,
+) -> List[Dict[str, Any]]:
+    return [
+        {
+            "blockId": "pnl-leaders",
+            "block_id": "pnl-leaders",
+            "label": "P&L Leaders",
+            "metric": "pnl",
+            "sortOrder": "desc",
+            "sort_order": "desc",
+            "items": _trading_pulse_ranked_items(
+                rankings,
+                metric="pnl",
+                descending=True,
+                limit=limit,
+                block_id="pnl-leaders",
+            ),
+        },
+        {
+            "blockId": "drawdown-control",
+            "block_id": "drawdown-control",
+            "label": "Drawdown Control",
+            "metric": "drawdown",
+            "sortOrder": "asc",
+            "sort_order": "asc",
+            "items": _trading_pulse_ranked_items(
+                rankings,
+                metric="drawdown",
+                descending=False,
+                limit=limit,
+                block_id="drawdown-control",
+            ),
+        },
+        {
+            "blockId": "execution-quality",
+            "block_id": "execution-quality",
+            "label": "Execution Quality",
+            "metric": "fill_rate",
+            "secondaryMetric": "avg_slippage_bps",
+            "secondary_metric": "avg_slippage_bps",
+            "sortOrder": "desc",
+            "sort_order": "desc",
+            "items": _trading_pulse_ranked_items(
+                rankings,
+                metric="fill_rate",
+                descending=True,
+                limit=limit,
+                block_id="execution-quality",
+            ),
+        },
+        {
+            "blockId": "sharpe-leaders",
+            "block_id": "sharpe-leaders",
+            "label": "Sharpe Leaders",
+            "metric": "sharpe_ratio",
+            "sortOrder": "desc",
+            "sort_order": "desc",
+            "items": _trading_pulse_ranked_items(
+                rankings,
+                metric="sharpe_ratio",
+                descending=True,
+                limit=limit,
+                block_id="sharpe-leaders",
+            ),
+        },
+    ]
+
+
+def _build_management_trading_pulse_rankings_payload(
+    snapshot_at: str,
+    *,
+    limit: int,
+) -> Dict[str, Any]:
+    trading_pulse = _build_management_trading_pulse_payload(snapshot_at)
+    blocks = _build_management_trading_pulse_ranking_blocks(
+        list(trading_pulse.get("rankings") or []),
+        limit=limit,
+    )
+    surfaces = dict((trading_pulse.get("meta") or {}).get("surfaces") or {})
+    source_surfaces = [
+        surface for surface in (
+            surfaces.get("management_trading_pulse"),
+            surfaces.get("runtime_roster"),
+            surfaces.get("telemetry_summary"),
+        )
+        if isinstance(surface, dict)
+    ]
+    surfaces["management_trading_pulse_rankings"] = _aggregate_group_surface(
+        "management_trading_pulse_rankings",
+        source_surfaces,
+        snapshot_at=snapshot_at,
+        unavailable_message="Trading pulse rankings aggregate unavailable.",
+        degraded_message="Trading pulse rankings are degraded because runtime or telemetry coverage is degraded.",
+    )
+    top_item = (blocks[0].get("items") or [None])[0] if blocks else None
+    ranked_item_count = sum(len(block.get("items") or []) for block in blocks)
+    summary = {
+        "runtimeCount": int((trading_pulse.get("summary") or {}).get("runtimeCount") or 0),
+        "runtime_count": int((trading_pulse.get("summary") or {}).get("runtime_count") or 0),
+        "rankingBlockCount": len(blocks),
+        "ranking_block_count": len(blocks),
+        "rankedItemCount": ranked_item_count,
+        "ranked_item_count": ranked_item_count,
+        "criteria": [str(block.get("metric") or "") for block in blocks],
+        "limit": limit,
+        "topRuntimeId": (top_item or {}).get("runtimeId") if isinstance(top_item, dict) else None,
+        "top_runtime_id": (top_item or {}).get("runtime_id") if isinstance(top_item, dict) else None,
+    }
+    return {
+        "data": blocks,
+        "items": blocks,
+        "rankings": blocks,
+        "rankingBlocks": blocks,
+        "ranking_blocks": blocks,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": None,
+            "total": len(blocks),
+            "page_size": len(blocks),
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": surfaces,
+            "composition_sources": [
+                "GET /bff/management/trading-pulse",
+                "GET /bff/runtimes",
+                "telemetry_summaries",
+            ],
+        },
+    }
+
+
 def _build_management_anomalies_payload(snapshot_at: str) -> Dict[str, Any]:
     runtime_alerts, runtime_surfaces = _build_runtime_alerts(snapshot_at)
     sentinel_available, sentinel_findings = read_store.list_sentinel_findings()
@@ -11467,6 +11693,31 @@ async def bff_management_cockpit(
 
     snapshot_at = utc_now()
     return _build_management_cockpit_payload(snapshot_at)
+
+
+@app.get("/bff/management/trading-pulse")
+async def bff_management_trading_pulse(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF-B3-004: Management Trading Pulse card aggregate."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    return _build_management_trading_pulse_route_payload(snapshot_at)
+
+
+@app.get("/bff/management/trading-pulse/rankings")
+async def bff_management_trading_pulse_rankings(
+    limit: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF-B3-004: Management Trading Pulse ranking blocks."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    return _build_management_trading_pulse_rankings_payload(snapshot_at, limit=limit)
 
 
 @app.get("/api/v1/operator/paper-live-drift/{runtime_id}")
@@ -23811,7 +24062,83 @@ _PM12_LEAGUE_RANKING_CRITERIA = {
     "activity": ("activityScore", "Activity"),
 }
 _PM12_LEAGUE_FORMULA_VERSION = "pm12-default-v1"
+_PM12_QUARTERLY_FORMULA_DOC_REF = (
+    "docs/04/pantheon_bff_api_gap_2026-05-23/"
+    "BFF_API_GAP_final_integration_spec.md#b34-pm-12-composition-sources"
+)
+_PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID = (
+    "pm12-quarterly-ranking-formula-v1-governance"
+)
+_PM12_QUARTERLY_FORMULA_EFFECTIVE_AT = "2026-05-23T00:00:00Z"
 _PM12_QUARTER_PATTERN = re.compile(r"^(?P<year>\d{4})-Q(?P<quarter>[1-4])$", re.IGNORECASE)
+_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER = (
+    "promote_to_canary_candidate",
+    "increase_research_budget",
+    "grant_tool_access",
+    "reduce_capital_access",
+    "require_retraining",
+    "freeze_persona",
+    "suspend_persona",
+    "retire_persona",
+)
+_PM12_QUARTERLY_RECOMMENDATION_ACTIONS = {
+    "promote_to_canary_candidate": {
+        "label": "Promote to canary candidate",
+        "priority": "high",
+        "riskLevel": "medium",
+        "risk_level": "medium",
+        "rationale": "Quarterly score and risk posture support canary-review consideration.",
+    },
+    "increase_research_budget": {
+        "label": "Increase research budget",
+        "priority": "medium",
+        "riskLevel": "low",
+        "risk_level": "low",
+        "rationale": "Quarterly score supports additional research-only budget.",
+    },
+    "grant_tool_access": {
+        "label": "Grant tool access",
+        "priority": "medium",
+        "riskLevel": "low",
+        "risk_level": "low",
+        "rationale": "Quarterly score and execution posture support expanded tool access review.",
+    },
+    "reduce_capital_access": {
+        "label": "Reduce capital access",
+        "priority": "high",
+        "riskLevel": "high",
+        "risk_level": "high",
+        "rationale": "Risk or overall score calls for capital-access reduction review.",
+    },
+    "require_retraining": {
+        "label": "Require retraining",
+        "priority": "medium",
+        "riskLevel": "medium",
+        "risk_level": "medium",
+        "rationale": "Quarterly component scores indicate retraining should be reviewed.",
+    },
+    "freeze_persona": {
+        "label": "Freeze persona",
+        "priority": "critical",
+        "riskLevel": "critical",
+        "risk_level": "critical",
+        "rationale": "Quarterly score is below the freeze-review threshold.",
+    },
+    "suspend_persona": {
+        "label": "Suspend persona",
+        "priority": "critical",
+        "riskLevel": "critical",
+        "risk_level": "critical",
+        "rationale": "Quarterly score is below the suspension-review threshold.",
+    },
+    "retire_persona": {
+        "label": "Retire persona",
+        "priority": "critical",
+        "riskLevel": "critical",
+        "risk_level": "critical",
+        "rationale": "Quarterly score is below the retirement-review threshold.",
+    },
+}
 _PM12_LEAGUE_TIER_DEFINITIONS = [
     {
         "id": "tier-1",
@@ -24034,7 +24361,92 @@ def _pm12_quarter_window(quarter: Optional[str], snapshot_at: str) -> Dict[str, 
     }
 
 
+def _pm12_quarter_formula_governance_evidence_refs() -> List[Dict[str, Any]]:
+    return [
+        {
+            "id": _PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID,
+            "refId": _PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID,
+            "ref_id": _PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID,
+            "title": "PM-12 quarterly ranking formula governance baseline",
+            "displayLabel": "PM-12 quarterly ranking formula governance baseline",
+            "display_label": "PM-12 quarterly ranking formula governance baseline",
+            "sourceType": "governance_record",
+            "source_type": "governance_record",
+            "sourceRef": _PM12_QUARTERLY_FORMULA_DOC_REF,
+            "source_ref": _PM12_QUARTERLY_FORMULA_DOC_REF,
+            "capturedAt": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
+            "captured_at": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
+            "linkType": "formula_version_governance",
+            "link_type": "formula_version_governance",
+            "credibility": {
+                "tier": "primary",
+                "verified": True,
+                "last_verified_at": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
+                "verification_method": "task_review",
+            },
+            "linkedObjectSummary": {
+                "entity_type": "ranking_formula",
+                "entity_ref": "pm12-quarterly-ranking-formula",
+                "display_label": "PM-12 quarterly ranking formula",
+            },
+            "linked_object_summary": {
+                "entity_type": "ranking_formula",
+                "entity_ref": "pm12-quarterly-ranking-formula",
+                "display_label": "PM-12 quarterly ranking formula",
+            },
+            "resolvedLink": {
+                "availability": "available",
+                "route_href": _PM12_QUARTERLY_FORMULA_DOC_REF,
+                "display_label": "Open PM-12 integration spec",
+                "open_in_new_tab": False,
+            },
+            "resolved_link": {
+                "availability": "available",
+                "route_href": _PM12_QUARTERLY_FORMULA_DOC_REF,
+                "display_label": "Open PM-12 integration spec",
+                "open_in_new_tab": False,
+            },
+            "routeHref": _PM12_QUARTERLY_FORMULA_DOC_REF,
+            "route_href": _PM12_QUARTERLY_FORMULA_DOC_REF,
+        }
+    ]
+
+
+def _pm12_quarter_formula_version_history() -> List[Dict[str, Any]]:
+    evidence_ref_ids = [
+        ref["ref_id"] for ref in _pm12_quarter_formula_governance_evidence_refs()
+    ]
+    return [
+        {
+            "id": f"pm12-quarterly-ranking-formula-{_PM12_LEAGUE_FORMULA_VERSION}",
+            "version": _PM12_LEAGUE_FORMULA_VERSION,
+            "formulaVersion": _PM12_LEAGUE_FORMULA_VERSION,
+            "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
+            "effectiveAt": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
+            "effective_at": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
+            "changeType": "baseline",
+            "change_type": "baseline",
+            "governanceEvidenceRefs": evidence_ref_ids,
+            "governance_evidence_refs": evidence_ref_ids,
+            "description": "Baseline formula accepted for PM-12 quarterly ranking reads.",
+        }
+    ]
+
+
 def _pm12_quarter_formula_payload() -> Dict[str, Any]:
+    evidence_ref_ids = [
+        ref["ref_id"] for ref in _pm12_quarter_formula_governance_evidence_refs()
+    ]
+    version_history = _pm12_quarter_formula_version_history()
+    change_control = {
+        "versionPolicy": "formula_version_changes_require_governance_evidence",
+        "version_policy": "formula_version_changes_require_governance_evidence",
+        "requiresGovernanceEvidence": True,
+        "requires_governance_evidence": True,
+        "governanceEvidenceRefs": evidence_ref_ids,
+        "governance_evidence_refs": evidence_ref_ids,
+        "authority": "read_only_governance_advisory",
+    }
     return {
         "id": "pm12-quarterly-ranking-formula",
         "formulaId": "pm12-quarterly-ranking-formula",
@@ -24053,6 +24465,12 @@ def _pm12_quarter_formula_payload() -> Dict[str, Any]:
         ],
         "basis": "latest_available_persona_league_metrics_with_quarter_window",
         "policy": "read_only_governance_advisory",
+        "governanceEvidenceRefs": evidence_ref_ids,
+        "governance_evidence_refs": evidence_ref_ids,
+        "versionHistory": version_history,
+        "version_history": version_history,
+        "changeControl": change_control,
+        "change_control": change_control,
     }
 
 
@@ -24075,6 +24493,37 @@ def _pm12_quarter_evidence_refs(
         for timestamp in [_pm12_evidence_timestamp(item)]
         if timestamp is not None and start_at <= timestamp < end_exclusive_at
     ]
+
+
+def _pm12_public_quarter_evidence_refs(
+    identity: OperatorIdentity,
+    quarter_window: Dict[str, Any],
+) -> tuple[List[Dict[str, Any]], int, bool]:
+    raw_evidence_refs = read_store.list_evidence_refs()
+    evidence_dataset_available = read_store.dataset_source("evidence_refs") != "missing"
+    quarter_evidence_refs = (
+        _pm12_quarter_evidence_refs(raw_evidence_refs, quarter_window)
+        if evidence_dataset_available
+        else []
+    )
+    try:
+        capabilities = _capabilities_for_identity(identity)
+    except Exception:
+        capabilities = None
+    processed_evidence_refs, redacted_count = redact_evidence_refs(
+        identity,
+        quarter_evidence_refs,
+        capabilities=capabilities,
+    )
+    return (
+        [
+            _management_evidence_public_item(item)
+            for item in processed_evidence_refs
+            if isinstance(item, dict)
+        ],
+        redacted_count,
+        evidence_dataset_available,
+    )
 
 
 def _pm12_quarterly_ranking_items(
@@ -24107,6 +24556,177 @@ def _pm12_quarterly_ranking_items(
             "basis": "latest_available_persona_league_metrics_with_quarter_window",
         })
     return items
+
+
+def _pm12_add_recommendation_action(action_ids: List[str], action_id: str) -> None:
+    if action_id in _PM12_QUARTERLY_RECOMMENDATION_ACTIONS and action_id not in action_ids:
+        action_ids.append(action_id)
+
+
+def _pm12_recommendation_action_ids(item: Dict[str, Any]) -> List[str]:
+    components = item.get("components") if isinstance(item.get("components"), dict) else {}
+    overall = _management_number(item.get("score")) or _management_number(item.get("overallScore")) or 0.0
+    risk_score = _management_number(components.get("riskScore"))
+    execution_score = _management_number(components.get("executionScore"))
+    activity_score = _management_number(components.get("activityScore"))
+    action_ids: List[str] = []
+
+    if overall >= 85.0 and (risk_score is None or risk_score >= 70.0) and (
+        execution_score is None or execution_score >= 65.0
+    ):
+        _pm12_add_recommendation_action(action_ids, "promote_to_canary_candidate")
+        _pm12_add_recommendation_action(action_ids, "increase_research_budget")
+        _pm12_add_recommendation_action(action_ids, "grant_tool_access")
+    elif overall >= 70.0 and (risk_score is None or risk_score >= 60.0):
+        _pm12_add_recommendation_action(action_ids, "increase_research_budget")
+        _pm12_add_recommendation_action(action_ids, "grant_tool_access")
+
+    if risk_score is not None and risk_score < 55.0:
+        _pm12_add_recommendation_action(action_ids, "reduce_capital_access")
+    if (execution_score is not None and execution_score < 55.0) or (
+        activity_score is not None and activity_score < 45.0
+    ):
+        _pm12_add_recommendation_action(action_ids, "require_retraining")
+    if overall < 55.0:
+        _pm12_add_recommendation_action(action_ids, "require_retraining")
+        _pm12_add_recommendation_action(action_ids, "reduce_capital_access")
+    if overall < 45.0:
+        _pm12_add_recommendation_action(action_ids, "freeze_persona")
+    if overall < 35.0:
+        _pm12_add_recommendation_action(action_ids, "suspend_persona")
+    if overall < 25.0:
+        _pm12_add_recommendation_action(action_ids, "retire_persona")
+
+    if not action_ids:
+        _pm12_add_recommendation_action(action_ids, "require_retraining")
+    return [
+        action_id
+        for action_id in _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER
+        if action_id in action_ids
+    ]
+
+
+def _pm12_quarterly_recommendation_item(
+    item: Dict[str, Any],
+    *,
+    action_id: str,
+    quarter_window: Dict[str, Any],
+    evidence_refs: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    action = _PM12_QUARTERLY_RECOMMENDATION_ACTIONS[action_id]
+    persona_id = str(item.get("personaId") or item.get("persona_id") or item.get("id") or "")
+    score = _management_number(item.get("score")) or _management_number(item.get("overallScore")) or 0.0
+    evidence_sample = evidence_refs[:5]
+    evidence_ref_ids = [
+        str(ref.get("refId") or ref.get("ref_id") or ref.get("id"))
+        for ref in evidence_sample
+        if ref.get("refId") or ref.get("ref_id") or ref.get("id")
+    ]
+    recommendation_id = f"pm12-{quarter_window['quarter'].lower()}-{persona_id}-{action_id}"
+    governance = {
+        "requiresHumanGateDecision": True,
+        "requires_human_gate_decision": True,
+        "destinations": ["human_inbox", "governance_queue", "human_gate_decision"],
+        "humanInboxRoute": "/bff/management/human-inbox",
+        "human_inbox_route": "/bff/management/human-inbox",
+        "governanceQueueRoute": "/api/v1/operator/governance/approval-queue",
+        "governance_queue_route": "/api/v1/operator/governance/approval-queue",
+        "decisionType": "HumanGateDecision",
+        "decision_type": "HumanGateDecision",
+        "liveCapitalMutation": False,
+        "live_capital_mutation": False,
+    }
+    return {
+        "id": recommendation_id,
+        "recommendationId": recommendation_id,
+        "recommendation_id": recommendation_id,
+        "quarter": quarter_window["quarter"],
+        "quarterWindow": quarter_window,
+        "quarter_window": quarter_window,
+        "personaId": persona_id,
+        "persona_id": persona_id,
+        "name": item.get("name"),
+        "owner": item.get("owner"),
+        "state": item.get("state"),
+        "risk": item.get("risk"),
+        "rank": item.get("rank"),
+        "score": score,
+        "tier": item.get("tier"),
+        "tierId": item.get("tierId"),
+        "tier_id": item.get("tier_id"),
+        "tierLabel": item.get("tierLabel"),
+        "tier_label": item.get("tier_label"),
+        "formulaVersion": item.get("formulaVersion") or _PM12_LEAGUE_FORMULA_VERSION,
+        "formula_version": item.get("formula_version") or _PM12_LEAGUE_FORMULA_VERSION,
+        "actionId": action_id,
+        "action_id": action_id,
+        "actionLabel": action["label"],
+        "action_label": action["label"],
+        "recommendationType": "governance_advisory",
+        "recommendation_type": "governance_advisory",
+        "status": "recommended",
+        "priority": action["priority"],
+        "riskLevel": action["riskLevel"],
+        "risk_level": action["risk_level"],
+        "target": {"type": "persona", "id": persona_id},
+        "rationale": f"{action['rationale']} Score={score:.2f}; tier={item.get('tier') or 'unknown'}.",
+        "rationaleCodes": [
+            f"tier:{item.get('tier') or 'unknown'}",
+            f"action:{action_id}",
+            "policy:no_direct_live_capital",
+        ],
+        "rationale_codes": [
+            f"tier:{item.get('tier') or 'unknown'}",
+            f"action:{action_id}",
+            "policy:no_direct_live_capital",
+        ],
+        "metrics": item.get("metrics") or {},
+        "components": item.get("components") or {},
+        "evidenceRefs": evidence_sample,
+        "evidence_refs": evidence_sample,
+        "evidenceRefIds": evidence_ref_ids,
+        "evidence_ref_ids": evidence_ref_ids,
+        "governance": governance,
+        "requiresHumanGateDecision": True,
+        "requires_human_gate_decision": True,
+        "liveCapitalMutation": False,
+        "live_capital_mutation": False,
+        "policy": "read_only_governance_advisory",
+        "links": {
+            "persona": f"/bff/personas/{persona_id}",
+            "humanInbox": "/bff/management/human-inbox",
+            "governanceQueue": "/api/v1/operator/governance/approval-queue",
+        },
+    }
+
+
+def _pm12_quarterly_recommendations(
+    ranked_items: List[Dict[str, Any]],
+    *,
+    quarter_window: Dict[str, Any],
+    evidence_refs: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    recommendations: List[Dict[str, Any]] = []
+    for item in ranked_items:
+        for action_id in _pm12_recommendation_action_ids(item):
+            recommendations.append(
+                _pm12_quarterly_recommendation_item(
+                    item,
+                    action_id=action_id,
+                    quarter_window=quarter_window,
+                    evidence_refs=evidence_refs,
+                )
+            )
+    recommendations.sort(
+        key=lambda entry: (
+            _HUMAN_INBOX_PRIORITY_RANK.get(str(entry.get("priority") or "unknown"), 0),
+            -int(entry.get("rank") or 0),
+            str(entry.get("actionId") or ""),
+            str(entry.get("personaId") or ""),
+        ),
+        reverse=True,
+    )
+    return recommendations
 
 
 def _project_persona_league_row(raw: Dict[str, Any]) -> Dict[str, Any]:
@@ -24476,6 +25096,64 @@ async def bff_management_persona_league_tiers(
     }
 
 
+@app.get("/bff/management/quarterly-ranking/formula")
+async def bff_management_quarterly_ranking_formula(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 quarterly ranking formula weights, version, and governance trace."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    formula = _pm12_quarter_formula_payload()
+    evidence_refs = _pm12_quarter_formula_governance_evidence_refs()
+    version_history = list(formula.get("versionHistory") or [])
+    formula_surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
+    evidence_surface = _composed_surface_status(
+        snapshot_at=snapshot_at,
+        available=bool(evidence_refs),
+        missing_message="Quarterly ranking formula governance evidence is unavailable.",
+    )
+    weights = formula.get("weights") if isinstance(formula.get("weights"), dict) else {}
+    summary = {
+        "formulaId": formula["formulaId"],
+        "formula_id": formula["formula_id"],
+        "formulaVersion": formula["formulaVersion"],
+        "formula_version": formula["formula_version"],
+        "componentCount": len(formula.get("components") or []),
+        "component_count": len(formula.get("components") or []),
+        "weightTotal": round(sum(_management_number(value) or 0.0 for value in weights.values()), 6),
+        "weight_total": round(sum(_management_number(value) or 0.0 for value in weights.values()), 6),
+        "evidenceRefCount": len(evidence_refs),
+        "evidence_ref_count": len(evidence_refs),
+        "basis": formula["basis"],
+        "policy": formula["policy"],
+    }
+    return {
+        "data": formula,
+        "formula": formula,
+        "versionHistory": version_history,
+        "version_history": version_history,
+        "evidenceRefs": evidence_refs,
+        "evidence_refs": evidence_refs,
+        "summary": summary,
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "quarterly_ranking_formula": formula_surface,
+                "formula": formula_surface,
+                "governance_evidence": evidence_surface,
+            },
+            "composition_sources": [
+                "GET /bff/management/persona-league/rankings",
+                "GET /api/v1/knowledge/evidence",
+                _PM12_QUARTERLY_FORMULA_DOC_REF,
+            ],
+            "policy": formula["policy"],
+            "version_policy": "formula_version_changes_require_governance_evidence",
+        },
+    }
+
+
 @app.get("/bff/management/quarterly-ranking")
 async def bff_management_quarterly_ranking(
     quarter: Optional[str] = Query(default=None),
@@ -24496,27 +25174,10 @@ async def bff_management_quarterly_ranking(
     total = len(ranked_items)
     page_items, next_page_token = _page_slice(ranked_items, page_token, page_size)
 
-    raw_evidence_refs = read_store.list_evidence_refs()
-    evidence_dataset_available = read_store.dataset_source("evidence_refs") != "missing"
-    quarter_evidence_refs = (
-        _pm12_quarter_evidence_refs(raw_evidence_refs, quarter_window)
-        if evidence_dataset_available
-        else []
-    )
-    try:
-        capabilities = _capabilities_for_identity(identity)
-    except Exception:
-        capabilities = None
-    processed_evidence_refs, redacted_count = redact_evidence_refs(
+    public_evidence_refs, redacted_count, evidence_dataset_available = _pm12_public_quarter_evidence_refs(
         identity,
-        quarter_evidence_refs,
-        capabilities=capabilities,
+        quarter_window,
     )
-    public_evidence_refs = [
-        _management_evidence_public_item(item)
-        for item in processed_evidence_refs
-        if isinstance(item, dict)
-    ]
 
     formula = _pm12_quarter_formula_payload()
     source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
@@ -24597,6 +25258,173 @@ async def bff_management_quarterly_ranking(
             ],
             "policy": "read_only_governance_advisory",
             "redacted_evidence_count": redacted_count,
+        },
+    }
+
+
+@app.get("/bff/management/quarterly-ranking/recommendations")
+async def bff_management_quarterly_ranking_recommendations(
+    quarter: Optional[str] = Query(default=None),
+    state: Optional[str] = None,
+    archetype: Optional[str] = None,
+    q: str = Query(default=""),
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 quarterly governance recommendations without live mutations."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    quarter_window = _pm12_quarter_window(quarter, snapshot_at)
+    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
+    ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
+    public_evidence_refs, redacted_count, evidence_dataset_available = _pm12_public_quarter_evidence_refs(
+        identity,
+        quarter_window,
+    )
+    recommendations = _pm12_quarterly_recommendations(
+        ranked_items,
+        quarter_window=quarter_window,
+        evidence_refs=public_evidence_refs,
+    )
+    total = len(recommendations)
+    page_items, next_page_token = _page_slice(recommendations, page_token, page_size)
+
+    formula = _pm12_quarter_formula_payload()
+    action_counts = {
+        action_id: len([item for item in recommendations if item.get("actionId") == action_id])
+        for action_id in _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER
+    }
+    top_item = ranked_items[0] if ranked_items else None
+    summary = {
+        "quarter": quarter_window["quarter"],
+        "formulaVersion": formula["formulaVersion"],
+        "formula_version": formula["formula_version"],
+        "personaCount": len(rows),
+        "persona_count": len(rows),
+        "rankedCount": len(ranked_items),
+        "ranked_count": len(ranked_items),
+        "recommendationCount": total,
+        "recommendation_count": total,
+        "returnedCount": len(page_items),
+        "returned_count": len(page_items),
+        "topPersonaId": (top_item or {}).get("personaId") if isinstance(top_item, dict) else None,
+        "top_persona_id": (top_item or {}).get("personaId") if isinstance(top_item, dict) else None,
+        "humanGateDecisionCount": total,
+        "human_gate_decision_count": total,
+        "liveCapitalMutationCount": 0,
+        "live_capital_mutation_count": 0,
+        "evidenceRefCount": len(public_evidence_refs),
+        "evidence_ref_count": len(public_evidence_refs),
+        "redactedEvidenceCount": redacted_count,
+        "redacted_evidence_count": redacted_count,
+        "byAction": action_counts,
+        "by_action": action_counts,
+        "allowedActions": list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER),
+        "allowed_actions": list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER),
+        "basis": formula["basis"],
+        "policy": "read_only_governance_advisory",
+    }
+
+    source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
+    formula_surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
+    evidence_surface = _dataset_surface_status(
+        "evidence_refs",
+        snapshot_at=snapshot_at,
+        has_data=evidence_dataset_available,
+        missing_message="Evidence reference read surface is unavailable.",
+    )
+    approval_queue_surface = _dataset_surface_status("approval_queue_items", snapshot_at=snapshot_at)
+    human_gate_surface = _dataset_surface_status("approval_decisions", snapshot_at=snapshot_at)
+    human_inbox_surface = _composed_surface_status(
+        snapshot_at=snapshot_at,
+        available=(
+            approval_queue_surface.get("status") != "unavailable"
+            or human_gate_surface.get("status") != "unavailable"
+        ),
+        missing_message="Human Inbox and HumanGateDecision read surfaces are unavailable.",
+    )
+    quarterly_surface = _aggregate_group_surface(
+        "quarterly_ranking",
+        [*source_surfaces.values(), formula_surface, evidence_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Quarterly ranking aggregate unavailable.",
+        degraded_message="Quarterly ranking is degraded because one or more source surfaces are degraded.",
+    )
+    recommendations_surface = _aggregate_group_surface(
+        "quarterly_ranking_recommendations",
+        [
+            quarterly_surface,
+            formula_surface,
+            evidence_surface,
+            approval_queue_surface,
+            human_gate_surface,
+            human_inbox_surface,
+        ],
+        snapshot_at=snapshot_at,
+        unavailable_message="Quarterly ranking recommendations aggregate unavailable.",
+        degraded_message="Quarterly ranking recommendations are degraded because one or more governance source surfaces are degraded.",
+    )
+    governance_destinations = ["human_inbox", "governance_queue", "human_gate_decision"]
+    data = {
+        "id": f"pm12-quarterly-ranking-recommendations-{quarter_window['quarter'].lower()}",
+        "quarter": quarter_window["quarter"],
+        "quarterWindow": quarter_window,
+        "quarter_window": quarter_window,
+        "formula": formula,
+        "items": page_items,
+        "recommendations": page_items,
+        "evidenceRefs": public_evidence_refs,
+        "evidence_refs": public_evidence_refs,
+        "summary": summary,
+        "policy": "read_only_governance_advisory",
+        "governanceDestinations": governance_destinations,
+        "governance_destinations": governance_destinations,
+        "allowedActions": list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER),
+        "allowed_actions": list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER),
+    }
+    return {
+        "data": data,
+        "items": page_items,
+        "recommendations": page_items,
+        "formula": formula,
+        "quarterWindow": quarter_window,
+        "quarter_window": quarter_window,
+        "evidenceRefs": public_evidence_refs,
+        "evidence_refs": public_evidence_refs,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "quarterly_ranking_recommendations": recommendations_surface,
+                "quarterly_ranking": quarterly_surface,
+                "formula": formula_surface,
+                "evidence_refs": evidence_surface,
+                "knowledge_evidence": evidence_surface,
+                "human_inbox": human_inbox_surface,
+                "governance_queue": approval_queue_surface,
+                "human_gate_decision": human_gate_surface,
+                **source_surfaces,
+            },
+            "composition_sources": [
+                "GET /bff/management/quarterly-ranking",
+                "GET /bff/management/persona-league",
+                "GET /bff/management/persona-league/rankings",
+                "GET /bff/management/persona-league/tiers",
+                "GET /api/v1/knowledge/evidence",
+                "GET /bff/management/human-inbox",
+                "GET /api/v1/operator/governance/approval-queue",
+            ],
+            "policy": "read_only_governance_advisory",
+            "governance_destinations": governance_destinations,
+            "redacted_evidence_count": redacted_count,
+            "live_capital_mutation": False,
         },
     }
 

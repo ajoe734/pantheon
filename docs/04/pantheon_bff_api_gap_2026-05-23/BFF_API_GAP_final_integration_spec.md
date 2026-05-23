@@ -865,7 +865,150 @@ Added the `managementQuarterlyRanking()` path builder resolving to
 
 ### Task
 
+BFF-PM12-008 — Owner: Codex2, Reviewer: Claude2
+
+---
+
+### PM-12 Quarterly Ranking Recommendations
+
+`GET /bff/management/quarterly-ranking/recommendations?quarter=YYYY-Qn`
+composes PM-12 governance recommendations from the quarterly ranking result.
+It is a read-only advisory aggregate: it never writes capital, personas, runtime
+bindings, or approvals directly.
+
+**File: `services/control-plane/bff/main.py`**
+
+The route accepts `quarter`, `state`, `archetype`, `q`, `page_token`, and
+`page_size`. Quarter parsing and invalid-quarter behavior match
+`GET /bff/management/quarterly-ranking`.
+
+Each recommendation carries a policy-safe action id from the B3.5 allow-list:
+
+```text
+promote_to_canary_candidate, increase_research_budget, grant_tool_access,
+reduce_capital_access, require_retraining, freeze_persona,
+suspend_persona, retire_persona
+```
+
+Every item sets `recommendationType=governance_advisory`,
+`requiresHumanGateDecision=true`, and `liveCapitalMutation=false`. Governance
+destinations are Human Inbox, Governance Queue, and HumanGateDecision; the route
+only exposes those destinations as routing metadata and does not enqueue or
+decide anything by itself.
+
+The response includes top-level `items` / `recommendations`,
+`data.recommendations`, `quarterWindow`, `formula`, `evidenceRefs`, `summary`,
+`page_info`, and `meta.surfaces.quarterly_ranking_recommendations`.
+
+The route advertises strict live composition sources:
+
+- `GET /bff/management/quarterly-ranking`
+- `GET /bff/management/persona-league`
+- `GET /bff/management/persona-league/rankings`
+- `GET /bff/management/persona-league/tiers`
+- `GET /api/v1/knowledge/evidence`
+- `GET /bff/management/human-inbox`
+- `GET /api/v1/operator/governance/approval-queue`
+
+**File: `execute-plans/src/lib/bff-v1/management.ts`**
+
+Added typed query/response contracts plus:
+
+- `managementQuarterlyRankingRecommendationsPath()`
+- `fetchManagementQuarterlyRankingRecommendations()`
+
+**File: `execute-plans/src/lib/bff-v1/paths.ts`**
+
+Added the `managementQuarterlyRankingRecommendations()` path builder resolving
+to `/bff/management/quarterly-ranking/recommendations`.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated `GET /bff/management/quarterly-ranking/recommendations` returns advisory recommendations, formula, quarter window, evidence refs, summary, page info, and source metadata | Implemented BFF-PM12-008 |
+| 2 | Recommendations only use B3.5 governance action ids and mark `liveCapitalMutation=false` | Implemented BFF-PM12-008 |
+| 3 | `quarter=YYYY-Qn` parsing and HTTP 422 invalid-quarter behavior match quarterly ranking | Implemented BFF-PM12-008 |
+| 4 | Missing auth returns HTTP 401 | Implemented BFF-PM12-008 |
+| 5 | Route is registered in the execute-plans final live wiring route inventory | Implemented BFF-PM12-008 |
+| 6 | execute-plans exposes typed path and fetch helpers for quarterly ranking recommendations | Implemented BFF-PM12-008 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_pm12_persona_league.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
 BFF-PM12-006 — Owner: Codex2, Reviewer: Claude2
+
+---
+
+### PM-12 Quarterly Ranking Formula
+
+`GET /bff/management/quarterly-ranking/formula` exposes the PM-12 quarterly
+ranking formula as a read-only Management aggregate. It is the standalone source
+for formula weights, current version, component metadata, and version governance
+traceability used by the quarterly ranking response.
+
+**File: `services/control-plane/bff/main.py`**
+
+The route returns top-level `data` / `formula`, `versionHistory`,
+`evidenceRefs`, `summary`, and `meta`. The `data` payload is the same formula
+shape embedded in `GET /bff/management/quarterly-ranking`, including:
+
+- `weights` and `components` for `pnl`, `risk`, `execution`, and `activity`;
+- `formulaVersion` / `formula_version`;
+- `basis` and `policy`;
+- `changeControl` / `change_control` stating that formula version changes
+  require governance evidence;
+- `governanceEvidenceRefs` / `governance_evidence_refs` and version-history
+  entries that link the current version back to the PM-12 integration spec.
+
+The route advertises strict live composition sources:
+
+- `GET /bff/management/persona-league/rankings`
+- `GET /api/v1/knowledge/evidence`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#b34-pm-12-composition-sources`
+
+**File: `execute-plans/src/lib/bff-v1/management.ts`**
+
+Added typed response contracts plus:
+
+- `managementQuarterlyRankingFormulaPath()`
+- `fetchManagementQuarterlyRankingFormula()`
+
+**File: `execute-plans/src/lib/bff-v1/paths.ts`**
+
+Added the `managementQuarterlyRankingFormula()` path builder resolving to
+`/bff/management/quarterly-ranking/formula`.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated `GET /bff/management/quarterly-ranking/formula` returns formula weights and version | Implemented BFF-PM12-007 |
+| 2 | Formula version history and change-control fields trace version increments to governance evidence | Implemented BFF-PM12-007 |
+| 3 | Missing auth returns HTTP 401 | Implemented BFF-PM12-007 |
+| 4 | Route is registered in the execute-plans final live wiring route inventory | Implemented BFF-PM12-007 |
+| 5 | execute-plans exposes typed path and fetch helper for quarterly ranking formula | Implemented BFF-PM12-007 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_pm12_persona_league.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-PM12-007 — Owner: Codex2, Reviewer: Claude2
 
 ---
 
@@ -1637,6 +1780,62 @@ BFF-B3-002 — Owner: Codex, Reviewer: Claude
 ### Task
 
 BFF-B3-003 — Owner: Codex, Reviewer: Claude
+
+### B3-005/B3-006 GET `/bff/management/trading-pulse`
+
+**File: `services/control-plane/bff/main.py`**
+
+- Add `GET /bff/management/trading-pulse` as a read-only Management aggregate.
+- Add `GET /bff/management/trading-pulse/rankings` for computed ranking blocks.
+- Require the existing BFF read-role authentication gate; anonymous requests
+  return the typed BFF 401 envelope.
+- Compose Trading Pulse from:
+  - runtime bindings and deployment stage/status;
+  - telemetry summaries for P&L, drawdown, Sharpe, fill rate, slippage, and
+    trade count;
+  - rollback summaries linked to each runtime;
+  - computed ranking rows and ranking blocks.
+- Return the standard BFF aggregate envelope with `data`, `items`, `summary`,
+  `page_info`, and `meta.surfaces`.
+- Preserve source surfaces in metadata (`runtime_roster`, `telemetry_summary`)
+  plus composed `management_trading_pulse` and
+  `management_trading_pulse_rankings` surfaces.
+
+**Files: `execute-plans/src/lib/bff-v1/paths.ts`,
+`execute-plans/src/lib/bff-v1/management.ts`, and
+`execute-plans/src/lib/bff/client.ts`**
+
+- Add canonical `/bff/management/trading-pulse` and
+  `/bff/management/trading-pulse/rankings` paths.
+- Export Trading Pulse response, summary, card, runtime row, ranking item,
+  ranking block, query, path, and fetch helper types.
+- Add `managementClient.tradingPulse.list()` and
+  `managementClient.tradingPulse.rankings()` using the same strict/hybrid live
+  transport policy as the other Management aggregate reads.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `GET /bff/management/trading-pulse` returns card summary, runtime rows, and runtime rankings composed from runtime bindings and telemetry summaries | ✅ test added in BFF-B3-004 |
+| 2 | Response includes `data`, `items`, `cards`, `rankings`, `summary`, `page_info`, and `meta.surfaces.management_trading_pulse` | ✅ test added in BFF-B3-004 |
+| 3 | `GET /bff/management/trading-pulse/rankings?limit=` returns computed ranking blocks with bounded limit support | ✅ test added in BFF-B3-004 |
+| 4 | Anonymous requests return HTTP 401 typed BFF error envelope | ✅ test added in BFF-B3-004 |
+| 5 | Frontend path/client contract exposes the live aggregate and rankings route without seed-list fanout | ✅ implemented in BFF-B3-004 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_b3_trading_pulse.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/src/lib/bff/client.ts`
+- `execute-plans/src/lib/bff/__tests__/client.test.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B3-004 — Owner: Codex, Reviewer: Codex2
 
 ### B3-007 GET `/bff/management/evolution-journal`
 

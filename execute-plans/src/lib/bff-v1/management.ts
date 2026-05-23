@@ -67,6 +67,168 @@ export interface ManagementCockpitResponse {
   meta: ManagementCockpitMeta;
 }
 
+export interface ManagementTradingPulseSummary {
+  runtimeCount: number;
+  runtime_count: number;
+  telemetryCoverageCount: number;
+  telemetry_coverage_count: number;
+  byStatus: Record<string, number>;
+  by_status: Record<string, number>;
+  byStage: Record<string, number>;
+  by_stage: Record<string, number>;
+  totalPnl?: number | null;
+  total_pnl?: number | null;
+  worstDrawdown?: number | null;
+  worst_drawdown?: number | null;
+  averageFillRate?: number | null;
+  average_fill_rate?: number | null;
+  worstSlippageBps?: number | null;
+  worst_slippage_bps?: number | null;
+  totalTrades: number;
+  total_trades: number;
+  [key: string]: unknown;
+}
+
+export interface ManagementTradingPulseCard {
+  cardId: string;
+  card_id: string;
+  label: string;
+  value?: number | string | boolean | null;
+  details?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface ManagementTradingPulseRuntimeRow {
+  runtime_id?: string;
+  runtime_binding_id?: string;
+  deployment_stage?: string;
+  status?: string;
+  telemetry_summary?: Record<string, unknown> | null;
+  rollback_summary?: Record<string, unknown> | null;
+  last_updated_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface ManagementTradingPulseRankingItem {
+  runtimeId?: string | null;
+  runtime_id?: string | null;
+  runtimeBindingId?: string | null;
+  runtime_binding_id?: string | null;
+  deploymentStage?: string | null;
+  deployment_stage?: string | null;
+  status?: string | null;
+  rank: number;
+  pnl?: number | null;
+  drawdown?: number | null;
+  sharpeRatio?: number | null;
+  sharpe_ratio?: number | null;
+  fillRate?: number | null;
+  fill_rate?: number | null;
+  avgSlippageBps?: number | null;
+  avg_slippage_bps?: number | null;
+  totalTrades?: number | null;
+  total_trades?: number | null;
+  lastUpdatedAt?: string | null;
+  last_updated_at?: string | null;
+  rankingBlockId?: string;
+  ranking_block_id?: string;
+  rankingMetric?: string;
+  ranking_metric?: string;
+  rankingMetricValue?: number | null;
+  ranking_metric_value?: number | null;
+  [key: string]: unknown;
+}
+
+export interface ManagementTradingPulseData {
+  id: "management-trading-pulse" | string;
+  summary: ManagementTradingPulseSummary;
+  cards: ManagementTradingPulseCard[];
+  rankings: ManagementTradingPulseRankingItem[];
+  runtimeRows: ManagementTradingPulseRuntimeRow[];
+  runtime_rows: ManagementTradingPulseRuntimeRow[];
+  [key: string]: unknown;
+}
+
+export interface ManagementTradingPulseResponse {
+  data: ManagementTradingPulseData;
+  items: ManagementTradingPulseCard[];
+  cards: ManagementTradingPulseCard[];
+  rankings: ManagementTradingPulseRankingItem[];
+  runtimeRows: ManagementTradingPulseRuntimeRow[];
+  runtime_rows: ManagementTradingPulseRuntimeRow[];
+  summary: ManagementTradingPulseSummary;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces: {
+      management_trading_pulse: ManagementSurfaceRef;
+      runtime_roster?: ManagementSurfaceRef;
+      telemetry_summary?: ManagementSurfaceRef;
+      [key: string]: ManagementSurfaceRef | undefined;
+    };
+    [key: string]: unknown;
+  };
+}
+
+export interface ManagementTradingPulseRankingsQuery {
+  limit?: number;
+}
+
+export interface ManagementTradingPulseRankingBlock {
+  blockId: string;
+  block_id: string;
+  label: string;
+  metric: string;
+  secondaryMetric?: string;
+  secondary_metric?: string;
+  sortOrder: "asc" | "desc" | string;
+  sort_order: "asc" | "desc" | string;
+  items: ManagementTradingPulseRankingItem[];
+  [key: string]: unknown;
+}
+
+export interface ManagementTradingPulseRankingsResponse {
+  data: ManagementTradingPulseRankingBlock[];
+  items: ManagementTradingPulseRankingBlock[];
+  rankings: ManagementTradingPulseRankingBlock[];
+  rankingBlocks: ManagementTradingPulseRankingBlock[];
+  ranking_blocks: ManagementTradingPulseRankingBlock[];
+  summary: {
+    runtimeCount: number;
+    runtime_count: number;
+    rankingBlockCount: number;
+    ranking_block_count: number;
+    rankedItemCount: number;
+    ranked_item_count: number;
+    criteria: string[];
+    limit: number;
+    topRuntimeId?: string | null;
+    top_runtime_id?: string | null;
+    [key: string]: unknown;
+  };
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces: {
+      management_trading_pulse_rankings: ManagementSurfaceRef;
+      management_trading_pulse?: ManagementSurfaceRef;
+      runtime_roster?: ManagementSurfaceRef;
+      telemetry_summary?: ManagementSurfaceRef;
+      [key: string]: ManagementSurfaceRef | undefined;
+    };
+    composition_sources?: string[];
+    [key: string]: unknown;
+  };
+}
+
 export interface ManagementEvidenceQuery {
   ref_id?: string;
   linked_entity_type?: string;
@@ -476,6 +638,32 @@ export interface ManagementQuarterlyRankingWindow {
   [key: string]: unknown;
 }
 
+export interface ManagementQuarterlyRankingFormulaVersion {
+  id: string;
+  version: string;
+  formulaVersion: string;
+  formula_version: string;
+  effectiveAt: string;
+  effective_at: string;
+  changeType: string;
+  change_type: string;
+  governanceEvidenceRefs: string[];
+  governance_evidence_refs: string[];
+  description?: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementQuarterlyRankingFormulaChangeControl {
+  versionPolicy: string;
+  version_policy: string;
+  requiresGovernanceEvidence: boolean;
+  requires_governance_evidence: boolean;
+  governanceEvidenceRefs: string[];
+  governance_evidence_refs: string[];
+  authority: string;
+  [key: string]: unknown;
+}
+
 export interface ManagementQuarterlyRankingFormula {
   id: string;
   formulaId: string;
@@ -489,7 +677,47 @@ export interface ManagementQuarterlyRankingFormula {
   components: Array<Record<string, unknown>>;
   basis: string;
   policy: string;
+  governanceEvidenceRefs: string[];
+  governance_evidence_refs: string[];
+  versionHistory: ManagementQuarterlyRankingFormulaVersion[];
+  version_history: ManagementQuarterlyRankingFormulaVersion[];
+  changeControl: ManagementQuarterlyRankingFormulaChangeControl;
+  change_control: ManagementQuarterlyRankingFormulaChangeControl;
   [key: string]: unknown;
+}
+
+export interface ManagementQuarterlyRankingFormulaSummary {
+  formulaId: string;
+  formula_id: string;
+  formulaVersion: string;
+  formula_version: string;
+  componentCount: number;
+  component_count: number;
+  weightTotal: number;
+  weight_total: number;
+  evidenceRefCount: number;
+  evidence_ref_count: number;
+  basis: string;
+  policy: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementQuarterlyRankingFormulaResponse {
+  data: ManagementQuarterlyRankingFormula;
+  formula: ManagementQuarterlyRankingFormula;
+  versionHistory: ManagementQuarterlyRankingFormulaVersion[];
+  version_history: ManagementQuarterlyRankingFormulaVersion[];
+  evidenceRefs: ManagementEvidenceItem[];
+  evidence_refs: ManagementEvidenceItem[];
+  summary: ManagementQuarterlyRankingFormulaSummary;
+  meta: {
+    snapshot_at?: string;
+    surfaces?: Record<string, ManagementSurfaceRef>;
+    composition_sources?: string[];
+    policy?: string;
+    version_policy?: string;
+    [key: string]: unknown;
+  };
 }
 
 export interface ManagementQuarterlyRankingItem extends ManagementPersonaLeagueRankingItem {
@@ -556,6 +784,174 @@ export interface ManagementQuarterlyRankingResponse {
     composition_sources?: string[];
     policy?: string;
     redacted_evidence_count?: number;
+    [key: string]: unknown;
+  };
+}
+
+export interface ManagementQuarterlyRankingRecommendationsQuery {
+  quarter?: string;
+  state?: string;
+  archetype?: string;
+  q?: string;
+  page_token?: string;
+  page_size?: number;
+}
+
+export type ManagementQuarterlyRankingRecommendationAction =
+  | "promote_to_canary_candidate"
+  | "increase_research_budget"
+  | "grant_tool_access"
+  | "reduce_capital_access"
+  | "require_retraining"
+  | "freeze_persona"
+  | "suspend_persona"
+  | "retire_persona"
+  | string;
+
+export interface ManagementQuarterlyRankingRecommendationGovernance {
+  requiresHumanGateDecision: boolean;
+  requires_human_gate_decision: boolean;
+  destinations: string[];
+  humanInboxRoute?: string;
+  human_inbox_route?: string;
+  governanceQueueRoute?: string;
+  governance_queue_route?: string;
+  decisionType?: string;
+  decision_type?: string;
+  liveCapitalMutation: boolean;
+  live_capital_mutation: boolean;
+  [key: string]: unknown;
+}
+
+export interface ManagementQuarterlyRankingRecommendationItem {
+  id: string;
+  recommendationId: string;
+  recommendation_id: string;
+  quarter: string;
+  quarterWindow: ManagementQuarterlyRankingWindow;
+  quarter_window: ManagementQuarterlyRankingWindow;
+  personaId: string;
+  persona_id: string;
+  name?: string;
+  owner?: string;
+  state?: string;
+  risk?: string;
+  rank?: number;
+  score: number;
+  tier?: string;
+  tierId?: string;
+  tier_id?: string;
+  tierLabel?: string;
+  tier_label?: string;
+  formulaVersion: string;
+  formula_version: string;
+  actionId: ManagementQuarterlyRankingRecommendationAction;
+  action_id: ManagementQuarterlyRankingRecommendationAction;
+  actionLabel: string;
+  action_label: string;
+  recommendationType: "governance_advisory" | string;
+  recommendation_type: "governance_advisory" | string;
+  status: "recommended" | string;
+  priority: string;
+  riskLevel: string;
+  risk_level: string;
+  target: {
+    type: string;
+    id: string;
+    [key: string]: unknown;
+  };
+  rationale: string;
+  rationaleCodes: string[];
+  rationale_codes: string[];
+  metrics: Record<string, unknown>;
+  components: Record<string, unknown>;
+  evidenceRefs: ManagementEvidenceItem[];
+  evidence_refs: ManagementEvidenceItem[];
+  evidenceRefIds: string[];
+  evidence_ref_ids: string[];
+  governance: ManagementQuarterlyRankingRecommendationGovernance;
+  requiresHumanGateDecision: boolean;
+  requires_human_gate_decision: boolean;
+  liveCapitalMutation: boolean;
+  live_capital_mutation: boolean;
+  policy: string;
+  links?: Record<string, string | null | undefined>;
+  [key: string]: unknown;
+}
+
+export interface ManagementQuarterlyRankingRecommendationsSummary {
+  quarter: string;
+  formulaVersion: string;
+  formula_version: string;
+  personaCount: number;
+  persona_count: number;
+  rankedCount: number;
+  ranked_count: number;
+  recommendationCount: number;
+  recommendation_count: number;
+  returnedCount: number;
+  returned_count: number;
+  topPersonaId?: string | null;
+  top_persona_id?: string | null;
+  humanGateDecisionCount: number;
+  human_gate_decision_count: number;
+  liveCapitalMutationCount: number;
+  live_capital_mutation_count: number;
+  evidenceRefCount: number;
+  evidence_ref_count: number;
+  redactedEvidenceCount: number;
+  redacted_evidence_count: number;
+  byAction: Record<string, number>;
+  by_action: Record<string, number>;
+  allowedActions: ManagementQuarterlyRankingRecommendationAction[];
+  allowed_actions: ManagementQuarterlyRankingRecommendationAction[];
+  basis: string;
+  policy: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementQuarterlyRankingRecommendationsData {
+  id: string;
+  quarter: string;
+  quarterWindow: ManagementQuarterlyRankingWindow;
+  quarter_window: ManagementQuarterlyRankingWindow;
+  formula: ManagementQuarterlyRankingFormula;
+  items: ManagementQuarterlyRankingRecommendationItem[];
+  recommendations: ManagementQuarterlyRankingRecommendationItem[];
+  evidenceRefs: ManagementEvidenceItem[];
+  evidence_refs: ManagementEvidenceItem[];
+  summary: ManagementQuarterlyRankingRecommendationsSummary;
+  policy: string;
+  governanceDestinations: string[];
+  governance_destinations: string[];
+  allowedActions: ManagementQuarterlyRankingRecommendationAction[];
+  allowed_actions: ManagementQuarterlyRankingRecommendationAction[];
+  [key: string]: unknown;
+}
+
+export interface ManagementQuarterlyRankingRecommendationsResponse {
+  data: ManagementQuarterlyRankingRecommendationsData;
+  items: ManagementQuarterlyRankingRecommendationItem[];
+  recommendations: ManagementQuarterlyRankingRecommendationItem[];
+  formula: ManagementQuarterlyRankingFormula;
+  quarterWindow: ManagementQuarterlyRankingWindow;
+  quarter_window: ManagementQuarterlyRankingWindow;
+  evidenceRefs: ManagementEvidenceItem[];
+  evidence_refs: ManagementEvidenceItem[];
+  summary: ManagementQuarterlyRankingRecommendationsSummary;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces?: Record<string, ManagementSurfaceRef>;
+    composition_sources?: string[];
+    policy?: string;
+    governance_destinations?: string[];
+    redacted_evidence_count?: number;
+    live_capital_mutation?: boolean;
     [key: string]: unknown;
   };
 }
@@ -943,6 +1339,16 @@ export function managementCockpitPath(): string {
   return paths.managementCockpit();
 }
 
+export function managementTradingPulsePath(): string {
+  return paths.managementTradingPulse();
+}
+
+export function managementTradingPulseRankingsPath(
+  query?: ManagementTradingPulseRankingsQuery,
+): string {
+  return withQuery(paths.managementTradingPulseRankings(), query);
+}
+
 export function managementEvidencePath(query?: ManagementEvidenceQuery): string {
   return withQuery(paths.managementEvidence(), query);
 }
@@ -1011,6 +1417,16 @@ export function managementQuarterlyRankingPath(
   return withQuery(paths.managementQuarterlyRanking(), query);
 }
 
+export function managementQuarterlyRankingFormulaPath(): string {
+  return paths.managementQuarterlyRankingFormula();
+}
+
+export function managementQuarterlyRankingRecommendationsPath(
+  query?: ManagementQuarterlyRankingRecommendationsQuery,
+): string {
+  return withQuery(paths.managementQuarterlyRankingRecommendations(), query);
+}
+
 export async function fetchManagementCockpit(
   init?: RequestInit,
   baseUrl = "",
@@ -1026,6 +1442,43 @@ export async function fetchManagementCockpit(
     throw new Error(`GET ${managementCockpitPath()} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementCockpitResponse>;
+}
+
+export async function fetchManagementTradingPulse(
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementTradingPulseResponse> {
+  const path = managementTradingPulsePath();
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementTradingPulseResponse>;
+}
+
+export async function fetchManagementTradingPulseRankings(
+  query?: ManagementTradingPulseRankingsQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementTradingPulseRankingsResponse> {
+  const path = managementTradingPulseRankingsPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementTradingPulseRankingsResponse>;
 }
 
 export async function fetchManagementEvidence(
@@ -1250,4 +1703,41 @@ export async function fetchManagementQuarterlyRanking(
     throw new Error(`GET ${path} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementQuarterlyRankingResponse>;
+}
+
+export async function fetchManagementQuarterlyRankingFormula(
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementQuarterlyRankingFormulaResponse> {
+  const path = managementQuarterlyRankingFormulaPath();
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementQuarterlyRankingFormulaResponse>;
+}
+
+export async function fetchManagementQuarterlyRankingRecommendations(
+  query?: ManagementQuarterlyRankingRecommendationsQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementQuarterlyRankingRecommendationsResponse> {
+  const path = managementQuarterlyRankingRecommendationsPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementQuarterlyRankingRecommendationsResponse>;
 }
