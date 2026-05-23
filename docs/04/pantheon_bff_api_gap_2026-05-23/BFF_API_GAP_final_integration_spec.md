@@ -736,6 +736,93 @@ BFF-PM12-004 — Owner: Codex2, Reviewer: Claude2
 
 ---
 
+### PM-12 Portfolio-Book Holdings
+
+`GET /bff/management/portfolio-book/holdings` is the global holdings table for
+the PM-12 portfolio book. It is a read-only BFF composition route rather than a
+new source of truth.
+
+**File: `services/control-plane/bff/main.py`**
+
+The route composes holdings from existing read surfaces:
+
+- runtime bindings as the primary row anchor;
+- telemetry summaries for position snapshots, mark prices, quantity, PnL, fill
+  and trade metrics;
+- deployment plans for strategy/deployment context;
+- persona-capital bindings for persona and capital-pool ownership;
+- capital pools for pool labels and risk-policy refs.
+
+When telemetry exposes `positions`, `holdings`, `position_snapshots`,
+`position`, or `holding`, each nested record becomes one table row. When a
+runtime has no nested position snapshot yet, the BFF still emits one degraded
+runtime-level row so the UI can show the runtime/pool/persona link and the
+missing telemetry surface instead of silently falling back to mock holdings.
+
+The response uses the standard aggregate envelope:
+
+```json
+{
+  "data": {
+    "summary": {},
+    "items": [],
+    "holdings": []
+  },
+  "items": [],
+  "summary": {},
+  "page_info": { "next_page_token": null, "total": 0 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": []
+  }
+}
+```
+
+Each row includes runtime, deployment, capital-pool, persona, strategy, artifact,
+instrument, mark, exposure, PnL, telemetry, and drilldown `links` fields. The
+route supports `capital_pool_id`, `persona_id`, `runtime_id`,
+`deployment_stage`, `status`, `q`, `page_token`, and `page_size`.
+
+**File: `execute-plans/src/lib/bff-v1/paths.ts`**
+
+Added `managementPortfolioBook()` and `managementPortfolioBookHoldings()` path
+builders.
+
+**File: `execute-plans/src/lib/bff-v1/management.ts`**
+
+Added `ManagementPortfolioBookHolding`,
+`ManagementPortfolioBookHoldingsSummary`,
+`ManagementPortfolioBookHoldingsResponse`,
+`ManagementPortfolioBookHoldingsQuery`,
+`managementPortfolioBookHoldingsPath()`, and
+`fetchManagementPortfolioBookHoldings()`.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated `GET /bff/management/portfolio-book/holdings` returns `data`, `items`, `summary`, `page_info`, and `meta` | Implemented BFF-PM12-002 |
+| 2 | Rows include runtime/capital/persona/strategy links plus instrument, mark, exposure, PnL, and telemetry fields | Implemented BFF-PM12-002 |
+| 3 | Route supports PM12 table filters and offset paging | Implemented BFF-PM12-002 |
+| 4 | Missing telemetry degrades the holdings surface without hiding runtime-level rows | Implemented BFF-PM12-002 |
+| 5 | Missing auth returns HTTP 401 | Implemented BFF-PM12-002 |
+| 6 | Route is registered in OpenAPI and exposed through execute-plans BFF v1 path/fetch helpers | Implemented BFF-PM12-002 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-PM12-002 — Owner: Codex2, Reviewer: Claude2
+
+---
+
 ## §16 PATCH /bff/me/locale — Operator Locale Preference
 
 ### Gap
@@ -980,6 +1067,61 @@ BFF-B3-001 — Owner: Codex, Reviewer: Claude
 
 ---
 
+### B3-008 Evidence Explorer Aggregate
+
+**File: `services/control-plane/bff/main.py`**
+
+- Add `GET /bff/management/evidence` as the PM-Live Evidence Explorer aggregate route.
+- Require the existing BFF read-role authentication gate; anonymous requests
+  return the typed BFF 401 envelope.
+- Adapt the existing `/api/v1/knowledge/evidence` read model into a Management
+  aggregate envelope with `data`, `items`, `summary`, `facets`, `page_info`,
+  and `meta.surfaces`.
+- Preserve knowledge evidence filters for `ref_id`, `linked_entity_type`,
+  `linked_entity_ref`, `link_type`, `credibility_tier`, `verified`,
+  `page_token`, and bounded `page_size`.
+- Preserve evidence capability redaction and expose
+  `meta.redacted_evidence_count`.
+- Preserve source surface metadata for the composed `management_evidence`
+  aggregate and the underlying `evidence_refs` read surface.
+
+**Files: `execute-plans/src/lib/bff-v1/paths.ts`,
+`execute-plans/src/lib/bff-v1/management.ts`, and
+`execute-plans/src/lib/bff/client.ts`**
+
+- Add the canonical `/bff/management/evidence` path.
+- Export Evidence Explorer query, item, summary, response, path, and fetch
+  helper types.
+- Add `managementClient.evidenceExplorer.list()` using the same strict/hybrid
+  live transport policy as the other Management aggregate reads.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated `GET /bff/management/evidence` returns an Evidence Explorer aggregate envelope with `data`, `items`, `summary`, `facets`, `page_info`, and `meta.surfaces.management_evidence` | ✅ test added in BFF-B3-006 |
+| 2 | Evidence filters and bounded pagination are accepted by the backend route | ✅ test added in BFF-B3-006 |
+| 3 | Evidence capability redaction is preserved and reported through `meta.redacted_evidence_count` | ✅ test added in BFF-B3-006 |
+| 4 | Anonymous request returns HTTP 401 typed BFF error envelope | ✅ test added in BFF-B3-006 |
+| 5 | Execute-plans exposes the live aggregate path, response contract, fetch helper, and strict/hybrid management client adapter | ✅ implemented in BFF-B3-006 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_b3_management_evidence.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/src/lib/bff/client.ts`
+- `execute-plans/src/lib/bff/__tests__/client.test.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B3-006 — Owner: Codex, Reviewer: Claude
+
+---
+
 ## B4 — P1 v5 Closed-Loop OS APIs {#b4--p1-v5-closed-loop-os-apis}
 
 ### Gap
@@ -1191,11 +1333,11 @@ BFF-B2-005 — Owner: Codex, Reviewer: Claude2
 
 ### Gap
 
-The execute-plans Persona Fleet page needs one strict/live aggregate read so the
-frontend does not fan out across persona, binding, runtime, telemetry, trainer,
-and evolution read surfaces. The page can already read the B2.1 list/detail
-facade, but the live Persona Fleet view requires a backend-owned composition that
-keeps source-surface health visible and preserves fail-closed auth semantics.
+The execute-plans Management pages need strict/live aggregate reads so the
+frontend does not fan out across lower-level governance, persona, runtime,
+telemetry, trainer, and evolution read surfaces. These aggregates are
+backend-owned compositions that keep source-surface health visible and preserve
+fail-closed auth semantics.
 
 ### B3.3 GET `/bff/management/persona-fleet`
 
@@ -1255,3 +1397,57 @@ keeps source-surface health visible and preserves fail-closed auth semantics.
 ### Task
 
 BFF-B3-002 — Owner: Codex, Reviewer: Claude
+
+### B3.4 GET `/bff/management/human-inbox`
+
+**File: `services/control-plane/bff/main.py`**
+
+- Add `GET /bff/management/human-inbox` as a read-only Management aggregate.
+- Add `GET /bff/management/human-inbox/{item_id}` for composed inbox detail.
+- Require the existing BFF read-role authentication gate; anonymous requests
+  return the typed BFF 401 envelope.
+- Compose human-action rows from:
+  - governance approval queue items;
+  - v5 intervention records.
+- Return the standard BFF aggregate envelope: `data`, `items`, `summary`,
+  `page_info`, and `meta.surfaces`.
+- Support `source_type`, `status`, `priority`, `page_token`, and bounded
+  `page_size` filters.
+- Preserve source surfaces in metadata (`approval_queue`, `v5_interventions`)
+  plus a composed `human_inbox` surface.
+
+**File: `execute-plans/src/lib/bff-v1/paths.ts`**
+
+- Add `paths.managementHumanInbox()` resolving to
+  `/bff/management/human-inbox`.
+- Add `paths.managementHumanInboxItem(id)` resolving to
+  `/bff/management/human-inbox/{id}`.
+
+**File: `execute-plans/src/lib/bff/client.ts`**
+
+- Add `managementClient.humanInbox.list()` and
+  `managementClient.humanInbox.get()` as live aggregate readers using the same
+  strict/hybrid transport policy as OODA and mutation-review live reads.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `GET /bff/management/human-inbox` returns rows composed from approval queue items and v5 interventions | ✅ test added |
+| 2 | Response includes `data`, `items`, `summary`, `page_info`, and `meta.surfaces.human_inbox` | ✅ test added |
+| 3 | `source_type`, `status`, pagination filters, and detail lookup are accepted by the backend route | ✅ test added |
+| 4 | Anonymous request returns HTTP 401 typed BFF error envelope | ✅ test added |
+| 5 | Frontend path/client contract exposes the live aggregate and detail route without seed-list fanout | ✅ test added |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_b3_human_inbox.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff/client.ts`
+- `execute-plans/src/lib/bff/__tests__/client.test.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B3-003 — Owner: Codex, Reviewer: Claude

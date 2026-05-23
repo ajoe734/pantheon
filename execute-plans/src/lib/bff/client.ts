@@ -40,6 +40,11 @@ import type {
   OodaPacketMeta,
 } from "@/lib/ooda/packets";
 import type {
+  ManagementEvidenceItem,
+  ManagementEvidenceQuery,
+  ManagementEvidenceResponse,
+} from "@/lib/bff-v1/management";
+import type {
   Strategy,
   Persona,
   CapitalPool,
@@ -99,6 +104,61 @@ export interface PersonaFleetAggregate {
     healthy_personas: number;
     bound_personas: number;
     runtime_bound_personas: number;
+  };
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces?: Record<string, unknown>;
+    [key: string]: unknown;
+  };
+}
+
+export type HumanInboxSourceType = "approval" | "intervention";
+export type HumanInboxPriority = "critical" | "high" | "medium" | "low" | "unknown";
+
+export interface HumanInboxItem {
+  id: string;
+  inbox_id: string;
+  inboxType: HumanInboxSourceType;
+  source_type: HumanInboxSourceType;
+  source_id: string;
+  title: string;
+  summary: string;
+  priority: HumanInboxPriority;
+  risk_level: string;
+  status: string;
+  action_state: "pending" | "resolved" | string;
+  created_at?: string | null;
+  updated_at?: string | null;
+  target: {
+    type?: string | null;
+    id?: string | null;
+  };
+  route: string;
+  bff_detail_path: string;
+  allowedActions: Record<string, unknown>;
+  approval_decision_id?: string;
+  intervention_id?: string;
+  decision_context?: Record<string, unknown>;
+  remediation_context?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface HumanInboxAggregate {
+  data: HumanInboxItem[];
+  items: HumanInboxItem[];
+  summary: {
+    total_items: number;
+    returned_items: number;
+    pending_items: number;
+    approval_count: number;
+    intervention_count: number;
+    critical_count: number;
+    high_count: number;
   };
   page_info: {
     next_page_token: string | null;
@@ -256,6 +316,89 @@ function emptyPersonaFleetAggregate(): PersonaFleetAggregate {
   };
 }
 
+function emptyHumanInboxAggregate(): HumanInboxAggregate {
+  return {
+    data: [],
+    items: [],
+    summary: {
+      total_items: 0,
+      returned_items: 0,
+      pending_items: 0,
+      approval_count: 0,
+      intervention_count: 0,
+      critical_count: 0,
+      high_count: 0,
+    },
+    page_info: {
+      next_page_token: null,
+      total: 0,
+      page_size: 0,
+    },
+    meta: {
+      surfaces: {
+        human_inbox: {
+          status: "unavailable",
+          source: "mock",
+          reason: "Human Inbox aggregate is served only by the Pantheon BFF management aggregate.",
+        },
+      },
+    },
+  };
+}
+
+function emptyManagementEvidenceAggregate(): ManagementEvidenceResponse {
+  return {
+    data: [],
+    items: [],
+    summary: {
+      totalEvidence: 0,
+      total_evidence: 0,
+      returnedEvidence: 0,
+      returned_evidence: 0,
+      visibleEvidence: 0,
+      visible_evidence: 0,
+      redactedEvidence: 0,
+      redacted_evidence: 0,
+      verifiedEvidence: 0,
+      verified_evidence: 0,
+      bySourceType: {},
+      by_source_type: {},
+      byLinkType: {},
+      by_link_type: {},
+      byCredibilityTier: {},
+      by_credibility_tier: {},
+    },
+    facets: {
+      sourceTypes: {},
+      source_types: {},
+      linkTypes: {},
+      link_types: {},
+      credibilityTiers: {},
+      credibility_tiers: {},
+    },
+    page_info: {
+      next_page_token: null,
+      total: 0,
+      page_size: 0,
+    },
+    pagination: {
+      next_page_token: null,
+      has_more: false,
+      page_size: 0,
+    },
+    meta: {
+      surfaces: {
+        management_evidence: {
+          status: "unavailable",
+          source: "mock",
+          reason: "Evidence Explorer aggregate is served by the Pantheon BFF management aggregate.",
+        },
+      },
+      redacted_evidence_count: 0,
+    },
+  };
+}
+
 function adaptOodaPacketDetail(body: unknown): OodaPacketDetail | undefined {
   const envelope = asObject(body);
   const rawPacket = asObject(strictDataFrom(body) ?? body);
@@ -304,6 +447,93 @@ function adaptPersonaFleetAggregate(body: unknown): PersonaFleetAggregate {
   };
 }
 
+function adaptHumanInboxAggregate(body: unknown): HumanInboxAggregate {
+  const envelope = asObject(body);
+  const rawItems = Array.isArray(envelope.items)
+    ? envelope.items
+    : Array.isArray(envelope.data)
+      ? envelope.data
+      : [];
+  const items = rawItems.filter((item) => item && typeof item === "object") as HumanInboxItem[];
+  const summary = asObject(envelope.summary);
+  const pageInfo = asObject(envelope.page_info);
+  const meta = asObject(envelope.meta);
+  return {
+    data: items,
+    items,
+    summary: {
+      total_items: Number(summary.total_items ?? items.length),
+      returned_items: Number(summary.returned_items ?? items.length),
+      pending_items: Number(summary.pending_items ?? 0),
+      approval_count: Number(summary.approval_count ?? 0),
+      intervention_count: Number(summary.intervention_count ?? 0),
+      critical_count: Number(summary.critical_count ?? 0),
+      high_count: Number(summary.high_count ?? 0),
+    },
+    page_info: {
+      next_page_token: typeof pageInfo.next_page_token === "string" ? pageInfo.next_page_token : null,
+      total: Number(pageInfo.total ?? items.length),
+      page_size: Number(pageInfo.page_size ?? items.length),
+    },
+    meta,
+  };
+}
+
+function adaptManagementEvidenceAggregate(body: unknown): ManagementEvidenceResponse {
+  const envelope = asObject(body);
+  const rawItems = Array.isArray(envelope.items)
+    ? envelope.items
+    : Array.isArray(envelope.data)
+      ? envelope.data
+      : [];
+  const items = rawItems.filter((item) => item && typeof item === "object") as ManagementEvidenceItem[];
+  const summary = asObject(envelope.summary);
+  const facets = asObject(envelope.facets);
+  const pageInfo = asObject(envelope.page_info);
+  const pagination = asObject(envelope.pagination);
+  const meta = asObject(envelope.meta);
+  return {
+    data: items,
+    items,
+    summary: {
+      totalEvidence: Number(summary.totalEvidence ?? summary.total_evidence ?? items.length),
+      total_evidence: Number(summary.total_evidence ?? summary.totalEvidence ?? items.length),
+      returnedEvidence: Number(summary.returnedEvidence ?? summary.returned_evidence ?? items.length),
+      returned_evidence: Number(summary.returned_evidence ?? summary.returnedEvidence ?? items.length),
+      visibleEvidence: Number(summary.visibleEvidence ?? summary.visible_evidence ?? items.length),
+      visible_evidence: Number(summary.visible_evidence ?? summary.visibleEvidence ?? items.length),
+      redactedEvidence: Number(summary.redactedEvidence ?? summary.redacted_evidence ?? 0),
+      redacted_evidence: Number(summary.redacted_evidence ?? summary.redactedEvidence ?? 0),
+      verifiedEvidence: Number(summary.verifiedEvidence ?? summary.verified_evidence ?? 0),
+      verified_evidence: Number(summary.verified_evidence ?? summary.verifiedEvidence ?? 0),
+      bySourceType: asObject(summary.bySourceType ?? summary.by_source_type) as Record<string, number>,
+      by_source_type: asObject(summary.by_source_type ?? summary.bySourceType) as Record<string, number>,
+      byLinkType: asObject(summary.byLinkType ?? summary.by_link_type) as Record<string, number>,
+      by_link_type: asObject(summary.by_link_type ?? summary.byLinkType) as Record<string, number>,
+      byCredibilityTier: asObject(summary.byCredibilityTier ?? summary.by_credibility_tier) as Record<string, number>,
+      by_credibility_tier: asObject(summary.by_credibility_tier ?? summary.byCredibilityTier) as Record<string, number>,
+    },
+    facets: facets as ManagementEvidenceResponse["facets"],
+    page_info: {
+      next_page_token: typeof pageInfo.next_page_token === "string" ? pageInfo.next_page_token : null,
+      total: Number(pageInfo.total ?? items.length),
+      page_size: Number(pageInfo.page_size ?? items.length),
+    },
+    pagination: pagination as ManagementEvidenceResponse["pagination"],
+    meta: meta as ManagementEvidenceResponse["meta"],
+  };
+}
+
+function managementEvidenceQueryParams(
+  query?: ManagementEvidenceQuery,
+): Record<string, string | number | undefined> | undefined {
+  if (!query) return undefined;
+  return {
+    ...query,
+    verified: typeof query.verified === "boolean" ? String(query.verified) : undefined,
+  } as Record<string, string | number | undefined>;
+}
+
 export type OodaPacketListQuery = {
   status?: string;
   stage?: string;
@@ -317,6 +547,14 @@ export type OodaPacketListQuery = {
 export type PersonaFleetQuery = {
   state?: string;
   health?: string;
+  page_token?: string;
+  page_size?: number;
+};
+
+export type HumanInboxQuery = {
+  source_type?: HumanInboxSourceType | string;
+  status?: string;
+  priority?: HumanInboxPriority | string;
   page_token?: string;
   page_size?: number;
 };
@@ -427,6 +665,22 @@ function evolutionReviewDetail(decisionId: string): Promise<EvolutionReviewProje
     { method: "GET", path: paths.evolutionMutationReview(decisionId) },
     async () => undefined,
     adaptEvolutionReview,
+    strictNotFoundAsUndefined,
+  );
+}
+
+function adaptHumanInboxDetail(body: unknown): HumanInboxItem | undefined {
+  const raw = strictDataFrom(body) ?? body;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const item = raw as HumanInboxItem;
+  return typeof item.id === "string" && item.id ? item : undefined;
+}
+
+function humanInboxDetail(itemId: string): Promise<HumanInboxItem | undefined> {
+  return withStrictLiveOrMock<HumanInboxItem | undefined, unknown>(
+    { method: "GET", path: paths.managementHumanInboxItem(itemId) },
+    async () => undefined,
+    adaptHumanInboxDetail,
     strictNotFoundAsUndefined,
   );
 }
@@ -588,6 +842,33 @@ const personaFleet = {
     ),
 };
 
+const humanInbox = {
+  list: (query?: HumanInboxQuery): Promise<HumanInboxAggregate> =>
+    withStrictLiveOrMock<HumanInboxAggregate, unknown>(
+      {
+        method: "GET",
+        path: paths.managementHumanInbox(),
+        query: query as Record<string, string | number | undefined> | undefined,
+      },
+      async () => emptyHumanInboxAggregate(),
+      adaptHumanInboxAggregate,
+    ),
+  get: humanInboxDetail,
+};
+
+const evidenceExplorer = {
+  list: (query?: ManagementEvidenceQuery): Promise<ManagementEvidenceResponse> =>
+    withStrictLiveOrMock<ManagementEvidenceResponse, unknown>(
+      {
+        method: "GET",
+        path: paths.managementEvidence(),
+        query: managementEvidenceQueryParams(query),
+      },
+      async () => emptyManagementEvidenceAggregate(),
+      adaptManagementEvidenceAggregate,
+    ),
+};
+
 // ---------- Public surface ----------
 
 /** Canonical Management Console read surface — list + detail per family,
@@ -616,6 +897,8 @@ export const managementClient = {
   oodaPackets,
   evolutionReviews,
   personaFleet,
+  humanInbox,
+  evidenceExplorer,
 } as const;
 
 export type ManagementFamily = keyof typeof managementClient;
@@ -626,7 +909,7 @@ export const MANAGEMENT_FAMILIES: readonly ManagementFamily[] = [
   "rebalances", "deployments", "evolution", "research", "artifacts",
   "tools", "mcpServers", "mcpTools", "skills", "channels",
   "jobs", "runtimes", "alerts", "incidents", "approvals", "audit",
-  "oodaPackets",
+  "oodaPackets", "humanInbox", "evidenceExplorer",
 ] as const;
 
 /** Snapshot of the current live-status, useful for UI banners that show
@@ -648,3 +931,8 @@ export function getLiveStatusSnapshot(): {
 }
 
 export type { ListEnvelope } from "@/lib/bff-v1";
+export type {
+  ManagementEvidenceItem,
+  ManagementEvidenceQuery,
+  ManagementEvidenceResponse,
+} from "@/lib/bff-v1/management";
