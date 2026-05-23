@@ -23561,10 +23561,16 @@ async def bff_persona_test_prompt(
 async def bff_search(
     q: str = Query(default=""),
     types: Optional[str] = Query(default=None),
-    limit: int = Query(default=20, ge=1, le=100),
+    page_size: int = Query(default=20, ge=1, le=100),
+    page_token: Optional[str] = Query(default=None),
     authorization: Optional[str] = Header(default=None),
 ):
-    """BFF: cross-entity search across strategies, personas, and capital pools."""
+    """BFF: cross-entity search across strategies, personas, and capital pools.
+
+    Accepts page_token (opaque offset cursor) and page_size for cursor-style
+    pagination.  A non-null next_page_token in the response indicates more
+    results are available; pass it back as page_token on the next request.
+    """
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     snapshot_at = utc_now()
@@ -23626,14 +23632,14 @@ async def bff_search(
                     "updatedAt": pool.get("updated_at") or pool.get("created_at") or snapshot_at,
                 })
 
-    capped = results[:limit]
+    page_items, next_page_token = _page_slice(results, page_token, page_size)
     return {
-        "data": capped,
-        "items": capped,
-        "page_info": {"next_page_token": None, "total": len(results), "returned": len(capped)},
+        "data": page_items,
+        "items": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": len(results), "returned": len(page_items)},
         "meta": _read_surface_meta(
             "personas", "search",
-            snapshot_at=snapshot_at, total=len(capped),
+            snapshot_at=snapshot_at, total=len(page_items),
         ),
     }
 

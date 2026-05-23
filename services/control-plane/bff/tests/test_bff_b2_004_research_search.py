@@ -266,3 +266,80 @@ def test_bff_capabilities_unauthorized() -> None:
             assert client.get("/bff/capabilities").status_code == 401
         finally:
             bff_main.read_store = original
+
+
+# ---------------------------------------------------------------------------
+# 5. GET /bff/search — cursor pagination regression
+# ---------------------------------------------------------------------------
+
+def test_bff_search_cursor_first_page() -> None:
+    """First page with page_size=1 must return a non-null next_page_token when results remain."""
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        saved_overlay = dict(bff_main._STRATEGY_BFF_OVERLAY)
+        try:
+            client = _fresh_client(td)
+            for i in range(3):
+                bff_main._STRATEGY_BFF_OVERLAY[f"search-pag-strat-{i}"] = {
+                    "name": f"search-pag-strat-{i}",
+                    "state": "draft",
+                    "owner": "test",
+                    "updatedAt": "2026-05-23T00:00:00Z",
+                }
+            resp = client.get(
+                "/bff/search?q=search-pag-strat&page_size=1",
+                headers=OPERATOR_HEADERS,
+            )
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert len(body.get("data") or []) == 1
+            pi = body["page_info"]
+            assert pi.get("returned") == 1
+            assert pi.get("total") >= 3
+            assert pi.get("next_page_token") is not None, (
+                "next_page_token must be set when more results remain"
+            )
+        finally:
+            bff_main.read_store = original_store
+            bff_main._STRATEGY_BFF_OVERLAY.clear()
+            bff_main._STRATEGY_BFF_OVERLAY.update(saved_overlay)
+
+
+def test_bff_search_cursor_second_page() -> None:
+    """Using next_page_token from page 1 must return a non-overlapping result set."""
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        saved_overlay = dict(bff_main._STRATEGY_BFF_OVERLAY)
+        try:
+            client = _fresh_client(td)
+            for i in range(3):
+                bff_main._STRATEGY_BFF_OVERLAY[f"search-pag-strat-{i}"] = {
+                    "name": f"search-pag-strat-{i}",
+                    "state": "draft",
+                    "owner": "test",
+                    "updatedAt": "2026-05-23T00:00:00Z",
+                }
+            resp1 = client.get(
+                "/bff/search?q=search-pag-strat&page_size=2",
+                headers=OPERATOR_HEADERS,
+            )
+            assert resp1.status_code == 200, resp1.text
+            body1 = resp1.json()
+            page1_ids = {r["id"] for r in (body1.get("data") or [])}
+            npt = body1["page_info"].get("next_page_token")
+            assert npt is not None, "next_page_token must be set after first page"
+            resp2 = client.get(
+                f"/bff/search?q=search-pag-strat&page_size=2&page_token={npt}",
+                headers=OPERATOR_HEADERS,
+            )
+            assert resp2.status_code == 200, resp2.text
+            body2 = resp2.json()
+            page2_ids = {r["id"] for r in (body2.get("data") or [])}
+            assert page2_ids, "Second page must contain at least one result"
+            assert not (page1_ids & page2_ids), (
+                f"Pages must not overlap; got page1={page1_ids} page2={page2_ids}"
+            )
+        finally:
+            bff_main.read_store = original_store
+            bff_main._STRATEGY_BFF_OVERLAY.clear()
+            bff_main._STRATEGY_BFF_OVERLAY.update(saved_overlay)
