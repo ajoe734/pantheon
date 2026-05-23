@@ -86,6 +86,14 @@ export interface ManagementTradingPulseSummary {
   worst_slippage_bps?: number | null;
   totalTrades: number;
   total_trades: number;
+  baselineComparisonCount?: number;
+  baseline_comparison_count?: number;
+  baselineBreachedCount?: number;
+  baseline_breached_count?: number;
+  baselineWatchCount?: number;
+  baseline_watch_count?: number;
+  byBaselineStatus?: Record<string, number>;
+  by_baseline_status?: Record<string, number>;
   [key: string]: unknown;
 }
 
@@ -105,7 +113,36 @@ export interface ManagementTradingPulseRuntimeRow {
   status?: string;
   telemetry_summary?: Record<string, unknown> | null;
   rollback_summary?: Record<string, unknown> | null;
+  baselineComparison?: ManagementTradingPulseBaselineComparison | null;
+  baseline_comparison?: ManagementTradingPulseBaselineComparison | null;
   last_updated_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface ManagementTradingPulseBaselineComparison {
+  runtimeId?: string | null;
+  runtime_id?: string | null;
+  runtimeBindingId?: string | null;
+  runtime_binding_id?: string | null;
+  deploymentStage?: string | null;
+  deployment_stage?: string | null;
+  status: "ok" | "watch" | "breached" | "unavailable" | "unknown" | string;
+  paperLiveDrift?: Record<string, unknown>;
+  paper_live_drift?: Record<string, unknown>;
+  paperBaseline?: Record<string, unknown> | null;
+  paper_baseline?: Record<string, unknown> | null;
+  observedState?: Record<string, unknown> | null;
+  observed_state?: Record<string, unknown> | null;
+  driftGroups?: Record<string, unknown>[];
+  drift_groups?: Record<string, unknown>[];
+  thresholdEvaluation?: Record<string, unknown>;
+  threshold_evaluation?: Record<string, unknown>;
+  metricCount?: number;
+  metric_count?: number;
+  breachedMetricCount?: number;
+  breached_metric_count?: number;
+  watchMetricCount?: number;
+  watch_metric_count?: number;
   [key: string]: unknown;
 }
 
@@ -130,6 +167,10 @@ export interface ManagementTradingPulseRankingItem {
   total_trades?: number | null;
   lastUpdatedAt?: string | null;
   last_updated_at?: string | null;
+  baselineComparisonStatus?: string | null;
+  baseline_comparison_status?: string | null;
+  breachedMetricCount?: number | null;
+  breached_metric_count?: number | null;
   rankingBlockId?: string;
   ranking_block_id?: string;
   rankingMetric?: string;
@@ -146,6 +187,8 @@ export interface ManagementTradingPulseData {
   rankings: ManagementTradingPulseRankingItem[];
   runtimeRows: ManagementTradingPulseRuntimeRow[];
   runtime_rows: ManagementTradingPulseRuntimeRow[];
+  baselineComparisons: ManagementTradingPulseBaselineComparison[];
+  baseline_comparisons: ManagementTradingPulseBaselineComparison[];
   [key: string]: unknown;
 }
 
@@ -156,6 +199,8 @@ export interface ManagementTradingPulseResponse {
   rankings: ManagementTradingPulseRankingItem[];
   runtimeRows: ManagementTradingPulseRuntimeRow[];
   runtime_rows: ManagementTradingPulseRuntimeRow[];
+  baselineComparisons: ManagementTradingPulseBaselineComparison[];
+  baseline_comparisons: ManagementTradingPulseBaselineComparison[];
   summary: ManagementTradingPulseSummary;
   page_info: {
     next_page_token: string | null;
@@ -168,6 +213,8 @@ export interface ManagementTradingPulseResponse {
       management_trading_pulse: ManagementSurfaceRef;
       runtime_roster?: ManagementSurfaceRef;
       telemetry_summary?: ManagementSurfaceRef;
+      paper_live_drift?: ManagementSurfaceRef;
+      baseline_comparison?: ManagementSurfaceRef;
       [key: string]: ManagementSurfaceRef | undefined;
     };
     [key: string]: unknown;
@@ -222,6 +269,8 @@ export interface ManagementTradingPulseRankingsResponse {
       management_trading_pulse?: ManagementSurfaceRef;
       runtime_roster?: ManagementSurfaceRef;
       telemetry_summary?: ManagementSurfaceRef;
+      paper_live_drift?: ManagementSurfaceRef;
+      baseline_comparison?: ManagementSurfaceRef;
       [key: string]: ManagementSurfaceRef | undefined;
     };
     composition_sources?: string[];
