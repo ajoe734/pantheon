@@ -171,6 +171,37 @@ def test_pm12_quarterly_ranking_returns_formula_window_and_evidence() -> None:
             bff_main.read_store = original
 
 
+def test_pm12_quarterly_ranking_formula_returns_weights_and_governance_trace() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            response = client.get(
+                "/bff/management/quarterly-ranking/formula",
+                headers=HEADERS,
+            )
+
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert body["data"] == body["formula"]
+            assert body["formula"]["formulaVersion"] == "pm12-default-v1"
+            assert body["formula"]["weights"] == {
+                "pnl": 0.35,
+                "risk": 0.25,
+                "execution": 0.25,
+                "activity": 0.15,
+            }
+            assert body["summary"]["weightTotal"] == 1.0
+            assert body["summary"]["evidenceRefCount"] == len(body["evidenceRefs"])
+            assert body["versionHistory"][0]["formulaVersion"] == "pm12-default-v1"
+            assert body["versionHistory"][0]["governanceEvidenceRefs"]
+            assert body["formula"]["changeControl"]["requiresGovernanceEvidence"] is True
+            assert body["meta"]["version_policy"] == "formula_version_changes_require_governance_evidence"
+            assert body["meta"]["surfaces"]["quarterly_ranking_formula"]["status"] == "ok"
+        finally:
+            bff_main.read_store = original
+
+
 def test_pm12_quarterly_ranking_recommendations_are_governance_only() -> None:
     with tempfile.TemporaryDirectory() as td:
         original = bff_main.read_store
@@ -266,5 +297,8 @@ def test_pm12_persona_league_requires_auth() -> None:
 
             recommendations = client.get("/bff/management/quarterly-ranking/recommendations")
             assert recommendations.status_code == 401, recommendations.text
+
+            formula = client.get("/bff/management/quarterly-ranking/formula")
+            assert formula.status_code == 401, formula.text
         finally:
             bff_main.read_store = original

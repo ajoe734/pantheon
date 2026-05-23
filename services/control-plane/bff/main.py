@@ -23330,6 +23330,14 @@ _PM12_LEAGUE_RANKING_CRITERIA = {
     "activity": ("activityScore", "Activity"),
 }
 _PM12_LEAGUE_FORMULA_VERSION = "pm12-default-v1"
+_PM12_QUARTERLY_FORMULA_DOC_REF = (
+    "docs/04/pantheon_bff_api_gap_2026-05-23/"
+    "BFF_API_GAP_final_integration_spec.md#b34-pm-12-composition-sources"
+)
+_PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID = (
+    "pm12-quarterly-ranking-formula-v1-governance"
+)
+_PM12_QUARTERLY_FORMULA_EFFECTIVE_AT = "2026-05-23T00:00:00Z"
 _PM12_QUARTER_PATTERN = re.compile(r"^(?P<year>\d{4})-Q(?P<quarter>[1-4])$", re.IGNORECASE)
 _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER = (
     "promote_to_canary_candidate",
@@ -23621,7 +23629,92 @@ def _pm12_quarter_window(quarter: Optional[str], snapshot_at: str) -> Dict[str, 
     }
 
 
+def _pm12_quarter_formula_governance_evidence_refs() -> List[Dict[str, Any]]:
+    return [
+        {
+            "id": _PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID,
+            "refId": _PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID,
+            "ref_id": _PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID,
+            "title": "PM-12 quarterly ranking formula governance baseline",
+            "displayLabel": "PM-12 quarterly ranking formula governance baseline",
+            "display_label": "PM-12 quarterly ranking formula governance baseline",
+            "sourceType": "governance_record",
+            "source_type": "governance_record",
+            "sourceRef": _PM12_QUARTERLY_FORMULA_DOC_REF,
+            "source_ref": _PM12_QUARTERLY_FORMULA_DOC_REF,
+            "capturedAt": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
+            "captured_at": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
+            "linkType": "formula_version_governance",
+            "link_type": "formula_version_governance",
+            "credibility": {
+                "tier": "primary",
+                "verified": True,
+                "last_verified_at": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
+                "verification_method": "task_review",
+            },
+            "linkedObjectSummary": {
+                "entity_type": "ranking_formula",
+                "entity_ref": "pm12-quarterly-ranking-formula",
+                "display_label": "PM-12 quarterly ranking formula",
+            },
+            "linked_object_summary": {
+                "entity_type": "ranking_formula",
+                "entity_ref": "pm12-quarterly-ranking-formula",
+                "display_label": "PM-12 quarterly ranking formula",
+            },
+            "resolvedLink": {
+                "availability": "available",
+                "route_href": _PM12_QUARTERLY_FORMULA_DOC_REF,
+                "display_label": "Open PM-12 integration spec",
+                "open_in_new_tab": False,
+            },
+            "resolved_link": {
+                "availability": "available",
+                "route_href": _PM12_QUARTERLY_FORMULA_DOC_REF,
+                "display_label": "Open PM-12 integration spec",
+                "open_in_new_tab": False,
+            },
+            "routeHref": _PM12_QUARTERLY_FORMULA_DOC_REF,
+            "route_href": _PM12_QUARTERLY_FORMULA_DOC_REF,
+        }
+    ]
+
+
+def _pm12_quarter_formula_version_history() -> List[Dict[str, Any]]:
+    evidence_ref_ids = [
+        ref["ref_id"] for ref in _pm12_quarter_formula_governance_evidence_refs()
+    ]
+    return [
+        {
+            "id": f"pm12-quarterly-ranking-formula-{_PM12_LEAGUE_FORMULA_VERSION}",
+            "version": _PM12_LEAGUE_FORMULA_VERSION,
+            "formulaVersion": _PM12_LEAGUE_FORMULA_VERSION,
+            "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
+            "effectiveAt": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
+            "effective_at": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
+            "changeType": "baseline",
+            "change_type": "baseline",
+            "governanceEvidenceRefs": evidence_ref_ids,
+            "governance_evidence_refs": evidence_ref_ids,
+            "description": "Baseline formula accepted for PM-12 quarterly ranking reads.",
+        }
+    ]
+
+
 def _pm12_quarter_formula_payload() -> Dict[str, Any]:
+    evidence_ref_ids = [
+        ref["ref_id"] for ref in _pm12_quarter_formula_governance_evidence_refs()
+    ]
+    version_history = _pm12_quarter_formula_version_history()
+    change_control = {
+        "versionPolicy": "formula_version_changes_require_governance_evidence",
+        "version_policy": "formula_version_changes_require_governance_evidence",
+        "requiresGovernanceEvidence": True,
+        "requires_governance_evidence": True,
+        "governanceEvidenceRefs": evidence_ref_ids,
+        "governance_evidence_refs": evidence_ref_ids,
+        "authority": "read_only_governance_advisory",
+    }
     return {
         "id": "pm12-quarterly-ranking-formula",
         "formulaId": "pm12-quarterly-ranking-formula",
@@ -23640,6 +23733,12 @@ def _pm12_quarter_formula_payload() -> Dict[str, Any]:
         ],
         "basis": "latest_available_persona_league_metrics_with_quarter_window",
         "policy": "read_only_governance_advisory",
+        "governanceEvidenceRefs": evidence_ref_ids,
+        "governance_evidence_refs": evidence_ref_ids,
+        "versionHistory": version_history,
+        "version_history": version_history,
+        "changeControl": change_control,
+        "change_control": change_control,
     }
 
 
@@ -24261,6 +24360,64 @@ async def bff_management_persona_league_tiers(
                 "GET /bff/v5/execution/persona-health",
             ],
             "policy": "read_only_governance_advisory",
+        },
+    }
+
+
+@app.get("/bff/management/quarterly-ranking/formula")
+async def bff_management_quarterly_ranking_formula(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 quarterly ranking formula weights, version, and governance trace."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    formula = _pm12_quarter_formula_payload()
+    evidence_refs = _pm12_quarter_formula_governance_evidence_refs()
+    version_history = list(formula.get("versionHistory") or [])
+    formula_surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
+    evidence_surface = _composed_surface_status(
+        snapshot_at=snapshot_at,
+        available=bool(evidence_refs),
+        missing_message="Quarterly ranking formula governance evidence is unavailable.",
+    )
+    weights = formula.get("weights") if isinstance(formula.get("weights"), dict) else {}
+    summary = {
+        "formulaId": formula["formulaId"],
+        "formula_id": formula["formula_id"],
+        "formulaVersion": formula["formulaVersion"],
+        "formula_version": formula["formula_version"],
+        "componentCount": len(formula.get("components") or []),
+        "component_count": len(formula.get("components") or []),
+        "weightTotal": round(sum(_management_number(value) or 0.0 for value in weights.values()), 6),
+        "weight_total": round(sum(_management_number(value) or 0.0 for value in weights.values()), 6),
+        "evidenceRefCount": len(evidence_refs),
+        "evidence_ref_count": len(evidence_refs),
+        "basis": formula["basis"],
+        "policy": formula["policy"],
+    }
+    return {
+        "data": formula,
+        "formula": formula,
+        "versionHistory": version_history,
+        "version_history": version_history,
+        "evidenceRefs": evidence_refs,
+        "evidence_refs": evidence_refs,
+        "summary": summary,
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "quarterly_ranking_formula": formula_surface,
+                "formula": formula_surface,
+                "governance_evidence": evidence_surface,
+            },
+            "composition_sources": [
+                "GET /bff/management/persona-league/rankings",
+                "GET /api/v1/knowledge/evidence",
+                _PM12_QUARTERLY_FORMULA_DOC_REF,
+            ],
+            "policy": formula["policy"],
+            "version_policy": "formula_version_changes_require_governance_evidence",
         },
     }
 

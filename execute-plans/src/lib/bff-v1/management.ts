@@ -476,6 +476,32 @@ export interface ManagementQuarterlyRankingWindow {
   [key: string]: unknown;
 }
 
+export interface ManagementQuarterlyRankingFormulaVersion {
+  id: string;
+  version: string;
+  formulaVersion: string;
+  formula_version: string;
+  effectiveAt: string;
+  effective_at: string;
+  changeType: string;
+  change_type: string;
+  governanceEvidenceRefs: string[];
+  governance_evidence_refs: string[];
+  description?: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementQuarterlyRankingFormulaChangeControl {
+  versionPolicy: string;
+  version_policy: string;
+  requiresGovernanceEvidence: boolean;
+  requires_governance_evidence: boolean;
+  governanceEvidenceRefs: string[];
+  governance_evidence_refs: string[];
+  authority: string;
+  [key: string]: unknown;
+}
+
 export interface ManagementQuarterlyRankingFormula {
   id: string;
   formulaId: string;
@@ -489,7 +515,47 @@ export interface ManagementQuarterlyRankingFormula {
   components: Array<Record<string, unknown>>;
   basis: string;
   policy: string;
+  governanceEvidenceRefs: string[];
+  governance_evidence_refs: string[];
+  versionHistory: ManagementQuarterlyRankingFormulaVersion[];
+  version_history: ManagementQuarterlyRankingFormulaVersion[];
+  changeControl: ManagementQuarterlyRankingFormulaChangeControl;
+  change_control: ManagementQuarterlyRankingFormulaChangeControl;
   [key: string]: unknown;
+}
+
+export interface ManagementQuarterlyRankingFormulaSummary {
+  formulaId: string;
+  formula_id: string;
+  formulaVersion: string;
+  formula_version: string;
+  componentCount: number;
+  component_count: number;
+  weightTotal: number;
+  weight_total: number;
+  evidenceRefCount: number;
+  evidence_ref_count: number;
+  basis: string;
+  policy: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementQuarterlyRankingFormulaResponse {
+  data: ManagementQuarterlyRankingFormula;
+  formula: ManagementQuarterlyRankingFormula;
+  versionHistory: ManagementQuarterlyRankingFormulaVersion[];
+  version_history: ManagementQuarterlyRankingFormulaVersion[];
+  evidenceRefs: ManagementEvidenceItem[];
+  evidence_refs: ManagementEvidenceItem[];
+  summary: ManagementQuarterlyRankingFormulaSummary;
+  meta: {
+    snapshot_at?: string;
+    surfaces?: Record<string, ManagementSurfaceRef>;
+    composition_sources?: string[];
+    policy?: string;
+    version_policy?: string;
+    [key: string]: unknown;
+  };
 }
 
 export interface ManagementQuarterlyRankingItem extends ManagementPersonaLeagueRankingItem {
@@ -1080,6 +1146,10 @@ export function managementQuarterlyRankingPath(
   return withQuery(paths.managementQuarterlyRanking(), query);
 }
 
+export function managementQuarterlyRankingFormulaPath(): string {
+  return paths.managementQuarterlyRankingFormula();
+}
+
 export function managementQuarterlyRankingRecommendationsPath(
   query?: ManagementQuarterlyRankingRecommendationsQuery,
 ): string {
@@ -1306,6 +1376,24 @@ export async function fetchManagementQuarterlyRanking(
     throw new Error(`GET ${path} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementQuarterlyRankingResponse>;
+}
+
+export async function fetchManagementQuarterlyRankingFormula(
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementQuarterlyRankingFormulaResponse> {
+  const path = managementQuarterlyRankingFormulaPath();
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementQuarterlyRankingFormulaResponse>;
 }
 
 export async function fetchManagementQuarterlyRankingRecommendations(
