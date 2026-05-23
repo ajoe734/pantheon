@@ -869,6 +869,70 @@ BFF-PM12-006 — Owner: Codex2, Reviewer: Claude2
 
 ---
 
+### PM-12 Quarterly Ranking Formula
+
+`GET /bff/management/quarterly-ranking/formula` exposes the PM-12 quarterly
+ranking formula as a read-only Management aggregate. It is the standalone source
+for formula weights, current version, component metadata, and version governance
+traceability used by the quarterly ranking response.
+
+**File: `services/control-plane/bff/main.py`**
+
+The route returns top-level `data` / `formula`, `versionHistory`,
+`evidenceRefs`, `summary`, and `meta`. The `data` payload is the same formula
+shape embedded in `GET /bff/management/quarterly-ranking`, including:
+
+- `weights` and `components` for `pnl`, `risk`, `execution`, and `activity`;
+- `formulaVersion` / `formula_version`;
+- `basis` and `policy`;
+- `changeControl` / `change_control` stating that formula version changes
+  require governance evidence;
+- `governanceEvidenceRefs` / `governance_evidence_refs` and version-history
+  entries that link the current version back to the PM-12 integration spec.
+
+The route advertises strict live composition sources:
+
+- `GET /bff/management/persona-league/rankings`
+- `GET /api/v1/knowledge/evidence`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#b34-pm-12-composition-sources`
+
+**File: `execute-plans/src/lib/bff-v1/management.ts`**
+
+Added typed response contracts plus:
+
+- `managementQuarterlyRankingFormulaPath()`
+- `fetchManagementQuarterlyRankingFormula()`
+
+**File: `execute-plans/src/lib/bff-v1/paths.ts`**
+
+Added the `managementQuarterlyRankingFormula()` path builder resolving to
+`/bff/management/quarterly-ranking/formula`.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated `GET /bff/management/quarterly-ranking/formula` returns formula weights and version | Implemented BFF-PM12-007 |
+| 2 | Formula version history and change-control fields trace version increments to governance evidence | Implemented BFF-PM12-007 |
+| 3 | Missing auth returns HTTP 401 | Implemented BFF-PM12-007 |
+| 4 | Route is registered in the execute-plans final live wiring route inventory | Implemented BFF-PM12-007 |
+| 5 | execute-plans exposes typed path and fetch helper for quarterly ranking formula | Implemented BFF-PM12-007 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_pm12_persona_league.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-PM12-007 — Owner: Codex2, Reviewer: Claude2
+
+---
+
 ### PM-12 Portfolio-Book Holdings
 
 `GET /bff/management/portfolio-book/holdings` is the global holdings table for
