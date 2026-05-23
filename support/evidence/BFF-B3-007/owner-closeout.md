@@ -76,3 +76,9 @@ After closeout PR #484 opened, `origin/dev` advanced to
 merged that dev tip at `2015800b99504054f35a5decbab3a616e826f0a5`, then reran
 the focused closeout validation. No BFF-B3-007 runtime behavior or
 execute-plans contract code changed during this refresh.
+
+`origin/dev` advanced again to `31d03a86bbf4c40614e76120135cb3ef51b6e45f`
+through PR #486. The task branch merged that dev tip at
+`4e642342ca2a22063821d3a254d7062220b4069d`; this second refresh only composed
+other tasks' closeout artifacts and did not change BFF-B3-007 runtime or
+execute-plans contract code.
