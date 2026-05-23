@@ -40,6 +40,9 @@ Results:
 - Focused backend and final live wiring contract tests passed: 10 passed, with
   3 existing `datetime.utcnow()` deprecation warnings from
   `services/control-plane/bff/read_store.py`.
+- After PR #474 was initially green but marked `BEHIND`, Codex merged
+  `origin/dev` again at merge commit `e6554fe2` and reran both commands above;
+  results remained 10 passed with the same 3 existing warnings.
 
 ## Notes
 
