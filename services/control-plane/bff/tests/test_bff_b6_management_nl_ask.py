@@ -213,3 +213,38 @@ def test_nl_ask_session_id_generated_when_omitted() -> None:
             assert session_id.startswith("mgmt-nl-")
         finally:
             bff_main.read_store = original
+
+
+# ---------------------------------------------------------------------------
+# Regression: focus=persona_fleet must populate context, not silently fail
+# ---------------------------------------------------------------------------
+
+def test_nl_ask_focus_persona_fleet_populates_context() -> None:
+    """
+    Regression for BFF-B6-001 review blocker: _mgmt_nl_collect_context was
+    calling _project_persona_fleet_payload() without required keyword args,
+    causing a TypeError caught as unavailable. After the fix the source must
+    appear in data.sources and persona_fleet must be present in summary_context.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            resp = client.post(
+                "/bff/management/nl/ask",
+                json={"question": "How is the persona fleet?", "focus": "persona_fleet"},
+                headers={**OPERATOR_HEADERS, "Idempotency-Key": "ik-pf-regression-001"},
+            )
+            assert resp.status_code == 202, resp.text
+            body = resp.json()
+            # persona_fleet surface must appear in sources (not silently dropped)
+            assert "persona_fleet" in body["data"]["sources"], (
+                "persona_fleet missing from sources — TypeError still being caught as unavailable"
+            )
+            # summary_context must contain a persona_fleet entry (not empty)
+            summary_ctx = body["data"].get("summary_context") or {}
+            assert "persona_fleet" in summary_ctx, (
+                "persona_fleet missing from summary_context"
+            )
+        finally:
+            bff_main.read_store = original

@@ -19321,7 +19321,12 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str) -> Dict[str, Any]:
 
     if use_all or focus == "persona_fleet":
         try:
-            fleet = _project_persona_fleet_payload()
+            fleet = _project_persona_fleet_payload(
+                state=None,
+                health=None,
+                page_token=None,
+                page_size=20,
+            )
             fleet_items = fleet.get("items") or []
             fleet_summary = fleet.get("summary") or {}
             snippets["persona_fleet"] = {
