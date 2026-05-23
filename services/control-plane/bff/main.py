@@ -6257,6 +6257,141 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
     }
 
 
+_TRADING_PULSE_RANKING_METRIC_FIELDS = {
+    "pnl": ("pnl",),
+    "drawdown": ("drawdown",),
+    "sharpe_ratio": ("sharpeRatio", "sharpe_ratio"),
+    "fill_rate": ("fillRate", "fill_rate"),
+    "avg_slippage_bps": ("avgSlippageBps", "avg_slippage_bps"),
+    "total_trades": ("totalTrades", "total_trades"),
+}
+
+
+def _trading_pulse_metric_value(
+    item: Dict[str, Any],
+    metric: str,
+) -> Optional[float]:
+    for field in _TRADING_PULSE_RANKING_METRIC_FIELDS.get(metric, (metric,)):
+        value = _management_number(item.get(field))
+        if value is not None:
+            return value
+    return None
+
+
+def _trading_pulse_ranked_items(
+    rankings: List[Dict[str, Any]],
+    *,
+    metric: str,
+    descending: bool,
+    limit: int,
+    block_id: str,
+) -> List[Dict[str, Any]]:
+    present = [
+        item for item in rankings
+        if _trading_pulse_metric_value(item, metric) is not None
+    ]
+    missing = [
+        item for item in rankings
+        if _trading_pulse_metric_value(item, metric) is None
+    ]
+    ordered_present = sorted(
+        present,
+        key=lambda item: (
+            _trading_pulse_metric_value(item, metric) or 0.0,
+            str(item.get("runtimeId") or item.get("runtime_id") or ""),
+        ),
+        reverse=descending,
+    )
+    ordered_missing = sorted(
+        missing,
+        key=lambda item: str(item.get("runtimeId") or item.get("runtime_id") or ""),
+    )
+
+    ranked: List[Dict[str, Any]] = []
+    for index, item in enumerate((ordered_present + ordered_missing)[:limit], start=1):
+        projected = dict(item)
+        projected["rank"] = index
+        projected["rankingBlockId"] = block_id
+        projected["ranking_block_id"] = block_id
+        projected["rankingMetric"] = metric
+        projected["ranking_metric"] = metric
+        projected["rankingMetricValue"] = _trading_pulse_metric_value(item, metric)
+        projected["ranking_metric_value"] = projected["rankingMetricValue"]
+        ranked.append(projected)
+    return ranked
+
+
+def _build_management_trading_pulse_ranking_blocks(
+    rankings: List[Dict[str, Any]],
+    *,
+    limit: int,
+) -> List[Dict[str, Any]]:
+    return [
+        {
+            "blockId": "pnl-leaders",
+            "block_id": "pnl-leaders",
+            "label": "P&L Leaders",
+            "metric": "pnl",
+            "sortOrder": "desc",
+            "sort_order": "desc",
+            "items": _trading_pulse_ranked_items(
+                rankings,
+                metric="pnl",
+                descending=True,
+                limit=limit,
+                block_id="pnl-leaders",
+            ),
+        },
+        {
+            "blockId": "drawdown-control",
+            "block_id": "drawdown-control",
+            "label": "Drawdown Control",
+            "metric": "drawdown",
+            "sortOrder": "asc",
+            "sort_order": "asc",
+            "items": _trading_pulse_ranked_items(
+                rankings,
+                metric="drawdown",
+                descending=False,
+                limit=limit,
+                block_id="drawdown-control",
+            ),
+        },
+        {
+            "blockId": "execution-quality",
+            "block_id": "execution-quality",
+            "label": "Execution Quality",
+            "metric": "fill_rate",
+            "secondaryMetric": "avg_slippage_bps",
+            "secondary_metric": "avg_slippage_bps",
+            "sortOrder": "desc",
+            "sort_order": "desc",
+            "items": _trading_pulse_ranked_items(
+                rankings,
+                metric="fill_rate",
+                descending=True,
+                limit=limit,
+                block_id="execution-quality",
+            ),
+        },
+        {
+            "blockId": "sharpe-leaders",
+            "block_id": "sharpe-leaders",
+            "label": "Sharpe Leaders",
+            "metric": "sharpe_ratio",
+            "sortOrder": "desc",
+            "sort_order": "desc",
+            "items": _trading_pulse_ranked_items(
+                rankings,
+                metric="sharpe_ratio",
+                descending=True,
+                limit=limit,
+                block_id="sharpe-leaders",
+            ),
+        },
+    ]
+
+
 def _build_management_anomalies_payload(snapshot_at: str) -> Dict[str, Any]:
     runtime_alerts, runtime_surfaces = _build_runtime_alerts(snapshot_at)
     sentinel_available, sentinel_findings = read_store.list_sentinel_findings()
