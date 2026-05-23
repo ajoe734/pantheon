@@ -15348,6 +15348,7 @@ async def bff_agora_signal_feedback(
     return result
 
 
+@app.get("/bff/agora/markets")
 @app.get("/bff/agora/watchlist")
 async def bff_agora_watchlist(
     page_token: Optional[str] = None,
@@ -15368,6 +15369,7 @@ async def bff_agora_watchlist(
     )
 
 
+@app.get("/bff/agora/committee-sessions")
 @app.get("/bff/agora/sessions")
 async def bff_agora_sessions(
     status: Optional[str] = None,
@@ -15678,6 +15680,7 @@ async def bff_agora_message_action(
     )
 
 
+@app.get("/bff/agora/market-notes")
 @app.get("/bff/agora/notes")
 async def bff_agora_notes(
     page_token: Optional[str] = None,
@@ -15732,6 +15735,7 @@ async def bff_create_agora_note(
     return result
 
 
+@app.get("/bff/agora/decision-journal")
 @app.get("/bff/agora/journal")
 async def bff_agora_journal(
     page_token: Optional[str] = None,
@@ -16006,6 +16010,7 @@ async def bff_create_agora_training_example(
     return result
 
 
+@app.get("/bff/agora/research-tasks")
 @app.get("/bff/research/tasks")
 async def bff_agora_research_tasks(
     status: Optional[str] = None,
@@ -16096,6 +16101,7 @@ async def bff_insight_attach_strategy_action(
     )
 
 
+@app.get("/bff/agora/incoming")
 @app.get("/bff/agora/handoffs")
 async def bff_agora_handoffs(
     status: Optional[str] = None,

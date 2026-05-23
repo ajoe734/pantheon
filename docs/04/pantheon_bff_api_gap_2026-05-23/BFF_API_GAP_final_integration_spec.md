@@ -200,3 +200,54 @@ durable across page loads.
 ### Task
 
 BFF-B1-004 — Owner: Claude, Reviewer: Codex
+
+---
+
+## B7 — Agora Compatibility APIs
+
+### Gap
+
+The execute-plans Agora workbench still references six historical Agora route
+names that had only registry-level `implemented_by_alias` coverage. The canonical
+BFF read models already existed, but the legacy path names were not registered
+as live FastAPI routes. In strict/live mode this could make a frontend route
+probe see a 404 even though the canonical surface was available.
+
+### Fix
+
+**File: `services/control-plane/bff/main.py`**
+
+Register the six historical Agora names as canonical read aliases on the
+existing handlers:
+
+| Compatibility path | Canonical handler/source |
+|---|---|
+| `GET /bff/agora/markets` | `GET /bff/agora/watchlist` |
+| `GET /bff/agora/committee-sessions` | `GET /bff/agora/sessions` |
+| `GET /bff/agora/market-notes` | `GET /bff/agora/notes` |
+| `GET /bff/agora/decision-journal` | `GET /bff/agora/journal` |
+| `GET /bff/agora/research-tasks` | `GET /bff/research/tasks` |
+| `GET /bff/agora/incoming` | `GET /bff/agora/handoffs` |
+
+These aliases do not introduce new write authority, fallback data, or separate
+DTO projections. They share the canonical handler, auth gate, pagination
+parameters, response envelope, and read-surface metadata.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | All six B7 compatibility paths are registered in FastAPI and return HTTP 200 with seeded local read-store data | ✅ test added |
+| 2 | Each alias returns the same item IDs as its canonical route | ✅ test added |
+| 3 | Each alias reports the same read-surface `status` and `source` as its canonical route | ✅ test added |
+| 4 | Aliases preserve the existing read-role auth gate and do not add write authority | ✅ implemented by shared handlers |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_b2_005_agora_canonical_aliases.py`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B2-005 — Owner: Codex, Reviewer: Claude2
