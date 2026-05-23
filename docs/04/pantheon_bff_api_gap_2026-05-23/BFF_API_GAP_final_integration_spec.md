@@ -117,6 +117,72 @@ BFF-B1-005 — Owner: Codex2, Reviewer: Claude
 
 ---
 
+## §13 Command / Action Compatibility
+
+### Gap
+
+The execute-plans strict-mode write path needs `POST /bff/v1/commands` to be the
+canonical command admission facade while legacy `/api/v1/operator/commands` status
+polling and `/bff/actions/*` compatibility remain intact. The facade must accept the
+frontend command schema, preserve idempotency and trace headers, project a
+`CommandResponse<T>` envelope, and fail closed for live broker scope when live broker
+execution is not explicitly enabled.
+
+### Fix
+
+**File: `services/control-plane/bff/main.py`**
+
+- Keep `POST /bff/v1/commands` as the final BFF command admission route.
+- Accept the final command payload shape:
+  `command`, `target`, optional `action`, `params`, `audit_context`, and
+  top-level precondition aliases `confirmToken`, `approvalDecisionId`, and
+  `twoManSignatureId` (with snake_case aliases also supported).
+- Require operator authentication and a header idempotency key. `Idempotency-Key`
+  is canonical; `X-Idempotency-Key` remains a temporary compatibility alias when
+  the canonical header is absent.
+- Reject `idempotencyKey` / `idempotency_key` in the body.
+- Propagate `X-Correlation-Id`, `X-Request-Id`, `X-Trace-Id`, and the resolved
+  idempotency key into the foundation command trace and persisted audit record.
+- Persist commands through the shared command store used by
+  `/api/v1/operator/commands`; the response `trackingUrl` points to
+  `GET /api/v1/operator/commands/{command_id}` so existing operator polling stays
+  compatible.
+- Return `CommandResponse<T>` with `status=accepted`, `data.receipt_id`,
+  `data.command_id` / `data.commandId`, `data.trackingUrl`, and
+  `meta.idempotency`.
+- Replay duplicate idempotency keys with the same request hash and return HTTP 409
+  `IDEMPOTENCY_CONFLICT` when the same key is reused with a different body.
+- Preserve the live broker fail-closed gate: payloads or runtime targets that signal
+  live broker scope return HTTP 403 unless `PANTHEON_LIVE_BROKER_ENABLED=true`.
+
+`/api/v1/operator/commands` remains available as the legacy foundation route and
+continues to return `CommandSubmissionResponse`; it is not changed to the final
+`CommandResponse<T>` shape.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `POST /bff/v1/commands` accepts final command schema fields (`command`, `target`, `action`, `params`, `audit_context`, `confirmToken`, `approvalDecisionId`, `twoManSignatureId`) | Implemented in BFF-B1-007 |
+| 2 | `Authorization`, `X-Correlation-Id`, `X-Request-Id`, and resolved `Idempotency-Key` / `X-Idempotency-Key` are honored and persisted in command foundation trace/audit | Implemented in BFF-B1-007 |
+| 3 | Response is `CommandResponse<T>` with accepted status, command receipt identifiers, `trackingUrl`, and `meta.idempotency` | Implemented in BFF-B1-007 |
+| 4 | Duplicate idempotency key with the same payload replays the original receipt | Implemented in BFF-B1-007 |
+| 5 | Duplicate idempotency key with a different payload returns HTTP 409 `IDEMPOTENCY_CONFLICT` | Implemented in BFF-B1-007 |
+| 6 | Live broker scope remains fail-closed when `PANTHEON_LIVE_BROKER_ENABLED` is false | Implemented in BFF-B1-007 |
+| 7 | Legacy `/api/v1/operator/commands` remains unaffected and keeps `CommandSubmissionResponse` | Implemented in BFF-B1-007 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_governance_command_submission.py`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B1-007 — Owner: Codex, Reviewer: Claude
+
+---
+
 ## §14 Confirm-Token Lifecycle
 
 ### Gap

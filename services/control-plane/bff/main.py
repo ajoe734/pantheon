@@ -8033,8 +8033,15 @@ def _project_final_command_response(
         staleness_warning=staleness_warning,
     ).model_dump()
     legacy_payload["status"] = final_status.value
+    tracking_url = f"/api/v1/operator/commands/{command_id}"
+    legacy_payload["command_id"] = command_id
+    legacy_payload["commandId"] = command_id
+    legacy_payload["tracking_url"] = tracking_url
+    legacy_payload["trackingUrl"] = tracking_url
     if isinstance(legacy_payload.get("receipt"), dict):
         legacy_payload["receipt"]["status"] = final_status.value
+        legacy_payload["receipt"]["tracking_url"] = tracking_url
+        legacy_payload["receipt"]["trackingUrl"] = tracking_url
     receipts = _command_dual_write_receipts(
         command_id=command_id,
         command=command.value,
@@ -14812,6 +14819,7 @@ async def submit_final_command(
         idempotency_key=idempotency_key,
         x_idempotency_key=x_idempotency_key,
         route=_FINAL_COMMAND_ROUTE,
+        include_durable_meta=True,
     )
 
 
