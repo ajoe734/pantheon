@@ -113,6 +113,7 @@ export const paths = {
   managementPersonaLeague: () => `${BASE}/management/persona-league`,
   managementPersonaLeagueRankings: () => `${BASE}/management/persona-league/rankings`,
   managementPersonaLeagueTiers: () => `${BASE}/management/persona-league/tiers`,
+  managementQuarterlyRanking: () => `${BASE}/management/quarterly-ranking`,
 
   // ---- Research ----
   researchExperiments: () => `${BASE}/research-experiments`,
