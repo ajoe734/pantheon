@@ -37,6 +37,9 @@ def _portfolio_store(
             "risk_policy_ref": "risk-alpha",
             "owner_id": "desk-alpha",
             "owner_type": "desk",
+            "risk_budget": 100.0,
+            "current_exposure": 40.0,
+            "currency": "USD",
         },
         {
             "id": "pool-beta",
@@ -44,6 +47,9 @@ def _portfolio_store(
             "name": "Beta Book",
             "status": "suspended",
             "risk_policy_ref": "risk-beta",
+            "risk_budget": 50.0,
+            "current_exposure": 20.0,
+            "currency": "USD",
         },
     ]
     bindings = [
@@ -126,7 +132,15 @@ def _portfolio_store(
         },
     }
 
-    store.list_capital_pools = lambda status=None, risk_policy_ref=None: capital_pools
+    def list_capital_pools(status=None, risk_policy_ref=None):
+        pools = list(capital_pools)
+        if status:
+            pools = [pool for pool in pools if pool.get("status") == status]
+        if risk_policy_ref:
+            pools = [pool for pool in pools if pool.get("risk_policy_ref") == risk_policy_ref]
+        return pools
+
+    store.list_capital_pools = list_capital_pools
     store.list_bindings = lambda persona_id=None, capital_pool_id=None, role=None, validity=None: bindings
     store.list_deployment_plans = lambda status=None, capital_pool_id=None: deployment_plans
     store.list_runtime_bindings = lambda deployment_mode=None, version=None: runtime_bindings
@@ -178,6 +192,10 @@ def test_portfolio_book_summary_composes_pool_runtime_and_telemetry(monkeypatch)
     assert alpha["active_binding_count"] == 1
     assert alpha["deployment_ids"] == ["plan-alpha"]
     assert alpha["runtime_ids"] == ["runtime-alpha", "runtime-alpha-live"]
+    assert alpha["risk_budget"] == 100.0
+    assert alpha["current_exposure"] == 40.0
+    assert alpha["risk_budget_utilization"] == 0.4
+    assert alpha["pnl"] == 8.0
     assert alpha["telemetry"]["total_pnl"] == 8.0
     assert payload["data"]["items"] == payload["items"]
     assert payload["data"]["pools"] == payload["items"]
@@ -208,9 +226,70 @@ def test_portfolio_book_reports_degraded_telemetry_without_hiding_core_book(monk
     assert payload["meta"]["surfaces"]["portfolio_book"]["status"] == "degraded"
 
 
+def test_portfolio_book_pools_returns_pool_risk_exposure_and_pnl(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get("/bff/management/portfolio-book/pools", headers=HEADERS)
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["data"] == payload["items"]
+    assert payload["pools"] == payload["items"]
+    assert payload["page_info"] == {"next_page_token": None, "total": 2, "page_size": 50}
+
+    alpha = payload["items"][0]
+    assert alpha["pool_id"] == "pool-alpha"
+    assert alpha["risk_budget"] == 100.0
+    assert alpha["riskBudget"] == 100.0
+    assert alpha["current_exposure"] == 40.0
+    assert alpha["currentExposure"] == 40.0
+    assert alpha["risk_budget_utilization"] == 0.4
+    assert alpha["exposure"]["source"] == "capital_pool"
+    assert alpha["pnl"] == 8.0
+    assert alpha["pnl_summary"]["total_pnl"] == 8.0
+
+    summary = payload["summary"]
+    assert summary["total_pools"] == 2
+    assert summary["returned_pools"] == 2
+    assert summary["risk_budget_total"] == 150.0
+    assert summary["current_exposure_total"] == 60.0
+    assert summary["risk_budget_utilization"] == 0.4
+    assert summary["telemetry_runtime_count"] == 2
+    assert summary["total_pnl"] == 8.0
+    assert payload["meta"]["surfaces"]["portfolio_book_pools"]["source"] == "bff_composed"
+    assert payload["meta"]["surfaces"]["capital_pools"]["source"] == "canonical"
+    assert "GET /bff/capital-pools" in payload["meta"]["composition_sources"]
+
+
+def test_portfolio_book_pools_filters_and_paginates(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get(
+        "/bff/management/portfolio-book/pools",
+        headers=HEADERS,
+        params={"status": "active", "risk_policy_ref": "risk-alpha", "page_size": 1},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["page_info"] == {"next_page_token": None, "total": 1, "page_size": 1}
+    assert payload["items"][0]["pool_id"] == "pool-alpha"
+    assert payload["summary"]["total_pools"] == 1
+
+
+def test_portfolio_book_pools_requires_read_auth(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get("/bff/management/portfolio-book/pools")
+
+    assert response.status_code == 401, response.text
+
+
 def test_portfolio_book_is_registered_in_openapi() -> None:
     bff_main.app.openapi_schema = None
     schema = bff_main.app.openapi()
 
     assert "/bff/management/portfolio-book" in schema["paths"]
     assert "get" in schema["paths"]["/bff/management/portfolio-book"]
+    assert "/bff/management/portfolio-book/pools" in schema["paths"]
+    assert "get" in schema["paths"]["/bff/management/portfolio-book/pools"]
