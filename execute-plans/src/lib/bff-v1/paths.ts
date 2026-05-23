@@ -104,6 +104,9 @@ export const paths = {
   rankingFormulas: () => `${BASE}/ranking-formulas`,
   search: () => `${BASE}/search`,
 
+  // ---- P1 Management aggregate APIs ----
+  managementCockpit: () => `${BASE}/management/cockpit`,
+
   // ---- Research ----
   researchExperiments: () => `${BASE}/research-experiments`,
   strategySpecs: (id: string) => `${BASE}/strategies/${enc(id)}/specs`,

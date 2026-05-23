@@ -731,6 +731,123 @@ BFF-B1-006 — Owner: Codex2, Reviewer: Claude
 
 ---
 
+## B3 — P1 Management Aggregate APIs
+
+> Goal: enable Pathreon Management cockpit, persona fleet, human inbox, trading
+> pulse, evolution, evidence, readiness, PM-12 performance/portfolio to go live.
+
+### B3.1 PM-Live 14 endpoints
+
+| ID | Method | Path | FE consumer |
+|---|---|---|---|
+| B3-001 | GET | `/bff/management/cockpit` | Pathreon Management Cockpit |
+| B3-002 | GET | `/bff/management/persona-fleet` | Persona Fleet |
+| B3-003 | GET | `/bff/management/human-inbox` | Human Inbox |
+| B3-004 | GET | `/bff/management/human-inbox/{id}` | HumanGate Detail |
+| B3-005 | GET | `/bff/management/trading-pulse` | Trading Pulse cards |
+| B3-006 | GET | `/bff/management/trading-pulse/rankings` | Trading Pulse ranking blocks |
+| B3-007 | GET | `/bff/management/evolution-journal` | Evolution Journal |
+| B3-008 | GET | `/bff/management/evidence` | Evidence Explorer |
+| B3-009 | GET | `/bff/management/persona-intent` | Persona Intent Traces |
+| B3-010 | GET | `/bff/management/readiness/ep5` | EP5 readiness |
+| B3-011 | GET | `/bff/management/readiness/broker-live` | Broker live readiness |
+| B3-012 | GET | `/bff/management/readiness/capital-binding-live` | Capital binding live readiness |
+| B3-013 | GET | `/bff/management/readiness/bff-ha` | BFF HA readiness |
+| B3-014 | GET | `/bff/management/readiness/strict-publish` | Strict publish audit |
+
+### B3.2 PM-12 Performance / Portfolio 10 endpoints
+
+| ID | Method | Path | FE consumer |
+|---|---|---|---|
+| B3-015 | GET | `/bff/management/portfolio-book` | Portfolio summary |
+| B3-016 | GET | `/bff/management/portfolio-book/pools` | Capital pool summaries |
+| B3-017 | GET | `/bff/management/portfolio-book/holdings` | Global holdings table |
+| B3-018 | GET | `/bff/management/persona-league` | Persona League table |
+| B3-019 | GET | `/bff/management/persona-league/rankings` | League rankings |
+| B3-020 | GET | `/bff/management/persona-league/tiers` | Tier definitions |
+| B3-021 | GET | `/bff/management/quarterly-ranking?quarter=YYYY-Qn` | Quarterly ranking |
+| B3-022 | GET | `/bff/management/quarterly-ranking/formula` | Quarterly formula |
+| B3-023 | GET | `/bff/management/quarterly-ranking/recommendations?quarter=YYYY-Qn` | Promote/demote recommendations |
+| B3-024 | GET | `/bff/management/performance-attribution?dimension=&period=` | Attribution rows |
+
+### B3.3 PM-Live composition sources
+
+| Endpoint | Suggested composition |
+|---|---|
+| cockpit | operator home + runtime health + alerts + human inbox + trading pulse + anomalies |
+| persona-fleet | personas + bindings + telemetry/persona-health + training/evolution info |
+| human-inbox | approvals + interventions + sentinel + readiness blockers + policy violations |
+| trading-pulse | telemetry performance + runtime status + rankings + baseline comparison |
+| evolution-journal | evolution decisions + postmortems + mutation review + rollback/freeze records |
+| evidence | `/api/v1/knowledge/evidence` adapted to Management Evidence Explorer shape |
+| persona-intent | redacted persona trace / trainer / Agora intent summaries |
+| readiness | M7 packets + evidence refs + broker/BFF/strict publish status + human gates |
+
+### B3.4 PM-12 composition sources
+
+| Endpoint | Suggested composition |
+|---|---|
+| portfolio-book | capital pools + runtime bindings + telemetry + holdings snapshot |
+| portfolio-book/pools | capital pool list + exposure + risk budget + PnL |
+| portfolio-book/holdings | positions/fills/mark prices + strategy/persona/runtime links |
+| persona-league | personas + strategy bindings + PnL + risk + execution metrics |
+| persona-league/rankings | computed ranking blocks by criteria |
+| persona-league/tiers | tier config / current season tiers |
+| quarterly-ranking | persona league + formula + quarter window + evidence |
+| quarterly-ranking/formula | formula weights and version |
+| quarterly-ranking/recommendations | governance recommendations only; no direct live changes |
+| performance-attribution | attribution by persona / strategy / pool / asset / broker / runtime / regime |
+
+### B3.5 Important policy rule
+
+Quarterly ranking recommendations MUST NOT directly change live capital. They emit:
+
+```text
+promote_to_canary_candidate, increase_research_budget, grant_tool_access,
+reduce_capital_access, require_retraining, freeze_persona,
+suspend_persona, retire_persona
+```
+
+Actions must enter Human Inbox / Governance Queue / HumanGateDecision.
+
+### B3-001 Cockpit Aggregate
+
+**File: `services/control-plane/bff/main.py`**
+
+- Add `GET /bff/management/cockpit` as the PM-Live cockpit aggregate route.
+- Require the same read-role authentication gate as the underlying operator read surfaces.
+- Compose operator home, runtime health, alerts, human inbox, trading pulse, and anomalies.
+- Preserve backend-owned degraded/unavailable surface metadata in `meta.surfaces`.
+
+**File: `execute-plans/src/lib/bff-v1/management.ts`**
+
+- Add the FE contract path and response types for the cockpit aggregate.
+- Keep both camelCase and snake_case section aliases while the frontend migrates.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated `GET /bff/management/cockpit` composes operator home, runtime health, alerts, human inbox, trading pulse, and anomalies | ✅ test added in BFF-B3-001 |
+| 2 | Anonymous `GET /bff/management/cockpit` returns HTTP 401 using the normal BFF auth gate | ✅ test added in BFF-B3-001 |
+| 3 | Response exposes FE-compatible section aliases and `meta.surfaces.management_cockpit` | ✅ test added in BFF-B3-001 |
+| 4 | `execute-plans/src/lib/bff-v1/management.ts` exports the cockpit path, response contract, and fetch helper | ✅ implemented in BFF-B3-001 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_management_cockpit.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B3-001 — Owner: Codex, Reviewer: Claude
+
+---
+
 ## B4 — P1 v5 Closed-Loop OS APIs {#b4--p1-v5-closed-loop-os-apis}
 
 ### Gap
