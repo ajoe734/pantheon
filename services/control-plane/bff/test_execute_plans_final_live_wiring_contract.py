@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import tempfile
 from contextlib import contextmanager
@@ -56,6 +57,8 @@ FINAL_CONTRACT_METHOD_PATHS = {
     ("GET", "/bff/incidents/{id}"),
     ("GET", "/bff/jobs"),
     ("GET", "/bff/jobs/{id}"),
+    ("GET", "/bff/management/cockpit"),
+    ("GET", "/bff/management/persona-league"),
     ("GET", "/bff/mcp-servers"),
     ("GET", "/bff/mcp-servers/{id}"),
     ("GET", "/bff/mcp-tools"),
@@ -155,6 +158,7 @@ LIVE_PROBE_CONCRETE_ROUTES = [
     ("GET", "/bff/deployments"),
     ("GET", "/bff/evolution-programs"),
     ("GET", "/bff/jobs"),
+    ("GET", "/bff/management/cockpit"),
     ("POST", "/bff/approvals/apr_001/decide"),
     ("POST", "/bff/approvals/batch-decide"),
     ("GET", "/bff/alerts"),
@@ -162,6 +166,7 @@ LIVE_PROBE_CONCRETE_ROUTES = [
     ("GET", "/bff/incidents"),
     ("GET", "/bff/audit"),
     ("GET", "/bff/artifacts"),
+    ("GET", "/bff/management/persona-league"),
     ("GET", "/bff/runtimes"),
     ("GET", "/bff/mcp-servers"),
     ("GET", "/bff/mcp-tools"),
@@ -318,9 +323,13 @@ def _detail_data(payload: dict) -> dict:
     return payload
 
 
+def _canonical_route_path(path: str) -> str:
+    return re.sub(r"\{[^}]+\}", "{id}", path)
+
+
 def _route_index() -> set[tuple[str, str]]:
     return {
-        (method, getattr(route, "path", ""))
+        (method, _canonical_route_path(getattr(route, "path", "")))
         for route in bff_main.app.routes
         for method in (getattr(route, "methods", set()) or set())
         if method in {"DELETE", "GET", "PATCH", "POST", "PUT"}
@@ -328,7 +337,8 @@ def _route_index() -> set[tuple[str, str]]:
 
 
 def test_execute_plans_final_contract_paths_are_registered() -> None:
-    missing = FINAL_CONTRACT_METHOD_PATHS - _route_index()
+    expected = {(method, _canonical_route_path(path)) for method, path in FINAL_CONTRACT_METHOD_PATHS}
+    missing = expected - _route_index()
     assert not missing
 
 
@@ -338,7 +348,8 @@ def test_execute_plans_final_openapi_json_is_route_discoverable() -> None:
 
     assert response.status_code == 200, response.text
     paths = response.json()["paths"]
-    missing = [path for _, path in FINAL_CONTRACT_METHOD_PATHS if path not in paths]
+    openapi_paths = {_canonical_route_path(path) for path in paths}
+    missing = [path for _, path in FINAL_CONTRACT_METHOD_PATHS if _canonical_route_path(path) not in openapi_paths]
     assert not missing
 
 
@@ -358,17 +369,17 @@ def test_execute_plans_live_probe_catalog_no_longer_404s_anonymously() -> None:
 
 def test_execute_plans_final_stub_auth_smoke_avoids_server_errors(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
-    client = TestClient(bff_main.app, raise_server_exceptions=False)
 
-    for path in [
-        "/bff/agora/signals/sig_001",
-        "/bff/artifacts",
-        "/bff/artifacts/art_001",
-        "/bff/capital-pools/pool_001",
-        "/bff/v5/execution/strategy-health",
-    ]:
-        response = client.get(path, headers=HEADERS)
-        assert response.status_code < 500, response.text
+    with _isolated_final_read_models() as client:
+        for path in [
+            "/bff/agora/signals/sig_001",
+            "/bff/artifacts",
+            "/bff/artifacts/art_001",
+            "/bff/capital-pools/pool-main",
+            "/bff/v5/execution/strategy-health",
+        ]:
+            response = client.get(path, headers=HEADERS)
+            assert response.status_code < 500, response.text
 
 
 def test_execute_plans_final_seeded_detail_paths_use_read_model_dtos(monkeypatch) -> None:

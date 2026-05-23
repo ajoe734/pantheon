@@ -104,6 +104,9 @@ export const paths = {
   rankingFormulas: () => `${BASE}/ranking-formulas`,
   search: () => `${BASE}/search`,
 
+  // ---- P1 Management aggregate APIs ----
+  managementCockpit: () => `${BASE}/management/cockpit`,
+
   // ---- Research ----
   researchExperiments: () => `${BASE}/research-experiments`,
   strategySpecs: (id: string) => `${BASE}/strategies/${enc(id)}/specs`,
@@ -139,6 +142,9 @@ export const paths = {
   /** @deprecated Alias of `v5InterventionDecide(id)`. */
   v5InterventionDecision: (id: string) => `${BASE}/v5/interventions/${enc(id)}/decide`,
   v5ExecutionPersonaHealth: () => `${BASE}/v5/execution/persona-health`,
+
+  // ---- Management aggregate read surfaces ----
+  managementPersonaFleet: () => `${BASE}/management/persona-fleet`,
 
   // ---- Management OODA packet read surface ----
   oodaPackets: () => `${BASE}/ooda/packets`,

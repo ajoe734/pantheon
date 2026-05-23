@@ -637,6 +637,105 @@ BFF-B2-002 — Owner: Claude2, Reviewer: Codex2
 
 ---
 
+## §B3.4 PM-12 Composition Sources {#b34-pm-12-composition-sources}
+
+### Gap
+
+The Management Persona League table needs a single BFF read that already joins
+the persona registry row with the persona-side drilldown sources used by the
+Management console. Without this composed route, `execute-plans` has to fan out
+from `GET /bff/personas` into per-persona route policy, capability, activity,
+evaluation, memory, binding, and health reads before rendering one table.
+
+### Fix
+
+**File: `services/control-plane/bff/main.py`**
+
+Added `GET /bff/management/persona-league`, a read-only composed table route
+that returns a canonical list envelope:
+
+```json
+{
+  "data": [],
+  "items": [],
+  "page_info": { "next_page_token": null, "total": 0 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": []
+  }
+}
+```
+
+Each row preserves the execute-plans persona list DTO fields (`id`, `name`,
+`owner`, `updatedAt`, `state`, `risk`, `archetype`, `routedStrategies`,
+`successRate`) and adds table-ready composition blocks:
+
+- `routePolicy`: route-policy / consult-policy rule counts.
+- `capabilities`: capability snapshot counts and snapshot metadata.
+- `bindings`: persona-capital binding counts, capital pool refs, deployment
+  scopes, and status counts.
+- `sessions`: persona session totals, active count, runtime refs, pool scopes,
+  heartbeat timestamp, and status counts.
+- `evaluations`: teaching/evaluation totals, completed count, latest timestamp,
+  outcomes, and status counts.
+- `memory`: memory item totals and status counts. This remains an empty
+  composed summary until a first-class persona-memory read-store method exists.
+- `health`: persona health derived from lifecycle state, active sessions, and
+  capability snapshot presence.
+- `allowedActions` and `links`: backend-shaped persona action authority and
+  route links for drilldown navigation.
+
+Supported query parameters:
+
+| Parameter | Notes |
+|---|---|
+| `state` | Filters normalized persona lifecycle state. |
+| `archetype` | Filters the projected persona archetype. |
+| `q` | Case-insensitive search across id, name, owner, and archetype. |
+| `page_token` / `page_size` | Uses the same offset paging convention as the other BFF list routes. |
+
+### Composition Sources
+
+The route declares these source surfaces in `meta.composition_sources`:
+
+- `GET /bff/personas`
+- `GET /bff/personas/{id}/route-policy`
+- `GET /bff/personas/{id}/capabilities`
+- `GET /bff/personas/{id}/activity`
+- `GET /bff/personas/{id}/evaluations`
+- `GET /bff/personas/{id}/memory`
+- `GET /bff/v5/execution/persona-health`
+
+`meta.surfaces` includes `persona_league`, `personas`, `route_policies`,
+`capability_snapshots`, `persona_bindings`, `persona_sessions`,
+`teaching_sessions`, `persona_memory`, and `persona_health` so the UI can keep
+strict fallback behavior without guessing which underlying read source degraded.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated `GET /bff/management/persona-league` returns `data` + `items` list envelope and `page_info` | Implemented BFF-PM12-004 |
+| 2 | Rows include execute-plans persona DTO fields plus `routePolicy`, `capabilities`, `bindings`, `sessions`, `evaluations`, `memory`, `health`, `allowedActions`, and `links` | Implemented BFF-PM12-004 |
+| 3 | Route supports `state`, `archetype`, `q`, `page_token`, and `page_size` | Implemented BFF-PM12-004 |
+| 4 | Response advertises composition sources and per-source surface status in `meta` | Implemented BFF-PM12-004 |
+| 5 | Missing auth returns HTTP 401 | Implemented BFF-PM12-004 |
+| 6 | Route is registered in the execute-plans final live wiring route inventory | Implemented BFF-PM12-004 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_pm12_persona_league.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-PM12-004 — Owner: Codex2, Reviewer: Claude2
+
+---
+
 ## §16 PATCH /bff/me/locale — Operator Locale Preference
 
 ### Gap
@@ -761,6 +860,123 @@ semantics.
 ### Task
 
 BFF-B1-006 — Owner: Codex2, Reviewer: Claude
+
+---
+
+## B3 — P1 Management Aggregate APIs
+
+> Goal: enable Pathreon Management cockpit, persona fleet, human inbox, trading
+> pulse, evolution, evidence, readiness, PM-12 performance/portfolio to go live.
+
+### B3.1 PM-Live 14 endpoints
+
+| ID | Method | Path | FE consumer |
+|---|---|---|---|
+| B3-001 | GET | `/bff/management/cockpit` | Pathreon Management Cockpit |
+| B3-002 | GET | `/bff/management/persona-fleet` | Persona Fleet |
+| B3-003 | GET | `/bff/management/human-inbox` | Human Inbox |
+| B3-004 | GET | `/bff/management/human-inbox/{id}` | HumanGate Detail |
+| B3-005 | GET | `/bff/management/trading-pulse` | Trading Pulse cards |
+| B3-006 | GET | `/bff/management/trading-pulse/rankings` | Trading Pulse ranking blocks |
+| B3-007 | GET | `/bff/management/evolution-journal` | Evolution Journal |
+| B3-008 | GET | `/bff/management/evidence` | Evidence Explorer |
+| B3-009 | GET | `/bff/management/persona-intent` | Persona Intent Traces |
+| B3-010 | GET | `/bff/management/readiness/ep5` | EP5 readiness |
+| B3-011 | GET | `/bff/management/readiness/broker-live` | Broker live readiness |
+| B3-012 | GET | `/bff/management/readiness/capital-binding-live` | Capital binding live readiness |
+| B3-013 | GET | `/bff/management/readiness/bff-ha` | BFF HA readiness |
+| B3-014 | GET | `/bff/management/readiness/strict-publish` | Strict publish audit |
+
+### B3.2 PM-12 Performance / Portfolio 10 endpoints
+
+| ID | Method | Path | FE consumer |
+|---|---|---|---|
+| B3-015 | GET | `/bff/management/portfolio-book` | Portfolio summary |
+| B3-016 | GET | `/bff/management/portfolio-book/pools` | Capital pool summaries |
+| B3-017 | GET | `/bff/management/portfolio-book/holdings` | Global holdings table |
+| B3-018 | GET | `/bff/management/persona-league` | Persona League table |
+| B3-019 | GET | `/bff/management/persona-league/rankings` | League rankings |
+| B3-020 | GET | `/bff/management/persona-league/tiers` | Tier definitions |
+| B3-021 | GET | `/bff/management/quarterly-ranking?quarter=YYYY-Qn` | Quarterly ranking |
+| B3-022 | GET | `/bff/management/quarterly-ranking/formula` | Quarterly formula |
+| B3-023 | GET | `/bff/management/quarterly-ranking/recommendations?quarter=YYYY-Qn` | Promote/demote recommendations |
+| B3-024 | GET | `/bff/management/performance-attribution?dimension=&period=` | Attribution rows |
+
+### B3.3 PM-Live composition sources
+
+| Endpoint | Suggested composition |
+|---|---|
+| cockpit | operator home + runtime health + alerts + human inbox + trading pulse + anomalies |
+| persona-fleet | personas + bindings + telemetry/persona-health + training/evolution info |
+| human-inbox | approvals + interventions + sentinel + readiness blockers + policy violations |
+| trading-pulse | telemetry performance + runtime status + rankings + baseline comparison |
+| evolution-journal | evolution decisions + postmortems + mutation review + rollback/freeze records |
+| evidence | `/api/v1/knowledge/evidence` adapted to Management Evidence Explorer shape |
+| persona-intent | redacted persona trace / trainer / Agora intent summaries |
+| readiness | M7 packets + evidence refs + broker/BFF/strict publish status + human gates |
+
+### B3.4 PM-12 composition sources
+
+| Endpoint | Suggested composition |
+|---|---|
+| portfolio-book | capital pools + runtime bindings + telemetry + holdings snapshot |
+| portfolio-book/pools | capital pool list + exposure + risk budget + PnL |
+| portfolio-book/holdings | positions/fills/mark prices + strategy/persona/runtime links |
+| persona-league | personas + strategy bindings + PnL + risk + execution metrics |
+| persona-league/rankings | computed ranking blocks by criteria |
+| persona-league/tiers | tier config / current season tiers |
+| quarterly-ranking | persona league + formula + quarter window + evidence |
+| quarterly-ranking/formula | formula weights and version |
+| quarterly-ranking/recommendations | governance recommendations only; no direct live changes |
+| performance-attribution | attribution by persona / strategy / pool / asset / broker / runtime / regime |
+
+### B3.5 Important policy rule
+
+Quarterly ranking recommendations MUST NOT directly change live capital. They emit:
+
+```text
+promote_to_canary_candidate, increase_research_budget, grant_tool_access,
+reduce_capital_access, require_retraining, freeze_persona,
+suspend_persona, retire_persona
+```
+
+Actions must enter Human Inbox / Governance Queue / HumanGateDecision.
+
+### B3-001 Cockpit Aggregate
+
+**File: `services/control-plane/bff/main.py`**
+
+- Add `GET /bff/management/cockpit` as the PM-Live cockpit aggregate route.
+- Require the same read-role authentication gate as the underlying operator read surfaces.
+- Compose operator home, runtime health, alerts, human inbox, trading pulse, and anomalies.
+- Preserve backend-owned degraded/unavailable surface metadata in `meta.surfaces`.
+
+**File: `execute-plans/src/lib/bff-v1/management.ts`**
+
+- Add the FE contract path and response types for the cockpit aggregate.
+- Keep both camelCase and snake_case section aliases while the frontend migrates.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated `GET /bff/management/cockpit` composes operator home, runtime health, alerts, human inbox, trading pulse, and anomalies | ✅ test added in BFF-B3-001 |
+| 2 | Anonymous `GET /bff/management/cockpit` returns HTTP 401 using the normal BFF auth gate | ✅ test added in BFF-B3-001 |
+| 3 | Response exposes FE-compatible section aliases and `meta.surfaces.management_cockpit` | ✅ test added in BFF-B3-001 |
+| 4 | `execute-plans/src/lib/bff-v1/management.ts` exports the cockpit path, response contract, and fetch helper | ✅ implemented in BFF-B3-001 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_management_cockpit.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B3-001 — Owner: Codex, Reviewer: Claude
 
 ---
 
@@ -968,3 +1184,74 @@ projection.
 ### Task
 
 BFF-B2-005 — Owner: Codex, Reviewer: Claude2
+
+---
+
+## B3 — P1 Management Aggregate APIs
+
+### Gap
+
+The execute-plans Persona Fleet page needs one strict/live aggregate read so the
+frontend does not fan out across persona, binding, runtime, telemetry, trainer,
+and evolution read surfaces. The page can already read the B2.1 list/detail
+facade, but the live Persona Fleet view requires a backend-owned composition that
+keeps source-surface health visible and preserves fail-closed auth semantics.
+
+### B3.3 GET `/bff/management/persona-fleet`
+
+**File: `services/control-plane/bff/main.py`**
+
+- Add `GET /bff/management/persona-fleet` as a read-only Management aggregate.
+- Require the existing BFF read-role authentication gate; anonymous requests
+  return the typed BFF 401 envelope.
+- Compose each persona with:
+  - execute-plans Persona DTO projection;
+  - persona-capital bindings and capital-pool enrichment;
+  - runtime bindings linked by persona binding, capital pool, deployment plan,
+    or persona session runtime reference;
+  - telemetry summaries keyed by runtime;
+  - trainer/teaching session summary;
+  - related evolution decisions via persona target, runtime artifact, or linked
+    incident;
+  - derived persona health with status, score, reasons, runtime statuses, latest
+    telemetry timestamp, and active incident count.
+- Return the standard BFF aggregate envelope: `data`, `items`, `summary`,
+  `page_info`, and `meta.surfaces`.
+- Support `state`, `health`, `page_token`, and bounded `page_size` filters.
+- Preserve source surfaces in metadata (`personas`, `persona_bindings`,
+  `runtime_bindings`, `telemetry_summaries`, `teaching_sessions`,
+  `evolution_decisions`) plus a composed `persona_fleet` surface.
+
+**File: `execute-plans/src/lib/bff-v1/paths.ts`**
+
+- Add `paths.managementPersonaFleet()` resolving to
+  `/bff/management/persona-fleet`.
+
+**File: `execute-plans/src/lib/bff/client.ts`**
+
+- Add `managementClient.personaFleet.list()` as the live aggregate reader using
+  the same strict/hybrid transport policy as OODA and mutation-review live reads,
+  with the Persona Fleet aggregate DTO exported from the tracked client module.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `GET /bff/management/persona-fleet` returns persona rows composed from personas, persona-capital bindings, runtime bindings, telemetry summaries, trainer sessions, and evolution decisions | ✅ test added |
+| 2 | Response includes `data`, `items`, `summary`, `page_info`, and `meta.surfaces.persona_fleet` | ✅ test added |
+| 3 | `health` and pagination filters are accepted by the backend route | ✅ test added |
+| 4 | Anonymous request returns HTTP 401 typed BFF error envelope | ✅ test added |
+| 5 | Frontend path/client contract exposes the live aggregate route without seed-list fanout | ✅ test added |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_b3_persona_fleet.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff/client.ts`
+- `execute-plans/src/lib/bff/__tests__/client.test.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B3-002 — Owner: Codex, Reviewer: Claude

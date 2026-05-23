@@ -1359,6 +1359,7 @@ _OPERATOR_DEPLOYMENT_PLAN_ROUTE_PREFIX = "/operator/deployment-plans"
 _OPERATOR_HEALTH_STATUS_ROUTE = "/operator/health-status"
 _OPERATOR_POST_INCIDENT_REVIEW_ROUTE = "/operator/post-incident-review"
 _OPERATOR_RUNTIME_STATE_ROUTE = "/operator/runtime-state"
+_MANAGEMENT_COCKPIT_ROUTE = "/management/cockpit"
 _CONSULTATION_WORKBENCH_ROUTE = "/consultation"
 _KNOWLEDGE_WORKBENCH_ROUTE = "/knowledge"
 _TRAINER_WORKBENCH_ROUTE = "/trainer"
@@ -5879,6 +5880,551 @@ def _build_operator_home_payload(snapshot_at: str) -> Dict[str, Any]:
     }
 
 
+def _management_record_time(record: Dict[str, Any]) -> str:
+    for field in (
+        "updated_at",
+        "updatedAt",
+        "created_at",
+        "createdAt",
+        "submitted_at",
+        "triggered_at",
+        "raised_at",
+        "collected_at",
+        "last_updated_at",
+    ):
+        value = record.get(field)
+        if value not in (None, ""):
+            return str(value)
+    return str(record.get("id") or "")
+
+
+def _management_number(value: Any) -> Optional[float]:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _management_avg(values: List[float]) -> Optional[float]:
+    return round(sum(values) / len(values), 6) if values else None
+
+
+def _management_count_by(records: List[Dict[str, Any]], field: str) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for record in records:
+        value = str(record.get(field) or "unknown").strip() or "unknown"
+        counts[value] = counts.get(value, 0) + 1
+    return counts
+
+
+_MANAGEMENT_RISK_LEVEL_ORDER = {
+    "low": 1,
+    "medium": 2,
+    "high": 3,
+    "critical": 4,
+}
+
+
+def _management_human_inbox_item(
+    *,
+    item_id: str,
+    inbox_type: str,
+    source_dataset: str,
+    title: str,
+    status: Optional[str],
+    risk_level: Optional[str],
+    created_at: Optional[str],
+    href: str,
+    source_record: Dict[str, Any],
+) -> Dict[str, Any]:
+    return {
+        "id": item_id,
+        "inboxType": inbox_type,
+        "inbox_type": inbox_type,
+        "sourceDataset": source_dataset,
+        "source_dataset": source_dataset,
+        "title": title,
+        "status": status,
+        "riskLevel": risk_level,
+        "risk_level": risk_level,
+        "createdAt": created_at,
+        "created_at": created_at,
+        "href": href,
+        "sourceRecord": source_record,
+        "source_record": source_record,
+    }
+
+
+def _build_management_human_inbox_payload(snapshot_at: str) -> Dict[str, Any]:
+    review_items = read_store.list_governance_review_queue_items()
+    approval_items = read_store.list_approval_queue_items()
+    interventions = _v5_intervention_records()
+    sentinel_available, sentinel_findings = read_store.list_sentinel_findings()
+
+    items: List[Dict[str, Any]] = []
+    for item in review_items:
+        item_id = str(item.get("item_id") or item.get("id") or "").strip()
+        if not item_id:
+            continue
+        items.append(
+            _management_human_inbox_item(
+                item_id=item_id,
+                inbox_type="governance_review",
+                source_dataset="governance_review_queue_items",
+                title=f"Governance review: {item.get('item_type') or item_id}",
+                status=item.get("status") or item.get("governance_outcome"),
+                risk_level=item.get("risk_level"),
+                created_at=item.get("submitted_at"),
+                href=f"{_GOVERNANCE_REVIEW_QUEUE_ROUTE}?item={item_id}",
+                source_record=item,
+            )
+        )
+    for item in approval_items:
+        decision_id = str(item.get("decision_id") or item.get("id") or "").strip()
+        if not decision_id:
+            continue
+        items.append(
+            _management_human_inbox_item(
+                item_id=decision_id,
+                inbox_type="approval_decision",
+                source_dataset="approval_queue_items",
+                title=f"Approval required: {item.get('decision_type') or decision_id}",
+                status=item.get("decision_state"),
+                risk_level=item.get("risk_level"),
+                created_at=item.get("submitted_at"),
+                href=f"{_GOVERNANCE_APPROVAL_QUEUE_ROUTE}?decision={decision_id}",
+                source_record=item,
+            )
+        )
+    for item in interventions:
+        intervention_id = str(item.get("intervention_id") or item.get("id") or "").strip()
+        if not intervention_id:
+            continue
+        status = str(item.get("status") or "").strip().lower()
+        if status and status not in {"pending", "open", "escalated", "claimed", "in_review"}:
+            continue
+        items.append(
+            _management_human_inbox_item(
+                item_id=intervention_id,
+                inbox_type="intervention",
+                source_dataset="v5_interventions",
+                title=f"Intervention: {item.get('kind') or intervention_id}",
+                status=item.get("status"),
+                risk_level=item.get("severity") or item.get("risk_level"),
+                created_at=item.get("triggered_at") or item.get("created_at"),
+                href=f"/management/interventions?intervention={intervention_id}",
+                source_record=item,
+            )
+        )
+    for item in sentinel_findings:
+        finding_id = str(item.get("id") or item.get("finding_id") or "").strip()
+        if not finding_id:
+            continue
+        status = str(item.get("status") or "").strip().lower()
+        if status and status not in {"pending", "open", "active", "escalated"}:
+            continue
+        items.append(
+            _management_human_inbox_item(
+                item_id=finding_id,
+                inbox_type="sentinel_finding",
+                source_dataset="sentinel_findings",
+                title=f"Sentinel finding: {item.get('kind') or item.get('title') or finding_id}",
+                status=item.get("status"),
+                risk_level=item.get("severity") or item.get("risk_level"),
+                created_at=item.get("triggered_at") or item.get("created_at"),
+                href=f"/management/sentinel?finding={finding_id}",
+                source_record=item,
+            )
+        )
+
+    items = sorted(items, key=_management_record_time, reverse=True)
+
+    review_surface = _dataset_surface_status(
+        "governance_review_queue_items",
+        snapshot_at=snapshot_at,
+    )
+    approval_surface = _dataset_surface_status(
+        "approval_queue_items",
+        snapshot_at=snapshot_at,
+    )
+    intervention_source = "bff_local_registry" if _V5_INTERVENTIONS_STORE else None
+    intervention_surface = _dataset_surface_status(
+        "v5_interventions",
+        snapshot_at=snapshot_at,
+        source=intervention_source,
+    )
+    incident_source = read_store.dataset_source("incidents")
+    sentinel_dataset = "incidents" if incident_source != "missing" else "sentinel_findings"
+    sentinel_surface = _dataset_surface_status(
+        sentinel_dataset,
+        snapshot_at=snapshot_at,
+        source=None if sentinel_available else "missing",
+    )
+    inbox_surface = _aggregate_group_surface(
+        "management_human_inbox",
+        [review_surface, approval_surface, intervention_surface, sentinel_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Human inbox aggregate unavailable.",
+        degraded_message="Human inbox aggregate is available, but one or more contributing surfaces are degraded.",
+    )
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {
+        "management_human_inbox": inbox_surface,
+        "governance_review_queue": review_surface,
+        "approval_queue": approval_surface,
+        "v5_interventions": intervention_surface,
+        "sentinel_findings": sentinel_surface,
+    }
+    return {
+        "items": items,
+        "summary": {
+            "total": len(items),
+            "byType": _management_count_by(items, "inboxType"),
+            "by_type": _management_count_by(items, "inboxType"),
+            "byStatus": _management_count_by(items, "status"),
+            "by_status": _management_count_by(items, "status"),
+            "highestRiskLevel": _highest_ranked_value(
+                [str(item.get("riskLevel") or "") for item in items],
+                _MANAGEMENT_RISK_LEVEL_ORDER,
+            ),
+            "highest_risk_level": _highest_ranked_value(
+                [str(item.get("riskLevel") or "") for item in items],
+                _MANAGEMENT_RISK_LEVEL_ORDER,
+            ),
+        },
+        "meta": meta,
+    }
+
+
+def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
+    runtime_bindings = read_store.list_runtime_bindings()
+    runtime_rows = [_project_operator_runtime_state_row(binding) for binding in runtime_bindings]
+    telemetry_rows = [
+        row.get("telemetry_summary")
+        for row in runtime_rows
+        if isinstance(row.get("telemetry_summary"), dict)
+    ]
+    pnl_values = [
+        value
+        for value in (_management_number((row.get("metrics") or {}).get("pnl")) for row in telemetry_rows)
+        if value is not None
+    ]
+    drawdown_values = [
+        value
+        for value in (_management_number((row.get("metrics") or {}).get("drawdown")) for row in telemetry_rows)
+        if value is not None
+    ]
+    fill_rate_values = [
+        value
+        for value in (_management_number((row.get("metrics") or {}).get("fill_rate")) for row in telemetry_rows)
+        if value is not None
+    ]
+    slippage_values = [
+        value
+        for value in (_management_number((row.get("metrics") or {}).get("avg_slippage_bps")) for row in telemetry_rows)
+        if value is not None
+    ]
+    trade_values = [
+        value
+        for value in (_management_number((row.get("metrics") or {}).get("total_trades")) for row in telemetry_rows)
+        if value is not None
+    ]
+
+    rankings: List[Dict[str, Any]] = []
+    for row in runtime_rows:
+        telemetry = row.get("telemetry_summary") if isinstance(row.get("telemetry_summary"), dict) else {}
+        metrics = telemetry.get("metrics") if isinstance(telemetry.get("metrics"), dict) else {}
+        rankings.append(
+            {
+                "runtimeId": row.get("runtime_id"),
+                "runtime_id": row.get("runtime_id"),
+                "runtimeBindingId": row.get("runtime_binding_id"),
+                "runtime_binding_id": row.get("runtime_binding_id"),
+                "deploymentStage": row.get("deployment_stage"),
+                "deployment_stage": row.get("deployment_stage"),
+                "status": row.get("status"),
+                "pnl": metrics.get("pnl"),
+                "drawdown": metrics.get("drawdown"),
+                "sharpeRatio": metrics.get("sharpe_ratio"),
+                "sharpe_ratio": metrics.get("sharpe_ratio"),
+                "fillRate": metrics.get("fill_rate"),
+                "fill_rate": metrics.get("fill_rate"),
+                "avgSlippageBps": metrics.get("avg_slippage_bps"),
+                "avg_slippage_bps": metrics.get("avg_slippage_bps"),
+                "totalTrades": metrics.get("total_trades"),
+                "total_trades": metrics.get("total_trades"),
+                "lastUpdatedAt": row.get("last_updated_at"),
+                "last_updated_at": row.get("last_updated_at"),
+            }
+        )
+    rankings.sort(
+        key=lambda item: (
+            _management_number(item.get("pnl")) is not None,
+            _management_number(item.get("pnl")) or 0.0,
+            str(item.get("runtimeId") or ""),
+        ),
+        reverse=True,
+    )
+    for index, item in enumerate(rankings, start=1):
+        item["rank"] = index
+
+    by_status = _management_count_by(runtime_rows, "status")
+    by_stage = _management_count_by(runtime_rows, "deployment_stage")
+    runtime_surface = _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at)
+    telemetry_surface = _dataset_surface_status("telemetry_summaries", snapshot_at=snapshot_at)
+    if runtime_rows and len(telemetry_rows) < len(runtime_rows) and telemetry_surface.get("status") == "ok":
+        telemetry_surface["status"] = "degraded"
+        telemetry_surface["message"] = "Telemetry summary missing for one or more cockpit runtimes."
+        telemetry_surface.setdefault(
+            "staleness",
+            {"served_from": "unverifiable", "last_known_at": snapshot_at},
+        )
+    trading_surface = _aggregate_group_surface(
+        "management_trading_pulse",
+        [runtime_surface, telemetry_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Trading pulse aggregate unavailable.",
+        degraded_message="Trading pulse aggregate is available, but runtime or telemetry coverage is degraded.",
+    )
+
+    summary = {
+        "runtimeCount": len(runtime_rows),
+        "runtime_count": len(runtime_rows),
+        "telemetryCoverageCount": len(telemetry_rows),
+        "telemetry_coverage_count": len(telemetry_rows),
+        "byStatus": by_status,
+        "by_status": by_status,
+        "byStage": by_stage,
+        "by_stage": by_stage,
+        "totalPnl": round(sum(pnl_values), 6) if pnl_values else None,
+        "total_pnl": round(sum(pnl_values), 6) if pnl_values else None,
+        "worstDrawdown": max(drawdown_values) if drawdown_values else None,
+        "worst_drawdown": max(drawdown_values) if drawdown_values else None,
+        "averageFillRate": _management_avg(fill_rate_values),
+        "average_fill_rate": _management_avg(fill_rate_values),
+        "worstSlippageBps": max(slippage_values) if slippage_values else None,
+        "worst_slippage_bps": max(slippage_values) if slippage_values else None,
+        "totalTrades": int(sum(trade_values)) if trade_values else 0,
+        "total_trades": int(sum(trade_values)) if trade_values else 0,
+    }
+    cards = [
+        {
+            "cardId": "runtime-status",
+            "card_id": "runtime-status",
+            "label": "Runtime Status",
+            "value": len(runtime_rows),
+            "details": {"byStatus": by_status, "byStage": by_stage},
+        },
+        {
+            "cardId": "pnl",
+            "card_id": "pnl",
+            "label": "P&L",
+            "value": summary["totalPnl"],
+            "details": {"telemetryCoverageCount": len(telemetry_rows)},
+        },
+        {
+            "cardId": "drawdown",
+            "card_id": "drawdown",
+            "label": "Worst Drawdown",
+            "value": summary["worstDrawdown"],
+            "details": {"source": "telemetry_summaries"},
+        },
+        {
+            "cardId": "execution-quality",
+            "card_id": "execution-quality",
+            "label": "Execution Quality",
+            "value": summary["averageFillRate"],
+            "details": {"worstSlippageBps": summary["worstSlippageBps"]},
+        },
+    ]
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {
+        "management_trading_pulse": trading_surface,
+        "runtime_roster": runtime_surface,
+        "telemetry_summary": telemetry_surface,
+    }
+    return {
+        "summary": summary,
+        "cards": cards,
+        "rankings": rankings,
+        "runtimeRows": runtime_rows,
+        "runtime_rows": runtime_rows,
+        "meta": meta,
+    }
+
+
+def _build_management_anomalies_payload(snapshot_at: str) -> Dict[str, Any]:
+    runtime_alerts, runtime_surfaces = _build_runtime_alerts(snapshot_at)
+    sentinel_available, sentinel_findings = read_store.list_sentinel_findings()
+    sentinel_anomalies: List[Dict[str, Any]] = []
+    for finding in sentinel_findings:
+        finding_id = str(finding.get("id") or finding.get("finding_id") or "").strip()
+        if not finding_id:
+            continue
+        sentinel_anomalies.append(
+            {
+                "id": finding_id,
+                "kind": finding.get("kind") or "sentinel_finding",
+                "severity": finding.get("severity") or finding.get("risk_level") or "medium",
+                "status": finding.get("status"),
+                "summary": finding.get("title") or finding.get("summary") or finding_id,
+                "created_at": finding.get("created_at"),
+                "triggered_at": finding.get("triggered_at"),
+                "target_ref": {
+                    "label": "Open sentinel finding",
+                    "href": f"/management/sentinel?finding={finding_id}",
+                    "target_id": finding_id,
+                },
+                "sourceRecord": finding,
+                "source_record": finding,
+            }
+        )
+    runtime_anomalies = [
+        {
+            "id": alert.get("alert_id"),
+            "kind": "runtime_alert",
+            "severity": alert.get("severity"),
+            "status": "active",
+            "summary": alert.get("summary"),
+            "raised_at": alert.get("raised_at"),
+            "target_ref": alert.get("target_ref"),
+            "sourceRecord": alert,
+            "source_record": alert,
+        }
+        for alert in runtime_alerts
+    ]
+    anomalies = sorted(
+        runtime_anomalies + sentinel_anomalies,
+        key=_management_record_time,
+        reverse=True,
+    )
+    incident_source = read_store.dataset_source("incidents")
+    sentinel_dataset = "incidents" if incident_source != "missing" else "sentinel_findings"
+    sentinel_surface = _dataset_surface_status(
+        sentinel_dataset,
+        snapshot_at=snapshot_at,
+        source=None if sentinel_available else "missing",
+    )
+    anomalies_surface = _aggregate_group_surface(
+        "management_anomalies",
+        [
+            runtime_surfaces["runtime_roster"],
+            runtime_surfaces["telemetry_summary"],
+            sentinel_surface,
+        ],
+        snapshot_at=snapshot_at,
+        unavailable_message="Anomaly aggregate unavailable.",
+        degraded_message="Anomaly aggregate is available, but runtime telemetry or sentinel coverage is degraded.",
+    )
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {
+        "management_anomalies": anomalies_surface,
+        "runtime_roster": runtime_surfaces["runtime_roster"],
+        "telemetry_summary": runtime_surfaces["telemetry_summary"],
+        "sentinel_findings": sentinel_surface,
+    }
+    return {
+        "items": anomalies,
+        "summary": {
+            "total": len(anomalies),
+            "bySeverity": _management_count_by(anomalies, "severity"),
+            "by_severity": _management_count_by(anomalies, "severity"),
+            "byKind": _management_count_by(anomalies, "kind"),
+            "by_kind": _management_count_by(anomalies, "kind"),
+            "highestSeverity": _highest_ranked_value(
+                [str(item.get("severity") or "") for item in anomalies],
+                _ALERT_SEVERITY_ORDER,
+            ),
+            "highest_severity": _highest_ranked_value(
+                [str(item.get("severity") or "") for item in anomalies],
+                _ALERT_SEVERITY_ORDER,
+            ),
+        },
+        "meta": meta,
+    }
+
+
+def _build_management_cockpit_payload(snapshot_at: str) -> Dict[str, Any]:
+    operator_home = _build_operator_home_payload(snapshot_at)
+    runtime_health = _build_operator_health_status_payload(snapshot_at)
+    alerts_payload = _build_operator_alerts_payload(snapshot_at)
+    human_inbox = _build_management_human_inbox_payload(snapshot_at)
+    trading_pulse = _build_management_trading_pulse_payload(snapshot_at)
+    anomalies = _build_management_anomalies_payload(snapshot_at)
+
+    alerts = {
+        "items": alerts_payload.get("alerts", []),
+        "summary": alerts_payload.get("summary", {}),
+        "meta": alerts_payload.get("meta", {}),
+    }
+    cockpit_inputs = [
+        operator_home["meta"]["surfaces"]["operator_home"],
+        runtime_health["meta"]["surfaces"]["health_status"],
+        alerts_payload["meta"]["surfaces"]["alerts"],
+        human_inbox["meta"]["surfaces"]["management_human_inbox"],
+        trading_pulse["meta"]["surfaces"]["management_trading_pulse"],
+        anomalies["meta"]["surfaces"]["management_anomalies"],
+    ]
+    cockpit_surface = _aggregate_group_surface(
+        "management_cockpit",
+        cockpit_inputs,
+        snapshot_at=snapshot_at,
+        unavailable_message="Management cockpit aggregate unavailable.",
+        degraded_message="Management cockpit aggregate is available, but one or more contributing surfaces are degraded.",
+    )
+    data = {
+        "id": "management-cockpit",
+        "snapshotAt": snapshot_at,
+        "snapshot_at": snapshot_at,
+        "operatorHome": operator_home,
+        "operator_home": operator_home,
+        "runtimeHealth": runtime_health,
+        "runtime_health": runtime_health,
+        "alerts": alerts,
+        "humanInbox": human_inbox,
+        "human_inbox": human_inbox,
+        "tradingPulse": trading_pulse,
+        "trading_pulse": trading_pulse,
+        "anomalies": anomalies,
+        "links": {
+            "self": f"/bff{_MANAGEMENT_COCKPIT_ROUTE}",
+            "operatorHome": "/api/v1/operator/home",
+            "operator_home": "/api/v1/operator/home",
+            "runtimeHealth": "/api/v1/operator/health-status",
+            "runtime_health": "/api/v1/operator/health-status",
+            "alerts": "/bff/alerts",
+            "humanInbox": "/bff/management/human-inbox",
+            "human_inbox": "/bff/management/human-inbox",
+            "tradingPulse": "/bff/management/trading-pulse",
+            "trading_pulse": "/bff/management/trading-pulse",
+        },
+    }
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {
+        "management_cockpit": cockpit_surface,
+        "operator_home": operator_home["meta"]["surfaces"]["operator_home"],
+        "runtime_health": runtime_health["meta"]["surfaces"]["health_status"],
+        "alerts": alerts_payload["meta"]["surfaces"]["alerts"],
+        "human_inbox": human_inbox["meta"]["surfaces"]["management_human_inbox"],
+        "trading_pulse": trading_pulse["meta"]["surfaces"]["management_trading_pulse"],
+        "anomalies": anomalies["meta"]["surfaces"]["management_anomalies"],
+    }
+    return {
+        "data": data,
+        "operator_home": operator_home,
+        "runtime_health": runtime_health,
+        "alerts": alerts,
+        "human_inbox": human_inbox,
+        "trading_pulse": trading_pulse,
+        "anomalies": anomalies,
+        "meta": meta,
+    }
+
+
 def _unavailable_surface(
     dataset: str,
     *,
@@ -10065,6 +10611,18 @@ async def get_operator_home(
 
     snapshot_at = utc_now()
     return _build_operator_home_payload(snapshot_at)
+
+
+@app.get(f"/bff{_MANAGEMENT_COCKPIT_ROUTE}")
+async def bff_management_cockpit(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF-B3-001: Pathreon Management cockpit aggregate."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    return _build_management_cockpit_payload(snapshot_at)
 
 
 @app.get("/api/v1/operator/paper-live-drift/{runtime_id}")
@@ -17961,6 +18519,714 @@ def _list_persona_records() -> List[Dict[str, Any]]:
     return items
 
 
+def _management_record_id(record: Dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = record.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def _management_normalized_status(record: Dict[str, Any]) -> str:
+    return str(record.get("status") or record.get("state") or "unknown").strip().lower() or "unknown"
+
+
+def _management_as_float(value: Any) -> Optional[float]:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _management_telemetry_rollup(records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    if not records:
+        return {
+            "runtime_count": 0,
+            "total_pnl": None,
+            "max_drawdown": None,
+            "average_fill_rate": None,
+            "total_trades": 0,
+            "latest_collected_at": None,
+        }
+
+    pnl_values: List[float] = []
+    drawdown_values: List[float] = []
+    fill_rates: List[float] = []
+    total_trades = 0
+    latest_collected_at: Optional[str] = None
+
+    for record in records:
+        summary = record.get("summary") if isinstance(record.get("summary"), dict) else {}
+        pnl = _management_as_float(record.get("pnl") or summary.get("total_pnl"))
+        drawdown = _management_as_float(record.get("drawdown") or summary.get("max_drawdown"))
+        fill_rate = _management_as_float(record.get("fill_rate") or summary.get("fill_rate"))
+        trades = _management_as_float(record.get("total_trades") or summary.get("total_trades"))
+        collected_at = str(record.get("collected_at") or "").strip()
+        if pnl is not None:
+            pnl_values.append(pnl)
+        if drawdown is not None:
+            drawdown_values.append(drawdown)
+        if fill_rate is not None:
+            fill_rates.append(fill_rate)
+        if trades is not None:
+            total_trades += int(trades)
+        if collected_at and (latest_collected_at is None or collected_at > latest_collected_at):
+            latest_collected_at = collected_at
+
+    return {
+        "runtime_count": len(records),
+        "total_pnl": round(sum(pnl_values), 6) if pnl_values else None,
+        "max_drawdown": max(drawdown_values) if drawdown_values else None,
+        "average_fill_rate": round(sum(fill_rates) / len(fill_rates), 6) if fill_rates else None,
+        "total_trades": total_trades,
+        "latest_collected_at": latest_collected_at,
+    }
+
+
+def _management_portfolio_book_entry(
+    pool: Dict[str, Any],
+    *,
+    bindings: List[Dict[str, Any]],
+    deployment_plans: List[Dict[str, Any]],
+    runtime_bindings: List[Dict[str, Any]],
+    telemetry_by_runtime_id: Dict[str, Dict[str, Any]],
+) -> Dict[str, Any]:
+    pool_id = _management_record_id(pool, "pool_id", "id")
+    pool_bindings = [
+        binding
+        for binding in bindings
+        if _management_record_id(binding, "capital_pool_id", "pool_id") == pool_id
+    ]
+    pool_binding_ids = {
+        _management_record_id(binding, "binding_id", "id", "persona_capital_binding_id")
+        for binding in pool_bindings
+    }
+    pool_binding_ids.discard("")
+    pool_plans = [
+        plan
+        for plan in deployment_plans
+        if _management_record_id(plan, "capital_pool_id", "target_pool_id", "pool_id") == pool_id
+        or bool(pool_binding_ids.intersection(str(v) for v in (plan.get("binding_ids") or [])))
+    ]
+    pool_plan_ids = {_management_record_id(plan, "plan_id", "id") for plan in pool_plans}
+    pool_plan_ids.discard("")
+
+    pool_runtimes = [
+        runtime
+        for runtime in runtime_bindings
+        if _management_record_id(runtime, "capital_pool_id", "pool_id") == pool_id
+        or _management_record_id(runtime, "plan_id", "deployment_plan_id") in pool_plan_ids
+    ]
+    telemetry_records = [
+        telemetry_by_runtime_id[runtime_id]
+        for runtime_id in (
+            _management_record_id(runtime, "runtime_id", "id", "binding_id")
+            for runtime in pool_runtimes
+        )
+        if runtime_id in telemetry_by_runtime_id
+    ]
+    telemetry = _management_telemetry_rollup(telemetry_records)
+
+    active_bindings = [
+        binding
+        for binding in pool_bindings
+        if _management_normalized_status(binding) == "active"
+        or str(binding.get("validity") or "").strip().lower() == "active"
+    ]
+    approved_plans = [
+        plan
+        for plan in pool_plans
+        if _management_normalized_status(plan) in {"approved", "executing", "executed", "active"}
+    ]
+    active_runtimes = [
+        runtime
+        for runtime in pool_runtimes
+        if _management_normalized_status(runtime) in {"active", "running", "healthy"}
+    ]
+
+    deployment_stages = sorted({
+        stage
+        for stage in (
+            [
+                str(plan.get("target_stage") or plan.get("stage") or plan.get("deployment_stage") or "").strip()
+                for plan in pool_plans
+            ]
+            + [
+                str(runtime.get("deployment_stage") or runtime.get("deployment_mode") or "").strip()
+                for runtime in pool_runtimes
+            ]
+        )
+        if stage
+    })
+
+    return {
+        "id": pool_id,
+        "pool_id": pool_id,
+        "name": pool.get("name") or pool_id,
+        "status": pool.get("status") or "unknown",
+        "risk_policy_ref": pool.get("risk_policy_ref"),
+        "owner": {
+            "id": pool.get("owner_id") or pool.get("owner"),
+            "type": pool.get("owner_type"),
+        },
+        "binding_count": len(pool_bindings),
+        "active_binding_count": len(active_bindings),
+        "deployment_count": len(pool_plans),
+        "approved_deployment_count": len(approved_plans),
+        "runtime_count": len(pool_runtimes),
+        "active_runtime_count": len(active_runtimes),
+        "paper_runtime_count": len([
+            runtime
+            for runtime in pool_runtimes
+            if str(runtime.get("deployment_stage") or runtime.get("deployment_mode") or "").lower() == "paper"
+        ]),
+        "live_runtime_count": len([
+            runtime
+            for runtime in pool_runtimes
+            if str(runtime.get("deployment_stage") or runtime.get("deployment_mode") or "").lower() == "live"
+        ]),
+        "deployment_stages": deployment_stages,
+        "binding_ids": sorted(pool_binding_ids),
+        "deployment_ids": sorted(pool_plan_ids),
+        "runtime_ids": sorted({
+            _management_record_id(runtime, "runtime_id", "id", "binding_id")
+            for runtime in pool_runtimes
+            if _management_record_id(runtime, "runtime_id", "id", "binding_id")
+        }),
+        "telemetry": telemetry,
+    }
+
+
+@app.get("/bff/management/portfolio-book")
+async def bff_management_portfolio_book(
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: composed portfolio-book summary for Management Console PM-12."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    capital_pools = read_store.list_capital_pools() or []
+    bindings = read_store.list_bindings() or []
+    deployment_plans = read_store.list_deployment_plans() or []
+    runtime_bindings = read_store.list_runtime_bindings() or []
+
+    telemetry_by_runtime_id: Dict[str, Dict[str, Any]] = {}
+    for runtime in runtime_bindings:
+        runtime_id = _management_record_id(runtime, "runtime_id", "id", "binding_id")
+        if not runtime_id:
+            continue
+        telemetry = read_store.get_telemetry_summary(runtime_id)
+        if telemetry is not None:
+            telemetry_by_runtime_id[runtime_id] = telemetry
+
+    entries = [
+        _management_portfolio_book_entry(
+            pool,
+            bindings=bindings,
+            deployment_plans=deployment_plans,
+            runtime_bindings=runtime_bindings,
+            telemetry_by_runtime_id=telemetry_by_runtime_id,
+        )
+        for pool in capital_pools
+    ]
+    entries = sorted(entries, key=lambda entry: str(entry.get("pool_id") or ""))
+    total = len(entries)
+    page_items, next_page_token = _page_slice(entries, page_token, page_size)
+    portfolio_telemetry = _management_telemetry_rollup(list(telemetry_by_runtime_id.values()))
+
+    active_pool_count = len([
+        pool for pool in capital_pools if _management_normalized_status(pool) in {"active", "ready"}
+    ])
+    active_binding_count = len([
+        binding
+        for binding in bindings
+        if _management_normalized_status(binding) == "active"
+        or str(binding.get("validity") or "").strip().lower() == "active"
+    ])
+    approved_deployment_count = len([
+        plan
+        for plan in deployment_plans
+        if _management_normalized_status(plan) in {"approved", "executing", "executed", "active"}
+    ])
+    active_runtime_count = len([
+        runtime
+        for runtime in runtime_bindings
+        if _management_normalized_status(runtime) in {"active", "running", "healthy"}
+    ])
+    paper_runtime_count = len([
+        runtime
+        for runtime in runtime_bindings
+        if str(runtime.get("deployment_stage") or runtime.get("deployment_mode") or "").lower() == "paper"
+    ])
+    live_runtime_count = len([
+        runtime
+        for runtime in runtime_bindings
+        if str(runtime.get("deployment_stage") or runtime.get("deployment_mode") or "").lower() == "live"
+    ])
+
+    summary = {
+        "portfolio_book_status": "ready" if total else "empty",
+        "capital_pool_count": len(capital_pools),
+        "active_capital_pool_count": active_pool_count,
+        "binding_count": len(bindings),
+        "active_binding_count": active_binding_count,
+        "deployment_count": len(deployment_plans),
+        "approved_deployment_count": approved_deployment_count,
+        "runtime_count": len(runtime_bindings),
+        "active_runtime_count": active_runtime_count,
+        "paper_runtime_count": paper_runtime_count,
+        "live_runtime_count": live_runtime_count,
+        "telemetry_runtime_count": portfolio_telemetry["runtime_count"],
+        "total_pnl": portfolio_telemetry["total_pnl"],
+        "max_drawdown": portfolio_telemetry["max_drawdown"],
+        "average_fill_rate": portfolio_telemetry["average_fill_rate"],
+        "total_trades": portfolio_telemetry["total_trades"],
+        "latest_telemetry_at": portfolio_telemetry["latest_collected_at"],
+    }
+
+    surfaces = {
+        "portfolio_book": _composed_surface_status(
+            snapshot_at=snapshot_at,
+            available=bool(capital_pools or bindings or deployment_plans or runtime_bindings),
+            missing_message="Portfolio-book composition has no readable source records.",
+        ),
+        "capital_pools": _dataset_surface_status("capital_pools", snapshot_at=snapshot_at),
+        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at),
+        "deployment_plans": _dataset_surface_status("deployment_plans", snapshot_at=snapshot_at),
+        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
+        "telemetry_summaries": _dataset_surface_status(
+            "telemetry_summaries",
+            snapshot_at=snapshot_at,
+            has_data=bool(telemetry_by_runtime_id) if runtime_bindings else None,
+            missing_message="Telemetry summaries unavailable for portfolio-book runtimes.",
+        ),
+    }
+    if any(surface.get("status") == "unavailable" for key, surface in surfaces.items() if key != "portfolio_book"):
+        surfaces["portfolio_book"] = _composed_surface_status(
+            snapshot_at=snapshot_at,
+            available=False,
+            missing_message="Portfolio-book composition is degraded because one or more source surfaces are unavailable.",
+        )
+
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = surfaces
+    meta["total"] = total
+    meta["summary"] = {
+        "source_mode": "bff_composed",
+        "task": "BFF-PM12-001",
+    }
+
+    return {
+        "data": {
+            "summary": summary,
+            "items": page_items,
+            "pools": page_items,
+        },
+        "items": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": meta,
+    }
+
+
+def _sort_records_latest_first(
+    records: List[Dict[str, Any]],
+    fields: tuple[str, ...],
+) -> List[Dict[str, Any]]:
+    return sorted(
+        records,
+        key=lambda item: next(
+            (str(item.get(field) or "") for field in fields if item.get(field)),
+            "",
+        ),
+        reverse=True,
+    )
+
+
+def _persona_fleet_runtime_matches(
+    runtime_binding: Dict[str, Any],
+    *,
+    binding_ids: set[str],
+    capital_pool_ids: set[str],
+    runtime_refs: set[str],
+) -> bool:
+    runtime_ids = {
+        str(runtime_binding.get(key) or "").strip()
+        for key in ("id", "binding_id", "runtime_binding_id", "runtime_id")
+    }
+    runtime_ids.discard("")
+    if runtime_ids.intersection(runtime_refs):
+        return True
+
+    persona_binding_id = str(runtime_binding.get("persona_capital_binding_id") or "").strip()
+    if persona_binding_id and persona_binding_id in binding_ids:
+        return True
+
+    capital_pool_id = str(runtime_binding.get("capital_pool_id") or "").strip()
+    if capital_pool_id and capital_pool_id in capital_pool_ids:
+        return True
+
+    plan_id = str(runtime_binding.get("plan_id") or runtime_binding.get("deployment_plan_id") or "").strip()
+    if plan_id:
+        plan = read_store.get_deployment_plan(plan_id) or {}
+        plan_binding_ids = {
+            str(value).strip()
+            for value in (plan.get("binding_ids") or [])
+            if str(value).strip()
+        }
+        if plan_binding_ids.intersection(binding_ids):
+            return True
+        plan_pool_id = str(plan.get("capital_pool_id") or plan.get("target_pool_id") or "").strip()
+        if plan_pool_id and plan_pool_id in capital_pool_ids:
+            return True
+
+    return False
+
+
+def _project_persona_fleet_health(
+    *,
+    persona: Dict[str, Any],
+    runtime_bindings: List[Dict[str, Any]],
+    telemetry_summaries: List[Dict[str, Any]],
+    active_incidents: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    reasons: List[str] = []
+    lifecycle = str(persona.get("lifecycle_state") or persona.get("state") or "").lower()
+    if lifecycle and lifecycle not in {"active", "ready", "running"}:
+        reasons.append("persona_lifecycle_not_active")
+    if not runtime_bindings:
+        reasons.append("no_runtime_binding")
+    if active_incidents:
+        reasons.append("active_incident")
+
+    latest_telemetry = telemetry_summaries[0] if telemetry_summaries else {}
+    drawdown = latest_telemetry.get("drawdown")
+    pnl = latest_telemetry.get("pnl")
+    try:
+        if drawdown is not None and float(drawdown) >= 0.10:
+            reasons.append("drawdown_threshold")
+    except (TypeError, ValueError):
+        pass
+    try:
+        if pnl is not None and float(pnl) <= -0.05:
+            reasons.append("negative_pnl")
+    except (TypeError, ValueError):
+        pass
+
+    runtime_statuses = {
+        str(binding.get("status") or "").strip().lower()
+        for binding in runtime_bindings
+        if str(binding.get("status") or "").strip()
+    }
+    unhealthy_runtime_statuses = sorted(runtime_statuses.difference({"active", "ready", "running", "idle"}))
+    if unhealthy_runtime_statuses:
+        reasons.append("runtime_status_attention")
+
+    status = "healthy"
+    severity = "low"
+    if active_incidents or "drawdown_threshold" in reasons:
+        status = "critical"
+        severity = "high"
+    elif reasons:
+        status = "degraded"
+        severity = "medium"
+
+    score = max(0, 100 - (35 if status == "critical" else 0) - (15 * max(len(reasons) - 1, 0)))
+    return {
+        "status": status,
+        "severity": severity,
+        "score": score,
+        "reasons": reasons,
+        "runtime_statuses": sorted(runtime_statuses),
+        "latest_telemetry_at": latest_telemetry.get("collected_at"),
+        "active_incident_count": len(active_incidents),
+    }
+
+
+def _project_persona_fleet_item(
+    raw_persona: Dict[str, Any],
+    *,
+    all_runtime_bindings: List[Dict[str, Any]],
+    all_incidents: List[Dict[str, Any]],
+    all_evolution_decisions: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    persona_id = str(raw_persona.get("persona_id") or raw_persona.get("id") or "").strip()
+    overlay = _PERSONA_BFF_OVERLAY.get(persona_id)
+    routed = _routed_strategies_for_persona(persona_id)
+    persona_dto = _project_persona_dto(raw_persona, overlay=overlay, routed_strategies=routed)
+
+    bindings = list(read_store.get_bindings_for_persona(persona_id) or [])
+    binding_ids = {
+        str(binding.get("id") or binding.get("binding_id") or "").strip()
+        for binding in bindings
+        if str(binding.get("id") or binding.get("binding_id") or "").strip()
+    }
+    capital_pool_ids = {
+        str(binding.get("capital_pool_id") or "").strip()
+        for binding in bindings
+        if str(binding.get("capital_pool_id") or "").strip()
+    }
+
+    sessions = list(read_store.get_sessions_for_persona(persona_id) or [])
+    runtime_refs = {
+        str(session.get("runtime_binding_id") or session.get("runtime_id") or "").strip()
+        for session in sessions
+        if str(session.get("runtime_binding_id") or session.get("runtime_id") or "").strip()
+    }
+    runtime_bindings = [
+        binding
+        for binding in all_runtime_bindings
+        if _persona_fleet_runtime_matches(
+            binding,
+            binding_ids=binding_ids,
+            capital_pool_ids=capital_pool_ids,
+            runtime_refs=runtime_refs,
+        )
+    ]
+    runtime_ids = {
+        str(binding.get("runtime_id") or binding.get("runtime_binding_id") or binding.get("id") or "").strip()
+        for binding in runtime_bindings
+        if str(binding.get("runtime_id") or binding.get("runtime_binding_id") or binding.get("id") or "").strip()
+    }
+    artifact_ids = {
+        str(binding.get("artifact_id") or "").strip()
+        for binding in runtime_bindings
+        if str(binding.get("artifact_id") or "").strip()
+    }
+
+    telemetry_summaries = [
+        summary
+        for runtime_id in sorted(runtime_ids)
+        for summary in [read_store.get_telemetry_summary(runtime_id)]
+        if summary
+    ]
+    telemetry_summaries = _sort_records_latest_first(telemetry_summaries, ("collected_at", "updated_at", "created_at"))
+    latest_telemetry = telemetry_summaries[0] if telemetry_summaries else None
+
+    teaching_sessions = _sort_records_latest_first(
+        list(read_store.get_teaching_sessions_for_persona(persona_id) or []),
+        ("started_at", "created_at", "updated_at"),
+    )
+    latest_training = teaching_sessions[0] if teaching_sessions else None
+
+    active_incidents = [
+        incident
+        for incident in all_incidents
+        if str(incident.get("status") or "").lower() in {"open", "active", "investigating"}
+        and (
+            str(incident.get("persona_id") or "").strip() == persona_id
+            or str(incident.get("persona_capital_binding_id") or "").strip() in binding_ids
+            or str(incident.get("capital_pool_id") or incident.get("affected_pool_id") or "").strip() in capital_pool_ids
+            or str(incident.get("runtime_id") or "").strip() in runtime_ids
+        )
+    ]
+    incident_ids = {
+        str(incident.get("incident_id") or incident.get("id") or "").strip()
+        for incident in all_incidents
+        if str(incident.get("incident_id") or incident.get("id") or "").strip()
+        and (
+            str(incident.get("persona_id") or "").strip() == persona_id
+            or str(incident.get("persona_capital_binding_id") or "").strip() in binding_ids
+            or str(incident.get("capital_pool_id") or incident.get("affected_pool_id") or "").strip() in capital_pool_ids
+            or str(incident.get("runtime_id") or "").strip() in runtime_ids
+        )
+    }
+    evolution_decisions = [
+        decision
+        for decision in all_evolution_decisions
+        if str(decision.get("target_id") or "").strip() == persona_id
+        or str(decision.get("artifact_id") or "").strip() in artifact_ids
+        or str(decision.get("incident_ref") or decision.get("linked_incident_id") or "").strip() in incident_ids
+    ]
+    evolution_decisions = _sort_records_latest_first(evolution_decisions, ("updated_at", "created_at"))
+
+    capital_pools = [
+        pool
+        for pool_id in sorted(capital_pool_ids)
+        for pool in [read_store.get_capital_pool(pool_id)]
+        if pool
+    ]
+    enriched_bindings = [
+        {
+            **binding,
+            "capital_pool": read_store.get_capital_pool(str(binding.get("capital_pool_id") or "")),
+        }
+        for binding in bindings
+    ]
+    health = _project_persona_fleet_health(
+        persona=raw_persona,
+        runtime_bindings=runtime_bindings,
+        telemetry_summaries=telemetry_summaries,
+        active_incidents=active_incidents,
+    )
+    allowed_actions = read_store.get_persona_allowed_actions(persona_id) or {}
+
+    telemetry_summary = {
+        "latest": latest_telemetry,
+        "runtime_count": len(runtime_bindings),
+        "covered_runtime_count": len(telemetry_summaries),
+        "summaries": telemetry_summaries,
+    }
+    training_summary = {
+        "session_count": len(teaching_sessions),
+        "active_session_count": len([
+            session for session in teaching_sessions
+            if str(session.get("status") or "").lower() == "active"
+        ]),
+        "completed_session_count": len([
+            session for session in teaching_sessions
+            if str(session.get("status") or "").lower() == "completed"
+        ]),
+        "latest_session": latest_training,
+    }
+    evolution_summary = {
+        "decision_count": len(evolution_decisions),
+        "pending_decision_count": len([
+            decision for decision in evolution_decisions
+            if str(decision.get("status") or decision.get("decision_state") or "").lower()
+            in {"pending", "in_review", "reviewed", "under_review"}
+        ]),
+        "latest_decision": evolution_decisions[0] if evolution_decisions else None,
+        "decisions": evolution_decisions,
+    }
+
+    return {
+        "id": persona_id,
+        "persona_id": persona_id,
+        "persona": persona_dto,
+        "health": health,
+        "bindings": enriched_bindings,
+        "capitalPools": capital_pools,
+        "capital_pools": capital_pools,
+        "runtimeBindings": runtime_bindings,
+        "runtime_bindings": runtime_bindings,
+        "telemetrySummary": telemetry_summary,
+        "telemetry_summary": telemetry_summary,
+        "training": training_summary,
+        "evolution": evolution_summary,
+        "sessions": sessions,
+        "activeIncidents": active_incidents,
+        "active_incidents": active_incidents,
+        "allowedActions": allowed_actions,
+    }
+
+
+def _project_persona_fleet_payload(
+    *,
+    state: Optional[str],
+    health: Optional[str],
+    page_token: Optional[str],
+    page_size: int,
+) -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    personas = _list_persona_records()
+    runtime_bindings = list(read_store.list_runtime_bindings() or [])
+    incidents = list(read_store.list_incidents() or [])
+    evolution_decisions = list(read_store.list_evolution_decisions() or [])
+    items = [
+        _project_persona_fleet_item(
+            persona,
+            all_runtime_bindings=runtime_bindings,
+            all_incidents=incidents,
+            all_evolution_decisions=evolution_decisions,
+        )
+        for persona in personas
+    ]
+
+    if state:
+        requested_states = {token.strip().lower() for token in state.split(",") if token.strip()}
+        items = [
+            item for item in items
+            if str((item.get("persona") or {}).get("state") or "").lower() in requested_states
+        ]
+    if health:
+        requested_health = {token.strip().lower() for token in health.split(",") if token.strip()}
+        items = [
+            item for item in items
+            if str((item.get("health") or {}).get("status") or "").lower() in requested_health
+        ]
+
+    items = sorted(
+        items,
+        key=lambda item: (
+            str((item.get("health") or {}).get("severity") or ""),
+            str((item.get("persona") or {}).get("updatedAt") or ""),
+            str(item.get("id") or ""),
+        ),
+        reverse=True,
+    )
+    total = len(items)
+    page_items, next_page_token = _page_slice(items, page_token, page_size)
+
+    source_surfaces = {
+        "personas": _dataset_surface_status("personas", snapshot_at=snapshot_at),
+        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at),
+        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
+        "telemetry_summaries": _dataset_surface_status("telemetry_summaries", snapshot_at=snapshot_at),
+        "teaching_sessions": _dataset_surface_status("teaching_sessions", snapshot_at=snapshot_at),
+        "evolution_decisions": _dataset_surface_status("evolution_decisions", snapshot_at=snapshot_at),
+    }
+    persona_fleet_surface = _aggregate_group_surface(
+        "persona_fleet",
+        list(source_surfaces.values()),
+        snapshot_at=snapshot_at,
+        unavailable_message="Persona fleet aggregate unavailable.",
+        degraded_message="Persona fleet aggregate is degraded because one or more source surfaces are degraded.",
+    )
+
+    summary = {
+        "total_personas": total,
+        "returned_personas": len(page_items),
+        "critical_personas": len([item for item in items if item["health"]["status"] == "critical"]),
+        "degraded_personas": len([item for item in items if item["health"]["status"] == "degraded"]),
+        "healthy_personas": len([item for item in items if item["health"]["status"] == "healthy"]),
+        "bound_personas": len([item for item in items if item["bindings"]]),
+        "runtime_bound_personas": len([item for item in items if item["runtimeBindings"]]),
+    }
+    return {
+        "data": page_items,
+        "items": page_items,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "persona_fleet": persona_fleet_surface,
+                **source_surfaces,
+            },
+        },
+    }
+
+
+# ---------------- /bff/management aggregate routes ----------------
+
+@app.get("/bff/management/persona-fleet")
+async def bff_management_persona_fleet(
+    state: Optional[str] = None,
+    health: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: compose the Management Persona Fleet aggregate from read surfaces."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _project_persona_fleet_payload(
+        state=state,
+        health=health,
+        page_token=page_token,
+        page_size=page_size,
+    )
+
+
 # ---------------- /bff/strategies routes ----------------
 
 @app.get("/bff/strategies")
@@ -19235,6 +20501,288 @@ async def bff_get_persona_capabilities_surface(
             "capability_snapshots", "persona_capabilities",
             snapshot_at=snapshot_at,
         ),
+    }
+
+
+def _pm12_status_counts(items: List[Dict[str, Any]]) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for item in items:
+        status = str(
+            item.get("status")
+            or item.get("state")
+            or item.get("lifecycle_state")
+            or "unknown"
+        ).strip().lower() or "unknown"
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def _pm12_latest_timestamp(items: List[Dict[str, Any]], keys: tuple[str, ...]) -> Optional[str]:
+    values: List[str] = []
+    for item in items:
+        for key in keys:
+            value = item.get(key)
+            if value not in (None, ""):
+                values.append(str(value))
+                break
+    return max(values) if values else None
+
+
+def _pm12_compact_ids(items: List[Dict[str, Any]], keys: tuple[str, ...]) -> List[str]:
+    values: List[str] = []
+    seen = set()
+    for item in items:
+        for key in keys:
+            value = item.get(key)
+            if value in (None, ""):
+                continue
+            text = str(value)
+            if text not in seen:
+                values.append(text)
+                seen.add(text)
+            break
+    return values
+
+
+def _pm12_memory_items_for_persona(persona_id: str) -> List[Dict[str, Any]]:
+    fetcher = getattr(read_store, "list_memory_updates_for_persona", None)
+    if not callable(fetcher):
+        return []
+    items = fetcher(persona_id) or []
+    return [dict(item) for item in items if isinstance(item, dict)]
+
+
+def _pm12_persona_route_summary(persona_id: str) -> Dict[str, Any]:
+    policy = read_store.get_route_policy_for_persona(persona_id) or {}
+    rules = policy.get("rules") if isinstance(policy.get("rules"), list) else []
+    consult_policy = policy.get("consult_policy") if isinstance(policy.get("consult_policy"), dict) else {}
+    trigger_rules = (
+        consult_policy.get("trigger_rules")
+        if isinstance(consult_policy.get("trigger_rules"), list)
+        else []
+    )
+    blocking_count = 0
+    for rule in list(rules) + list(trigger_rules):
+        if not isinstance(rule, dict):
+            continue
+        mode = str(rule.get("mode") or rule.get("decision_mode") or "").lower()
+        if mode in {"blocking", "block", "hard_gate", "consult_required"}:
+            blocking_count += 1
+    return {
+        "version": policy.get("version") or consult_policy.get("version"),
+        "ruleCount": len(rules),
+        "consultRuleCount": len(trigger_rules),
+        "blockingRuleCount": blocking_count,
+        "hasPolicy": bool(policy or consult_policy),
+    }
+
+
+def _pm12_persona_capability_summary(persona_id: str) -> Dict[str, Any]:
+    snapshot = read_store.get_capability_snapshot_for_persona(persona_id) or {}
+    skills = list(snapshot.get("effective_skills") or [])
+    tools = list(snapshot.get("effective_tools") or [])
+    workflows = list(snapshot.get("effective_workflows") or [])
+    restrictions = list(snapshot.get("restrictions") or [])
+    return {
+        "snapshotId": snapshot.get("snapshot_id") or snapshot.get("id"),
+        "generatedAt": snapshot.get("generated_at"),
+        "skillCount": len(skills),
+        "toolCount": len(tools),
+        "workflowCount": len(workflows),
+        "restrictionCount": len(restrictions),
+        "sourceRefCount": len(snapshot.get("source_refs") or []),
+        "hasSnapshot": bool(snapshot),
+    }
+
+
+def _pm12_persona_binding_summary(persona_id: str) -> Dict[str, Any]:
+    bindings = read_store.get_bindings_for_persona(persona_id) or []
+    pool_ids = _pm12_compact_ids(bindings, ("capital_pool_id", "pool_id"))
+    pool_refs: List[Dict[str, Any]] = []
+    for pool_id in pool_ids:
+        pool = read_store.get_capital_pool(pool_id) or {}
+        pool_refs.append({
+            "id": pool_id,
+            "name": pool.get("name") or pool_id,
+            "status": pool.get("status"),
+        })
+    active_count = 0
+    deployment_scopes: List[str] = []
+    for binding in bindings:
+        status = str(binding.get("status") or binding.get("validity") or "").lower()
+        if status in {"active", "ready", "bound"}:
+            active_count += 1
+        scope = binding.get("allowed_deployment_scope") or binding.get("deployment_stage")
+        if scope not in (None, "") and str(scope) not in deployment_scopes:
+            deployment_scopes.append(str(scope))
+    return {
+        "total": len(bindings),
+        "active": active_count,
+        "capitalPoolIds": pool_ids,
+        "capitalPools": pool_refs,
+        "deploymentScopes": deployment_scopes,
+        "statusCounts": _pm12_status_counts(bindings),
+    }
+
+
+def _pm12_persona_session_summary(persona_id: str) -> Dict[str, Any]:
+    sessions = read_store.get_sessions_for_persona(persona_id) or []
+    active = [s for s in sessions if str(s.get("status") or "").lower() == "active"]
+    return {
+        "total": len(sessions),
+        "active": len(active),
+        "lastHeartbeatAt": _pm12_latest_timestamp(
+            sessions,
+            ("last_heartbeat_at", "updated_at", "started_at"),
+        ),
+        "runtimeBindingIds": _pm12_compact_ids(sessions, ("runtime_binding_id", "runtime_id")),
+        "poolScopes": _pm12_compact_ids(sessions, ("pool_scope", "capital_pool_id")),
+        "statusCounts": _pm12_status_counts(sessions),
+    }
+
+
+def _pm12_persona_evaluation_summary(persona_id: str) -> Dict[str, Any]:
+    teaching = read_store.get_teaching_sessions_for_persona(persona_id) or []
+    completed = [
+        item for item in teaching
+        if str(item.get("status") or "").lower() in {"completed", "complete", "passed"}
+    ]
+    outcome_count = 0
+    for item in teaching:
+        outcomes = item.get("outcomes")
+        if isinstance(outcomes, list):
+            outcome_count += len(outcomes)
+    return {
+        "total": len(teaching),
+        "completed": len(completed),
+        "latestAt": _pm12_latest_timestamp(
+            teaching,
+            ("completed_at", "updated_at", "started_at", "created_at"),
+        ),
+        "outcomeCount": outcome_count,
+        "statusCounts": _pm12_status_counts(teaching),
+    }
+
+
+def _pm12_persona_memory_summary(persona_id: str) -> Dict[str, Any]:
+    memory = _pm12_memory_items_for_persona(persona_id)
+    return {
+        "total": len(memory),
+        "latestAt": _pm12_latest_timestamp(memory, ("updated_at", "created_at", "recorded_at")),
+        "statusCounts": _pm12_status_counts(memory),
+    }
+
+
+def _pm12_persona_health_summary(persona: Dict[str, Any], sessions: Dict[str, Any], capabilities: Dict[str, Any]) -> Dict[str, Any]:
+    state = str(persona.get("lifecycle_state") or persona.get("state") or "").lower()
+    health = "healthy" if state == "active" else "degraded"
+    if state == "active" and capabilities.get("hasSnapshot") is False:
+        health = "degraded"
+    return {
+        "health": health,
+        "lifecycleState": state or "unknown",
+        "activeSessionCount": sessions.get("active", 0),
+        "hasCapabilitySnapshot": bool(capabilities.get("hasSnapshot")),
+    }
+
+
+def _project_persona_league_row(raw: Dict[str, Any]) -> Dict[str, Any]:
+    persona_id = str(raw.get("persona_id") or raw.get("id") or "")
+    routed = _routed_strategies_for_persona(persona_id)
+    dto = _project_persona_dto(raw, routed_strategies=routed)
+    route_policy = _pm12_persona_route_summary(persona_id)
+    capabilities = _pm12_persona_capability_summary(persona_id)
+    bindings = _pm12_persona_binding_summary(persona_id)
+    sessions = _pm12_persona_session_summary(persona_id)
+    evaluations = _pm12_persona_evaluation_summary(persona_id)
+    memory = _pm12_persona_memory_summary(persona_id)
+    health = _pm12_persona_health_summary(raw, sessions, capabilities)
+    allowed_actions = read_store.get_persona_allowed_actions(persona_id) or {}
+    return {
+        **dto,
+        "personaId": persona_id,
+        "mandate": raw.get("mandate"),
+        "strategyFamily": raw.get("strategy_family"),
+        "routePolicy": route_policy,
+        "capabilities": capabilities,
+        "bindings": bindings,
+        "sessions": sessions,
+        "evaluations": evaluations,
+        "memory": memory,
+        "health": health,
+        "allowedActions": allowed_actions,
+        "links": {
+            "detail": f"/bff/personas/{persona_id}",
+            "routePolicy": f"/bff/personas/{persona_id}/route-policy",
+            "capabilities": f"/bff/personas/{persona_id}/capabilities",
+            "evaluations": f"/bff/personas/{persona_id}/evaluations",
+            "memory": f"/bff/personas/{persona_id}/memory",
+            "activity": f"/bff/personas/{persona_id}/activity",
+        },
+    }
+
+
+@app.get("/bff/management/persona-league")
+async def bff_management_persona_league(
+    state: Optional[str] = None,
+    archetype: Optional[str] = None,
+    q: str = Query(default=""),
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 persona-league table composed from persona-side read surfaces."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    rows = [_project_persona_league_row(raw) for raw in _list_persona_records()]
+    if state:
+        normalized_state = _normalize_lifecycle_state(state)
+        rows = [row for row in rows if row.get("state") == normalized_state]
+    if archetype:
+        rows = [row for row in rows if str(row.get("archetype") or "") == archetype]
+    needle = q.strip().lower()
+    if needle:
+        rows = [
+            row for row in rows
+            if needle in str(row.get("id") or "").lower()
+            or needle in str(row.get("name") or "").lower()
+            or needle in str(row.get("owner") or "").lower()
+            or needle in str(row.get("archetype") or "").lower()
+        ]
+    rows = sorted(rows, key=lambda row: str(row.get("name") or row.get("id") or ""))
+    total = len(rows)
+    page_items, next_page_token = _page_slice(rows, page_token, page_size)
+    persona_surface = _dataset_surface_status("personas", snapshot_at=snapshot_at)
+    surfaces = {
+        "persona_league": _composed_surface_status(snapshot_at=snapshot_at),
+        "personas": persona_surface,
+        "route_policies": _composed_surface_status(snapshot_at=snapshot_at),
+        "capability_snapshots": _dataset_surface_status("capability_snapshots", snapshot_at=snapshot_at),
+        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at),
+        "persona_sessions": _dataset_surface_status("sessions", snapshot_at=snapshot_at),
+        "teaching_sessions": _dataset_surface_status("teaching_sessions", snapshot_at=snapshot_at),
+        "persona_memory": _composed_surface_status(snapshot_at=snapshot_at),
+        "persona_health": dict(persona_surface),
+    }
+    return {
+        "data": page_items,
+        "items": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "total": total,
+            "surfaces": surfaces,
+            "composition_sources": [
+                "GET /bff/personas",
+                "GET /bff/personas/{id}/route-policy",
+                "GET /bff/personas/{id}/capabilities",
+                "GET /bff/personas/{id}/activity",
+                "GET /bff/personas/{id}/evaluations",
+                "GET /bff/personas/{id}/memory",
+                "GET /bff/v5/execution/persona-health",
+            ],
+        },
     }
 
 
