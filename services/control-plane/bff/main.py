@@ -34213,22 +34213,162 @@ async def bff_get_ranking_formula_facade(
     )
 
 
+# ============================================================================
+# BFF-B2-006: v5 closed-loop read routes — dedicated GET handlers
+# Covers: /bff/v5/control-room, /bff/v5/execution/persona-health,
+#         /bff/v5/execution/strategy-health, /bff/v5/interventions/{id}.
+# Removed from sem_final_generic_read_alias and sem_final_id_named_read_alias.
+# ============================================================================
+
+@app.get("/bff/v5/control-room")
+async def bff_v5_control_room(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF BFF-B2-006: v5 control-room aggregate (loops + interventions + sentinel + OODA card)."""
+    _require_read_role(_extract_identity(authorization))
+    snapshot_at = utc_now()
+    avail_lr, loop_runs = read_store.list_loop_runs()
+    avail_sf, sentinel_findings = read_store.list_sentinel_findings()
+    incidents_source = read_store.dataset_source("incidents")
+
+    def _cr_child_surface(dataset: str, available: bool) -> Dict[str, Any]:
+        if incidents_source != "missing":
+            return _dataset_surface_status("incidents", snapshot_at=snapshot_at)
+        return _dataset_surface_status(
+            dataset,
+            snapshot_at=snapshot_at,
+            source=None if available else "missing",
+        )
+
+    loop_surface = _cr_child_surface("loop_runs", avail_lr)
+    sentinel_surface = _cr_child_surface("sentinel_findings", avail_sf)
+    child_statuses = {
+        str(loop_surface.get("status") or "ok"),
+        str(sentinel_surface.get("status") or "ok"),
+    }
+    if child_statuses == {"ok"}:
+        control_surface: Dict[str, Any] = {"status": "ok", "source": "composed_read_models"}
+    elif child_statuses == {"unavailable"}:
+        control_surface = {
+            "status": "unavailable",
+            "source": "missing",
+            "staleness": {"served_from": "unverifiable", "last_known_at": snapshot_at},
+        }
+    else:
+        control_surface = {
+            "status": "degraded",
+            "source": "composed_read_models",
+            "staleness": {"served_from": "mixed", "last_known_at": snapshot_at},
+        }
+    ooda_card = _build_ooda_control_room_status_card(snapshot_at)
+    return {
+        "loops": {
+            "items": loop_runs,
+            "meta": {"snapshot_at": snapshot_at, "surfaces": {"loop_runs": loop_surface}},
+        },
+        "interventions": {
+            "items": _v5_intervention_records(),
+            "meta": {"snapshot_at": snapshot_at, "surfaces": {"interventions": {"status": "ok", "source": "bff_local_registry"}}},
+        },
+        "sentinel": {
+            "items": sentinel_findings,
+            "meta": {"snapshot_at": snapshot_at, "surfaces": {"sentinel_findings": sentinel_surface}},
+        },
+        "ooda_status": ooda_card,
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": {
+                "control_room": control_surface,
+                "loop_runs": loop_surface,
+                "sentinel_findings": sentinel_surface,
+                "ooda_control_room_status": ooda_card["meta"],
+            },
+        },
+    }
+
+
+@app.get("/bff/v5/execution/persona-health")
+async def bff_v5_execution_persona_health(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF BFF-B2-006: v5 execution persona-health list."""
+    _require_read_role(_extract_identity(authorization))
+    snapshot_at = utc_now()
+    persona_surface = _dataset_surface_status("personas", snapshot_at=snapshot_at)
+    personas = read_store.list_personas()
+    health_items = [
+        {
+            "id": p.get("persona_id") or p.get("id"),
+            "persona_id": p.get("persona_id") or p.get("id"),
+            "name": p.get("name") or p.get("persona_id"),
+            "health": "healthy" if p.get("lifecycle_state") == "active" else "degraded",
+            "lifecycle_state": p.get("lifecycle_state"),
+        }
+        for p in personas
+    ]
+    return {
+        "items": health_items,
+        "meta": {"snapshot_at": snapshot_at, "surfaces": {"persona_health": persona_surface}},
+    }
+
+
+@app.get("/bff/v5/execution/strategy-health")
+async def bff_v5_execution_strategy_health(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF BFF-B2-006: v5 execution strategy-health list."""
+    _require_read_role(_extract_identity(authorization))
+    snapshot_at = utc_now()
+    strategy_surface = _dataset_surface_status("strategy_specs", snapshot_at=snapshot_at)
+    strategies = read_store.list_strategy_specs()
+    health_items = [
+        {
+            "id": s.get("strategy_id") or s.get("id"),
+            "strategy_id": s.get("strategy_id") or s.get("id"),
+            "name": s.get("name") or s.get("strategy_id"),
+            "health": "healthy" if str(s.get("status") or "") == "active" else "degraded",
+            "status": s.get("status"),
+        }
+        for s in strategies
+    ]
+    return {
+        "items": health_items,
+        "meta": {"snapshot_at": snapshot_at, "surfaces": {"strategy_health": strategy_surface}},
+    }
+
+
+@app.get("/bff/v5/interventions/{intervention_id}")
+async def bff_v5_intervention_detail(
+    intervention_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF BFF-B2-006: v5 intervention detail by id."""
+    _require_read_role(_extract_identity(authorization))
+    clean_id = str(intervention_id or "").strip()
+    return _sem_final_registry_detail(
+        _sem_final_v5_intervention_record(clean_id),
+        entity_id=clean_id,
+        label="Intervention",
+        surface_key="intervention_detail",
+    )
+
+
 # NOTE: /bff/artifacts, /bff/incidents, /bff/incidents/{id}, /bff/runtimes,
 # /bff/runtimes/{id}, /bff/v5/loop-runs, /bff/v5/loop-runs/{id}, and
 # /bff/v5/sentinel/findings/{id} have dedicated handlers in the B2.2 block.
 # /bff/channels, /bff/channels/{id}, /bff/mcp-servers, /bff/mcp-servers/{id},
 # /bff/mcp-tools, /bff/mcp-tools/{id}, /bff/ranking-formulas,
 # /bff/ranking-formulas/{id}, /bff/tools, /bff/tools/{id}, and /bff/skills/{id}
-# have dedicated handlers in the B2.3 block above; all excluded here.
+# have dedicated handlers in the B2.3 block above.
+# /bff/v5/control-room, /bff/v5/execution/persona-health,
+# /bff/v5/execution/strategy-health, and /bff/v5/interventions/{id}
+# have dedicated handlers in the BFF-B2-006 block above; all excluded here.
 @app.get("/bff/agora/signals/{id}")
 @app.get("/bff/approvals/{id}")
 @app.get("/bff/artifacts/{id}")
 @app.get("/bff/events/stream")
 @app.get("/bff/research-experiments")
 @app.get("/bff/research-analyses")
-@app.get("/bff/v5/control-room")
-@app.get("/bff/v5/execution/persona-health")
-@app.get("/bff/v5/execution/strategy-health")
 async def sem_final_generic_read_alias(
     request: Request,
     id: Optional[str] = None,
@@ -34249,11 +34389,10 @@ async def sem_final_generic_read_alias(
 
 # NOTE: /bff/capital-pools/{id}, /bff/deployments/{id}, /bff/evolution-programs/{id},
 # /bff/jobs/{id}, /bff/personas/{id}, /bff/rebalances/{id}, /bff/strategies/{id},
-# /bff/ranking-formulas/{id}, and /bff/skills/{id} have dedicated handlers
-# registered earlier in this file and are intentionally excluded here.
+# /bff/ranking-formulas/{id}, /bff/skills/{id}, and /bff/v5/interventions/{id}
+# have dedicated handlers registered earlier in this file and are intentionally excluded here.
 @app.get("/bff/research-analyses/{id}")
 @app.get("/bff/research-experiments/{id}")
-@app.get("/bff/v5/interventions/{id}")
 async def sem_final_id_named_read_alias(
     request: Request,
     id: str,
