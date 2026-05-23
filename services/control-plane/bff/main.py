@@ -23562,6 +23562,7 @@ async def bff_search(
     q: str = Query(default=""),
     types: Optional[str] = Query(default=None),
     page_size: int = Query(default=20, ge=1, le=100),
+    limit: Optional[int] = Query(default=None, ge=1, le=100),
     page_token: Optional[str] = Query(default=None),
     authorization: Optional[str] = Header(default=None),
 ):
@@ -23570,9 +23571,14 @@ async def bff_search(
     Accepts page_token (opaque offset cursor) and page_size for cursor-style
     pagination.  A non-null next_page_token in the response indicates more
     results are available; pass it back as page_token on the next request.
+
+    `limit` is a backward-compatible alias for `page_size`; when both are
+    provided, `limit` takes precedence so legacy callers are not silently
+    truncated.
     """
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+    effective_page_size = limit if limit is not None else page_size
     snapshot_at = utc_now()
     needle = q.strip().lower()
     requested_types: Optional[set[str]] = None
@@ -23632,7 +23638,7 @@ async def bff_search(
                     "updatedAt": pool.get("updated_at") or pool.get("created_at") or snapshot_at,
                 })
 
-    page_items, next_page_token = _page_slice(results, page_token, page_size)
+    page_items, next_page_token = _page_slice(results, page_token, effective_page_size)
     return {
         "data": page_items,
         "items": page_items,

@@ -686,7 +686,7 @@ The 4 endpoints formalised in this section:
 |---|---|---|---|---|
 | 1 | GET | `/bff/research-experiments` | `bff_list_research_experiments` | status, page_token, page_size filters |
 | 2 | GET | `/bff/research-experiments/{id}` | `bff_get_research_experiment` | 404 on unknown id |
-| 3 | GET | `/bff/search` | `bff_search` | q, types, limit filters; cross-entity |
+| 3 | GET | `/bff/search` | `bff_search` | q, types, page_size, page_token, limit (backward-compat alias for page_size) filters; cross-entity |
 | 4 | GET | `/bff/capabilities` | `sem_bff_capabilities` | feature-flags envelope |
 
 **Response envelope (`GET /bff/research-experiments`)**
@@ -713,6 +713,8 @@ Unknown-id detail requests return HTTP 404 with typed BFF error envelope:
 { "data": [...], "items": [...], "page_info": { "next_page_token": null, "total": N, "returned": N }, "meta": { "snapshot_at": "...", "surfaces": { ... } } }
 ```
 
+Query parameters for `/bff/search`: `q` (string, case-insensitive match), `types` (comma-separated entity types), `page_size` (int 1–100, default 20), `page_token` (opaque cursor), `limit` (int 1–100; backward-compat alias for `page_size` — when both are supplied, `limit` takes precedence).
+
 **Response envelope (`GET /bff/capabilities`)**
 
 ```json
@@ -733,6 +735,7 @@ Unknown-id detail requests return HTTP 404 with typed BFF error envelope:
 | 8 | All 4 endpoints return HTTP 401 when no Authorization header is provided | Implemented BFF-B2-004 |
 | 9 | Dead catch-all entries removed: `/bff/research-experiments` from `sem_final_generic_read_alias`; `/bff/research-experiments/{id}` from `sem_final_id_named_read_alias` and `sem_final_generic_patch_alias` | Implemented BFF-B2-004 |
 | 10 | `pytest services/control-plane/bff/tests/test_bff_b2_004_research_search.py` passes all cases | ✅ verified |
+| 11 | `GET /bff/search?limit=N` is a backward-compatible alias for `?page_size=N` and caps returned items to N | Implemented BFF-B2-004 |
 
 ### Affected Files
 

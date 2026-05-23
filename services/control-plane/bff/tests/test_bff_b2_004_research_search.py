@@ -343,3 +343,69 @@ def test_bff_search_cursor_second_page() -> None:
             bff_main.read_store = original_store
             bff_main._STRATEGY_BFF_OVERLAY.clear()
             bff_main._STRATEGY_BFF_OVERLAY.update(saved_overlay)
+
+
+# ---------------------------------------------------------------------------
+# 6. GET /bff/search — backward-compat limit alias regression
+# ---------------------------------------------------------------------------
+
+def test_bff_search_limit_alias_respected() -> None:
+    """?limit=N is a backward-compat alias for page_size; must cap returned items to N."""
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        saved_overlay = dict(bff_main._STRATEGY_BFF_OVERLAY)
+        try:
+            client = _fresh_client(td)
+            for i in range(5):
+                bff_main._STRATEGY_BFF_OVERLAY[f"limit-alias-strat-{i}"] = {
+                    "name": f"limit-alias-strat-{i}",
+                    "state": "draft",
+                    "owner": "test",
+                    "updatedAt": "2026-05-23T00:00:00Z",
+                }
+            resp = client.get(
+                "/bff/search?q=limit-alias-strat&limit=2",
+                headers=OPERATOR_HEADERS,
+            )
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            returned = body.get("page_info", {}).get("returned") or len(body.get("data") or [])
+            assert returned <= 2, f"limit=2 must cap results to ≤2, got {returned}"
+            assert body["page_info"].get("total") >= 5
+        finally:
+            bff_main.read_store = original_store
+            bff_main._STRATEGY_BFF_OVERLAY.clear()
+            bff_main._STRATEGY_BFF_OVERLAY.update(saved_overlay)
+
+
+def test_bff_search_limit_alias_matches_page_size() -> None:
+    """?limit=N and ?page_size=N must return identical result counts."""
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        saved_overlay = dict(bff_main._STRATEGY_BFF_OVERLAY)
+        try:
+            client = _fresh_client(td)
+            for i in range(5):
+                bff_main._STRATEGY_BFF_OVERLAY[f"limit-eq-strat-{i}"] = {
+                    "name": f"limit-eq-strat-{i}",
+                    "state": "draft",
+                    "owner": "test",
+                    "updatedAt": "2026-05-23T00:00:00Z",
+                }
+            r_limit = client.get(
+                "/bff/search?q=limit-eq-strat&limit=3", headers=OPERATOR_HEADERS
+            )
+            r_page_size = client.get(
+                "/bff/search?q=limit-eq-strat&page_size=3", headers=OPERATOR_HEADERS
+            )
+            assert r_limit.status_code == 200 and r_page_size.status_code == 200
+            b_limit = r_limit.json()
+            b_ps = r_page_size.json()
+            assert b_limit["page_info"]["returned"] == b_ps["page_info"]["returned"], (
+                f"limit and page_size must return same count; "
+                f"limit={b_limit['page_info']['returned']} page_size={b_ps['page_info']['returned']}"
+            )
+        finally:
+            bff_main.read_store = original_store
+            bff_main._STRATEGY_BFF_OVERLAY.clear()
+            bff_main._STRATEGY_BFF_OVERLAY.update(saved_overlay)
