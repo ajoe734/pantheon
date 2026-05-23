@@ -1,7 +1,7 @@
 # BFF-B3-007 Implementation Handoff
 
 Task: BFF-B3-007 - GET /bff/management/persona-intent redacted aggregate
-Owner: Codex2
+Owner: Codex
 Reviewer: Claude
 Status: ready for review
 Date: 2026-05-23
@@ -21,10 +21,13 @@ Date: 2026-05-23
   while exposing safe counts, identifiers, timestamps, status, and summaries.
 - Added execute-plans BFF v1 path/type/fetch helpers and
   `managementClient.personaIntent.list()`.
+- Preserved BFF-B3-004 `tradingPulse` client additions while composing this
+  branch with current `origin/dev`.
 
 ## Validation
 
-Commands run from `task/BFF-B3-007` on 2026-05-23:
+Commands run from `task/BFF-B3-007` on 2026-05-23 after Codex handoff and
+merge with current `origin/dev`:
 
 ```bash
 python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/tests/test_bff_b3_persona_intent.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py
@@ -40,6 +43,10 @@ Results:
 
 ## Notes
 
+- Implementation was originally anchored by Codex2 and resumed by Codex after
+  orchestrator reassignment. Codex re-composed with `origin/dev`, resolved the
+  execute-plans client/test conflict by retaining both `tradingPulse` and
+  `personaIntent`, then reran focused validation.
 - No L1 architecture or policy document was changed.
 - This repository checkout does not contain an execute-plans `package.json` or
   Vitest config, so the TypeScript client test was not runnable locally. The

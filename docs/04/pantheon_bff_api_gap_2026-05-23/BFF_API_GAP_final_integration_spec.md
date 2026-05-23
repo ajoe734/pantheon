@@ -1948,4 +1948,4 @@ BFF-B3-005 — Owner: Codex, Reviewer: Claude
 
 ### Task
 
-BFF-B3-007 — Owner: Codex2, Reviewer: Claude
+BFF-B3-007 — Owner: Codex, Reviewer: Claude
