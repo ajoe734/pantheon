@@ -137,12 +137,17 @@ def _portfolio_store(
                     "market_value": 30600,
                     "unrealized_pnl": 200,
                     "realized_pnl": 12,
+                    "broker_id": "broker-alpha",
+                    "regime": "trend",
                     "marked_at": "2026-05-23T08:04:00Z",
                 }
             ],
         },
         "runtime-alpha-live": {
             "runtime_id": "runtime-alpha-live",
+            "symbol": "NQ",
+            "broker_id": "broker-alpha",
+            "market_regime": "risk-off",
             "pnl": -2.0,
             "drawdown": 0.12,
             "fill_rate": 0.8,
@@ -297,6 +302,125 @@ def test_portfolio_book_holdings_requires_read_auth(monkeypatch) -> None:
     assert response.status_code == 401, response.text
 
 
+def test_performance_attribution_groups_requested_dimension(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get(
+        "/bff/management/performance-attribution",
+        headers=HEADERS,
+        params={"dimension": "asset", "period": "30d", "page_size": 20},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["items"] == payload["rows"] == payload["data"]["rows"]
+    assert payload["data"]["items"] == payload["items"]
+    assert payload["summary"]["period"] == "30d"
+    assert payload["summary"]["dimensions"] == ["asset"]
+    assert payload["summary"]["supportedDimensions"] == [
+        "persona",
+        "strategy",
+        "pool",
+        "asset",
+        "broker",
+        "runtime",
+        "regime",
+    ]
+    assert payload["page_info"] == {"next_page_token": None, "total": 3, "page_size": 20}
+
+    rows = {row["dimension_key"]: row for row in payload["items"]}
+    txf = rows["TXF"]
+    assert txf["dimension"] == "asset"
+    assert txf["label"] == "TXF"
+    assert txf["period"] == "30d"
+    assert txf["metrics"]["totalPnl"] == 10.0
+    assert txf["metrics"]["totalTrades"] == 12
+    assert txf["metrics"]["runtimeCount"] == 1
+    assert txf["sourceRefs"]["runtimeIds"] == ["runtime-alpha"]
+
+    assert rows["NQ"]["metrics"]["totalPnl"] == -2.0
+    assert payload["summary"]["totalPnl"] == 8.0
+    assert payload["summary"]["telemetryRuntimeCount"] == 2
+    assert payload["meta"]["policy"] == "read_only_performance_attribution"
+    assert payload["meta"]["surfaces"]["performance_attribution"]["source"] == "bff_composed"
+    assert "GET /api/v1/telemetry/{runtime_id}/summary" in payload["meta"]["composition_sources"]
+
+
+def test_performance_attribution_supports_all_pm12_dimensions(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get(
+        "/bff/management/performance-attribution",
+        headers=HEADERS,
+        params={
+            "dimension": "persona,strategy,pool,asset,broker,runtime,regime",
+            "period": "latest",
+            "page_size": 200,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    dimensions = {row["dimension"] for row in payload["items"]}
+    assert dimensions == {"persona", "strategy", "pool", "asset", "broker", "runtime", "regime"}
+
+    persona_alpha = next(
+        row for row in payload["items"]
+        if row["dimension"] == "persona" and row["dimension_key"] == "persona-alpha"
+    )
+    assert persona_alpha["label"] == "persona-alpha"
+    assert persona_alpha["metrics"]["totalPnl"] == 10.0
+    assert persona_alpha["links"]["persona"] == "/bff/personas/persona-alpha"
+
+    pool_alpha = next(
+        row for row in payload["items"]
+        if row["dimension"] == "pool" and row["dimension_key"] == "pool-alpha"
+    )
+    assert pool_alpha["label"] == "Alpha Book"
+    assert pool_alpha["metrics"]["totalPnl"] == 8.0
+
+    broker_alpha = next(
+        row for row in payload["items"]
+        if row["dimension"] == "broker" and row["dimension_key"] == "broker-alpha"
+    )
+    assert broker_alpha["metrics"]["runtimeCount"] == 2
+    assert broker_alpha["metrics"]["totalPnl"] == 8.0
+
+    runtime_alpha = next(
+        row for row in payload["items"]
+        if row["dimension"] == "runtime" and row["dimension_key"] == "runtime-alpha"
+    )
+    assert runtime_alpha["links"]["runtime"] == "/bff/runtimes/runtime-alpha"
+
+    regimes = {
+        row["dimension_key"]
+        for row in payload["items"]
+        if row["dimension"] == "regime"
+    }
+    assert {"trend", "risk-off"}.issubset(regimes)
+
+
+def test_performance_attribution_rejects_invalid_dimension(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get(
+        "/bff/management/performance-attribution",
+        headers=HEADERS,
+        params={"dimension": "desk"},
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["error"] == "invalid_dimension"
+
+
+def test_performance_attribution_requires_read_auth(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get("/bff/management/performance-attribution")
+
+    assert response.status_code == 401, response.text
+
+
 def test_portfolio_book_reports_degraded_telemetry_without_hiding_core_book(monkeypatch) -> None:
     client = _portfolio_store(monkeypatch, telemetry_source="missing", telemetry={})
 
@@ -394,3 +518,5 @@ def test_portfolio_book_is_registered_in_openapi() -> None:
     assert "get" in schema["paths"]["/bff/management/portfolio-book/pools"]
     assert "/bff/management/portfolio-book/holdings" in schema["paths"]
     assert "get" in schema["paths"]["/bff/management/portfolio-book/holdings"]
+    assert "/bff/management/performance-attribution" in schema["paths"]
+    assert "get" in schema["paths"]["/bff/management/performance-attribution"]

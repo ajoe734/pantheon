@@ -956,6 +956,163 @@ export interface ManagementQuarterlyRankingRecommendationsResponse {
   };
 }
 
+export type ManagementPerformanceAttributionDimension =
+  | "persona"
+  | "strategy"
+  | "pool"
+  | "asset"
+  | "broker"
+  | "runtime"
+  | "regime"
+  | "all"
+  | string;
+
+export interface ManagementPerformanceAttributionQuery {
+  dimension?: ManagementPerformanceAttributionDimension;
+  period?: string;
+  page_token?: string;
+  page_size?: number;
+}
+
+export interface ManagementPerformanceAttributionMetrics {
+  runtimeCount: number;
+  runtime_count: number;
+  telemetryRuntimeCount: number;
+  telemetry_runtime_count: number;
+  holdingCount: number;
+  holding_count: number;
+  totalPnl?: number | null;
+  total_pnl?: number | null;
+  unrealizedPnl?: number | null;
+  unrealized_pnl?: number | null;
+  realizedPnl?: number | null;
+  realized_pnl?: number | null;
+  totalNotional?: number | null;
+  total_notional?: number | null;
+  totalMarketValue?: number | null;
+  total_market_value?: number | null;
+  totalExposure?: number | null;
+  total_exposure?: number | null;
+  worstDrawdown?: number | null;
+  worst_drawdown?: number | null;
+  averageFillRate?: number | null;
+  average_fill_rate?: number | null;
+  averageSlippageBps?: number | null;
+  average_slippage_bps?: number | null;
+  totalTrades: number;
+  total_trades: number;
+  latestTelemetryAt?: string | null;
+  latest_telemetry_at?: string | null;
+  pnlContributionPct?: number | null;
+  pnl_contribution_pct?: number | null;
+  notionalWeight?: number | null;
+  notional_weight?: number | null;
+  [key: string]: unknown;
+}
+
+export interface ManagementPerformanceAttributionSourceRefs {
+  runtimeIds?: string[];
+  runtime_ids?: string[];
+  capitalPoolIds?: string[];
+  capital_pool_ids?: string[];
+  personaIds?: string[];
+  persona_ids?: string[];
+  strategyIds?: string[];
+  strategy_ids?: string[];
+  [key: string]: unknown;
+}
+
+export interface ManagementPerformanceAttributionRow {
+  id: string;
+  dimension: ManagementPerformanceAttributionDimension;
+  dimensionKey: string;
+  dimension_key: string;
+  label: string;
+  period: string;
+  rank: number;
+  metrics: ManagementPerformanceAttributionMetrics;
+  totalPnl?: number | null;
+  total_pnl?: number | null;
+  pnlContributionPct?: number | null;
+  pnl_contribution_pct?: number | null;
+  notionalWeight?: number | null;
+  notional_weight?: number | null;
+  runtimeCount: number;
+  runtime_count: number;
+  holdingCount: number;
+  holding_count: number;
+  sourceRefs?: ManagementPerformanceAttributionSourceRefs;
+  source_refs?: ManagementPerformanceAttributionSourceRefs;
+  links?: Record<string, string | null | undefined>;
+  [key: string]: unknown;
+}
+
+export interface ManagementPerformanceAttributionSummary {
+  period: string;
+  dimensions: string[];
+  supportedDimensions: string[];
+  supported_dimensions: string[];
+  rowCount: number;
+  row_count: number;
+  returnedRowCount: number;
+  returned_row_count: number;
+  runtimeCount: number;
+  runtime_count: number;
+  telemetryRuntimeCount: number;
+  telemetry_runtime_count: number;
+  holdingCount: number;
+  holding_count: number;
+  totalPnl?: number | null;
+  total_pnl?: number | null;
+  totalNotional?: number | null;
+  total_notional?: number | null;
+  totalExposure?: number | null;
+  total_exposure?: number | null;
+  worstDrawdown?: number | null;
+  worst_drawdown?: number | null;
+  averageFillRate?: number | null;
+  average_fill_rate?: number | null;
+  averageSlippageBps?: number | null;
+  average_slippage_bps?: number | null;
+  totalTrades: number;
+  total_trades: number;
+  latestTelemetryAt?: string | null;
+  latest_telemetry_at?: string | null;
+  basis: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementPerformanceAttributionData {
+  id: string;
+  period: string;
+  dimensions: string[];
+  items: ManagementPerformanceAttributionRow[];
+  rows: ManagementPerformanceAttributionRow[];
+  summary: ManagementPerformanceAttributionSummary;
+  [key: string]: unknown;
+}
+
+export interface ManagementPerformanceAttributionResponse {
+  data: ManagementPerformanceAttributionData;
+  items: ManagementPerformanceAttributionRow[];
+  rows: ManagementPerformanceAttributionRow[];
+  summary: ManagementPerformanceAttributionSummary;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces?: Record<string, ManagementSurfaceRef>;
+    composition_sources?: string[];
+    period?: string;
+    dimensions?: string[];
+    policy?: string;
+    [key: string]: unknown;
+  };
+}
+
 export interface ManagementEvidenceItem {
   id: string;
   refId: string;
@@ -1144,6 +1301,101 @@ export interface ManagementEvolutionJournalResponse {
   };
 }
 
+export interface ManagementPersonaIntentQuery {
+  source_type?: string;
+  persona_id?: string;
+  status?: string;
+  intent?: string;
+  page_token?: string;
+  page_size?: number;
+}
+
+export type ManagementPersonaIntentSourceType =
+  | "persona_trace"
+  | "trainer_session"
+  | "agora_session"
+  | string;
+
+export interface ManagementPersonaIntentItem {
+  id: string;
+  intent_id: string;
+  sourceType: ManagementPersonaIntentSourceType;
+  source_type: ManagementPersonaIntentSourceType;
+  source_id: string;
+  personaId?: string | null;
+  persona_id?: string | null;
+  persona_ids?: string[];
+  persona_label?: string | null;
+  intent: string;
+  title: string;
+  summary: string;
+  status: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+  occurred_at?: string | null;
+  trace?: Record<string, unknown>;
+  trainer?: Record<string, unknown>;
+  agora?: Record<string, unknown>;
+  redacted: boolean;
+  redaction: {
+    is_redacted?: boolean;
+    redacted?: boolean;
+    policy?: string;
+    redacted_fields?: string[];
+    [key: string]: unknown;
+  };
+  route?: string | null;
+  bff_detail_path?: string | null;
+  [key: string]: unknown;
+}
+
+export interface ManagementPersonaIntentSummary {
+  total_items: number;
+  returned_items: number;
+  persona_trace_count: number;
+  trainer_session_count: number;
+  agora_session_count: number;
+  redacted_item_count: number;
+  persona_count: number;
+  persona_ids: string[];
+  latest_at?: string | null;
+  bySourceType: Record<string, number>;
+  by_source_type: Record<string, number>;
+  byStatus: Record<string, number>;
+  by_status: Record<string, number>;
+  byIntent: Record<string, number>;
+  by_intent: Record<string, number>;
+  [key: string]: unknown;
+}
+
+export interface ManagementPersonaIntentResponse {
+  data: ManagementPersonaIntentItem[];
+  items: ManagementPersonaIntentItem[];
+  summary: ManagementPersonaIntentSummary;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    staleness?: Record<string, unknown>;
+    surfaces: {
+      management_persona_intent: ManagementSurfaceRef;
+      persona_traces?: ManagementSurfaceRef;
+      personas?: ManagementSurfaceRef;
+      persona_sessions?: ManagementSurfaceRef;
+      capability_snapshots?: ManagementSurfaceRef;
+      teaching_sessions?: ManagementSurfaceRef;
+      agora_sessions?: ManagementSurfaceRef;
+      [key: string]: ManagementSurfaceRef | undefined;
+    };
+    composition_sources?: string[];
+    redacted_item_count?: number;
+    [key: string]: unknown;
+  };
+}
+
 export interface ManagementPortfolioBookPoolQuery {
   status?: string;
   risk_policy_ref?: string;
@@ -1262,6 +1514,10 @@ export function managementEvolutionJournalPath(query?: ManagementEvolutionJourna
   return withQuery(paths.managementEvolutionJournal(), query);
 }
 
+export function managementPersonaIntentPath(query?: ManagementPersonaIntentQuery): string {
+  return withQuery(paths.managementPersonaIntent(), query);
+}
+
 export function managementReadinessEp5Path(): string {
   return paths.managementReadinessEp5();
 }
@@ -1326,6 +1582,12 @@ export function managementQuarterlyRankingRecommendationsPath(
   query?: ManagementQuarterlyRankingRecommendationsQuery,
 ): string {
   return withQuery(paths.managementQuarterlyRankingRecommendations(), query);
+}
+
+export function managementPerformanceAttributionPath(
+  query?: ManagementPerformanceAttributionQuery,
+): string {
+  return withQuery(paths.managementPerformanceAttribution(), query);
 }
 
 export async function fetchManagementCockpit(
@@ -1418,6 +1680,25 @@ export async function fetchManagementEvolutionJournal(
     throw new Error(`GET ${path} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementEvolutionJournalResponse>;
+}
+
+export async function fetchManagementPersonaIntent(
+  query?: ManagementPersonaIntentQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementPersonaIntentResponse> {
+  const path = managementPersonaIntentPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementPersonaIntentResponse>;
 }
 
 export async function fetchManagementReadiness(
@@ -1622,4 +1903,23 @@ export async function fetchManagementQuarterlyRankingRecommendations(
     throw new Error(`GET ${path} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementQuarterlyRankingRecommendationsResponse>;
+}
+
+export async function fetchManagementPerformanceAttribution(
+  query?: ManagementPerformanceAttributionQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementPerformanceAttributionResponse> {
+  const path = managementPerformanceAttributionPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementPerformanceAttributionResponse>;
 }
