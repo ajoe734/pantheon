@@ -391,6 +391,73 @@ BFF-B1-004 — Owner: Claude, Reviewer: Codex
 
 ---
 
+## §17 POST /bff/logout — Clear Session
+
+### Gap
+
+The BFF session surface lacked a specified, tested logout endpoint. The `POST /bff/logout`
+route existed in `main.py` but had no spec section and no test coverage, leaving the
+session-clear behaviour undocumented and unverified against the acceptance bar required
+by Sprint BFF-1.
+
+### Fix
+
+**File: `services/control-plane/bff/main.py`**
+
+The `POST /bff/logout` endpoint is implemented with the following behaviour:
+
+- Requires a valid Bearer token or cookie session with at least the `operator` role
+  (via `_require_read_role`).
+- Accepts an optional JSON body (ignored beyond idempotency-key hashing).
+- Accepts optional `Idempotency-Key` / `X-Idempotency-Key` headers for safe retries.
+- Writes `{"state": "logged_out", "logged_out_at": <iso-timestamp>}` into the
+  session-scoped lifecycle store entry for the caller.
+- Clears the `pantheon_session` cookie with `Set-Cookie: ... Max-Age=0`.
+- Returns the full `_sem_session_current_response` envelope with:
+  - `data.operation.type = "logout"`
+  - `data.session.state = "logged_out"`
+  - `data.session.authenticated = false`
+  - `data.session.fresh = false`
+  - `data.session.logged_out_at = <iso-timestamp>`
+  - `meta.idempotency.idempotencyKey` and `meta.idempotency.replayed` for replay tracking.
+- Subsequent `GET /bff/me` from the same bearer/cookie session returns HTTP 401 with
+  typed BFF error reason `SESSION_LOGGED_OUT`; the BFF no longer bootstraps a
+  logged-out DTO as an authenticated session.
+- If an idempotency key is reused with a different payload, returns HTTP 409
+  `IDEMPOTENCY_CONFLICT`.
+
+**File: `services/control-plane/bff/tests/test_bff_logout.py`** (new)
+
+Seven focused tests covering the acceptance criteria below, plus the existing
+session lifecycle contract tests updated for cookie clearing and logged-out 401
+semantics.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated `POST /bff/logout` returns HTTP 200 with `data.operation.type = "logout"`, `data.session.state = "logged_out"`, and `data.session.authenticated = false` | ✅ test added |
+| 2 | A subsequent `GET /bff/me` from the same bearer/session returns HTTP 401 `INVALID_TOKEN` with reason `SESSION_LOGGED_OUT` | ✅ test added |
+| 3 | Anonymous `POST /bff/logout` returns HTTP 401 | ✅ test added |
+| 4 | Idempotent logout: same idempotency key returns the same response with `meta.idempotency.replayed = true` | ✅ test added |
+| 5 | Reusing an idempotency key with a different payload returns HTTP 409 `IDEMPOTENCY_CONFLICT` | ✅ test added |
+| 6 | Response `data.session.logged_out_at` is present and `data.session.fresh` is `false` | ✅ test added |
+| 7 | Cookie-backed logout clears `pantheon_session` and a follow-up `GET /bff/me` returns HTTP 401 | ✅ test added |
+| 8 | `pytest services/control-plane/bff/tests/test_bff_logout.py services/control-plane/bff/test_bff_session_auth_me_contract.py` passes | ✅ verified |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_logout.py`
+- `services/control-plane/bff/test_bff_session_auth_me_contract.py`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B1-006 — Owner: Codex2, Reviewer: Claude
+
+---
+
 ## B7 — Agora Compatibility APIs
 
 ### Gap
