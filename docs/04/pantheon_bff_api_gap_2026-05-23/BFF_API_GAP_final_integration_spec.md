@@ -1585,6 +1585,62 @@ BFF-B3-002 — Owner: Codex, Reviewer: Claude
 
 BFF-B3-003 — Owner: Codex, Reviewer: Claude
 
+### B3-005/B3-006 GET `/bff/management/trading-pulse`
+
+**File: `services/control-plane/bff/main.py`**
+
+- Add `GET /bff/management/trading-pulse` as a read-only Management aggregate.
+- Add `GET /bff/management/trading-pulse/rankings` for computed ranking blocks.
+- Require the existing BFF read-role authentication gate; anonymous requests
+  return the typed BFF 401 envelope.
+- Compose Trading Pulse from:
+  - runtime bindings and deployment stage/status;
+  - telemetry summaries for P&L, drawdown, Sharpe, fill rate, slippage, and
+    trade count;
+  - rollback summaries linked to each runtime;
+  - computed ranking rows and ranking blocks.
+- Return the standard BFF aggregate envelope with `data`, `items`, `summary`,
+  `page_info`, and `meta.surfaces`.
+- Preserve source surfaces in metadata (`runtime_roster`, `telemetry_summary`)
+  plus composed `management_trading_pulse` and
+  `management_trading_pulse_rankings` surfaces.
+
+**Files: `execute-plans/src/lib/bff-v1/paths.ts`,
+`execute-plans/src/lib/bff-v1/management.ts`, and
+`execute-plans/src/lib/bff/client.ts`**
+
+- Add canonical `/bff/management/trading-pulse` and
+  `/bff/management/trading-pulse/rankings` paths.
+- Export Trading Pulse response, summary, card, runtime row, ranking item,
+  ranking block, query, path, and fetch helper types.
+- Add `managementClient.tradingPulse.list()` and
+  `managementClient.tradingPulse.rankings()` using the same strict/hybrid live
+  transport policy as the other Management aggregate reads.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `GET /bff/management/trading-pulse` returns card summary, runtime rows, and runtime rankings composed from runtime bindings and telemetry summaries | ✅ test added in BFF-B3-004 |
+| 2 | Response includes `data`, `items`, `cards`, `rankings`, `summary`, `page_info`, and `meta.surfaces.management_trading_pulse` | ✅ test added in BFF-B3-004 |
+| 3 | `GET /bff/management/trading-pulse/rankings?limit=` returns computed ranking blocks with bounded limit support | ✅ test added in BFF-B3-004 |
+| 4 | Anonymous requests return HTTP 401 typed BFF error envelope | ✅ test added in BFF-B3-004 |
+| 5 | Frontend path/client contract exposes the live aggregate and rankings route without seed-list fanout | ✅ implemented in BFF-B3-004 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_b3_trading_pulse.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/src/lib/bff/client.ts`
+- `execute-plans/src/lib/bff/__tests__/client.test.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B3-004 — Owner: Codex, Reviewer: Codex2
+
 ### B3-007 GET `/bff/management/evolution-journal`
 
 **File: `services/control-plane/bff/main.py`**

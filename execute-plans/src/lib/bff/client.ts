@@ -352,6 +352,99 @@ function emptyHumanInboxAggregate(): HumanInboxAggregate {
   };
 }
 
+function emptyManagementTradingPulseAggregate(): ManagementTradingPulseResponse {
+  const summary = {
+    runtimeCount: 0,
+    runtime_count: 0,
+    telemetryCoverageCount: 0,
+    telemetry_coverage_count: 0,
+    byStatus: {},
+    by_status: {},
+    byStage: {},
+    by_stage: {},
+    totalPnl: null,
+    total_pnl: null,
+    worstDrawdown: null,
+    worst_drawdown: null,
+    averageFillRate: null,
+    average_fill_rate: null,
+    worstSlippageBps: null,
+    worst_slippage_bps: null,
+    totalTrades: 0,
+    total_trades: 0,
+  };
+  const data = {
+    id: "management-trading-pulse",
+    summary,
+    cards: [],
+    rankings: [],
+    runtimeRows: [],
+    runtime_rows: [],
+  };
+  return {
+    data,
+    items: [],
+    cards: [],
+    rankings: [],
+    runtimeRows: [],
+    runtime_rows: [],
+    summary,
+    page_info: {
+      next_page_token: null,
+      total: 0,
+      page_size: 0,
+    },
+    meta: {
+      surfaces: {
+        management_trading_pulse: {
+          status: "unavailable",
+          source: "mock",
+          reason: "Trading Pulse aggregate is served by the Pantheon BFF management aggregate.",
+        },
+      },
+    },
+  };
+}
+
+function emptyManagementTradingPulseRankingsAggregate(
+  limit = 20,
+): ManagementTradingPulseRankingsResponse {
+  return {
+    data: [],
+    items: [],
+    rankings: [],
+    rankingBlocks: [],
+    ranking_blocks: [],
+    summary: {
+      runtimeCount: 0,
+      runtime_count: 0,
+      rankingBlockCount: 0,
+      ranking_block_count: 0,
+      rankedItemCount: 0,
+      ranked_item_count: 0,
+      criteria: [],
+      limit,
+      topRuntimeId: null,
+      top_runtime_id: null,
+    },
+    page_info: {
+      next_page_token: null,
+      total: 0,
+      page_size: 0,
+    },
+    meta: {
+      surfaces: {
+        management_trading_pulse_rankings: {
+          status: "unavailable",
+          source: "mock",
+          reason: "Trading Pulse rankings are served by the Pantheon BFF management aggregate.",
+        },
+      },
+      composition_sources: [],
+    },
+  };
+}
+
 function emptyManagementEvidenceAggregate(): ManagementEvidenceResponse {
   return {
     data: [],
@@ -527,6 +620,110 @@ function adaptHumanInboxAggregate(body: unknown): HumanInboxAggregate {
       next_page_token: typeof pageInfo.next_page_token === "string" ? pageInfo.next_page_token : null,
       total: Number(pageInfo.total ?? items.length),
       page_size: Number(pageInfo.page_size ?? items.length),
+    },
+    meta,
+  };
+}
+
+function adaptManagementTradingPulseAggregate(body: unknown): ManagementTradingPulseResponse {
+  const envelope = asObject(body);
+  const dataEnvelope = asObject(envelope.data);
+  const rawCards = Array.isArray(envelope.cards)
+    ? envelope.cards
+    : Array.isArray(envelope.items)
+      ? envelope.items
+      : Array.isArray(dataEnvelope.cards)
+        ? dataEnvelope.cards
+        : [];
+  const rawRankings = Array.isArray(envelope.rankings)
+    ? envelope.rankings
+    : Array.isArray(dataEnvelope.rankings)
+      ? dataEnvelope.rankings
+      : [];
+  const rawRuntimeRows = Array.isArray(envelope.runtimeRows)
+    ? envelope.runtimeRows
+    : Array.isArray(envelope.runtime_rows)
+      ? envelope.runtime_rows
+      : Array.isArray(dataEnvelope.runtimeRows)
+        ? dataEnvelope.runtimeRows
+        : Array.isArray(dataEnvelope.runtime_rows)
+          ? dataEnvelope.runtime_rows
+          : [];
+  const cards = rawCards.filter((item) => item && typeof item === "object") as ManagementTradingPulseResponse["cards"];
+  const rankings = rawRankings.filter((item) => item && typeof item === "object") as ManagementTradingPulseResponse["rankings"];
+  const runtimeRows = rawRuntimeRows.filter((item) => item && typeof item === "object") as ManagementTradingPulseResponse["runtimeRows"];
+  const summary = asObject(envelope.summary ?? dataEnvelope.summary) as ManagementTradingPulseResponse["summary"];
+  const pageInfo = asObject(envelope.page_info);
+  const meta = asObject(envelope.meta) as ManagementTradingPulseResponse["meta"];
+  const data = {
+    id: typeof dataEnvelope.id === "string" ? dataEnvelope.id : "management-trading-pulse",
+    summary,
+    cards,
+    rankings,
+    runtimeRows,
+    runtime_rows: runtimeRows,
+  };
+  return {
+    data,
+    items: cards,
+    cards,
+    rankings,
+    runtimeRows,
+    runtime_rows: runtimeRows,
+    summary,
+    page_info: {
+      next_page_token: typeof pageInfo.next_page_token === "string" ? pageInfo.next_page_token : null,
+      total: Number(pageInfo.total ?? cards.length),
+      page_size: Number(pageInfo.page_size ?? cards.length),
+    },
+    meta,
+  };
+}
+
+function adaptManagementTradingPulseRankingsAggregate(
+  body: unknown,
+): ManagementTradingPulseRankingsResponse {
+  const envelope = asObject(body);
+  const rawBlocks = Array.isArray(envelope.rankingBlocks)
+    ? envelope.rankingBlocks
+    : Array.isArray(envelope.ranking_blocks)
+      ? envelope.ranking_blocks
+      : Array.isArray(envelope.rankings)
+        ? envelope.rankings
+        : Array.isArray(envelope.items)
+          ? envelope.items
+          : Array.isArray(envelope.data)
+            ? envelope.data
+            : [];
+  const rankingBlocks = rawBlocks.filter((item) => item && typeof item === "object") as ManagementTradingPulseRankingsResponse["rankingBlocks"];
+  const summary = asObject(envelope.summary);
+  const pageInfo = asObject(envelope.page_info);
+  const meta = asObject(envelope.meta) as ManagementTradingPulseRankingsResponse["meta"];
+  const criteria = Array.isArray(summary.criteria)
+    ? summary.criteria.map((item) => String(item))
+    : rankingBlocks.map((block) => String(block.metric || "")).filter(Boolean);
+  return {
+    data: rankingBlocks,
+    items: rankingBlocks,
+    rankings: rankingBlocks,
+    rankingBlocks,
+    ranking_blocks: rankingBlocks,
+    summary: {
+      runtimeCount: Number(summary.runtimeCount ?? summary.runtime_count ?? 0),
+      runtime_count: Number(summary.runtime_count ?? summary.runtimeCount ?? 0),
+      rankingBlockCount: Number(summary.rankingBlockCount ?? summary.ranking_block_count ?? rankingBlocks.length),
+      ranking_block_count: Number(summary.ranking_block_count ?? summary.rankingBlockCount ?? rankingBlocks.length),
+      rankedItemCount: Number(summary.rankedItemCount ?? summary.ranked_item_count ?? 0),
+      ranked_item_count: Number(summary.ranked_item_count ?? summary.rankedItemCount ?? 0),
+      criteria,
+      limit: Number(summary.limit ?? 20),
+      topRuntimeId: typeof summary.topRuntimeId === "string" ? summary.topRuntimeId : null,
+      top_runtime_id: typeof summary.top_runtime_id === "string" ? summary.top_runtime_id : null,
+    },
+    page_info: {
+      next_page_token: typeof pageInfo.next_page_token === "string" ? pageInfo.next_page_token : null,
+      total: Number(pageInfo.total ?? rankingBlocks.length),
+      page_size: Number(pageInfo.page_size ?? rankingBlocks.length),
     },
     meta,
   };
@@ -951,6 +1148,28 @@ const humanInbox = {
   get: humanInboxDetail,
 };
 
+const tradingPulse = {
+  list: (): Promise<ManagementTradingPulseResponse> =>
+    withStrictLiveOrMock<ManagementTradingPulseResponse, unknown>(
+      {
+        method: "GET",
+        path: paths.managementTradingPulse(),
+      },
+      async () => emptyManagementTradingPulseAggregate(),
+      adaptManagementTradingPulseAggregate,
+    ),
+  rankings: (query?: ManagementTradingPulseRankingsQuery): Promise<ManagementTradingPulseRankingsResponse> =>
+    withStrictLiveOrMock<ManagementTradingPulseRankingsResponse, unknown>(
+      {
+        method: "GET",
+        path: paths.managementTradingPulseRankings(),
+        query: query as Record<string, string | number | undefined> | undefined,
+      },
+      async () => emptyManagementTradingPulseRankingsAggregate(query?.limit),
+      adaptManagementTradingPulseRankingsAggregate,
+    ),
+};
+
 const evidenceExplorer = {
   list: (query?: ManagementEvidenceQuery): Promise<ManagementEvidenceResponse> =>
     withStrictLiveOrMock<ManagementEvidenceResponse, unknown>(
@@ -1006,6 +1225,7 @@ export const managementClient = {
   evolutionReviews,
   personaFleet,
   humanInbox,
+  tradingPulse,
   evidenceExplorer,
   evolutionJournal,
 } as const;
@@ -1018,7 +1238,7 @@ export const MANAGEMENT_FAMILIES: readonly ManagementFamily[] = [
   "rebalances", "deployments", "evolution", "research", "artifacts",
   "tools", "mcpServers", "mcpTools", "skills", "channels",
   "jobs", "runtimes", "alerts", "incidents", "approvals", "audit",
-  "oodaPackets", "humanInbox", "evidenceExplorer", "evolutionJournal",
+  "oodaPackets", "humanInbox", "tradingPulse", "evidenceExplorer", "evolutionJournal",
 ] as const;
 
 /** Snapshot of the current live-status, useful for UI banners that show
