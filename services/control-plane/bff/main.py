@@ -26501,11 +26501,15 @@ _BFF_APPROVAL_DECIDE_COMMANDS: Dict[str, CommandType] = {
     "approve": CommandType.APPROVE_DECISION,
     "reject": CommandType.REJECT_DECISION,
     "request_revision": CommandType.REQUEST_APPROVAL_REVISION,
+    "request_changes": CommandType.REQUEST_APPROVAL_REVISION,
 }
 
 # Decisions that emit approval.stage.changed rather than approval.decided.
 # escalate and freeze are stage transitions despite mapping to APPROVE_DECISION command type.
-_APPROVAL_STAGE_CHANGE_DECISIONS: frozenset = frozenset({"request_revision", "escalate", "freeze"})
+_APPROVAL_STAGE_CHANGE_DECISIONS: frozenset = frozenset(
+    {"request_revision", "request_changes", "escalate", "freeze"}
+)
+_BFF_APPROVAL_DECIDE_VALUES = "approve, reject, request_revision, request_changes, escalate, freeze"
 
 
 @app.post("/bff/approvals/{id}/decide", status_code=202)
@@ -26549,7 +26553,7 @@ async def bff_approvals_decide(
                 422,
                 ErrorCode.INVALID_PARAMS,
                 "Invalid decision value",
-                f"decision={raw_decision!r} is not one of approve, reject, request_revision, escalate, freeze",
+                f"decision={raw_decision!r} is not one of {_BFF_APPROVAL_DECIDE_VALUES}",
                 precondition_failed="decision",
             )
 
@@ -26686,6 +26690,9 @@ async def bff_approvals_batch_decide(
             precondition_failed="decisions",
         )
 
+    # Reject top-level body idempotency keys before deriving per-item command keys.
+    _reject_body_idempotency_key(payload)
+
     # Batch-level idempotency key; per-item keys are derived as "{batch_key}::{index}::{id}".
     batch_idem_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
 
@@ -26734,7 +26741,7 @@ async def bff_approvals_batch_decide(
                     "status": "failed",
                     "error": {
                         "code": "INVALID_PARAMS",
-                        "message": f"decision={raw_decision!r} is not one of approve, reject, request_revision, escalate, freeze",
+                        "message": f"decision={raw_decision!r} is not one of {_BFF_APPROVAL_DECIDE_VALUES}",
                     },
                 })
                 has_failures = True
