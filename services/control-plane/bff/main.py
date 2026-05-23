@@ -1348,6 +1348,16 @@ _REMEDIATE_SENTINEL_REQUIRED = {"intervention_id", "remediation_action"}
 _VALID_REMEDIATION_ACTIONS = {"resolve", "dismiss", "escalate"}
 _DECIDE_V5_INTERVENTION_REQUIRED = {"intervention_id", "decision"}
 _VALID_V5_INTERVENTION_DECISIONS = {"approve", "reject", "defer", "dismiss"}
+_HUMAN_GATE_DECISIONS_BY_COMMAND: Dict[CommandType, str] = {
+    CommandType.HUMAN_GATE_APPROVE: "approve",
+    CommandType.HUMAN_GATE_REJECT: "reject",
+    CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: "request_more_evidence",
+    CommandType.HUMAN_GATE_REVOKE: "revoke",
+    CommandType.HUMAN_GATE_EXTEND_TTL: "extend_ttl",
+}
+_HUMAN_GATE_REQUIRED = {"human_gate_item_id", "decision"}
+_VALID_HUMAN_GATE_DECISIONS = set(_HUMAN_GATE_DECISIONS_BY_COMMAND.values())
+_HUMAN_GATE_APPROVER_DECISIONS = {"approve", "reject", "revoke", "extend_ttl"}
 
 _EXECUTE_EVO_REQUIRED = {"evolution_decision_id", "action_type"}
 _VALID_EVO_ACTION_TYPES = {"freeze", "retrain", "revalidate", "mutate", "retire"}
@@ -1360,6 +1370,7 @@ _OPERATOR_HEALTH_STATUS_ROUTE = "/operator/health-status"
 _OPERATOR_POST_INCIDENT_REVIEW_ROUTE = "/operator/post-incident-review"
 _OPERATOR_RUNTIME_STATE_ROUTE = "/operator/runtime-state"
 _MANAGEMENT_COCKPIT_ROUTE = "/management/cockpit"
+_MANAGEMENT_READINESS_BASE_ROUTE = "/management/readiness"
 _CONSULTATION_WORKBENCH_ROUTE = "/consultation"
 _KNOWLEDGE_WORKBENCH_ROUTE = "/knowledge"
 _TRAINER_WORKBENCH_ROUTE = "/trainer"
@@ -1944,6 +1955,114 @@ def _require_final_command_preconditions(
             )
 
 
+_FINAL_COMMAND_TARGET_TYPES: Dict[CommandType, ObjectType] = {
+    CommandType.HUMAN_GATE_APPROVE: ObjectType.HUMAN_GATE_ITEM,
+    CommandType.HUMAN_GATE_REJECT: ObjectType.HUMAN_GATE_ITEM,
+    CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: ObjectType.HUMAN_GATE_ITEM,
+    CommandType.HUMAN_GATE_REVOKE: ObjectType.HUMAN_GATE_ITEM,
+    CommandType.HUMAN_GATE_EXTEND_TTL: ObjectType.HUMAN_GATE_ITEM,
+    CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT: ObjectType.RANKING,
+}
+
+
+def _validate_final_command_target_type(cmd: OperatorCommand) -> None:
+    expected = _FINAL_COMMAND_TARGET_TYPES.get(cmd.command)
+    if expected is None or cmd.target.type == expected:
+        return
+    raise _bff_error(
+        422,
+        ErrorCode.INVALID_PARAMS,
+        "Invalid command target type",
+        f"{cmd.command.value} must target {expected.value}, not {cmd.target.type.value}",
+        precondition_failed="target.type",
+        suggestion=f"Use target.type={expected.value} for {cmd.command.value}",
+    )
+
+
+def _human_gate_source_type(item_id: str) -> Optional[str]:
+    prefix = item_id.split(":", 1)[0].strip().lower() if ":" in item_id else ""
+    if prefix in {"approval", "intervention"}:
+        return prefix
+    return None
+
+
+def _normalize_human_gate_command(cmd: OperatorCommand) -> OperatorCommand:
+    decision = _HUMAN_GATE_DECISIONS_BY_COMMAND.get(cmd.command)
+    if decision is None:
+        return cmd
+
+    params = dict(cmd.params or {})
+    item_id = str(
+        params.get("human_gate_item_id")
+        or params.get("humanGateItemId")
+        or params.get("item_id")
+        or params.get("itemId")
+        or cmd.target.id
+        or ""
+    ).strip()
+    params["human_gate_item_id"] = item_id
+    params["humanGateItemId"] = item_id
+    params["item_id"] = item_id
+    params["itemId"] = item_id
+    source_type = str(params.get("source_type") or params.get("sourceType") or "").strip()
+    if not source_type:
+        source_type = _human_gate_source_type(item_id) or ""
+    if source_type:
+        params["source_type"] = source_type
+        params["sourceType"] = source_type
+    params["decision"] = decision
+    params["action_id"] = decision
+    params["actionId"] = decision
+    params.setdefault("audit_event", f"human_gate.{decision}")
+    params.setdefault("auditEvent", f"human_gate.{decision}")
+    params.setdefault("entity_type", "human_gate_item")
+    params.setdefault("entity_id", item_id)
+    cmd.params = params
+    return cmd
+
+
+def _normalize_quarterly_recommendation_command(cmd: OperatorCommand) -> OperatorCommand:
+    if cmd.command != CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT:
+        return cmd
+
+    params = dict(cmd.params or {})
+    recommendation_id = str(
+        params.get("recommendation_id")
+        or params.get("recommendationId")
+        or cmd.target.id
+        or ""
+    ).strip()
+    if recommendation_id:
+        params["recommendation_id"] = recommendation_id
+        params["recommendationId"] = recommendation_id
+
+    recommendation_action_id = str(
+        params.get("recommendation_action_id")
+        or params.get("recommendationActionId")
+        or params.get("actionId")
+        or params.get("action_id")
+        or ""
+    ).strip()
+    if recommendation_action_id and recommendation_action_id != "submit_recommendation":
+        params["recommendation_action_id"] = recommendation_action_id
+        params["recommendationActionId"] = recommendation_action_id
+
+    params["action_id"] = "submit_recommendation"
+    params["actionId"] = "submit_recommendation"
+    params.setdefault("audit_event", "quarterly_ranking.recommendation_submitted")
+    params.setdefault("auditEvent", "quarterly_ranking.recommendation_submitted")
+    params.setdefault("entity_type", "quarterly_ranking_recommendation")
+    params.setdefault("entity_id", recommendation_id or cmd.target.id)
+    cmd.params = params
+    return cmd
+
+
+def _normalize_b5_command_payload(cmd: OperatorCommand) -> OperatorCommand:
+    return _normalize_quarterly_recommendation_command(
+        _normalize_human_gate_command(cmd)
+    )
+
+
 def _normalize_operator_command_payload(payload: Dict[str, Any]) -> OperatorCommand:
     command_type = payload.get("command_type")
     if command_type:
@@ -2006,7 +2125,7 @@ def _normalize_operator_command_payload(payload: Dict[str, Any]) -> OperatorComm
         )
 
     try:
-        return OperatorCommand.model_validate(payload)
+        return _normalize_b5_command_payload(OperatorCommand.model_validate(payload))
     except ValidationError as exc:
         raise _bff_error(
             422,
@@ -3277,6 +3396,109 @@ def _validate_decide_v5_intervention(params: Dict[str, Any], identity: OperatorI
         )
 
 
+def _validate_human_gate_decision(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    missing = _HUMAN_GATE_REQUIRED - {key for key, value in params.items() if value not in (None, "")}
+    if missing:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Missing required params for HumanGate command",
+            f"Missing fields: {sorted(missing)}",
+            precondition_failed="human_gate",
+        )
+
+    decision = str(params.get("decision") or "").strip().lower()
+    if decision not in _VALID_HUMAN_GATE_DECISIONS:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid HumanGate decision value",
+            f"decision must be one of {sorted(_VALID_HUMAN_GATE_DECISIONS)}",
+            precondition_failed="decision",
+        )
+
+    if decision in _HUMAN_GATE_APPROVER_DECISIONS and not {"approver", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.INSUFFICIENT_ROLE,
+            "HumanGate decision requires 'approver' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with approver or admin role",
+        )
+    if decision == "request_more_evidence" and not {"operator", "approver", "admin", "reviewer"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.INSUFFICIENT_ROLE,
+            "HumanGate evidence request requires operator-level role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with operator, reviewer, approver, or admin role",
+        )
+
+    if decision == "extend_ttl":
+        raw_ttl = (
+            params.get("ttl_seconds")
+            or params.get("ttlSeconds")
+            or params.get("extend_ttl_seconds")
+            or params.get("extendTtlSeconds")
+        )
+        try:
+            ttl_seconds = int(raw_ttl)
+        except (TypeError, ValueError):
+            ttl_seconds = 0
+        if ttl_seconds <= 0:
+            raise _bff_error(
+                422,
+                ErrorCode.INVALID_PARAMS,
+                "HumanGateExtendTtl requires a positive ttl_seconds value",
+                "ttl_seconds must be a positive integer number of seconds",
+                precondition_failed="ttl_seconds",
+            )
+        params["ttl_seconds"] = ttl_seconds
+        params["ttlSeconds"] = ttl_seconds
+
+
+def _validate_quarterly_ranking_recommendation_submit(
+    params: Dict[str, Any],
+    identity: OperatorIdentity,
+) -> None:
+    if not {"operator", "approver", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.INSUFFICIENT_ROLE,
+            "Quarterly ranking recommendation submission requires operator-level role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with operator, approver, or admin role",
+        )
+
+    required = {"quarter", "recommendation_id"}
+    missing = required - {key for key, value in params.items() if value not in (None, "")}
+    if missing:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Missing required params for QuarterlyRankingRecommendationSubmit",
+            f"Missing fields: {sorted(missing)}",
+            precondition_failed="quarterly_ranking_recommendation",
+        )
+
+    action_id = str(
+        params.get("recommendation_action_id")
+        or params.get("recommendationActionId")
+        or ""
+    ).strip()
+    if action_id and action_id not in _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid quarterly ranking recommendation action",
+            f"recommendation_action_id must be one of {list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER)}",
+            precondition_failed="recommendation_action_id",
+        )
+
+
 _VALIDATORS = {
     CommandType.APPROVE_DEPLOYMENT: _validate_approve_deployment,
     CommandType.APPROVE_DECISION: _validate_approve_decision,
@@ -3300,6 +3522,12 @@ _VALIDATORS = {
     CommandType.RECORD_SPONSOR_DECISION: _validate_record_sponsor_decision,
     CommandType.REMEDIATE_SENTINEL_INTERVENTION: _validate_remediate_sentinel_intervention,
     CommandType.DECIDE_V5_INTERVENTION: _validate_decide_v5_intervention,
+    CommandType.HUMAN_GATE_APPROVE: _validate_human_gate_decision,
+    CommandType.HUMAN_GATE_REJECT: _validate_human_gate_decision,
+    CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: _validate_human_gate_decision,
+    CommandType.HUMAN_GATE_REVOKE: _validate_human_gate_decision,
+    CommandType.HUMAN_GATE_EXTEND_TTL: _validate_human_gate_decision,
+    CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT: _validate_quarterly_ranking_recommendation_submit,
 }
 
 # --------------------------------------------------------------------------- #
@@ -5921,6 +6149,108 @@ def _management_count_by(records: List[Dict[str, Any]], field: str) -> Dict[str,
     return counts
 
 
+_TRADING_PULSE_DRIFT_BREACH_STATUSES = {"breached", "blocked", "critical", "fail", "failed"}
+_TRADING_PULSE_DRIFT_WATCH_STATUSES = {"degraded", "warn", "warning", "watch"}
+
+
+def _management_json_clone(value: Any) -> Any:
+    return json.loads(json.dumps(value))
+
+
+def _trading_pulse_baseline_status(report: Optional[Dict[str, Any]]) -> str:
+    if not report:
+        return "unavailable"
+    threshold = report.get("threshold_evaluation")
+    if not isinstance(threshold, dict):
+        return "unknown"
+    status = str(threshold.get("overall_status") or threshold.get("status") or "").lower()
+    if status in _TRADING_PULSE_DRIFT_BREACH_STATUSES:
+        return "breached"
+    if status in _TRADING_PULSE_DRIFT_WATCH_STATUSES:
+        return "watch"
+    if status in {"ok", "pass", "passed", "within_threshold", "within-threshold"}:
+        return "ok"
+    return status or "unknown"
+
+
+def _trading_pulse_drift_metric_counts(drift_groups: Any) -> Dict[str, int]:
+    metric_count = 0
+    breached_metric_count = 0
+    watch_metric_count = 0
+    groups = drift_groups if isinstance(drift_groups, list) else []
+    for group in groups:
+        metrics = group.get("metrics") if isinstance(group, dict) else None
+        if not isinstance(metrics, list):
+            continue
+        for metric in metrics:
+            if not isinstance(metric, dict):
+                continue
+            metric_count += 1
+            status = str(metric.get("status") or "").lower()
+            if status in _TRADING_PULSE_DRIFT_BREACH_STATUSES:
+                breached_metric_count += 1
+            elif status in _TRADING_PULSE_DRIFT_WATCH_STATUSES:
+                watch_metric_count += 1
+    return {
+        "metricCount": metric_count,
+        "metric_count": metric_count,
+        "breachedMetricCount": breached_metric_count,
+        "breached_metric_count": breached_metric_count,
+        "watchMetricCount": watch_metric_count,
+        "watch_metric_count": watch_metric_count,
+    }
+
+
+def _build_trading_pulse_baseline_comparison(row: Dict[str, Any]) -> Dict[str, Any]:
+    runtime_id = str(row.get("runtime_id") or "").strip()
+    report = read_store.get_paper_live_drift_report(runtime_id)
+    status = _trading_pulse_baseline_status(report)
+    drift_groups = (report or {}).get("drift_groups") or []
+    metric_counts = _trading_pulse_drift_metric_counts(drift_groups)
+    threshold_evaluation = (
+        _management_json_clone((report or {}).get("threshold_evaluation"))
+        if report
+        else {
+            "overall_status": "unavailable",
+            "summary": "Paper/live baseline comparison unavailable for this runtime.",
+            "breached_metric_ids": [],
+        }
+    )
+    paper_live_drift = {
+        "available": report is not None,
+        "status": status,
+        "href": f"/api/v1/operator/paper-live-drift/{runtime_id}" if runtime_id else None,
+    }
+    return {
+        "runtimeId": runtime_id or None,
+        "runtime_id": runtime_id or None,
+        "runtimeBindingId": row.get("runtime_binding_id"),
+        "runtime_binding_id": row.get("runtime_binding_id"),
+        "deploymentStage": row.get("deployment_stage"),
+        "deployment_stage": row.get("deployment_stage"),
+        "status": status,
+        "paperLiveDrift": paper_live_drift,
+        "paper_live_drift": paper_live_drift,
+        "paperBaseline": _management_json_clone((report or {}).get("paper_baseline"))
+        if report
+        else None,
+        "paper_baseline": _management_json_clone((report or {}).get("paper_baseline"))
+        if report
+        else None,
+        "observedState": _management_json_clone((report or {}).get("observed_state"))
+        if report
+        else None,
+        "observed_state": _management_json_clone((report or {}).get("observed_state"))
+        if report
+        else None,
+        "driftGroups": _management_json_clone(drift_groups),
+        "drift_groups": _management_json_clone(drift_groups),
+        "thresholdEvaluation": threshold_evaluation,
+        "threshold_evaluation": threshold_evaluation,
+        **metric_counts,
+    }
+
+
 _MANAGEMENT_RISK_LEVEL_ORDER = {
     "low": 1,
     "medium": 2,
@@ -6103,6 +6433,17 @@ def _build_management_human_inbox_payload(snapshot_at: str) -> Dict[str, Any]:
 def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
     runtime_bindings = read_store.list_runtime_bindings()
     runtime_rows = [_project_operator_runtime_state_row(binding) for binding in runtime_bindings]
+    baseline_comparisons = [
+        _build_trading_pulse_baseline_comparison(row) for row in runtime_rows
+    ]
+    baseline_by_runtime_id = {
+        str(comparison.get("runtimeId") or comparison.get("runtime_id") or ""): comparison
+        for comparison in baseline_comparisons
+    }
+    for row in runtime_rows:
+        comparison = baseline_by_runtime_id.get(str(row.get("runtime_id") or ""))
+        row["baselineComparison"] = comparison
+        row["baseline_comparison"] = comparison
     telemetry_rows = [
         row.get("telemetry_summary")
         for row in runtime_rows
@@ -6138,6 +6479,7 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
     for row in runtime_rows:
         telemetry = row.get("telemetry_summary") if isinstance(row.get("telemetry_summary"), dict) else {}
         metrics = telemetry.get("metrics") if isinstance(telemetry.get("metrics"), dict) else {}
+        baseline_comparison = baseline_by_runtime_id.get(str(row.get("runtime_id") or "")) or {}
         rankings.append(
             {
                 "runtimeId": row.get("runtime_id"),
@@ -6159,6 +6501,10 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
                 "total_trades": metrics.get("total_trades"),
                 "lastUpdatedAt": row.get("last_updated_at"),
                 "last_updated_at": row.get("last_updated_at"),
+                "baselineComparisonStatus": baseline_comparison.get("status"),
+                "baseline_comparison_status": baseline_comparison.get("status"),
+                "breachedMetricCount": baseline_comparison.get("breachedMetricCount"),
+                "breached_metric_count": baseline_comparison.get("breached_metric_count"),
             }
         )
     rankings.sort(
@@ -6174,6 +6520,20 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
 
     by_status = _management_count_by(runtime_rows, "status")
     by_stage = _management_count_by(runtime_rows, "deployment_stage")
+    by_baseline_status = _management_count_by(baseline_comparisons, "status")
+    baseline_available_count = sum(
+        1
+        for comparison in baseline_comparisons
+        if (comparison.get("paper_live_drift") or {}).get("available")
+    )
+    baseline_breached_count = sum(
+        1 for comparison in baseline_comparisons
+        if comparison.get("status") == "breached"
+    )
+    baseline_watch_count = sum(
+        1 for comparison in baseline_comparisons
+        if comparison.get("status") == "watch"
+    )
     runtime_surface = _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at)
     telemetry_surface = _dataset_surface_status("telemetry_summaries", snapshot_at=snapshot_at)
     if runtime_rows and len(telemetry_rows) < len(runtime_rows) and telemetry_surface.get("status") == "ok":
@@ -6183,12 +6543,36 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
             "staleness",
             {"served_from": "unverifiable", "last_known_at": snapshot_at},
         )
+    paper_live_drift_surface = _dataset_surface_status(
+        "paper_live_drift_reports",
+        snapshot_at=snapshot_at,
+    )
+    if (
+        runtime_rows
+        and baseline_available_count < len(runtime_rows)
+        and paper_live_drift_surface.get("status") == "ok"
+    ):
+        paper_live_drift_surface["status"] = "degraded"
+        paper_live_drift_surface["message"] = (
+            "Paper/live baseline comparison missing for one or more cockpit runtimes."
+        )
+        paper_live_drift_surface.setdefault(
+            "staleness",
+            {"served_from": "unverifiable", "last_known_at": snapshot_at},
+        )
+    baseline_surface = _aggregate_group_surface(
+        "baseline_comparison",
+        [runtime_surface, paper_live_drift_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Trading pulse baseline comparison unavailable.",
+        degraded_message="Trading pulse baseline comparison is degraded because one or more paper/live drift reports are missing.",
+    )
     trading_surface = _aggregate_group_surface(
         "management_trading_pulse",
-        [runtime_surface, telemetry_surface],
+        [runtime_surface, telemetry_surface, baseline_surface],
         snapshot_at=snapshot_at,
         unavailable_message="Trading pulse aggregate unavailable.",
-        degraded_message="Trading pulse aggregate is available, but runtime or telemetry coverage is degraded.",
+        degraded_message="Trading pulse aggregate is available, but runtime, telemetry, or baseline coverage is degraded.",
     )
 
     summary = {
@@ -6210,6 +6594,14 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
         "worst_slippage_bps": max(slippage_values) if slippage_values else None,
         "totalTrades": int(sum(trade_values)) if trade_values else 0,
         "total_trades": int(sum(trade_values)) if trade_values else 0,
+        "baselineComparisonCount": baseline_available_count,
+        "baseline_comparison_count": baseline_available_count,
+        "baselineBreachedCount": baseline_breached_count,
+        "baseline_breached_count": baseline_breached_count,
+        "baselineWatchCount": baseline_watch_count,
+        "baseline_watch_count": baseline_watch_count,
+        "byBaselineStatus": by_baseline_status,
+        "by_baseline_status": by_baseline_status,
     }
     cards = [
         {
@@ -6240,12 +6632,24 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
             "value": summary["averageFillRate"],
             "details": {"worstSlippageBps": summary["worstSlippageBps"]},
         },
+        {
+            "cardId": "baseline-comparison",
+            "card_id": "baseline-comparison",
+            "label": "Baseline Comparison",
+            "value": summary["baselineBreachedCount"],
+            "details": {
+                "baselineComparisonCount": summary["baselineComparisonCount"],
+                "byBaselineStatus": by_baseline_status,
+            },
+        },
     ]
     meta = _snapshot_meta(snapshot_at)
     meta["surfaces"] = {
         "management_trading_pulse": trading_surface,
         "runtime_roster": runtime_surface,
         "telemetry_summary": telemetry_surface,
+        "paper_live_drift": paper_live_drift_surface,
+        "baseline_comparison": baseline_surface,
     }
     return {
         "summary": summary,
@@ -6253,7 +6657,242 @@ def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
         "rankings": rankings,
         "runtimeRows": runtime_rows,
         "runtime_rows": runtime_rows,
+        "baselineComparisons": baseline_comparisons,
+        "baseline_comparisons": baseline_comparisons,
         "meta": meta,
+    }
+
+
+def _build_management_trading_pulse_route_payload(snapshot_at: str) -> Dict[str, Any]:
+    payload = _build_management_trading_pulse_payload(snapshot_at)
+    data = {
+        "id": "management-trading-pulse",
+        "summary": payload["summary"],
+        "cards": payload["cards"],
+        "rankings": payload["rankings"],
+        "runtimeRows": payload["runtimeRows"],
+        "runtime_rows": payload["runtime_rows"],
+        "baselineComparisons": payload["baselineComparisons"],
+        "baseline_comparisons": payload["baseline_comparisons"],
+    }
+    return {
+        "data": data,
+        "items": payload["cards"],
+        "cards": payload["cards"],
+        "rankings": payload["rankings"],
+        "runtimeRows": payload["runtimeRows"],
+        "runtime_rows": payload["runtime_rows"],
+        "baselineComparisons": payload["baselineComparisons"],
+        "baseline_comparisons": payload["baseline_comparisons"],
+        "summary": payload["summary"],
+        "page_info": {
+            "next_page_token": None,
+            "total": len(payload["cards"]),
+            "page_size": len(payload["cards"]),
+        },
+        "meta": payload["meta"],
+    }
+
+
+_TRADING_PULSE_RANKING_METRIC_FIELDS = {
+    "pnl": ("pnl",),
+    "drawdown": ("drawdown",),
+    "sharpe_ratio": ("sharpeRatio", "sharpe_ratio"),
+    "fill_rate": ("fillRate", "fill_rate"),
+    "avg_slippage_bps": ("avgSlippageBps", "avg_slippage_bps"),
+    "total_trades": ("totalTrades", "total_trades"),
+}
+
+
+def _trading_pulse_metric_value(
+    item: Dict[str, Any],
+    metric: str,
+) -> Optional[float]:
+    for field in _TRADING_PULSE_RANKING_METRIC_FIELDS.get(metric, (metric,)):
+        value = _management_number(item.get(field))
+        if value is not None:
+            return value
+    return None
+
+
+def _trading_pulse_ranked_items(
+    rankings: List[Dict[str, Any]],
+    *,
+    metric: str,
+    descending: bool,
+    limit: int,
+    block_id: str,
+) -> List[Dict[str, Any]]:
+    present = [
+        item for item in rankings
+        if _trading_pulse_metric_value(item, metric) is not None
+    ]
+    missing = [
+        item for item in rankings
+        if _trading_pulse_metric_value(item, metric) is None
+    ]
+    ordered_present = sorted(
+        present,
+        key=lambda item: (
+            _trading_pulse_metric_value(item, metric) or 0.0,
+            str(item.get("runtimeId") or item.get("runtime_id") or ""),
+        ),
+        reverse=descending,
+    )
+    ordered_missing = sorted(
+        missing,
+        key=lambda item: str(item.get("runtimeId") or item.get("runtime_id") or ""),
+    )
+
+    ranked: List[Dict[str, Any]] = []
+    for index, item in enumerate((ordered_present + ordered_missing)[:limit], start=1):
+        projected = dict(item)
+        projected["rank"] = index
+        projected["rankingBlockId"] = block_id
+        projected["ranking_block_id"] = block_id
+        projected["rankingMetric"] = metric
+        projected["ranking_metric"] = metric
+        projected["rankingMetricValue"] = _trading_pulse_metric_value(item, metric)
+        projected["ranking_metric_value"] = projected["rankingMetricValue"]
+        ranked.append(projected)
+    return ranked
+
+
+def _build_management_trading_pulse_ranking_blocks(
+    rankings: List[Dict[str, Any]],
+    *,
+    limit: int,
+) -> List[Dict[str, Any]]:
+    return [
+        {
+            "blockId": "pnl-leaders",
+            "block_id": "pnl-leaders",
+            "label": "P&L Leaders",
+            "metric": "pnl",
+            "sortOrder": "desc",
+            "sort_order": "desc",
+            "items": _trading_pulse_ranked_items(
+                rankings,
+                metric="pnl",
+                descending=True,
+                limit=limit,
+                block_id="pnl-leaders",
+            ),
+        },
+        {
+            "blockId": "drawdown-control",
+            "block_id": "drawdown-control",
+            "label": "Drawdown Control",
+            "metric": "drawdown",
+            "sortOrder": "asc",
+            "sort_order": "asc",
+            "items": _trading_pulse_ranked_items(
+                rankings,
+                metric="drawdown",
+                descending=False,
+                limit=limit,
+                block_id="drawdown-control",
+            ),
+        },
+        {
+            "blockId": "execution-quality",
+            "block_id": "execution-quality",
+            "label": "Execution Quality",
+            "metric": "fill_rate",
+            "secondaryMetric": "avg_slippage_bps",
+            "secondary_metric": "avg_slippage_bps",
+            "sortOrder": "desc",
+            "sort_order": "desc",
+            "items": _trading_pulse_ranked_items(
+                rankings,
+                metric="fill_rate",
+                descending=True,
+                limit=limit,
+                block_id="execution-quality",
+            ),
+        },
+        {
+            "blockId": "sharpe-leaders",
+            "block_id": "sharpe-leaders",
+            "label": "Sharpe Leaders",
+            "metric": "sharpe_ratio",
+            "sortOrder": "desc",
+            "sort_order": "desc",
+            "items": _trading_pulse_ranked_items(
+                rankings,
+                metric="sharpe_ratio",
+                descending=True,
+                limit=limit,
+                block_id="sharpe-leaders",
+            ),
+        },
+    ]
+
+
+def _build_management_trading_pulse_rankings_payload(
+    snapshot_at: str,
+    *,
+    limit: int,
+) -> Dict[str, Any]:
+    trading_pulse = _build_management_trading_pulse_payload(snapshot_at)
+    blocks = _build_management_trading_pulse_ranking_blocks(
+        list(trading_pulse.get("rankings") or []),
+        limit=limit,
+    )
+    surfaces = dict((trading_pulse.get("meta") or {}).get("surfaces") or {})
+    source_surfaces = [
+        surface for surface in (
+            surfaces.get("management_trading_pulse"),
+            surfaces.get("runtime_roster"),
+            surfaces.get("telemetry_summary"),
+            surfaces.get("paper_live_drift"),
+            surfaces.get("baseline_comparison"),
+        )
+        if isinstance(surface, dict)
+    ]
+    surfaces["management_trading_pulse_rankings"] = _aggregate_group_surface(
+        "management_trading_pulse_rankings",
+        source_surfaces,
+        snapshot_at=snapshot_at,
+        unavailable_message="Trading pulse rankings aggregate unavailable.",
+        degraded_message="Trading pulse rankings are degraded because runtime or telemetry coverage is degraded.",
+    )
+    top_item = (blocks[0].get("items") or [None])[0] if blocks else None
+    ranked_item_count = sum(len(block.get("items") or []) for block in blocks)
+    summary = {
+        "runtimeCount": int((trading_pulse.get("summary") or {}).get("runtimeCount") or 0),
+        "runtime_count": int((trading_pulse.get("summary") or {}).get("runtime_count") or 0),
+        "rankingBlockCount": len(blocks),
+        "ranking_block_count": len(blocks),
+        "rankedItemCount": ranked_item_count,
+        "ranked_item_count": ranked_item_count,
+        "criteria": [str(block.get("metric") or "") for block in blocks],
+        "limit": limit,
+        "topRuntimeId": (top_item or {}).get("runtimeId") if isinstance(top_item, dict) else None,
+        "top_runtime_id": (top_item or {}).get("runtime_id") if isinstance(top_item, dict) else None,
+    }
+    return {
+        "data": blocks,
+        "items": blocks,
+        "rankings": blocks,
+        "rankingBlocks": blocks,
+        "ranking_blocks": blocks,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": None,
+            "total": len(blocks),
+            "page_size": len(blocks),
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": surfaces,
+            "composition_sources": [
+                "GET /bff/management/trading-pulse",
+                "GET /bff/runtimes",
+                "telemetry_summaries",
+                "paper_live_drift_reports",
+            ],
+        },
     }
 
 
@@ -6604,6 +7243,591 @@ def _build_management_evidence_payload(
         },
         "meta": meta,
     }
+
+
+_READINESS_EP5_EVIDENCE_REFS = [
+    ("support/evidence/EP5-001-V2/closeout.md", "PromotionReadinessPacket schema closeout"),
+    ("support/evidence/EP5-002-V2/owner-closeout.md", "Promotion readiness validator closeout"),
+    ("support/evidence/EP5-003-V2/owner-closeout.md", "Human gate signoff closeout"),
+    ("support/evidence/EP5-006-V2/owner-closeout.md", "EP5 dry-run API closeout"),
+    ("support/evidence/EP5-007-V2/rollback-drill.json", "Rollback drill evidence"),
+    ("support/evidence/EP5-008-V2/kill-switch-demo.json", "Kill-switch demo evidence"),
+    (
+        "docs/deployment/evidence/ep5-broker-tw-002/20260517T054748Z/evidence-packet/shioaji-sandbox-evidence-packet.json",
+        "Broker sandbox evidence packet",
+    ),
+]
+_READINESS_STRICT_PUBLISH_AUDIT = "support/evidence/lsp-final-audit/strict-publish-audit.json"
+_READINESS_STRICT_PUBLISH_REPORT = "support/evidence/lsp-final-audit/strict-publish-audit.md"
+_READINESS_BFF_HA_PACKET = "support/evidence/bff-ha-failover-demo/README.md"
+_READINESS_BFF_HA_REVIEW = "support/evidence/bff-ha-failover-demo/review-ha-010-v2.md"
+_READINESS_NO_REAL_CAPITAL_EVIDENCE = "support/evidence/MGMT-BROKER-003/no-real-capital-evidence.json"
+_READINESS_BROKER_LIVE_DISABLED = (
+    "docs/deployment/evidence/ep5-broker-tw-002/20260517T054748Z/sandbox-smoke/live-disabled.json"
+)
+
+
+def _repo_artifact_path(rel_path: str) -> str:
+    return os.path.join(_REPO_ROOT, rel_path)
+
+
+def _read_repo_json_artifact(rel_path: str) -> Optional[Dict[str, Any]]:
+    path = _repo_artifact_path(rel_path)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        return payload if isinstance(payload, dict) else None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _read_repo_text_artifact(rel_path: str) -> str:
+    path = _repo_artifact_path(rel_path)
+    if not os.path.exists(path):
+        return ""
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return handle.read()
+    except OSError:
+        return ""
+
+
+def _readiness_evidence_ref(rel_path: str, label: str) -> Dict[str, Any]:
+    exists = os.path.exists(_repo_artifact_path(rel_path))
+    return {
+        "id": re.sub(r"[^a-z0-9]+", "-", rel_path.lower()).strip("-"),
+        "label": label,
+        "path": rel_path,
+        "href": f"/{rel_path}",
+        "exists": exists,
+    }
+
+
+def _readiness_artifact_surface(
+    surface_key: str,
+    rel_path: str,
+    *,
+    snapshot_at: str,
+    label: str,
+) -> Dict[str, Any]:
+    exists = os.path.exists(_repo_artifact_path(rel_path))
+    surface = dict(_surface_status())
+    surface["source"] = "repo_artifact" if exists else "missing"
+    surface["artifact_path"] = rel_path
+    if not exists:
+        surface["status"] = "unavailable"
+        surface["message"] = f"{label} artifact is unavailable."
+        surface.setdefault(
+            "staleness",
+            {"served_from": "unverifiable", "last_known_at": snapshot_at},
+        )
+    return surface
+
+
+def _readiness_check(
+    check_id: str,
+    label: str,
+    status: str,
+    *,
+    blocking: bool,
+    message: str,
+    evidence_refs: Optional[List[str]] = None,
+    details: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "id": check_id,
+        "label": label,
+        "status": status,
+        "blocking": blocking,
+        "message": message,
+    }
+    if evidence_refs:
+        payload["evidence_refs"] = evidence_refs
+    if details:
+        payload["details"] = details
+    return payload
+
+
+def _readiness_summary(checks: List[Dict[str, Any]]) -> Dict[str, Any]:
+    by_status = _management_count_by(checks, "status")
+    blocking_reasons = [
+        str(check.get("id"))
+        for check in checks
+        if bool(check.get("blocking")) and str(check.get("status") or "") != "pass"
+    ]
+    can_proceed = not blocking_reasons
+    readiness_status = "ready" if can_proceed else "blocked"
+    return {
+        "readinessStatus": readiness_status,
+        "readiness_status": readiness_status,
+        "canProceed": can_proceed,
+        "can_proceed": can_proceed,
+        "checkCount": len(checks),
+        "check_count": len(checks),
+        "passedCheckCount": by_status.get("pass", 0),
+        "passed_check_count": by_status.get("pass", 0),
+        "blockingReasonCount": len(blocking_reasons),
+        "blocking_reason_count": len(blocking_reasons),
+        "blockingReasons": blocking_reasons,
+        "blocking_reasons": blocking_reasons,
+        "byStatus": by_status,
+        "by_status": by_status,
+    }
+
+
+def _readiness_response(
+    *,
+    readiness_id: str,
+    title: str,
+    checks: List[Dict[str, Any]],
+    evidence_refs: List[Dict[str, Any]],
+    source_surfaces: Dict[str, Dict[str, Any]],
+    snapshot_at: str,
+    details: Optional[Dict[str, Any]] = None,
+    links: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
+    summary = _readiness_summary(checks)
+    surface_key = f"management_readiness_{readiness_id.replace('-', '_')}"
+    aggregate_surface = _aggregate_group_surface(
+        surface_key,
+        list(source_surfaces.values()) or [_composed_surface_status(snapshot_at=snapshot_at)],
+        snapshot_at=snapshot_at,
+        unavailable_message=f"{title} readiness aggregate unavailable.",
+        degraded_message=f"{title} readiness aggregate is available, but one or more evidence surfaces are degraded.",
+    )
+    aggregate_surface["readiness_status"] = summary["readiness_status"]
+    aggregate_surface["can_proceed"] = summary["can_proceed"]
+
+    surfaces = {surface_key: aggregate_surface}
+    surfaces.update(source_surfaces)
+    data = {
+        "id": readiness_id,
+        "readinessId": readiness_id,
+        "readiness_id": readiness_id,
+        "title": title,
+        "readinessStatus": summary["readinessStatus"],
+        "readiness_status": summary["readiness_status"],
+        "canProceed": summary["canProceed"],
+        "can_proceed": summary["can_proceed"],
+        "blockingReasons": summary["blockingReasons"],
+        "blocking_reasons": summary["blocking_reasons"],
+        "checks": checks,
+        "evidenceRefs": evidence_refs,
+        "evidence_refs": evidence_refs,
+        "links": links or {},
+        "details": details or {},
+    }
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = surfaces
+    return {
+        "data": data,
+        "summary": summary,
+        "checks": checks,
+        "items": checks,
+        "evidence_refs": evidence_refs,
+        "meta": meta,
+    }
+
+
+def _build_management_strict_publish_readiness_payload() -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    audit = _read_repo_json_artifact(_READINESS_STRICT_PUBLISH_AUDIT) or {}
+    component_status = audit.get("component_status") if isinstance(audit.get("component_status"), dict) else {}
+    forbidden_scan = (
+        (audit.get("components") or {}).get("forbidden_path_scan")
+        if isinstance(audit.get("components"), dict)
+        else {}
+    )
+    forbidden_signals = (
+        forbidden_scan.get("forbidden_signals")
+        if isinstance(forbidden_scan, dict) and isinstance(forbidden_scan.get("forbidden_signals"), list)
+        else []
+    )
+    passed = bool(audit.get("passed"))
+    checked_at = audit.get("checked_at")
+    evidence_refs = [
+        _readiness_evidence_ref(_READINESS_STRICT_PUBLISH_AUDIT, "Strict publish audit JSON"),
+        _readiness_evidence_ref(_READINESS_STRICT_PUBLISH_REPORT, "Strict publish audit report"),
+    ]
+    audit_surface = _readiness_artifact_surface(
+        "strict_publish_audit",
+        _READINESS_STRICT_PUBLISH_AUDIT,
+        snapshot_at=snapshot_at,
+        label="Strict publish audit",
+    )
+    checks = [
+        _readiness_check(
+            "browser_probe",
+            "Browser health and /bff/me probe",
+            "pass" if component_status.get("LSP-002-V2") is True else "fail",
+            blocking=True,
+            message="Hosted browser probe must pass before strict publish can proceed.",
+            evidence_refs=[_READINESS_STRICT_PUBLISH_AUDIT],
+        ),
+        _readiness_check(
+            "bundle_hash_capture",
+            "Hosted bundle hash capture",
+            "pass" if component_status.get("LSP-003-V2") is True else "fail",
+            blocking=True,
+            message="Hosted bundle hash capture must pass before strict publish can proceed.",
+            evidence_refs=[_READINESS_STRICT_PUBLISH_AUDIT],
+        ),
+        _readiness_check(
+            "forbidden_path_scan",
+            "Forbidden mock/seed runtime path scan",
+            "pass" if component_status.get("LSP-004-V2") is True else "fail",
+            blocking=True,
+            message="Strict publish remains blocked while deployed bundles contain forbidden mock/seed signals.",
+            evidence_refs=[_READINESS_STRICT_PUBLISH_AUDIT],
+            details={"forbidden_signal_count": len(forbidden_signals)},
+        ),
+    ]
+    return _readiness_response(
+        readiness_id="strict-publish",
+        title="Strict Publish Audit",
+        checks=checks,
+        evidence_refs=evidence_refs,
+        source_surfaces={"strict_publish_audit": audit_surface},
+        snapshot_at=snapshot_at,
+        details={
+            "passed": passed,
+            "checked_at": checked_at,
+            "deployment_url": audit.get("deployment_url"),
+            "browser_probe_base_url": audit.get("browser_probe_base_url"),
+            "errors": audit.get("errors") if isinstance(audit.get("errors"), list) else [],
+        },
+        links={
+            "self": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/strict-publish",
+            "audit": f"/{_READINESS_STRICT_PUBLISH_REPORT}",
+        },
+    )
+
+
+def _build_management_bff_ha_readiness_payload() -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    packet_text = _read_repo_text_artifact(_READINESS_BFF_HA_PACKET)
+    review_text = _read_repo_text_artifact(_READINESS_BFF_HA_REVIEW)
+    packet_exists = bool(packet_text)
+    review_approved = "Status: **approved**" in review_text or "Approved." in review_text
+    evidence_refs = [
+        _readiness_evidence_ref(_READINESS_BFF_HA_PACKET, "BFF HA failover demo packet"),
+        _readiness_evidence_ref(_READINESS_BFF_HA_REVIEW, "BFF HA failover demo review"),
+    ]
+    packet_surface = _readiness_artifact_surface(
+        "bff_ha_failover_demo",
+        _READINESS_BFF_HA_PACKET,
+        snapshot_at=snapshot_at,
+        label="BFF HA failover demo",
+    )
+    checks = [
+        _readiness_check(
+            "dev_failover_demo_packet",
+            "Dev failover demo packet recorded",
+            "pass" if packet_exists else "fail",
+            blocking=True,
+            message="The BFF HA readiness page requires the dev failover demo packet.",
+            evidence_refs=[_READINESS_BFF_HA_PACKET],
+        ),
+        _readiness_check(
+            "dev_failover_demo_review",
+            "Dev failover demo review approved",
+            "pass" if review_approved else "fail",
+            blocking=True,
+            message="The dev failover demo must have reviewer approval.",
+            evidence_refs=[_READINESS_BFF_HA_REVIEW],
+        ),
+        _readiness_check(
+            "production_ha_topology",
+            "Production HA topology and LB cutover",
+            "blocked",
+            blocking=True,
+            message="Current evidence is dev-only; production BFF HA/LB topology remains a separate gate.",
+            evidence_refs=[_READINESS_BFF_HA_PACKET],
+            details={
+                "dev_only": True,
+                "production_topology_ready": False,
+                "l1_policy_changed": False,
+            },
+        ),
+    ]
+    return _readiness_response(
+        readiness_id="bff-ha",
+        title="BFF HA Readiness",
+        checks=checks,
+        evidence_refs=evidence_refs,
+        source_surfaces={"bff_ha_failover_demo": packet_surface},
+        snapshot_at=snapshot_at,
+        details={
+            "dev_demo_ready": packet_exists and review_approved,
+            "production_topology_ready": False,
+        },
+        links={
+            "self": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/bff-ha",
+            "evidence": f"/{_READINESS_BFF_HA_PACKET}",
+        },
+    )
+
+
+def _build_management_broker_live_readiness_payload() -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    broker_surface = read_store.get_openclaw_broker_adapter_readiness()
+    service_surface = (
+        broker_surface.get("service_status")
+        if isinstance(broker_surface.get("service_status"), dict)
+        else _composed_surface_status(snapshot_at=snapshot_at)
+    )
+    live_gate_enabled = _bool_from_env("PANTHEON_LIVE_BROKER_ENABLED", default=False)
+    live_execution_enabled = bool(broker_surface.get("live_execution_enabled"))
+    live_adapter_state = str(broker_surface.get("live_adapter_state") or "unknown").lower()
+    broker_live_ready = (
+        live_gate_enabled
+        and live_execution_enabled
+        and live_adapter_state in {"enabled", "active"}
+    )
+    evidence_refs = [
+        _readiness_evidence_ref(
+            "docs/deployment/evidence/ep5-broker-tw-002/20260517T054748Z/evidence-packet/shioaji-sandbox-evidence-packet.json",
+            "Broker sandbox evidence packet",
+        ),
+        _readiness_evidence_ref(_READINESS_BROKER_LIVE_DISABLED, "Broker live-disabled smoke"),
+    ]
+    live_disabled_surface = _readiness_artifact_surface(
+        "broker_live_disabled_smoke",
+        _READINESS_BROKER_LIVE_DISABLED,
+        snapshot_at=snapshot_at,
+        label="Broker live-disabled smoke",
+    )
+    checks = [
+        _readiness_check(
+            "openclaw_broker_readiness_surface",
+            "OpenClaw broker readiness surface",
+            "pass" if broker_surface.get("overall_status") != "unavailable" else "fail",
+            blocking=True,
+            message="Broker live readiness requires the OpenClaw broker readiness surface.",
+            details={"overall_status": broker_surface.get("overall_status")},
+        ),
+        _readiness_check(
+            "live_broker_gate",
+            "Live broker gate",
+            "pass" if broker_live_ready else "blocked",
+            blocking=True,
+            message="Live broker execution is fail-closed until explicit live broker gates and adapter state are enabled.",
+            evidence_refs=[_READINESS_BROKER_LIVE_DISABLED],
+            details={
+                "PANTHEON_LIVE_BROKER_ENABLED": live_gate_enabled,
+                "live_execution_enabled": live_execution_enabled,
+                "live_adapter_state": live_adapter_state,
+            },
+        ),
+        _readiness_check(
+            "no_real_capital_side_effects",
+            "No real capital side effects",
+            "pass"
+            if broker_surface.get("is_real_capital") is False and broker_surface.get("is_real_order") is False
+            else "fail",
+            blocking=True,
+            message="Broker readiness must not report real capital or real orders before live approval.",
+            details={
+                "is_real_capital": broker_surface.get("is_real_capital"),
+                "is_real_order": broker_surface.get("is_real_order"),
+            },
+        ),
+    ]
+    return _readiness_response(
+        readiness_id="broker-live",
+        title="Broker Live Readiness",
+        checks=checks,
+        evidence_refs=evidence_refs,
+        source_surfaces={
+            "openclaw_broker_adapter_readiness": service_surface,
+            "broker_live_disabled_smoke": live_disabled_surface,
+        },
+        snapshot_at=snapshot_at,
+        details={
+            "broker_readiness": broker_surface,
+            "live_broker_enabled": broker_live_ready,
+            "fail_closed": not broker_live_ready,
+        },
+        links={
+            "self": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/broker-live",
+            "operator_surface": "/api/v1/operator/openclaw/broker/adapter-readiness",
+        },
+    )
+
+
+def _build_management_capital_binding_live_readiness_payload() -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    bindings = read_store.list_bindings()
+    runtime_bindings = read_store.list_runtime_bindings()
+    active_bindings = [
+        binding
+        for binding in bindings
+        if str(binding.get("validity") or binding.get("status") or "").lower() in {"active", "valid"}
+    ]
+    live_runtime_bindings = [
+        binding
+        for binding in runtime_bindings
+        if str(binding.get("deployment_stage") or binding.get("deployment_mode") or "").lower()
+        in {"canary", "live", "production", "staging-live"}
+    ]
+    gate_enabled = (
+        _bool_from_env("OPENCLAW_CAPITAL_BINDING_ENABLED", default=False)
+        or _bool_from_env("PANTHEON_CAPITAL_BINDING_LIVE_ENABLED", default=False)
+    )
+    evidence_refs = [
+        _readiness_evidence_ref(_READINESS_NO_REAL_CAPITAL_EVIDENCE, "No real capital evidence"),
+        _readiness_evidence_ref(_READINESS_BROKER_LIVE_DISABLED, "Broker live-disabled smoke"),
+    ]
+    capital_surface = _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at)
+    runtime_surface = _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at)
+    no_real_capital_surface = _readiness_artifact_surface(
+        "no_real_capital_evidence",
+        _READINESS_NO_REAL_CAPITAL_EVIDENCE,
+        snapshot_at=snapshot_at,
+        label="No real capital evidence",
+    )
+    checks = [
+        _readiness_check(
+            "capital_binding_live_gate",
+            "Capital binding live gate",
+            "pass" if gate_enabled else "blocked",
+            blocking=True,
+            message="Live capital binding remains fail-closed until explicit capital-binding live gates are enabled.",
+            evidence_refs=[_READINESS_NO_REAL_CAPITAL_EVIDENCE],
+            details={
+                "OPENCLAW_CAPITAL_BINDING_ENABLED": _bool_from_env("OPENCLAW_CAPITAL_BINDING_ENABLED", default=False),
+                "PANTHEON_CAPITAL_BINDING_LIVE_ENABLED": _bool_from_env(
+                    "PANTHEON_CAPITAL_BINDING_LIVE_ENABLED",
+                    default=False,
+                ),
+            },
+        ),
+        _readiness_check(
+            "active_persona_capital_bindings",
+            "Active persona-capital binding records",
+            "pass" if active_bindings else "warn",
+            blocking=False,
+            message="Active persona-capital bindings are visible to the BFF read surface.",
+            details={
+                "active_binding_count": len(active_bindings),
+                "binding_count": len(bindings),
+            },
+        ),
+        _readiness_check(
+            "live_runtime_binding_absence",
+            "No live runtime binding activated by this BFF",
+            "pass" if not live_runtime_bindings else "fail",
+            blocking=True,
+            message="Readiness publication must not silently materialize live runtime bindings.",
+            details={"live_runtime_binding_count": len(live_runtime_bindings)},
+        ),
+    ]
+    return _readiness_response(
+        readiness_id="capital-binding-live",
+        title="Capital Binding Live Readiness",
+        checks=checks,
+        evidence_refs=evidence_refs,
+        source_surfaces={
+            "persona_bindings": capital_surface,
+            "runtime_bindings": runtime_surface,
+            "no_real_capital_evidence": no_real_capital_surface,
+        },
+        snapshot_at=snapshot_at,
+        details={
+            "capital_binding_live_enabled": gate_enabled,
+            "active_binding_count": len(active_bindings),
+            "live_runtime_binding_count": len(live_runtime_bindings),
+            "fail_closed": not gate_enabled,
+        },
+        links={"self": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/capital-binding-live"},
+    )
+
+
+def _build_management_ep5_readiness_payload() -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    broker = _build_management_broker_live_readiness_payload()
+    capital = _build_management_capital_binding_live_readiness_payload()
+    bff_ha = _build_management_bff_ha_readiness_payload()
+    strict_publish = _build_management_strict_publish_readiness_payload()
+    evidence_refs = [
+        _readiness_evidence_ref(rel_path, label)
+        for rel_path, label in _READINESS_EP5_EVIDENCE_REFS
+    ]
+    ep5_surfaces = {
+        f"ep5_evidence_{index}": _readiness_artifact_surface(
+            f"ep5_evidence_{index}",
+            ref["path"],
+            snapshot_at=snapshot_at,
+            label=ref["label"],
+        )
+        for index, ref in enumerate(evidence_refs, start=1)
+    }
+    family_payloads = {
+        "broker-live": broker,
+        "capital-binding-live": capital,
+        "bff-ha": bff_ha,
+        "strict-publish": strict_publish,
+    }
+    checks = [
+        _readiness_check(
+            "ep5_evidence_bundle",
+            "EP5 prerequisite evidence bundle",
+            "pass" if all(ref.get("exists") for ref in evidence_refs) else "fail",
+            blocking=True,
+            message="EP5 readiness requires the prerequisite evidence bundle to be present in repo.",
+            evidence_refs=[ref["path"] for ref in evidence_refs],
+            details={
+                "available_evidence_count": len([ref for ref in evidence_refs if ref.get("exists")]),
+                "required_evidence_count": len(evidence_refs),
+            },
+        )
+    ]
+    for family_id, payload in family_payloads.items():
+        summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+        checks.append(
+            _readiness_check(
+                f"{family_id}-readiness",
+                f"{family_id} readiness",
+                "pass" if summary.get("can_proceed") is True else "blocked",
+                blocking=True,
+                message=f"{family_id} must be ready before EP5 can proceed.",
+                details={
+                    "readiness_status": summary.get("readiness_status"),
+                    "blocking_reasons": summary.get("blocking_reasons"),
+                },
+            )
+        )
+    return _readiness_response(
+        readiness_id="ep5",
+        title="EP5 Readiness",
+        checks=checks,
+        evidence_refs=evidence_refs,
+        source_surfaces=ep5_surfaces,
+        snapshot_at=snapshot_at,
+        details={
+            "families": {
+                family_id: {
+                    "readiness_status": payload["summary"]["readiness_status"],
+                    "can_proceed": payload["summary"]["can_proceed"],
+                    "blocking_reasons": payload["summary"]["blocking_reasons"],
+                }
+                for family_id, payload in family_payloads.items()
+            },
+        },
+        links={
+            "self": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/ep5",
+            "brokerLive": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/broker-live",
+            "broker_live": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/broker-live",
+            "capitalBindingLive": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/capital-binding-live",
+            "capital_binding_live": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/capital-binding-live",
+            "bffHa": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/bff-ha",
+            "bff_ha": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/bff-ha",
+            "strictPublish": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/strict-publish",
+            "strict_publish": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/strict-publish",
+        },
+    )
 
 
 def _build_management_cockpit_payload(snapshot_at: str) -> Dict[str, Any]:
@@ -10881,6 +12105,31 @@ async def bff_management_cockpit(
 
     snapshot_at = utc_now()
     return _build_management_cockpit_payload(snapshot_at)
+
+
+@app.get("/bff/management/trading-pulse")
+async def bff_management_trading_pulse(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF-B3-004: Management Trading Pulse card aggregate."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    return _build_management_trading_pulse_route_payload(snapshot_at)
+
+
+@app.get("/bff/management/trading-pulse/rankings")
+async def bff_management_trading_pulse_rankings(
+    limit: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF-B3-004: Management Trading Pulse ranking blocks."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    return _build_management_trading_pulse_rankings_payload(snapshot_at, limit=limit)
 
 
 @app.get("/api/v1/operator/paper-live-drift/{runtime_id}")
@@ -15397,6 +16646,7 @@ async def submit_command(
         _validate_audit_context(cmd)
         _ensure_live_broker_scope_allowed(cmd, payload)
         _validate_drawer_runtime_target(cmd)
+        _validate_final_command_target_type(cmd)
         validator = _VALIDATORS.get(cmd.command)
         if validator:
             validator(cmd.params, identity)
@@ -15560,6 +16810,7 @@ def _submit_final_command_admission(
         _validate_audit_context(cmd)
         _ensure_live_broker_scope_allowed(cmd, payload)
         _validate_drawer_runtime_target(cmd)
+        _validate_final_command_target_type(cmd)
         validator = _VALIDATORS.get(cmd.command)
         if validator:
             validator(cmd.params, identity)
@@ -19497,6 +20748,589 @@ def _management_portfolio_holding_entry(
     }
 
 
+_PM12_ATTRIBUTION_DIMENSIONS = ("persona", "strategy", "pool", "asset", "broker", "runtime", "regime")
+_PM12_ATTRIBUTION_DIMENSION_ALIASES = {
+    "persona": "persona",
+    "personas": "persona",
+    "strategy": "strategy",
+    "strategies": "strategy",
+    "pool": "pool",
+    "pools": "pool",
+    "capital_pool": "pool",
+    "capital_pools": "pool",
+    "capitalpool": "pool",
+    "capitalpools": "pool",
+    "asset": "asset",
+    "assets": "asset",
+    "instrument": "asset",
+    "instruments": "asset",
+    "symbol": "asset",
+    "symbols": "asset",
+    "broker": "broker",
+    "brokers": "broker",
+    "runtime": "runtime",
+    "runtimes": "runtime",
+    "regime": "regime",
+    "regimes": "regime",
+    "market_regime": "regime",
+}
+
+
+def _pm12_normalize_attribution_dimensions(dimension: Optional[str]) -> List[str]:
+    raw = str(dimension or "").strip()
+    if not raw or raw.lower() in {"all", "*"}:
+        return list(_PM12_ATTRIBUTION_DIMENSIONS)
+
+    dimensions: List[str] = []
+    invalid: List[str] = []
+    for item in raw.split(","):
+        key = item.strip().replace("-", "_").lower()
+        if not key:
+            continue
+        normalized = _PM12_ATTRIBUTION_DIMENSION_ALIASES.get(key)
+        if normalized is None:
+            invalid.append(item.strip())
+            continue
+        if normalized not in dimensions:
+            dimensions.append(normalized)
+
+    if invalid or not dimensions:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "invalid_dimension",
+                "message": "dimension must be one of persona, strategy, pool, asset, broker, runtime, regime.",
+                "field": "dimension",
+                "invalid": invalid,
+                "supported": list(_PM12_ATTRIBUTION_DIMENSIONS),
+            },
+        )
+    return dimensions
+
+
+def _pm12_metric_or_split(
+    value: Any,
+    fallback: Optional[float],
+    split_count: int,
+) -> Optional[float]:
+    metric = _management_as_float(value)
+    if metric is not None:
+        return metric
+    if fallback is None:
+        return None
+    return round(fallback / max(split_count, 1), 6)
+
+
+def _pm12_dimension_key(value: Any) -> str:
+    key = str(value or "").strip()
+    return key if key else "unassigned"
+
+
+def _pm12_attribution_dimension_label(
+    dimension: str,
+    key: str,
+    *,
+    personas_by_id: Dict[str, Dict[str, Any]],
+    strategies_by_id: Dict[str, Dict[str, Any]],
+    pools_by_id: Dict[str, Dict[str, Any]],
+) -> str:
+    if key == "unassigned":
+        return "Unassigned"
+    if dimension == "persona":
+        persona = personas_by_id.get(key, {})
+        return str(persona.get("name") or persona.get("display_name") or key)
+    if dimension == "strategy":
+        strategy = strategies_by_id.get(key, {})
+        return str(strategy.get("title") or strategy.get("name") or key)
+    if dimension == "pool":
+        pool = pools_by_id.get(key, {})
+        return str(pool.get("name") or key)
+    return key
+
+
+def _pm12_performance_attribution_sources() -> Dict[str, Any]:
+    runtime_bindings = read_store.list_runtime_bindings() or []
+    deployment_plans = read_store.list_deployment_plans() or []
+    bindings = read_store.list_bindings() or []
+    capital_pools = read_store.list_capital_pools() or []
+    personas = _list_persona_records()
+    strategies = _list_strategy_summaries()
+
+    plans_by_id = {
+        _management_record_id(plan, "plan_id", "id"): plan
+        for plan in deployment_plans
+        if _management_record_id(plan, "plan_id", "id")
+    }
+    bindings_by_id = {
+        _management_record_id(binding, "binding_id", "id", "persona_capital_binding_id"): binding
+        for binding in bindings
+        if _management_record_id(binding, "binding_id", "id", "persona_capital_binding_id")
+    }
+    pools_by_id = {
+        _management_record_id(pool, "pool_id", "id"): pool
+        for pool in capital_pools
+        if _management_record_id(pool, "pool_id", "id")
+    }
+    personas_by_id = {
+        _management_record_id(persona, "persona_id", "id"): persona
+        for persona in personas
+        if _management_record_id(persona, "persona_id", "id")
+    }
+    strategies_by_id = {
+        _management_record_id(strategy, "strategy_id", "id"): strategy
+        for strategy in strategies
+        if _management_record_id(strategy, "strategy_id", "id")
+    }
+
+    telemetry_by_runtime_id: Dict[str, Dict[str, Any]] = {}
+    for runtime in runtime_bindings:
+        runtime_id = _management_record_id(runtime, "runtime_id", "id", "binding_id")
+        if not runtime_id:
+            continue
+        telemetry = read_store.get_telemetry_summary(runtime_id)
+        if telemetry is not None:
+            telemetry_by_runtime_id[runtime_id] = telemetry
+
+    return {
+        "runtime_bindings": runtime_bindings,
+        "deployment_plans": deployment_plans,
+        "bindings": bindings,
+        "capital_pools": capital_pools,
+        "personas": personas,
+        "strategies": strategies,
+        "plans_by_id": plans_by_id,
+        "bindings_by_id": bindings_by_id,
+        "pools_by_id": pools_by_id,
+        "personas_by_id": personas_by_id,
+        "strategies_by_id": strategies_by_id,
+        "telemetry_by_runtime_id": telemetry_by_runtime_id,
+    }
+
+
+def _pm12_performance_attribution_facts(sources: Dict[str, Any], period_key: str) -> List[Dict[str, Any]]:
+    facts: List[Dict[str, Any]] = []
+    plans_by_id = sources["plans_by_id"]
+    bindings_by_id = sources["bindings_by_id"]
+    pools_by_id = sources["pools_by_id"]
+    telemetry_by_runtime_id = sources["telemetry_by_runtime_id"]
+
+    for runtime in sources["runtime_bindings"]:
+        runtime_id = _management_record_id(runtime, "runtime_id", "id", "binding_id")
+        runtime_binding_id = _management_record_id(runtime, "runtime_binding_id", "binding_id", "id")
+        plan_id = _management_record_id(runtime, "plan_id", "deployment_plan_id")
+        plan = plans_by_id.get(plan_id, {})
+        plan_binding_ids = [
+            str(value).strip()
+            for value in (plan.get("binding_ids") or [])
+            if str(value).strip()
+        ]
+        persona_binding_id = (
+            _management_record_id(runtime, "persona_capital_binding_id")
+            or (plan_binding_ids[0] if plan_binding_ids else "")
+        )
+        persona_binding = bindings_by_id.get(persona_binding_id, {})
+        telemetry = telemetry_by_runtime_id.get(runtime_id, {})
+        summary = telemetry.get("summary") if isinstance(telemetry.get("summary"), dict) else {}
+        positions = _management_position_records(telemetry) or [{}]
+        split_count = len(positions)
+
+        runtime_pnl = _management_as_float(
+            _management_first_non_empty(telemetry.get("pnl"), summary.get("total_pnl"))
+        )
+        runtime_unrealized_pnl = _management_as_float(
+            _management_first_non_empty(telemetry.get("unrealized_pnl"), summary.get("unrealized_pnl"))
+        )
+        runtime_realized_pnl = _management_as_float(
+            _management_first_non_empty(telemetry.get("realized_pnl"), summary.get("realized_pnl"))
+        )
+        runtime_trades = _management_as_float(
+            _management_first_non_empty(telemetry.get("total_trades"), summary.get("total_trades"))
+        )
+
+        for index, position in enumerate(positions):
+            instrument = _management_nested_dict(position, "instrument", "asset", "contract")
+            mark = _management_nested_dict(position, "mark", "mark_price", "market_price")
+            capital_pool_id = str(
+                _management_first_non_empty(
+                    _management_dict_value(position, "capital_pool_id", "pool_id"),
+                    _management_dict_value(runtime, "capital_pool_id", "pool_id"),
+                    _management_dict_value(plan, "capital_pool_id", "target_pool_id", "pool_id"),
+                    _management_dict_value(persona_binding, "capital_pool_id", "pool_id"),
+                )
+                or ""
+            )
+            capital_pool = pools_by_id.get(capital_pool_id, {})
+            persona_id = str(
+                _management_first_non_empty(
+                    _management_dict_value(position, "persona_id"),
+                    _management_dict_value(runtime, "persona_id"),
+                    _management_dict_value(plan, "persona_id"),
+                    _management_dict_value(persona_binding, "persona_id"),
+                )
+                or ""
+            )
+            strategy_id = str(
+                _management_first_non_empty(
+                    _management_dict_value(position, "strategy_id", "strategy_ref"),
+                    _management_dict_value(runtime, "strategy_id", "strategy_ref"),
+                    _management_dict_value(plan, "strategy_id", "strategy_ref"),
+                    _management_dict_value(persona_binding, "strategy_id"),
+                )
+                or ""
+            )
+            symbol = str(
+                _management_first_non_empty(
+                    _management_dict_value(position, "symbol", "instrument_id", "asset_id", "contract_id"),
+                    _management_dict_value(instrument, "symbol", "instrument_id", "asset_id", "contract_id"),
+                    _management_dict_value(telemetry, "symbol", "instrument_id", "asset_id", "contract_id"),
+                )
+                or ""
+            )
+            broker_id = str(
+                _management_first_non_empty(
+                    _management_dict_value(position, "broker_id", "broker", "broker_ref"),
+                    _management_dict_value(telemetry, "broker_id", "broker", "broker_ref"),
+                    _management_dict_value(runtime, "broker_id", "broker", "broker_ref"),
+                    _management_dict_value(plan, "broker_id", "broker", "broker_ref"),
+                )
+                or ""
+            )
+            regime = str(
+                _management_first_non_empty(
+                    _management_dict_value(position, "regime", "market_regime", "risk_regime"),
+                    _management_dict_value(telemetry, "regime", "market_regime", "risk_regime"),
+                    _management_dict_value(runtime, "regime", "market_regime", "risk_regime"),
+                    _management_dict_value(plan, "regime", "market_regime", "risk_regime"),
+                )
+                or ""
+            )
+            quantity = _management_as_float(
+                _management_first_non_empty(
+                    _management_dict_value(position, "quantity", "qty", "net_quantity", "position_quantity"),
+                    _management_dict_value(telemetry, "quantity", "position_quantity"),
+                    _management_dict_value(summary, "quantity", "position_quantity"),
+                )
+            )
+            mark_price = _management_as_float(
+                _management_first_non_empty(
+                    _management_dict_value(position, "mark_price", "market_price", "last_price"),
+                    _management_dict_value(mark, "price", "mark_price", "market_price", "last_price"),
+                    _management_dict_value(telemetry, "mark_price", "market_price", "last_price"),
+                    _management_dict_value(summary, "mark_price", "market_price", "last_price"),
+                )
+            )
+            market_value = _management_as_float(
+                _management_first_non_empty(
+                    _management_dict_value(position, "market_value", "value"),
+                    _management_dict_value(telemetry, "market_value"),
+                    _management_dict_value(summary, "market_value"),
+                )
+            )
+            if market_value is None and quantity is not None and mark_price is not None:
+                market_value = round(quantity * mark_price, 6)
+            notional = _management_as_float(
+                _management_first_non_empty(
+                    _management_dict_value(position, "notional", "gross_notional"),
+                    _management_dict_value(telemetry, "notional", "gross_notional"),
+                    _management_dict_value(summary, "notional", "gross_notional"),
+                    market_value,
+                )
+            )
+            if notional is not None:
+                notional = abs(notional)
+            exposure = _management_as_float(
+                _management_first_non_empty(
+                    _management_dict_value(position, "exposure", "gross_exposure"),
+                    _management_dict_value(telemetry, "exposure", "gross_exposure"),
+                    _management_dict_value(summary, "exposure", "gross_exposure"),
+                    notional,
+                )
+            )
+            total_pnl = _pm12_metric_or_split(
+                _management_first_non_empty(
+                    _management_dict_value(position, "total_pnl", "pnl"),
+                    _management_dict_value(position, "realized_plus_unrealized_pnl"),
+                ),
+                runtime_pnl,
+                split_count,
+            )
+            unrealized_pnl = _pm12_metric_or_split(
+                _management_dict_value(position, "unrealized_pnl", "unrealized"),
+                runtime_unrealized_pnl,
+                split_count,
+            )
+            realized_pnl = _pm12_metric_or_split(
+                _management_dict_value(position, "realized_pnl", "realized"),
+                runtime_realized_pnl,
+                split_count,
+            )
+            drawdown = _management_as_float(
+                _management_first_non_empty(
+                    _management_dict_value(position, "drawdown", "max_drawdown"),
+                    _management_dict_value(telemetry, "drawdown"),
+                    _management_dict_value(summary, "max_drawdown"),
+                )
+            )
+            fill_rate = _management_as_float(
+                _management_first_non_empty(
+                    _management_dict_value(position, "fill_rate"),
+                    _management_dict_value(telemetry, "fill_rate"),
+                    _management_dict_value(summary, "fill_rate"),
+                )
+            )
+            avg_slippage_bps = _management_as_float(
+                _management_first_non_empty(
+                    _management_dict_value(position, "avg_slippage_bps", "slippage_bps"),
+                    _management_dict_value(telemetry, "avg_slippage_bps", "slippage_bps"),
+                    _management_dict_value(summary, "avg_slippage_bps", "slippage_bps"),
+                )
+            )
+            total_trades = _pm12_metric_or_split(
+                _management_dict_value(position, "total_trades", "trade_count", "trades"),
+                runtime_trades,
+                split_count,
+            )
+            collected_at = str(
+                _management_first_non_empty(
+                    _management_dict_value(position, "collected_at", "marked_at", "updated_at"),
+                    _management_dict_value(telemetry, "collected_at", "updated_at"),
+                    _management_dict_value(summary, "collected_at", "updated_at"),
+                )
+                or ""
+            )
+
+            facts.append({
+                "id": f"{runtime_id or runtime_binding_id or 'runtime'}:{index}",
+                "period": period_key,
+                "runtime_id": runtime_id,
+                "runtime_binding_id": runtime_binding_id,
+                "deployment_plan_id": plan_id or _management_record_id(plan, "plan_id", "id"),
+                "persona_capital_binding_id": persona_binding_id,
+                "capital_pool_id": capital_pool_id,
+                "capital_pool_name": capital_pool.get("name") or capital_pool_id,
+                "persona_id": persona_id,
+                "strategy_id": strategy_id,
+                "symbol": symbol,
+                "broker_id": broker_id,
+                "regime": regime,
+                "deployment_stage": str(
+                    runtime.get("deployment_stage") or runtime.get("deployment_mode") or plan.get("target_stage") or ""
+                ),
+                "status": str(_management_first_non_empty(position.get("status"), runtime.get("status"), "unknown")),
+                "total_pnl": total_pnl,
+                "unrealized_pnl": unrealized_pnl,
+                "realized_pnl": realized_pnl,
+                "notional": notional,
+                "market_value": market_value,
+                "exposure": exposure,
+                "drawdown": drawdown,
+                "fill_rate": fill_rate,
+                "avg_slippage_bps": avg_slippage_bps,
+                "total_trades": total_trades,
+                "collected_at": collected_at or None,
+                "telemetry_available": runtime_id in telemetry_by_runtime_id if runtime_id else False,
+                "dimensions": {
+                    "persona": _pm12_dimension_key(persona_id),
+                    "strategy": _pm12_dimension_key(strategy_id),
+                    "pool": _pm12_dimension_key(capital_pool_id),
+                    "asset": _pm12_dimension_key(symbol),
+                    "broker": _pm12_dimension_key(broker_id),
+                    "runtime": _pm12_dimension_key(runtime_id or runtime_binding_id),
+                    "regime": _pm12_dimension_key(regime),
+                },
+            })
+
+    return facts
+
+
+def _pm12_metric_sum(facts: List[Dict[str, Any]], field: str) -> Optional[float]:
+    values = [
+        value
+        for value in (_management_as_float(fact.get(field)) for fact in facts)
+        if value is not None
+    ]
+    return round(sum(values), 6) if values else None
+
+
+def _pm12_metric_avg(facts: List[Dict[str, Any]], field: str) -> Optional[float]:
+    values = [
+        value
+        for value in (_management_as_float(fact.get(field)) for fact in facts)
+        if value is not None
+    ]
+    return _management_avg(values)
+
+
+def _pm12_attribution_metrics(facts: List[Dict[str, Any]]) -> Dict[str, Any]:
+    drawdown_values = [
+        value
+        for value in (_management_as_float(fact.get("drawdown")) for fact in facts)
+        if value is not None
+    ]
+    trade_total = _pm12_metric_sum(facts, "total_trades")
+    runtime_ids = sorted({
+        str(fact.get("runtime_id") or "")
+        for fact in facts
+        if str(fact.get("runtime_id") or "")
+    })
+    telemetry_runtime_ids = sorted({
+        str(fact.get("runtime_id") or "")
+        for fact in facts
+        if str(fact.get("runtime_id") or "") and fact.get("telemetry_available")
+    })
+    metrics = {
+        "runtimeCount": len(runtime_ids),
+        "runtime_count": len(runtime_ids),
+        "telemetryRuntimeCount": len(telemetry_runtime_ids),
+        "telemetry_runtime_count": len(telemetry_runtime_ids),
+        "holdingCount": len(facts),
+        "holding_count": len(facts),
+        "totalPnl": _pm12_metric_sum(facts, "total_pnl"),
+        "total_pnl": _pm12_metric_sum(facts, "total_pnl"),
+        "unrealizedPnl": _pm12_metric_sum(facts, "unrealized_pnl"),
+        "unrealized_pnl": _pm12_metric_sum(facts, "unrealized_pnl"),
+        "realizedPnl": _pm12_metric_sum(facts, "realized_pnl"),
+        "realized_pnl": _pm12_metric_sum(facts, "realized_pnl"),
+        "totalNotional": _pm12_metric_sum(facts, "notional"),
+        "total_notional": _pm12_metric_sum(facts, "notional"),
+        "totalMarketValue": _pm12_metric_sum(facts, "market_value"),
+        "total_market_value": _pm12_metric_sum(facts, "market_value"),
+        "totalExposure": _pm12_metric_sum(facts, "exposure"),
+        "total_exposure": _pm12_metric_sum(facts, "exposure"),
+        "worstDrawdown": max(drawdown_values) if drawdown_values else None,
+        "worst_drawdown": max(drawdown_values) if drawdown_values else None,
+        "averageFillRate": _pm12_metric_avg(facts, "fill_rate"),
+        "average_fill_rate": _pm12_metric_avg(facts, "fill_rate"),
+        "averageSlippageBps": _pm12_metric_avg(facts, "avg_slippage_bps"),
+        "average_slippage_bps": _pm12_metric_avg(facts, "avg_slippage_bps"),
+        "totalTrades": int(trade_total) if trade_total is not None else 0,
+        "total_trades": int(trade_total) if trade_total is not None else 0,
+        "latestTelemetryAt": _management_latest_timestamp(facts, "collected_at"),
+        "latest_telemetry_at": _management_latest_timestamp(facts, "collected_at"),
+    }
+    return metrics
+
+
+def _pm12_performance_attribution_rows(
+    facts: List[Dict[str, Any]],
+    *,
+    dimensions: List[str],
+    period_key: str,
+    sources: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    total_metrics = _pm12_attribution_metrics(facts)
+    portfolio_pnl = _management_as_float(total_metrics.get("total_pnl"))
+    portfolio_notional = _management_as_float(total_metrics.get("total_notional"))
+    rows: List[Dict[str, Any]] = []
+
+    for dimension in dimensions:
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        for fact in facts:
+            dims = fact.get("dimensions") if isinstance(fact.get("dimensions"), dict) else {}
+            key = _pm12_dimension_key(dims.get(dimension))
+            grouped.setdefault(key, []).append(fact)
+
+        ranked_groups: List[tuple[str, List[Dict[str, Any]], Dict[str, Any]]] = []
+        for key, group_facts in grouped.items():
+            ranked_groups.append((key, group_facts, _pm12_attribution_metrics(group_facts)))
+        ranked_groups.sort(
+            key=lambda item: (
+                _management_as_float(item[2].get("total_pnl")) is None,
+                -(_management_as_float(item[2].get("total_pnl")) or 0.0),
+                item[0],
+            )
+        )
+
+        for rank, (key, group_facts, metrics) in enumerate(ranked_groups, start=1):
+            pnl = _management_as_float(metrics.get("total_pnl"))
+            notional = _management_as_float(metrics.get("total_notional"))
+            pnl_contribution = None
+            if pnl is not None and portfolio_pnl not in (None, 0):
+                pnl_contribution = round(pnl / portfolio_pnl, 6)
+            notional_weight = None
+            if notional is not None and portfolio_notional not in (None, 0):
+                notional_weight = round(notional / portfolio_notional, 6)
+            runtime_ids = sorted({
+                str(fact.get("runtime_id") or "")
+                for fact in group_facts
+                if str(fact.get("runtime_id") or "")
+            })
+            pool_ids = sorted({
+                str(fact.get("capital_pool_id") or "")
+                for fact in group_facts
+                if str(fact.get("capital_pool_id") or "")
+            })
+            persona_ids = sorted({
+                str(fact.get("persona_id") or "")
+                for fact in group_facts
+                if str(fact.get("persona_id") or "")
+            })
+            strategy_ids = sorted({
+                str(fact.get("strategy_id") or "")
+                for fact in group_facts
+                if str(fact.get("strategy_id") or "")
+            })
+            label = _pm12_attribution_dimension_label(
+                dimension,
+                key,
+                personas_by_id=sources["personas_by_id"],
+                strategies_by_id=sources["strategies_by_id"],
+                pools_by_id=sources["pools_by_id"],
+            )
+            row = {
+                "id": f"pm12-performance-attribution-{dimension}-{key}",
+                "dimension": dimension,
+                "dimensionKey": key,
+                "dimension_key": key,
+                "label": label,
+                "period": period_key,
+                "rank": rank,
+                "metrics": {
+                    **metrics,
+                    "pnlContributionPct": pnl_contribution,
+                    "pnl_contribution_pct": pnl_contribution,
+                    "notionalWeight": notional_weight,
+                    "notional_weight": notional_weight,
+                },
+                "totalPnl": metrics["totalPnl"],
+                "total_pnl": metrics["total_pnl"],
+                "pnlContributionPct": pnl_contribution,
+                "pnl_contribution_pct": pnl_contribution,
+                "notionalWeight": notional_weight,
+                "notional_weight": notional_weight,
+                "runtimeCount": metrics["runtimeCount"],
+                "runtime_count": metrics["runtime_count"],
+                "holdingCount": metrics["holdingCount"],
+                "holding_count": metrics["holding_count"],
+                "sourceRefs": {
+                    "runtimeIds": runtime_ids,
+                    "runtime_ids": runtime_ids,
+                    "capitalPoolIds": pool_ids,
+                    "capital_pool_ids": pool_ids,
+                    "personaIds": persona_ids,
+                    "persona_ids": persona_ids,
+                    "strategyIds": strategy_ids,
+                    "strategy_ids": strategy_ids,
+                },
+                "source_refs": {
+                    "runtime_ids": runtime_ids,
+                    "capital_pool_ids": pool_ids,
+                    "persona_ids": persona_ids,
+                    "strategy_ids": strategy_ids,
+                },
+                "links": {
+                    "runtime": _management_link("/bff/runtimes", key) if dimension == "runtime" else None,
+                    "capitalPool": _management_link("/bff/capital-pools", key) if dimension == "pool" else None,
+                    "capital_pool": _management_link("/bff/capital-pools", key) if dimension == "pool" else None,
+                    "persona": _management_link("/bff/personas", key) if dimension == "persona" else None,
+                    "strategy": _management_link("/bff/strategies", key) if dimension == "strategy" else None,
+                },
+            }
+            rows.append(row)
+
+    return rows
+
+
 @app.get("/bff/management/portfolio-book")
 async def bff_management_portfolio_book(
     page_token: Optional[str] = None,
@@ -21053,6 +22887,440 @@ def _evolution_journal_surfaces(
     }
 
 
+_PERSONA_INTENT_SOURCE_ALIASES = {
+    "trace": "persona_trace",
+    "persona_trace": "persona_trace",
+    "persona_traces": "persona_trace",
+    "session": "persona_trace",
+    "sessions": "persona_trace",
+    "trainer": "trainer_session",
+    "trainer_session": "trainer_session",
+    "trainer_sessions": "trainer_session",
+    "teaching": "trainer_session",
+    "teaching_session": "trainer_session",
+    "agora": "agora_session",
+    "agora_session": "agora_session",
+    "agora_sessions": "agora_session",
+}
+
+
+def _persona_intent_csv_filter(value: Optional[str]) -> Optional[set[str]]:
+    if not value:
+        return None
+    requested = {part.strip().lower() for part in value.split(",") if part.strip()}
+    return requested or None
+
+
+def _persona_intent_source_filter(value: Optional[str]) -> Optional[set[str]]:
+    requested = _persona_intent_csv_filter(value)
+    if not requested:
+        return None
+    return {
+        _PERSONA_INTENT_SOURCE_ALIASES.get(source_type, source_type)
+        for source_type in requested
+    }
+
+
+def _persona_intent_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _persona_intent_timestamp(record: Dict[str, Any]) -> str:
+    return str(
+        _management_first_non_empty(
+            record.get("updated_at"),
+            record.get("updatedAt"),
+            record.get("last_heartbeat_at"),
+            record.get("completed_at"),
+            record.get("ended_at"),
+            record.get("created_at"),
+            record.get("createdAt"),
+            record.get("started_at"),
+        )
+        or ""
+    )
+
+
+def _persona_intent_persona_label(persona_id: str) -> Optional[str]:
+    persona = read_store.get_persona(persona_id)
+    if not persona:
+        return None
+    return persona.get("name") or persona.get("display_name") or persona_id
+
+
+def _persona_intent_capability_summary(session: Dict[str, Any]) -> Dict[str, Any]:
+    snapshot_id = _persona_intent_text(session.get("capability_snapshot_id"))
+    snapshot = read_store.get_capability_snapshot(snapshot_id) if snapshot_id else None
+    if not snapshot:
+        persona_id = _persona_intent_text(session.get("persona_id"))
+        snapshot = read_store.get_capability_snapshot_for_persona(persona_id)
+        snapshot_id = _persona_intent_text((snapshot or {}).get("snapshot_id") or snapshot_id)
+    if not snapshot:
+        return {
+            "snapshot_id": snapshot_id or None,
+            "available": False,
+            "effective_tool_count": 0,
+            "effective_skill_count": 0,
+            "restriction_count": 0,
+        }
+    return {
+        "snapshot_id": snapshot_id or snapshot.get("snapshot_id") or snapshot.get("id"),
+        "available": True,
+        "effective_tool_count": len(snapshot.get("effective_tools") or []),
+        "effective_skill_count": len(snapshot.get("effective_skills") or []),
+        "effective_workflow_count": len(snapshot.get("effective_workflows") or []),
+        "restriction_count": len(snapshot.get("restrictions") or []),
+        "generated_at": snapshot.get("generated_at"),
+    }
+
+
+def _persona_intent_redaction(fields: List[str]) -> Dict[str, Any]:
+    return {
+        "is_redacted": True,
+        "redacted": True,
+        "policy": "management_persona_intent_public_summary",
+        "redacted_fields": fields,
+    }
+
+
+def _persona_intent_trace_item(session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    session_id = _management_record_id(session, "session_id", "id")
+    if not session_id:
+        return None
+    persona_id = _persona_intent_text(session.get("persona_id"))
+    session_type = _persona_intent_text(session.get("session_type") or "persona_session")
+    status = _persona_intent_text(session.get("status") or "unknown").lower() or "unknown"
+    occurred_at = _persona_intent_timestamp(session)
+    item_id = f"persona_trace:{session_id}"
+    trace = {
+        "session_id": session_id,
+        "trace_id": session.get("trace_id"),
+        "request_id": session.get("request_id"),
+        "runtime_binding_id": session.get("runtime_binding_id"),
+        "deployment_stage": session.get("deployment_stage"),
+        "capital_pool_id": session.get("capital_pool_id"),
+        "last_heartbeat_at": session.get("last_heartbeat_at"),
+        "capability_summary": _persona_intent_capability_summary(session),
+    }
+    return {
+        "id": item_id,
+        "intent_id": item_id,
+        "sourceType": "persona_trace",
+        "source_type": "persona_trace",
+        "source_id": session_id,
+        "personaId": persona_id or None,
+        "persona_id": persona_id or None,
+        "persona_label": _persona_intent_persona_label(persona_id) if persona_id else None,
+        "intent": session_type,
+        "title": f"Persona trace {session_id}",
+        "summary": f"{session_type.replace('_', ' ').title()} session intent summary.",
+        "status": status,
+        "created_at": session.get("started_at") or session.get("created_at"),
+        "updated_at": session.get("last_heartbeat_at") or session.get("updated_at"),
+        "occurred_at": occurred_at,
+        "trace": trace,
+        "redacted": True,
+        "redaction": _persona_intent_redaction(
+            ["capability_snapshot", "tools_enabled", "memory_trace", "reasoning_trace"]
+        ),
+        "route": "/management/persona-intent?source_type=persona_trace",
+        "bff_detail_path": f"/api/v1/sessions/{session_id}",
+    }
+
+
+def _persona_intent_trainer_item(session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    session_id = _management_record_id(session, "session_id", "id")
+    if not session_id:
+        return None
+    persona_id = _persona_intent_text(session.get("persona_id"))
+    status = _persona_intent_text(session.get("status") or "unknown").lower() or "unknown"
+    raw_events = [event for event in (session.get("events") or []) if isinstance(event, dict)]
+    latest_event = None
+    if raw_events:
+        latest_event = sorted(
+            raw_events,
+            key=lambda event: int(event.get("sequence_number") or 0),
+        )[-1]
+    outcomes = list(session.get("outcomes") or [])
+    objective = _persona_intent_text(session.get("objective") or session.get("topic"))
+    occurred_at = _persona_intent_timestamp(session)
+    item_id = f"trainer_session:{session_id}"
+    trainer_summary = {
+        "session_id": session_id,
+        "objective": objective or None,
+        "mode": session.get("mode") or session.get("session_type") or "trainer",
+        "status": status,
+        "started_at": session.get("started_at"),
+        "ended_at": session.get("ended_at") or session.get("completed_at"),
+        "current_control_state": session.get("current_control_state"),
+        "event_count": len(raw_events),
+        "outcome_count": len(outcomes),
+        "latest_outcome_signal": (latest_event or {}).get("outcome_signal"),
+        "artifact_count": len(session.get("session_artifacts") or session.get("artifacts") or []),
+    }
+    return {
+        "id": item_id,
+        "intent_id": item_id,
+        "sourceType": "trainer_session",
+        "source_type": "trainer_session",
+        "source_id": session_id,
+        "personaId": persona_id or None,
+        "persona_id": persona_id or None,
+        "persona_label": _persona_intent_persona_label(persona_id) if persona_id else None,
+        "intent": trainer_summary["mode"],
+        "title": f"Trainer session {session_id}",
+        "summary": objective or "Trainer session intent summary.",
+        "status": status,
+        "created_at": session.get("started_at") or session.get("created_at"),
+        "updated_at": session.get("ended_at") or session.get("completed_at") or session.get("updated_at"),
+        "occurred_at": occurred_at,
+        "trainer": trainer_summary,
+        "redacted": True,
+        "redaction": _persona_intent_redaction(["events", "message_body", "raw_control_diff"]),
+        "route": "/management/persona-intent?source_type=trainer_session",
+        "bff_detail_path": f"/api/v1/trainer/sessions/{session_id}",
+    }
+
+
+def _persona_intent_agora_persona_ids(session: Dict[str, Any]) -> List[str]:
+    persona_ids: List[str] = []
+    for participant in session.get("participants") or []:
+        if not isinstance(participant, dict):
+            continue
+        actor_id = _persona_intent_text(
+            participant.get("actorId") or participant.get("actor_id") or participant.get("persona_id")
+        )
+        if actor_id.startswith("persona-") or actor_id.startswith("p-"):
+            persona_ids.append(actor_id)
+    for ref in session.get("contextRefs") or session.get("context_refs") or []:
+        if not isinstance(ref, dict):
+            continue
+        ref_type = _persona_intent_text(ref.get("ref_type") or ref.get("type")).lower()
+        ref_id = _persona_intent_text(ref.get("ref_id") or ref.get("id"))
+        if ref_type == "persona" and ref_id:
+            persona_ids.append(ref_id)
+    seen: set[str] = set()
+    ordered: List[str] = []
+    for persona_id in persona_ids:
+        if persona_id and persona_id not in seen:
+            ordered.append(persona_id)
+            seen.add(persona_id)
+    return ordered
+
+
+def _persona_intent_agora_item(session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    session_id = _management_record_id(session, "sessionId", "session_id", "id")
+    if not session_id:
+        return None
+    status = _persona_intent_text(session.get("status") or "unknown").lower() or "unknown"
+    mode = _persona_intent_text(session.get("mode") or session.get("sessionType") or "agora_session")
+    messages = [message for message in (session.get("messages") or []) if isinstance(message, dict)]
+    latest_message_at = max(
+        [
+            _persona_intent_text(message.get("createdAt") or message.get("created_at"))
+            for message in messages
+            if _persona_intent_text(message.get("createdAt") or message.get("created_at"))
+        ],
+        default=None,
+    )
+    context_refs = [
+        ref for ref in (session.get("contextRefs") or session.get("context_refs") or [])
+        if isinstance(ref, dict)
+    ]
+    persona_ids = _persona_intent_agora_persona_ids(session)
+    topic = _persona_intent_text(session.get("topic") or session.get("title"))
+    occurred_at = _persona_intent_timestamp(session)
+    item_id = f"agora_session:{session_id}"
+    agora_summary = {
+        "sessionId": session_id,
+        "session_id": session_id,
+        "mode": mode,
+        "status": status,
+        "topic": topic or None,
+        "participant_count": len(session.get("participants") or []),
+        "context_ref_count": len(context_refs),
+        "message_count": len(messages),
+        "latest_message_at": latest_message_at,
+        "persona_ids": persona_ids,
+        "sse_topic": session.get("sse_topic"),
+    }
+    return {
+        "id": item_id,
+        "intent_id": item_id,
+        "sourceType": "agora_session",
+        "source_type": "agora_session",
+        "source_id": session_id,
+        "personaId": persona_ids[0] if persona_ids else None,
+        "persona_id": persona_ids[0] if persona_ids else None,
+        "persona_ids": persona_ids,
+        "intent": mode,
+        "title": session.get("title") or f"Agora session {session_id}",
+        "summary": topic or "Agora session intent summary.",
+        "status": status,
+        "created_at": session.get("createdAt") or session.get("created_at"),
+        "updated_at": session.get("updatedAt") or session.get("updated_at") or latest_message_at,
+        "occurred_at": occurred_at,
+        "agora": agora_summary,
+        "redacted": True,
+        "redaction": _persona_intent_redaction(["messages", "message_content", "raw_transcript"]),
+        "route": "/management/persona-intent?source_type=agora_session",
+        "bff_detail_path": f"/bff/agora/ask/sessions/{session_id}",
+    }
+
+
+def _persona_intent_all_items() -> tuple[
+    List[Dict[str, Any]],
+    List[Dict[str, Any]],
+    List[Dict[str, Any]],
+    List[Dict[str, Any]],
+]:
+    personas = _list_persona_records()
+    items: List[Dict[str, Any]] = []
+    persona_sessions: List[Dict[str, Any]] = []
+    trainer_sessions: List[Dict[str, Any]] = []
+    for persona in personas:
+        persona_id = _persona_intent_text(persona.get("persona_id") or persona.get("id"))
+        for session in read_store.get_sessions_for_persona(persona_id) or []:
+            persona_sessions.append(session)
+            item = _persona_intent_trace_item(session)
+            if item is not None:
+                items.append(item)
+        for session in read_store.get_teaching_sessions_for_persona(persona_id) or []:
+            trainer_sessions.append(session)
+            item = _persona_intent_trainer_item(session)
+            if item is not None:
+                items.append(item)
+
+    agora_sessions = list(read_store.list_agora_sessions() or [])
+    for session in agora_sessions:
+        item = _persona_intent_agora_item(session)
+        if item is not None:
+            items.append(item)
+
+    items.sort(
+        key=lambda item: (
+            str(item.get("occurred_at") or ""),
+            str(item.get("id") or ""),
+        ),
+        reverse=True,
+    )
+    return items, persona_sessions, trainer_sessions, agora_sessions
+
+
+def _persona_intent_filter_items(
+    items: List[Dict[str, Any]],
+    *,
+    source_type: Optional[str],
+    persona_id: Optional[str],
+    status: Optional[str],
+    intent: Optional[str],
+) -> List[Dict[str, Any]]:
+    source_types = _persona_intent_source_filter(source_type)
+    persona_ids = _persona_intent_csv_filter(persona_id)
+    statuses = _persona_intent_csv_filter(status)
+    intents = _persona_intent_csv_filter(intent)
+    filtered = items
+    if source_types:
+        filtered = [
+            item for item in filtered
+            if str(item.get("source_type") or item.get("sourceType") or "").lower() in source_types
+        ]
+    if persona_ids:
+        filtered = [
+            item for item in filtered
+            if str(item.get("persona_id") or "").lower() in persona_ids
+            or any(str(pid or "").lower() in persona_ids for pid in (item.get("persona_ids") or []))
+        ]
+    if statuses:
+        filtered = [
+            item for item in filtered
+            if str(item.get("status") or "").lower() in statuses
+        ]
+    if intents:
+        filtered = [
+            item for item in filtered
+            if str(item.get("intent") or "").lower() in intents
+            or any(token in str(item.get("summary") or "").lower() for token in intents)
+            or any(token in str(item.get("title") or "").lower() for token in intents)
+        ]
+    return filtered
+
+
+def _persona_intent_summary(items: List[Dict[str, Any]], returned_count: int) -> Dict[str, Any]:
+    by_source_type = _management_count_by(items, "source_type")
+    by_status = _management_count_by(items, "status")
+    by_intent = _management_count_by(items, "intent")
+    persona_ids = sorted(
+        {
+            str(pid)
+            for item in items
+            for pid in [item.get("persona_id"), *(item.get("persona_ids") or [])]
+            if str(pid or "").strip()
+        }
+    )
+    latest_at = max(
+        [str(item.get("occurred_at") or "") for item in items if item.get("occurred_at")],
+        default=None,
+    )
+    return {
+        "total_items": len(items),
+        "returned_items": returned_count,
+        "persona_trace_count": by_source_type.get("persona_trace", 0),
+        "trainer_session_count": by_source_type.get("trainer_session", 0),
+        "agora_session_count": by_source_type.get("agora_session", 0),
+        "redacted_item_count": len([item for item in items if item.get("redacted")]),
+        "persona_count": len(persona_ids),
+        "persona_ids": persona_ids,
+        "latest_at": latest_at,
+        "bySourceType": by_source_type,
+        "by_source_type": by_source_type,
+        "byStatus": by_status,
+        "by_status": by_status,
+        "byIntent": by_intent,
+        "by_intent": by_intent,
+    }
+
+
+def _persona_intent_surfaces(
+    *,
+    snapshot_at: str,
+) -> Dict[str, Any]:
+    source_surfaces = {
+        "personas": _dataset_surface_status("personas", snapshot_at=snapshot_at),
+        "persona_sessions": _dataset_surface_status("sessions", snapshot_at=snapshot_at),
+        "capability_snapshots": _dataset_surface_status("capability_snapshots", snapshot_at=snapshot_at),
+        "teaching_sessions": _dataset_surface_status("teaching_sessions", snapshot_at=snapshot_at),
+        "agora_sessions": _dataset_surface_status("agora_sessions", snapshot_at=snapshot_at),
+    }
+    persona_trace_surface = _aggregate_group_surface(
+        "persona_traces",
+        [
+            source_surfaces["personas"],
+            source_surfaces["persona_sessions"],
+            source_surfaces["capability_snapshots"],
+        ],
+        snapshot_at=snapshot_at,
+        unavailable_message="Persona trace intent summaries are unavailable.",
+        degraded_message="Persona trace intent summaries are degraded because one or more source surfaces are degraded.",
+    )
+    persona_intent_surface = _aggregate_group_surface(
+        "management_persona_intent",
+        [
+            persona_trace_surface,
+            source_surfaces["teaching_sessions"],
+            source_surfaces["agora_sessions"],
+        ],
+        snapshot_at=snapshot_at,
+        unavailable_message="Persona Intent aggregate unavailable.",
+        degraded_message="Persona Intent aggregate is degraded because one or more source surfaces are degraded.",
+    )
+    return {
+        "management_persona_intent": persona_intent_surface,
+        "persona_traces": persona_trace_surface,
+        **source_surfaces,
+    }
+
+
 @app.get("/bff/management/human-inbox")
 async def bff_management_human_inbox(
     source_type: Optional[str] = None,
@@ -21219,6 +23487,103 @@ async def bff_management_evidence(
         page_token=page_token,
         page_size=page_size,
     )
+
+
+@app.get("/bff/management/persona-intent")
+async def bff_management_persona_intent(
+    source_type: Optional[str] = None,
+    persona_id: Optional[str] = None,
+    status: Optional[str] = None,
+    intent: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: compose redacted Persona Intent trace, trainer, and Agora summaries."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    items, _persona_sessions, _trainer_sessions, _agora_sessions = _persona_intent_all_items()
+    filtered = _persona_intent_filter_items(
+        items,
+        source_type=source_type,
+        persona_id=persona_id,
+        status=status,
+        intent=intent,
+    )
+    total = len(filtered)
+    page_items, next_page_token = _page_slice(filtered, page_token, page_size)
+    summary = _persona_intent_summary(filtered, len(page_items))
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = _persona_intent_surfaces(snapshot_at=snapshot_at)
+    meta["composition_sources"] = [
+        "persona_traces",
+        "teaching_sessions",
+        "agora_sessions",
+    ]
+    meta["redacted_item_count"] = summary["redacted_item_count"]
+    return {
+        "data": page_items,
+        "items": page_items,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": meta,
+    }
+
+
+@app.get("/bff/management/readiness/ep5")
+async def bff_management_readiness_ep5(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: compose EP5 readiness status from task evidence and live gates."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _build_management_ep5_readiness_payload()
+
+
+@app.get("/bff/management/readiness/broker-live")
+async def bff_management_readiness_broker_live(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: expose broker-live readiness while preserving fail-closed gates."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _build_management_broker_live_readiness_payload()
+
+
+@app.get("/bff/management/readiness/capital-binding-live")
+async def bff_management_readiness_capital_binding_live(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: expose capital-binding-live readiness without enabling writes."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _build_management_capital_binding_live_readiness_payload()
+
+
+@app.get("/bff/management/readiness/bff-ha")
+async def bff_management_readiness_bff_ha(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: expose BFF HA readiness evidence and production topology gap."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _build_management_bff_ha_readiness_payload()
+
+
+@app.get("/bff/management/readiness/strict-publish")
+async def bff_management_readiness_strict_publish(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: expose strict-publish audit readiness and blockers."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _build_management_strict_publish_readiness_payload()
 
 
 # ---------------- /bff/strategies routes ----------------
@@ -22694,7 +25059,83 @@ _PM12_LEAGUE_RANKING_CRITERIA = {
     "activity": ("activityScore", "Activity"),
 }
 _PM12_LEAGUE_FORMULA_VERSION = "pm12-default-v1"
+_PM12_QUARTERLY_FORMULA_DOC_REF = (
+    "docs/04/pantheon_bff_api_gap_2026-05-23/"
+    "BFF_API_GAP_final_integration_spec.md#b34-pm-12-composition-sources"
+)
+_PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID = (
+    "pm12-quarterly-ranking-formula-v1-governance"
+)
+_PM12_QUARTERLY_FORMULA_EFFECTIVE_AT = "2026-05-23T00:00:00Z"
 _PM12_QUARTER_PATTERN = re.compile(r"^(?P<year>\d{4})-Q(?P<quarter>[1-4])$", re.IGNORECASE)
+_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER = (
+    "promote_to_canary_candidate",
+    "increase_research_budget",
+    "grant_tool_access",
+    "reduce_capital_access",
+    "require_retraining",
+    "freeze_persona",
+    "suspend_persona",
+    "retire_persona",
+)
+_PM12_QUARTERLY_RECOMMENDATION_ACTIONS = {
+    "promote_to_canary_candidate": {
+        "label": "Promote to canary candidate",
+        "priority": "high",
+        "riskLevel": "medium",
+        "risk_level": "medium",
+        "rationale": "Quarterly score and risk posture support canary-review consideration.",
+    },
+    "increase_research_budget": {
+        "label": "Increase research budget",
+        "priority": "medium",
+        "riskLevel": "low",
+        "risk_level": "low",
+        "rationale": "Quarterly score supports additional research-only budget.",
+    },
+    "grant_tool_access": {
+        "label": "Grant tool access",
+        "priority": "medium",
+        "riskLevel": "low",
+        "risk_level": "low",
+        "rationale": "Quarterly score and execution posture support expanded tool access review.",
+    },
+    "reduce_capital_access": {
+        "label": "Reduce capital access",
+        "priority": "high",
+        "riskLevel": "high",
+        "risk_level": "high",
+        "rationale": "Risk or overall score calls for capital-access reduction review.",
+    },
+    "require_retraining": {
+        "label": "Require retraining",
+        "priority": "medium",
+        "riskLevel": "medium",
+        "risk_level": "medium",
+        "rationale": "Quarterly component scores indicate retraining should be reviewed.",
+    },
+    "freeze_persona": {
+        "label": "Freeze persona",
+        "priority": "critical",
+        "riskLevel": "critical",
+        "risk_level": "critical",
+        "rationale": "Quarterly score is below the freeze-review threshold.",
+    },
+    "suspend_persona": {
+        "label": "Suspend persona",
+        "priority": "critical",
+        "riskLevel": "critical",
+        "risk_level": "critical",
+        "rationale": "Quarterly score is below the suspension-review threshold.",
+    },
+    "retire_persona": {
+        "label": "Retire persona",
+        "priority": "critical",
+        "riskLevel": "critical",
+        "risk_level": "critical",
+        "rationale": "Quarterly score is below the retirement-review threshold.",
+    },
+}
 _PM12_LEAGUE_TIER_DEFINITIONS = [
     {
         "id": "tier-1",
@@ -22917,7 +25358,92 @@ def _pm12_quarter_window(quarter: Optional[str], snapshot_at: str) -> Dict[str, 
     }
 
 
+def _pm12_quarter_formula_governance_evidence_refs() -> List[Dict[str, Any]]:
+    return [
+        {
+            "id": _PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID,
+            "refId": _PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID,
+            "ref_id": _PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID,
+            "title": "PM-12 quarterly ranking formula governance baseline",
+            "displayLabel": "PM-12 quarterly ranking formula governance baseline",
+            "display_label": "PM-12 quarterly ranking formula governance baseline",
+            "sourceType": "governance_record",
+            "source_type": "governance_record",
+            "sourceRef": _PM12_QUARTERLY_FORMULA_DOC_REF,
+            "source_ref": _PM12_QUARTERLY_FORMULA_DOC_REF,
+            "capturedAt": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
+            "captured_at": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
+            "linkType": "formula_version_governance",
+            "link_type": "formula_version_governance",
+            "credibility": {
+                "tier": "primary",
+                "verified": True,
+                "last_verified_at": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
+                "verification_method": "task_review",
+            },
+            "linkedObjectSummary": {
+                "entity_type": "ranking_formula",
+                "entity_ref": "pm12-quarterly-ranking-formula",
+                "display_label": "PM-12 quarterly ranking formula",
+            },
+            "linked_object_summary": {
+                "entity_type": "ranking_formula",
+                "entity_ref": "pm12-quarterly-ranking-formula",
+                "display_label": "PM-12 quarterly ranking formula",
+            },
+            "resolvedLink": {
+                "availability": "available",
+                "route_href": _PM12_QUARTERLY_FORMULA_DOC_REF,
+                "display_label": "Open PM-12 integration spec",
+                "open_in_new_tab": False,
+            },
+            "resolved_link": {
+                "availability": "available",
+                "route_href": _PM12_QUARTERLY_FORMULA_DOC_REF,
+                "display_label": "Open PM-12 integration spec",
+                "open_in_new_tab": False,
+            },
+            "routeHref": _PM12_QUARTERLY_FORMULA_DOC_REF,
+            "route_href": _PM12_QUARTERLY_FORMULA_DOC_REF,
+        }
+    ]
+
+
+def _pm12_quarter_formula_version_history() -> List[Dict[str, Any]]:
+    evidence_ref_ids = [
+        ref["ref_id"] for ref in _pm12_quarter_formula_governance_evidence_refs()
+    ]
+    return [
+        {
+            "id": f"pm12-quarterly-ranking-formula-{_PM12_LEAGUE_FORMULA_VERSION}",
+            "version": _PM12_LEAGUE_FORMULA_VERSION,
+            "formulaVersion": _PM12_LEAGUE_FORMULA_VERSION,
+            "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
+            "effectiveAt": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
+            "effective_at": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
+            "changeType": "baseline",
+            "change_type": "baseline",
+            "governanceEvidenceRefs": evidence_ref_ids,
+            "governance_evidence_refs": evidence_ref_ids,
+            "description": "Baseline formula accepted for PM-12 quarterly ranking reads.",
+        }
+    ]
+
+
 def _pm12_quarter_formula_payload() -> Dict[str, Any]:
+    evidence_ref_ids = [
+        ref["ref_id"] for ref in _pm12_quarter_formula_governance_evidence_refs()
+    ]
+    version_history = _pm12_quarter_formula_version_history()
+    change_control = {
+        "versionPolicy": "formula_version_changes_require_governance_evidence",
+        "version_policy": "formula_version_changes_require_governance_evidence",
+        "requiresGovernanceEvidence": True,
+        "requires_governance_evidence": True,
+        "governanceEvidenceRefs": evidence_ref_ids,
+        "governance_evidence_refs": evidence_ref_ids,
+        "authority": "read_only_governance_advisory",
+    }
     return {
         "id": "pm12-quarterly-ranking-formula",
         "formulaId": "pm12-quarterly-ranking-formula",
@@ -22936,6 +25462,12 @@ def _pm12_quarter_formula_payload() -> Dict[str, Any]:
         ],
         "basis": "latest_available_persona_league_metrics_with_quarter_window",
         "policy": "read_only_governance_advisory",
+        "governanceEvidenceRefs": evidence_ref_ids,
+        "governance_evidence_refs": evidence_ref_ids,
+        "versionHistory": version_history,
+        "version_history": version_history,
+        "changeControl": change_control,
+        "change_control": change_control,
     }
 
 
@@ -22958,6 +25490,37 @@ def _pm12_quarter_evidence_refs(
         for timestamp in [_pm12_evidence_timestamp(item)]
         if timestamp is not None and start_at <= timestamp < end_exclusive_at
     ]
+
+
+def _pm12_public_quarter_evidence_refs(
+    identity: OperatorIdentity,
+    quarter_window: Dict[str, Any],
+) -> tuple[List[Dict[str, Any]], int, bool]:
+    raw_evidence_refs = read_store.list_evidence_refs()
+    evidence_dataset_available = read_store.dataset_source("evidence_refs") != "missing"
+    quarter_evidence_refs = (
+        _pm12_quarter_evidence_refs(raw_evidence_refs, quarter_window)
+        if evidence_dataset_available
+        else []
+    )
+    try:
+        capabilities = _capabilities_for_identity(identity)
+    except Exception:
+        capabilities = None
+    processed_evidence_refs, redacted_count = redact_evidence_refs(
+        identity,
+        quarter_evidence_refs,
+        capabilities=capabilities,
+    )
+    return (
+        [
+            _management_evidence_public_item(item)
+            for item in processed_evidence_refs
+            if isinstance(item, dict)
+        ],
+        redacted_count,
+        evidence_dataset_available,
+    )
 
 
 def _pm12_quarterly_ranking_items(
@@ -22990,6 +25553,177 @@ def _pm12_quarterly_ranking_items(
             "basis": "latest_available_persona_league_metrics_with_quarter_window",
         })
     return items
+
+
+def _pm12_add_recommendation_action(action_ids: List[str], action_id: str) -> None:
+    if action_id in _PM12_QUARTERLY_RECOMMENDATION_ACTIONS and action_id not in action_ids:
+        action_ids.append(action_id)
+
+
+def _pm12_recommendation_action_ids(item: Dict[str, Any]) -> List[str]:
+    components = item.get("components") if isinstance(item.get("components"), dict) else {}
+    overall = _management_number(item.get("score")) or _management_number(item.get("overallScore")) or 0.0
+    risk_score = _management_number(components.get("riskScore"))
+    execution_score = _management_number(components.get("executionScore"))
+    activity_score = _management_number(components.get("activityScore"))
+    action_ids: List[str] = []
+
+    if overall >= 85.0 and (risk_score is None or risk_score >= 70.0) and (
+        execution_score is None or execution_score >= 65.0
+    ):
+        _pm12_add_recommendation_action(action_ids, "promote_to_canary_candidate")
+        _pm12_add_recommendation_action(action_ids, "increase_research_budget")
+        _pm12_add_recommendation_action(action_ids, "grant_tool_access")
+    elif overall >= 70.0 and (risk_score is None or risk_score >= 60.0):
+        _pm12_add_recommendation_action(action_ids, "increase_research_budget")
+        _pm12_add_recommendation_action(action_ids, "grant_tool_access")
+
+    if risk_score is not None and risk_score < 55.0:
+        _pm12_add_recommendation_action(action_ids, "reduce_capital_access")
+    if (execution_score is not None and execution_score < 55.0) or (
+        activity_score is not None and activity_score < 45.0
+    ):
+        _pm12_add_recommendation_action(action_ids, "require_retraining")
+    if overall < 55.0:
+        _pm12_add_recommendation_action(action_ids, "require_retraining")
+        _pm12_add_recommendation_action(action_ids, "reduce_capital_access")
+    if overall < 45.0:
+        _pm12_add_recommendation_action(action_ids, "freeze_persona")
+    if overall < 35.0:
+        _pm12_add_recommendation_action(action_ids, "suspend_persona")
+    if overall < 25.0:
+        _pm12_add_recommendation_action(action_ids, "retire_persona")
+
+    if not action_ids:
+        _pm12_add_recommendation_action(action_ids, "require_retraining")
+    return [
+        action_id
+        for action_id in _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER
+        if action_id in action_ids
+    ]
+
+
+def _pm12_quarterly_recommendation_item(
+    item: Dict[str, Any],
+    *,
+    action_id: str,
+    quarter_window: Dict[str, Any],
+    evidence_refs: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    action = _PM12_QUARTERLY_RECOMMENDATION_ACTIONS[action_id]
+    persona_id = str(item.get("personaId") or item.get("persona_id") or item.get("id") or "")
+    score = _management_number(item.get("score")) or _management_number(item.get("overallScore")) or 0.0
+    evidence_sample = evidence_refs[:5]
+    evidence_ref_ids = [
+        str(ref.get("refId") or ref.get("ref_id") or ref.get("id"))
+        for ref in evidence_sample
+        if ref.get("refId") or ref.get("ref_id") or ref.get("id")
+    ]
+    recommendation_id = f"pm12-{quarter_window['quarter'].lower()}-{persona_id}-{action_id}"
+    governance = {
+        "requiresHumanGateDecision": True,
+        "requires_human_gate_decision": True,
+        "destinations": ["human_inbox", "governance_queue", "human_gate_decision"],
+        "humanInboxRoute": "/bff/management/human-inbox",
+        "human_inbox_route": "/bff/management/human-inbox",
+        "governanceQueueRoute": "/api/v1/operator/governance/approval-queue",
+        "governance_queue_route": "/api/v1/operator/governance/approval-queue",
+        "decisionType": "HumanGateDecision",
+        "decision_type": "HumanGateDecision",
+        "liveCapitalMutation": False,
+        "live_capital_mutation": False,
+    }
+    return {
+        "id": recommendation_id,
+        "recommendationId": recommendation_id,
+        "recommendation_id": recommendation_id,
+        "quarter": quarter_window["quarter"],
+        "quarterWindow": quarter_window,
+        "quarter_window": quarter_window,
+        "personaId": persona_id,
+        "persona_id": persona_id,
+        "name": item.get("name"),
+        "owner": item.get("owner"),
+        "state": item.get("state"),
+        "risk": item.get("risk"),
+        "rank": item.get("rank"),
+        "score": score,
+        "tier": item.get("tier"),
+        "tierId": item.get("tierId"),
+        "tier_id": item.get("tier_id"),
+        "tierLabel": item.get("tierLabel"),
+        "tier_label": item.get("tier_label"),
+        "formulaVersion": item.get("formulaVersion") or _PM12_LEAGUE_FORMULA_VERSION,
+        "formula_version": item.get("formula_version") or _PM12_LEAGUE_FORMULA_VERSION,
+        "actionId": action_id,
+        "action_id": action_id,
+        "actionLabel": action["label"],
+        "action_label": action["label"],
+        "recommendationType": "governance_advisory",
+        "recommendation_type": "governance_advisory",
+        "status": "recommended",
+        "priority": action["priority"],
+        "riskLevel": action["riskLevel"],
+        "risk_level": action["risk_level"],
+        "target": {"type": "persona", "id": persona_id},
+        "rationale": f"{action['rationale']} Score={score:.2f}; tier={item.get('tier') or 'unknown'}.",
+        "rationaleCodes": [
+            f"tier:{item.get('tier') or 'unknown'}",
+            f"action:{action_id}",
+            "policy:no_direct_live_capital",
+        ],
+        "rationale_codes": [
+            f"tier:{item.get('tier') or 'unknown'}",
+            f"action:{action_id}",
+            "policy:no_direct_live_capital",
+        ],
+        "metrics": item.get("metrics") or {},
+        "components": item.get("components") or {},
+        "evidenceRefs": evidence_sample,
+        "evidence_refs": evidence_sample,
+        "evidenceRefIds": evidence_ref_ids,
+        "evidence_ref_ids": evidence_ref_ids,
+        "governance": governance,
+        "requiresHumanGateDecision": True,
+        "requires_human_gate_decision": True,
+        "liveCapitalMutation": False,
+        "live_capital_mutation": False,
+        "policy": "read_only_governance_advisory",
+        "links": {
+            "persona": f"/bff/personas/{persona_id}",
+            "humanInbox": "/bff/management/human-inbox",
+            "governanceQueue": "/api/v1/operator/governance/approval-queue",
+        },
+    }
+
+
+def _pm12_quarterly_recommendations(
+    ranked_items: List[Dict[str, Any]],
+    *,
+    quarter_window: Dict[str, Any],
+    evidence_refs: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    recommendations: List[Dict[str, Any]] = []
+    for item in ranked_items:
+        for action_id in _pm12_recommendation_action_ids(item):
+            recommendations.append(
+                _pm12_quarterly_recommendation_item(
+                    item,
+                    action_id=action_id,
+                    quarter_window=quarter_window,
+                    evidence_refs=evidence_refs,
+                )
+            )
+    recommendations.sort(
+        key=lambda entry: (
+            _HUMAN_INBOX_PRIORITY_RANK.get(str(entry.get("priority") or "unknown"), 0),
+            -int(entry.get("rank") or 0),
+            str(entry.get("actionId") or ""),
+            str(entry.get("personaId") or ""),
+        ),
+        reverse=True,
+    )
+    return recommendations
 
 
 def _project_persona_league_row(raw: Dict[str, Any]) -> Dict[str, Any]:
@@ -23359,6 +26093,64 @@ async def bff_management_persona_league_tiers(
     }
 
 
+@app.get("/bff/management/quarterly-ranking/formula")
+async def bff_management_quarterly_ranking_formula(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 quarterly ranking formula weights, version, and governance trace."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    formula = _pm12_quarter_formula_payload()
+    evidence_refs = _pm12_quarter_formula_governance_evidence_refs()
+    version_history = list(formula.get("versionHistory") or [])
+    formula_surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
+    evidence_surface = _composed_surface_status(
+        snapshot_at=snapshot_at,
+        available=bool(evidence_refs),
+        missing_message="Quarterly ranking formula governance evidence is unavailable.",
+    )
+    weights = formula.get("weights") if isinstance(formula.get("weights"), dict) else {}
+    summary = {
+        "formulaId": formula["formulaId"],
+        "formula_id": formula["formula_id"],
+        "formulaVersion": formula["formulaVersion"],
+        "formula_version": formula["formula_version"],
+        "componentCount": len(formula.get("components") or []),
+        "component_count": len(formula.get("components") or []),
+        "weightTotal": round(sum(_management_number(value) or 0.0 for value in weights.values()), 6),
+        "weight_total": round(sum(_management_number(value) or 0.0 for value in weights.values()), 6),
+        "evidenceRefCount": len(evidence_refs),
+        "evidence_ref_count": len(evidence_refs),
+        "basis": formula["basis"],
+        "policy": formula["policy"],
+    }
+    return {
+        "data": formula,
+        "formula": formula,
+        "versionHistory": version_history,
+        "version_history": version_history,
+        "evidenceRefs": evidence_refs,
+        "evidence_refs": evidence_refs,
+        "summary": summary,
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "quarterly_ranking_formula": formula_surface,
+                "formula": formula_surface,
+                "governance_evidence": evidence_surface,
+            },
+            "composition_sources": [
+                "GET /bff/management/persona-league/rankings",
+                "GET /api/v1/knowledge/evidence",
+                _PM12_QUARTERLY_FORMULA_DOC_REF,
+            ],
+            "policy": formula["policy"],
+            "version_policy": "formula_version_changes_require_governance_evidence",
+        },
+    }
+
+
 @app.get("/bff/management/quarterly-ranking")
 async def bff_management_quarterly_ranking(
     quarter: Optional[str] = Query(default=None),
@@ -23379,27 +26171,10 @@ async def bff_management_quarterly_ranking(
     total = len(ranked_items)
     page_items, next_page_token = _page_slice(ranked_items, page_token, page_size)
 
-    raw_evidence_refs = read_store.list_evidence_refs()
-    evidence_dataset_available = read_store.dataset_source("evidence_refs") != "missing"
-    quarter_evidence_refs = (
-        _pm12_quarter_evidence_refs(raw_evidence_refs, quarter_window)
-        if evidence_dataset_available
-        else []
-    )
-    try:
-        capabilities = _capabilities_for_identity(identity)
-    except Exception:
-        capabilities = None
-    processed_evidence_refs, redacted_count = redact_evidence_refs(
+    public_evidence_refs, redacted_count, evidence_dataset_available = _pm12_public_quarter_evidence_refs(
         identity,
-        quarter_evidence_refs,
-        capabilities=capabilities,
+        quarter_window,
     )
-    public_evidence_refs = [
-        _management_evidence_public_item(item)
-        for item in processed_evidence_refs
-        if isinstance(item, dict)
-    ]
 
     formula = _pm12_quarter_formula_payload()
     source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
@@ -23480,6 +26255,293 @@ async def bff_management_quarterly_ranking(
             ],
             "policy": "read_only_governance_advisory",
             "redacted_evidence_count": redacted_count,
+        },
+    }
+
+
+@app.get("/bff/management/quarterly-ranking/recommendations")
+async def bff_management_quarterly_ranking_recommendations(
+    quarter: Optional[str] = Query(default=None),
+    state: Optional[str] = None,
+    archetype: Optional[str] = None,
+    q: str = Query(default=""),
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 quarterly governance recommendations without live mutations."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    quarter_window = _pm12_quarter_window(quarter, snapshot_at)
+    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
+    ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
+    public_evidence_refs, redacted_count, evidence_dataset_available = _pm12_public_quarter_evidence_refs(
+        identity,
+        quarter_window,
+    )
+    recommendations = _pm12_quarterly_recommendations(
+        ranked_items,
+        quarter_window=quarter_window,
+        evidence_refs=public_evidence_refs,
+    )
+    total = len(recommendations)
+    page_items, next_page_token = _page_slice(recommendations, page_token, page_size)
+
+    formula = _pm12_quarter_formula_payload()
+    action_counts = {
+        action_id: len([item for item in recommendations if item.get("actionId") == action_id])
+        for action_id in _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER
+    }
+    top_item = ranked_items[0] if ranked_items else None
+    summary = {
+        "quarter": quarter_window["quarter"],
+        "formulaVersion": formula["formulaVersion"],
+        "formula_version": formula["formula_version"],
+        "personaCount": len(rows),
+        "persona_count": len(rows),
+        "rankedCount": len(ranked_items),
+        "ranked_count": len(ranked_items),
+        "recommendationCount": total,
+        "recommendation_count": total,
+        "returnedCount": len(page_items),
+        "returned_count": len(page_items),
+        "topPersonaId": (top_item or {}).get("personaId") if isinstance(top_item, dict) else None,
+        "top_persona_id": (top_item or {}).get("personaId") if isinstance(top_item, dict) else None,
+        "humanGateDecisionCount": total,
+        "human_gate_decision_count": total,
+        "liveCapitalMutationCount": 0,
+        "live_capital_mutation_count": 0,
+        "evidenceRefCount": len(public_evidence_refs),
+        "evidence_ref_count": len(public_evidence_refs),
+        "redactedEvidenceCount": redacted_count,
+        "redacted_evidence_count": redacted_count,
+        "byAction": action_counts,
+        "by_action": action_counts,
+        "allowedActions": list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER),
+        "allowed_actions": list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER),
+        "basis": formula["basis"],
+        "policy": "read_only_governance_advisory",
+    }
+
+    source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
+    formula_surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
+    evidence_surface = _dataset_surface_status(
+        "evidence_refs",
+        snapshot_at=snapshot_at,
+        has_data=evidence_dataset_available,
+        missing_message="Evidence reference read surface is unavailable.",
+    )
+    approval_queue_surface = _dataset_surface_status("approval_queue_items", snapshot_at=snapshot_at)
+    human_gate_surface = _dataset_surface_status("approval_decisions", snapshot_at=snapshot_at)
+    human_inbox_surface = _composed_surface_status(
+        snapshot_at=snapshot_at,
+        available=(
+            approval_queue_surface.get("status") != "unavailable"
+            or human_gate_surface.get("status") != "unavailable"
+        ),
+        missing_message="Human Inbox and HumanGateDecision read surfaces are unavailable.",
+    )
+    quarterly_surface = _aggregate_group_surface(
+        "quarterly_ranking",
+        [*source_surfaces.values(), formula_surface, evidence_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Quarterly ranking aggregate unavailable.",
+        degraded_message="Quarterly ranking is degraded because one or more source surfaces are degraded.",
+    )
+    recommendations_surface = _aggregate_group_surface(
+        "quarterly_ranking_recommendations",
+        [
+            quarterly_surface,
+            formula_surface,
+            evidence_surface,
+            approval_queue_surface,
+            human_gate_surface,
+            human_inbox_surface,
+        ],
+        snapshot_at=snapshot_at,
+        unavailable_message="Quarterly ranking recommendations aggregate unavailable.",
+        degraded_message="Quarterly ranking recommendations are degraded because one or more governance source surfaces are degraded.",
+    )
+    governance_destinations = ["human_inbox", "governance_queue", "human_gate_decision"]
+    data = {
+        "id": f"pm12-quarterly-ranking-recommendations-{quarter_window['quarter'].lower()}",
+        "quarter": quarter_window["quarter"],
+        "quarterWindow": quarter_window,
+        "quarter_window": quarter_window,
+        "formula": formula,
+        "items": page_items,
+        "recommendations": page_items,
+        "evidenceRefs": public_evidence_refs,
+        "evidence_refs": public_evidence_refs,
+        "summary": summary,
+        "policy": "read_only_governance_advisory",
+        "governanceDestinations": governance_destinations,
+        "governance_destinations": governance_destinations,
+        "allowedActions": list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER),
+        "allowed_actions": list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER),
+    }
+    return {
+        "data": data,
+        "items": page_items,
+        "recommendations": page_items,
+        "formula": formula,
+        "quarterWindow": quarter_window,
+        "quarter_window": quarter_window,
+        "evidenceRefs": public_evidence_refs,
+        "evidence_refs": public_evidence_refs,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "quarterly_ranking_recommendations": recommendations_surface,
+                "quarterly_ranking": quarterly_surface,
+                "formula": formula_surface,
+                "evidence_refs": evidence_surface,
+                "knowledge_evidence": evidence_surface,
+                "human_inbox": human_inbox_surface,
+                "governance_queue": approval_queue_surface,
+                "human_gate_decision": human_gate_surface,
+                **source_surfaces,
+            },
+            "composition_sources": [
+                "GET /bff/management/quarterly-ranking",
+                "GET /bff/management/persona-league",
+                "GET /bff/management/persona-league/rankings",
+                "GET /bff/management/persona-league/tiers",
+                "GET /api/v1/knowledge/evidence",
+                "GET /bff/management/human-inbox",
+                "GET /api/v1/operator/governance/approval-queue",
+            ],
+            "policy": "read_only_governance_advisory",
+            "governance_destinations": governance_destinations,
+            "redacted_evidence_count": redacted_count,
+            "live_capital_mutation": False,
+        },
+    }
+
+
+@app.get("/bff/management/performance-attribution")
+async def bff_management_performance_attribution(
+    dimension: Optional[str] = Query(default=None),
+    period: str = Query(default="latest"),
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 performance attribution by persona/strategy/pool/asset/broker/runtime/regime."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    dimensions = _pm12_normalize_attribution_dimensions(dimension)
+    period_key = str(period or "").strip() or "latest"
+    sources = _pm12_performance_attribution_sources()
+    facts = _pm12_performance_attribution_facts(sources, period_key)
+    rows = _pm12_performance_attribution_rows(
+        facts,
+        dimensions=dimensions,
+        period_key=period_key,
+        sources=sources,
+    )
+    total = len(rows)
+    page_items, next_page_token = _page_slice(rows, page_token, page_size)
+    aggregate_metrics = _pm12_attribution_metrics(facts)
+
+    source_surfaces = {
+        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
+        "telemetry_summaries": _dataset_surface_status(
+            "telemetry_summaries",
+            snapshot_at=snapshot_at,
+            has_data=bool(sources["telemetry_by_runtime_id"]) if sources["runtime_bindings"] else None,
+            missing_message="Telemetry summaries unavailable for performance attribution runtimes.",
+        ),
+        "deployment_plans": _dataset_surface_status("deployment_plans", snapshot_at=snapshot_at),
+        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at),
+        "capital_pools": _dataset_surface_status("capital_pools", snapshot_at=snapshot_at),
+        "personas": _dataset_surface_status("personas", snapshot_at=snapshot_at),
+        "strategies": _dataset_surface_status("strategy_specs", snapshot_at=snapshot_at),
+    }
+    attribution_surface = _aggregate_group_surface(
+        "performance_attribution",
+        list(source_surfaces.values()),
+        snapshot_at=snapshot_at,
+        unavailable_message="Performance attribution aggregate unavailable.",
+        degraded_message="Performance attribution is degraded because one or more source surfaces are degraded.",
+    )
+    summary = {
+        "period": period_key,
+        "dimensions": dimensions,
+        "supportedDimensions": list(_PM12_ATTRIBUTION_DIMENSIONS),
+        "supported_dimensions": list(_PM12_ATTRIBUTION_DIMENSIONS),
+        "rowCount": total,
+        "row_count": total,
+        "returnedRowCount": len(page_items),
+        "returned_row_count": len(page_items),
+        "runtimeCount": aggregate_metrics["runtimeCount"],
+        "runtime_count": aggregate_metrics["runtime_count"],
+        "telemetryRuntimeCount": aggregate_metrics["telemetryRuntimeCount"],
+        "telemetry_runtime_count": aggregate_metrics["telemetry_runtime_count"],
+        "holdingCount": aggregate_metrics["holdingCount"],
+        "holding_count": aggregate_metrics["holding_count"],
+        "totalPnl": aggregate_metrics["totalPnl"],
+        "total_pnl": aggregate_metrics["total_pnl"],
+        "totalNotional": aggregate_metrics["totalNotional"],
+        "total_notional": aggregate_metrics["total_notional"],
+        "totalExposure": aggregate_metrics["totalExposure"],
+        "total_exposure": aggregate_metrics["total_exposure"],
+        "worstDrawdown": aggregate_metrics["worstDrawdown"],
+        "worst_drawdown": aggregate_metrics["worst_drawdown"],
+        "averageFillRate": aggregate_metrics["averageFillRate"],
+        "average_fill_rate": aggregate_metrics["average_fill_rate"],
+        "averageSlippageBps": aggregate_metrics["averageSlippageBps"],
+        "average_slippage_bps": aggregate_metrics["average_slippage_bps"],
+        "totalTrades": aggregate_metrics["totalTrades"],
+        "total_trades": aggregate_metrics["total_trades"],
+        "latestTelemetryAt": aggregate_metrics["latestTelemetryAt"],
+        "latest_telemetry_at": aggregate_metrics["latest_telemetry_at"],
+        "basis": "latest_runtime_telemetry_snapshot",
+    }
+    data = {
+        "id": "pm12-performance-attribution",
+        "period": period_key,
+        "dimensions": dimensions,
+        "items": page_items,
+        "rows": page_items,
+        "summary": summary,
+    }
+    return {
+        "data": data,
+        "items": page_items,
+        "rows": page_items,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "performance_attribution": attribution_surface,
+                **source_surfaces,
+            },
+            "composition_sources": [
+                "GET /api/v1/runtime-bindings",
+                "GET /api/v1/telemetry/{runtime_id}/summary",
+                "GET /api/v1/deployment-plans",
+                "GET /api/v1/persona-capital-bindings",
+                "GET /bff/capital-pools",
+                "GET /bff/personas",
+                "GET /bff/strategies",
+            ],
+            "period": period_key,
+            "dimensions": dimensions,
+            "policy": "read_only_performance_attribution",
         },
     }
 
@@ -27197,7 +30259,8 @@ async def bff_get_alert(
             f"Alert {alert_id!r} does not exist",
             precondition_failed="alert_id",
         )
-    return {"data": match, "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()}}
+    detail_meta = payload.get("meta", {"snapshot_at": snapshot_at, "staleness": _meta_staleness()})
+    return {"data": match, "meta": detail_meta}
 
 
 @app.post("/bff/alerts/{alert_id}/acknowledge", status_code=202)
@@ -31085,24 +34148,150 @@ def _sem_final_generic_detail_for_path(path: str, entity_id: str) -> Optional[Di
     return None
 
 
+# ============================================================================
+# B2.3 Capabilities facade — dedicated GET handlers
+# Covers: mcp-servers, mcp-tools, channels, ranking-formulas (list + detail).
+# /bff/tools and /bff/skills already have dedicated handlers registered above.
+# ============================================================================
+
+@app.get("/bff/mcp-servers")
+async def bff_list_mcp_servers_facade(
+    status: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF B2.3: list MCP servers from the registry."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    records = _merged_mcp_server_records()
+    if status:
+        requested = {s.strip().lower() for s in status.split(",") if s.strip()}
+        records = [r for r in records if str(r.get("status") or "").lower() in requested]
+    return _sem_final_list_response(records, dataset="mcp_servers", surface_key="mcp_servers", source="bff_local_registry")
+
+
+@app.get("/bff/mcp-servers/{server_id}")
+async def bff_get_mcp_server_facade(
+    server_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF B2.3: get MCP server detail by server_id."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    clean_id = str(server_id or "").strip()
+    return _sem_final_registry_detail(
+        _find_record_by_id(_merged_mcp_server_records(), clean_id, ("server_id", "id")),
+        entity_id=clean_id,
+        label="MCP server",
+        surface_key="mcp_server_detail",
+    )
+
+
+@app.get("/bff/mcp-tools")
+async def bff_list_mcp_tools_facade(
+    status: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF B2.3: list MCP tools from the registry."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    records = _sem_final_mcp_tool_records()
+    if status:
+        requested = {s.strip().lower() for s in status.split(",") if s.strip()}
+        records = [r for r in records if str(r.get("status") or "").lower() in requested]
+    return _sem_final_list_response(records, dataset="mcp_tools", surface_key="mcp_tools", source="bff_local_registry")
+
+
+@app.get("/bff/mcp-tools/{tool_id}")
+async def bff_get_mcp_tool_facade(
+    tool_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF B2.3: get MCP tool detail by tool_id."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    clean_id = str(tool_id or "").strip()
+    return _sem_final_registry_detail(
+        _sem_final_mcp_tool_record(clean_id),
+        entity_id=clean_id,
+        label="MCP tool",
+        surface_key="mcp_tool_detail",
+    )
+
+
+@app.get("/bff/channels")
+async def bff_list_channels(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF B2.3: list SSE channels from the local registry."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _sem_final_list_response(
+        _sem_final_channel_records(),
+        dataset="channels",
+        surface_key="channels",
+        source="bff_local_registry",
+    )
+
+
+@app.get("/bff/channels/{channel_id}")
+async def bff_get_channel(
+    channel_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF B2.3: get SSE channel detail by channel_id."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    clean_id = str(channel_id or "").strip()
+    return _sem_final_registry_detail(
+        _sem_final_channel_record(clean_id),
+        entity_id=clean_id,
+        label="Channel",
+        surface_key="channel_detail",
+    )
+
+
+@app.get("/bff/ranking-formulas")
+async def bff_list_ranking_formulas_facade(
+    status: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF B2.3: list ranking formulas from the read surface store."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    records = read_store.list_ranking_formulas(status=status)
+    return _sem_final_list_response(records, dataset="ranking_formulas", surface_key="ranking_formulas")
+
+
+@app.get("/bff/ranking-formulas/{formula_id}")
+async def bff_get_ranking_formula_facade(
+    formula_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF B2.3: get ranking formula detail by formula_id."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    clean_id = str(formula_id or "").strip()
+    return _sem_final_read_model_detail(
+        read_store.get_ranking_formula(clean_id),
+        entity_id=clean_id,
+        label="Ranking formula",
+        dataset="ranking_formulas",
+        surface_key="ranking_formula_detail",
+    )
+
+
 # NOTE: /bff/artifacts, /bff/incidents, /bff/incidents/{id}, /bff/runtimes,
 # /bff/runtimes/{id}, /bff/v5/loop-runs, /bff/v5/loop-runs/{id}, and
-# /bff/v5/sentinel/findings/{id} have dedicated handlers registered in the
-# B2.2 facade block above and are intentionally excluded here.
+# /bff/v5/sentinel/findings/{id} have dedicated handlers in the B2.2 block.
+# /bff/channels, /bff/channels/{id}, /bff/mcp-servers, /bff/mcp-servers/{id},
+# /bff/mcp-tools, /bff/mcp-tools/{id}, /bff/ranking-formulas,
+# /bff/ranking-formulas/{id}, /bff/tools, /bff/tools/{id}, and /bff/skills/{id}
+# have dedicated handlers in the B2.3 block above; all excluded here.
 @app.get("/bff/agora/signals/{id}")
 @app.get("/bff/approvals/{id}")
 @app.get("/bff/artifacts/{id}")
-@app.get("/bff/channels")
-@app.get("/bff/channels/{id}")
 @app.get("/bff/events/stream")
-@app.get("/bff/mcp-servers")
-@app.get("/bff/mcp-servers/{id}")
-@app.get("/bff/mcp-tools")
-@app.get("/bff/mcp-tools/{id}")
-@app.get("/bff/ranking-formulas")
 @app.get("/bff/research-analyses")
-@app.get("/bff/tools")
-@app.get("/bff/tools/{id}")
 @app.get("/bff/v5/control-room")
 @app.get("/bff/v5/execution/persona-health")
 @app.get("/bff/v5/execution/strategy-health")
@@ -31125,11 +34314,11 @@ async def sem_final_generic_read_alias(
 
 
 # NOTE: /bff/capital-pools/{id}, /bff/deployments/{id}, /bff/evolution-programs/{id},
-# /bff/jobs/{id}, /bff/personas/{id}, /bff/rebalances/{id}, and /bff/strategies/{id}
-# have dedicated handlers registered earlier in this file and are intentionally excluded here.
-@app.get("/bff/ranking-formulas/{id}")
+# /bff/jobs/{id}, /bff/personas/{id}, /bff/rebalances/{id}, /bff/strategies/{id},
+# /bff/ranking-formulas/{id}, /bff/research-experiments/{id}, and /bff/skills/{id}
+# have dedicated handlers registered earlier in this file and are intentionally
+# excluded here.
 @app.get("/bff/research-analyses/{id}")
-@app.get("/bff/skills/{id}")
 @app.get("/bff/v5/interventions/{id}")
 async def sem_final_id_named_read_alias(
     request: Request,
@@ -31144,10 +34333,11 @@ async def sem_final_id_named_read_alias(
 
 
 # NOTE: /bff/capital-pools/{id}, /bff/evolution-programs/{id}, /bff/personas/{id},
-# /bff/research-experiments/{id}, and /bff/strategies/{id} have dedicated handlers
-# registered earlier and are intentionally excluded here.
+# and /bff/strategies/{id} have dedicated PATCH handlers registered earlier
+# and are intentionally excluded here.
 @app.patch("/bff/artifacts/{id}")
 @app.patch("/bff/ranking-formulas/{id}")
+@app.patch("/bff/research-experiments/{id}")
 async def sem_final_generic_patch_alias(id: str, payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None)):
     _require_read_role(_extract_identity(authorization))
     return {"data": {"id": id, **payload}, "meta": {"snapshot_at": utc_now()}}

@@ -106,8 +106,16 @@ export const paths = {
 
   // ---- P1 Management aggregate APIs ----
   managementCockpit: () => `${BASE}/management/cockpit`,
+  managementTradingPulse: () => `${BASE}/management/trading-pulse`,
+  managementTradingPulseRankings: () => `${BASE}/management/trading-pulse/rankings`,
   managementEvidence: () => `${BASE}/management/evidence`,
   managementEvolutionJournal: () => `${BASE}/management/evolution-journal`,
+  managementPersonaIntent: () => `${BASE}/management/persona-intent`,
+  managementReadinessEp5: () => `${BASE}/management/readiness/ep5`,
+  managementReadinessBrokerLive: () => `${BASE}/management/readiness/broker-live`,
+  managementReadinessCapitalBindingLive: () => `${BASE}/management/readiness/capital-binding-live`,
+  managementReadinessBffHa: () => `${BASE}/management/readiness/bff-ha`,
+  managementReadinessStrictPublish: () => `${BASE}/management/readiness/strict-publish`,
   managementPortfolioBook: () => `${BASE}/management/portfolio-book`,
   managementPortfolioBookPools: () => `${BASE}/management/portfolio-book/pools`,
   managementPortfolioBookHoldings: () => `${BASE}/management/portfolio-book/holdings`,
@@ -115,6 +123,9 @@ export const paths = {
   managementPersonaLeagueRankings: () => `${BASE}/management/persona-league/rankings`,
   managementPersonaLeagueTiers: () => `${BASE}/management/persona-league/tiers`,
   managementQuarterlyRanking: () => `${BASE}/management/quarterly-ranking`,
+  managementQuarterlyRankingFormula: () => `${BASE}/management/quarterly-ranking/formula`,
+  managementQuarterlyRankingRecommendations: () => `${BASE}/management/quarterly-ranking/recommendations`,
+  managementPerformanceAttribution: () => `${BASE}/management/performance-attribution`,
 
   // ---- Research ----
   researchExperiments: () => `${BASE}/research-experiments`,

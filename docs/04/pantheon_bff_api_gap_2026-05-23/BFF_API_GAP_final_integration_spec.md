@@ -641,9 +641,29 @@ BFF-B2-002 — Owner: Claude2, Reviewer: Codex2
 
 ### Gap
 
-Sprint BFF-2 requires that `execute-plans@main` can consume the capabilities
-feature-flag surface, the research-experiments read surface, and the cross-entity
-search endpoint without falling back to mock data. Prior to this sprint:
+Sprint BFF-2 closed two gaps in this section.
+
+**BFF-B2-003 (Capabilities facade):** The capabilities surface — MCP servers, MCP
+tools, SSE channels, and ranking formulas — was served by generic catch-all handlers.
+Prior to BFF-B2-003:
+
+- `GET /bff/mcp-servers` and `GET /bff/mcp-servers/{id}` were registered only
+  on `sem_final_generic_read_alias`, returning an untyped stub with no source
+  metadata, no proper `data` / `items` / `page_info` structure, and no status
+  filter support.
+- `GET /bff/mcp-tools` and `GET /bff/mcp-tools/{id}` had the same stub-only
+  problem.
+- `GET /bff/channels` and `GET /bff/channels/{id}` were similarly registered on
+  the catch-all with no registry-backed envelope or 404 guard.
+- `GET /bff/ranking-formulas` was catch-all only; `GET /bff/ranking-formulas/{id}`
+  was registered on `sem_final_id_named_read_alias` as a stub.
+- `GET /bff/tools`, `GET /bff/tools/{id}`, and `GET /bff/skills/{id}` had
+  already-dedicated handlers registered above the catch-all block, but dead
+  catch-all decorators for those paths still existed on the generic handlers.
+
+**BFF-B2-004 (Research / Search):** `execute-plans@main` needed to consume the
+research-experiments read surface and the cross-entity search endpoint without
+falling back to mock data. Prior to BFF-B2-004:
 
 - `GET /bff/research-experiments` (list) was only registered on the generic
   `sem_final_generic_read_alias` catch-all handler. It had no dedicated handler,
@@ -662,7 +682,21 @@ search endpoint without falling back to mock data. Prior to this sprint:
 
 **File: `services/control-plane/bff/main.py`**
 
-Two dedicated handlers are added and catch-all dead entries removed:
+**BFF-B2-003** added eight dedicated handlers in a `B2.3 Capabilities facade` block
+and removed dead catch-all decorators:
+
+| # | Method | Path | Handler | Notes |
+|---|---|---|---|---|
+| 1 | GET | `/bff/mcp-servers` | `bff_list_mcp_servers_facade` | status filter; `bff_local_registry` source |
+| 2 | GET | `/bff/mcp-servers/{server_id}` | `bff_get_mcp_server_facade` | 404 on unknown id |
+| 3 | GET | `/bff/mcp-tools` | `bff_list_mcp_tools_facade` | status filter; `bff_local_registry` source |
+| 4 | GET | `/bff/mcp-tools/{tool_id}` | `bff_get_mcp_tool_facade` | 404 on unknown id |
+| 5 | GET | `/bff/channels` | `bff_list_channels` | full SSE_CHANNEL_CATALOG; `bff_local_registry` source |
+| 6 | GET | `/bff/channels/{channel_id}` | `bff_get_channel` | 404 on unknown id |
+| 7 | GET | `/bff/ranking-formulas` | `bff_list_ranking_formulas_facade` | status filter; read_store source |
+| 8 | GET | `/bff/ranking-formulas/{formula_id}` | `bff_get_ranking_formula_facade` | 404 on unknown id |
+
+**BFF-B2-004** added two dedicated GET handlers and formalized search/capabilities:
 
 1. `bff_list_research_experiments` — `GET /bff/research-experiments`: reads
    `_list_bff_experiments()`, applies optional `?status=` and pagination
@@ -674,13 +708,13 @@ Two dedicated handlers are added and catch-all dead entries removed:
 
 Dead catch-all entries removed:
 
-| Handler | Removed decorators |
-|---|---|
-| `sem_final_generic_read_alias` | `/bff/research-experiments` (list) |
-| `sem_final_id_named_read_alias` | `/bff/research-experiments/{id}` |
-| `sem_final_generic_patch_alias` | `/bff/research-experiments/{id}` |
+| Handler | Removed decorators (BFF-B2-003) | Removed decorators (BFF-B2-004) |
+|---|---|---|
+| `sem_final_generic_read_alias` | `/bff/channels`, `/bff/channels/{id}`, `/bff/mcp-servers`, `/bff/mcp-servers/{id}`, `/bff/mcp-tools`, `/bff/mcp-tools/{id}`, `/bff/ranking-formulas`, `/bff/tools`, `/bff/tools/{id}` | `/bff/research-experiments` (list) |
+| `sem_final_id_named_read_alias` | `/bff/ranking-formulas/{id}`, `/bff/skills/{id}` | `/bff/research-experiments/{id}` |
+| `sem_final_generic_patch_alias` | — | `/bff/research-experiments/{id}` (note: PATCH for research-experiments remains in generic handler post-B2-004) |
 
-The 4 endpoints formalised in this section:
+The 4 endpoints formalised by BFF-B2-004 in this section:
 
 | # | Method | Path | Handler | Notes |
 |---|---|---|---|---|
@@ -721,7 +755,43 @@ Query parameters for `/bff/search`: `q` (string, case-insensitive match), `types
 { "data": { "feature_flags": { "executePlansBff": true, "sessionAuthMe": true, ... } }, "meta": { "snapshot_at": "..." } }
 ```
 
+**Response envelopes (BFF-B2-003 list/detail endpoints)**
+
+```json
+{ "data": [...], "items": [...], "page_info": { "next_page_token": null, "total": N }, "meta": { "snapshot_at": "...", "surfaces": { "<surface_key>": { "status": "ok", "source": "bff_local_registry" } } } }
+```
+
+```json
+{ "data": { ...resource fields... }, "meta": { "snapshot_at": "...", "surfaces": { "<surface_key>": { "status": "ok" } } } }
+```
+
+Unknown-id detail requests return HTTP 404 with typed BFF error envelope.
+
 ### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+**BFF-B2-003 (Capabilities facade):**
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated `GET /bff/mcp-servers` returns `data` + `items` + `page_info` + `meta` | Implemented BFF-B2-003 |
+| 2 | `GET /bff/mcp-servers/{id}` for known server returns `data` with server record | Implemented BFF-B2-003 |
+| 3 | `GET /bff/mcp-servers/{id}` for unknown id returns HTTP 404 | Implemented BFF-B2-003 |
+| 4 | Authenticated `GET /bff/mcp-tools` returns `data` + `items` + `page_info` + `meta` | Implemented BFF-B2-003 |
+| 5 | `GET /bff/mcp-tools/{id}` for unknown id returns HTTP 404 | Implemented BFF-B2-003 |
+| 6 | Authenticated `GET /bff/channels` returns all `SSE_CHANNEL_CATALOG` entries with `id`, `channel_id`, and `status` | Implemented BFF-B2-003 |
+| 7 | `GET /bff/channels/{id}` for known channel returns `data` with channel record | Implemented BFF-B2-003 |
+| 8 | `GET /bff/channels/{id}` for unknown id returns HTTP 404 | Implemented BFF-B2-003 |
+| 9 | Authenticated `GET /bff/ranking-formulas` returns `data` + `items` + `page_info` + `meta` | Implemented BFF-B2-003 |
+| 10 | `GET /bff/ranking-formulas/{id}` for known formula returns `data` with formula record | Implemented BFF-B2-003 |
+| 11 | `GET /bff/ranking-formulas/{id}` for unknown id returns HTTP 404 (requires source to be non-missing) | Implemented BFF-B2-003 |
+| 12 | All 8 new endpoints return HTTP 401 when no Authorization header is provided | Implemented BFF-B2-003 |
+| 13 | Dead catch-all decorators for tools, skills, channels, mcp-servers, mcp-tools, ranking-formulas removed | Implemented BFF-B2-003 |
+| 14 | `GET /bff/tools` and `GET /bff/skills` still served by their own dedicated handlers | Implemented BFF-B2-003 |
+| 15 | `pytest services/control-plane/bff/tests/test_bff_b2_003_capabilities.py` passes 23 tests | ✅ verified |
+
+**BFF-B2-004 (Research / Search):**
 
 | # | Criterion | Status |
 |---|---|---|
@@ -733,18 +803,20 @@ Query parameters for `/bff/search`: `q` (string, case-insensitive match), `types
 | 6 | `GET /bff/search?types=strategy` returns only strategy-typed results | Implemented BFF-B2-004 |
 | 7 | Authenticated `GET /bff/capabilities` returns `data.feature_flags` with `executePlansBff` and `sessionAuthMe` keys | Implemented BFF-B2-004 |
 | 8 | All 4 endpoints return HTTP 401 when no Authorization header is provided | Implemented BFF-B2-004 |
-| 9 | Dead catch-all entries removed: `/bff/research-experiments` from `sem_final_generic_read_alias`; `/bff/research-experiments/{id}` from `sem_final_id_named_read_alias` and `sem_final_generic_patch_alias` | Implemented BFF-B2-004 |
+| 9 | Dead catch-all entries removed: `/bff/research-experiments` from `sem_final_generic_read_alias`; `/bff/research-experiments/{id}` from `sem_final_id_named_read_alias` | Implemented BFF-B2-004 |
 | 10 | `pytest services/control-plane/bff/tests/test_bff_b2_004_research_search.py` passes all cases | ✅ verified |
 | 11 | `GET /bff/search?limit=N` is a backward-compatible alias for `?page_size=N` and caps returned items to N | Implemented BFF-B2-004 |
 
 ### Affected Files
 
 - `services/control-plane/bff/main.py`
-- `services/control-plane/bff/tests/test_bff_b2_004_research_search.py` (new)
+- `services/control-plane/bff/tests/test_bff_b2_003_capabilities.py` (new, BFF-B2-003)
+- `services/control-plane/bff/tests/test_bff_b2_004_research_search.py` (new, BFF-B2-004)
 - `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
 
 ### Task
 
+BFF-B2-003 — Owner: Claude, Reviewer: Codex2
 BFF-B2-004 — Owner: Claude2, Reviewer: Codex2
 
 ---
@@ -977,7 +1049,150 @@ Added the `managementQuarterlyRanking()` path builder resolving to
 
 ### Task
 
+BFF-PM12-008 — Owner: Codex2, Reviewer: Claude2
+
+---
+
+### PM-12 Quarterly Ranking Recommendations
+
+`GET /bff/management/quarterly-ranking/recommendations?quarter=YYYY-Qn`
+composes PM-12 governance recommendations from the quarterly ranking result.
+It is a read-only advisory aggregate: it never writes capital, personas, runtime
+bindings, or approvals directly.
+
+**File: `services/control-plane/bff/main.py`**
+
+The route accepts `quarter`, `state`, `archetype`, `q`, `page_token`, and
+`page_size`. Quarter parsing and invalid-quarter behavior match
+`GET /bff/management/quarterly-ranking`.
+
+Each recommendation carries a policy-safe action id from the B3.5 allow-list:
+
+```text
+promote_to_canary_candidate, increase_research_budget, grant_tool_access,
+reduce_capital_access, require_retraining, freeze_persona,
+suspend_persona, retire_persona
+```
+
+Every item sets `recommendationType=governance_advisory`,
+`requiresHumanGateDecision=true`, and `liveCapitalMutation=false`. Governance
+destinations are Human Inbox, Governance Queue, and HumanGateDecision; the route
+only exposes those destinations as routing metadata and does not enqueue or
+decide anything by itself.
+
+The response includes top-level `items` / `recommendations`,
+`data.recommendations`, `quarterWindow`, `formula`, `evidenceRefs`, `summary`,
+`page_info`, and `meta.surfaces.quarterly_ranking_recommendations`.
+
+The route advertises strict live composition sources:
+
+- `GET /bff/management/quarterly-ranking`
+- `GET /bff/management/persona-league`
+- `GET /bff/management/persona-league/rankings`
+- `GET /bff/management/persona-league/tiers`
+- `GET /api/v1/knowledge/evidence`
+- `GET /bff/management/human-inbox`
+- `GET /api/v1/operator/governance/approval-queue`
+
+**File: `execute-plans/src/lib/bff-v1/management.ts`**
+
+Added typed query/response contracts plus:
+
+- `managementQuarterlyRankingRecommendationsPath()`
+- `fetchManagementQuarterlyRankingRecommendations()`
+
+**File: `execute-plans/src/lib/bff-v1/paths.ts`**
+
+Added the `managementQuarterlyRankingRecommendations()` path builder resolving
+to `/bff/management/quarterly-ranking/recommendations`.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated `GET /bff/management/quarterly-ranking/recommendations` returns advisory recommendations, formula, quarter window, evidence refs, summary, page info, and source metadata | Implemented BFF-PM12-008 |
+| 2 | Recommendations only use B3.5 governance action ids and mark `liveCapitalMutation=false` | Implemented BFF-PM12-008 |
+| 3 | `quarter=YYYY-Qn` parsing and HTTP 422 invalid-quarter behavior match quarterly ranking | Implemented BFF-PM12-008 |
+| 4 | Missing auth returns HTTP 401 | Implemented BFF-PM12-008 |
+| 5 | Route is registered in the execute-plans final live wiring route inventory | Implemented BFF-PM12-008 |
+| 6 | execute-plans exposes typed path and fetch helpers for quarterly ranking recommendations | Implemented BFF-PM12-008 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_pm12_persona_league.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
 BFF-PM12-006 — Owner: Codex2, Reviewer: Claude2
+
+---
+
+### PM-12 Quarterly Ranking Formula
+
+`GET /bff/management/quarterly-ranking/formula` exposes the PM-12 quarterly
+ranking formula as a read-only Management aggregate. It is the standalone source
+for formula weights, current version, component metadata, and version governance
+traceability used by the quarterly ranking response.
+
+**File: `services/control-plane/bff/main.py`**
+
+The route returns top-level `data` / `formula`, `versionHistory`,
+`evidenceRefs`, `summary`, and `meta`. The `data` payload is the same formula
+shape embedded in `GET /bff/management/quarterly-ranking`, including:
+
+- `weights` and `components` for `pnl`, `risk`, `execution`, and `activity`;
+- `formulaVersion` / `formula_version`;
+- `basis` and `policy`;
+- `changeControl` / `change_control` stating that formula version changes
+  require governance evidence;
+- `governanceEvidenceRefs` / `governance_evidence_refs` and version-history
+  entries that link the current version back to the PM-12 integration spec.
+
+The route advertises strict live composition sources:
+
+- `GET /bff/management/persona-league/rankings`
+- `GET /api/v1/knowledge/evidence`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#b34-pm-12-composition-sources`
+
+**File: `execute-plans/src/lib/bff-v1/management.ts`**
+
+Added typed response contracts plus:
+
+- `managementQuarterlyRankingFormulaPath()`
+- `fetchManagementQuarterlyRankingFormula()`
+
+**File: `execute-plans/src/lib/bff-v1/paths.ts`**
+
+Added the `managementQuarterlyRankingFormula()` path builder resolving to
+`/bff/management/quarterly-ranking/formula`.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated `GET /bff/management/quarterly-ranking/formula` returns formula weights and version | Implemented BFF-PM12-007 |
+| 2 | Formula version history and change-control fields trace version increments to governance evidence | Implemented BFF-PM12-007 |
+| 3 | Missing auth returns HTTP 401 | Implemented BFF-PM12-007 |
+| 4 | Route is registered in the execute-plans final live wiring route inventory | Implemented BFF-PM12-007 |
+| 5 | execute-plans exposes typed path and fetch helper for quarterly ranking formula | Implemented BFF-PM12-007 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_pm12_persona_league.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-PM12-007 — Owner: Codex2, Reviewer: Claude2
 
 ---
 
@@ -1065,6 +1280,97 @@ Added `ManagementPortfolioBookHolding`,
 ### Task
 
 BFF-PM12-002 — Owner: Codex2, Reviewer: Claude2
+
+---
+
+### PM-12 Performance Attribution
+
+`GET /bff/management/performance-attribution?dimension=&period=` is the PM-12
+performance attribution table. It is a read-only BFF composition route and does
+not create a new performance source of truth.
+
+**File: `services/control-plane/bff/main.py`**
+
+The route composes attribution facts from existing read surfaces:
+
+- runtime bindings as the runtime anchor;
+- telemetry summaries for PnL, drawdown, fill rate, slippage, trade count, and
+  position snapshots;
+- deployment plans for strategy/deployment context;
+- persona-capital bindings for persona and capital-pool ownership;
+- capital pools, personas, and strategy specs for table labels and drilldown
+  links.
+
+The route accepts `dimension`, `period`, `page_token`, and `page_size`.
+`dimension` may be omitted, `all`, or a comma-separated subset of:
+
+```text
+persona, strategy, pool, asset, broker, runtime, regime
+```
+
+The response uses the standard aggregate envelope:
+
+```json
+{
+  "data": {
+    "period": "latest",
+    "dimensions": [],
+    "items": [],
+    "rows": [],
+    "summary": {}
+  },
+  "items": [],
+  "rows": [],
+  "summary": {},
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 50 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": []
+  }
+}
+```
+
+Each row includes `dimension`, `dimensionKey` / `dimension_key`, `label`,
+`rank`, `period`, top-level PnL contribution fields, nested `metrics`,
+`sourceRefs` / `source_refs`, and drilldown `links` when the dimension maps to a
+BFF entity route. Missing telemetry degrades the attribution surface while still
+emitting runtime-level rows so strict live rendering can show source gaps.
+
+**File: `execute-plans/src/lib/bff-v1/paths.ts`**
+
+Added `managementPerformanceAttribution()` resolving to
+`/bff/management/performance-attribution`.
+
+**File: `execute-plans/src/lib/bff-v1/management.ts`**
+
+Added `ManagementPerformanceAttribution*` query/row/summary/response contracts,
+`managementPerformanceAttributionPath()`, and
+`fetchManagementPerformanceAttribution()`.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated `GET /bff/management/performance-attribution` accepts `dimension` and `period` query parameters | Implemented BFF-PM12-009 |
+| 2 | Rows support attribution by persona, strategy, pool, asset, broker, runtime, and regime | Implemented BFF-PM12-009 |
+| 3 | Response advertises source surfaces and composition sources for strict live rendering | Implemented BFF-PM12-009 |
+| 4 | Missing auth returns HTTP 401 and invalid dimensions return HTTP 422 | Implemented BFF-PM12-009 |
+| 5 | Route is registered in OpenAPI and execute-plans final live wiring route inventory | Implemented BFF-PM12-009 |
+| 6 | execute-plans exposes typed path and fetch helpers for the Performance Attribution table | Implemented BFF-PM12-009 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-PM12-009 — Owner: Codex2, Reviewer: Claude2
 
 ---
 
@@ -1367,6 +1673,59 @@ BFF-B3-006 — Owner: Codex, Reviewer: Claude
 
 ---
 
+### B3-010..014 Readiness Aggregates
+
+**File: `services/control-plane/bff/main.py`**
+
+- Add read-only Management readiness routes:
+  - `GET /bff/management/readiness/ep5`
+  - `GET /bff/management/readiness/broker-live`
+  - `GET /bff/management/readiness/capital-binding-live`
+  - `GET /bff/management/readiness/bff-ha`
+  - `GET /bff/management/readiness/strict-publish`
+- Require the existing BFF read-role authentication gate; anonymous requests
+  return the typed BFF 401 envelope.
+- Return a consistent readiness envelope with `data`, `summary`, `checks`,
+  `evidence_refs`, and `meta.surfaces`.
+- Preserve fail-closed truth: broker live, capital binding live, production BFF
+  HA, and strict publish must not be reported as proceedable while their current
+  gates/evidence remain blocked.
+
+**Files: `execute-plans/src/lib/bff-v1/paths.ts`,
+`execute-plans/src/lib/bff-v1/management.ts`, and
+`execute-plans/src/lib/bff/client.ts`**
+
+- Add canonical paths and typed response contracts for the five readiness
+  aggregates.
+- Add strict/hybrid Management client adapters for the five readiness reads.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated readiness routes return `data`, `summary`, `checks`, `evidence_refs`, and `meta.surfaces.management_readiness_*` | ✅ test added in BFF-B3-008 |
+| 2 | Broker live readiness reports live broker execution fail-closed and no real-capital/order side effects | ✅ test added in BFF-B3-008 |
+| 3 | Strict publish readiness exposes the current forbidden-path scan blocker from the audit packet | ✅ test added in BFF-B3-008 |
+| 4 | Anonymous readiness requests return HTTP 401 typed BFF error envelope | ✅ test added in BFF-B3-008 |
+| 5 | Execute-plans exposes the five readiness paths, response contract, fetch helpers, and strict/hybrid client adapter | ✅ implemented in BFF-B3-008 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_b3_readiness.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/src/lib/bff/client.ts`
+- `execute-plans/src/lib/bff/__tests__/client.test.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B3-008 — Owner: Codex, Reviewer: Claude
+
+---
+
 ## B4 — P1 v5 Closed-Loop OS APIs {#b4--p1-v5-closed-loop-os-apis}
 
 ### Gap
@@ -1517,6 +1876,72 @@ existence validation.
 ### Task
 
 BFF-B1-012 — Owner: Claude, Reviewer: Codex
+
+---
+
+## B5 — P15 / P2 HumanGate Write APIs {#b5--p15--p2-humangate-write-apis}
+
+### Gap
+
+The Management Human Inbox and PM-12 quarterly ranking recommendations exposed
+read-side HumanGate work, but the write intents were not first-class final
+commands. Frontend flows could inspect approvals, interventions, and quarterly
+recommendations, yet lacked canonical command names for approve/reject,
+request-more-evidence, revoke, TTL extension, and recommendation submission.
+
+### Fix
+
+**File: `services/control-plane/bff/models.py`**
+
+- Added final command enum values:
+  `HumanGateApprove`, `HumanGateReject`,
+  `HumanGateRequestMoreEvidence`, `HumanGateRevoke`,
+  `HumanGateExtendTtl`, and `QuarterlyRankingRecommendationSubmit`.
+- Added `HumanGateItem` as the command target object type.
+
+**File: `services/control-plane/bff/main.py`**
+
+- Normalizes HumanGate commands submitted to `POST /bff/v1/commands` so
+  `target.id` becomes `human_gate_item_id` / `itemId`, infers `source_type`
+  from `approval:` or `intervention:` item ids, and records
+  `human_gate.{decision}` audit events.
+- Validates HumanGate target type, role gates, bounded decisions, and positive
+  TTL for `HumanGateExtendTtl`.
+- Normalizes `QuarterlyRankingRecommendationSubmit` so the recommendation id,
+  recommendation action id, command action, and audit event are persisted in the
+  command-store params while preserving `liveCapitalSideEffects=false` in the
+  standard `CommandResponse<T>` envelope.
+
+**Files: `services/control-plane/bff/action_catalog.py` and
+`services/control-plane/bff/command_executor.py`**
+
+- Registers all B5 command names in the action catalog with
+  `/bff/v1/commands` as the endpoint.
+- Routes B5 commands through the adapter-only executor path so they are admitted
+  and auditable without direct live capital mutation.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `POST /bff/v1/commands` admits `HumanGateApprove`, `HumanGateReject`, `HumanGateRequestMoreEvidence`, `HumanGateRevoke`, `HumanGateExtendTtl`, and `QuarterlyRankingRecommendationSubmit` | Implemented BFF-B5-001 |
+| 2 | Each command returns the standard `CommandResponse<T>` with command id, tracking URL, receipt dual-write data, and durable idempotency metadata | Implemented BFF-B5-001 |
+| 3 | Human Inbox decision flow can approve, reject, and request more evidence by using the composed inbox item id as a `HumanGateItem` target | Implemented BFF-B5-001 |
+| 4 | Quarterly ranking recommendation submission records governance intent and remains `liveCapitalSideEffects=false` / no direct live capital mutation | Implemented BFF-B5-001 |
+| 5 | B5 command names are present in the action catalog and command executor dispatch table | Implemented BFF-B5-001 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/models.py`
+- `services/control-plane/bff/action_catalog.py`
+- `services/control-plane/bff/command_executor.py`
+- `services/control-plane/bff/tests/test_bff_b5_humangate_commands.py`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B5-001 — Owner: Codex, Reviewer: Claude
 
 ---
 
@@ -1697,6 +2122,65 @@ BFF-B3-002 — Owner: Codex, Reviewer: Claude
 
 BFF-B3-003 — Owner: Codex, Reviewer: Claude
 
+### B3-005/B3-006 GET `/bff/management/trading-pulse`
+
+**File: `services/control-plane/bff/main.py`**
+
+- Add `GET /bff/management/trading-pulse` as a read-only Management aggregate.
+- Add `GET /bff/management/trading-pulse/rankings` for computed ranking blocks.
+- Require the existing BFF read-role authentication gate; anonymous requests
+  return the typed BFF 401 envelope.
+- Compose Trading Pulse from:
+  - runtime bindings and deployment stage/status;
+  - telemetry summaries for P&L, drawdown, Sharpe, fill rate, slippage, and
+    trade count;
+  - rollback summaries linked to each runtime;
+  - paper/live drift reports as the paper baseline vs observed-state
+    comparison for each runtime;
+  - computed ranking rows and ranking blocks.
+- Return the standard BFF aggregate envelope with `data`, `items`, `summary`,
+  `page_info`, `baselineComparisons` / `baseline_comparisons`, and
+  `meta.surfaces`.
+- Preserve source surfaces in metadata (`runtime_roster`, `telemetry_summary`)
+  and `paper_live_drift`) plus composed `baseline_comparison`,
+  `management_trading_pulse`, and `management_trading_pulse_rankings` surfaces.
+
+**Files: `execute-plans/src/lib/bff-v1/paths.ts`,
+`execute-plans/src/lib/bff-v1/management.ts`, and
+`execute-plans/src/lib/bff/client.ts`**
+
+- Add canonical `/bff/management/trading-pulse` and
+  `/bff/management/trading-pulse/rankings` paths.
+- Export Trading Pulse response, summary, card, runtime row, ranking item,
+  ranking block, query, path, and fetch helper types.
+- Add `managementClient.tradingPulse.list()` and
+  `managementClient.tradingPulse.rankings()` using the same strict/hybrid live
+  transport policy as the other Management aggregate reads.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `GET /bff/management/trading-pulse` returns card summary, runtime rows, runtime rankings, and baseline comparisons composed from runtime bindings, telemetry summaries, and paper/live drift reports | ✅ test added in BFF-B3-004 |
+| 2 | Response includes `data`, `items`, `cards`, `rankings`, `baselineComparisons`, `baseline_comparisons`, `summary`, `page_info`, `meta.surfaces.management_trading_pulse`, and `meta.surfaces.baseline_comparison` | ✅ test added in BFF-B3-004 |
+| 3 | `GET /bff/management/trading-pulse/rankings?limit=` returns computed ranking blocks with bounded limit support | ✅ test added in BFF-B3-004 |
+| 4 | Anonymous requests return HTTP 401 typed BFF error envelope | ✅ test added in BFF-B3-004 |
+| 5 | Frontend path/client contract exposes the live aggregate, baseline comparison fields, and rankings route without seed-list fanout | ✅ implemented in BFF-B3-004 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_b3_trading_pulse.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/src/lib/bff/client.ts`
+- `execute-plans/src/lib/bff/__tests__/client.test.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B3-004 — Owner: Codex, Reviewer: Codex2
+
 ### B3-007 GET `/bff/management/evolution-journal`
 
 **File: `services/control-plane/bff/main.py`**
@@ -1752,3 +2236,60 @@ BFF-B3-003 — Owner: Codex, Reviewer: Claude
 ### Task
 
 BFF-B3-005 — Owner: Codex, Reviewer: Claude
+
+### B3-009 GET `/bff/management/persona-intent`
+
+**File: `services/control-plane/bff/main.py`**
+
+- Add `GET /bff/management/persona-intent` as a read-only Management aggregate.
+- Require the existing BFF read-role authentication gate; anonymous requests
+  return the typed BFF 401 envelope.
+- Compose redacted intent rows from:
+  - persona session trace summaries;
+  - trainer / teaching session summaries;
+  - Agora session summaries.
+- Return the standard BFF aggregate envelope: `data`, `items`, `summary`,
+  `page_info`, and `meta.surfaces`.
+- Support `source_type`, `persona_id`, `status`, `intent`, `page_token`, and
+  bounded `page_size` filters.
+- Preserve source surfaces in metadata (`persona_traces`, `persona_sessions`,
+  `capability_snapshots`, `teaching_sessions`, `agora_sessions`) plus a
+  composed `management_persona_intent` surface.
+- Redact raw transcripts, message bodies, tool lists, and capability internals;
+  expose only safe counts, IDs, timestamps, status, and summary fields.
+
+**Files: `execute-plans/src/lib/bff-v1/paths.ts`,
+`execute-plans/src/lib/bff-v1/management.ts`, and
+`execute-plans/src/lib/bff/client.ts`**
+
+- Add the canonical `/bff/management/persona-intent` path.
+- Export Persona Intent query, item, summary, response, path, and fetch helper
+  types.
+- Add `managementClient.personaIntent.list()` using the same strict/hybrid
+  live transport policy as the other Management aggregate reads.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `GET /bff/management/persona-intent` returns rows composed from persona traces, trainer sessions, and Agora sessions | ✅ test added in BFF-B3-007 |
+| 2 | Response includes `data`, `items`, `summary`, `page_info`, and `meta.surfaces.management_persona_intent` | ✅ test added in BFF-B3-007 |
+| 3 | `source_type`, `persona_id`, `status`, `intent`, and pagination filters are accepted by the backend route | ✅ test added in BFF-B3-007 |
+| 4 | Raw message bodies, transcript content, tool lists, and capability internals are redacted from aggregate rows | ✅ test added in BFF-B3-007 |
+| 5 | Anonymous request returns HTTP 401 typed BFF error envelope | ✅ test added in BFF-B3-007 |
+| 6 | Frontend path/client contract exposes the live aggregate route without seed-list fanout | ✅ test added in BFF-B3-007 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_b3_persona_intent.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/src/lib/bff/client.ts`
+- `execute-plans/src/lib/bff/__tests__/client.test.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B3-007 — Owner: Codex, Reviewer: Claude
