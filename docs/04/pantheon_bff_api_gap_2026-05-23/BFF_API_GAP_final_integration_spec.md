@@ -208,3 +208,63 @@ Lovable-hosted frontend deployments:
 ### Task
 
 BFF-B1-001 — Owner: Claude, Reviewer: Codex
+
+---
+
+## §16 PATCH /bff/me/locale — Operator Locale Preference
+
+### Gap
+
+The BFF session surface had no write path for the operator locale preference.
+Clients that needed to persist a locale choice had to resubmit `X-Locale` on
+every request; there was no way to store the preference server-side in the
+session and have it reflected back on subsequent `GET /bff/me` calls.
+
+### Fix
+
+**File: `services/control-plane/bff/main.py`**
+
+The `PATCH /bff/me/locale` endpoint was added with the following behaviour:
+
+- Requires a valid Bearer token with at least the `operator` role (same gate as
+  all BFF session mutation endpoints via `_require_read_role`).
+- Accepts `{"locale": "<BCP-47-ish tag>"}` in the request body.
+- Validates the submitted value through `_normalize_locale`; returns HTTP 400
+  `INVALID_PARAMS` when the value is absent, empty, or fails the BCP-47-ish
+  regex (`[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*`).
+- Normalises the tag (lowercase language, uppercase 2-char region, title-cased
+  4-char script).
+- Persists the normalised value in the session store via
+  `session_lifecycle_store.upsert_session` so subsequent `GET /bff/me` calls
+  reflect `locale.source = "session"`.
+- Returns the full `_sem_session_current_response` envelope with
+  `data.operation.type = "update_locale"`, `data.locale.resolved` set to the
+  submitted value, and `data.locale.source = "session"`.
+
+No changes were made to `execute-plans` paths; the frontend can call this
+endpoint after the user changes their locale in the UI to make the preference
+durable across page loads.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated `PATCH /bff/me/locale` with a valid BCP-47 tag returns HTTP 200 with `data.locale.resolved` equal to the submitted tag | ✅ test added |
+| 2 | Response `data.locale.source` is `"session"` | ✅ test added |
+| 3 | Response `data.operation.type` is `"update_locale"` | ✅ test added |
+| 4 | Locale tag is normalised (e.g. `ZH-tw` → `zh-TW`) | ✅ test added |
+| 5 | A subsequent `GET /bff/me` from the same session reflects the persisted locale | ✅ test added |
+| 6 | Anonymous `PATCH /bff/me/locale` returns HTTP 401 | ✅ test added |
+| 7 | Missing `locale` field returns HTTP 400 `INVALID_PARAMS` with `precondition_failed: "locale"` | ✅ test added |
+| 8 | Invalid locale tag (e.g. single-char sub-tag `not-a`) returns HTTP 400 `INVALID_PARAMS` | ✅ test added |
+| 9 | `pytest services/control-plane/bff/tests/test_bff_me_locale.py` passes 6 tests | ✅ verified |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_me_locale.py`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B1-004 — Owner: Claude, Reviewer: Codex
