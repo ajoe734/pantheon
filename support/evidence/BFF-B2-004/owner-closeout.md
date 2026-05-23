@@ -36,6 +36,18 @@ pytest services/control-plane/bff/tests/test_bff_b2_004_research_search.py servi
 53 passed, 3 warnings in 13.22s
 ```
 
+Follow-up dev sync by Codex2 (2026-05-23T11:55:00Z):
+
+- Merged `origin/dev` at `05b011ff`; incoming changes were BFF-B2-006 closeout
+  artifacts only.
+- Merge sync commit: `f8574215`.
+- Validation:
+
+```
+pytest services/control-plane/bff/tests/test_bff_b2_004_research_search.py -q
+17 passed in 4.58s
+```
+
 ## Delivered Endpoints
 
 | # | Method | Path | Handler |
