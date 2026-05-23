@@ -49,6 +49,7 @@ import type {
   ManagementPersonaIntentItem,
   ManagementPersonaIntentQuery,
   ManagementPersonaIntentResponse,
+  ManagementReadinessResponse,
 } from "@/lib/bff-v1/management";
 import type {
   Strategy,
@@ -405,6 +406,57 @@ function emptyManagementEvidenceAggregate(): ManagementEvidenceResponse {
   };
 }
 
+function emptyManagementReadinessAggregate(id: string): ManagementReadinessResponse {
+  const surfaceKey = `management_readiness_${id.replace(/-/g, "_")}`;
+  return {
+    data: {
+      id,
+      readinessId: id,
+      readiness_id: id,
+      title: id,
+      readinessStatus: "unknown",
+      readiness_status: "unknown",
+      canProceed: false,
+      can_proceed: false,
+      blockingReasons: ["mock_unavailable"],
+      blocking_reasons: ["mock_unavailable"],
+      checks: [],
+      evidenceRefs: [],
+      evidence_refs: [],
+      links: {},
+      details: {},
+    },
+    summary: {
+      readinessStatus: "unknown",
+      readiness_status: "unknown",
+      canProceed: false,
+      can_proceed: false,
+      checkCount: 0,
+      check_count: 0,
+      passedCheckCount: 0,
+      passed_check_count: 0,
+      blockingReasonCount: 1,
+      blocking_reason_count: 1,
+      blockingReasons: ["mock_unavailable"],
+      blocking_reasons: ["mock_unavailable"],
+      byStatus: {},
+      by_status: {},
+    },
+    checks: [],
+    items: [],
+    evidence_refs: [],
+    meta: {
+      surfaces: {
+        [surfaceKey]: {
+          status: "unavailable",
+          source: "mock",
+          reason: "Management readiness aggregates are served only by the Pantheon BFF.",
+        },
+      },
+    },
+  };
+}
+
 function emptyManagementEvolutionJournalAggregate(): ManagementEvolutionJournalResponse {
   return {
     data: [],
@@ -618,6 +670,74 @@ function adaptManagementEvidenceAggregate(body: unknown): ManagementEvidenceResp
     },
     pagination: pagination as ManagementEvidenceResponse["pagination"],
     meta: meta as ManagementEvidenceResponse["meta"],
+  };
+}
+
+function adaptManagementReadinessAggregate(body: unknown, fallbackId: string): ManagementReadinessResponse {
+  const envelope = asObject(body);
+  const rawData = asObject(envelope.data);
+  const rawChecks = Array.isArray(envelope.checks)
+    ? envelope.checks
+    : Array.isArray(rawData.checks)
+      ? rawData.checks
+      : [];
+  const checks = rawChecks.filter((item) => item && typeof item === "object") as ManagementReadinessResponse["checks"];
+  const rawEvidenceRefs = Array.isArray(envelope.evidence_refs)
+    ? envelope.evidence_refs
+    : Array.isArray(rawData.evidence_refs)
+      ? rawData.evidence_refs
+      : Array.isArray(rawData.evidenceRefs)
+        ? rawData.evidenceRefs
+        : [];
+  const evidenceRefs = rawEvidenceRefs.filter((item) => item && typeof item === "object") as ManagementReadinessResponse["evidence_refs"];
+  const summary = asObject(envelope.summary);
+  const readinessStatus = String(
+    summary.readinessStatus ?? summary.readiness_status ?? rawData.readinessStatus ?? rawData.readiness_status ?? "unknown",
+  );
+  const canProceed = Boolean(summary.canProceed ?? summary.can_proceed ?? rawData.canProceed ?? rawData.can_proceed);
+  const blockingReasons = Array.isArray(summary.blockingReasons)
+    ? summary.blockingReasons.map(String)
+    : Array.isArray(summary.blocking_reasons)
+      ? summary.blocking_reasons.map(String)
+      : [];
+  const data = {
+    ...rawData,
+    id: String(rawData.id ?? fallbackId),
+    readinessId: String(rawData.readinessId ?? rawData.readiness_id ?? rawData.id ?? fallbackId),
+    readiness_id: String(rawData.readiness_id ?? rawData.readinessId ?? rawData.id ?? fallbackId),
+    title: String(rawData.title ?? fallbackId),
+    readinessStatus,
+    readiness_status: readinessStatus,
+    canProceed,
+    can_proceed: canProceed,
+    blockingReasons,
+    blocking_reasons: blockingReasons,
+    checks,
+    evidenceRefs,
+    evidence_refs: evidenceRefs,
+  } as ManagementReadinessResponse["data"];
+  return {
+    data,
+    summary: {
+      readinessStatus,
+      readiness_status: readinessStatus,
+      canProceed,
+      can_proceed: canProceed,
+      checkCount: Number(summary.checkCount ?? summary.check_count ?? checks.length),
+      check_count: Number(summary.check_count ?? summary.checkCount ?? checks.length),
+      passedCheckCount: Number(summary.passedCheckCount ?? summary.passed_check_count ?? 0),
+      passed_check_count: Number(summary.passed_check_count ?? summary.passedCheckCount ?? 0),
+      blockingReasonCount: Number(summary.blockingReasonCount ?? summary.blocking_reason_count ?? blockingReasons.length),
+      blocking_reason_count: Number(summary.blocking_reason_count ?? summary.blockingReasonCount ?? blockingReasons.length),
+      blockingReasons,
+      blocking_reasons: blockingReasons,
+      byStatus: asObject(summary.byStatus ?? summary.by_status) as Record<string, number>,
+      by_status: asObject(summary.by_status ?? summary.byStatus) as Record<string, number>,
+    },
+    checks,
+    items: checks,
+    evidence_refs: evidenceRefs,
+    meta: asObject(envelope.meta) as ManagementReadinessResponse["meta"],
   };
 }
 
@@ -1048,6 +1168,54 @@ const evidenceExplorer = {
     ),
 };
 
+const readiness = {
+  ep5: (): Promise<ManagementReadinessResponse> =>
+    withStrictLiveOrMock<ManagementReadinessResponse, unknown>(
+      {
+        method: "GET",
+        path: paths.managementReadinessEp5(),
+      },
+      async () => emptyManagementReadinessAggregate("ep5"),
+      (body) => adaptManagementReadinessAggregate(body, "ep5"),
+    ),
+  brokerLive: (): Promise<ManagementReadinessResponse> =>
+    withStrictLiveOrMock<ManagementReadinessResponse, unknown>(
+      {
+        method: "GET",
+        path: paths.managementReadinessBrokerLive(),
+      },
+      async () => emptyManagementReadinessAggregate("broker-live"),
+      (body) => adaptManagementReadinessAggregate(body, "broker-live"),
+    ),
+  capitalBindingLive: (): Promise<ManagementReadinessResponse> =>
+    withStrictLiveOrMock<ManagementReadinessResponse, unknown>(
+      {
+        method: "GET",
+        path: paths.managementReadinessCapitalBindingLive(),
+      },
+      async () => emptyManagementReadinessAggregate("capital-binding-live"),
+      (body) => adaptManagementReadinessAggregate(body, "capital-binding-live"),
+    ),
+  bffHa: (): Promise<ManagementReadinessResponse> =>
+    withStrictLiveOrMock<ManagementReadinessResponse, unknown>(
+      {
+        method: "GET",
+        path: paths.managementReadinessBffHa(),
+      },
+      async () => emptyManagementReadinessAggregate("bff-ha"),
+      (body) => adaptManagementReadinessAggregate(body, "bff-ha"),
+    ),
+  strictPublish: (): Promise<ManagementReadinessResponse> =>
+    withStrictLiveOrMock<ManagementReadinessResponse, unknown>(
+      {
+        method: "GET",
+        path: paths.managementReadinessStrictPublish(),
+      },
+      async () => emptyManagementReadinessAggregate("strict-publish"),
+      (body) => adaptManagementReadinessAggregate(body, "strict-publish"),
+    ),
+};
+
 const evolutionJournal = {
   list: (query?: ManagementEvolutionJournalQuery): Promise<ManagementEvolutionJournalResponse> =>
     withStrictLiveOrMock<ManagementEvolutionJournalResponse, unknown>(
@@ -1104,6 +1272,7 @@ export const managementClient = {
   personaFleet,
   humanInbox,
   evidenceExplorer,
+  readiness,
   evolutionJournal,
   personaIntent,
 } as const;
