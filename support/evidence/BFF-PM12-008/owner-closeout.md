@@ -10,7 +10,7 @@ Date: 2026-05-23
 
 Confirmed the approved PM-12 quarterly ranking recommendations surface is
 present in the current worktree after refreshing the task branch to
-`origin/dev` at `de1a1701010aa93f794fcf6b947ad364030fa850`.
+`origin/dev` at `cc29749e3c1d5770de532a3136cfc4e54d1503cf`.
 
 - `GET /bff/management/quarterly-ranking/recommendations` is registered in
   `services/control-plane/bff/main.py` and requires BFF read-role auth.
@@ -65,7 +65,9 @@ Results:
 
 - BFF main module and focused PM-12 test modules compiled cleanly.
 - PM-12 persona-league / quarterly-ranking regression tests plus final live
-  wiring contract tests: 16 passed in 7.15s.
+  wiring contract tests: 16 passed in 7.15s before the first closeout push,
+  then 16 passed in 7.34s after refreshing the branch for PR #482's BEHIND
+  state.
 - The pytest run emitted 3 existing `datetime.utcnow()` deprecation warnings
   from `services/control-plane/bff/read_store.py`.
 - GitHub PR #473 is merged into `dev`; visible Branch CI Gate and Orchestrator
@@ -73,11 +75,16 @@ Results:
 
 ## Publication Refresh
 
-The task branch was fast-forwarded to current `origin/dev` before this owner
-closeout commit so the closeout PR composes with later BFF work already merged
-after PR #473.
+The task branch was fast-forwarded to current `origin/dev` before the first
+owner closeout commit so the closeout PR composes with later BFF work already
+merged after PR #473. PR #482 then reported `BEHIND` after `dev` advanced
+again, so the task branch was refreshed with a non-interactive
+`origin/dev` merge and this file was updated so the branch tip remains a
+BFF-PM12-008 owner commit with the required Codex2 closeout trailers.
 
-- Refreshed dev head: `de1a1701010aa93f794fcf6b947ad364030fa850`
+- First refreshed dev head: `de1a1701010aa93f794fcf6b947ad364030fa850`
+- Second refreshed dev head: `cc29749e3c1d5770de532a3136cfc4e54d1503cf`
+- Dev refresh merge commit: `ce1fcd024b6718e961091b00d2b90cba04bb668f`
 - Implementation PR merge commit remains an ancestor of `origin/dev`.
 - This file records the owner finalization evidence; it does not alter runtime
   behavior or the API contract.
