@@ -15,6 +15,8 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import json
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -101,6 +103,9 @@ def test_high_risk_questions_return_typed_403(
             assert details["matched_pattern"] == expected_pattern
             assert isinstance(details["safe_alternatives"], str)
             assert details["safe_alternatives"]
+            assert details["followups"][0]["route"] == "/bff/management/human-inbox"
+            assert isinstance(details["audit_id"], str)
+            assert details["audit_id"]
         finally:
             bff_main.read_store = original_store
             bff_main._MGMT_NL_IDEMPOTENCY.clear()
@@ -155,6 +160,15 @@ def test_refusal_does_not_create_session_idempotency_record_or_sse(monkeypatch) 
             assert store.get_agora_session(session_id) is None
             assert bff_main._MGMT_NL_IDEMPOTENCY == {}
             assert list(bff_main._sse_buffers["ask"]) == []
+
+            data = json.loads(Path(td, "read_surfaces.json").read_text(encoding="utf-8"))
+            audits = data.get("agora_audit_events") or {}
+            assert len(audits) == 1
+            audit = next(iter(audits.values()))
+            assert audit["action"] == "management.nl.high_risk_refused"
+            assert audit["reason"] == "high_risk_nl_policy"
+            assert audit["matchedCategory"] == "runtime_control"
+            assert audit["matchedPattern"] == "stop runtime"
         finally:
             monkeypatch.setattr(bff_main, "_mgmt_nl_collect_context", original_collect)
             bff_main.read_store = original_store

@@ -2408,8 +2408,13 @@ structured policy response before any synthesis or surface-query occurs.
   - `details.matched_pattern`: a representative matched term from the question
   - `details.safe_alternatives`: a short guidance string directing the operator
     to the appropriate mutation endpoint instead of the NL surface
+  - `details.refused`: `true`
+  - `details.followups`: includes a Human Inbox route for operator follow-up
+  - `details.audit_id`: the audit event ID for the recorded refusal
 - The check must be case-insensitive and applied against the stripped question
   text before any other processing in `bff_management_nl_ask`.
+- Record an `agora_audit_event` with `reason=high_risk_nl_policy`, matched
+  category, and matched pattern so refusal decisions remain auditable.
 - The refusal must not store an idempotency record, must not create or append to
   an `agora_session`, and must not emit an SSE event.
 
@@ -2424,6 +2429,7 @@ structured policy response before any synthesis or surface-query occurs.
 | 5 | A question asking to stop or restart a runtime returns HTTP 403 with `matched_category=runtime_control` | ✅ test added |
 | 6 | A read-only question (e.g. "What is the current PnL?") is not refused and returns HTTP 202 as before | ✅ test added |
 | 7 | The refused response does not create an `agora_session` record and does not emit an SSE event | ✅ test added |
+| 8 | The refused response includes `refused=true`, Human Inbox follow-up metadata, and an audit record with refusal reason | ✅ test added |
 
 ### Affected Files
 

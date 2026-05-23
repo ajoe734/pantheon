@@ -23467,6 +23467,14 @@ _MGMT_NL_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 
 _MGMT_NL_VALID_FOCUS = {"cockpit", "trading_pulse", "portfolio", "persona_fleet", "all"}
 
+_MGMT_NL_HIGH_RISK_REFUSAL_FOLLOWUPS = [
+    {
+        "label": "Open Human Inbox",
+        "route": "/bff/management/human-inbox",
+        "rel": "human_inbox",
+    }
+]
+
 # BFF-B6-003: high-risk action pattern sets for NL refusal policy.
 _MGMT_NL_HIGH_RISK_PATTERNS: List[tuple[str, List[str], str]] = [
     # (category_key, trigger_terms, safe_alternatives_hint)
@@ -23549,6 +23557,35 @@ def _mgmt_nl_high_risk_classify(question: str) -> Optional[Dict[str, Any]]:
                     "safe_alternatives": safe_alternatives,
                 }
     return None
+
+
+def _mgmt_nl_record_high_risk_refusal(
+    *,
+    identity: OperatorIdentity,
+    question: str,
+    risk: Dict[str, Any],
+    recorded_at: str,
+) -> Optional[str]:
+    """Record a narrow refusal audit event without creating NL session state."""
+    try:
+        audit = read_store.record_agora_audit_event(
+            {
+                "action": "management.nl.high_risk_refused",
+                "targetType": "ManagementNLQuery",
+                "targetId": f"mgmt-nl-refusal-{uuid.uuid4().hex[:12]}",
+                "actorId": identity.operator_id,
+                "recordedAt": recorded_at,
+                "reason": "high_risk_nl_policy",
+                "matchedCategory": risk.get("matched_category"),
+                "matchedPattern": risk.get("matched_pattern"),
+                "questionExcerpt": question[:200],
+                "followups": _MGMT_NL_HIGH_RISK_REFUSAL_FOLLOWUPS,
+            }
+        )
+        return str(audit.get("auditId") or audit.get("eventId") or "").strip() or None
+    except Exception:
+        log.warning("Failed to record management NL high-risk refusal audit", exc_info=True)
+        return None
 
 
 def _mgmt_nl_idempotency_check(resolved_key: str, request_hash: str) -> Optional[Dict[str, Any]]:
@@ -23737,6 +23774,12 @@ async def bff_management_nl_ask(
     # collection, session creation, or SSE emission.
     risk = _mgmt_nl_high_risk_classify(question)
     if risk is not None:
+        audit_id = _mgmt_nl_record_high_risk_refusal(
+            identity=identity,
+            question=question,
+            risk=risk,
+            recorded_at=utc_now(),
+        )
         raise _bff_error(
             403,
             ErrorCode.HIGH_RISK_QUERY_REFUSED,
@@ -23753,6 +23796,8 @@ async def bff_management_nl_ask(
                 "matched_category": risk["matched_category"],
                 "matched_pattern": risk["matched_pattern"],
                 "safe_alternatives": risk["safe_alternatives"],
+                "followups": _MGMT_NL_HIGH_RISK_REFUSAL_FOLLOWUPS,
+                "audit_id": audit_id,
             },
         )
 
