@@ -1348,6 +1348,16 @@ _REMEDIATE_SENTINEL_REQUIRED = {"intervention_id", "remediation_action"}
 _VALID_REMEDIATION_ACTIONS = {"resolve", "dismiss", "escalate"}
 _DECIDE_V5_INTERVENTION_REQUIRED = {"intervention_id", "decision"}
 _VALID_V5_INTERVENTION_DECISIONS = {"approve", "reject", "defer", "dismiss"}
+_HUMAN_GATE_DECISIONS_BY_COMMAND: Dict[CommandType, str] = {
+    CommandType.HUMAN_GATE_APPROVE: "approve",
+    CommandType.HUMAN_GATE_REJECT: "reject",
+    CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: "request_more_evidence",
+    CommandType.HUMAN_GATE_REVOKE: "revoke",
+    CommandType.HUMAN_GATE_EXTEND_TTL: "extend_ttl",
+}
+_HUMAN_GATE_REQUIRED = {"human_gate_item_id", "decision"}
+_VALID_HUMAN_GATE_DECISIONS = set(_HUMAN_GATE_DECISIONS_BY_COMMAND.values())
+_HUMAN_GATE_APPROVER_DECISIONS = {"approve", "reject", "revoke", "extend_ttl"}
 
 _EXECUTE_EVO_REQUIRED = {"evolution_decision_id", "action_type"}
 _VALID_EVO_ACTION_TYPES = {"freeze", "retrain", "revalidate", "mutate", "retire"}
@@ -1945,6 +1955,114 @@ def _require_final_command_preconditions(
             )
 
 
+_FINAL_COMMAND_TARGET_TYPES: Dict[CommandType, ObjectType] = {
+    CommandType.HUMAN_GATE_APPROVE: ObjectType.HUMAN_GATE_ITEM,
+    CommandType.HUMAN_GATE_REJECT: ObjectType.HUMAN_GATE_ITEM,
+    CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: ObjectType.HUMAN_GATE_ITEM,
+    CommandType.HUMAN_GATE_REVOKE: ObjectType.HUMAN_GATE_ITEM,
+    CommandType.HUMAN_GATE_EXTEND_TTL: ObjectType.HUMAN_GATE_ITEM,
+    CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT: ObjectType.RANKING,
+}
+
+
+def _validate_final_command_target_type(cmd: OperatorCommand) -> None:
+    expected = _FINAL_COMMAND_TARGET_TYPES.get(cmd.command)
+    if expected is None or cmd.target.type == expected:
+        return
+    raise _bff_error(
+        422,
+        ErrorCode.INVALID_PARAMS,
+        "Invalid command target type",
+        f"{cmd.command.value} must target {expected.value}, not {cmd.target.type.value}",
+        precondition_failed="target.type",
+        suggestion=f"Use target.type={expected.value} for {cmd.command.value}",
+    )
+
+
+def _human_gate_source_type(item_id: str) -> Optional[str]:
+    prefix = item_id.split(":", 1)[0].strip().lower() if ":" in item_id else ""
+    if prefix in {"approval", "intervention"}:
+        return prefix
+    return None
+
+
+def _normalize_human_gate_command(cmd: OperatorCommand) -> OperatorCommand:
+    decision = _HUMAN_GATE_DECISIONS_BY_COMMAND.get(cmd.command)
+    if decision is None:
+        return cmd
+
+    params = dict(cmd.params or {})
+    item_id = str(
+        params.get("human_gate_item_id")
+        or params.get("humanGateItemId")
+        or params.get("item_id")
+        or params.get("itemId")
+        or cmd.target.id
+        or ""
+    ).strip()
+    params["human_gate_item_id"] = item_id
+    params["humanGateItemId"] = item_id
+    params["item_id"] = item_id
+    params["itemId"] = item_id
+    source_type = str(params.get("source_type") or params.get("sourceType") or "").strip()
+    if not source_type:
+        source_type = _human_gate_source_type(item_id) or ""
+    if source_type:
+        params["source_type"] = source_type
+        params["sourceType"] = source_type
+    params["decision"] = decision
+    params["action_id"] = decision
+    params["actionId"] = decision
+    params.setdefault("audit_event", f"human_gate.{decision}")
+    params.setdefault("auditEvent", f"human_gate.{decision}")
+    params.setdefault("entity_type", "human_gate_item")
+    params.setdefault("entity_id", item_id)
+    cmd.params = params
+    return cmd
+
+
+def _normalize_quarterly_recommendation_command(cmd: OperatorCommand) -> OperatorCommand:
+    if cmd.command != CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT:
+        return cmd
+
+    params = dict(cmd.params or {})
+    recommendation_id = str(
+        params.get("recommendation_id")
+        or params.get("recommendationId")
+        or cmd.target.id
+        or ""
+    ).strip()
+    if recommendation_id:
+        params["recommendation_id"] = recommendation_id
+        params["recommendationId"] = recommendation_id
+
+    recommendation_action_id = str(
+        params.get("recommendation_action_id")
+        or params.get("recommendationActionId")
+        or params.get("actionId")
+        or params.get("action_id")
+        or ""
+    ).strip()
+    if recommendation_action_id and recommendation_action_id != "submit_recommendation":
+        params["recommendation_action_id"] = recommendation_action_id
+        params["recommendationActionId"] = recommendation_action_id
+
+    params["action_id"] = "submit_recommendation"
+    params["actionId"] = "submit_recommendation"
+    params.setdefault("audit_event", "quarterly_ranking.recommendation_submitted")
+    params.setdefault("auditEvent", "quarterly_ranking.recommendation_submitted")
+    params.setdefault("entity_type", "quarterly_ranking_recommendation")
+    params.setdefault("entity_id", recommendation_id or cmd.target.id)
+    cmd.params = params
+    return cmd
+
+
+def _normalize_b5_command_payload(cmd: OperatorCommand) -> OperatorCommand:
+    return _normalize_quarterly_recommendation_command(
+        _normalize_human_gate_command(cmd)
+    )
+
+
 def _normalize_operator_command_payload(payload: Dict[str, Any]) -> OperatorCommand:
     command_type = payload.get("command_type")
     if command_type:
@@ -2007,7 +2125,7 @@ def _normalize_operator_command_payload(payload: Dict[str, Any]) -> OperatorComm
         )
 
     try:
-        return OperatorCommand.model_validate(payload)
+        return _normalize_b5_command_payload(OperatorCommand.model_validate(payload))
     except ValidationError as exc:
         raise _bff_error(
             422,
@@ -3278,6 +3396,109 @@ def _validate_decide_v5_intervention(params: Dict[str, Any], identity: OperatorI
         )
 
 
+def _validate_human_gate_decision(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    missing = _HUMAN_GATE_REQUIRED - {key for key, value in params.items() if value not in (None, "")}
+    if missing:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Missing required params for HumanGate command",
+            f"Missing fields: {sorted(missing)}",
+            precondition_failed="human_gate",
+        )
+
+    decision = str(params.get("decision") or "").strip().lower()
+    if decision not in _VALID_HUMAN_GATE_DECISIONS:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid HumanGate decision value",
+            f"decision must be one of {sorted(_VALID_HUMAN_GATE_DECISIONS)}",
+            precondition_failed="decision",
+        )
+
+    if decision in _HUMAN_GATE_APPROVER_DECISIONS and not {"approver", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.INSUFFICIENT_ROLE,
+            "HumanGate decision requires 'approver' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with approver or admin role",
+        )
+    if decision == "request_more_evidence" and not {"operator", "approver", "admin", "reviewer"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.INSUFFICIENT_ROLE,
+            "HumanGate evidence request requires operator-level role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with operator, reviewer, approver, or admin role",
+        )
+
+    if decision == "extend_ttl":
+        raw_ttl = (
+            params.get("ttl_seconds")
+            or params.get("ttlSeconds")
+            or params.get("extend_ttl_seconds")
+            or params.get("extendTtlSeconds")
+        )
+        try:
+            ttl_seconds = int(raw_ttl)
+        except (TypeError, ValueError):
+            ttl_seconds = 0
+        if ttl_seconds <= 0:
+            raise _bff_error(
+                422,
+                ErrorCode.INVALID_PARAMS,
+                "HumanGateExtendTtl requires a positive ttl_seconds value",
+                "ttl_seconds must be a positive integer number of seconds",
+                precondition_failed="ttl_seconds",
+            )
+        params["ttl_seconds"] = ttl_seconds
+        params["ttlSeconds"] = ttl_seconds
+
+
+def _validate_quarterly_ranking_recommendation_submit(
+    params: Dict[str, Any],
+    identity: OperatorIdentity,
+) -> None:
+    if not {"operator", "approver", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.INSUFFICIENT_ROLE,
+            "Quarterly ranking recommendation submission requires operator-level role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with operator, approver, or admin role",
+        )
+
+    required = {"quarter", "recommendation_id"}
+    missing = required - {key for key, value in params.items() if value not in (None, "")}
+    if missing:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Missing required params for QuarterlyRankingRecommendationSubmit",
+            f"Missing fields: {sorted(missing)}",
+            precondition_failed="quarterly_ranking_recommendation",
+        )
+
+    action_id = str(
+        params.get("recommendation_action_id")
+        or params.get("recommendationActionId")
+        or ""
+    ).strip()
+    if action_id and action_id not in _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid quarterly ranking recommendation action",
+            f"recommendation_action_id must be one of {list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER)}",
+            precondition_failed="recommendation_action_id",
+        )
+
+
 _VALIDATORS = {
     CommandType.APPROVE_DEPLOYMENT: _validate_approve_deployment,
     CommandType.APPROVE_DECISION: _validate_approve_decision,
@@ -3301,6 +3522,12 @@ _VALIDATORS = {
     CommandType.RECORD_SPONSOR_DECISION: _validate_record_sponsor_decision,
     CommandType.REMEDIATE_SENTINEL_INTERVENTION: _validate_remediate_sentinel_intervention,
     CommandType.DECIDE_V5_INTERVENTION: _validate_decide_v5_intervention,
+    CommandType.HUMAN_GATE_APPROVE: _validate_human_gate_decision,
+    CommandType.HUMAN_GATE_REJECT: _validate_human_gate_decision,
+    CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: _validate_human_gate_decision,
+    CommandType.HUMAN_GATE_REVOKE: _validate_human_gate_decision,
+    CommandType.HUMAN_GATE_EXTEND_TTL: _validate_human_gate_decision,
+    CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT: _validate_quarterly_ranking_recommendation_submit,
 }
 
 # --------------------------------------------------------------------------- #
@@ -16234,6 +16461,7 @@ async def submit_command(
         _validate_audit_context(cmd)
         _ensure_live_broker_scope_allowed(cmd, payload)
         _validate_drawer_runtime_target(cmd)
+        _validate_final_command_target_type(cmd)
         validator = _VALIDATORS.get(cmd.command)
         if validator:
             validator(cmd.params, identity)
@@ -16397,6 +16625,7 @@ def _submit_final_command_admission(
         _validate_audit_context(cmd)
         _ensure_live_broker_scope_allowed(cmd, payload)
         _validate_drawer_runtime_target(cmd)
+        _validate_final_command_target_type(cmd)
         validator = _VALIDATORS.get(cmd.command)
         if validator:
             validator(cmd.params, identity)
