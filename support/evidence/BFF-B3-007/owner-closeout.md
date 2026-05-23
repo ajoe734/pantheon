@@ -69,3 +69,10 @@ Results:
   the task branch tip on an owner-authored `BFF-B3-007` commit with required
   trailers before running the canonical `done` command.
 
+## Dev Refresh
+
+After closeout PR #484 opened, `origin/dev` advanced to
+`e84d7fb550a955568635659ce75bd20ba3860e86` through PR #483. The task branch
+merged that dev tip at `2015800b99504054f35a5decbab3a616e826f0a5`, then reran
+the focused closeout validation. No BFF-B3-007 runtime behavior or
+execute-plans contract code changed during this refresh.
