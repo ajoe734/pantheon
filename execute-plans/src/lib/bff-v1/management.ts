@@ -168,6 +168,210 @@ export interface ManagementPortfolioBookHoldingsQuery {
   page_size?: number;
 }
 
+export interface ManagementPersonaLeagueQuery {
+  state?: string;
+  archetype?: string;
+  q?: string;
+  page_token?: string;
+  page_size?: number;
+}
+
+export interface ManagementPersonaLeagueRow {
+  id: string;
+  personaId?: string;
+  persona_id?: string;
+  name?: string;
+  owner?: string;
+  updatedAt?: string;
+  updated_at?: string;
+  state?: string;
+  risk?: string;
+  archetype?: string;
+  routedStrategies?: number;
+  routed_strategies?: number;
+  successRate?: number;
+  success_rate?: number;
+  mandate?: string;
+  strategyFamily?: string;
+  strategy_family?: string;
+  routePolicy?: Record<string, unknown>;
+  route_policy?: Record<string, unknown>;
+  capabilities?: Record<string, unknown>;
+  bindings?: Record<string, unknown>;
+  sessions?: Record<string, unknown>;
+  evaluations?: Record<string, unknown>;
+  memory?: Record<string, unknown>;
+  health?: Record<string, unknown>;
+  allowedActions?: Record<string, unknown>;
+  allowed_actions?: Record<string, unknown>;
+  links?: Record<string, string | null | undefined>;
+  [key: string]: unknown;
+}
+
+export interface ManagementPersonaLeagueResponse {
+  data: ManagementPersonaLeagueRow[];
+  items: ManagementPersonaLeagueRow[];
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size?: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces?: Record<string, ManagementSurfaceRef>;
+    composition_sources?: string[];
+    [key: string]: unknown;
+  };
+}
+
+export interface ManagementPersonaLeagueRankingsQuery {
+  state?: string;
+  archetype?: string;
+  q?: string;
+  criteria?: string;
+  limit?: number;
+}
+
+export interface ManagementPersonaLeagueRankingItem {
+  id: string;
+  personaId: string;
+  persona_id: string;
+  name?: string;
+  owner?: string;
+  state?: string;
+  risk?: string;
+  archetype?: string;
+  tier: string;
+  tierId: string;
+  tier_id: string;
+  tierLabel: string;
+  tier_label: string;
+  rank: number;
+  score: number;
+  overallScore: number;
+  overall_score: number;
+  scoreField?: string;
+  score_field?: string;
+  metrics: Record<string, unknown>;
+  components: Record<string, number>;
+  links?: Record<string, string | null | undefined>;
+  [key: string]: unknown;
+}
+
+export interface ManagementPersonaLeagueRankingBlock {
+  id: string;
+  rankingId: string;
+  ranking_id: string;
+  criteria: string;
+  label: string;
+  formulaVersion: string;
+  formula_version: string;
+  weights: Record<string, number>;
+  items: ManagementPersonaLeagueRankingItem[];
+  rankedCount: number;
+  ranked_count: number;
+  [key: string]: unknown;
+}
+
+export interface ManagementPersonaLeagueRankingsResponse {
+  data: ManagementPersonaLeagueRankingBlock[];
+  items: ManagementPersonaLeagueRankingBlock[];
+  rankings: ManagementPersonaLeagueRankingBlock[];
+  rankingBlocks: ManagementPersonaLeagueRankingBlock[];
+  ranking_blocks: ManagementPersonaLeagueRankingBlock[];
+  summary: {
+    personaCount: number;
+    persona_count: number;
+    criteria: string[];
+    topPersonaId?: string | null;
+    top_persona_id?: string | null;
+    [key: string]: unknown;
+  };
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces?: Record<string, ManagementSurfaceRef>;
+    composition_sources?: string[];
+    [key: string]: unknown;
+  };
+}
+
+export interface ManagementPersonaLeagueTiersQuery {
+  state?: string;
+  archetype?: string;
+  q?: string;
+}
+
+export interface ManagementPersonaLeagueTierAssignment {
+  personaId: string;
+  persona_id: string;
+  name?: string;
+  tier: string;
+  tierId: string;
+  tier_id: string;
+  tierLabel: string;
+  tier_label: string;
+  overallScore: number;
+  overall_score: number;
+  metrics: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface ManagementPersonaLeagueTier {
+  id: string;
+  tierId: string;
+  tier_id: string;
+  label: string;
+  minScore: number;
+  min_score: number;
+  maxScore: number;
+  max_score: number;
+  governancePosture: string;
+  governance_posture: string;
+  personaCount: number;
+  persona_count: number;
+  personaIds: string[];
+  persona_ids: string[];
+  assignments: ManagementPersonaLeagueTierAssignment[];
+  [key: string]: unknown;
+}
+
+export interface ManagementPersonaLeagueTiersResponse {
+  data: ManagementPersonaLeagueTier[];
+  items: ManagementPersonaLeagueTier[];
+  tiers: ManagementPersonaLeagueTier[];
+  assignments: ManagementPersonaLeagueTierAssignment[];
+  summary: {
+    seasonId: string;
+    season_id: string;
+    formulaVersion: string;
+    formula_version: string;
+    personaCount: number;
+    persona_count: number;
+    tierCount: number;
+    tier_count: number;
+    byTier: Record<string, number>;
+    by_tier: Record<string, number>;
+    [key: string]: unknown;
+  };
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces?: Record<string, ManagementSurfaceRef>;
+    composition_sources?: string[];
+    policy?: string;
+    [key: string]: unknown;
+  };
+}
+
 export interface ManagementEvidenceItem {
   id: string;
   refId: string;
@@ -258,6 +462,89 @@ export interface ManagementEvidenceResponse {
   };
 }
 
+export interface ManagementPortfolioBookPoolQuery {
+  status?: string;
+  risk_policy_ref?: string;
+  page_token?: string;
+  page_size?: number;
+}
+
+export interface ManagementPortfolioBookPoolItem {
+  id: string;
+  pool_id: string;
+  name?: string;
+  status?: string;
+  risk_policy_ref?: string;
+  owner?: Record<string, unknown>;
+  currency?: string;
+  risk_budget?: number | null;
+  riskBudget?: number | null;
+  current_exposure?: number | null;
+  currentExposure?: number | null;
+  risk_budget_utilization?: number | null;
+  riskBudgetUtilization?: number | null;
+  exposure?: Record<string, unknown>;
+  risk?: Record<string, unknown>;
+  pnl?: number | null;
+  total_pnl?: number | null;
+  pnl_summary?: Record<string, unknown>;
+  telemetry?: Record<string, unknown>;
+  binding_count?: number;
+  active_binding_count?: number;
+  deployment_count?: number;
+  approved_deployment_count?: number;
+  runtime_count?: number;
+  active_runtime_count?: number;
+  paper_runtime_count?: number;
+  live_runtime_count?: number;
+  deployment_stages?: string[];
+  binding_ids?: string[];
+  deployment_ids?: string[];
+  runtime_ids?: string[];
+  [key: string]: unknown;
+}
+
+export interface ManagementPortfolioBookPoolsResponse {
+  data: ManagementPortfolioBookPoolItem[];
+  items: ManagementPortfolioBookPoolItem[];
+  pools: ManagementPortfolioBookPoolItem[];
+  summary: {
+    total_pools: number;
+    returned_pools: number;
+    active_pool_count: number;
+    risk_budget_total?: number | null;
+    current_exposure_total?: number | null;
+    risk_budget_utilization?: number | null;
+    telemetry_runtime_count?: number;
+    total_pnl?: number | null;
+    max_drawdown?: number | null;
+    average_fill_rate?: number | null;
+    total_trades?: number;
+    latest_telemetry_at?: string | null;
+    [key: string]: unknown;
+  };
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    staleness?: Record<string, unknown>;
+    surfaces: {
+      portfolio_book_pools: ManagementSurfaceRef;
+      capital_pools?: ManagementSurfaceRef;
+      persona_bindings?: ManagementSurfaceRef;
+      deployment_plans?: ManagementSurfaceRef;
+      runtime_bindings?: ManagementSurfaceRef;
+      telemetry_summaries?: ManagementSurfaceRef;
+      [key: string]: ManagementSurfaceRef | undefined;
+    };
+    composition_sources?: string[];
+    [key: string]: unknown;
+  };
+}
+
 type ManagementQueryValue = string | number | boolean | undefined | null;
 
 function withQuery(path: string, query?: object): string {
@@ -279,10 +566,34 @@ export function managementEvidencePath(query?: ManagementEvidenceQuery): string 
   return withQuery(paths.managementEvidence(), query);
 }
 
+export function managementPortfolioBookPath(): string {
+  return paths.managementPortfolioBook();
+}
+
+export function managementPortfolioBookPoolsPath(query?: ManagementPortfolioBookPoolQuery): string {
+  return withQuery(paths.managementPortfolioBookPools(), query);
+}
+
 export function managementPortfolioBookHoldingsPath(
   query?: ManagementPortfolioBookHoldingsQuery,
 ): string {
   return withQuery(paths.managementPortfolioBookHoldings(), query);
+}
+
+export function managementPersonaLeaguePath(query?: ManagementPersonaLeagueQuery): string {
+  return withQuery(paths.managementPersonaLeague(), query);
+}
+
+export function managementPersonaLeagueRankingsPath(
+  query?: ManagementPersonaLeagueRankingsQuery,
+): string {
+  return withQuery(paths.managementPersonaLeagueRankings(), query);
+}
+
+export function managementPersonaLeagueTiersPath(
+  query?: ManagementPersonaLeagueTiersQuery,
+): string {
+  return withQuery(paths.managementPersonaLeagueTiers(), query);
 }
 
 export async function fetchManagementCockpit(
@@ -321,6 +632,25 @@ export async function fetchManagementEvidence(
   return response.json() as Promise<ManagementEvidenceResponse>;
 }
 
+export async function fetchManagementPortfolioBookPools(
+  query?: ManagementPortfolioBookPoolQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementPortfolioBookPoolsResponse> {
+  const path = managementPortfolioBookPoolsPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementPortfolioBookPoolsResponse>;
+}
+
 export async function fetchManagementPortfolioBookHoldings(
   query?: ManagementPortfolioBookHoldingsQuery,
   init?: RequestInit,
@@ -338,4 +668,61 @@ export async function fetchManagementPortfolioBookHoldings(
     throw new Error(`GET ${path} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementPortfolioBookHoldingsResponse>;
+}
+
+export async function fetchManagementPersonaLeague(
+  query?: ManagementPersonaLeagueQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementPersonaLeagueResponse> {
+  const path = managementPersonaLeaguePath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementPersonaLeagueResponse>;
+}
+
+export async function fetchManagementPersonaLeagueRankings(
+  query?: ManagementPersonaLeagueRankingsQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementPersonaLeagueRankingsResponse> {
+  const path = managementPersonaLeagueRankingsPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementPersonaLeagueRankingsResponse>;
+}
+
+export async function fetchManagementPersonaLeagueTiers(
+  query?: ManagementPersonaLeagueTiersQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementPersonaLeagueTiersResponse> {
+  const path = managementPersonaLeagueTiersPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementPersonaLeagueTiersResponse>;
 }
