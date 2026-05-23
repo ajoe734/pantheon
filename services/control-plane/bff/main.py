@@ -135,6 +135,8 @@ _DEFAULT_LOVABLE_CORS_ORIGINS = [
     # BFF-CONSOL-022: Pantheon Frontend Lovable project preview URLs.
     "https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com",
     "https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app",
+    # BFF-B1-001: execute-plans Lovable project (UUID 140c41d5) published preview.
+    "https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com",
 ]
 _DEV_LOVABLE_CORS_ORIGINS = {
     "https://preview--pantheon-dev.lovable.app",
@@ -144,7 +146,25 @@ _DEV_LOVABLE_CORS_ORIGINS = {
     # Pantheon Frontend Lovable project preview URLs (dev tier).
     "https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com",
     "https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app",
+    # BFF-B1-001: execute-plans Lovable project (UUID 140c41d5) published preview.
+    "https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com",
 }
+
+# BFF-B1-001: Lovable dynamic preview URLs include a commit hash that changes per
+# deployment: id-preview-<commit>--<project-uuid>.lovable.app.  Exact-match allowlists
+# cannot enumerate them, so we use a regex covering the two known project UUIDs.
+# Only applied in non-production-strict mode (preview URLs are dev-tier only).
+_LOVABLE_PREVIEW_UUIDS = (
+    "b75d3452-f667-4cf4-893a-1061de45b347"
+    "|140c41d5-9cd8-4d6b-ba02-66d5941d0dbe"
+)
+_LOVABLE_PREVIEW_ORIGIN_REGEX = (
+    r"https://id-preview-[a-f0-9]+--({})"
+    r"\.lovable\.app"
+).format(_LOVABLE_PREVIEW_UUIDS)
+_LOVABLE_PREVIEW_ORIGIN_PATTERN = re.compile(
+    r"^" + _LOVABLE_PREVIEW_ORIGIN_REGEX + r"$"
+)
 
 
 def _normalized_origin(origin: str) -> str:
@@ -192,20 +212,29 @@ def _cors_origins_from_env() -> List[str]:
 
 
 def _cors_origin_allowed(origin: str) -> bool:
-    return _normalized_origin(origin) in set(_cors_origins_from_env())
+    normalized = _normalized_origin(origin)
+    if normalized in set(_cors_origins_from_env()):
+        return True
+    if not _is_production_strict_mode():
+        return bool(_LOVABLE_PREVIEW_ORIGIN_PATTERN.match(normalized))
+    return False
 
 
 def _build_bff_app() -> FastAPI:
     cors_origins = _cors_origins_from_env()
+    strict = _is_production_strict_mode()
+    preview_regex = None if strict else _LOVABLE_PREVIEW_ORIGIN_REGEX
     built_app = FastAPI(title="Pantheon Operator BFF", version="0.2.0")
-    if cors_origins:
-        built_app.add_middleware(
-            CORSMiddleware,
+    if cors_origins or preview_regex:
+        middleware_kwargs: Dict[str, Any] = dict(
             allow_origins=cors_origins,
             allow_credentials=True,
             allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
             allow_headers=_CORS_ALLOW_HEADERS,
         )
+        if preview_regex:
+            middleware_kwargs["allow_origin_regex"] = preview_regex
+        built_app.add_middleware(CORSMiddleware, **middleware_kwargs)
     return built_app
 
 
