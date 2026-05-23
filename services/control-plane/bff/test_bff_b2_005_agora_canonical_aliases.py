@@ -30,6 +30,25 @@ def _seed_read_store(path: Path) -> ReadSurfaceStore:
                         "return1dPct": 2.6,
                     }
                 },
+                "agora_signals": {
+                    "sig-b2-005": {
+                        "id": "sig-b2-005",
+                        "signal_id": "sig-b2-005",
+                        "title": "B2 signal",
+                        "reviewStatus": "pending_trader_review",
+                        "createdAt": "2026-05-23T06:04:00Z",
+                        "updatedAt": "2026-05-23T06:04:00Z",
+                    }
+                },
+                "insight_cards": {
+                    "ins-b2-005": {
+                        "id": "ins-b2-005",
+                        "insight_id": "ins-b2-005",
+                        "summary": "Inbox insight for B2 acceptance.",
+                        "created_at": "2026-05-23T06:05:00Z",
+                        "updated_at": "2026-05-23T06:05:00Z",
+                    }
+                },
                 "agora_sessions": {
                     "sess-b2-005": {
                         "id": "sess-b2-005",
@@ -38,6 +57,15 @@ def _seed_read_store(path: Path) -> ReadSurfaceStore:
                         "status": "active",
                         "createdAt": "2026-05-23T06:00:00Z",
                         "updatedAt": "2026-05-23T06:00:00Z",
+                    },
+                    "ask-b2-005": {
+                        "id": "ask-b2-005",
+                        "sessionId": "ask-b2-005",
+                        "title": "Quick ask alias session",
+                        "mode": "quick_ask",
+                        "status": "active",
+                        "createdAt": "2026-05-23T06:06:00Z",
+                        "updatedAt": "2026-05-23T06:06:00Z",
                     }
                 },
                 "research_notes": {
@@ -58,6 +86,16 @@ def _seed_read_store(path: Path) -> ReadSurfaceStore:
                         "body": "Decision journal alias coverage.",
                         "created_at": "2026-05-23T06:00:00Z",
                         "updated_at": "2026-05-23T06:00:00Z",
+                    }
+                },
+                "postmortems": {
+                    "pm-b2-005": {
+                        "id": "pm-b2-005",
+                        "postmortem_id": "pm-b2-005",
+                        "title": "Agora B2 postmortem",
+                        "status": "published",
+                        "created_at": "2026-05-23T06:03:00Z",
+                        "updated_at": "2026-05-23T06:03:00Z",
                     }
                 },
                 "research_tickets": {
@@ -163,3 +201,61 @@ def test_bff_b2_005_agora_aliases_share_canonical_read_surfaces() -> None:
             canonical_surface = canonical_payload["meta"]["surfaces"][surface_key]
             assert alias_surface["status"] == canonical_surface["status"]
             assert alias_surface["source"] == canonical_surface["source"]
+
+
+def test_bff_b2_005_agora_core_routes_return_envelopes_and_composite_inbox() -> None:
+    with _isolated_bff() as client:
+        cases = [
+            ("/bff/agora/signals", "agora_signal_list", "signal_id", "sig-b2-005"),
+            ("/bff/agora/journal", "agora_journal_list", "id", "journal-b2-005"),
+            ("/bff/agora/postmortems", "agora_postmortems", "postmortem_id", "pm-b2-005"),
+            ("/bff/agora/ask/sessions", "agora_ask_sessions", "sessionId", "ask-b2-005"),
+        ]
+
+        for path, surface_key, id_key, expected_id in cases:
+            response = client.get(path, headers=HEADERS)
+
+            assert response.status_code == 200, response.text
+            payload = response.json()
+            assert payload["data"] == payload["items"]
+            assert expected_id in _record_ids(payload, id_key)
+            assert payload["page_info"]["next_page_token"] is None
+            surface = payload["meta"]["surfaces"][surface_key]
+            assert surface["source"] in {"local_snapshot", "bff_local"}
+            assert surface["status"] in {"degraded", "ok"}
+
+        detail_response = client.get("/bff/agora/ask/sessions/ask-b2-005", headers=HEADERS)
+        assert detail_response.status_code == 200, detail_response.text
+        detail_payload = detail_response.json()
+        assert detail_payload["data"]["sessionId"] == "ask-b2-005"
+        assert "agora_ask_session_detail" in detail_payload["meta"]["surfaces"]
+
+        inbox_response = client.get("/bff/agora/inbox", headers=HEADERS)
+        assert inbox_response.status_code == 200, inbox_response.text
+        inbox_payload = inbox_response.json()
+        assert inbox_payload["data"] == inbox_payload["items"]
+        items = inbox_payload["items"]
+        assert any(
+            item.get("inboxType") == "insight"
+            and (item.get("id") or item.get("insight_id")) == "ins-b2-005"
+            for item in items
+        )
+        assert any(
+            item.get("inboxType") == "signal" and item.get("signal_id") == "sig-b2-005"
+            for item in items
+        )
+        assert any(
+            item.get("inboxType") == "research_task" and item.get("ticket_id") == "rt-b2-005"
+            for item in items
+        )
+        counts = inbox_payload["meta"]["composition"]["itemCounts"]
+        assert counts["insight"] >= 1
+        assert counts["signal"] >= 1
+        assert counts["research_task"] >= 1
+        for surface_key in (
+            "agora_inbox",
+            "agora_inbox_insights",
+            "agora_inbox_signals",
+            "agora_inbox_research_tasks",
+        ):
+            assert surface_key in inbox_payload["meta"]["surfaces"]

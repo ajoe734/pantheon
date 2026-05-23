@@ -8033,8 +8033,15 @@ def _project_final_command_response(
         staleness_warning=staleness_warning,
     ).model_dump()
     legacy_payload["status"] = final_status.value
+    tracking_url = f"/api/v1/operator/commands/{command_id}"
+    legacy_payload["command_id"] = command_id
+    legacy_payload["commandId"] = command_id
+    legacy_payload["tracking_url"] = tracking_url
+    legacy_payload["trackingUrl"] = tracking_url
     if isinstance(legacy_payload.get("receipt"), dict):
         legacy_payload["receipt"]["status"] = final_status.value
+        legacy_payload["receipt"]["tracking_url"] = tracking_url
+        legacy_payload["receipt"]["trackingUrl"] = tracking_url
     receipts = _command_dual_write_receipts(
         command_id=command_id,
         command=command.value,
@@ -14812,6 +14819,7 @@ async def submit_final_command(
         idempotency_key=idempotency_key,
         x_idempotency_key=x_idempotency_key,
         route=_FINAL_COMMAND_ROUTE,
+        include_durable_meta=True,
     )
 
 
@@ -24997,13 +25005,78 @@ def _sem_list_payload(dataset: str, surface_key: str, *, filter_mode: Optional[s
         total=len(records),
         surface=surface,
     )
-    return {"items": records, "page_info": {"next_page_token": None}, "meta": meta}
+    return {"data": records, "items": records, "page_info": {"next_page_token": None}, "meta": meta}
+
+
+def _sem_inbox_records(dataset: str, inbox_type: str) -> tuple[str, List[Dict[str, Any]]]:
+    source, records = _sem_read_records(dataset)
+    typed_records: List[Dict[str, Any]] = []
+    for record in records:
+        item = dict(record)
+        item.setdefault("inboxType", inbox_type)
+        item.setdefault("sourceDataset", dataset)
+        typed_records.append(item)
+    return source, typed_records
+
+
+def _sem_inbox_sort_value(record: Dict[str, Any]) -> str:
+    for field in ("updatedAt", "updated_at", "createdAt", "created_at"):
+        value = record.get(field)
+        if value:
+            return str(value)
+    return str(record.get("id") or record.get("signal_id") or record.get("ticket_id") or "")
+
+
+def _sem_agora_inbox_payload() -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    datasets = [
+        ("insight_cards", "insight", "agora_inbox_insights"),
+        ("agora_signals", "signal", "agora_inbox_signals"),
+        ("research_tickets", "research_task", "agora_inbox_research_tasks"),
+    ]
+    records: List[Dict[str, Any]] = []
+    sources: Dict[str, str] = {}
+    counts: Dict[str, int] = {}
+    surfaces: Dict[str, Dict[str, Any]] = {}
+
+    for dataset, inbox_type, surface_key in datasets:
+        source, typed_records = _sem_inbox_records(dataset, inbox_type)
+        sources[dataset] = source
+        counts[inbox_type] = len(typed_records)
+        records.extend(typed_records)
+        surfaces[surface_key] = _dataset_surface_status(
+            dataset,
+            snapshot_at=snapshot_at,
+            source=source,
+            has_data=(source != "missing"),
+        )
+
+    records.sort(key=_sem_inbox_sort_value, reverse=True)
+    primary_surface = _dataset_surface_status(
+        "insight_cards",
+        snapshot_at=snapshot_at,
+        source=sources.get("insight_cards"),
+        has_data=(sources.get("insight_cards") != "missing"),
+    )
+    meta = _read_surface_meta(
+        "insight_cards",
+        "agora_inbox",
+        snapshot_at=snapshot_at,
+        total=len(records),
+        surface=primary_surface,
+    )
+    meta["surfaces"].update(surfaces)
+    meta["composition"] = {
+        "datasets": [dataset for dataset, _, _ in datasets],
+        "itemCounts": counts,
+    }
+    return {"data": records, "items": records, "page_info": {"next_page_token": None}, "meta": meta}
 
 
 @app.get("/bff/agora/inbox")
 async def sem_agora_inbox(authorization: Optional[str] = Header(default=None)):
     _require_read_role(_extract_identity(authorization))
-    return _sem_list_payload("insight_cards", "agora_inbox")
+    return _sem_agora_inbox_payload()
 
 
 @app.get("/bff/agora/ask/sessions")

@@ -117,6 +117,72 @@ BFF-B1-005 — Owner: Codex2, Reviewer: Claude
 
 ---
 
+## §13 Command / Action Compatibility
+
+### Gap
+
+The execute-plans strict-mode write path needs `POST /bff/v1/commands` to be the
+canonical command admission facade while legacy `/api/v1/operator/commands` status
+polling and `/bff/actions/*` compatibility remain intact. The facade must accept the
+frontend command schema, preserve idempotency and trace headers, project a
+`CommandResponse<T>` envelope, and fail closed for live broker scope when live broker
+execution is not explicitly enabled.
+
+### Fix
+
+**File: `services/control-plane/bff/main.py`**
+
+- Keep `POST /bff/v1/commands` as the final BFF command admission route.
+- Accept the final command payload shape:
+  `command`, `target`, optional `action`, `params`, `audit_context`, and
+  top-level precondition aliases `confirmToken`, `approvalDecisionId`, and
+  `twoManSignatureId` (with snake_case aliases also supported).
+- Require operator authentication and a header idempotency key. `Idempotency-Key`
+  is canonical; `X-Idempotency-Key` remains a temporary compatibility alias when
+  the canonical header is absent.
+- Reject `idempotencyKey` / `idempotency_key` in the body.
+- Propagate `X-Correlation-Id`, `X-Request-Id`, `X-Trace-Id`, and the resolved
+  idempotency key into the foundation command trace and persisted audit record.
+- Persist commands through the shared command store used by
+  `/api/v1/operator/commands`; the response `trackingUrl` points to
+  `GET /api/v1/operator/commands/{command_id}` so existing operator polling stays
+  compatible.
+- Return `CommandResponse<T>` with `status=accepted`, `data.receipt_id`,
+  `data.command_id` / `data.commandId`, `data.trackingUrl`, and
+  `meta.idempotency`.
+- Replay duplicate idempotency keys with the same request hash and return HTTP 409
+  `IDEMPOTENCY_CONFLICT` when the same key is reused with a different body.
+- Preserve the live broker fail-closed gate: payloads or runtime targets that signal
+  live broker scope return HTTP 403 unless `PANTHEON_LIVE_BROKER_ENABLED=true`.
+
+`/api/v1/operator/commands` remains available as the legacy foundation route and
+continues to return `CommandSubmissionResponse`; it is not changed to the final
+`CommandResponse<T>` shape.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `POST /bff/v1/commands` accepts final command schema fields (`command`, `target`, `action`, `params`, `audit_context`, `confirmToken`, `approvalDecisionId`, `twoManSignatureId`) | Implemented in BFF-B1-007 |
+| 2 | `Authorization`, `X-Correlation-Id`, `X-Request-Id`, and resolved `Idempotency-Key` / `X-Idempotency-Key` are honored and persisted in command foundation trace/audit | Implemented in BFF-B1-007 |
+| 3 | Response is `CommandResponse<T>` with accepted status, command receipt identifiers, `trackingUrl`, and `meta.idempotency` | Implemented in BFF-B1-007 |
+| 4 | Duplicate idempotency key with the same payload replays the original receipt | Implemented in BFF-B1-007 |
+| 5 | Duplicate idempotency key with a different payload returns HTTP 409 `IDEMPOTENCY_CONFLICT` | Implemented in BFF-B1-007 |
+| 6 | Live broker scope remains fail-closed when `PANTHEON_LIVE_BROKER_ENABLED` is false | Implemented in BFF-B1-007 |
+| 7 | Legacy `/api/v1/operator/commands` remains unaffected and keeps `CommandSubmissionResponse` | Implemented in BFF-B1-007 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_governance_command_submission.py`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B1-007 — Owner: Codex, Reviewer: Claude
+
+---
+
 ## §14 Confirm-Token Lifecycle
 
 ### Gap
@@ -435,40 +501,43 @@ BFF-B1-004 — Owner: Claude, Reviewer: Codex
 
 ### Gap
 
-The execute-plans Agora workbench still references six historical Agora route
-names that had only registry-level `implemented_by_alias` coverage. The canonical
-BFF read models already existed, but the legacy path names were not registered
-as live FastAPI routes. In strict/live mode this could make a frontend route
-probe see a 404 even though the canonical surface was available.
+The execute-plans Agora workbench depends on six strict/live read surfaces for
+its core bootstrap path. Most of the backing read models already existed, but
+the task needed one focused acceptance slice that proves the routes return BFF
+envelopes and that `/bff/agora/inbox` is not a single-dataset shortcut.
 
 ### Fix
 
 **File: `services/control-plane/bff/main.py`**
 
-Register the six historical Agora names as canonical read aliases on the
-existing handlers:
+Verify and preserve these six Agora compatibility reads:
 
 | Compatibility path | Canonical handler/source |
 |---|---|
-| `GET /bff/agora/markets` | `GET /bff/agora/watchlist` |
-| `GET /bff/agora/committee-sessions` | `GET /bff/agora/sessions` |
-| `GET /bff/agora/market-notes` | `GET /bff/agora/notes` |
-| `GET /bff/agora/decision-journal` | `GET /bff/agora/journal` |
-| `GET /bff/agora/research-tasks` | `GET /bff/research/tasks` |
-| `GET /bff/agora/incoming` | `GET /bff/agora/handoffs` |
+| `GET /bff/agora/ask/sessions` | `agora_sessions` filtered to `mode=quick_ask` |
+| `GET /bff/agora/ask/sessions/{id}` | `agora_sessions` detail / ask SSE resync route |
+| `GET /bff/agora/signals` | `agora_signals` |
+| `GET /bff/agora/journal` | `decision_journal_entries` |
+| `GET /bff/agora/postmortems` | `postmortems` |
+| `GET /bff/agora/inbox` | composed `insight_cards` + `agora_signals` + `research_tickets` |
 
-These aliases do not introduce new write authority, fallback data, or separate
-DTO projections. They share the canonical handler, auth gate, pagination
-parameters, response envelope, and read-surface metadata.
+The inbox route now returns a composed list with stable `inboxType` and
+`sourceDataset` markers while preserving the standard `data`, `items`,
+`page_info`, and `meta.surfaces` BFF envelope. The previously added historical
+read aliases (`/markets`, `/committee-sessions`, `/market-notes`,
+`/decision-journal`, `/research-tasks`, `/incoming`) remain registered on their
+canonical handlers; this task does not add write authority or a separate DTO
+projection.
 
 ### Acceptance Criteria
 
 | # | Criterion | Status |
 |---|---|---|
-| 1 | All six B7 compatibility paths are registered in FastAPI and return HTTP 200 with seeded local read-store data | ✅ test added |
-| 2 | Each alias returns the same item IDs as its canonical route | ✅ test added |
-| 3 | Each alias reports the same read-surface `status` and `source` as its canonical route | ✅ test added |
-| 4 | Aliases preserve the existing read-role auth gate and do not add write authority | ✅ implemented by shared handlers |
+| 1 | `/bff/agora/ask/sessions` and `/bff/agora/ask/sessions/{id}` return live envelopes from the existing Agora session store | ✅ test added |
+| 2 | `/bff/agora/signals`, `/bff/agora/journal`, and `/bff/agora/postmortems` return BFF read envelopes with seeded local read-store data | ✅ test added |
+| 3 | `/bff/agora/inbox` composes insight cards, signals, and research tasks with per-source surface metadata | ✅ implemented and tested |
+| 4 | Historical Agora read aliases still share their canonical handler outputs and read-surface metadata | ✅ preserved by existing test |
+| 5 | Compatibility reads preserve the existing read-role auth gate and do not add write authority | ✅ implemented by shared handlers |
 
 ### Affected Files
 
