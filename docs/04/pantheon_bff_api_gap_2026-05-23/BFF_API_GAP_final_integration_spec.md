@@ -1194,6 +1194,97 @@ BFF-PM12-002 — Owner: Codex2, Reviewer: Claude2
 
 ---
 
+### PM-12 Performance Attribution
+
+`GET /bff/management/performance-attribution?dimension=&period=` is the PM-12
+performance attribution table. It is a read-only BFF composition route and does
+not create a new performance source of truth.
+
+**File: `services/control-plane/bff/main.py`**
+
+The route composes attribution facts from existing read surfaces:
+
+- runtime bindings as the runtime anchor;
+- telemetry summaries for PnL, drawdown, fill rate, slippage, trade count, and
+  position snapshots;
+- deployment plans for strategy/deployment context;
+- persona-capital bindings for persona and capital-pool ownership;
+- capital pools, personas, and strategy specs for table labels and drilldown
+  links.
+
+The route accepts `dimension`, `period`, `page_token`, and `page_size`.
+`dimension` may be omitted, `all`, or a comma-separated subset of:
+
+```text
+persona, strategy, pool, asset, broker, runtime, regime
+```
+
+The response uses the standard aggregate envelope:
+
+```json
+{
+  "data": {
+    "period": "latest",
+    "dimensions": [],
+    "items": [],
+    "rows": [],
+    "summary": {}
+  },
+  "items": [],
+  "rows": [],
+  "summary": {},
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 50 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": []
+  }
+}
+```
+
+Each row includes `dimension`, `dimensionKey` / `dimension_key`, `label`,
+`rank`, `period`, top-level PnL contribution fields, nested `metrics`,
+`sourceRefs` / `source_refs`, and drilldown `links` when the dimension maps to a
+BFF entity route. Missing telemetry degrades the attribution surface while still
+emitting runtime-level rows so strict live rendering can show source gaps.
+
+**File: `execute-plans/src/lib/bff-v1/paths.ts`**
+
+Added `managementPerformanceAttribution()` resolving to
+`/bff/management/performance-attribution`.
+
+**File: `execute-plans/src/lib/bff-v1/management.ts`**
+
+Added `ManagementPerformanceAttribution*` query/row/summary/response contracts,
+`managementPerformanceAttributionPath()`, and
+`fetchManagementPerformanceAttribution()`.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated `GET /bff/management/performance-attribution` accepts `dimension` and `period` query parameters | Implemented BFF-PM12-009 |
+| 2 | Rows support attribution by persona, strategy, pool, asset, broker, runtime, and regime | Implemented BFF-PM12-009 |
+| 3 | Response advertises source surfaces and composition sources for strict live rendering | Implemented BFF-PM12-009 |
+| 4 | Missing auth returns HTTP 401 and invalid dimensions return HTTP 422 | Implemented BFF-PM12-009 |
+| 5 | Route is registered in OpenAPI and execute-plans final live wiring route inventory | Implemented BFF-PM12-009 |
+| 6 | execute-plans exposes typed path and fetch helpers for the Performance Attribution table | Implemented BFF-PM12-009 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-PM12-009 — Owner: Codex2, Reviewer: Claude2
+
+---
+
 ## §16 PATCH /bff/me/locale — Operator Locale Preference
 
 ### Gap
