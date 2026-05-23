@@ -37,6 +37,9 @@ def _portfolio_store(
             "risk_policy_ref": "risk-alpha",
             "owner_id": "desk-alpha",
             "owner_type": "desk",
+            "risk_budget": 100.0,
+            "current_exposure": 40.0,
+            "currency": "USD",
         },
         {
             "id": "pool-beta",
@@ -44,6 +47,9 @@ def _portfolio_store(
             "name": "Beta Book",
             "status": "suspended",
             "risk_policy_ref": "risk-beta",
+            "risk_budget": 50.0,
+            "current_exposure": 20.0,
+            "currency": "USD",
         },
     ]
     bindings = [
@@ -71,6 +77,7 @@ def _portfolio_store(
             "status": "approved",
             "target_stage": "paper",
             "capital_pool_id": "pool-alpha",
+            "strategy_id": "strategy-alpha",
             "binding_ids": ["binding-alpha"],
         },
         {
@@ -79,6 +86,7 @@ def _portfolio_store(
             "status": "draft",
             "target_stage": "paper",
             "capital_pool_id": "pool-beta",
+            "strategy_id": "strategy-beta",
         },
     ]
     runtime_bindings = [
@@ -115,9 +123,31 @@ def _portfolio_store(
             "fill_rate": 0.9,
             "total_trades": 12,
             "collected_at": "2026-05-23T08:00:00Z",
+            "positions": [
+                {
+                    "id": "pos-alpha-txf",
+                    "symbol": "TXF",
+                    "asset_class": "future",
+                    "currency": "TWD",
+                    "side": "long",
+                    "quantity": 2,
+                    "average_price": 15200,
+                    "mark_price": 15300,
+                    "notional": 30600,
+                    "market_value": 30600,
+                    "unrealized_pnl": 200,
+                    "realized_pnl": 12,
+                    "broker_id": "broker-alpha",
+                    "regime": "trend",
+                    "marked_at": "2026-05-23T08:04:00Z",
+                }
+            ],
         },
         "runtime-alpha-live": {
             "runtime_id": "runtime-alpha-live",
+            "symbol": "NQ",
+            "broker_id": "broker-alpha",
+            "market_regime": "risk-off",
             "pnl": -2.0,
             "drawdown": 0.12,
             "fill_rate": 0.8,
@@ -126,7 +156,15 @@ def _portfolio_store(
         },
     }
 
-    store.list_capital_pools = lambda status=None, risk_policy_ref=None: capital_pools
+    def list_capital_pools(status=None, risk_policy_ref=None):
+        pools = list(capital_pools)
+        if status:
+            pools = [pool for pool in pools if pool.get("status") == status]
+        if risk_policy_ref:
+            pools = [pool for pool in pools if pool.get("risk_policy_ref") == risk_policy_ref]
+        return pools
+
+    store.list_capital_pools = list_capital_pools
     store.list_bindings = lambda persona_id=None, capital_pool_id=None, role=None, validity=None: bindings
     store.list_deployment_plans = lambda status=None, capital_pool_id=None: deployment_plans
     store.list_runtime_bindings = lambda deployment_mode=None, version=None: runtime_bindings
@@ -178,6 +216,10 @@ def test_portfolio_book_summary_composes_pool_runtime_and_telemetry(monkeypatch)
     assert alpha["active_binding_count"] == 1
     assert alpha["deployment_ids"] == ["plan-alpha"]
     assert alpha["runtime_ids"] == ["runtime-alpha", "runtime-alpha-live"]
+    assert alpha["risk_budget"] == 100.0
+    assert alpha["current_exposure"] == 40.0
+    assert alpha["risk_budget_utilization"] == 0.4
+    assert alpha["pnl"] == 8.0
     assert alpha["telemetry"]["total_pnl"] == 8.0
     assert payload["data"]["items"] == payload["items"]
     assert payload["data"]["pools"] == payload["items"]
@@ -190,6 +232,191 @@ def test_portfolio_book_requires_read_auth(monkeypatch) -> None:
     client = _portfolio_store(monkeypatch)
 
     response = client.get("/bff/management/portfolio-book")
+
+    assert response.status_code == 401, response.text
+
+
+def test_portfolio_book_holdings_composes_global_holdings_table(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get("/bff/management/portfolio-book/holdings", headers=HEADERS)
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    summary = payload["summary"]
+    assert summary["holding_count"] == 3
+    assert summary["returned_holding_count"] == 3
+    assert summary["active_holding_count"] == 2
+    assert summary["paper_holding_count"] == 2
+    assert summary["live_holding_count"] == 1
+    assert summary["runtime_count"] == 3
+    assert summary["telemetry_runtime_count"] == 2
+    assert summary["total_notional"] == 30600
+    assert summary["total_market_value"] == 30600
+    assert summary["total_unrealized_pnl"] == 200
+    assert summary["total_realized_pnl"] == 12
+    assert summary["total_pnl"] == 8
+    assert summary["latest_mark_at"] == "2026-05-23T08:05:00Z"
+
+    alpha = payload["items"][0]
+    assert alpha["holding_id"] == "runtime-alpha:pos-alpha-txf"
+    assert alpha["runtime_id"] == "runtime-alpha"
+    assert alpha["capital_pool_id"] == "pool-alpha"
+    assert alpha["persona_id"] == "persona-alpha"
+    assert alpha["strategy_id"] == "strategy-alpha"
+    assert alpha["symbol"] == "TXF"
+    assert alpha["quantity"] == 2
+    assert alpha["mark_price"] == 15300
+    assert alpha["market_value"] == 30600
+    assert alpha["links"]["runtime"] == "/bff/runtimes/runtime-alpha"
+    assert alpha["links"]["capitalPool"] == "/bff/capital-pools/pool-alpha"
+    assert payload["data"]["items"] == payload["items"]
+    assert payload["data"]["holdings"] == payload["items"]
+    assert payload["data"]["summary"] == payload["summary"]
+    assert payload["page_info"] == {"next_page_token": None, "total": 3}
+    assert payload["meta"]["surfaces"]["portfolio_book_holdings"]["source"] == "bff_composed"
+    assert payload["meta"]["surfaces"]["runtime_bindings"]["source"] == "canonical"
+    assert "GET /api/v1/telemetry/{runtime_id}/summary" in payload["meta"]["composition_sources"]
+
+
+def test_portfolio_book_holdings_filters_by_stage(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get(
+        "/bff/management/portfolio-book/holdings?deployment_stage=live",
+        headers=HEADERS,
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["summary"]["holding_count"] == 1
+    assert payload["summary"]["live_holding_count"] == 1
+    assert payload["items"][0]["runtime_id"] == "runtime-alpha-live"
+
+
+def test_portfolio_book_holdings_requires_read_auth(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get("/bff/management/portfolio-book/holdings")
+
+    assert response.status_code == 401, response.text
+
+
+def test_performance_attribution_groups_requested_dimension(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get(
+        "/bff/management/performance-attribution",
+        headers=HEADERS,
+        params={"dimension": "asset", "period": "30d", "page_size": 20},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["items"] == payload["rows"] == payload["data"]["rows"]
+    assert payload["data"]["items"] == payload["items"]
+    assert payload["summary"]["period"] == "30d"
+    assert payload["summary"]["dimensions"] == ["asset"]
+    assert payload["summary"]["supportedDimensions"] == [
+        "persona",
+        "strategy",
+        "pool",
+        "asset",
+        "broker",
+        "runtime",
+        "regime",
+    ]
+    assert payload["page_info"] == {"next_page_token": None, "total": 3, "page_size": 20}
+
+    rows = {row["dimension_key"]: row for row in payload["items"]}
+    txf = rows["TXF"]
+    assert txf["dimension"] == "asset"
+    assert txf["label"] == "TXF"
+    assert txf["period"] == "30d"
+    assert txf["metrics"]["totalPnl"] == 10.0
+    assert txf["metrics"]["totalTrades"] == 12
+    assert txf["metrics"]["runtimeCount"] == 1
+    assert txf["sourceRefs"]["runtimeIds"] == ["runtime-alpha"]
+
+    assert rows["NQ"]["metrics"]["totalPnl"] == -2.0
+    assert payload["summary"]["totalPnl"] == 8.0
+    assert payload["summary"]["telemetryRuntimeCount"] == 2
+    assert payload["meta"]["policy"] == "read_only_performance_attribution"
+    assert payload["meta"]["surfaces"]["performance_attribution"]["source"] == "bff_composed"
+    assert "GET /api/v1/telemetry/{runtime_id}/summary" in payload["meta"]["composition_sources"]
+
+
+def test_performance_attribution_supports_all_pm12_dimensions(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get(
+        "/bff/management/performance-attribution",
+        headers=HEADERS,
+        params={
+            "dimension": "persona,strategy,pool,asset,broker,runtime,regime",
+            "period": "latest",
+            "page_size": 200,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    dimensions = {row["dimension"] for row in payload["items"]}
+    assert dimensions == {"persona", "strategy", "pool", "asset", "broker", "runtime", "regime"}
+
+    persona_alpha = next(
+        row for row in payload["items"]
+        if row["dimension"] == "persona" and row["dimension_key"] == "persona-alpha"
+    )
+    assert persona_alpha["label"] == "persona-alpha"
+    assert persona_alpha["metrics"]["totalPnl"] == 10.0
+    assert persona_alpha["links"]["persona"] == "/bff/personas/persona-alpha"
+
+    pool_alpha = next(
+        row for row in payload["items"]
+        if row["dimension"] == "pool" and row["dimension_key"] == "pool-alpha"
+    )
+    assert pool_alpha["label"] == "Alpha Book"
+    assert pool_alpha["metrics"]["totalPnl"] == 8.0
+
+    broker_alpha = next(
+        row for row in payload["items"]
+        if row["dimension"] == "broker" and row["dimension_key"] == "broker-alpha"
+    )
+    assert broker_alpha["metrics"]["runtimeCount"] == 2
+    assert broker_alpha["metrics"]["totalPnl"] == 8.0
+
+    runtime_alpha = next(
+        row for row in payload["items"]
+        if row["dimension"] == "runtime" and row["dimension_key"] == "runtime-alpha"
+    )
+    assert runtime_alpha["links"]["runtime"] == "/bff/runtimes/runtime-alpha"
+
+    regimes = {
+        row["dimension_key"]
+        for row in payload["items"]
+        if row["dimension"] == "regime"
+    }
+    assert {"trend", "risk-off"}.issubset(regimes)
+
+
+def test_performance_attribution_rejects_invalid_dimension(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get(
+        "/bff/management/performance-attribution",
+        headers=HEADERS,
+        params={"dimension": "desk"},
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["error"] == "invalid_dimension"
+
+
+def test_performance_attribution_requires_read_auth(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get("/bff/management/performance-attribution")
 
     assert response.status_code == 401, response.text
 
@@ -208,9 +435,88 @@ def test_portfolio_book_reports_degraded_telemetry_without_hiding_core_book(monk
     assert payload["meta"]["surfaces"]["portfolio_book"]["status"] == "degraded"
 
 
+def test_portfolio_book_pools_returns_pool_risk_exposure_and_pnl(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get("/bff/management/portfolio-book/pools", headers=HEADERS)
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["data"] == payload["items"]
+    assert payload["pools"] == payload["items"]
+    assert payload["page_info"] == {"next_page_token": None, "total": 2, "page_size": 50}
+
+    alpha = payload["items"][0]
+    assert alpha["pool_id"] == "pool-alpha"
+    assert alpha["risk_budget"] == 100.0
+    assert alpha["riskBudget"] == 100.0
+    assert alpha["current_exposure"] == 40.0
+    assert alpha["currentExposure"] == 40.0
+    assert alpha["risk_budget_utilization"] == 0.4
+    assert alpha["exposure"]["source"] == "capital_pool"
+    assert alpha["pnl"] == 8.0
+    assert alpha["pnl_summary"]["total_pnl"] == 8.0
+
+    summary = payload["summary"]
+    assert summary["total_pools"] == 2
+    assert summary["returned_pools"] == 2
+    assert summary["risk_budget_total"] == 150.0
+    assert summary["current_exposure_total"] == 60.0
+    assert summary["risk_budget_utilization"] == 0.4
+    assert summary["telemetry_runtime_count"] == 2
+    assert summary["total_pnl"] == 8.0
+    assert payload["meta"]["surfaces"]["portfolio_book_pools"]["source"] == "bff_composed"
+    assert payload["meta"]["surfaces"]["capital_pools"]["source"] == "canonical"
+    assert "GET /bff/capital-pools" in payload["meta"]["composition_sources"]
+
+
+def test_portfolio_book_pools_filters_and_paginates(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get(
+        "/bff/management/portfolio-book/pools",
+        headers=HEADERS,
+        params={"status": "active", "risk_policy_ref": "risk-alpha", "page_size": 1},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["page_info"] == {"next_page_token": None, "total": 1, "page_size": 1}
+    assert payload["items"][0]["pool_id"] == "pool-alpha"
+    assert payload["summary"]["total_pools"] == 1
+
+
+def test_portfolio_book_pools_requires_read_auth(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get("/bff/management/portfolio-book/pools")
+
+    assert response.status_code == 401, response.text
+
+
+def test_portfolio_book_holdings_reports_degraded_telemetry(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch, telemetry_source="missing", telemetry={})
+
+    response = client.get("/bff/management/portfolio-book/holdings", headers=HEADERS)
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["summary"]["holding_count"] == 3
+    assert payload["summary"]["telemetry_runtime_count"] == 0
+    assert payload["summary"]["total_pnl"] is None
+    assert payload["meta"]["surfaces"]["telemetry_summaries"]["status"] == "unavailable"
+    assert payload["meta"]["surfaces"]["portfolio_book_holdings"]["status"] == "degraded"
+
+
 def test_portfolio_book_is_registered_in_openapi() -> None:
     bff_main.app.openapi_schema = None
     schema = bff_main.app.openapi()
 
     assert "/bff/management/portfolio-book" in schema["paths"]
     assert "get" in schema["paths"]["/bff/management/portfolio-book"]
+    assert "/bff/management/portfolio-book/pools" in schema["paths"]
+    assert "get" in schema["paths"]["/bff/management/portfolio-book/pools"]
+    assert "/bff/management/portfolio-book/holdings" in schema["paths"]
+    assert "get" in schema["paths"]["/bff/management/portfolio-book/holdings"]
+    assert "/bff/management/performance-attribution" in schema["paths"]
+    assert "get" in schema["paths"]["/bff/management/performance-attribution"]

@@ -680,6 +680,12 @@ _EXECUTORS = {
     CommandType.EXPERIMENT_ACTION: _execute_bff_action_adapter,
     CommandType.JOB_ACTION: _execute_bff_action_adapter,
     CommandType.ALERT_ACKNOWLEDGE: _execute_bff_action_adapter,
+    CommandType.HUMAN_GATE_APPROVE: _execute_bff_action_adapter,
+    CommandType.HUMAN_GATE_REJECT: _execute_bff_action_adapter,
+    CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: _execute_bff_action_adapter,
+    CommandType.HUMAN_GATE_REVOKE: _execute_bff_action_adapter,
+    CommandType.HUMAN_GATE_EXTEND_TTL: _execute_bff_action_adapter,
+    CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT: _execute_bff_action_adapter,
 }
 
 

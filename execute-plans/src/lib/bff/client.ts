@@ -40,6 +40,21 @@ import type {
   OodaPacketMeta,
 } from "@/lib/ooda/packets";
 import type {
+  ManagementEvidenceItem,
+  ManagementEvidenceQuery,
+  ManagementEvidenceResponse,
+  ManagementEvolutionJournalItem,
+  ManagementEvolutionJournalQuery,
+  ManagementEvolutionJournalResponse,
+  ManagementPersonaIntentItem,
+  ManagementPersonaIntentQuery,
+  ManagementPersonaIntentResponse,
+  ManagementTradingPulseRankingsQuery,
+  ManagementTradingPulseRankingsResponse,
+  ManagementTradingPulseResponse,
+  ManagementReadinessResponse,
+} from "@/lib/bff-v1/management";
+import type {
   Strategy,
   Persona,
   CapitalPool,
@@ -99,6 +114,61 @@ export interface PersonaFleetAggregate {
     healthy_personas: number;
     bound_personas: number;
     runtime_bound_personas: number;
+  };
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces?: Record<string, unknown>;
+    [key: string]: unknown;
+  };
+}
+
+export type HumanInboxSourceType = "approval" | "intervention";
+export type HumanInboxPriority = "critical" | "high" | "medium" | "low" | "unknown";
+
+export interface HumanInboxItem {
+  id: string;
+  inbox_id: string;
+  inboxType: HumanInboxSourceType;
+  source_type: HumanInboxSourceType;
+  source_id: string;
+  title: string;
+  summary: string;
+  priority: HumanInboxPriority;
+  risk_level: string;
+  status: string;
+  action_state: "pending" | "resolved" | string;
+  created_at?: string | null;
+  updated_at?: string | null;
+  target: {
+    type?: string | null;
+    id?: string | null;
+  };
+  route: string;
+  bff_detail_path: string;
+  allowedActions: Record<string, unknown>;
+  approval_decision_id?: string;
+  intervention_id?: string;
+  decision_context?: Record<string, unknown>;
+  remediation_context?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface HumanInboxAggregate {
+  data: HumanInboxItem[];
+  items: HumanInboxItem[];
+  summary: {
+    total_items: number;
+    returned_items: number;
+    pending_items: number;
+    approval_count: number;
+    intervention_count: number;
+    critical_count: number;
+    high_count: number;
   };
   page_info: {
     next_page_token: string | null;
@@ -256,6 +326,341 @@ function emptyPersonaFleetAggregate(): PersonaFleetAggregate {
   };
 }
 
+function emptyHumanInboxAggregate(): HumanInboxAggregate {
+  return {
+    data: [],
+    items: [],
+    summary: {
+      total_items: 0,
+      returned_items: 0,
+      pending_items: 0,
+      approval_count: 0,
+      intervention_count: 0,
+      critical_count: 0,
+      high_count: 0,
+    },
+    page_info: {
+      next_page_token: null,
+      total: 0,
+      page_size: 0,
+    },
+    meta: {
+      surfaces: {
+        human_inbox: {
+          status: "unavailable",
+          source: "mock",
+          reason: "Human Inbox aggregate is served only by the Pantheon BFF management aggregate.",
+        },
+      },
+    },
+  };
+}
+
+function emptyManagementTradingPulseAggregate(): ManagementTradingPulseResponse {
+  const summary = {
+    runtimeCount: 0,
+    runtime_count: 0,
+    telemetryCoverageCount: 0,
+    telemetry_coverage_count: 0,
+    byStatus: {},
+    by_status: {},
+    byStage: {},
+    by_stage: {},
+    totalPnl: null,
+    total_pnl: null,
+    worstDrawdown: null,
+    worst_drawdown: null,
+    averageFillRate: null,
+    average_fill_rate: null,
+    worstSlippageBps: null,
+    worst_slippage_bps: null,
+    totalTrades: 0,
+    total_trades: 0,
+    baselineComparisonCount: 0,
+    baseline_comparison_count: 0,
+    baselineBreachedCount: 0,
+    baseline_breached_count: 0,
+    baselineWatchCount: 0,
+    baseline_watch_count: 0,
+    byBaselineStatus: {},
+    by_baseline_status: {},
+  };
+  const data = {
+    id: "management-trading-pulse",
+    summary,
+    cards: [],
+    rankings: [],
+    runtimeRows: [],
+    runtime_rows: [],
+    baselineComparisons: [],
+    baseline_comparisons: [],
+  };
+  return {
+    data,
+    items: [],
+    cards: [],
+    rankings: [],
+    runtimeRows: [],
+    runtime_rows: [],
+    baselineComparisons: [],
+    baseline_comparisons: [],
+    summary,
+    page_info: {
+      next_page_token: null,
+      total: 0,
+      page_size: 0,
+    },
+    meta: {
+      surfaces: {
+        management_trading_pulse: {
+          status: "unavailable",
+          source: "mock",
+          reason: "Trading Pulse aggregate is served by the Pantheon BFF management aggregate.",
+        },
+        baseline_comparison: {
+          status: "unavailable",
+          source: "mock",
+          reason: "Trading Pulse baseline comparison is served by the Pantheon BFF management aggregate.",
+        },
+      },
+    },
+  };
+}
+
+function emptyManagementTradingPulseRankingsAggregate(
+  limit = 20,
+): ManagementTradingPulseRankingsResponse {
+  return {
+    data: [],
+    items: [],
+    rankings: [],
+    rankingBlocks: [],
+    ranking_blocks: [],
+    summary: {
+      runtimeCount: 0,
+      runtime_count: 0,
+      rankingBlockCount: 0,
+      ranking_block_count: 0,
+      rankedItemCount: 0,
+      ranked_item_count: 0,
+      criteria: [],
+      limit,
+      topRuntimeId: null,
+      top_runtime_id: null,
+    },
+    page_info: {
+      next_page_token: null,
+      total: 0,
+      page_size: 0,
+    },
+    meta: {
+      surfaces: {
+        management_trading_pulse_rankings: {
+          status: "unavailable",
+          source: "mock",
+          reason: "Trading Pulse rankings are served by the Pantheon BFF management aggregate.",
+        },
+      },
+      composition_sources: [],
+    },
+  };
+}
+
+function emptyManagementEvidenceAggregate(): ManagementEvidenceResponse {
+  return {
+    data: [],
+    items: [],
+    summary: {
+      totalEvidence: 0,
+      total_evidence: 0,
+      returnedEvidence: 0,
+      returned_evidence: 0,
+      visibleEvidence: 0,
+      visible_evidence: 0,
+      redactedEvidence: 0,
+      redacted_evidence: 0,
+      verifiedEvidence: 0,
+      verified_evidence: 0,
+      bySourceType: {},
+      by_source_type: {},
+      byLinkType: {},
+      by_link_type: {},
+      byCredibilityTier: {},
+      by_credibility_tier: {},
+    },
+    facets: {
+      sourceTypes: {},
+      source_types: {},
+      linkTypes: {},
+      link_types: {},
+      credibilityTiers: {},
+      credibility_tiers: {},
+    },
+    page_info: {
+      next_page_token: null,
+      total: 0,
+      page_size: 0,
+    },
+    pagination: {
+      next_page_token: null,
+      has_more: false,
+      page_size: 0,
+    },
+    meta: {
+      surfaces: {
+        management_evidence: {
+          status: "unavailable",
+          source: "mock",
+          reason: "Evidence Explorer aggregate is served by the Pantheon BFF management aggregate.",
+        },
+      },
+      redacted_evidence_count: 0,
+    },
+  };
+}
+
+function emptyManagementReadinessAggregate(id: string): ManagementReadinessResponse {
+  const surfaceKey = `management_readiness_${id.replace(/-/g, "_")}`;
+  return {
+    data: {
+      id,
+      readinessId: id,
+      readiness_id: id,
+      title: id,
+      readinessStatus: "unknown",
+      readiness_status: "unknown",
+      canProceed: false,
+      can_proceed: false,
+      blockingReasons: ["mock_unavailable"],
+      blocking_reasons: ["mock_unavailable"],
+      checks: [],
+      evidenceRefs: [],
+      evidence_refs: [],
+      links: {},
+      details: {},
+    },
+    summary: {
+      readinessStatus: "unknown",
+      readiness_status: "unknown",
+      canProceed: false,
+      can_proceed: false,
+      checkCount: 0,
+      check_count: 0,
+      passedCheckCount: 0,
+      passed_check_count: 0,
+      blockingReasonCount: 1,
+      blocking_reason_count: 1,
+      blockingReasons: ["mock_unavailable"],
+      blocking_reasons: ["mock_unavailable"],
+      byStatus: {},
+      by_status: {},
+    },
+    checks: [],
+    items: [],
+    evidence_refs: [],
+    meta: {
+      surfaces: {
+        [surfaceKey]: {
+          status: "unavailable",
+          source: "mock",
+          reason: "Management readiness aggregates are served only by the Pantheon BFF.",
+        },
+      },
+    },
+  };
+}
+
+function emptyManagementEvolutionJournalAggregate(): ManagementEvolutionJournalResponse {
+  return {
+    data: [],
+    items: [],
+    summary: {
+      total_items: 0,
+      returned_items: 0,
+      decision_count: 0,
+      mutation_review_count: 0,
+      postmortem_count: 0,
+      rollback_count: 0,
+      freeze_order_count: 0,
+      pending_review_count: 0,
+      active_freeze_count: 0,
+      completed_rollback_count: 0,
+      latest_at: null,
+      byType: {},
+      by_type: {},
+      byStatus: {},
+      by_status: {},
+      byRiskLevel: {},
+      by_risk_level: {},
+    },
+    page_info: {
+      next_page_token: null,
+      total: 0,
+      page_size: 0,
+    },
+    meta: {
+      surfaces: {
+        management_evolution_journal: {
+          status: "unavailable",
+          source: "mock",
+          reason: "Evolution Journal aggregate is served by the Pantheon BFF management aggregate.",
+        },
+      },
+      composition_sources: [
+        "evolution_decisions",
+        "postmortems",
+        "mutation_review",
+        "rollbacks",
+        "freeze_orders",
+      ],
+    },
+  };
+}
+
+function emptyManagementPersonaIntentAggregate(): ManagementPersonaIntentResponse {
+  return {
+    data: [],
+    items: [],
+    summary: {
+      total_items: 0,
+      returned_items: 0,
+      persona_trace_count: 0,
+      trainer_session_count: 0,
+      agora_session_count: 0,
+      redacted_item_count: 0,
+      persona_count: 0,
+      persona_ids: [],
+      latest_at: null,
+      bySourceType: {},
+      by_source_type: {},
+      byStatus: {},
+      by_status: {},
+      byIntent: {},
+      by_intent: {},
+    },
+    page_info: {
+      next_page_token: null,
+      total: 0,
+      page_size: 0,
+    },
+    meta: {
+      surfaces: {
+        management_persona_intent: {
+          status: "unavailable",
+          source: "mock",
+          reason: "Persona Intent aggregate is served by the Pantheon BFF management aggregate.",
+        },
+      },
+      composition_sources: [
+        "persona_traces",
+        "teaching_sessions",
+        "agora_sessions",
+      ],
+      redacted_item_count: 0,
+    },
+  };
+}
+
 function adaptOodaPacketDetail(body: unknown): OodaPacketDetail | undefined {
   const envelope = asObject(body);
   const rawPacket = asObject(strictDataFrom(body) ?? body);
@@ -304,6 +709,361 @@ function adaptPersonaFleetAggregate(body: unknown): PersonaFleetAggregate {
   };
 }
 
+function adaptHumanInboxAggregate(body: unknown): HumanInboxAggregate {
+  const envelope = asObject(body);
+  const rawItems = Array.isArray(envelope.items)
+    ? envelope.items
+    : Array.isArray(envelope.data)
+      ? envelope.data
+      : [];
+  const items = rawItems.filter((item) => item && typeof item === "object") as HumanInboxItem[];
+  const summary = asObject(envelope.summary);
+  const pageInfo = asObject(envelope.page_info);
+  const meta = asObject(envelope.meta);
+  return {
+    data: items,
+    items,
+    summary: {
+      total_items: Number(summary.total_items ?? items.length),
+      returned_items: Number(summary.returned_items ?? items.length),
+      pending_items: Number(summary.pending_items ?? 0),
+      approval_count: Number(summary.approval_count ?? 0),
+      intervention_count: Number(summary.intervention_count ?? 0),
+      critical_count: Number(summary.critical_count ?? 0),
+      high_count: Number(summary.high_count ?? 0),
+    },
+    page_info: {
+      next_page_token: typeof pageInfo.next_page_token === "string" ? pageInfo.next_page_token : null,
+      total: Number(pageInfo.total ?? items.length),
+      page_size: Number(pageInfo.page_size ?? items.length),
+    },
+    meta,
+  };
+}
+
+function adaptManagementTradingPulseAggregate(body: unknown): ManagementTradingPulseResponse {
+  const envelope = asObject(body);
+  const dataEnvelope = asObject(envelope.data);
+  const rawCards = Array.isArray(envelope.cards)
+    ? envelope.cards
+    : Array.isArray(envelope.items)
+      ? envelope.items
+      : Array.isArray(dataEnvelope.cards)
+        ? dataEnvelope.cards
+        : [];
+  const rawRankings = Array.isArray(envelope.rankings)
+    ? envelope.rankings
+    : Array.isArray(dataEnvelope.rankings)
+      ? dataEnvelope.rankings
+      : [];
+  const rawRuntimeRows = Array.isArray(envelope.runtimeRows)
+    ? envelope.runtimeRows
+    : Array.isArray(envelope.runtime_rows)
+      ? envelope.runtime_rows
+      : Array.isArray(dataEnvelope.runtimeRows)
+        ? dataEnvelope.runtimeRows
+        : Array.isArray(dataEnvelope.runtime_rows)
+          ? dataEnvelope.runtime_rows
+          : [];
+  const rawBaselineComparisons = Array.isArray(envelope.baselineComparisons)
+    ? envelope.baselineComparisons
+    : Array.isArray(envelope.baseline_comparisons)
+      ? envelope.baseline_comparisons
+      : Array.isArray(dataEnvelope.baselineComparisons)
+        ? dataEnvelope.baselineComparisons
+        : Array.isArray(dataEnvelope.baseline_comparisons)
+          ? dataEnvelope.baseline_comparisons
+          : [];
+  const cards = rawCards.filter((item) => item && typeof item === "object") as ManagementTradingPulseResponse["cards"];
+  const rankings = rawRankings.filter((item) => item && typeof item === "object") as ManagementTradingPulseResponse["rankings"];
+  const runtimeRows = rawRuntimeRows.filter((item) => item && typeof item === "object") as ManagementTradingPulseResponse["runtimeRows"];
+  const baselineComparisons = rawBaselineComparisons.filter((item) => item && typeof item === "object") as ManagementTradingPulseResponse["baselineComparisons"];
+  const summary = asObject(envelope.summary ?? dataEnvelope.summary) as ManagementTradingPulseResponse["summary"];
+  const pageInfo = asObject(envelope.page_info);
+  const meta = asObject(envelope.meta) as ManagementTradingPulseResponse["meta"];
+  const data = {
+    id: typeof dataEnvelope.id === "string" ? dataEnvelope.id : "management-trading-pulse",
+    summary,
+    cards,
+    rankings,
+    runtimeRows,
+    runtime_rows: runtimeRows,
+    baselineComparisons,
+    baseline_comparisons: baselineComparisons,
+  };
+  return {
+    data,
+    items: cards,
+    cards,
+    rankings,
+    runtimeRows,
+    runtime_rows: runtimeRows,
+    baselineComparisons,
+    baseline_comparisons: baselineComparisons,
+    summary,
+    page_info: {
+      next_page_token: typeof pageInfo.next_page_token === "string" ? pageInfo.next_page_token : null,
+      total: Number(pageInfo.total ?? cards.length),
+      page_size: Number(pageInfo.page_size ?? cards.length),
+    },
+    meta,
+  };
+}
+
+function adaptManagementTradingPulseRankingsAggregate(
+  body: unknown,
+): ManagementTradingPulseRankingsResponse {
+  const envelope = asObject(body);
+  const rawBlocks = Array.isArray(envelope.rankingBlocks)
+    ? envelope.rankingBlocks
+    : Array.isArray(envelope.ranking_blocks)
+      ? envelope.ranking_blocks
+      : Array.isArray(envelope.rankings)
+        ? envelope.rankings
+        : Array.isArray(envelope.items)
+          ? envelope.items
+          : Array.isArray(envelope.data)
+            ? envelope.data
+            : [];
+  const rankingBlocks = rawBlocks.filter((item) => item && typeof item === "object") as ManagementTradingPulseRankingsResponse["rankingBlocks"];
+  const summary = asObject(envelope.summary);
+  const pageInfo = asObject(envelope.page_info);
+  const meta = asObject(envelope.meta) as ManagementTradingPulseRankingsResponse["meta"];
+  const criteria = Array.isArray(summary.criteria)
+    ? summary.criteria.map((item) => String(item))
+    : rankingBlocks.map((block) => String(block.metric || "")).filter(Boolean);
+  return {
+    data: rankingBlocks,
+    items: rankingBlocks,
+    rankings: rankingBlocks,
+    rankingBlocks,
+    ranking_blocks: rankingBlocks,
+    summary: {
+      runtimeCount: Number(summary.runtimeCount ?? summary.runtime_count ?? 0),
+      runtime_count: Number(summary.runtime_count ?? summary.runtimeCount ?? 0),
+      rankingBlockCount: Number(summary.rankingBlockCount ?? summary.ranking_block_count ?? rankingBlocks.length),
+      ranking_block_count: Number(summary.ranking_block_count ?? summary.rankingBlockCount ?? rankingBlocks.length),
+      rankedItemCount: Number(summary.rankedItemCount ?? summary.ranked_item_count ?? 0),
+      ranked_item_count: Number(summary.ranked_item_count ?? summary.rankedItemCount ?? 0),
+      criteria,
+      limit: Number(summary.limit ?? 20),
+      topRuntimeId: typeof summary.topRuntimeId === "string" ? summary.topRuntimeId : null,
+      top_runtime_id: typeof summary.top_runtime_id === "string" ? summary.top_runtime_id : null,
+    },
+    page_info: {
+      next_page_token: typeof pageInfo.next_page_token === "string" ? pageInfo.next_page_token : null,
+      total: Number(pageInfo.total ?? rankingBlocks.length),
+      page_size: Number(pageInfo.page_size ?? rankingBlocks.length),
+    },
+    meta,
+  };
+}
+
+function adaptManagementEvidenceAggregate(body: unknown): ManagementEvidenceResponse {
+  const envelope = asObject(body);
+  const rawItems = Array.isArray(envelope.items)
+    ? envelope.items
+    : Array.isArray(envelope.data)
+      ? envelope.data
+      : [];
+  const items = rawItems.filter((item) => item && typeof item === "object") as ManagementEvidenceItem[];
+  const summary = asObject(envelope.summary);
+  const facets = asObject(envelope.facets);
+  const pageInfo = asObject(envelope.page_info);
+  const pagination = asObject(envelope.pagination);
+  const meta = asObject(envelope.meta);
+  return {
+    data: items,
+    items,
+    summary: {
+      totalEvidence: Number(summary.totalEvidence ?? summary.total_evidence ?? items.length),
+      total_evidence: Number(summary.total_evidence ?? summary.totalEvidence ?? items.length),
+      returnedEvidence: Number(summary.returnedEvidence ?? summary.returned_evidence ?? items.length),
+      returned_evidence: Number(summary.returned_evidence ?? summary.returnedEvidence ?? items.length),
+      visibleEvidence: Number(summary.visibleEvidence ?? summary.visible_evidence ?? items.length),
+      visible_evidence: Number(summary.visible_evidence ?? summary.visibleEvidence ?? items.length),
+      redactedEvidence: Number(summary.redactedEvidence ?? summary.redacted_evidence ?? 0),
+      redacted_evidence: Number(summary.redacted_evidence ?? summary.redactedEvidence ?? 0),
+      verifiedEvidence: Number(summary.verifiedEvidence ?? summary.verified_evidence ?? 0),
+      verified_evidence: Number(summary.verified_evidence ?? summary.verifiedEvidence ?? 0),
+      bySourceType: asObject(summary.bySourceType ?? summary.by_source_type) as Record<string, number>,
+      by_source_type: asObject(summary.by_source_type ?? summary.bySourceType) as Record<string, number>,
+      byLinkType: asObject(summary.byLinkType ?? summary.by_link_type) as Record<string, number>,
+      by_link_type: asObject(summary.by_link_type ?? summary.byLinkType) as Record<string, number>,
+      byCredibilityTier: asObject(summary.byCredibilityTier ?? summary.by_credibility_tier) as Record<string, number>,
+      by_credibility_tier: asObject(summary.by_credibility_tier ?? summary.byCredibilityTier) as Record<string, number>,
+    },
+    facets: facets as ManagementEvidenceResponse["facets"],
+    page_info: {
+      next_page_token: typeof pageInfo.next_page_token === "string" ? pageInfo.next_page_token : null,
+      total: Number(pageInfo.total ?? items.length),
+      page_size: Number(pageInfo.page_size ?? items.length),
+    },
+    pagination: pagination as ManagementEvidenceResponse["pagination"],
+    meta: meta as ManagementEvidenceResponse["meta"],
+  };
+}
+
+function adaptManagementReadinessAggregate(body: unknown, fallbackId: string): ManagementReadinessResponse {
+  const envelope = asObject(body);
+  const rawData = asObject(envelope.data);
+  const rawChecks = Array.isArray(envelope.checks)
+    ? envelope.checks
+    : Array.isArray(rawData.checks)
+      ? rawData.checks
+      : [];
+  const checks = rawChecks.filter((item) => item && typeof item === "object") as ManagementReadinessResponse["checks"];
+  const rawEvidenceRefs = Array.isArray(envelope.evidence_refs)
+    ? envelope.evidence_refs
+    : Array.isArray(rawData.evidence_refs)
+      ? rawData.evidence_refs
+      : Array.isArray(rawData.evidenceRefs)
+        ? rawData.evidenceRefs
+        : [];
+  const evidenceRefs = rawEvidenceRefs.filter((item) => item && typeof item === "object") as ManagementReadinessResponse["evidence_refs"];
+  const summary = asObject(envelope.summary);
+  const readinessStatus = String(
+    summary.readinessStatus ?? summary.readiness_status ?? rawData.readinessStatus ?? rawData.readiness_status ?? "unknown",
+  );
+  const canProceed = Boolean(summary.canProceed ?? summary.can_proceed ?? rawData.canProceed ?? rawData.can_proceed);
+  const blockingReasons = Array.isArray(summary.blockingReasons)
+    ? summary.blockingReasons.map(String)
+    : Array.isArray(summary.blocking_reasons)
+      ? summary.blocking_reasons.map(String)
+      : [];
+  const data = {
+    ...rawData,
+    id: String(rawData.id ?? fallbackId),
+    readinessId: String(rawData.readinessId ?? rawData.readiness_id ?? rawData.id ?? fallbackId),
+    readiness_id: String(rawData.readiness_id ?? rawData.readinessId ?? rawData.id ?? fallbackId),
+    title: String(rawData.title ?? fallbackId),
+    readinessStatus,
+    readiness_status: readinessStatus,
+    canProceed,
+    can_proceed: canProceed,
+    blockingReasons,
+    blocking_reasons: blockingReasons,
+    checks,
+    evidenceRefs,
+    evidence_refs: evidenceRefs,
+  } as ManagementReadinessResponse["data"];
+  return {
+    data,
+    summary: {
+      readinessStatus,
+      readiness_status: readinessStatus,
+      canProceed,
+      can_proceed: canProceed,
+      checkCount: Number(summary.checkCount ?? summary.check_count ?? checks.length),
+      check_count: Number(summary.check_count ?? summary.checkCount ?? checks.length),
+      passedCheckCount: Number(summary.passedCheckCount ?? summary.passed_check_count ?? 0),
+      passed_check_count: Number(summary.passed_check_count ?? summary.passedCheckCount ?? 0),
+      blockingReasonCount: Number(summary.blockingReasonCount ?? summary.blocking_reason_count ?? blockingReasons.length),
+      blocking_reason_count: Number(summary.blocking_reason_count ?? summary.blockingReasonCount ?? blockingReasons.length),
+      blockingReasons,
+      blocking_reasons: blockingReasons,
+      byStatus: asObject(summary.byStatus ?? summary.by_status) as Record<string, number>,
+      by_status: asObject(summary.by_status ?? summary.byStatus) as Record<string, number>,
+    },
+    checks,
+    items: checks,
+    evidence_refs: evidenceRefs,
+    meta: asObject(envelope.meta) as ManagementReadinessResponse["meta"],
+  };
+}
+
+function adaptManagementEvolutionJournalAggregate(body: unknown): ManagementEvolutionJournalResponse {
+  const envelope = asObject(body);
+  const rawItems = Array.isArray(envelope.items)
+    ? envelope.items
+    : Array.isArray(envelope.data)
+      ? envelope.data
+      : [];
+  const items = rawItems.filter((item) => item && typeof item === "object") as ManagementEvolutionJournalItem[];
+  const summary = asObject(envelope.summary);
+  const pageInfo = asObject(envelope.page_info);
+  const meta = asObject(envelope.meta);
+  return {
+    data: items,
+    items,
+    summary: {
+      total_items: Number(summary.total_items ?? items.length),
+      returned_items: Number(summary.returned_items ?? items.length),
+      decision_count: Number(summary.decision_count ?? 0),
+      mutation_review_count: Number(summary.mutation_review_count ?? 0),
+      postmortem_count: Number(summary.postmortem_count ?? 0),
+      rollback_count: Number(summary.rollback_count ?? 0),
+      freeze_order_count: Number(summary.freeze_order_count ?? 0),
+      pending_review_count: Number(summary.pending_review_count ?? 0),
+      active_freeze_count: Number(summary.active_freeze_count ?? 0),
+      completed_rollback_count: Number(summary.completed_rollback_count ?? 0),
+      latest_at: typeof summary.latest_at === "string" ? summary.latest_at : null,
+      byType: asObject(summary.byType ?? summary.by_type) as Record<string, number>,
+      by_type: asObject(summary.by_type ?? summary.byType) as Record<string, number>,
+      byStatus: asObject(summary.byStatus ?? summary.by_status) as Record<string, number>,
+      by_status: asObject(summary.by_status ?? summary.byStatus) as Record<string, number>,
+      byRiskLevel: asObject(summary.byRiskLevel ?? summary.by_risk_level) as Record<string, number>,
+      by_risk_level: asObject(summary.by_risk_level ?? summary.byRiskLevel) as Record<string, number>,
+    },
+    page_info: {
+      next_page_token: typeof pageInfo.next_page_token === "string" ? pageInfo.next_page_token : null,
+      total: Number(pageInfo.total ?? items.length),
+      page_size: Number(pageInfo.page_size ?? items.length),
+    },
+    meta: meta as ManagementEvolutionJournalResponse["meta"],
+  };
+}
+
+function adaptManagementPersonaIntentAggregate(body: unknown): ManagementPersonaIntentResponse {
+  const envelope = asObject(body);
+  const rawItems = Array.isArray(envelope.items)
+    ? envelope.items
+    : Array.isArray(envelope.data)
+      ? envelope.data
+      : [];
+  const items = rawItems.filter((item) => item && typeof item === "object") as ManagementPersonaIntentItem[];
+  const summary = asObject(envelope.summary);
+  const pageInfo = asObject(envelope.page_info);
+  const meta = asObject(envelope.meta);
+  return {
+    data: items,
+    items,
+    summary: {
+      total_items: Number(summary.total_items ?? items.length),
+      returned_items: Number(summary.returned_items ?? items.length),
+      persona_trace_count: Number(summary.persona_trace_count ?? 0),
+      trainer_session_count: Number(summary.trainer_session_count ?? 0),
+      agora_session_count: Number(summary.agora_session_count ?? 0),
+      redacted_item_count: Number(summary.redacted_item_count ?? 0),
+      persona_count: Number(summary.persona_count ?? 0),
+      persona_ids: Array.isArray(summary.persona_ids) ? summary.persona_ids.map(String) : [],
+      latest_at: typeof summary.latest_at === "string" ? summary.latest_at : null,
+      bySourceType: asObject(summary.bySourceType ?? summary.by_source_type) as Record<string, number>,
+      by_source_type: asObject(summary.by_source_type ?? summary.bySourceType) as Record<string, number>,
+      byStatus: asObject(summary.byStatus ?? summary.by_status) as Record<string, number>,
+      by_status: asObject(summary.by_status ?? summary.byStatus) as Record<string, number>,
+      byIntent: asObject(summary.byIntent ?? summary.by_intent) as Record<string, number>,
+      by_intent: asObject(summary.by_intent ?? summary.byIntent) as Record<string, number>,
+    },
+    page_info: {
+      next_page_token: typeof pageInfo.next_page_token === "string" ? pageInfo.next_page_token : null,
+      total: Number(pageInfo.total ?? items.length),
+      page_size: Number(pageInfo.page_size ?? items.length),
+    },
+    meta: meta as ManagementPersonaIntentResponse["meta"],
+  };
+}
+
+function managementEvidenceQueryParams(
+  query?: ManagementEvidenceQuery,
+): Record<string, string | number | undefined> | undefined {
+  if (!query) return undefined;
+  return {
+    ...query,
+    verified: typeof query.verified === "boolean" ? String(query.verified) : undefined,
+  } as Record<string, string | number | undefined>;
+}
+
 export type OodaPacketListQuery = {
   status?: string;
   stage?: string;
@@ -317,6 +1077,14 @@ export type OodaPacketListQuery = {
 export type PersonaFleetQuery = {
   state?: string;
   health?: string;
+  page_token?: string;
+  page_size?: number;
+};
+
+export type HumanInboxQuery = {
+  source_type?: HumanInboxSourceType | string;
+  status?: string;
+  priority?: HumanInboxPriority | string;
   page_token?: string;
   page_size?: number;
 };
@@ -427,6 +1195,22 @@ function evolutionReviewDetail(decisionId: string): Promise<EvolutionReviewProje
     { method: "GET", path: paths.evolutionMutationReview(decisionId) },
     async () => undefined,
     adaptEvolutionReview,
+    strictNotFoundAsUndefined,
+  );
+}
+
+function adaptHumanInboxDetail(body: unknown): HumanInboxItem | undefined {
+  const raw = strictDataFrom(body) ?? body;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const item = raw as HumanInboxItem;
+  return typeof item.id === "string" && item.id ? item : undefined;
+}
+
+function humanInboxDetail(itemId: string): Promise<HumanInboxItem | undefined> {
+  return withStrictLiveOrMock<HumanInboxItem | undefined, unknown>(
+    { method: "GET", path: paths.managementHumanInboxItem(itemId) },
+    async () => undefined,
+    adaptHumanInboxDetail,
     strictNotFoundAsUndefined,
   );
 }
@@ -588,6 +1372,129 @@ const personaFleet = {
     ),
 };
 
+const humanInbox = {
+  list: (query?: HumanInboxQuery): Promise<HumanInboxAggregate> =>
+    withStrictLiveOrMock<HumanInboxAggregate, unknown>(
+      {
+        method: "GET",
+        path: paths.managementHumanInbox(),
+        query: query as Record<string, string | number | undefined> | undefined,
+      },
+      async () => emptyHumanInboxAggregate(),
+      adaptHumanInboxAggregate,
+    ),
+  get: humanInboxDetail,
+};
+
+const tradingPulse = {
+  list: (): Promise<ManagementTradingPulseResponse> =>
+    withStrictLiveOrMock<ManagementTradingPulseResponse, unknown>(
+      {
+        method: "GET",
+        path: paths.managementTradingPulse(),
+      },
+      async () => emptyManagementTradingPulseAggregate(),
+      adaptManagementTradingPulseAggregate,
+    ),
+  rankings: (query?: ManagementTradingPulseRankingsQuery): Promise<ManagementTradingPulseRankingsResponse> =>
+    withStrictLiveOrMock<ManagementTradingPulseRankingsResponse, unknown>(
+      {
+        method: "GET",
+        path: paths.managementTradingPulseRankings(),
+        query: query as Record<string, string | number | undefined> | undefined,
+      },
+      async () => emptyManagementTradingPulseRankingsAggregate(query?.limit),
+      adaptManagementTradingPulseRankingsAggregate,
+    ),
+};
+
+const evidenceExplorer = {
+  list: (query?: ManagementEvidenceQuery): Promise<ManagementEvidenceResponse> =>
+    withStrictLiveOrMock<ManagementEvidenceResponse, unknown>(
+      {
+        method: "GET",
+        path: paths.managementEvidence(),
+        query: managementEvidenceQueryParams(query),
+      },
+      async () => emptyManagementEvidenceAggregate(),
+      adaptManagementEvidenceAggregate,
+    ),
+};
+
+const readiness = {
+  ep5: (): Promise<ManagementReadinessResponse> =>
+    withStrictLiveOrMock<ManagementReadinessResponse, unknown>(
+      {
+        method: "GET",
+        path: paths.managementReadinessEp5(),
+      },
+      async () => emptyManagementReadinessAggregate("ep5"),
+      (body) => adaptManagementReadinessAggregate(body, "ep5"),
+    ),
+  brokerLive: (): Promise<ManagementReadinessResponse> =>
+    withStrictLiveOrMock<ManagementReadinessResponse, unknown>(
+      {
+        method: "GET",
+        path: paths.managementReadinessBrokerLive(),
+      },
+      async () => emptyManagementReadinessAggregate("broker-live"),
+      (body) => adaptManagementReadinessAggregate(body, "broker-live"),
+    ),
+  capitalBindingLive: (): Promise<ManagementReadinessResponse> =>
+    withStrictLiveOrMock<ManagementReadinessResponse, unknown>(
+      {
+        method: "GET",
+        path: paths.managementReadinessCapitalBindingLive(),
+      },
+      async () => emptyManagementReadinessAggregate("capital-binding-live"),
+      (body) => adaptManagementReadinessAggregate(body, "capital-binding-live"),
+    ),
+  bffHa: (): Promise<ManagementReadinessResponse> =>
+    withStrictLiveOrMock<ManagementReadinessResponse, unknown>(
+      {
+        method: "GET",
+        path: paths.managementReadinessBffHa(),
+      },
+      async () => emptyManagementReadinessAggregate("bff-ha"),
+      (body) => adaptManagementReadinessAggregate(body, "bff-ha"),
+    ),
+  strictPublish: (): Promise<ManagementReadinessResponse> =>
+    withStrictLiveOrMock<ManagementReadinessResponse, unknown>(
+      {
+        method: "GET",
+        path: paths.managementReadinessStrictPublish(),
+      },
+      async () => emptyManagementReadinessAggregate("strict-publish"),
+      (body) => adaptManagementReadinessAggregate(body, "strict-publish"),
+    ),
+};
+
+const evolutionJournal = {
+  list: (query?: ManagementEvolutionJournalQuery): Promise<ManagementEvolutionJournalResponse> =>
+    withStrictLiveOrMock<ManagementEvolutionJournalResponse, unknown>(
+      {
+        method: "GET",
+        path: paths.managementEvolutionJournal(),
+        query: query as Record<string, string | number | undefined> | undefined,
+      },
+      async () => emptyManagementEvolutionJournalAggregate(),
+      adaptManagementEvolutionJournalAggregate,
+    ),
+};
+
+const personaIntent = {
+  list: (query?: ManagementPersonaIntentQuery): Promise<ManagementPersonaIntentResponse> =>
+    withStrictLiveOrMock<ManagementPersonaIntentResponse, unknown>(
+      {
+        method: "GET",
+        path: paths.managementPersonaIntent(),
+        query: query as Record<string, string | number | undefined> | undefined,
+      },
+      async () => emptyManagementPersonaIntentAggregate(),
+      adaptManagementPersonaIntentAggregate,
+    ),
+};
+
 // ---------- Public surface ----------
 
 /** Canonical Management Console read surface — list + detail per family,
@@ -616,6 +1523,12 @@ export const managementClient = {
   oodaPackets,
   evolutionReviews,
   personaFleet,
+  humanInbox,
+  tradingPulse,
+  evidenceExplorer,
+  readiness,
+  evolutionJournal,
+  personaIntent,
 } as const;
 
 export type ManagementFamily = keyof typeof managementClient;
@@ -626,7 +1539,7 @@ export const MANAGEMENT_FAMILIES: readonly ManagementFamily[] = [
   "rebalances", "deployments", "evolution", "research", "artifacts",
   "tools", "mcpServers", "mcpTools", "skills", "channels",
   "jobs", "runtimes", "alerts", "incidents", "approvals", "audit",
-  "oodaPackets",
+  "oodaPackets", "humanInbox", "tradingPulse", "evidenceExplorer", "evolutionJournal", "personaIntent",
 ] as const;
 
 /** Snapshot of the current live-status, useful for UI banners that show
@@ -648,3 +1561,8 @@ export function getLiveStatusSnapshot(): {
 }
 
 export type { ListEnvelope } from "@/lib/bff-v1";
+export type {
+  ManagementEvidenceItem,
+  ManagementEvidenceQuery,
+  ManagementEvidenceResponse,
+} from "@/lib/bff-v1/management";

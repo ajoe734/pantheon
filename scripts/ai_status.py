@@ -1182,6 +1182,21 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
     repository_root = repository_local_path(config, repository_id)
     if repository_root is None:
         raise SystemExit(f"Cannot finalize task: repository `{repository_id}` has no local_path configured.")
+    repository_fallback: dict[str, Any] | None = None
+    if repository_id != "pantheon" and not repository_root.exists():
+        repo_ids = task_artifact_repository_ids(config, task)
+        pantheon_root = repository_local_path(config, "pantheon")
+        if "pantheon" in repo_ids and pantheon_root is not None:
+            repository_fallback = {
+                "from_repository_id": repository_id,
+                "missing_repository_path": str(repository_root.resolve(strict=False)),
+                "reason": (
+                    "non-Pantheon artifact repository local_path is unavailable; "
+                    "using Pantheon because the task also has Pantheon artifacts"
+                ),
+            }
+            repository_id = "pantheon"
+            repository_root = pantheon_root
     repository_root = repository_root.resolve(strict=False)
     repository_slug_value = repository_slug(config, repository_id)
     branch = run_git_command(
@@ -1197,6 +1212,8 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
         "branch": branch,
         "git_clean_required": settings["require_git_clean"],
     }
+    if repository_fallback is not None:
+        delivery["repository_fallback"] = repository_fallback
 
     if settings["require_commit_hash"]:
         commit_hash = run_git_command(

@@ -103,6 +103,55 @@ def _staged_paths(env: dict[str, str]) -> list[str]:
     return sorted(p for p in out.splitlines() if p)
 
 
+def _is_ignored_path(path: str, env: dict[str, str]) -> bool:
+    return _git(
+        "check-ignore",
+        "--no-index",
+        "-q",
+        "--",
+        path,
+        env=env,
+        check=False,
+    ).returncode == 0
+
+
+def _stage_scope(scope: list[str], env: dict[str, str]) -> subprocess.CompletedProcess:
+    normal_scope: list[str] = []
+    forced_files: list[str] = []
+    for path in scope:
+        path_on_disk = ROOT / path
+        if _is_ignored_path(path, env):
+            if path_on_disk.is_dir():
+                return subprocess.CompletedProcess(
+                    ["git", "add", "--", path],
+                    returncode=2,
+                    stdout="",
+                    stderr=(
+                        "Refusing to force-add ignored directory scope "
+                        f"{path!r}. Pass explicit file paths for ignored "
+                        "task artifacts instead.\n"
+                    ),
+                )
+            forced_files.append(path)
+        else:
+            normal_scope.append(path)
+
+    if normal_scope:
+        proc = _git("add", "--", *normal_scope, env=env, check=False)
+        if proc.returncode != 0:
+            return proc
+    if forced_files:
+        proc = _git("add", "-f", "--", *forced_files, env=env, check=False)
+        if proc.returncode != 0:
+            return proc
+    return subprocess.CompletedProcess(
+        ["git", "add", "--", *scope],
+        returncode=0,
+        stdout="",
+        stderr="",
+    )
+
+
 def _append_audit(payload: dict) -> None:
     try:
         ACTIVITY_LOG.parent.mkdir(parents=True, exist_ok=True)
@@ -150,8 +199,11 @@ def main() -> int:
     # Step 2: stage only the declared scope. Use --intent-to-add for untracked
     # files? No — `git add` handles new files just fine. We add each entry
     # explicitly so a typo surfaces immediately.
-    add_args = ["add", "--"] + scope
-    proc = _git(*add_args, env=env, check=False)
+    # Some tracked task artifacts live under repo-ignored mirror paths such as
+    # execute-plans/. Force-add only ignored file paths named explicitly in
+    # --scope; never force-add directory scopes because that can sweep ignored
+    # build artifacts into the commit.
+    proc = _stage_scope(scope, env)
     if proc.returncode != 0:
         print("git add failed:")
         print(proc.stderr, file=sys.stderr)

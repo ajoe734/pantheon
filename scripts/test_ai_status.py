@@ -281,6 +281,60 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
         self.assertTrue(calls)
         self.assertTrue(all(cwd == execute_plans_root for _, cwd in calls))
 
+    def test_collect_done_delivery_metadata_falls_back_to_pantheon_for_missing_mixed_repo(self) -> None:
+        responses = iter(
+            [
+                "task/BFF-PM12-002",
+                "abc123",
+                "BFF-PM12-002: refresh closeout gate",
+                "LLM-Agent: Codex2\nTask-ID: BFF-PM12-002\nReviewer: Claude2\n",
+                "Codex2",
+                "codex2@example.com",
+                "",
+                "",
+            ]
+        )
+        calls: list[tuple[list[str], Path | None]] = []
+
+        def fake_run_git_command(args: list[str], **kwargs: object) -> str:
+            calls.append((args, kwargs.get("cwd") if isinstance(kwargs.get("cwd"), Path) else None))
+            return next(responses)
+
+        task = {
+            "id": "BFF-PM12-002",
+            "owner": "Codex2",
+            "reviewer": "Claude2",
+            "status": "review_approved",
+            "artifacts": [
+                "execute-plans/src/lib/bff-v1/management.ts",
+                "services/control-plane/bff/main.py",
+            ],
+        }
+        pantheon_root = Path("/tmp/pantheon-task-worktree")
+        missing_execute_plans_root = Path("/tmp/pantheon-worker-worktrees/pantheon/execute-plans")
+
+        def fake_repository_local_path(_config: dict[str, object], repo_id: str | None) -> Path | None:
+            if repo_id == "execute_plans":
+                return missing_execute_plans_root
+            if repo_id == "pantheon":
+                return pantheon_root
+            return None
+
+        with (
+            mock.patch.dict(os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False),
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
+            mock.patch.object(ai_status, "repository_local_path", side_effect=fake_repository_local_path),
+        ):
+            delivery = ai_status.collect_done_delivery_metadata(task, "Codex2")
+
+        self.assertEqual(delivery["repository_id"], "pantheon")
+        self.assertEqual(delivery["repository_path"], str(pantheon_root))
+        self.assertEqual(delivery["branch"], "task/BFF-PM12-002")
+        self.assertEqual(delivery["repository_fallback"]["from_repository_id"], "execute_plans")
+        self.assertEqual(delivery["repository_fallback"]["missing_repository_path"], str(missing_execute_plans_root))
+        self.assertTrue(calls)
+        self.assertTrue(all(cwd == pantheon_root for _, cwd in calls))
+
     def test_collect_done_delivery_metadata_blocks_unmerged_task_pr(self) -> None:
         task = {
             "id": "REG-002",

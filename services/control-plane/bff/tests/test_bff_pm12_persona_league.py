@@ -91,6 +91,192 @@ def test_pm12_persona_league_filters_searches_and_paginates() -> None:
             bff_main.read_store = original
 
 
+def test_pm12_persona_league_rankings_returns_computed_blocks() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            response = client.get(
+                "/bff/management/persona-league/rankings",
+                headers=HEADERS,
+                params={"criteria": "overall,pnl", "limit": 1},
+            )
+
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert body["items"] == body["data"]
+            assert [block["criteria"] for block in body["items"]] == ["overall", "pnl"]
+            assert body["items"][0]["items"][0]["rank"] == 1
+            assert body["items"][0]["items"][0]["personaId"]
+            assert "overallScore" in body["items"][0]["items"][0]
+            assert body["summary"]["personaCount"] >= 1
+            assert body["meta"]["surfaces"]["persona_league_rankings"]["status"] in {"ok", "degraded"}
+            assert "GET /bff/management/persona-league" in body["meta"]["composition_sources"]
+        finally:
+            bff_main.read_store = original
+
+
+def test_pm12_persona_league_tiers_returns_config_and_current_assignments() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            response = client.get("/bff/management/persona-league/tiers", headers=HEADERS)
+
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert body["items"] == body["data"]
+            assert len(body["items"]) == 4
+            assert body["items"][0]["tierId"] == "tier-1"
+            assert body["summary"]["formulaVersion"] == "pm12-default-v1"
+            assert body["summary"]["personaCount"] == len(body["assignments"])
+            assert body["meta"]["policy"] == "read_only_governance_advisory"
+            assert body["meta"]["surfaces"]["persona_league_tiers"]["status"] in {"ok", "degraded"}
+        finally:
+            bff_main.read_store = original
+
+
+def test_pm12_quarterly_ranking_returns_formula_window_and_evidence() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            response = client.get(
+                "/bff/management/quarterly-ranking",
+                headers=HEADERS,
+                params={"quarter": "2026-Q1", "page_size": 1},
+            )
+
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert body["items"] == body["data"]["items"]
+            assert body["rankings"] == body["items"]
+            assert body["summary"]["quarter"] == "2026-Q1"
+            assert body["summary"]["formulaVersion"] == "pm12-default-v1"
+            assert body["quarterWindow"]["startAt"] == "2026-01-01T00:00:00Z"
+            assert body["quarterWindow"]["endExclusiveAt"] == "2026-04-01T00:00:00Z"
+            assert body["formula"]["weights"]["pnl"] == 0.35
+            assert body["page_info"]["page_size"] == 1
+            assert body["page_info"]["total"] >= 1
+            assert body["items"][0]["rank"] == 1
+            assert body["items"][0]["quarter"] == "2026-Q1"
+            assert body["items"][0]["scoreField"] == "overallScore"
+            assert body["evidenceRefs"]
+            assert body["summary"]["evidenceRefCount"] == len(body["evidenceRefs"])
+            assert body["meta"]["policy"] == "read_only_governance_advisory"
+            assert body["meta"]["surfaces"]["quarterly_ranking"]["status"] in {"ok", "degraded"}
+            assert "GET /bff/management/persona-league" in body["meta"]["composition_sources"]
+            assert "GET /api/v1/knowledge/evidence" in body["meta"]["composition_sources"]
+        finally:
+            bff_main.read_store = original
+
+
+def test_pm12_quarterly_ranking_formula_returns_weights_and_governance_trace() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            response = client.get(
+                "/bff/management/quarterly-ranking/formula",
+                headers=HEADERS,
+            )
+
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert body["data"] == body["formula"]
+            assert body["formula"]["formulaVersion"] == "pm12-default-v1"
+            assert body["formula"]["weights"] == {
+                "pnl": 0.35,
+                "risk": 0.25,
+                "execution": 0.25,
+                "activity": 0.15,
+            }
+            assert body["summary"]["weightTotal"] == 1.0
+            assert body["summary"]["evidenceRefCount"] == len(body["evidenceRefs"])
+            assert body["versionHistory"][0]["formulaVersion"] == "pm12-default-v1"
+            assert body["versionHistory"][0]["governanceEvidenceRefs"]
+            assert body["formula"]["changeControl"]["requiresGovernanceEvidence"] is True
+            assert body["meta"]["version_policy"] == "formula_version_changes_require_governance_evidence"
+            assert body["meta"]["surfaces"]["quarterly_ranking_formula"]["status"] == "ok"
+        finally:
+            bff_main.read_store = original
+
+
+def test_pm12_quarterly_ranking_recommendations_are_governance_only() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            response = client.get(
+                "/bff/management/quarterly-ranking/recommendations",
+                headers=HEADERS,
+                params={"quarter": "2026-Q1", "page_size": 3},
+            )
+
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert body["items"] == body["data"]["recommendations"]
+            assert body["recommendations"] == body["items"]
+            assert body["summary"]["quarter"] == "2026-Q1"
+            assert body["quarterWindow"]["startAt"] == "2026-01-01T00:00:00Z"
+            assert body["page_info"]["page_size"] == 3
+            assert body["page_info"]["total"] >= len(body["items"]) >= 1
+            assert body["meta"]["policy"] == "read_only_governance_advisory"
+            assert body["meta"]["live_capital_mutation"] is False
+            assert body["summary"]["liveCapitalMutationCount"] == 0
+            assert body["summary"]["humanGateDecisionCount"] == body["page_info"]["total"]
+            assert "human_gate_decision" in body["meta"]["governance_destinations"]
+            assert "GET /bff/management/human-inbox" in body["meta"]["composition_sources"]
+            assert body["meta"]["surfaces"]["quarterly_ranking_recommendations"]["status"] in {"ok", "degraded"}
+
+            allowed = set(body["summary"]["allowedActions"])
+            assert allowed == {
+                "promote_to_canary_candidate",
+                "increase_research_budget",
+                "grant_tool_access",
+                "reduce_capital_access",
+                "require_retraining",
+                "freeze_persona",
+                "suspend_persona",
+                "retire_persona",
+            }
+            for recommendation in body["items"]:
+                assert recommendation["actionId"] in allowed
+                assert recommendation["recommendationType"] == "governance_advisory"
+                assert recommendation["requiresHumanGateDecision"] is True
+                assert recommendation["liveCapitalMutation"] is False
+                assert recommendation["governance"]["liveCapitalMutation"] is False
+                assert "human_inbox" in recommendation["governance"]["destinations"]
+        finally:
+            bff_main.read_store = original
+
+
+def test_pm12_quarterly_ranking_rejects_invalid_quarter() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            response = client.get(
+                "/bff/management/quarterly-ranking",
+                headers=HEADERS,
+                params={"quarter": "2026-05"},
+            )
+
+            assert response.status_code == 422, response.text
+            assert response.json()["detail"]["error"] == "invalid_quarter"
+
+            recommendations = client.get(
+                "/bff/management/quarterly-ranking/recommendations",
+                headers=HEADERS,
+                params={"quarter": "2026-05"},
+            )
+
+            assert recommendations.status_code == 422, recommendations.text
+            assert recommendations.json()["detail"]["error"] == "invalid_quarter"
+        finally:
+            bff_main.read_store = original
+
+
 def test_pm12_persona_league_requires_auth() -> None:
     with tempfile.TemporaryDirectory() as td:
         original = bff_main.read_store
@@ -99,5 +285,20 @@ def test_pm12_persona_league_requires_auth() -> None:
             response = client.get("/bff/management/persona-league")
 
             assert response.status_code == 401, response.text
+
+            rankings = client.get("/bff/management/persona-league/rankings")
+            assert rankings.status_code == 401, rankings.text
+
+            tiers = client.get("/bff/management/persona-league/tiers")
+            assert tiers.status_code == 401, tiers.text
+
+            quarterly = client.get("/bff/management/quarterly-ranking")
+            assert quarterly.status_code == 401, quarterly.text
+
+            recommendations = client.get("/bff/management/quarterly-ranking/recommendations")
+            assert recommendations.status_code == 401, recommendations.text
+
+            formula = client.get("/bff/management/quarterly-ranking/formula")
+            assert formula.status_code == 401, formula.text
         finally:
             bff_main.read_store = original
