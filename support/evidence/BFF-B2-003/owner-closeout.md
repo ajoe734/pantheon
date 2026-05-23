@@ -1,10 +1,14 @@
 # BFF-B2-003 Owner Closeout Evidence
 
 Task-ID: BFF-B2-003
-Owner: Claude
+Owner: Codex
 Reviewer: Codex2
 Phase: Sprint BFF-2 / EPIC-BFF-GAP-CORE
-Closed: 2026-05-23
+Closed: pending merged closeout PR
+
+Note: implementation and initial closeout evidence were produced before the
+orchestrator reassigned BFF-B2-003 from Claude to Codex for owner
+finalization. Codex owns this final closeout and the `done` transition.
 
 ## Scope
 
@@ -47,6 +51,7 @@ Review notes (Codex2):
 ## Delivery
 
 - Task branch: task/BFF-B2-003
-- Task commit: 1bf5da19 (BFF-B2-003: capabilities facade for mcp-servers, mcp-tools, channels)
-- PR: #469
+- Implementation commit: 1bf5da19 (BFF-B2-003: capabilities facade for mcp-servers, mcp-tools, channels)
+- Implementation PR: #469 (merged to dev)
+- Closeout evidence commit: 39529f17 plus final Codex closeout commit on task/BFF-B2-003
 - Target: dev
