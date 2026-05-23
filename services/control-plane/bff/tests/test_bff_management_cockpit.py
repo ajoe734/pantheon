@@ -85,6 +85,53 @@ def _seeded_client(td: str) -> TestClient:
         "last_heartbeat_at": "2026-05-23T08:10:00Z",
         "last_event_at": "2026-05-23T08:09:00Z",
     } if runtime_id == "runtime-b3-001" else None
+    store.get_paper_live_drift_report = lambda runtime_id: {
+        "runtime_id": "runtime-b3-001",
+        "artifact_id": "artifact-b3-001",
+        "paper_baseline": {
+            "captured_at": "2026-05-23T07:00:00Z",
+            "deployment_stage": "paper",
+            "window": "1h",
+            "metrics": {
+                "pnl": 0.36,
+                "drawdown": 0.09,
+                "fill_rate": 0.9,
+                "avg_slippage_bps": 4.1,
+            },
+        },
+        "observed_state": {
+            "deployment_stage": "paper",
+            "runtime_status": "running",
+            "observed_at": "2026-05-23T08:10:00Z",
+            "metrics": {
+                "pnl": 0.42,
+                "drawdown": 0.11,
+                "fill_rate": 0.88,
+                "avg_slippage_bps": 4.8,
+            },
+        },
+        "drift_groups": [
+            {
+                "group_id": "performance",
+                "label": "Performance",
+                "status": "watch",
+                "metrics": [
+                    {
+                        "metric_id": "drawdown",
+                        "baseline_value": 0.09,
+                        "observed_value": 0.11,
+                        "delta": 0.02,
+                        "status": "watch",
+                    }
+                ],
+            }
+        ],
+        "threshold_evaluation": {
+            "overall_status": "watch",
+            "summary": "Drawdown drift is inside the watch band.",
+            "breached_metric_ids": [],
+        },
+    } if runtime_id == "runtime-b3-001" else None
     store.get_rollbacks = lambda runtime_id: []
     store.list_sentinel_findings = lambda **kwargs: (
         True,
@@ -118,6 +165,7 @@ def _seeded_client(td: str) -> TestClient:
         "kill_switch": "service_store",
         "runtime_bindings": "canonical",
         "telemetry_summaries": "service_store",
+        "paper_live_drift_reports": "service_store",
         "rollbacks": "service_store",
         "v5_interventions": "service_store",
         "sentinel_findings": "service_store",
@@ -143,7 +191,12 @@ def test_bff_management_cockpit_composes_required_sections() -> None:
             assert data["humanInbox"]["summary"]["total"] == 4
             assert data["tradingPulse"]["summary"]["runtimeCount"] == 1
             assert data["tradingPulse"]["summary"]["totalPnl"] == 0.42
+            assert data["tradingPulse"]["summary"]["baselineComparisonCount"] == 1
             assert data["tradingPulse"]["rankings"][0]["runtimeId"] == "runtime-b3-001"
+            assert (
+                data["tradingPulse"]["baselineComparisons"][0]["status"]
+                == "watch"
+            )
             assert data["anomalies"]["summary"]["total"] >= 2
             assert payload["meta"]["surfaces"]["management_cockpit"]["status"] in {
                 "ok",

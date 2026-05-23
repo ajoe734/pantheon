@@ -376,6 +376,14 @@ function emptyManagementTradingPulseAggregate(): ManagementTradingPulseResponse 
     worst_slippage_bps: null,
     totalTrades: 0,
     total_trades: 0,
+    baselineComparisonCount: 0,
+    baseline_comparison_count: 0,
+    baselineBreachedCount: 0,
+    baseline_breached_count: 0,
+    baselineWatchCount: 0,
+    baseline_watch_count: 0,
+    byBaselineStatus: {},
+    by_baseline_status: {},
   };
   const data = {
     id: "management-trading-pulse",
@@ -384,6 +392,8 @@ function emptyManagementTradingPulseAggregate(): ManagementTradingPulseResponse 
     rankings: [],
     runtimeRows: [],
     runtime_rows: [],
+    baselineComparisons: [],
+    baseline_comparisons: [],
   };
   return {
     data,
@@ -392,6 +402,8 @@ function emptyManagementTradingPulseAggregate(): ManagementTradingPulseResponse 
     rankings: [],
     runtimeRows: [],
     runtime_rows: [],
+    baselineComparisons: [],
+    baseline_comparisons: [],
     summary,
     page_info: {
       next_page_token: null,
@@ -404,6 +416,11 @@ function emptyManagementTradingPulseAggregate(): ManagementTradingPulseResponse 
           status: "unavailable",
           source: "mock",
           reason: "Trading Pulse aggregate is served by the Pantheon BFF management aggregate.",
+        },
+        baseline_comparison: {
+          status: "unavailable",
+          source: "mock",
+          reason: "Trading Pulse baseline comparison is served by the Pantheon BFF management aggregate.",
         },
       },
     },
@@ -748,9 +765,19 @@ function adaptManagementTradingPulseAggregate(body: unknown): ManagementTradingP
         : Array.isArray(dataEnvelope.runtime_rows)
           ? dataEnvelope.runtime_rows
           : [];
+  const rawBaselineComparisons = Array.isArray(envelope.baselineComparisons)
+    ? envelope.baselineComparisons
+    : Array.isArray(envelope.baseline_comparisons)
+      ? envelope.baseline_comparisons
+      : Array.isArray(dataEnvelope.baselineComparisons)
+        ? dataEnvelope.baselineComparisons
+        : Array.isArray(dataEnvelope.baseline_comparisons)
+          ? dataEnvelope.baseline_comparisons
+          : [];
   const cards = rawCards.filter((item) => item && typeof item === "object") as ManagementTradingPulseResponse["cards"];
   const rankings = rawRankings.filter((item) => item && typeof item === "object") as ManagementTradingPulseResponse["rankings"];
   const runtimeRows = rawRuntimeRows.filter((item) => item && typeof item === "object") as ManagementTradingPulseResponse["runtimeRows"];
+  const baselineComparisons = rawBaselineComparisons.filter((item) => item && typeof item === "object") as ManagementTradingPulseResponse["baselineComparisons"];
   const summary = asObject(envelope.summary ?? dataEnvelope.summary) as ManagementTradingPulseResponse["summary"];
   const pageInfo = asObject(envelope.page_info);
   const meta = asObject(envelope.meta) as ManagementTradingPulseResponse["meta"];
@@ -761,6 +788,8 @@ function adaptManagementTradingPulseAggregate(body: unknown): ManagementTradingP
     rankings,
     runtimeRows,
     runtime_rows: runtimeRows,
+    baselineComparisons,
+    baseline_comparisons: baselineComparisons,
   };
   return {
     data,
@@ -769,6 +798,8 @@ function adaptManagementTradingPulseAggregate(body: unknown): ManagementTradingP
     rankings,
     runtimeRows,
     runtime_rows: runtimeRows,
+    baselineComparisons,
+    baseline_comparisons: baselineComparisons,
     summary,
     page_info: {
       next_page_token: typeof pageInfo.next_page_token === "string" ? pageInfo.next_page_token : null,
