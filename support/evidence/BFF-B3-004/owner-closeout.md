@@ -17,7 +17,7 @@ Date: 2026-05-23
 ## Scope Check
 
 Confirmed the approved Trading Pulse aggregate remains present after composing
-with `origin/dev` at `31d03a86bbf4c40614e76120135cb3ef51b6e45f`.
+with `origin/dev` at `637bd0ae6167d8007f8b7d29e4f9f70271b7d5b8`.
 
 - `services/control-plane/bff/main.py` registers read-role gated
   `GET /bff/management/trading-pulse` and
@@ -66,12 +66,13 @@ Results:
 
 ## Closeout Notes
 
-- After the initial closeout PR opened, `origin/dev` advanced to
-  `31d03a86bbf4c40614e76120135cb3ef51b6e45f` with other tasks' closeout and
-  review artifacts. The task branch merged that `dev` update and reran the
-  full focused verification above successfully.
+- After the initial closeout PR opened, `origin/dev` advanced first to
+  `31d03a86bbf4c40614e76120135cb3ef51b6e45f` and then to
+  `637bd0ae6167d8007f8b7d29e4f9f70271b7d5b8` with other tasks' closeout and
+  review artifacts. The task branch merged those `dev` updates and reran the
+  full focused verification above successfully after the latest refresh.
 - The task branch currently includes later `dev` merge commits through
-  `31d03a86bbf4c40614e76120135cb3ef51b6e45f`; this evidence commit keeps the
+  `637bd0ae6167d8007f8b7d29e4f9f70271b7d5b8`; this evidence commit keeps the
   branch tip on an owner-authored BFF-B3-004 commit with required trailers for
   the final done gate.
 - This closeout only records owner finalization evidence and the task brief.
