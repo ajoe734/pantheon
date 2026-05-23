@@ -1255,3 +1255,73 @@ keeps source-surface health visible and preserves fail-closed auth semantics.
 ### Task
 
 BFF-B3-002 — Owner: Codex, Reviewer: Claude
+
+---
+
+## B6 — P2 Management Natural Language API {#b6--p2-management-natural-language-api}
+
+### Gap
+
+The Management surface lacked a natural language query interface. Operators must
+currently fan out across cockpit, trading-pulse, portfolio-book, and persona-fleet
+surfaces to answer ad-hoc operational questions. No BFF endpoint accepted a free-text
+question and returned a synthesised, management-data-grounded answer with source
+attribution.
+
+### Fix
+
+**File: `services/control-plane/bff/main.py`**
+
+- Add `POST /bff/management/nl/ask` as a management natural language query endpoint.
+- Require the existing BFF read-role authentication gate; anonymous requests return
+  the typed BFF 401 envelope.
+- Accept a JSON body with:
+  - `question` (required): the operator's free-text question.
+  - `session_id` (optional): conversation session ID for multi-turn context.
+  - `focus` (optional): management surface hint — `cockpit`, `trading_pulse`,
+    `portfolio`, `persona_fleet`, or `all` (default).
+  - `context` (optional): arbitrary operator-supplied supplementary context string.
+- Compose a response by pulling live summaries from whichever management surfaces
+  match the `focus` hint (or all surfaces when `focus` is absent or `all`):
+  - cockpit aggregate via `_build_management_cockpit_payload`
+  - portfolio summary via the portfolio-book read surface
+  - persona-fleet summary via the persona-fleet read surface
+  - trading-pulse summary via `_build_management_trading_pulse_payload`
+- Return a structured NL answer envelope:
+  - `data.answer`: synthesised plain-text answer grounded in the retrieved summaries.
+  - `data.session_id`: echo of the resolved session ID (generated if not supplied).
+  - `data.message_id`: unique ID for this exchange.
+  - `data.question`: echo of the original question.
+  - `data.sources`: list of management surface keys consulted.
+  - `data.confidence`: `high`, `partial`, or `unavailable` based on surface health.
+  - `data.summary_context`: the raw management summary snippets used to ground the
+    answer, enabling the frontend to render supporting evidence cards.
+- Support idempotency via `Idempotency-Key` / `X-Idempotency-Key` headers with the
+  same replay semantics as other BFF POST endpoints.
+- Store each exchange as an `agora_session` record so the session history survives
+  re-render without refetching.
+- Emit a `management.nl.ask.accepted` SSE event on the `ask` channel so streaming
+  frontends can react without polling.
+- Return HTTP 202 Accepted with the BFF envelope; `status: "accepted"` in the body.
+- Preserve the `meta.surfaces` envelope listing all consulted management surfaces.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated `POST /bff/management/nl/ask` with a `question` field returns HTTP 202 with `data.answer`, `data.session_id`, `data.message_id`, `data.sources`, and `data.confidence` | ✅ test added |
+| 2 | Anonymous `POST /bff/management/nl/ask` returns HTTP 401 typed BFF error envelope | ✅ test added |
+| 3 | `focus=trading_pulse` restricts sourced summaries to trading-pulse surface only | ✅ test added |
+| 4 | Idempotency replay: second request with same `Idempotency-Key` returns the cached result without re-querying management surfaces | ✅ test added |
+| 5 | Missing `question` field returns HTTP 422 typed BFF error envelope | ✅ test added |
+| 6 | `session_id` supplied in the body is echoed in `data.session_id`; omitted `session_id` generates a new one | ✅ test added |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B6-001 — Owner: Claude, Reviewer: Codex
