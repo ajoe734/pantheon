@@ -113,6 +113,7 @@ export const paths = {
   managementReadinessBffHa: () => `${BASE}/management/readiness/bff-ha`,
   managementReadinessStrictPublish: () => `${BASE}/management/readiness/strict-publish`,
   managementPortfolioBook: () => `${BASE}/management/portfolio-book`,
+  managementPortfolioBookPools: () => `${BASE}/management/portfolio-book/pools`,
   managementPortfolioBookHoldings: () => `${BASE}/management/portfolio-book/holdings`,
 
   // ---- Research ----

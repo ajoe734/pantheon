@@ -19376,6 +19376,8 @@ def _management_normalized_status(record: Dict[str, Any]) -> str:
 
 
 def _management_as_float(value: Any) -> Optional[float]:
+    if isinstance(value, bool):
+        return None
     if value is None or value == "":
         return None
     try:
@@ -19428,6 +19430,151 @@ def _management_sum_numeric(items: List[Dict[str, Any]], field: str) -> Optional
         if value is not None
     ]
     return round(sum(values), 6) if values else None
+
+
+def _management_nested_value(record: Dict[str, Any], path: str) -> Any:
+    value: Any = record
+    for part in path.split("."):
+        if not isinstance(value, dict):
+            return None
+        value = value.get(part)
+    return value
+
+
+def _management_first_float(record: Dict[str, Any], *paths: str) -> Optional[float]:
+    for path in paths:
+        value = _management_nested_value(record, path)
+        number = _management_as_float(value)
+        if number is not None:
+            return number
+    return None
+
+
+def _management_sum_first_float(records: List[Dict[str, Any]], *paths: str) -> Optional[float]:
+    values = [
+        value
+        for record in records
+        for value in [_management_first_float(record, *paths)]
+        if value is not None
+    ]
+    return round(sum(values), 6) if values else None
+
+
+def _management_exposure_payload(
+    *,
+    pool: Dict[str, Any],
+    pool_bindings: List[Dict[str, Any]],
+    pool_plans: List[Dict[str, Any]],
+    pool_runtimes: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    risk_budget = _management_first_float(
+        pool,
+        "risk_budget",
+        "risk_budget_amount",
+        "budget",
+        "capital_allocation",
+        "allocation_limit",
+        "max_target_size",
+        "params.risk_budget",
+        "params.budget",
+        "limits.risk_budget",
+        "risk.budget",
+    )
+    max_drawdown_pct = _management_first_float(
+        pool,
+        "max_drawdown_pct",
+        "risk.max_drawdown_pct",
+        "limits.max_drawdown_pct",
+        "params.max_drawdown_pct",
+    )
+
+    direct_exposure = _management_first_float(
+        pool,
+        "current_exposure",
+        "current_exposure_amount",
+        "exposure",
+        "exposure_amount",
+        "used_capital",
+        "used_budget",
+        "deployed_capital",
+        "capital_deployed",
+        "metrics.exposure",
+        "summary.exposure",
+        "params.exposure",
+    )
+    plan_exposure = _management_sum_first_float(
+        pool_plans,
+        "target_size",
+        "targetSize",
+        "target_notional",
+        "notional",
+        "requested_capital",
+        "capital_allocation",
+        "params.target_size",
+        "params.notional",
+    )
+    runtime_exposure = _management_sum_first_float(
+        pool_runtimes,
+        "current_exposure",
+        "exposure",
+        "notional",
+        "allocated_capital",
+        "capital_allocation",
+        "metrics.exposure",
+        "summary.exposure",
+    )
+    binding_exposure = _management_sum_first_float(
+        pool_bindings,
+        "budget",
+        "risk_budget",
+        "allocation",
+        "allocated_capital",
+        "capital_allocation",
+    )
+
+    current_exposure = direct_exposure
+    exposure_source = "capital_pool"
+    if current_exposure is None:
+        current_exposure = plan_exposure
+        exposure_source = "deployment_plans"
+    if current_exposure is None:
+        current_exposure = runtime_exposure
+        exposure_source = "runtime_bindings"
+    if current_exposure is None:
+        current_exposure = binding_exposure
+        exposure_source = "persona_bindings"
+    if current_exposure is None:
+        exposure_source = "unavailable"
+
+    utilization = None
+    if current_exposure is not None and risk_budget not in (None, 0):
+        utilization = round(current_exposure / risk_budget, 6)
+
+    return {
+        "risk_budget": risk_budget,
+        "riskBudget": risk_budget,
+        "max_drawdown_pct": max_drawdown_pct,
+        "maxDrawdownPct": max_drawdown_pct,
+        "current_exposure": current_exposure,
+        "currentExposure": current_exposure,
+        "risk_budget_utilization": utilization,
+        "riskBudgetUtilization": utilization,
+        "exposure": {
+            "amount": current_exposure,
+            "risk_budget": risk_budget,
+            "riskBudget": risk_budget,
+            "risk_budget_utilization": utilization,
+            "riskBudgetUtilization": utilization,
+            "source": exposure_source,
+        },
+        "risk": {
+            "policy_ref": pool.get("risk_policy_ref"),
+            "policyRef": pool.get("risk_policy_ref"),
+            "budget": risk_budget,
+            "max_drawdown_pct": max_drawdown_pct,
+            "maxDrawdownPct": max_drawdown_pct,
+        },
+    }
 
 
 def _management_latest_timestamp(items: List[Dict[str, Any]], *fields: str) -> Optional[str]:
@@ -19528,6 +19675,12 @@ def _management_portfolio_book_entry(
         if runtime_id in telemetry_by_runtime_id
     ]
     telemetry = _management_telemetry_rollup(telemetry_records)
+    exposure = _management_exposure_payload(
+        pool=pool,
+        pool_bindings=pool_bindings,
+        pool_plans=pool_plans,
+        pool_runtimes=pool_runtimes,
+    )
 
     active_bindings = [
         binding
@@ -19571,6 +19724,11 @@ def _management_portfolio_book_entry(
             "id": pool.get("owner_id") or pool.get("owner"),
             "type": pool.get("owner_type"),
         },
+        "currency": pool.get("currency"),
+        **exposure,
+        "pnl": telemetry["total_pnl"],
+        "total_pnl": telemetry["total_pnl"],
+        "pnl_summary": telemetry,
         "binding_count": len(pool_bindings),
         "active_binding_count": len(active_bindings),
         "deployment_count": len(pool_plans),
@@ -19596,6 +19754,45 @@ def _management_portfolio_book_entry(
             if _management_record_id(runtime, "runtime_id", "id", "binding_id")
         }),
         "telemetry": telemetry,
+    }
+
+
+def _management_portfolio_book_pool_sources(
+    *,
+    status: Optional[str] = None,
+    risk_policy_ref: Optional[str] = None,
+) -> Dict[str, Any]:
+    capital_pools = read_store.list_capital_pools(status=status, risk_policy_ref=risk_policy_ref) or []
+    bindings = read_store.list_bindings() or []
+    deployment_plans = read_store.list_deployment_plans() or []
+    runtime_bindings = read_store.list_runtime_bindings() or []
+
+    telemetry_by_runtime_id: Dict[str, Dict[str, Any]] = {}
+    for runtime in runtime_bindings:
+        runtime_id = _management_record_id(runtime, "runtime_id", "id", "binding_id")
+        if not runtime_id:
+            continue
+        telemetry = read_store.get_telemetry_summary(runtime_id)
+        if telemetry is not None:
+            telemetry_by_runtime_id[runtime_id] = telemetry
+
+    entries = [
+        _management_portfolio_book_entry(
+            pool,
+            bindings=bindings,
+            deployment_plans=deployment_plans,
+            runtime_bindings=runtime_bindings,
+            telemetry_by_runtime_id=telemetry_by_runtime_id,
+        )
+        for pool in capital_pools
+    ]
+    return {
+        "capital_pools": capital_pools,
+        "bindings": bindings,
+        "deployment_plans": deployment_plans,
+        "runtime_bindings": runtime_bindings,
+        "telemetry_by_runtime_id": telemetry_by_runtime_id,
+        "entries": sorted(entries, key=lambda entry: str(entry.get("pool_id") or "")),
     }
 
 
@@ -19897,31 +20094,13 @@ async def bff_management_portfolio_book(
     _require_read_role(identity)
 
     snapshot_at = utc_now()
-    capital_pools = read_store.list_capital_pools() or []
-    bindings = read_store.list_bindings() or []
-    deployment_plans = read_store.list_deployment_plans() or []
-    runtime_bindings = read_store.list_runtime_bindings() or []
-
-    telemetry_by_runtime_id: Dict[str, Dict[str, Any]] = {}
-    for runtime in runtime_bindings:
-        runtime_id = _management_record_id(runtime, "runtime_id", "id", "binding_id")
-        if not runtime_id:
-            continue
-        telemetry = read_store.get_telemetry_summary(runtime_id)
-        if telemetry is not None:
-            telemetry_by_runtime_id[runtime_id] = telemetry
-
-    entries = [
-        _management_portfolio_book_entry(
-            pool,
-            bindings=bindings,
-            deployment_plans=deployment_plans,
-            runtime_bindings=runtime_bindings,
-            telemetry_by_runtime_id=telemetry_by_runtime_id,
-        )
-        for pool in capital_pools
-    ]
-    entries = sorted(entries, key=lambda entry: str(entry.get("pool_id") or ""))
+    sources = _management_portfolio_book_pool_sources()
+    capital_pools = sources["capital_pools"]
+    bindings = sources["bindings"]
+    deployment_plans = sources["deployment_plans"]
+    runtime_bindings = sources["runtime_bindings"]
+    telemetry_by_runtime_id = sources["telemetry_by_runtime_id"]
+    entries = sources["entries"]
     total = len(entries)
     page_items, next_page_token = _page_slice(entries, page_token, page_size)
     portfolio_telemetry = _management_telemetry_rollup(list(telemetry_by_runtime_id.values()))
@@ -20017,6 +20196,111 @@ async def bff_management_portfolio_book(
         "items": page_items,
         "page_info": {"next_page_token": next_page_token, "total": total},
         "meta": meta,
+    }
+
+
+@app.get("/bff/management/portfolio-book/pools")
+async def bff_management_portfolio_book_pools(
+    status: Optional[str] = None,
+    risk_policy_ref: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 portfolio-book capital pool summaries."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    sources = _management_portfolio_book_pool_sources(
+        status=status,
+        risk_policy_ref=risk_policy_ref,
+    )
+    entries = sources["entries"]
+    telemetry_by_runtime_id = sources["telemetry_by_runtime_id"]
+    total = len(entries)
+    page_items, next_page_token = _page_slice(entries, page_token, page_size)
+
+    risk_budgets = [
+        value
+        for entry in entries
+        for value in [_management_as_float(entry.get("risk_budget"))]
+        if value is not None
+    ]
+    exposures = [
+        value
+        for entry in entries
+        for value in [_management_as_float(entry.get("current_exposure"))]
+        if value is not None
+    ]
+    portfolio_telemetry = _management_telemetry_rollup(list(telemetry_by_runtime_id.values()))
+    risk_budget_total = round(sum(risk_budgets), 6) if risk_budgets else None
+    current_exposure_total = round(sum(exposures), 6) if exposures else None
+    utilization = None
+    if current_exposure_total is not None and risk_budget_total not in (None, 0):
+        utilization = round(current_exposure_total / risk_budget_total, 6)
+
+    source_surfaces = {
+        "capital_pools": _dataset_surface_status("capital_pools", snapshot_at=snapshot_at),
+        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at),
+        "deployment_plans": _dataset_surface_status("deployment_plans", snapshot_at=snapshot_at),
+        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
+        "telemetry_summaries": _dataset_surface_status(
+            "telemetry_summaries",
+            snapshot_at=snapshot_at,
+            has_data=bool(telemetry_by_runtime_id) if sources["runtime_bindings"] else None,
+            missing_message="Telemetry summaries unavailable for portfolio-book pool runtimes.",
+        ),
+    }
+    pool_surface = _aggregate_group_surface(
+        "portfolio_book_pools",
+        list(source_surfaces.values()),
+        snapshot_at=snapshot_at,
+        unavailable_message="Portfolio-book pool composition has no readable source records.",
+        degraded_message="Portfolio-book pool composition is degraded because one or more source surfaces are degraded.",
+    )
+
+    return {
+        "data": page_items,
+        "items": page_items,
+        "pools": page_items,
+        "summary": {
+            "total_pools": total,
+            "returned_pools": len(page_items),
+            "active_pool_count": len([
+                entry for entry in entries
+                if str(entry.get("status") or "").strip().lower() in {"active", "ready"}
+            ]),
+            "risk_budget_total": risk_budget_total,
+            "current_exposure_total": current_exposure_total,
+            "risk_budget_utilization": utilization,
+            "telemetry_runtime_count": portfolio_telemetry["runtime_count"],
+            "total_pnl": portfolio_telemetry["total_pnl"],
+            "max_drawdown": portfolio_telemetry["max_drawdown"],
+            "average_fill_rate": portfolio_telemetry["average_fill_rate"],
+            "total_trades": portfolio_telemetry["total_trades"],
+            "latest_telemetry_at": portfolio_telemetry["latest_collected_at"],
+        },
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "total": total,
+            "surfaces": {
+                "portfolio_book_pools": pool_surface,
+                **source_surfaces,
+            },
+            "composition_sources": [
+                "GET /bff/capital-pools",
+                "GET /api/v1/persona-capital-bindings",
+                "GET /api/v1/deployment-plans",
+                "GET /api/v1/runtime-bindings",
+                "GET /api/v1/telemetry/{runtime_id}/summary",
+            ],
+        },
     }
 
 
