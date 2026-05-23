@@ -20,7 +20,7 @@ Finalized: 2026-05-23
 - PR state: merged into `dev`.
 - Merge commit: `689c400fb2e309c2e947f136ce0f537fd6ae8a14`.
 - GitHub checks observed successful: Commit trailers, Runtime mirror guard, Smoke acceptance, Forward to orchestrator.
-- Closeout branch refreshed with `origin/dev` at `14cc8cc570f2ee1091ef371848c6bad6851923c4` before publishing this final evidence commit.
+- Closeout branch refreshed with `origin/dev` at `6908ec20ab3df5da985c67430818739352c3dc0b` before publishing this final evidence commit.
 
 ## Local Verification
 
