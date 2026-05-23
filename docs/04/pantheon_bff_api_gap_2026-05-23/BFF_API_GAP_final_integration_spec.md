@@ -1790,6 +1790,72 @@ BFF-B1-012 — Owner: Claude, Reviewer: Codex
 
 ---
 
+## B5 — P15 / P2 HumanGate Write APIs {#b5--p15--p2-humangate-write-apis}
+
+### Gap
+
+The Management Human Inbox and PM-12 quarterly ranking recommendations exposed
+read-side HumanGate work, but the write intents were not first-class final
+commands. Frontend flows could inspect approvals, interventions, and quarterly
+recommendations, yet lacked canonical command names for approve/reject,
+request-more-evidence, revoke, TTL extension, and recommendation submission.
+
+### Fix
+
+**File: `services/control-plane/bff/models.py`**
+
+- Added final command enum values:
+  `HumanGateApprove`, `HumanGateReject`,
+  `HumanGateRequestMoreEvidence`, `HumanGateRevoke`,
+  `HumanGateExtendTtl`, and `QuarterlyRankingRecommendationSubmit`.
+- Added `HumanGateItem` as the command target object type.
+
+**File: `services/control-plane/bff/main.py`**
+
+- Normalizes HumanGate commands submitted to `POST /bff/v1/commands` so
+  `target.id` becomes `human_gate_item_id` / `itemId`, infers `source_type`
+  from `approval:` or `intervention:` item ids, and records
+  `human_gate.{decision}` audit events.
+- Validates HumanGate target type, role gates, bounded decisions, and positive
+  TTL for `HumanGateExtendTtl`.
+- Normalizes `QuarterlyRankingRecommendationSubmit` so the recommendation id,
+  recommendation action id, command action, and audit event are persisted in the
+  command-store params while preserving `liveCapitalSideEffects=false` in the
+  standard `CommandResponse<T>` envelope.
+
+**Files: `services/control-plane/bff/action_catalog.py` and
+`services/control-plane/bff/command_executor.py`**
+
+- Registers all B5 command names in the action catalog with
+  `/bff/v1/commands` as the endpoint.
+- Routes B5 commands through the adapter-only executor path so they are admitted
+  and auditable without direct live capital mutation.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `POST /bff/v1/commands` admits `HumanGateApprove`, `HumanGateReject`, `HumanGateRequestMoreEvidence`, `HumanGateRevoke`, `HumanGateExtendTtl`, and `QuarterlyRankingRecommendationSubmit` | Implemented BFF-B5-001 |
+| 2 | Each command returns the standard `CommandResponse<T>` with command id, tracking URL, receipt dual-write data, and durable idempotency metadata | Implemented BFF-B5-001 |
+| 3 | Human Inbox decision flow can approve, reject, and request more evidence by using the composed inbox item id as a `HumanGateItem` target | Implemented BFF-B5-001 |
+| 4 | Quarterly ranking recommendation submission records governance intent and remains `liveCapitalSideEffects=false` / no direct live capital mutation | Implemented BFF-B5-001 |
+| 5 | B5 command names are present in the action catalog and command executor dispatch table | Implemented BFF-B5-001 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/models.py`
+- `services/control-plane/bff/action_catalog.py`
+- `services/control-plane/bff/command_executor.py`
+- `services/control-plane/bff/tests/test_bff_b5_humangate_commands.py`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B5-001 — Owner: Codex, Reviewer: Claude
+
+---
+
 ## B7 — Agora Compatibility APIs
 
 ### Gap
