@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "No runnable execution backlog or eligible parent support need remains; active tasks are human gates.",
+  "blocked_by": [
+    "No runnable execution backlog is present in the task board.",
+    "Active blocked tasks are human_gate items awaiting human signoff or observation inputs."
+  ],
+  "blocked_sidecar_parents": [
+    "PROD-WRITES-001-V2",
+    "LIVE-SCALE-001-V2"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": []
+}
