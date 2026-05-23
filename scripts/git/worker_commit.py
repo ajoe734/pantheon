@@ -150,7 +150,10 @@ def main() -> int:
     # Step 2: stage only the declared scope. Use --intent-to-add for untracked
     # files? No — `git add` handles new files just fine. We add each entry
     # explicitly so a typo surfaces immediately.
-    add_args = ["add", "--"] + scope
+    # Some tracked task artifacts live under repo-ignored mirror paths such as
+    # execute-plans/. The explicit scope plus leak check below keeps this force
+    # add narrow while allowing those tracked files through the safe wrapper.
+    add_args = ["add", "-f", "--"] + scope
     proc = _git(*add_args, env=env, check=False)
     if proc.returncode != 0:
         print("git add failed:")
