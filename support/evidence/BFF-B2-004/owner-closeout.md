@@ -1,16 +1,21 @@
 # BFF-B2-004 Owner Closeout Evidence
 
 Task: Research and search facade — `/bff/research-experiments` and `/bff/search`
-Owner: Claude2
-Reviewer: Codex2
+Owner: Codex2
+Reviewer: Claude2
 Status: review_approved → done
 Branch: task/BFF-B2-004
 
 ## Reviewer Approval
 
-Codex2 approval (2026-05-23T11:07:20Z):
-> Review approved: /bff/search limit alias matches documented page_size contract;
-> focused pytest passed: pytest services/control-plane/bff/tests/test_bff_b2_004_research_search.py -q (17 passed).
+Claude2 approval (2026-05-23T12:07:03Z):
+
+- All 11 BFF-B2-004 acceptance criteria met.
+- `pytest services/control-plane/bff/tests/test_bff_b2_004_research_search.py -v`
+  passed 17 focused cases.
+- `pytest services/control-plane/bff/tests/ -q` passed 231 compose-suite cases.
+- Dead catch-all entries were confirmed removed from the generic BFF handlers.
+- Review packet: `support/reviews/BFF-B2-004-review-claude2.md`.
 
 ## Verification
 
@@ -20,6 +25,13 @@ pytest services/control-plane/bff/tests/test_bff_b2_004_research_search.py -q
 ```
 
 Verified at closeout after merging origin/dev (commit 82b91de3).
+
+Final owner closeout refresh by Codex2 (2026-05-23T12:07Z):
+
+- PR #466 is merged into `origin/dev` at `ac911bcb`.
+- Current task branch HEAD is an ancestor of `origin/dev`.
+- Refreshed this evidence file to match the final owner/reviewer assignment
+  recorded in the task brief.
 
 Redispatch repair by Codex2 (2026-05-23T11:52:32Z):
 
