@@ -107,6 +107,51 @@ def test_bff_actions_adapter_records_final_command_foundation_context() -> None:
         )
 
 
+def test_bff_actions_named_facade_accepts_x_idempotency_alias() -> None:
+    with _isolated_action_adapter() as client:
+        headers = {
+            **{key: value for key, value in OPERATOR_HEADERS.items() if key != "Idempotency-Key"},
+            "X-Idempotency-Key": "bff-b1-008-action-alias",
+        }
+        response = client.post(
+            "/bff/actions/strategy/stg-bff-008/submit_review",
+            headers=headers,
+            json={"reason": "submit strategy review through named action facade"},
+        )
+
+        assert response.status_code == 202, response.text
+        body = response.json()
+        assert body["status"] == "accepted"
+        assert body["data"]["command"] == "StrategyAction"
+        assert body["meta"]["idempotency"]["idempotencyKey"] == "bff-b1-008-action-alias"
+
+        records = bff_main.command_store._get_all_commands()
+        assert len(records) == 1
+        foundation = records[0]["foundation"]
+        assert foundation["admission_route"] == "POST /bff/v1/commands"
+        assert foundation["source_route"] == "POST /bff/actions/{entityType}/{entityId}/{actionId}"
+        assert foundation["idempotency_record"]["idempotency_key"] == "bff-b1-008-action-alias"
+        assert foundation["trace_context"]["correlation_id"] == "corr-bff-consol-019"
+
+
+def test_bff_actions_named_facade_rejects_body_idempotency_key() -> None:
+    with _isolated_action_adapter() as client:
+        response = client.post(
+            "/bff/actions/strategy/stg-bff-008/submit_review",
+            headers=OPERATOR_HEADERS,
+            json={
+                "idempotencyKey": "body-key-must-not-be-used",
+                "reason": "body idempotency key must fail closed",
+            },
+        )
+
+        assert response.status_code == 400, response.text
+        detail = response.json()["detail"]
+        assert detail["error"]["code"] == "INVALID_REQUEST"
+        assert detail["error"]["details"]["precondition_failed"] == "body_idempotency_key"
+        assert bff_main.command_store._get_all_commands() == []
+
+
 def test_bff_actions_adapter_requires_idempotency_key() -> None:
     with _isolated_action_adapter() as client:
         headers = {k: v for k, v in OPERATOR_HEADERS.items() if k != "Idempotency-Key"}

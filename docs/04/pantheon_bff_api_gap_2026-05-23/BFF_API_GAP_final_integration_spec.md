@@ -154,6 +154,13 @@ execution is not explicitly enabled.
   `IDEMPOTENCY_CONFLICT` when the same key is reused with a different body.
 - Preserve the live broker fail-closed gate: payloads or runtime targets that signal
   live broker scope return HTTP 403 unless `PANTHEON_LIVE_BROKER_ENABLED=true`.
+- Keep the deprecated action compatibility facade
+  `POST /bff/actions/{entityType}/{entityId}/{actionId}` live. It must translate
+  the path and body into the final command envelope, persist through the same command
+  store, mark `admission_route=POST /bff/v1/commands`, preserve
+  `source_route=POST /bff/actions/{entityType}/{entityId}/{actionId}` for audit,
+  emit deprecation headers/body metadata, and reject body-level idempotency keys
+  with no command side effect.
 
 `/api/v1/operator/commands` remains available as the legacy foundation route and
 continues to return `CommandSubmissionResponse`; it is not changed to the final
@@ -170,16 +177,21 @@ continues to return `CommandSubmissionResponse`; it is not changed to the final
 | 5 | Duplicate idempotency key with a different payload returns HTTP 409 `IDEMPOTENCY_CONFLICT` | Implemented in BFF-B1-007 |
 | 6 | Live broker scope remains fail-closed when `PANTHEON_LIVE_BROKER_ENABLED` is false | Implemented in BFF-B1-007 |
 | 7 | Legacy `/api/v1/operator/commands` remains unaffected and keeps `CommandSubmissionResponse` | Implemented in BFF-B1-007 |
+| 8 | `POST /bff/actions/{entityType}/{entityId}/{actionId}` remains route-discoverable and adapts accepted calls through the final command admission facade with deprecation metadata | Implemented in BFF-B1-008 |
+| 9 | Action facade requests honor `Idempotency-Key` / `X-Idempotency-Key`, persist the resolved key in foundation context, and reject body-level idempotency keys before command-store writes | Implemented in BFF-B1-008 |
+| 10 | Action facade policy denials preserve final-command foundation error/audit metadata with `source_route=POST /bff/actions/{entityType}/{entityId}/{actionId}` | Implemented in BFF-B1-008 |
 
 ### Affected Files
 
 - `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_actions_to_commands_adapter.py`
 - `services/control-plane/bff/test_governance_command_submission.py`
 - `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
 
 ### Task
 
-BFF-B1-007 — Owner: Codex, Reviewer: Claude
+- BFF-B1-007 — Owner: Codex, Reviewer: Claude
+- BFF-B1-008 — Owner: Codex, Reviewer: Claude
 
 ---
 
