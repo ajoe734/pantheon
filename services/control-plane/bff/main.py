@@ -28203,6 +28203,61 @@ async def bff_get_experiment_artifacts(
     }
 
 
+# -- Research Experiments (BFF-B2-004 dedicated surface) ---------------------
+
+@app.get("/bff/research-experiments")
+async def bff_list_research_experiments(
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: list research experiments (execute-plans compatibility surface)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    items = _list_bff_experiments(status=status)
+    source = "bff_overlay" if _GOV_BFF_EXPERIMENT_OVERLAY else None
+    surface = _dataset_surface_status("research_experiments", snapshot_at=snapshot_at, source=source)
+    if surface.get("status") == "unavailable" and not _GOV_BFF_EXPERIMENT_OVERLAY:
+        items = []
+        next_page_token = None
+    else:
+        items, next_page_token = _page_slice(items, page_token, page_size)
+
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {"research_experiments": surface}
+    return {
+        "data": items,
+        "items": items,
+        "page_info": {"next_page_token": next_page_token, "total": len(items)},
+        "meta": meta,
+    }
+
+
+@app.get("/bff/research-experiments/{experiment_id}")
+async def bff_get_research_experiment(
+    experiment_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: get a research experiment by ID (execute-plans compatibility surface)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    clean_id = experiment_id.strip()
+    source = "bff_overlay" if _GOV_BFF_EXPERIMENT_OVERLAY else None
+    return _sem_final_read_model_detail(
+        _get_bff_experiment(clean_id),
+        entity_id=clean_id,
+        label="Research experiment",
+        dataset="research_experiments",
+        surface_key="research_experiment_detail",
+        source=source,
+        source_available=True if _GOV_BFF_EXPERIMENT_OVERLAY else None,
+    )
+
+
 # -- Jobs --------------------------------------------------------------------
 
 @app.get("/bff/jobs")
@@ -31033,7 +31088,6 @@ def _sem_final_generic_detail_for_path(path: str, entity_id: str) -> Optional[Di
 @app.get("/bff/mcp-tools")
 @app.get("/bff/mcp-tools/{id}")
 @app.get("/bff/ranking-formulas")
-@app.get("/bff/research-experiments")
 @app.get("/bff/research-analyses")
 @app.get("/bff/tools")
 @app.get("/bff/tools/{id}")
@@ -31063,7 +31117,6 @@ async def sem_final_generic_read_alias(
 # have dedicated handlers registered earlier in this file and are intentionally excluded here.
 @app.get("/bff/ranking-formulas/{id}")
 @app.get("/bff/research-analyses/{id}")
-@app.get("/bff/research-experiments/{id}")
 @app.get("/bff/skills/{id}")
 @app.get("/bff/v5/interventions/{id}")
 async def sem_final_id_named_read_alias(
@@ -31079,11 +31132,10 @@ async def sem_final_id_named_read_alias(
 
 
 # NOTE: /bff/capital-pools/{id}, /bff/evolution-programs/{id}, /bff/personas/{id},
-# and /bff/strategies/{id} have dedicated PATCH handlers registered earlier
-# and are intentionally excluded here.
+# /bff/research-experiments/{id}, and /bff/strategies/{id} have dedicated handlers
+# registered earlier and are intentionally excluded here.
 @app.patch("/bff/artifacts/{id}")
 @app.patch("/bff/ranking-formulas/{id}")
-@app.patch("/bff/research-experiments/{id}")
 async def sem_final_generic_patch_alias(id: str, payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None)):
     _require_read_role(_extract_identity(authorization))
     return {"data": {"id": id, **payload}, "meta": {"snapshot_at": utc_now()}}
