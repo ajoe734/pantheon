@@ -23461,6 +23461,274 @@ async def bff_management_persona_fleet(
     )
 
 
+# ---------------- /bff/management/nl (BFF-B6-001) ----------------
+
+_MGMT_NL_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
+
+_MGMT_NL_VALID_FOCUS = {"cockpit", "trading_pulse", "portfolio", "persona_fleet", "all"}
+
+
+def _mgmt_nl_idempotency_check(resolved_key: str, request_hash: str) -> Optional[Dict[str, Any]]:
+    existing = _MGMT_NL_IDEMPOTENCY.get(resolved_key)
+    if existing is None:
+        return None
+    if existing.get("request_hash") != request_hash:
+        raise _bff_error(
+            409,
+            ErrorCode.IDEMPOTENCY_CONFLICT,
+            "Idempotency key was already used with a different payload",
+            f"Key {resolved_key!r} is bound to a different management NL request hash",
+            precondition_failed="idempotency_conflict",
+            suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+        )
+    return existing.get("result")
+
+
+def _mgmt_nl_surface_confidence(surfaces: Dict[str, Any]) -> str:
+    statuses = [v.get("status", "unavailable") for v in surfaces.values() if isinstance(v, dict)]
+    if not statuses:
+        return "unavailable"
+    if all(s == "ok" for s in statuses):
+        return "high"
+    if all(s == "unavailable" for s in statuses):
+        return "unavailable"
+    return "partial"
+
+
+def _mgmt_nl_collect_context(focus: str, snapshot_at: str) -> Dict[str, Any]:
+    """Collect management summary context for the requested focus surface(s)."""
+    use_all = focus in ("all", "")
+    snippets: Dict[str, Any] = {}
+    surfaces: Dict[str, Any] = {}
+
+    if use_all or focus == "cockpit":
+        try:
+            cockpit = _build_management_cockpit_payload(snapshot_at)
+            cockpit_data = cockpit.get("data") or {}
+            snippets["cockpit"] = {
+                "trading_pulse_summary": (cockpit_data.get("tradingPulse") or {}).get("summary"),
+                "alerts_summary": (cockpit_data.get("alerts") or {}).get("summary"),
+                "human_inbox_summary": (cockpit_data.get("humanInbox") or {}).get("summary"),
+                "anomalies_summary": (cockpit_data.get("anomalies") or {}).get("summary"),
+            }
+            surfaces.update(cockpit.get("meta", {}).get("surfaces", {}))
+        except Exception:
+            surfaces["management_cockpit"] = {"status": "unavailable", "source": "error"}
+
+    if use_all or focus == "trading_pulse":
+        try:
+            pulse = _build_management_trading_pulse_payload(snapshot_at)
+            pulse_data = pulse.get("data") or {}
+            snippets["trading_pulse"] = {
+                "summary": pulse_data.get("summary"),
+                "cards": pulse_data.get("cards"),
+            }
+            surfaces.update(pulse.get("meta", {}).get("surfaces", {}))
+        except Exception:
+            surfaces["management_trading_pulse"] = {"status": "unavailable", "source": "error"}
+
+    if use_all or focus == "portfolio":
+        try:
+            pools = read_store.list_capital_pools() or []
+            runtime_bindings = read_store.list_runtime_bindings() or []
+            telemetry_values = [
+                read_store.get_telemetry_summary(
+                    str(r.get("runtime_id") or r.get("id") or r.get("binding_id") or "")
+                )
+                for r in runtime_bindings
+                if r.get("runtime_id") or r.get("id") or r.get("binding_id")
+            ]
+            telemetry_values = [t for t in telemetry_values if t is not None]
+            portfolio_rollup = _management_telemetry_rollup(telemetry_values)
+            snippets["portfolio"] = {
+                "capital_pool_count": len(pools),
+                "runtime_count": len(runtime_bindings),
+                "total_pnl": portfolio_rollup.get("total_pnl"),
+                "max_drawdown": portfolio_rollup.get("max_drawdown"),
+                "average_fill_rate": portfolio_rollup.get("average_fill_rate"),
+                "total_trades": portfolio_rollup.get("total_trades"),
+            }
+            portfolio_status = "ok" if pools or runtime_bindings else "unavailable"
+            surfaces["portfolio_book"] = {"status": portfolio_status, "source": "bff_composed"}
+        except Exception:
+            surfaces["portfolio_book"] = {"status": "unavailable", "source": "error"}
+
+    if use_all or focus == "persona_fleet":
+        try:
+            fleet = _project_persona_fleet_payload(
+                state=None,
+                health=None,
+                page_token=None,
+                page_size=20,
+            )
+            fleet_items = fleet.get("items") or []
+            fleet_summary = fleet.get("summary") or {}
+            snippets["persona_fleet"] = {
+                "total": len(fleet_items),
+                "summary": fleet_summary,
+            }
+            surfaces.update(fleet.get("meta", {}).get("surfaces", {}))
+        except Exception:
+            surfaces["persona_fleet"] = {"status": "unavailable", "source": "error"}
+
+    return {"snippets": snippets, "surfaces": surfaces}
+
+
+def _mgmt_nl_synthesize_answer(question: str, snippets: Dict[str, Any], focus: str) -> str:
+    """
+    Compose a plain-text management answer grounded in the collected snippets.
+    This is a structured synthesis layer — not an external LLM call.
+    """
+    parts: List[str] = []
+
+    cockpit = snippets.get("cockpit") or {}
+    pulse = snippets.get("trading_pulse") or {}
+    portfolio = snippets.get("portfolio") or {}
+    fleet = snippets.get("persona_fleet") or {}
+
+    if cockpit:
+        alerts = cockpit.get("alerts_summary") or {}
+        inbox = cockpit.get("human_inbox_summary") or {}
+        anomalies = cockpit.get("anomalies_summary") or {}
+        pulse_summary = cockpit.get("trading_pulse_summary") or {}
+        if alerts.get("total_active") is not None:
+            parts.append(f"Active alerts: {alerts['total_active']}.")
+        if inbox.get("total") is not None:
+            parts.append(f"Human inbox items: {inbox['total']}.")
+        if anomalies.get("total") is not None:
+            parts.append(f"Anomalies: {anomalies['total']}.")
+        if pulse_summary.get("runtimeCount") is not None:
+            parts.append(f"Runtimes in cockpit: {pulse_summary['runtimeCount']}.")
+
+    if pulse:
+        pulse_s = pulse.get("summary") or {}
+        if pulse_s.get("totalPnl") is not None:
+            parts.append(f"Total PnL: {pulse_s['totalPnl']:.4f}.")
+        if pulse_s.get("runtimeCount") is not None:
+            parts.append(f"Runtime count (trading pulse): {pulse_s['runtimeCount']}.")
+        if pulse_s.get("averageFillRate") is not None:
+            parts.append(f"Average fill rate: {pulse_s['averageFillRate']:.2%}.")
+
+    if portfolio:
+        if portfolio.get("capital_pool_count") is not None:
+            parts.append(f"Capital pools: {portfolio['capital_pool_count']}.")
+        if portfolio.get("runtime_count") is not None:
+            parts.append(f"Runtime bindings: {portfolio['runtime_count']}.")
+        if portfolio.get("total_pnl") is not None:
+            parts.append(f"Portfolio total PnL: {portfolio['total_pnl']:.4f}.")
+        if portfolio.get("max_drawdown") is not None:
+            parts.append(f"Max drawdown: {portfolio['max_drawdown']:.4f}.")
+        if portfolio.get("total_trades") is not None:
+            parts.append(f"Total trades: {int(portfolio['total_trades'])}.")
+
+    if fleet:
+        total = fleet.get("total")
+        if total is not None:
+            parts.append(f"Persona fleet size: {total}.")
+
+    if not parts:
+        return (
+            f"Management data is currently unavailable for the requested focus ({focus}). "
+            "Please retry when management surfaces are reachable."
+        )
+
+    intro = f"Management summary for question: '{question}'. "
+    return intro + " ".join(parts)
+
+
+@app.post("/bff/management/nl/ask", status_code=202)
+async def bff_management_nl_ask(
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF-B6-001: POST /bff/management/nl/ask — Management natural language query endpoint."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+
+    question = _agora_required_text(payload, "question")
+    focus = str(payload.get("focus") or "all").strip().lower()
+    if focus not in _MGMT_NL_VALID_FOCUS:
+        focus = "all"
+    operator_context = str(payload.get("context") or "").strip()
+
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({"route": "POST /bff/management/nl/ask", "payload": payload})
+    cached = _mgmt_nl_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        replayed = {**cached, "meta": {**cached.get("meta", {}), "idempotency": {**cached.get("meta", {}).get("idempotency", {}), "replayed": True}}}
+        return JSONResponse(status_code=202, content=replayed)
+
+    now = utc_now()
+    session_id = str(payload.get("sessionId") or payload.get("session_id") or f"mgmt-nl-{uuid.uuid4().hex[:10]}")
+    message_id = f"mnl-{uuid.uuid4().hex[:16]}"
+
+    context_bundle = _mgmt_nl_collect_context(focus, now)
+    snippets = context_bundle["snippets"]
+    surfaces = context_bundle["surfaces"]
+
+    answer = _mgmt_nl_synthesize_answer(question, snippets, focus)
+    confidence = _mgmt_nl_surface_confidence(surfaces)
+    source_keys = list(snippets.keys())
+
+    session = read_store.get_agora_session(session_id)
+    if session is None:
+        session = read_store.create_agora_session(
+            session_id=session_id,
+            title=question[:80],
+            actor_id=identity.operator_id,
+            payload={
+                "mode": "management_nl",
+                "focus": focus,
+                "participants": [{"type": "operator", "id": identity.operator_id}],
+            },
+            created_at=now,
+        )
+    read_store.append_agora_session_message(
+        session_id,
+        message_id=message_id,
+        content=question,
+        actor_id=identity.operator_id,
+        payload={
+            "role": "user",
+            "focus": focus,
+            "context": operator_context or None,
+            "sender": {"type": "operator", "id": identity.operator_id},
+        },
+        created_at=now,
+    )
+
+    _publish_event(
+        _sse_buffers["ask"],
+        _sse_subscribers["ask"],
+        "management.nl.ask.accepted",
+        {"session_id": session_id, "message_id": message_id, "focus": focus},
+    )
+
+    result = {
+        "status": "accepted",
+        "data": {
+            "answer": answer,
+            "session_id": session_id,
+            "message_id": message_id,
+            "question": question,
+            "focus": focus,
+            "sources": source_keys,
+            "confidence": confidence,
+            "summary_context": snippets,
+        },
+        "meta": {
+            "snapshot_at": now,
+            "surfaces": surfaces,
+            "idempotency": {"idempotencyKey": resolved_key, "replayed": False},
+        },
+    }
+    _MGMT_NL_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return JSONResponse(status_code=202, content=result)
+
+
 @app.get("/bff/management/evidence")
 async def bff_management_evidence(
     ref_id: Optional[str] = None,
