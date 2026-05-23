@@ -56,3 +56,17 @@ After the owner closeout commit was pushed, GitHub reported PR #448 as
 - Post-refresh verification: `python3 -m pytest services/control-plane/bff/tests/test_bff_b3_human_inbox.py` - 4 passed.
 - This file was updated after the dev refresh so the branch tip remains a
   BFF-B3-003 owner commit with the required Codex closeout trailers.
+
+PR #448 later became conflicting after `origin/dev` advanced again with
+BFF-B3-006 Evidence Explorer work. The branch was refreshed a second time and
+the frontend client/test conflicts were resolved by composing both Management
+aggregate adapters:
+
+- Second dev refresh merge commit: `a4443fc5`
+- Conflict files:
+  - `execute-plans/src/lib/bff/client.ts`
+  - `execute-plans/src/lib/bff/__tests__/client.test.ts`
+- Resolution: retain BFF-B3-003 `humanInbox` list/detail adapter and retain
+  BFF-B3-006 `evidenceExplorer` list adapter in the public management client
+  and live adapter tests.
+- Post-resolution verification: `python3 -m pytest services/control-plane/bff/tests/test_bff_b3_human_inbox.py services/control-plane/bff/tests/test_bff_b3_management_evidence.py` - 7 passed.
