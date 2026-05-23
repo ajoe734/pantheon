@@ -1359,6 +1359,7 @@ _OPERATOR_DEPLOYMENT_PLAN_ROUTE_PREFIX = "/operator/deployment-plans"
 _OPERATOR_HEALTH_STATUS_ROUTE = "/operator/health-status"
 _OPERATOR_POST_INCIDENT_REVIEW_ROUTE = "/operator/post-incident-review"
 _OPERATOR_RUNTIME_STATE_ROUTE = "/operator/runtime-state"
+_MANAGEMENT_COCKPIT_ROUTE = "/management/cockpit"
 _CONSULTATION_WORKBENCH_ROUTE = "/consultation"
 _KNOWLEDGE_WORKBENCH_ROUTE = "/knowledge"
 _TRAINER_WORKBENCH_ROUTE = "/trainer"
@@ -5879,6 +5880,551 @@ def _build_operator_home_payload(snapshot_at: str) -> Dict[str, Any]:
     }
 
 
+def _management_record_time(record: Dict[str, Any]) -> str:
+    for field in (
+        "updated_at",
+        "updatedAt",
+        "created_at",
+        "createdAt",
+        "submitted_at",
+        "triggered_at",
+        "raised_at",
+        "collected_at",
+        "last_updated_at",
+    ):
+        value = record.get(field)
+        if value not in (None, ""):
+            return str(value)
+    return str(record.get("id") or "")
+
+
+def _management_number(value: Any) -> Optional[float]:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _management_avg(values: List[float]) -> Optional[float]:
+    return round(sum(values) / len(values), 6) if values else None
+
+
+def _management_count_by(records: List[Dict[str, Any]], field: str) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for record in records:
+        value = str(record.get(field) or "unknown").strip() or "unknown"
+        counts[value] = counts.get(value, 0) + 1
+    return counts
+
+
+_MANAGEMENT_RISK_LEVEL_ORDER = {
+    "low": 1,
+    "medium": 2,
+    "high": 3,
+    "critical": 4,
+}
+
+
+def _management_human_inbox_item(
+    *,
+    item_id: str,
+    inbox_type: str,
+    source_dataset: str,
+    title: str,
+    status: Optional[str],
+    risk_level: Optional[str],
+    created_at: Optional[str],
+    href: str,
+    source_record: Dict[str, Any],
+) -> Dict[str, Any]:
+    return {
+        "id": item_id,
+        "inboxType": inbox_type,
+        "inbox_type": inbox_type,
+        "sourceDataset": source_dataset,
+        "source_dataset": source_dataset,
+        "title": title,
+        "status": status,
+        "riskLevel": risk_level,
+        "risk_level": risk_level,
+        "createdAt": created_at,
+        "created_at": created_at,
+        "href": href,
+        "sourceRecord": source_record,
+        "source_record": source_record,
+    }
+
+
+def _build_management_human_inbox_payload(snapshot_at: str) -> Dict[str, Any]:
+    review_items = read_store.list_governance_review_queue_items()
+    approval_items = read_store.list_approval_queue_items()
+    interventions = _v5_intervention_records()
+    sentinel_available, sentinel_findings = read_store.list_sentinel_findings()
+
+    items: List[Dict[str, Any]] = []
+    for item in review_items:
+        item_id = str(item.get("item_id") or item.get("id") or "").strip()
+        if not item_id:
+            continue
+        items.append(
+            _management_human_inbox_item(
+                item_id=item_id,
+                inbox_type="governance_review",
+                source_dataset="governance_review_queue_items",
+                title=f"Governance review: {item.get('item_type') or item_id}",
+                status=item.get("status") or item.get("governance_outcome"),
+                risk_level=item.get("risk_level"),
+                created_at=item.get("submitted_at"),
+                href=f"{_GOVERNANCE_REVIEW_QUEUE_ROUTE}?item={item_id}",
+                source_record=item,
+            )
+        )
+    for item in approval_items:
+        decision_id = str(item.get("decision_id") or item.get("id") or "").strip()
+        if not decision_id:
+            continue
+        items.append(
+            _management_human_inbox_item(
+                item_id=decision_id,
+                inbox_type="approval_decision",
+                source_dataset="approval_queue_items",
+                title=f"Approval required: {item.get('decision_type') or decision_id}",
+                status=item.get("decision_state"),
+                risk_level=item.get("risk_level"),
+                created_at=item.get("submitted_at"),
+                href=f"{_GOVERNANCE_APPROVAL_QUEUE_ROUTE}?decision={decision_id}",
+                source_record=item,
+            )
+        )
+    for item in interventions:
+        intervention_id = str(item.get("intervention_id") or item.get("id") or "").strip()
+        if not intervention_id:
+            continue
+        status = str(item.get("status") or "").strip().lower()
+        if status and status not in {"pending", "open", "escalated", "claimed", "in_review"}:
+            continue
+        items.append(
+            _management_human_inbox_item(
+                item_id=intervention_id,
+                inbox_type="intervention",
+                source_dataset="v5_interventions",
+                title=f"Intervention: {item.get('kind') or intervention_id}",
+                status=item.get("status"),
+                risk_level=item.get("severity") or item.get("risk_level"),
+                created_at=item.get("triggered_at") or item.get("created_at"),
+                href=f"/management/interventions?intervention={intervention_id}",
+                source_record=item,
+            )
+        )
+    for item in sentinel_findings:
+        finding_id = str(item.get("id") or item.get("finding_id") or "").strip()
+        if not finding_id:
+            continue
+        status = str(item.get("status") or "").strip().lower()
+        if status and status not in {"pending", "open", "active", "escalated"}:
+            continue
+        items.append(
+            _management_human_inbox_item(
+                item_id=finding_id,
+                inbox_type="sentinel_finding",
+                source_dataset="sentinel_findings",
+                title=f"Sentinel finding: {item.get('kind') or item.get('title') or finding_id}",
+                status=item.get("status"),
+                risk_level=item.get("severity") or item.get("risk_level"),
+                created_at=item.get("triggered_at") or item.get("created_at"),
+                href=f"/management/sentinel?finding={finding_id}",
+                source_record=item,
+            )
+        )
+
+    items = sorted(items, key=_management_record_time, reverse=True)
+
+    review_surface = _dataset_surface_status(
+        "governance_review_queue_items",
+        snapshot_at=snapshot_at,
+    )
+    approval_surface = _dataset_surface_status(
+        "approval_queue_items",
+        snapshot_at=snapshot_at,
+    )
+    intervention_source = "bff_local_registry" if _V5_INTERVENTIONS_STORE else None
+    intervention_surface = _dataset_surface_status(
+        "v5_interventions",
+        snapshot_at=snapshot_at,
+        source=intervention_source,
+    )
+    incident_source = read_store.dataset_source("incidents")
+    sentinel_dataset = "incidents" if incident_source != "missing" else "sentinel_findings"
+    sentinel_surface = _dataset_surface_status(
+        sentinel_dataset,
+        snapshot_at=snapshot_at,
+        source=None if sentinel_available else "missing",
+    )
+    inbox_surface = _aggregate_group_surface(
+        "management_human_inbox",
+        [review_surface, approval_surface, intervention_surface, sentinel_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Human inbox aggregate unavailable.",
+        degraded_message="Human inbox aggregate is available, but one or more contributing surfaces are degraded.",
+    )
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {
+        "management_human_inbox": inbox_surface,
+        "governance_review_queue": review_surface,
+        "approval_queue": approval_surface,
+        "v5_interventions": intervention_surface,
+        "sentinel_findings": sentinel_surface,
+    }
+    return {
+        "items": items,
+        "summary": {
+            "total": len(items),
+            "byType": _management_count_by(items, "inboxType"),
+            "by_type": _management_count_by(items, "inboxType"),
+            "byStatus": _management_count_by(items, "status"),
+            "by_status": _management_count_by(items, "status"),
+            "highestRiskLevel": _highest_ranked_value(
+                [str(item.get("riskLevel") or "") for item in items],
+                _MANAGEMENT_RISK_LEVEL_ORDER,
+            ),
+            "highest_risk_level": _highest_ranked_value(
+                [str(item.get("riskLevel") or "") for item in items],
+                _MANAGEMENT_RISK_LEVEL_ORDER,
+            ),
+        },
+        "meta": meta,
+    }
+
+
+def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
+    runtime_bindings = read_store.list_runtime_bindings()
+    runtime_rows = [_project_operator_runtime_state_row(binding) for binding in runtime_bindings]
+    telemetry_rows = [
+        row.get("telemetry_summary")
+        for row in runtime_rows
+        if isinstance(row.get("telemetry_summary"), dict)
+    ]
+    pnl_values = [
+        value
+        for value in (_management_number((row.get("metrics") or {}).get("pnl")) for row in telemetry_rows)
+        if value is not None
+    ]
+    drawdown_values = [
+        value
+        for value in (_management_number((row.get("metrics") or {}).get("drawdown")) for row in telemetry_rows)
+        if value is not None
+    ]
+    fill_rate_values = [
+        value
+        for value in (_management_number((row.get("metrics") or {}).get("fill_rate")) for row in telemetry_rows)
+        if value is not None
+    ]
+    slippage_values = [
+        value
+        for value in (_management_number((row.get("metrics") or {}).get("avg_slippage_bps")) for row in telemetry_rows)
+        if value is not None
+    ]
+    trade_values = [
+        value
+        for value in (_management_number((row.get("metrics") or {}).get("total_trades")) for row in telemetry_rows)
+        if value is not None
+    ]
+
+    rankings: List[Dict[str, Any]] = []
+    for row in runtime_rows:
+        telemetry = row.get("telemetry_summary") if isinstance(row.get("telemetry_summary"), dict) else {}
+        metrics = telemetry.get("metrics") if isinstance(telemetry.get("metrics"), dict) else {}
+        rankings.append(
+            {
+                "runtimeId": row.get("runtime_id"),
+                "runtime_id": row.get("runtime_id"),
+                "runtimeBindingId": row.get("runtime_binding_id"),
+                "runtime_binding_id": row.get("runtime_binding_id"),
+                "deploymentStage": row.get("deployment_stage"),
+                "deployment_stage": row.get("deployment_stage"),
+                "status": row.get("status"),
+                "pnl": metrics.get("pnl"),
+                "drawdown": metrics.get("drawdown"),
+                "sharpeRatio": metrics.get("sharpe_ratio"),
+                "sharpe_ratio": metrics.get("sharpe_ratio"),
+                "fillRate": metrics.get("fill_rate"),
+                "fill_rate": metrics.get("fill_rate"),
+                "avgSlippageBps": metrics.get("avg_slippage_bps"),
+                "avg_slippage_bps": metrics.get("avg_slippage_bps"),
+                "totalTrades": metrics.get("total_trades"),
+                "total_trades": metrics.get("total_trades"),
+                "lastUpdatedAt": row.get("last_updated_at"),
+                "last_updated_at": row.get("last_updated_at"),
+            }
+        )
+    rankings.sort(
+        key=lambda item: (
+            _management_number(item.get("pnl")) is not None,
+            _management_number(item.get("pnl")) or 0.0,
+            str(item.get("runtimeId") or ""),
+        ),
+        reverse=True,
+    )
+    for index, item in enumerate(rankings, start=1):
+        item["rank"] = index
+
+    by_status = _management_count_by(runtime_rows, "status")
+    by_stage = _management_count_by(runtime_rows, "deployment_stage")
+    runtime_surface = _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at)
+    telemetry_surface = _dataset_surface_status("telemetry_summaries", snapshot_at=snapshot_at)
+    if runtime_rows and len(telemetry_rows) < len(runtime_rows) and telemetry_surface.get("status") == "ok":
+        telemetry_surface["status"] = "degraded"
+        telemetry_surface["message"] = "Telemetry summary missing for one or more cockpit runtimes."
+        telemetry_surface.setdefault(
+            "staleness",
+            {"served_from": "unverifiable", "last_known_at": snapshot_at},
+        )
+    trading_surface = _aggregate_group_surface(
+        "management_trading_pulse",
+        [runtime_surface, telemetry_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Trading pulse aggregate unavailable.",
+        degraded_message="Trading pulse aggregate is available, but runtime or telemetry coverage is degraded.",
+    )
+
+    summary = {
+        "runtimeCount": len(runtime_rows),
+        "runtime_count": len(runtime_rows),
+        "telemetryCoverageCount": len(telemetry_rows),
+        "telemetry_coverage_count": len(telemetry_rows),
+        "byStatus": by_status,
+        "by_status": by_status,
+        "byStage": by_stage,
+        "by_stage": by_stage,
+        "totalPnl": round(sum(pnl_values), 6) if pnl_values else None,
+        "total_pnl": round(sum(pnl_values), 6) if pnl_values else None,
+        "worstDrawdown": max(drawdown_values) if drawdown_values else None,
+        "worst_drawdown": max(drawdown_values) if drawdown_values else None,
+        "averageFillRate": _management_avg(fill_rate_values),
+        "average_fill_rate": _management_avg(fill_rate_values),
+        "worstSlippageBps": max(slippage_values) if slippage_values else None,
+        "worst_slippage_bps": max(slippage_values) if slippage_values else None,
+        "totalTrades": int(sum(trade_values)) if trade_values else 0,
+        "total_trades": int(sum(trade_values)) if trade_values else 0,
+    }
+    cards = [
+        {
+            "cardId": "runtime-status",
+            "card_id": "runtime-status",
+            "label": "Runtime Status",
+            "value": len(runtime_rows),
+            "details": {"byStatus": by_status, "byStage": by_stage},
+        },
+        {
+            "cardId": "pnl",
+            "card_id": "pnl",
+            "label": "P&L",
+            "value": summary["totalPnl"],
+            "details": {"telemetryCoverageCount": len(telemetry_rows)},
+        },
+        {
+            "cardId": "drawdown",
+            "card_id": "drawdown",
+            "label": "Worst Drawdown",
+            "value": summary["worstDrawdown"],
+            "details": {"source": "telemetry_summaries"},
+        },
+        {
+            "cardId": "execution-quality",
+            "card_id": "execution-quality",
+            "label": "Execution Quality",
+            "value": summary["averageFillRate"],
+            "details": {"worstSlippageBps": summary["worstSlippageBps"]},
+        },
+    ]
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {
+        "management_trading_pulse": trading_surface,
+        "runtime_roster": runtime_surface,
+        "telemetry_summary": telemetry_surface,
+    }
+    return {
+        "summary": summary,
+        "cards": cards,
+        "rankings": rankings,
+        "runtimeRows": runtime_rows,
+        "runtime_rows": runtime_rows,
+        "meta": meta,
+    }
+
+
+def _build_management_anomalies_payload(snapshot_at: str) -> Dict[str, Any]:
+    runtime_alerts, runtime_surfaces = _build_runtime_alerts(snapshot_at)
+    sentinel_available, sentinel_findings = read_store.list_sentinel_findings()
+    sentinel_anomalies: List[Dict[str, Any]] = []
+    for finding in sentinel_findings:
+        finding_id = str(finding.get("id") or finding.get("finding_id") or "").strip()
+        if not finding_id:
+            continue
+        sentinel_anomalies.append(
+            {
+                "id": finding_id,
+                "kind": finding.get("kind") or "sentinel_finding",
+                "severity": finding.get("severity") or finding.get("risk_level") or "medium",
+                "status": finding.get("status"),
+                "summary": finding.get("title") or finding.get("summary") or finding_id,
+                "created_at": finding.get("created_at"),
+                "triggered_at": finding.get("triggered_at"),
+                "target_ref": {
+                    "label": "Open sentinel finding",
+                    "href": f"/management/sentinel?finding={finding_id}",
+                    "target_id": finding_id,
+                },
+                "sourceRecord": finding,
+                "source_record": finding,
+            }
+        )
+    runtime_anomalies = [
+        {
+            "id": alert.get("alert_id"),
+            "kind": "runtime_alert",
+            "severity": alert.get("severity"),
+            "status": "active",
+            "summary": alert.get("summary"),
+            "raised_at": alert.get("raised_at"),
+            "target_ref": alert.get("target_ref"),
+            "sourceRecord": alert,
+            "source_record": alert,
+        }
+        for alert in runtime_alerts
+    ]
+    anomalies = sorted(
+        runtime_anomalies + sentinel_anomalies,
+        key=_management_record_time,
+        reverse=True,
+    )
+    incident_source = read_store.dataset_source("incidents")
+    sentinel_dataset = "incidents" if incident_source != "missing" else "sentinel_findings"
+    sentinel_surface = _dataset_surface_status(
+        sentinel_dataset,
+        snapshot_at=snapshot_at,
+        source=None if sentinel_available else "missing",
+    )
+    anomalies_surface = _aggregate_group_surface(
+        "management_anomalies",
+        [
+            runtime_surfaces["runtime_roster"],
+            runtime_surfaces["telemetry_summary"],
+            sentinel_surface,
+        ],
+        snapshot_at=snapshot_at,
+        unavailable_message="Anomaly aggregate unavailable.",
+        degraded_message="Anomaly aggregate is available, but runtime telemetry or sentinel coverage is degraded.",
+    )
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {
+        "management_anomalies": anomalies_surface,
+        "runtime_roster": runtime_surfaces["runtime_roster"],
+        "telemetry_summary": runtime_surfaces["telemetry_summary"],
+        "sentinel_findings": sentinel_surface,
+    }
+    return {
+        "items": anomalies,
+        "summary": {
+            "total": len(anomalies),
+            "bySeverity": _management_count_by(anomalies, "severity"),
+            "by_severity": _management_count_by(anomalies, "severity"),
+            "byKind": _management_count_by(anomalies, "kind"),
+            "by_kind": _management_count_by(anomalies, "kind"),
+            "highestSeverity": _highest_ranked_value(
+                [str(item.get("severity") or "") for item in anomalies],
+                _ALERT_SEVERITY_ORDER,
+            ),
+            "highest_severity": _highest_ranked_value(
+                [str(item.get("severity") or "") for item in anomalies],
+                _ALERT_SEVERITY_ORDER,
+            ),
+        },
+        "meta": meta,
+    }
+
+
+def _build_management_cockpit_payload(snapshot_at: str) -> Dict[str, Any]:
+    operator_home = _build_operator_home_payload(snapshot_at)
+    runtime_health = _build_operator_health_status_payload(snapshot_at)
+    alerts_payload = _build_operator_alerts_payload(snapshot_at)
+    human_inbox = _build_management_human_inbox_payload(snapshot_at)
+    trading_pulse = _build_management_trading_pulse_payload(snapshot_at)
+    anomalies = _build_management_anomalies_payload(snapshot_at)
+
+    alerts = {
+        "items": alerts_payload.get("alerts", []),
+        "summary": alerts_payload.get("summary", {}),
+        "meta": alerts_payload.get("meta", {}),
+    }
+    cockpit_inputs = [
+        operator_home["meta"]["surfaces"]["operator_home"],
+        runtime_health["meta"]["surfaces"]["health_status"],
+        alerts_payload["meta"]["surfaces"]["alerts"],
+        human_inbox["meta"]["surfaces"]["management_human_inbox"],
+        trading_pulse["meta"]["surfaces"]["management_trading_pulse"],
+        anomalies["meta"]["surfaces"]["management_anomalies"],
+    ]
+    cockpit_surface = _aggregate_group_surface(
+        "management_cockpit",
+        cockpit_inputs,
+        snapshot_at=snapshot_at,
+        unavailable_message="Management cockpit aggregate unavailable.",
+        degraded_message="Management cockpit aggregate is available, but one or more contributing surfaces are degraded.",
+    )
+    data = {
+        "id": "management-cockpit",
+        "snapshotAt": snapshot_at,
+        "snapshot_at": snapshot_at,
+        "operatorHome": operator_home,
+        "operator_home": operator_home,
+        "runtimeHealth": runtime_health,
+        "runtime_health": runtime_health,
+        "alerts": alerts,
+        "humanInbox": human_inbox,
+        "human_inbox": human_inbox,
+        "tradingPulse": trading_pulse,
+        "trading_pulse": trading_pulse,
+        "anomalies": anomalies,
+        "links": {
+            "self": f"/bff{_MANAGEMENT_COCKPIT_ROUTE}",
+            "operatorHome": "/api/v1/operator/home",
+            "operator_home": "/api/v1/operator/home",
+            "runtimeHealth": "/api/v1/operator/health-status",
+            "runtime_health": "/api/v1/operator/health-status",
+            "alerts": "/bff/alerts",
+            "humanInbox": "/bff/management/human-inbox",
+            "human_inbox": "/bff/management/human-inbox",
+            "tradingPulse": "/bff/management/trading-pulse",
+            "trading_pulse": "/bff/management/trading-pulse",
+        },
+    }
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {
+        "management_cockpit": cockpit_surface,
+        "operator_home": operator_home["meta"]["surfaces"]["operator_home"],
+        "runtime_health": runtime_health["meta"]["surfaces"]["health_status"],
+        "alerts": alerts_payload["meta"]["surfaces"]["alerts"],
+        "human_inbox": human_inbox["meta"]["surfaces"]["management_human_inbox"],
+        "trading_pulse": trading_pulse["meta"]["surfaces"]["management_trading_pulse"],
+        "anomalies": anomalies["meta"]["surfaces"]["management_anomalies"],
+    }
+    return {
+        "data": data,
+        "operator_home": operator_home,
+        "runtime_health": runtime_health,
+        "alerts": alerts,
+        "human_inbox": human_inbox,
+        "trading_pulse": trading_pulse,
+        "anomalies": anomalies,
+        "meta": meta,
+    }
+
+
 def _unavailable_surface(
     dataset: str,
     *,
@@ -10065,6 +10611,18 @@ async def get_operator_home(
 
     snapshot_at = utc_now()
     return _build_operator_home_payload(snapshot_at)
+
+
+@app.get(f"/bff{_MANAGEMENT_COCKPIT_ROUTE}")
+async def bff_management_cockpit(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF-B3-001: Pathreon Management cockpit aggregate."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    return _build_management_cockpit_payload(snapshot_at)
 
 
 @app.get("/api/v1/operator/paper-live-drift/{runtime_id}")
