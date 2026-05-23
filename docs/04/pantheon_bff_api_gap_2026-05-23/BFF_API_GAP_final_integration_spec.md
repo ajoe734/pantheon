@@ -195,6 +195,62 @@ continues to return `CommandSubmissionResponse`; it is not changed to the final
 
 ---
 
+## §13.5 Decision Endpoints
+
+### Gap
+
+The execute-plans approval queue needs direct BFF decision endpoints for both a
+single approval decision and a batch of approval decisions. The single route existed
+for the legacy approval contract, but the final BFF gap requires the route to accept
+the frontend decision vocabulary and the batch route to return per-approval results
+instead of falling through to a generic create/action stub.
+
+| ID | Method | Path |
+|---|---|---|
+| B1-017 | POST | `/bff/approvals/{id}/decide` |
+| B1-018 | POST | `/bff/approvals/batch-decide` |
+
+### Fix
+
+**File: `services/control-plane/bff/main.py`**
+
+- Keep `POST /bff/approvals/{id}/decide` as the canonical single-decision route.
+- Accept `approve`, `reject`, `request_revision`, `request_changes`, `escalate`, and
+  `freeze`. `request_changes` is a frontend alias for the existing
+  `RequestApprovalRevision` command.
+- Preserve the approver/admin role gate and typed anonymous/auth failure envelopes.
+- Preserve header idempotency requirements and reject body-level `idempotencyKey` /
+  `idempotency_key` before command side effects.
+- Route accepted decisions through the shared command store used by
+  `/api/v1/operator/commands`.
+- Register `POST /bff/approvals/batch-decide` before the generic create stubs and
+  process a bounded list of decision items with derived per-item idempotency keys.
+- Return per-item `accepted` / `failed` results with `summary.total`,
+  `summary.accepted`, and `summary.failed`; mixed batches return HTTP 207 while fully
+  accepted batches return HTTP 202.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `POST /bff/approvals/{id}/decide` accepts approve/reject/request_revision/request_changes/escalate/freeze and records shared command-store receipts | Implemented in BFF-B1-010 |
+| 2 | Single decide preserves approver/admin role gate, typed validation failures, and header idempotency replay/conflict behavior | Implemented in BFF-B1-010 |
+| 3 | `POST /bff/approvals/batch-decide` accepts a non-empty bounded decision list and returns per-id result status | Implemented in BFF-B1-010 |
+| 4 | Batch decide rejects top-level body idempotency keys before writing commands | Implemented in BFF-B1-010 |
+| 5 | Batch decide records accepted items through the shared command store and isolates failures per item | Implemented in BFF-B1-010 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_approvals_decide_contract.py`
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
+
+### Task
+
+BFF-B1-010 — Owner: Codex, Reviewer: Claude
+
+---
+
 ## §14 Confirm-Token Lifecycle
 
 ### Gap
@@ -627,4 +683,3 @@ projection.
 ### Task
 
 BFF-B2-005 — Owner: Codex, Reviewer: Claude2
-
