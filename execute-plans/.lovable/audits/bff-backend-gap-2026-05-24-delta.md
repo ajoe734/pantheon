@@ -175,6 +175,50 @@ pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py se
 Result: 49 passed, 3 existing `datetime.utcnow()` deprecation warnings in
 `services/control-plane/bff/read_store.py`.
 
+## BFF-MGMT-DELTA-004
+
+Route:
+
+```text
+GET /bff/management/capital-flow
+```
+
+Purpose:
+
+Provide a strict-live Management Console route for read-only capital flow
+projections across capital pools, personas, strategies, and runtime deployment
+stages. The backend composes existing runtime, deployment, binding, pool,
+strategy, and telemetry surfaces; it does not introduce a new capital ledger or
+mutate capital.
+
+Frontend contract:
+
+- `paths.managementCapitalFlow()`
+- `managementCapitalFlowPath(query)`
+- `fetchManagementCapitalFlow(query, init, baseUrl)`
+
+Backend acceptance:
+
+- unauthenticated request: HTTP 401
+- authenticated request: HTTP 200
+- CORS preflight: HTTP 204
+- response envelope: `data`, `items`, `rows`, `flows`, `summary`, `page_info`, `meta`
+- supported query: `capital_pool_id`, `persona_id`, `strategy_id`,
+  `deployment_stage`, `direction`, `page_token`, `page_size`
+- `data.id`: `management-capital-flow`
+- `meta.policy`: `read_only_capital_flow`
+- no new capital source of truth; composed from runtime bindings, deployment
+  plans, persona bindings, capital pools, strategies, and telemetry summaries
+
+Validation:
+
+```bash
+python3 -m pytest services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py -q
+```
+
+Result: 79 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
 ## BFF-PM12-DELTA-004
 
 Route:

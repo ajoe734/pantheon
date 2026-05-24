@@ -22275,6 +22275,392 @@ def _management_strategy_allocation_response(
     }
 
 
+_MANAGEMENT_CAPITAL_FLOW_DIRECTIONS = {"inflow", "outflow", "flat", "unknown"}
+
+
+def _management_capital_flow_direction(net_flow: Optional[float]) -> str:
+    if net_flow is None:
+        return "unknown"
+    if net_flow > 0:
+        return "inflow"
+    if net_flow < 0:
+        return "outflow"
+    return "flat"
+
+
+def _management_capital_flow_rows(
+    facts: List[Dict[str, Any]],
+    sources: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    grouped: Dict[tuple[str, str, str, str], List[Dict[str, Any]]] = {}
+    for fact in facts:
+        pool_key = _pm12_dimension_key(fact.get("capital_pool_id"))
+        persona_key = _pm12_dimension_key(fact.get("persona_id"))
+        strategy_key = _pm12_dimension_key(fact.get("strategy_id"))
+        stage_key = _pm12_dimension_key(fact.get("deployment_stage"))
+        grouped.setdefault((pool_key, persona_key, strategy_key, stage_key), []).append(fact)
+
+    rows: List[Dict[str, Any]] = []
+    for (pool_key, persona_key, strategy_key, stage_key), group_facts in grouped.items():
+        metrics = _pm12_attribution_metrics(group_facts)
+        net_flow = _management_as_float(metrics.get("total_pnl"))
+        direction = _management_capital_flow_direction(net_flow)
+        inflow_amount = net_flow if net_flow is not None and net_flow > 0 else 0.0
+        outflow_amount = abs(net_flow) if net_flow is not None and net_flow < 0 else 0.0
+        allocated_capital = _management_as_float(
+            _management_first_non_empty(
+                metrics.get("total_exposure"),
+                metrics.get("total_notional"),
+                metrics.get("total_market_value"),
+            )
+        )
+        pool = sources["pools_by_id"].get(pool_key, {})
+        risk_budget = _management_first_float(
+            pool,
+            "risk_budget",
+            "risk_budget_amount",
+            "budget",
+            "capital_allocation",
+            "allocation_limit",
+            "max_target_size",
+            "params.risk_budget",
+            "risk.budget",
+        )
+        utilization = None
+        if allocated_capital is not None and risk_budget not in (None, 0):
+            utilization = round(allocated_capital / risk_budget, 6)
+        available_capital = (
+            round(risk_budget - allocated_capital, 6)
+            if risk_budget is not None and allocated_capital is not None
+            else None
+        )
+        runtime_ids = sorted({
+            str(fact.get("runtime_id") or "")
+            for fact in group_facts
+            if str(fact.get("runtime_id") or "")
+        })
+        runtime_binding_ids = sorted({
+            str(fact.get("runtime_binding_id") or "")
+            for fact in group_facts
+            if str(fact.get("runtime_binding_id") or "")
+        })
+        plan_ids = sorted({
+            str(fact.get("deployment_plan_id") or "")
+            for fact in group_facts
+            if str(fact.get("deployment_plan_id") or "")
+        })
+        persona_binding_ids = sorted({
+            str(fact.get("persona_capital_binding_id") or "")
+            for fact in group_facts
+            if str(fact.get("persona_capital_binding_id") or "")
+        })
+        statuses = sorted({
+            str(fact.get("status") or "")
+            for fact in group_facts
+            if str(fact.get("status") or "")
+        })
+        latest_flow_at = _management_latest_timestamp(group_facts, "collected_at")
+        pool_label = _pm12_attribution_dimension_label(
+            "pool",
+            pool_key,
+            personas_by_id=sources["personas_by_id"],
+            strategies_by_id=sources["strategies_by_id"],
+            pools_by_id=sources["pools_by_id"],
+        )
+        persona_label = _pm12_attribution_dimension_label(
+            "persona",
+            persona_key,
+            personas_by_id=sources["personas_by_id"],
+            strategies_by_id=sources["strategies_by_id"],
+            pools_by_id=sources["pools_by_id"],
+        )
+        strategy_label = _pm12_attribution_dimension_label(
+            "strategy",
+            strategy_key,
+            personas_by_id=sources["personas_by_id"],
+            strategies_by_id=sources["strategies_by_id"],
+            pools_by_id=sources["pools_by_id"],
+        )
+        row = {
+            "id": f"capital-flow-{pool_key}-{persona_key}-{strategy_key}-{stage_key}",
+            "flowId": f"capital-flow-{pool_key}-{persona_key}-{strategy_key}-{stage_key}",
+            "flow_id": f"capital-flow-{pool_key}-{persona_key}-{strategy_key}-{stage_key}",
+            "direction": direction,
+            "status": "active" if any(status in _MANAGEMENT_STRATEGY_ALLOCATION_ACTIVE_STATUSES for status in statuses) else (
+                statuses[0] if len(statuses) == 1 else ("mixed" if statuses else "unknown")
+            ),
+            "capitalPoolId": pool_key,
+            "capital_pool_id": pool_key,
+            "capitalPoolName": pool_label,
+            "capital_pool_name": pool_label,
+            "personaId": persona_key,
+            "persona_id": persona_key,
+            "personaLabel": persona_label,
+            "persona_label": persona_label,
+            "strategyId": strategy_key,
+            "strategy_id": strategy_key,
+            "strategyLabel": strategy_label,
+            "strategy_label": strategy_label,
+            "deploymentStage": stage_key,
+            "deployment_stage": stage_key,
+            "runtimeIds": runtime_ids,
+            "runtime_ids": runtime_ids,
+            "runtimeBindingIds": runtime_binding_ids,
+            "runtime_binding_ids": runtime_binding_ids,
+            "deploymentPlanIds": plan_ids,
+            "deployment_plan_ids": plan_ids,
+            "personaCapitalBindingIds": persona_binding_ids,
+            "persona_capital_binding_ids": persona_binding_ids,
+            "runtimeStatuses": statuses,
+            "runtime_statuses": statuses,
+            "amount": abs(net_flow) if net_flow is not None else None,
+            "netCapitalFlow": net_flow,
+            "net_capital_flow": net_flow,
+            "inflowAmount": round(inflow_amount, 6),
+            "inflow_amount": round(inflow_amount, 6),
+            "outflowAmount": round(outflow_amount, 6),
+            "outflow_amount": round(outflow_amount, 6),
+            "allocatedCapital": allocated_capital,
+            "allocated_capital": allocated_capital,
+            "currentExposure": allocated_capital,
+            "current_exposure": allocated_capital,
+            "riskBudget": risk_budget,
+            "risk_budget": risk_budget,
+            "availableCapital": available_capital,
+            "available_capital": available_capital,
+            "riskBudgetUtilization": utilization,
+            "risk_budget_utilization": utilization,
+            "latestFlowAt": latest_flow_at,
+            "latest_flow_at": latest_flow_at,
+            "metrics": {
+                **metrics,
+                "netCapitalFlow": net_flow,
+                "net_capital_flow": net_flow,
+                "inflowAmount": round(inflow_amount, 6),
+                "inflow_amount": round(inflow_amount, 6),
+                "outflowAmount": round(outflow_amount, 6),
+                "outflow_amount": round(outflow_amount, 6),
+                "allocatedCapital": allocated_capital,
+                "allocated_capital": allocated_capital,
+                "riskBudget": risk_budget,
+                "risk_budget": risk_budget,
+                "riskBudgetUtilization": utilization,
+                "risk_budget_utilization": utilization,
+            },
+            "sourceRefs": {
+                "runtimeIds": runtime_ids,
+                "runtime_ids": runtime_ids,
+                "runtimeBindingIds": runtime_binding_ids,
+                "runtime_binding_ids": runtime_binding_ids,
+                "deploymentPlanIds": plan_ids,
+                "deployment_plan_ids": plan_ids,
+                "personaCapitalBindingIds": persona_binding_ids,
+                "persona_capital_binding_ids": persona_binding_ids,
+                "capitalPoolIds": [] if pool_key == "unassigned" else [pool_key],
+                "capital_pool_ids": [] if pool_key == "unassigned" else [pool_key],
+                "personaIds": [] if persona_key == "unassigned" else [persona_key],
+                "persona_ids": [] if persona_key == "unassigned" else [persona_key],
+                "strategyIds": [] if strategy_key == "unassigned" else [strategy_key],
+                "strategy_ids": [] if strategy_key == "unassigned" else [strategy_key],
+            },
+            "source_refs": {
+                "runtime_ids": runtime_ids,
+                "runtime_binding_ids": runtime_binding_ids,
+                "deployment_plan_ids": plan_ids,
+                "persona_capital_binding_ids": persona_binding_ids,
+                "capital_pool_ids": [] if pool_key == "unassigned" else [pool_key],
+                "persona_ids": [] if persona_key == "unassigned" else [persona_key],
+                "strategy_ids": [] if strategy_key == "unassigned" else [strategy_key],
+            },
+            "links": {
+                "capitalPool": _management_link("/bff/capital-pools", pool_key if pool_key != "unassigned" else None),
+                "capital_pool": _management_link("/bff/capital-pools", pool_key if pool_key != "unassigned" else None),
+                "persona": _management_link("/bff/personas", persona_key if persona_key != "unassigned" else None),
+                "strategy": _management_link("/bff/strategies", strategy_key if strategy_key != "unassigned" else None),
+            },
+        }
+        rows.append(row)
+
+    rows.sort(
+        key=lambda item: (
+            {"outflow": 0, "unknown": 1, "flat": 2, "inflow": 3}.get(str(item.get("direction") or ""), 4),
+            -abs(_management_as_float(item.get("net_capital_flow")) or 0.0),
+            str(item.get("capital_pool_id") or ""),
+            str(item.get("persona_id") or ""),
+            str(item.get("strategy_id") or ""),
+        )
+    )
+    for rank, row in enumerate(rows, start=1):
+        row["rank"] = rank
+    return rows
+
+
+def _management_capital_flow_response(
+    *,
+    capital_pool_id: Optional[str],
+    persona_id: Optional[str],
+    strategy_id: Optional[str],
+    deployment_stage: Optional[str],
+    direction: Optional[str],
+    page_token: Optional[str],
+    page_size: int,
+) -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    sources = _pm12_performance_attribution_sources()
+    facts = _pm12_performance_attribution_facts(sources, "latest")
+    pool_filter = set(_split_csv_query(capital_pool_id) or [])
+    persona_filter = set(_split_csv_query(persona_id) or [])
+    strategy_filter = set(_split_csv_query(strategy_id) or [])
+    stage_filter = {item.lower() for item in (_split_csv_query(deployment_stage) or [])}
+    direction_filter = {item.lower() for item in (_split_csv_query(direction) or [])}
+    invalid_directions = sorted(direction_filter - _MANAGEMENT_CAPITAL_FLOW_DIRECTIONS)
+    if invalid_directions:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "invalid_direction",
+                "field": "direction",
+                "invalid": invalid_directions,
+                "supported": sorted(_MANAGEMENT_CAPITAL_FLOW_DIRECTIONS),
+            },
+        )
+
+    if pool_filter:
+        facts = [fact for fact in facts if str(fact.get("capital_pool_id") or "") in pool_filter]
+    if persona_filter:
+        facts = [fact for fact in facts if str(fact.get("persona_id") or "") in persona_filter]
+    if strategy_filter:
+        facts = [fact for fact in facts if str(fact.get("strategy_id") or "") in strategy_filter]
+    if stage_filter:
+        facts = [
+            fact
+            for fact in facts
+            if str(fact.get("deployment_stage") or "").strip().lower() in stage_filter
+        ]
+
+    rows = _management_capital_flow_rows(facts, sources)
+    if direction_filter:
+        rows = [
+            row
+            for row in rows
+            if str(row.get("direction") or "").strip().lower() in direction_filter
+        ]
+
+    total = len(rows)
+    page_items, next_page_token = _page_slice(rows, page_token, page_size)
+    net_values = [
+        value
+        for value in (_management_as_float(row.get("net_capital_flow")) for row in rows)
+        if value is not None
+    ]
+    allocated_values = [
+        value
+        for value in (_management_as_float(row.get("allocated_capital")) for row in rows)
+        if value is not None
+    ]
+    direction_counts = _management_count_by([{"direction": row.get("direction")} for row in rows], "direction")
+    telemetry_runtime_count = len({
+        runtime_id
+        for row in rows
+        for runtime_id in (row.get("runtime_ids") or [])
+        if runtime_id in sources["telemetry_by_runtime_id"]
+    })
+    source_surfaces = {
+        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
+        "deployment_plans": _dataset_surface_status("deployment_plans", snapshot_at=snapshot_at),
+        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at),
+        "capital_pools": _dataset_surface_status("capital_pools", snapshot_at=snapshot_at),
+        "strategies": _dataset_surface_status("strategy_specs", snapshot_at=snapshot_at),
+        "telemetry_summaries": _dataset_surface_status(
+            "telemetry_summaries",
+            snapshot_at=snapshot_at,
+            has_data=bool(sources["telemetry_by_runtime_id"]) if sources["runtime_bindings"] else None,
+            missing_message="Telemetry summaries unavailable for capital-flow runtime projections.",
+        ),
+    }
+    capital_flow_surface = _aggregate_group_surface(
+        "capital_flow",
+        list(source_surfaces.values()),
+        snapshot_at=snapshot_at,
+        unavailable_message="Capital-flow projection has no readable source records.",
+        degraded_message="Capital-flow projection is available, but one or more supporting surfaces are degraded.",
+    )
+    summary = {
+        "flowCount": total,
+        "flow_count": total,
+        "returnedFlowCount": len(page_items),
+        "returned_flow_count": len(page_items),
+        "capitalPoolCount": len({row.get("capital_pool_id") for row in rows if row.get("capital_pool_id")}),
+        "capital_pool_count": len({row.get("capital_pool_id") for row in rows if row.get("capital_pool_id")}),
+        "personaCount": len({row.get("persona_id") for row in rows if row.get("persona_id")}),
+        "persona_count": len({row.get("persona_id") for row in rows if row.get("persona_id")}),
+        "strategyCount": len({row.get("strategy_id") for row in rows if row.get("strategy_id")}),
+        "strategy_count": len({row.get("strategy_id") for row in rows if row.get("strategy_id")}),
+        "runtimeCount": len({
+            runtime_id
+            for row in rows
+            for runtime_id in (row.get("runtime_ids") or [])
+            if runtime_id
+        }),
+        "runtime_count": len({
+            runtime_id
+            for row in rows
+            for runtime_id in (row.get("runtime_ids") or [])
+            if runtime_id
+        }),
+        "telemetryRuntimeCount": telemetry_runtime_count,
+        "telemetry_runtime_count": telemetry_runtime_count,
+        "netCapitalFlow": round(sum(net_values), 6) if net_values else None,
+        "net_capital_flow": round(sum(net_values), 6) if net_values else None,
+        "totalInflow": round(sum(value for value in net_values if value > 0), 6) if net_values else None,
+        "total_inflow": round(sum(value for value in net_values if value > 0), 6) if net_values else None,
+        "totalOutflow": round(sum(abs(value) for value in net_values if value < 0), 6) if net_values else None,
+        "total_outflow": round(sum(abs(value) for value in net_values if value < 0), 6) if net_values else None,
+        "allocatedCapitalTotal": round(sum(allocated_values), 6) if allocated_values else None,
+        "allocated_capital_total": round(sum(allocated_values), 6) if allocated_values else None,
+        "byDirection": direction_counts,
+        "by_direction": direction_counts,
+        "latestFlowAt": _management_latest_timestamp(rows, "latest_flow_at"),
+        "latest_flow_at": _management_latest_timestamp(rows, "latest_flow_at"),
+        "basis": "runtime_capital_flow_projection_from_allocations_and_pnl",
+    }
+    data = {
+        "id": "management-capital-flow",
+        "items": page_items,
+        "rows": page_items,
+        "flows": page_items,
+        "summary": summary,
+    }
+    return {
+        "data": data,
+        "items": page_items,
+        "rows": page_items,
+        "flows": page_items,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "capital_flow": capital_flow_surface,
+                **source_surfaces,
+            },
+            "composition_sources": [
+                "GET /api/v1/runtime-bindings",
+                "GET /api/v1/deployment-plans",
+                "GET /api/v1/persona-capital-bindings",
+                "GET /bff/capital-pools",
+                "GET /bff/strategies",
+                "GET /api/v1/telemetry/{runtime_id}/summary",
+            ],
+            "policy": "read_only_capital_flow",
+        },
+    }
+
+
 _MANAGEMENT_RISK_RADAR_STATES = {"ok", "watch", "critical", "unknown"}
 _MANAGEMENT_RISK_RADAR_SEVERITY = {"critical": 0, "watch": 1, "unknown": 2, "ok": 3}
 _MANAGEMENT_INCIDENT_SEVERITY_BUCKETS = ("high", "medium", "low")
@@ -22987,6 +23373,31 @@ async def bff_management_strategy_allocation(
         capital_pool_id=capital_pool_id,
         deployment_stage=deployment_stage,
         drift_status=drift_status,
+        page_token=page_token,
+        page_size=page_size,
+    )
+
+
+@app.get("/bff/management/capital-flow")
+async def bff_management_capital_flow(
+    capital_pool_id: Optional[str] = None,
+    persona_id: Optional[str] = None,
+    strategy_id: Optional[str] = None,
+    deployment_stage: Optional[str] = None,
+    direction: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: read-only capital flow projection across pools, personas, and strategies."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _management_capital_flow_response(
+        capital_pool_id=capital_pool_id,
+        persona_id=persona_id,
+        strategy_id=strategy_id,
+        deployment_stage=deployment_stage,
+        direction=direction,
         page_token=page_token,
         page_size=page_size,
     )

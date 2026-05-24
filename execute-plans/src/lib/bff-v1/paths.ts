@@ -118,6 +118,7 @@ export const paths = {
   managementReadinessBffHa: () => `${BASE}/management/readiness/bff-ha`,
   managementReadinessStrictPublish: () => `${BASE}/management/readiness/strict-publish`,
   managementStrategyAllocation: () => `${BASE}/management/strategy-allocation`,
+  managementCapitalFlow: () => `${BASE}/management/capital-flow`,
   managementRiskRadar: () => `${BASE}/management/risk-radar`,
   managementIncidentTimeline: () => `${BASE}/management/incident-timeline`,
   managementPortfolioBook: () => `${BASE}/management/portfolio-book`,
