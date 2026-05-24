@@ -393,6 +393,24 @@ def _pack_d_error_response(
     )
 
 
+def _pack_d_direct_error_response(
+    *,
+    status_code: int,
+    code: Any,
+    message: Any,
+    details: Optional[Dict[str, Any]] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> JSONResponse:
+    return _pack_d_error_response(
+        status_code=status_code,
+        code=code,
+        message=message,
+        correlation_id=str(uuid.uuid4()),
+        details=details,
+        extra=extra,
+    )
+
+
 def _pack_d_http_exception_response(
     request: Request,
     exc: StarletteHTTPException,
@@ -9640,12 +9658,11 @@ def _rw03_validate_date_range(date_range: Any) -> str:
 
 
 def _rw02_invalid_query(detail: str) -> JSONResponse:
-    return JSONResponse(
+    return _pack_d_direct_error_response(
         status_code=400,
-        content={
-            "error": "invalid_search_query",
-            "detail": detail,
-        },
+        code="invalid_search_query",
+        message="Invalid research search query",
+        details={"reason": detail},
     )
 
 
@@ -13606,16 +13623,12 @@ async def search_research_corpus(
     index_adapter = read_store.get_research_search_index()
     adapter_state = _rw02_adapter_state(index_adapter, snapshot_at=snapshot_at)
     if index_adapter is None or adapter_state == "unavailable":
-        return JSONResponse(
+        return _pack_d_direct_error_response(
             status_code=503,
-            content={
-                "error": "search_unavailable",
-                "meta": {
-                    "surfaces": {
-                        "search_results": "unavailable",
-                    }
-                },
-            },
+            code="search_unavailable",
+            message="Search results are unavailable",
+            details={"reason": "SEARCH_RESULTS_UNAVAILABLE"},
+            extra={"surfaces": {"search_results": "unavailable"}},
         )
 
     items = read_store.list_research_search_results(
@@ -14224,17 +14237,13 @@ async def compare_artifacts(
         if not (artifact.get("allowedActions") or {}).get("canCompare")
     ]
     if non_comparable:
-        return JSONResponse(
+        return _pack_d_direct_error_response(
             status_code=422,
-            content={
-                "error": {
-                    "code": ErrorCode.INVALID_STATE.value,
-                    "message": "One or more artifacts cannot be compared",
-                    "details": {
-                        "reason": "Compare accepts only sealed or superseded artifacts.",
-                        "precondition_failed": "artifact_status",
-                    },
-                },
+            code=ErrorCode.INVALID_STATE.value,
+            message="One or more artifacts cannot be compared",
+            details={
+                "reason": "Compare accepts only sealed or superseded artifacts.",
+                "precondition_failed": "artifact_status",
                 "non_comparable_artifacts": non_comparable,
             },
         )
@@ -15237,9 +15246,11 @@ async def get_institutional_memory_entry(
         include_snapshot_fallback=False,
     )
     if entry is None:
-        return JSONResponse(
+        return _pack_d_direct_error_response(
             status_code=404,
-            content={"error": "entry_not_found", "entry_id": entry_id},
+            code="entry_not_found",
+            message="Institutional memory entry not found",
+            details={"reason": f"entry_id={entry_id!r} was not found", "entry_id": entry_id},
         )
 
     source_event = entry.get("source_event") if isinstance(entry.get("source_event"), dict) else {}
@@ -16276,9 +16287,11 @@ async def get_mutation_review(
 
     decision, approval_decision, linked_incident, linked_postmortem = _mutation_review_inputs(decision_id)
     if decision is None:
-        return JSONResponse(
+        return _pack_d_direct_error_response(
             status_code=404,
-            content={"error": "decision_not_found", "decision_id": decision_id},
+            code="decision_not_found",
+            message="Mutation review decision not found",
+            details={"reason": f"decision_id={decision_id!r} was not found", "decision_id": decision_id},
         )
 
     payload = _mutation_review_projection(
@@ -16291,16 +16304,12 @@ async def get_mutation_review(
     )
 
     if payload["meta"]["surfaces"]["mutation_review"] == "unavailable":
-        return JSONResponse(
+        return _pack_d_direct_error_response(
             status_code=503,
-            content={
-                "error": "evidence_unavailable",
-                "meta": {
-                    "surfaces": {
-                        "mutation_review": "unavailable",
-                    }
-                },
-            },
+            code="evidence_unavailable",
+            message="Mutation review evidence is unavailable",
+            details={"reason": "MUTATION_REVIEW_UNAVAILABLE"},
+            extra={"surfaces": {"mutation_review": "unavailable"}},
         )
 
     required_fields = (
@@ -16315,17 +16324,15 @@ async def get_mutation_review(
     )
     missing_fields = [field for field in required_fields if payload.get(field) in (None, "")]
     if missing_fields:
-        return JSONResponse(
+        return _pack_d_direct_error_response(
             status_code=503,
-            content={
-                "error": "evidence_unavailable",
-                "detail": f"Mutation review projection is missing required fields: {missing_fields}",
-                "meta": {
-                    "surfaces": {
-                        "mutation_review": "unavailable",
-                    }
-                },
+            code="evidence_unavailable",
+            message="Mutation review projection is missing required fields",
+            details={
+                "reason": f"Mutation review projection is missing required fields: {missing_fields}",
+                "missing_fields": missing_fields,
             },
+            extra={"surfaces": {"mutation_review": "unavailable"}},
         )
 
     return payload

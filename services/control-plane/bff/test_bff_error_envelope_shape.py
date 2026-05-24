@@ -27,6 +27,15 @@ def _install_error_envelope_test_routes() -> None:
     async def _generic_500_probe():
         raise RuntimeError("Synthetic server failure")
 
+    @bff_main.app.get("/__test/error-envelope/direct-json-response")
+    async def _direct_json_response_probe():
+        return bff_main._pack_d_direct_error_response(
+            status_code=503,
+            code="synthetic_unavailable",
+            message="Synthetic direct response failure",
+            details={"reason": "SYNTHETIC_DIRECT_RESPONSE"},
+        )
+
     bff_main.app.state.error_envelope_test_routes_installed = True
 
 
@@ -129,3 +138,15 @@ def test_500_error_envelope_generates_uuid_correlation_when_missing() -> None:
     )
     assert body["error"]["message"] == "Internal server error"
     assert body["error"]["details"]["reason"] == "INTERNAL_SERVER_ERROR"
+
+
+def test_direct_json_error_response_uses_pack_d_shape() -> None:
+    response = _client().get("/__test/error-envelope/direct-json-response")
+
+    body = _assert_error_envelope(
+        response,
+        status_code=503,
+        code="synthetic_unavailable",
+        correlation_id=None,
+    )
+    assert body["error"]["details"]["reason"] == "SYNTHETIC_DIRECT_RESPONSE"
