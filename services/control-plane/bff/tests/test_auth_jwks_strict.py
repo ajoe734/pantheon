@@ -75,7 +75,7 @@ def test_strict_cors_rejects_unlisted_origin(monkeypatch) -> None:
     allowed = _cors_preflight("https://pantheon-dev.lovable.app")
     rejected = _cors_preflight("https://evil.example.com")
 
-    assert allowed.status_code == 200
+    assert allowed.status_code == 204
     assert allowed.headers["access-control-allow-origin"] == "https://pantheon-dev.lovable.app"
     assert rejected.status_code == 400
     assert "access-control-allow-origin" not in rejected.headers
@@ -120,7 +120,7 @@ def test_lovable_cors_preflight_accepts_bff_client_headers(monkeypatch) -> None:
         header.strip().lower()
         for header in response.headers["access-control-allow-headers"].split(",")
     }
-    assert response.status_code == 200
+    assert response.status_code == 204
     assert response.headers["access-control-allow-origin"] == "https://pantheon-dev.lovable.app"
     assert {header.lower() for header in bff_main._CORS_ALLOW_HEADERS}.issubset(allowed)
 
@@ -277,6 +277,7 @@ def test_jwks_strict_refreshes_once_for_rotated_kid(monkeypatch) -> None:
 
 
 # BFF-B1-001: CORS fix for Lovable preview and published origins
+# BFF-B1-001-DELTA: regression — execute-plans published URL must survive production-strict filter
 
 
 def test_execute_plans_lovableproject_in_default_origins(monkeypatch) -> None:
@@ -289,14 +290,32 @@ def test_execute_plans_lovableproject_in_default_origins(monkeypatch) -> None:
     assert "https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com" in origins
 
 
-def test_execute_plans_lovableproject_filtered_in_strict_mode(monkeypatch) -> None:
+def test_execute_plans_lovableproject_survives_production_strict_filter(monkeypatch) -> None:
+    """BFF-B1-001-DELTA regression: 140c41d5 published URL is NOT dev-only and must remain
+    in the CORS allowlist when PANTHEON_ENV=production strict mode is active."""
     monkeypatch.delenv("PANTHEON_BFF_CORS_ORIGINS", raising=False)
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
     monkeypatch.setenv("PANTHEON_ENV", "production")
 
     origins = bff_main._cors_origins_from_env()
 
-    assert "https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com" not in origins
+    assert "https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com" in origins
+
+
+def test_execute_plans_options_preflight_succeeds_in_production_strict_mode(monkeypatch) -> None:
+    """BFF-B1-001-DELTA regression: OPTIONS from the execute-plans live origin must return
+    204 even when PANTHEON_ENV=production (strict mode) is active."""
+    monkeypatch.delenv("PANTHEON_BFF_CORS_ORIGINS", raising=False)
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_ENV", "production")
+
+    resp = _cors_preflight("https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com")
+
+    assert resp.status_code == 204
+    assert (
+        resp.headers.get("access-control-allow-origin")
+        == "https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com"
+    )
 
 
 def test_preview_regex_allows_known_uuid_with_commit_hash(monkeypatch) -> None:
@@ -307,7 +326,7 @@ def test_preview_regex_allows_known_uuid_with_commit_hash(monkeypatch) -> None:
     preview_origin = "https://id-preview-a7067bd5--140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovable.app"
     resp = _cors_preflight(preview_origin)
 
-    assert resp.status_code == 200
+    assert resp.status_code == 204
     assert resp.headers.get("access-control-allow-origin") == preview_origin
 
 
@@ -319,7 +338,7 @@ def test_preview_regex_allows_old_project_uuid_with_commit_hash(monkeypatch) -> 
     preview_origin = "https://id-preview-deadbeef--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app"
     resp = _cors_preflight(preview_origin)
 
-    assert resp.status_code == 200
+    assert resp.status_code == 204
     assert resp.headers.get("access-control-allow-origin") == preview_origin
 
 

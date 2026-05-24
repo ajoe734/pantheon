@@ -664,6 +664,112 @@ export interface ManagementPersonaLeagueTiersResponse {
   };
 }
 
+export interface ManagementPersonaLeagueHeatmapQuery {
+  state?: string;
+  archetype?: string;
+  q?: string;
+  bucket?: "hour" | "day" | "week" | string;
+  bucket_count?: number;
+  limit?: number;
+}
+
+export interface ManagementPersonaLeagueHeatmapBucket {
+  id: string;
+  bucketId: string;
+  bucket_id: string;
+  index: number;
+  label: string;
+  startAt: string;
+  start_at: string;
+  endAt: string;
+  end_at: string;
+  endExclusiveAt: string;
+  end_exclusive_at: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementPersonaLeagueHeatmapCell {
+  id: string;
+  personaId: string;
+  persona_id: string;
+  bucketId: string;
+  bucket_id: string;
+  bucketIndex: number;
+  bucket_index: number;
+  score: number;
+  compositeScore: number;
+  composite_score: number;
+  overallScore: number;
+  overall_score: number;
+  components: Record<string, number>;
+  metrics: Record<string, unknown>;
+  formulaVersion: string;
+  formula_version: string;
+  source: string;
+  observedTelemetryCount: number;
+  observed_telemetry_count: number;
+  latestTelemetryAt?: string | null;
+  latest_telemetry_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface ManagementPersonaLeagueHeatmapRow {
+  id: string;
+  personaId: string;
+  persona_id: string;
+  name?: string;
+  owner?: string;
+  state?: string;
+  risk?: string;
+  archetype?: string;
+  tier?: string;
+  tierId?: string;
+  tier_id?: string;
+  tierLabel?: string;
+  tier_label?: string;
+  latestScore?: number;
+  latest_score?: number;
+  runtimeIds: string[];
+  runtime_ids: string[];
+  cells: ManagementPersonaLeagueHeatmapCell[];
+  links?: Record<string, string | null | undefined>;
+  [key: string]: unknown;
+}
+
+export interface ManagementPersonaLeagueHeatmapResponse {
+  data: {
+    id: string;
+    heatmapId: string;
+    heatmap_id: string;
+    bucket: string;
+    buckets: ManagementPersonaLeagueHeatmapBucket[];
+    rows: ManagementPersonaLeagueHeatmapRow[];
+    cells: ManagementPersonaLeagueHeatmapCell[];
+    summary: Record<string, unknown>;
+    formulaVersion: string;
+    formula_version: string;
+    basis: string;
+    [key: string]: unknown;
+  };
+  items: ManagementPersonaLeagueHeatmapRow[];
+  rows: ManagementPersonaLeagueHeatmapRow[];
+  buckets: ManagementPersonaLeagueHeatmapBucket[];
+  cells: ManagementPersonaLeagueHeatmapCell[];
+  summary: Record<string, unknown>;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces?: Record<string, ManagementSurfaceRef>;
+    composition_sources?: string[];
+    policy?: string;
+    [key: string]: unknown;
+  };
+}
+
 export interface ManagementQuarterlyRankingQuery {
   quarter?: string;
   state?: string;
@@ -829,6 +935,106 @@ export interface ManagementQuarterlyRankingResponse {
   };
   meta: {
     snapshot_at?: string;
+    surfaces?: Record<string, ManagementSurfaceRef>;
+    composition_sources?: string[];
+    policy?: string;
+    redacted_evidence_count?: number;
+    [key: string]: unknown;
+  };
+}
+
+export interface ManagementQuarterlyRankingDrilldownQuery {
+  personaId: string;
+  quarter?: string;
+  state?: string;
+  archetype?: string;
+  q?: string;
+}
+
+export interface ManagementQuarterlyRankingContribution {
+  id: string;
+  key: string;
+  label: string;
+  scoreField: string;
+  score_field: string;
+  score: number;
+  weight: number;
+  weightedContribution: number;
+  weighted_contribution: number;
+  contributionShare: number;
+  contribution_share: number;
+  basis: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementQuarterlyRankingDrilldownSummary {
+  quarter: string;
+  personaId: string;
+  persona_id: string;
+  rank?: number | null;
+  rankedCount: number;
+  ranked_count: number;
+  score: number;
+  overallScore?: number | null;
+  overall_score?: number | null;
+  formulaVersion: string;
+  formula_version: string;
+  componentCount: number;
+  component_count: number;
+  totalWeightedContribution: number;
+  total_weighted_contribution: number;
+  evidenceRefCount: number;
+  evidence_ref_count: number;
+  redactedEvidenceCount?: number;
+  redacted_evidence_count?: number;
+  basis: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementQuarterlyRankingDrilldownData {
+  id: string;
+  quarter: string;
+  quarterWindow: ManagementQuarterlyRankingWindow;
+  quarter_window: ManagementQuarterlyRankingWindow;
+  personaId: string;
+  persona_id: string;
+  rank?: number | null;
+  score: number;
+  rankingItem: ManagementQuarterlyRankingItem;
+  ranking_item: ManagementQuarterlyRankingItem;
+  formula: ManagementQuarterlyRankingFormula;
+  contributions: ManagementQuarterlyRankingContribution[];
+  contributionBreakdown: ManagementQuarterlyRankingContribution[];
+  contribution_breakdown: ManagementQuarterlyRankingContribution[];
+  sourceBreakdown: Record<string, unknown>;
+  source_breakdown: Record<string, unknown>;
+  evidenceRefs: ManagementEvidenceItem[];
+  evidence_refs: ManagementEvidenceItem[];
+  summary: ManagementQuarterlyRankingDrilldownSummary;
+  links?: Record<string, string | null | undefined>;
+  [key: string]: unknown;
+}
+
+export interface ManagementQuarterlyRankingDrilldownResponse {
+  data: ManagementQuarterlyRankingDrilldownData;
+  item: ManagementQuarterlyRankingItem;
+  rankingItem: ManagementQuarterlyRankingItem;
+  ranking_item: ManagementQuarterlyRankingItem;
+  contributions: ManagementQuarterlyRankingContribution[];
+  contributionBreakdown: ManagementQuarterlyRankingContribution[];
+  contribution_breakdown: ManagementQuarterlyRankingContribution[];
+  sourceBreakdown: Record<string, unknown>;
+  source_breakdown: Record<string, unknown>;
+  formula: ManagementQuarterlyRankingFormula;
+  quarterWindow: ManagementQuarterlyRankingWindow;
+  quarter_window: ManagementQuarterlyRankingWindow;
+  evidenceRefs: ManagementEvidenceItem[];
+  evidence_refs: ManagementEvidenceItem[];
+  summary: ManagementQuarterlyRankingDrilldownSummary;
+  meta: {
+    snapshot_at?: string;
+    correlationId?: string;
+    correlation_id?: string;
     surfaces?: Record<string, ManagementSurfaceRef>;
     composition_sources?: string[];
     policy?: string;
@@ -1022,6 +1228,16 @@ export interface ManagementPerformanceAttributionQuery {
   page_token?: string;
   page_size?: number;
 }
+
+export type ManagementPerformanceAttributionByPersonaQuery = Omit<
+  ManagementPerformanceAttributionQuery,
+  "dimension"
+>;
+
+export type ManagementPerformanceAttributionByPoolQuery = Omit<
+  ManagementPerformanceAttributionQuery,
+  "dimension"
+>;
 
 export interface ManagementPerformanceAttributionMetrics {
   runtimeCount: number;
@@ -1617,10 +1833,22 @@ export function managementPersonaLeagueTiersPath(
   return withQuery(paths.managementPersonaLeagueTiers(), query);
 }
 
+export function managementPersonaLeagueHeatmapPath(
+  query?: ManagementPersonaLeagueHeatmapQuery,
+): string {
+  return withQuery(paths.managementPersonaLeagueHeatmap(), query);
+}
+
 export function managementQuarterlyRankingPath(
   query?: ManagementQuarterlyRankingQuery,
 ): string {
   return withQuery(paths.managementQuarterlyRanking(), query);
+}
+
+export function managementQuarterlyRankingDrilldownPath(
+  query: ManagementQuarterlyRankingDrilldownQuery,
+): string {
+  return withQuery(paths.managementQuarterlyRankingDrilldown(), query);
 }
 
 export function managementQuarterlyRankingFormulaPath(): string {
@@ -1637,6 +1865,18 @@ export function managementPerformanceAttributionPath(
   query?: ManagementPerformanceAttributionQuery,
 ): string {
   return withQuery(paths.managementPerformanceAttribution(), query);
+}
+
+export function managementPerformanceAttributionByPersonaPath(
+  query?: ManagementPerformanceAttributionByPersonaQuery,
+): string {
+  return withQuery(paths.managementPerformanceAttributionByPersona(), query);
+}
+
+export function managementPerformanceAttributionByPoolPath(
+  query?: ManagementPerformanceAttributionByPoolQuery,
+): string {
+  return withQuery(paths.managementPerformanceAttributionByPool(), query);
 }
 
 export async function fetchManagementCockpit(
@@ -1898,6 +2138,25 @@ export async function fetchManagementPersonaLeagueTiers(
   return response.json() as Promise<ManagementPersonaLeagueTiersResponse>;
 }
 
+export async function fetchManagementPersonaLeagueHeatmap(
+  query?: ManagementPersonaLeagueHeatmapQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementPersonaLeagueHeatmapResponse> {
+  const path = managementPersonaLeagueHeatmapPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementPersonaLeagueHeatmapResponse>;
+}
+
 export async function fetchManagementQuarterlyRanking(
   query?: ManagementQuarterlyRankingQuery,
   init?: RequestInit,
@@ -1915,6 +2174,25 @@ export async function fetchManagementQuarterlyRanking(
     throw new Error(`GET ${path} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementQuarterlyRankingResponse>;
+}
+
+export async function fetchManagementQuarterlyRankingDrilldown(
+  query: ManagementQuarterlyRankingDrilldownQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementQuarterlyRankingDrilldownResponse> {
+  const path = managementQuarterlyRankingDrilldownPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementQuarterlyRankingDrilldownResponse>;
 }
 
 export async function fetchManagementQuarterlyRankingFormula(
@@ -1960,6 +2238,44 @@ export async function fetchManagementPerformanceAttribution(
   baseUrl = "",
 ): Promise<ManagementPerformanceAttributionResponse> {
   const path = managementPerformanceAttributionPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementPerformanceAttributionResponse>;
+}
+
+export async function fetchManagementPerformanceAttributionByPersona(
+  query?: ManagementPerformanceAttributionByPersonaQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementPerformanceAttributionResponse> {
+  const path = managementPerformanceAttributionByPersonaPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementPerformanceAttributionResponse>;
+}
+
+export async function fetchManagementPerformanceAttributionByPool(
+  query?: ManagementPerformanceAttributionByPoolQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementPerformanceAttributionResponse> {
+  const path = managementPerformanceAttributionByPoolPath(query);
   const headers = new Headers(init?.headers);
   headers.set("Accept", "application/json");
   const response = await fetch(`${baseUrl}${path}`, {
