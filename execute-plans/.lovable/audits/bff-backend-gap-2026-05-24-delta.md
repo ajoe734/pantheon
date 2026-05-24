@@ -97,6 +97,49 @@ pytest -q services/control-plane/bff/test_bff_management_delta_routes.py service
 Result: 75 passed, 3 existing `datetime.utcnow()` deprecation warnings in
 `services/control-plane/bff/read_store.py`.
 
+## BFF-MGMT-DELTA-007
+
+Route:
+
+```text
+GET /bff/management/governance-ledger
+```
+
+Purpose:
+
+Provide a strict-live Management Console route for a unified governance ledger.
+The backend route composes approval queue/decision records, v5 interventions,
+and governance audit events that represent approvals, interventions, and
+overrides. It is read-only and does not introduce a new governance source of
+truth.
+
+Frontend contract:
+
+- `paths.managementGovernanceLedger()`
+- `managementGovernanceLedgerPath(query)`
+- `fetchManagementGovernanceLedger(query, init, baseUrl)`
+
+Backend acceptance:
+
+- unauthenticated request: HTTP 401
+- authenticated request: HTTP 200
+- CORS preflight: HTTP 204
+- response envelope: `data`, `items`, `entries`, `ledger`, `summary`, `page_info`, `meta`
+- supported query: `source_type`, `status`, `q`, `page_token`, `page_size`
+- `data.id`: `management-governance-ledger`
+- `meta.policy`: `read_only_governance_ledger`
+- no new governance source of truth; composed from audit, approvals, and v5
+  intervention read surfaces
+
+Validation:
+
+```bash
+python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py -q
+```
+
+Result: 81 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
 ## BFF-PM12-DELTA-002
 
 Route:

@@ -175,6 +175,111 @@ export interface ManagementBoardPackResponse {
   };
 }
 
+export interface ManagementGovernanceLedgerQuery {
+  source_type?: "approval" | "intervention" | "override" | string;
+  status?: string;
+  q?: string;
+  page_token?: string;
+  page_size?: number;
+}
+
+export type ManagementGovernanceLedgerSourceType =
+  | "approval"
+  | "intervention"
+  | "override"
+  | string;
+
+export interface ManagementGovernanceLedgerItem {
+  id: string;
+  entry_id: string;
+  ledgerId: string;
+  ledger_id: string;
+  sourceType: ManagementGovernanceLedgerSourceType;
+  source_type: ManagementGovernanceLedgerSourceType;
+  sourceDataset: string;
+  source_dataset: string;
+  eventType: string;
+  event_type: string;
+  status?: string | null;
+  outcome?: string | null;
+  actor?: string | null;
+  targetType?: string | null;
+  target_type?: string | null;
+  targetId?: string | null;
+  target_id?: string | null;
+  riskLevel?: string | null;
+  risk_level?: string | null;
+  occurredAt?: string | null;
+  occurred_at?: string | null;
+  createdAt?: string | null;
+  created_at?: string | null;
+  title: string;
+  summary?: string | null;
+  href?: string | null;
+  links?: Record<string, string | null | undefined>;
+  evidenceRefs?: Record<string, unknown>[];
+  evidence_refs?: Record<string, unknown>[];
+  auditContext?: Record<string, unknown>;
+  audit_context?: Record<string, unknown>;
+  sourceRecord?: Record<string, unknown>;
+  source_record?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface ManagementGovernanceLedgerSummary {
+  ledgerCount: number;
+  ledger_count: number;
+  returnedLedgerCount: number;
+  returned_ledger_count: number;
+  approvalCount: number;
+  approval_count: number;
+  interventionCount: number;
+  intervention_count: number;
+  overrideCount: number;
+  override_count: number;
+  bySourceType: Record<string, number>;
+  by_source_type: Record<string, number>;
+  byStatus: Record<string, number>;
+  by_status: Record<string, number>;
+  byEventType: Record<string, number>;
+  by_event_type: Record<string, number>;
+  latestAt?: string | null;
+  latest_at?: string | null;
+  policy: string;
+  basis: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementGovernanceLedgerResponse {
+  data: {
+    id: "management-governance-ledger" | string;
+    items: ManagementGovernanceLedgerItem[];
+    entries: ManagementGovernanceLedgerItem[];
+    ledger: ManagementGovernanceLedgerItem[];
+    summary: ManagementGovernanceLedgerSummary;
+    policy?: string;
+    [key: string]: unknown;
+  };
+  items: ManagementGovernanceLedgerItem[];
+  entries: ManagementGovernanceLedgerItem[];
+  ledger: ManagementGovernanceLedgerItem[];
+  summary: ManagementGovernanceLedgerSummary;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    staleness?: Record<string, unknown>;
+    surfaces?: Record<string, ManagementSurfaceRef>;
+    composition_sources?: string[];
+    policy?: string;
+    filters?: Record<string, unknown>;
+    [key: string]: unknown;
+  };
+}
+
 export interface ManagementTradingPulseSummary {
   runtimeCount: number;
   runtime_count: number;
@@ -2656,6 +2761,12 @@ export function managementBoardPackPath(query?: ManagementBoardPackQuery): strin
   return withQuery(paths.managementBoardPack(), query);
 }
 
+export function managementGovernanceLedgerPath(
+  query?: ManagementGovernanceLedgerQuery,
+): string {
+  return withQuery(paths.managementGovernanceLedger(), query);
+}
+
 export function managementTradingPulsePath(): string {
   return paths.managementTradingPulse();
 }
@@ -2852,6 +2963,25 @@ export async function fetchManagementBoardPack(
     throw new Error(`GET ${path} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementBoardPackResponse>;
+}
+
+export async function fetchManagementGovernanceLedger(
+  query?: ManagementGovernanceLedgerQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementGovernanceLedgerResponse> {
+  const path = managementGovernanceLedgerPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementGovernanceLedgerResponse>;
 }
 
 export async function fetchManagementTradingPulse(
