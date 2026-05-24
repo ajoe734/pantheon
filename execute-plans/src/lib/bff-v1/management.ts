@@ -67,6 +67,114 @@ export interface ManagementCockpitResponse {
   meta: ManagementCockpitMeta;
 }
 
+export interface ManagementBoardPackQuery {
+  period?: string;
+  state?: string;
+  archetype?: string;
+  q?: string;
+  section_limit?: number;
+}
+
+export interface ManagementBoardPackSection {
+  id: string;
+  section_id: string;
+  label: string;
+  href: string;
+  status: ManagementSurfaceStatus;
+  source?: string;
+  item_count?: number;
+  itemCount?: number;
+  returned_item_count?: number;
+  returnedItemCount?: number;
+  summary?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface ManagementBoardPackSummary {
+  section_count: number;
+  sectionCount: number;
+  section_ids: string[];
+  sectionIds: string[];
+  by_status: Record<string, number>;
+  byStatus: Record<string, number>;
+  ok_section_count: number;
+  okSectionCount: number;
+  degraded_section_count: number;
+  degradedSectionCount: number;
+  unavailable_section_count: number;
+  unavailableSectionCount: number;
+  period: string;
+  section_limit: number;
+  sectionLimit: number;
+  policy: string;
+  basis: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementBoardPackResponse {
+  data: {
+    id: "management-board-pack" | string;
+    snapshotAt?: string;
+    snapshot_at?: string;
+    period: string;
+    sectionLimit: number;
+    section_limit: number;
+    sections: ManagementBoardPackSection[];
+    summary: ManagementBoardPackSummary;
+    portfolioBook?: Record<string, unknown>;
+    portfolio_book?: Record<string, unknown>;
+    portfolioBookExposure?: ManagementPortfolioBookExposureResponse;
+    portfolio_book_exposure?: ManagementPortfolioBookExposureResponse;
+    portfolioBookPositions?: ManagementPortfolioBookPositionsResponse;
+    portfolio_book_positions?: ManagementPortfolioBookPositionsResponse;
+    strategyAllocation?: ManagementStrategyAllocationResponse;
+    strategy_allocation?: ManagementStrategyAllocationResponse;
+    personaLeague?: {
+      league?: ManagementPersonaLeagueResponse;
+      movers?: ManagementPersonaLeagueMoversResponse;
+      [key: string]: unknown;
+    };
+    persona_league?: {
+      league?: ManagementPersonaLeagueResponse;
+      movers?: ManagementPersonaLeagueMoversResponse;
+      [key: string]: unknown;
+    };
+    performanceAttribution?: {
+      byPersona?: ManagementPerformanceAttributionResponse;
+      by_persona?: ManagementPerformanceAttributionResponse;
+      byPool?: ManagementPerformanceAttributionResponse;
+      by_pool?: ManagementPerformanceAttributionResponse;
+      [key: string]: unknown;
+    };
+    performance_attribution?: {
+      byPersona?: ManagementPerformanceAttributionResponse;
+      by_persona?: ManagementPerformanceAttributionResponse;
+      byPool?: ManagementPerformanceAttributionResponse;
+      by_pool?: ManagementPerformanceAttributionResponse;
+      [key: string]: unknown;
+    };
+    policy?: string;
+    [key: string]: unknown;
+  };
+  items: ManagementBoardPackSection[];
+  sections: ManagementBoardPackSection[];
+  summary: ManagementBoardPackSummary;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces?: Record<string, ManagementSurfaceRef>;
+    composition_sources?: string[];
+    period?: string;
+    section_limit?: number;
+    policy?: string;
+    [key: string]: unknown;
+  };
+}
+
 export interface ManagementTradingPulseSummary {
   runtimeCount: number;
   runtime_count: number;
@@ -2011,6 +2119,397 @@ export interface ManagementStrategyAllocationResponse {
   };
 }
 
+export type ManagementCapitalFlowDirection = "inflow" | "outflow" | "flat" | "unknown" | string;
+
+export interface ManagementCapitalFlowQuery {
+  capital_pool_id?: string;
+  persona_id?: string;
+  strategy_id?: string;
+  deployment_stage?: string;
+  direction?: ManagementCapitalFlowDirection;
+  page_token?: string;
+  page_size?: number;
+}
+
+export interface ManagementCapitalFlowRow {
+  id: string;
+  rank: number;
+  flowId?: string;
+  flow_id?: string;
+  direction: ManagementCapitalFlowDirection;
+  status: string;
+  capitalPoolId: string;
+  capital_pool_id: string;
+  capitalPoolName?: string;
+  capital_pool_name?: string;
+  personaId: string;
+  persona_id: string;
+  personaLabel?: string;
+  persona_label?: string;
+  strategyId: string;
+  strategy_id: string;
+  strategyLabel?: string;
+  strategy_label?: string;
+  deploymentStage: string;
+  deployment_stage: string;
+  runtimeIds: string[];
+  runtime_ids: string[];
+  runtimeBindingIds?: string[];
+  runtime_binding_ids?: string[];
+  deploymentPlanIds?: string[];
+  deployment_plan_ids?: string[];
+  personaCapitalBindingIds?: string[];
+  persona_capital_binding_ids?: string[];
+  runtimeStatuses?: string[];
+  runtime_statuses?: string[];
+  amount?: number | null;
+  netCapitalFlow?: number | null;
+  net_capital_flow?: number | null;
+  inflowAmount?: number | null;
+  inflow_amount?: number | null;
+  outflowAmount?: number | null;
+  outflow_amount?: number | null;
+  allocatedCapital?: number | null;
+  allocated_capital?: number | null;
+  currentExposure?: number | null;
+  current_exposure?: number | null;
+  riskBudget?: number | null;
+  risk_budget?: number | null;
+  availableCapital?: number | null;
+  available_capital?: number | null;
+  riskBudgetUtilization?: number | null;
+  risk_budget_utilization?: number | null;
+  latestFlowAt?: string | null;
+  latest_flow_at?: string | null;
+  metrics: Record<string, unknown>;
+  sourceRefs?: Record<string, unknown>;
+  source_refs?: Record<string, unknown>;
+  links?: Record<string, string | null | undefined>;
+  [key: string]: unknown;
+}
+
+export interface ManagementCapitalFlowSummary {
+  flowCount: number;
+  flow_count: number;
+  returnedFlowCount: number;
+  returned_flow_count: number;
+  capitalPoolCount: number;
+  capital_pool_count: number;
+  personaCount: number;
+  persona_count: number;
+  strategyCount: number;
+  strategy_count: number;
+  runtimeCount: number;
+  runtime_count: number;
+  telemetryRuntimeCount: number;
+  telemetry_runtime_count: number;
+  netCapitalFlow?: number | null;
+  net_capital_flow?: number | null;
+  totalInflow?: number | null;
+  total_inflow?: number | null;
+  totalOutflow?: number | null;
+  total_outflow?: number | null;
+  allocatedCapitalTotal?: number | null;
+  allocated_capital_total?: number | null;
+  byDirection: Record<string, number>;
+  by_direction: Record<string, number>;
+  latestFlowAt?: string | null;
+  latest_flow_at?: string | null;
+  basis: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementCapitalFlowResponse {
+  data: {
+    id: "management-capital-flow" | string;
+    items: ManagementCapitalFlowRow[];
+    rows: ManagementCapitalFlowRow[];
+    flows: ManagementCapitalFlowRow[];
+    summary: ManagementCapitalFlowSummary;
+    [key: string]: unknown;
+  };
+  items: ManagementCapitalFlowRow[];
+  rows: ManagementCapitalFlowRow[];
+  flows: ManagementCapitalFlowRow[];
+  summary: ManagementCapitalFlowSummary;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces: {
+      capital_flow: ManagementSurfaceRef;
+      runtime_bindings?: ManagementSurfaceRef;
+      deployment_plans?: ManagementSurfaceRef;
+      persona_bindings?: ManagementSurfaceRef;
+      capital_pools?: ManagementSurfaceRef;
+      strategies?: ManagementSurfaceRef;
+      telemetry_summaries?: ManagementSurfaceRef;
+      [key: string]: ManagementSurfaceRef | undefined;
+    };
+    composition_sources?: string[];
+    policy?: string;
+    [key: string]: unknown;
+  };
+}
+
+export interface ManagementRiskRadarQuery {
+  persona_id?: string;
+  strategy_id?: string;
+  capital_pool_id?: string;
+  risk_state?: string;
+  page_token?: string;
+  page_size?: number;
+}
+
+export type ManagementRiskRadarState = "ok" | "watch" | "critical" | "unknown" | string;
+
+export interface ManagementRiskRadarMetricIndicator {
+  id: "drawdown" | "exposure" | "value-at-risk" | string;
+  metric: string;
+  label?: string;
+  value?: number | null;
+  risk_budget?: number | null;
+  utilization?: number | null;
+  status: ManagementRiskRadarState;
+  source?: string;
+  watch_threshold?: number;
+  critical_threshold?: number;
+  basis?: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementRiskRadarItem {
+  id: string;
+  rank: number;
+  personaId: string;
+  persona_id: string;
+  personaLabel?: string;
+  persona_label?: string;
+  strategyId: string;
+  strategy_id: string;
+  strategyLabel?: string;
+  strategy_label?: string;
+  capitalPoolId: string;
+  capital_pool_id: string;
+  capitalPoolName?: string;
+  capital_pool_name?: string;
+  riskState: ManagementRiskRadarState;
+  risk_state: ManagementRiskRadarState;
+  riskScore?: number;
+  risk_score?: number;
+  deploymentStages?: string[];
+  deployment_stages?: string[];
+  runtimeStatuses?: string[];
+  runtime_statuses?: string[];
+  indicators: ManagementRiskRadarMetricIndicator[];
+  metrics: Record<string, unknown>;
+  drawdown?: number | null;
+  worstDrawdown?: number | null;
+  worst_drawdown?: number | null;
+  exposure?: number | null;
+  totalExposure?: number | null;
+  total_exposure?: number | null;
+  valueAtRisk?: number | null;
+  value_at_risk?: number | null;
+  riskBudget?: number | null;
+  risk_budget?: number | null;
+  exposureUtilization?: number | null;
+  exposure_utilization?: number | null;
+  valueAtRiskUtilization?: number | null;
+  value_at_risk_utilization?: number | null;
+  sourceRefs?: Record<string, unknown>;
+  source_refs?: Record<string, unknown>;
+  links?: Record<string, string | null | undefined>;
+  [key: string]: unknown;
+}
+
+export interface ManagementRiskRadarSummary {
+  indicatorCount: number;
+  indicator_count: number;
+  returnedIndicatorCount: number;
+  returned_indicator_count: number;
+  personaCount: number;
+  persona_count: number;
+  strategyCount: number;
+  strategy_count: number;
+  capitalPoolCount: number;
+  capital_pool_count: number;
+  criticalCount: number;
+  critical_count: number;
+  watchCount: number;
+  watch_count: number;
+  unknownCount: number;
+  unknown_count: number;
+  okCount: number;
+  ok_count: number;
+  byRiskState: Record<string, number>;
+  by_risk_state: Record<string, number>;
+  totalExposure?: number | null;
+  total_exposure?: number | null;
+  worstDrawdown?: number | null;
+  worst_drawdown?: number | null;
+  valueAtRiskTotal?: number | null;
+  value_at_risk_total?: number | null;
+  basis?: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementRiskRadarResponse {
+  data: {
+    id: "management-risk-radar" | string;
+    items: ManagementRiskRadarItem[];
+    rows: ManagementRiskRadarItem[];
+    indicators: ManagementRiskRadarItem[];
+    summary: ManagementRiskRadarSummary;
+    [key: string]: unknown;
+  };
+  items: ManagementRiskRadarItem[];
+  rows: ManagementRiskRadarItem[];
+  indicators: ManagementRiskRadarItem[];
+  summary: ManagementRiskRadarSummary;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces: {
+      risk_radar: ManagementSurfaceRef;
+      runtime_bindings?: ManagementSurfaceRef;
+      deployment_plans?: ManagementSurfaceRef;
+      persona_bindings?: ManagementSurfaceRef;
+      capital_pools?: ManagementSurfaceRef;
+      strategies?: ManagementSurfaceRef;
+      telemetry_summaries?: ManagementSurfaceRef;
+      [key: string]: ManagementSurfaceRef | undefined;
+    };
+    composition_sources?: string[];
+    policy?: string;
+    [key: string]: unknown;
+  };
+}
+
+export interface ManagementIncidentTimelineQuery {
+  status?: string;
+  severity?: string;
+  capital_pool_id?: string;
+  affected_pool_id?: string;
+  runtime_id?: string;
+  sort_order?: "asc" | "desc" | string;
+  page_token?: string;
+  page_size?: number;
+}
+
+export type ManagementIncidentSeverityBucket = "high" | "medium" | "low" | string;
+
+export interface ManagementIncidentTimelineItem {
+  id: string;
+  incidentId?: string;
+  incident_id: string;
+  timelineId?: string | null;
+  timeline_id?: string | null;
+  sequence: number;
+  timelineSequence?: number;
+  timeline_sequence?: number;
+  title?: string;
+  status: string;
+  severity: string;
+  severityBucket: ManagementIncidentSeverityBucket;
+  severity_bucket: ManagementIncidentSeverityBucket;
+  occurredAt?: string | null;
+  occurred_at?: string | null;
+  updatedAt?: string | null;
+  updated_at?: string | null;
+  runtimeId?: string | null;
+  runtime_id?: string | null;
+  deploymentPlanId?: string | null;
+  deployment_plan_id?: string | null;
+  capitalPoolId?: string | null;
+  capital_pool_id?: string | null;
+  artifactId?: string | null;
+  artifact_id?: string | null;
+  lineageRef?: string | null;
+  lineage_ref?: string | null;
+  evidenceSummary?: string | null;
+  evidence_summary?: string | null;
+  telemetryEventIds?: string[];
+  telemetry_event_ids?: string[];
+  sourceRefs?: Record<string, unknown>;
+  source_refs?: Record<string, unknown>;
+  links?: Record<string, string | null | undefined>;
+  [key: string]: unknown;
+}
+
+export interface ManagementIncidentTimelineSummary {
+  incidentCount: number;
+  incident_count: number;
+  returnedIncidentCount: number;
+  returned_incident_count: number;
+  activeIncidentCount: number;
+  active_incident_count: number;
+  resolvedIncidentCount: number;
+  resolved_incident_count: number;
+  highSeverityCount: number;
+  high_severity_count: number;
+  mediumSeverityCount: number;
+  medium_severity_count: number;
+  lowSeverityCount: number;
+  low_severity_count: number;
+  severityBuckets: Record<string, number>;
+  severity_buckets: Record<string, number>;
+  byStatus: Record<string, number>;
+  by_status: Record<string, number>;
+  firstIncidentAt?: string | null;
+  first_incident_at?: string | null;
+  latestIncidentAt?: string | null;
+  latest_incident_at?: string | null;
+  sortOrder?: string;
+  sort_order?: string;
+  basis?: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementIncidentTimelineResponse {
+  data: {
+    id: "management-incident-timeline" | string;
+    items: ManagementIncidentTimelineItem[];
+    rows: ManagementIncidentTimelineItem[];
+    incidents: ManagementIncidentTimelineItem[];
+    events: ManagementIncidentTimelineItem[];
+    summary: ManagementIncidentTimelineSummary;
+    severityBuckets: Record<string, number>;
+    severity_buckets: Record<string, number>;
+    [key: string]: unknown;
+  };
+  items: ManagementIncidentTimelineItem[];
+  rows: ManagementIncidentTimelineItem[];
+  incidents: ManagementIncidentTimelineItem[];
+  events: ManagementIncidentTimelineItem[];
+  summary: ManagementIncidentTimelineSummary;
+  severityBuckets: Record<string, number>;
+  severity_buckets: Record<string, number>;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces: {
+      incident_timeline: ManagementSurfaceRef;
+      incidents?: ManagementSurfaceRef;
+      [key: string]: ManagementSurfaceRef | undefined;
+    };
+    composition_sources?: string[];
+    policy?: string;
+    [key: string]: unknown;
+  };
+}
+
 export interface ManagementPortfolioBookExposureQuery {
   status?: string;
   risk_policy_ref?: string;
@@ -2153,6 +2652,10 @@ export function managementCockpitPath(): string {
   return paths.managementCockpit();
 }
 
+export function managementBoardPackPath(query?: ManagementBoardPackQuery): string {
+  return withQuery(paths.managementBoardPack(), query);
+}
+
 export function managementTradingPulsePath(): string {
   return paths.managementTradingPulse();
 }
@@ -2199,6 +2702,20 @@ export function managementStrategyAllocationPath(
   query?: ManagementStrategyAllocationQuery,
 ): string {
   return withQuery(paths.managementStrategyAllocation(), query);
+}
+
+export function managementCapitalFlowPath(query?: ManagementCapitalFlowQuery): string {
+  return withQuery(paths.managementCapitalFlow(), query);
+}
+
+export function managementRiskRadarPath(query?: ManagementRiskRadarQuery): string {
+  return withQuery(paths.managementRiskRadar(), query);
+}
+
+export function managementIncidentTimelinePath(
+  query?: ManagementIncidentTimelineQuery,
+): string {
+  return withQuery(paths.managementIncidentTimeline(), query);
 }
 
 export function managementPortfolioBookPath(): string {
@@ -2316,6 +2833,25 @@ export async function fetchManagementCockpit(
     throw new Error(`GET ${managementCockpitPath()} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementCockpitResponse>;
+}
+
+export async function fetchManagementBoardPack(
+  query?: ManagementBoardPackQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementBoardPackResponse> {
+  const path = managementBoardPackPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementBoardPackResponse>;
 }
 
 export async function fetchManagementTradingPulse(
@@ -2482,6 +3018,63 @@ export async function fetchManagementStrategyAllocation(
     throw new Error(`GET ${path} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementStrategyAllocationResponse>;
+}
+
+export async function fetchManagementCapitalFlow(
+  query?: ManagementCapitalFlowQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementCapitalFlowResponse> {
+  const path = managementCapitalFlowPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementCapitalFlowResponse>;
+}
+
+export async function fetchManagementRiskRadar(
+  query?: ManagementRiskRadarQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementRiskRadarResponse> {
+  const path = managementRiskRadarPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementRiskRadarResponse>;
+}
+
+export async function fetchManagementIncidentTimeline(
+  query?: ManagementIncidentTimelineQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementIncidentTimelineResponse> {
+  const path = managementIncidentTimelinePath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementIncidentTimelineResponse>;
 }
 
 export async function fetchManagementPortfolioBookPools(

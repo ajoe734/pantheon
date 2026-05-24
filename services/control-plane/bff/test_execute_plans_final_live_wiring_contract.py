@@ -57,11 +57,15 @@ FINAL_CONTRACT_METHOD_PATHS = {
     ("GET", "/bff/incidents/{id}"),
     ("GET", "/bff/jobs"),
     ("GET", "/bff/jobs/{id}"),
+    ("GET", "/bff/management/board-pack"),
     ("GET", "/bff/management/cockpit"),
     ("GET", "/bff/management/evidence"),
     ("GET", "/bff/management/evolution-journal"),
     ("GET", "/bff/management/persona-intent"),
     ("GET", "/bff/management/strategy-allocation"),
+    ("GET", "/bff/management/capital-flow"),
+    ("GET", "/bff/management/risk-radar"),
+    ("GET", "/bff/management/incident-timeline"),
     ("GET", "/bff/management/portfolio-book/exposure"),
     ("GET", "/bff/management/persona-league"),
     ("GET", "/bff/management/persona-league/movers"),
@@ -179,11 +183,15 @@ LIVE_PROBE_CONCRETE_ROUTES = [
     ("GET", "/bff/deployments"),
     ("GET", "/bff/evolution-programs"),
     ("GET", "/bff/jobs"),
+    ("GET", "/bff/management/board-pack"),
     ("GET", "/bff/management/cockpit"),
     ("GET", "/bff/management/evidence"),
     ("GET", "/bff/management/evolution-journal"),
     ("GET", "/bff/management/persona-intent"),
     ("GET", "/bff/management/strategy-allocation"),
+    ("GET", "/bff/management/capital-flow"),
+    ("GET", "/bff/management/risk-radar"),
+    ("GET", "/bff/management/incident-timeline"),
     ("GET", "/bff/management/readiness/ep5"),
     ("GET", "/bff/management/readiness/broker-live"),
     ("GET", "/bff/management/readiness/capital-binding-live"),
@@ -393,6 +401,18 @@ def test_execute_plans_final_openapi_json_is_route_discoverable() -> None:
     openapi_paths = {_canonical_route_path(path) for path in paths}
     missing = [path for _, path in FINAL_CONTRACT_METHOD_PATHS if _canonical_route_path(path) not in openapi_paths]
     assert not missing
+
+
+def test_execute_plans_management_board_pack_client_exports_are_present() -> None:
+    repo_root = BFF_DIR.parents[2]
+    paths_ts = (repo_root / "execute-plans/src/lib/bff-v1/paths.ts").read_text()
+    management_ts = (repo_root / "execute-plans/src/lib/bff-v1/management.ts").read_text()
+
+    assert "managementBoardPack: () => `${BASE}/management/board-pack`" in paths_ts
+    assert "ManagementBoardPackQuery" in management_ts
+    assert "ManagementBoardPackResponse" in management_ts
+    assert "managementBoardPackPath" in management_ts
+    assert "fetchManagementBoardPack" in management_ts
 
 
 def test_execute_plans_live_probe_catalog_no_longer_404s_anonymously() -> None:
