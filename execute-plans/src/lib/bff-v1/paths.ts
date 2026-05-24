@@ -121,6 +121,7 @@ export const paths = {
   managementPortfolioBookPools: () => `${BASE}/management/portfolio-book/pools`,
   managementPortfolioBookExposure: () => `${BASE}/management/portfolio-book/exposure`,
   managementPortfolioBookHoldings: () => `${BASE}/management/portfolio-book/holdings`,
+  managementPortfolioBookPositions: () => `${BASE}/management/portfolio-book/positions`,
   managementPersonaLeague: () => `${BASE}/management/persona-league`,
   managementPersonaLeagueMovers: () => `${BASE}/management/persona-league/movers`,
   managementPersonaLeagueRankings: () => `${BASE}/management/persona-league/rankings`,

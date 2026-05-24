@@ -22885,6 +22885,101 @@ async def bff_management_portfolio_book_holdings(
     }
 
 
+@app.get("/bff/management/portfolio-book/positions")
+async def bff_management_portfolio_book_positions(
+    capital_pool_id: Optional[str] = None,
+    persona_id: Optional[str] = None,
+    runtime_id: Optional[str] = None,
+    deployment_stage: Optional[str] = None,
+    status: Optional[str] = None,
+    q: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 global positions table composed from runtime and telemetry surfaces."""
+    holdings_payload = await bff_management_portfolio_book_holdings(
+        capital_pool_id=capital_pool_id,
+        persona_id=persona_id,
+        runtime_id=runtime_id,
+        deployment_stage=deployment_stage,
+        status=status,
+        q=q,
+        page_token=page_token,
+        page_size=page_size,
+        authorization=authorization,
+    )
+
+    positions: List[Dict[str, Any]] = []
+    for item in holdings_payload.get("items", []):
+        if not isinstance(item, dict):
+            continue
+        position = dict(item)
+        position_id = str(
+            _management_first_non_empty(
+                position.get("position_id"),
+                position.get("holding_id"),
+                position.get("id"),
+            )
+            or ""
+        )
+        position["id"] = position_id
+        position["position_id"] = position_id
+        position["positionId"] = position_id
+        positions.append(position)
+
+    holding_summary = dict(holdings_payload.get("summary") or {})
+    summary = {
+        "position_count": holding_summary.get("holding_count", len(positions)),
+        "returned_position_count": holding_summary.get("returned_holding_count", len(positions)),
+        "active_position_count": holding_summary.get("active_holding_count", 0),
+        "paper_position_count": holding_summary.get("paper_holding_count", 0),
+        "live_position_count": holding_summary.get("live_holding_count", 0),
+        "runtime_count": holding_summary.get("runtime_count", 0),
+        "telemetry_runtime_count": holding_summary.get("telemetry_runtime_count", 0),
+        "total_notional": holding_summary.get("total_notional"),
+        "total_market_value": holding_summary.get("total_market_value"),
+        "total_unrealized_pnl": holding_summary.get("total_unrealized_pnl"),
+        "total_realized_pnl": holding_summary.get("total_realized_pnl"),
+        "total_pnl": holding_summary.get("total_pnl"),
+        "latest_mark_at": holding_summary.get("latest_mark_at"),
+    }
+
+    meta = dict(holdings_payload.get("meta") or {})
+    surfaces = dict(meta.get("surfaces") or {})
+    holding_surface = surfaces.pop("portfolio_book_holdings", None)
+    if holding_surface:
+        surfaces["portfolio_book_positions"] = dict(holding_surface)
+    else:
+        surfaces["portfolio_book_positions"] = _composed_surface_status(
+            snapshot_at=str(meta.get("snapshot_at") or utc_now()),
+            available=bool(positions),
+            missing_message="Portfolio-book positions composition has no runtime binding source records.",
+        )
+    meta["surfaces"] = surfaces
+    meta["total"] = summary["position_count"]
+    meta["summary"] = {
+        "source_mode": "bff_composed",
+        "task": "BFF-PM12-DELTA-005",
+    }
+
+    page_info = dict(holdings_payload.get("page_info") or {})
+    page_info["page_size"] = page_size
+
+    return {
+        "data": {
+            "summary": summary,
+            "items": positions,
+            "positions": positions,
+        },
+        "items": positions,
+        "positions": positions,
+        "summary": summary,
+        "page_info": page_info,
+        "meta": meta,
+    }
+
+
 def _sort_records_latest_first(
     records: List[Dict[str, Any]],
     fields: tuple[str, ...],
