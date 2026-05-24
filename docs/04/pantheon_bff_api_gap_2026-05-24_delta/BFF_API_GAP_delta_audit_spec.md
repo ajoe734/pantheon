@@ -268,6 +268,90 @@ Result: 43 passed, 3 existing `datetime.utcnow()` deprecation warnings in
 
 ---
 
+## DELTA-3 Management Strategy Allocation Route
+
+Task: BFF-MGMT-DELTA-003
+Owner: Codex
+Reviewer: Claude
+
+### Scope
+
+Add a strict-live Management Console route for active strategy allocation across
+capital pools:
+
+```text
+GET /bff/management/strategy-allocation?strategy_id=&capital_pool_id=&deployment_stage=&drift_status=&page_token=&page_size=
+```
+
+The route composes runtime bindings, deployment plans, persona-capital bindings,
+capital pools, strategy summaries, telemetry snapshots, and paper/live drift
+reports. It is read-only and does not introduce a new allocation source of
+truth or mutate capital.
+
+### Contract
+
+The response uses the canonical aggregate envelope:
+
+```json
+{
+  "data": {
+    "id": "management-strategy-allocation",
+    "items": [],
+    "rows": [],
+    "summary": {}
+  },
+  "items": [],
+  "rows": [],
+  "summary": {},
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 50 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": [],
+    "policy": "read_only_strategy_allocation"
+  }
+}
+```
+
+Rows include `strategyId` / `strategy_id`, `capitalPoolId` /
+`capital_pool_id`, allocation amount and risk-budget utilization, source refs,
+runtime/deployment/persona references, links, metrics, and a paper/live drift
+summary with per-runtime drift report refs.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Path registered in FastAPI/OpenAPI | Implemented |
+| 2 | Active strategy allocation slice across capital pools | Implemented |
+| 3 | Includes paper/live drift status and metric counts | Implemented |
+| 4 | Anonymous request returns HTTP 401 | Implemented |
+| 5 | Authenticated request returns HTTP 200 | Implemented |
+| 6 | Response keeps canonical aggregate envelope | Implemented |
+| 7 | CORS preflight returns HTTP 204 | Implemented |
+| 8 | Focused pytest case covers `strategy_allocation` | Implemented |
+| 9 | execute-plans exposes typed path and fetch helpers | Implemented |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
+
+### Validation
+
+```bash
+pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py
+```
+
+Result: 49 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
+---
+
 ## DELTA-4 PM-12 Capital Pool Performance Attribution Route
 
 Task: BFF-PM12-DELTA-004
