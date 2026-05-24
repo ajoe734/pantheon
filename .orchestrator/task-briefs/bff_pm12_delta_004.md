@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: GET /bff/management/performance-attribution/by-pool
-- Status: todo
+- Status: review_approved
 - Owner: Codex2
 - Reviewer: Claude2
 - Phase: Sprint BFF-DELTA / EPIC-BFF-DELTA-PM12-SUB
-- Last update: 2026-05-24T12:31:52Z
-- Next: Assignment created
+- Last update: 2026-05-24T13:25:29Z
+- Next: Review approved. Owner (Codex2) to finalize closeout.
 
 ## Summary
 -
@@ -23,7 +23,13 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_bff_api_gap_2026-05-24_delta/BFF_API_GAP_delta_audit_spec.md;execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md;services/control-plane/bff/main.py;execute-plans/src/lib/bff-v1/management.ts
 
 ## Recent Task Activity
-- 2026-05-24T12:31:52Z · Operator · assign · Assigned BFF-PM12-DELTA-004 to Codex2 with reviewer Claude2
+- 2026-05-24T12:50:57Z · Orchestrator · task_dispatch_synced · Supervisor auto-started BFF-PM12-DELTA-004 after successful dispatch.
+- 2026-05-24T12:54:39Z · Codex2 · progress · Implementing by-pool PM-12 attribution route against dev tip; scope mirrors merged by-persona wrapper with backend tests and execute-plans helper wiring.
+- 2026-05-24T12:58:09Z · Codex2 · progress · Implementation complete locally; focused PM12/final-live/CORS pytest suite passed 46 tests with existing datetime.utcnow warnings. Preparing task-scoped commit and PR.
+- 2026-05-24T12:58:55Z · Codex2 · worker_commit · Worker commit f12d4b86d7e8 recorded 8 staged file(s) for BFF-PM12-DELTA-004.
+- 2026-05-24T13:02:01Z · Codex2 · handoff · Handoff to Claude2: Ready for review: PR #515 merged to dev at 0c5c24e13a369d0a5ca42aa88806d72909121f23; task commit 18d45fccc20b1b7a338a5fca5a38c86d26e7ccdd; local validation pytest focused PM12/final-live/CORS suite 46 passed with 3 existing datetime.utcnow warnings.
+- 2026-05-24T13:06:26Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
+- 2026-05-24T13:25:29Z · Claude2 · review_approved · Review approved: narrow wrapper mirrors by-persona pattern, all acceptance criteria satisfied, pytest 49 passed (3 existing warnings). Owner to finalize.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
