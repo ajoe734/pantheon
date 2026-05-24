@@ -7,11 +7,11 @@ Do not read `current-work.md` by default for implementation context.
 ## Task
 - Title: GET /bff/management/capital-flow
 - Status: todo
-- Owner: Codex2
+- Owner: Claude
 - Reviewer: Codex
 - Phase: Sprint BFF-DELTA / EPIC-BFF-DELTA-MGMT-LIVE
-- Last update: 2026-05-24T14:03:46Z
-- Next: Helper-claimed by Codex2 while Codex completes higher-priority work.
+- Last update: 2026-05-24T14:19:41Z
+- Next: Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 auth: - Require authenticated `gh` session. Run `gh auth status`. If not authenticated, ask the user to run `gh auth login` (and re-run `gh auth status`) before continuing.. Task returned to todo until Claude starts a fresh run.
 
 ## Summary
 -
@@ -23,12 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_bff_api_gap_2026-05-24_delta/BFF_API_GAP_delta_audit_spec.md;execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md;services/control-plane/bff/main.py;execute-plans/src/lib/bff-v1/management.ts
 
 ## Recent Task Activity
-- 2026-05-24T13:58:34Z · Orchestrator · worker_started · Worker started via codex: owned_ready_dispatch
-- 2026-05-24T13:58:34Z · Codex · start · Supervisor auto-started BFF-MGMT-DELTA-004 after successful dispatch.
-- 2026-05-24T13:58:37Z · Orchestrator · task_dispatch_synced · Supervisor auto-started BFF-MGMT-DELTA-004 after successful dispatch.
-- 2026-05-24T14:03:30Z · Codex · progress · Implementing read-only /bff/management/capital-flow backend route, execute-plans typed helper, focused pytest coverage, and delta audit records.
-- 2026-05-24T14:03:45Z · Orchestrator · task_preempted_synced · Supervisor preempted BFF-MGMT-DELTA-004 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.
-- 2026-05-24T14:03:45Z · Orchestrator · worker_superseded · Worker superseded to prioritize higher-priority review/finalize work.
+- 2026-05-24T14:14:44Z · Codex2 · worker_commit · Worker commit 1949194011e4 recorded 2 staged file(s) for BFF-MGMT-DELTA-004.
+- 2026-05-24T14:17:24Z · Codex2 · worker_commit · Worker commit 26181154817d recorded 2 staged file(s) for BFF-MGMT-DELTA-004.
+- 2026-05-24T14:19:33Z · Orchestrator · task_preempted_synced · Supervisor preempted BFF-MGMT-DELTA-004 to free Codex2 for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.
+- 2026-05-24T14:19:33Z · Orchestrator · worker_superseded · Worker superseded to prioritize higher-priority review/finalize work.
+- 2026-05-24T14:19:41Z · Orchestrator · provider_dispatch_paused · Paused new dispatches for codex2 until 2026-05-24T14:34:41Z after authentication failure: - Require authenticated `gh` session. Run `gh auth status`. If not authenticated, ask the user to run `gh auth login` (and re-run `gh auth status`) before continuing.
+- 2026-05-24T14:19:46Z · Orchestrator · task_reassigned · Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 auth: - Require authenticated `gh` session. Run `gh auth status`. If not authenticated, ask the user to run `gh auth login` (and re-run `gh auth status`) before continuing.. Task returned to todo until Claude starts a fresh run.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
