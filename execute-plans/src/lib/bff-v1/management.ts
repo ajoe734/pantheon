@@ -604,6 +604,152 @@ export interface ManagementTradingPulseRankingsResponse {
   };
 }
 
+export interface ManagementSentinelPulseQuery {
+  kind?: string;
+  status?: string;
+  severity?: string;
+  q?: string;
+  page_token?: string;
+  page_size?: number;
+}
+
+export interface ManagementSentinelPulseSourceRefs {
+  findingId?: string | null;
+  finding_id?: string | null;
+  incidentId?: string | null;
+  incident_id?: string | null;
+  loopRunId?: string | null;
+  loop_run_id?: string | null;
+  runtimeId?: string | null;
+  runtime_id?: string | null;
+  interventionId?: string | null;
+  intervention_id?: string | null;
+  [key: string]: unknown;
+}
+
+export interface ManagementSentinelPulseFinding {
+  id: string;
+  findingId: string;
+  finding_id: string;
+  kind: string;
+  severity: string;
+  riskLevel: string;
+  risk_level: string;
+  status: string;
+  title: string;
+  summary?: string;
+  triggeredAt?: string | null;
+  triggered_at?: string | null;
+  createdAt?: string | null;
+  created_at?: string | null;
+  updatedAt?: string | null;
+  updated_at?: string | null;
+  target?: Record<string, unknown>;
+  sourceRefs: ManagementSentinelPulseSourceRefs;
+  source_refs: ManagementSentinelPulseSourceRefs;
+  links?: Record<string, string | null | undefined>;
+  sourceRecord?: Record<string, unknown>;
+  source_record?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface ManagementSentinelPulseIntervention {
+  id: string;
+  interventionId: string;
+  intervention_id: string;
+  findingId?: string | null;
+  finding_id?: string | null;
+  kind: string;
+  severity: string;
+  riskLevel: string;
+  risk_level: string;
+  status: string;
+  title: string;
+  summary?: string;
+  triggeredAt?: string | null;
+  triggered_at?: string | null;
+  sourceRefs: ManagementSentinelPulseSourceRefs;
+  source_refs: ManagementSentinelPulseSourceRefs;
+  links?: Record<string, string | null | undefined>;
+  sourceRecord?: Record<string, unknown>;
+  source_record?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface ManagementSentinelPulseCard {
+  cardId: string;
+  card_id: string;
+  label: string;
+  value?: number | string | boolean | null;
+  details?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface ManagementSentinelPulseSummary {
+  findingCount: number;
+  finding_count: number;
+  returnedFindingCount: number;
+  returned_finding_count: number;
+  activeFindingCount: number;
+  active_finding_count: number;
+  criticalFindingCount: number;
+  critical_finding_count: number;
+  interventionCount: number;
+  intervention_count: number;
+  pendingInterventionCount: number;
+  pending_intervention_count: number;
+  highestSeverity?: string | null;
+  highest_severity?: string | null;
+  byStatus: Record<string, number>;
+  by_status: Record<string, number>;
+  bySeverity: Record<string, number>;
+  by_severity: Record<string, number>;
+  byKind: Record<string, number>;
+  by_kind: Record<string, number>;
+  policy: string;
+  basis: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementSentinelPulseResponse {
+  data: {
+    id: "management-sentinel-pulse" | string;
+    snapshotAt?: string;
+    snapshot_at?: string;
+    items: ManagementSentinelPulseFinding[];
+    findings: ManagementSentinelPulseFinding[];
+    interventions: ManagementSentinelPulseIntervention[];
+    cards: ManagementSentinelPulseCard[];
+    summary: ManagementSentinelPulseSummary;
+    policy?: string;
+    [key: string]: unknown;
+  };
+  items: ManagementSentinelPulseFinding[];
+  findings: ManagementSentinelPulseFinding[];
+  interventions: ManagementSentinelPulseIntervention[];
+  cards: ManagementSentinelPulseCard[];
+  summary: ManagementSentinelPulseSummary;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces: {
+      management_sentinel_pulse: ManagementSurfaceRef;
+      sentinel_pulse?: ManagementSurfaceRef;
+      sentinel_findings?: ManagementSurfaceRef;
+      v5_interventions?: ManagementSurfaceRef;
+      [key: string]: ManagementSurfaceRef | undefined;
+    };
+    composition_sources?: string[];
+    filters?: ManagementSentinelPulseQuery;
+    policy?: string;
+    [key: string]: unknown;
+  };
+}
+
 export interface ManagementEvidenceQuery {
   ref_id?: string;
   linked_entity_type?: string;
@@ -3002,6 +3148,10 @@ export function managementTradingPulseRankingsPath(
   return withQuery(paths.managementTradingPulseRankings(), query);
 }
 
+export function managementSentinelPulsePath(query?: ManagementSentinelPulseQuery): string {
+  return withQuery(paths.managementSentinelPulse(), query);
+}
+
 export function managementEvidencePath(query?: ManagementEvidenceQuery): string {
   return withQuery(paths.managementEvidence(), query);
 }
@@ -3269,6 +3419,25 @@ export async function fetchManagementTradingPulseRankings(
     throw new Error(`GET ${path} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementTradingPulseRankingsResponse>;
+}
+
+export async function fetchManagementSentinelPulse(
+  query?: ManagementSentinelPulseQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementSentinelPulseResponse> {
+  const path = managementSentinelPulsePath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementSentinelPulseResponse>;
 }
 
 export async function fetchManagementEvidence(

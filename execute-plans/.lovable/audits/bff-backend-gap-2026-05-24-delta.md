@@ -229,6 +229,8 @@ Backend acceptance:
 - `meta.policy`: `read_only_governance_ledger`
 - no new governance source of truth; composed from audit, approvals, and v5
   intervention read surfaces
+- no new sentinel source of truth; composed from `/bff/v5/sentinel/findings`
+  and `/bff/v5/interventions`
 
 Validation:
 
@@ -237,6 +239,48 @@ python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py
 ```
 
 Result: 81 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
+## BFF-MGMT-DELTA-009
+
+Route:
+
+```text
+GET /bff/management/sentinel-pulse
+```
+
+Purpose:
+
+Provide a strict-live Management Console route for the sentinel first-screen
+pulse. The backend route composes existing v5 sentinel findings and v5
+interventions into a read-only Management aggregate without introducing a new
+sentinel source of truth or write path.
+
+Frontend contract:
+
+- `paths.managementSentinelPulse()`
+- `managementSentinelPulsePath(query)`
+- `fetchManagementSentinelPulse(query, init, baseUrl)`
+
+Backend acceptance:
+
+- unauthenticated request: HTTP 401
+- authenticated request: HTTP 200
+- CORS preflight: HTTP 204
+- response envelope: `data`, `items`, `findings`, `interventions`, `cards`, `summary`, `page_info`, `meta`
+- supported query: `kind`, `status`, `severity`, `q`, `page_token`, `page_size`
+- `data.id`: `management-sentinel-pulse`
+- `meta.policy`: `read_only_sentinel_pulse`
+- no new sentinel source of truth; composed from `/bff/v5/sentinel/findings`
+  and `/bff/v5/interventions`
+
+Validation:
+
+```bash
+python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q
+```
+
+Result after rebase with `origin/dev`: 21 passed, 3 existing `datetime.utcnow()` deprecation warnings in
 `services/control-plane/bff/read_store.py`.
 
 ## BFF-PM12-DELTA-002

@@ -111,6 +111,7 @@ export const paths = {
   managementHiqBacklog: () => `${BASE}/management/hiq-backlog`,
   managementTradingPulse: () => `${BASE}/management/trading-pulse`,
   managementTradingPulseRankings: () => `${BASE}/management/trading-pulse/rankings`,
+  managementSentinelPulse: () => `${BASE}/management/sentinel-pulse`,
   managementEvidence: () => `${BASE}/management/evidence`,
   managementEvolutionJournal: () => `${BASE}/management/evolution-journal`,
   managementPersonaIntent: () => `${BASE}/management/persona-intent`,
