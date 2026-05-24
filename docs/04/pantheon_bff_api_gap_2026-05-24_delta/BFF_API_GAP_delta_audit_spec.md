@@ -72,6 +72,115 @@ assert successful preflight as HTTP 204 with the matching
 
 ---
 
+## BFF-MGMT-DELTA-001 Persona League Movers Route
+
+Task: BFF-MGMT-DELTA-001
+Owner: Codex
+Reviewer: Claude
+
+### Scope
+
+Add a dedicated Management route for execute-plans strict live rendering:
+
+```text
+GET /bff/management/persona-league/movers?state=&archetype=&q=&direction=&limit=
+```
+
+The route exposes persona-league movement cards/lists without requiring
+execute-plans to fan out through raw persona, ranking, tier, and health routes.
+It is read-only and uses `policy=read_only_governance_advisory`.
+
+### Contract
+
+The response uses the canonical Management list envelope:
+
+```json
+{
+  "data": {
+    "id": "management-persona-league-movers",
+    "items": [],
+    "movers": [],
+    "summary": {},
+    "policy": "read_only_governance_advisory"
+  },
+  "items": [],
+  "movers": [],
+  "summary": {},
+  "page_info": {
+    "next_page_token": null,
+    "total": 0,
+    "page_size": 0
+  },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": [],
+    "policy": "read_only_governance_advisory"
+  }
+}
+```
+
+Each mover item includes persona identifiers, current rank and score, previous
+rank and score placeholders, rank and score deltas, direction, tier, metrics,
+score components, links, formula version, and movement basis.
+
+Historical persona-league snapshots are not yet a first-class read source in
+the BFF. Until that source exists, returned items use
+`baselineStatus=unavailable`, `direction=new`, null delta fields, and
+`basis=current_persona_league_snapshot_no_historical_baseline`.
+
+### Composition Sources
+
+- `GET /bff/management/persona-league`
+- `GET /bff/management/persona-league/rankings`
+- `GET /bff/management/persona-league/tiers`
+- `GET /bff/personas`
+- `GET /bff/v5/execution/persona-health`
+
+`meta.surfaces` includes `persona_league_movers`, `persona_league_history`, and
+the PM-12 persona-league source surfaces. The history surface is degraded while
+historical baseline data is unavailable.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated GET returns `data`, `items`, `movers`, `summary`, `page_info`, and `meta` | Implemented |
+| 2 | Route supports `state`, `archetype`, `q`, `direction`, and `limit` | Implemented |
+| 3 | Invalid `direction` returns HTTP 422 | Implemented |
+| 4 | Missing auth returns HTTP 401 | Implemented |
+| 5 | execute-plans exposes path, query/response types, and fetch helper | Implemented |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_pm12_persona_league.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
+
+### Validation
+
+```bash
+git diff --check
+python3 -m pytest services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q
+```
+
+Reviewer result before closeout merge with `origin/dev`: 18 passed, 3 existing
+`datetime.utcnow()` deprecation warnings in `services/control-plane/bff/read_store.py`.
+
+Closeout merge validation with `origin/dev`:
+
+```bash
+python3 -m pytest services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py -q
+```
+
+Result: 62 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
+---
+
 ## DELTA-2 PM-12 Persona Performance Attribution Route
 
 Task: BFF-PM12-DELTA-002
@@ -159,6 +268,90 @@ Result: 43 passed, 3 existing `datetime.utcnow()` deprecation warnings in
 
 ---
 
+## DELTA-3 Management Strategy Allocation Route
+
+Task: BFF-MGMT-DELTA-003
+Owner: Codex
+Reviewer: Claude
+
+### Scope
+
+Add a strict-live Management Console route for active strategy allocation across
+capital pools:
+
+```text
+GET /bff/management/strategy-allocation?strategy_id=&capital_pool_id=&deployment_stage=&drift_status=&page_token=&page_size=
+```
+
+The route composes runtime bindings, deployment plans, persona-capital bindings,
+capital pools, strategy summaries, telemetry snapshots, and paper/live drift
+reports. It is read-only and does not introduce a new allocation source of
+truth or mutate capital.
+
+### Contract
+
+The response uses the canonical aggregate envelope:
+
+```json
+{
+  "data": {
+    "id": "management-strategy-allocation",
+    "items": [],
+    "rows": [],
+    "summary": {}
+  },
+  "items": [],
+  "rows": [],
+  "summary": {},
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 50 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": [],
+    "policy": "read_only_strategy_allocation"
+  }
+}
+```
+
+Rows include `strategyId` / `strategy_id`, `capitalPoolId` /
+`capital_pool_id`, allocation amount and risk-budget utilization, source refs,
+runtime/deployment/persona references, links, metrics, and a paper/live drift
+summary with per-runtime drift report refs.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Path registered in FastAPI/OpenAPI | Implemented |
+| 2 | Active strategy allocation slice across capital pools | Implemented |
+| 3 | Includes paper/live drift status and metric counts | Implemented |
+| 4 | Anonymous request returns HTTP 401 | Implemented |
+| 5 | Authenticated request returns HTTP 200 | Implemented |
+| 6 | Response keeps canonical aggregate envelope | Implemented |
+| 7 | CORS preflight returns HTTP 204 | Implemented |
+| 8 | Focused pytest case covers `strategy_allocation` | Implemented |
+| 9 | execute-plans exposes typed path and fetch helpers | Implemented |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
+
+### Validation
+
+```bash
+pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py
+```
+
+Result: 49 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
+---
+
 ## DELTA-4 PM-12 Capital Pool Performance Attribution Route
 
 Task: BFF-PM12-DELTA-004
@@ -204,6 +397,7 @@ The response uses the canonical aggregate envelope:
     "policy": "read_only_performance_attribution"
   }
 }
+
 ```
 
 Rows keep the existing attribution row schema: `dimension`,

@@ -21546,6 +21546,617 @@ def _pm12_performance_attribution_rows(
     return rows
 
 
+_MANAGEMENT_STRATEGY_ALLOCATION_ACTIVE_STATUSES = {
+    "active",
+    "approved",
+    "bound",
+    "executed",
+    "executing",
+    "healthy",
+    "ready",
+    "running",
+}
+
+
+def _management_runtime_allocation_payload(
+    runtime: Dict[str, Any],
+    plan: Dict[str, Any],
+    persona_binding: Dict[str, Any],
+    telemetry: Dict[str, Any],
+) -> Dict[str, Any]:
+    summary = telemetry.get("summary") if isinstance(telemetry.get("summary"), dict) else {}
+    positions = _management_position_records(telemetry)
+    candidates = [
+        ("runtime_bindings", _management_first_float(
+            runtime,
+            "allocated_capital",
+            "capital_allocation",
+            "current_exposure",
+            "exposure",
+            "notional",
+            "metrics.exposure",
+            "summary.exposure",
+        )),
+        ("deployment_plans", _management_first_float(
+            plan,
+            "target_size",
+            "targetSize",
+            "target_notional",
+            "notional",
+            "requested_capital",
+            "capital_allocation",
+            "params.target_size",
+            "params.notional",
+        )),
+        ("persona_bindings", _management_first_float(
+            persona_binding,
+            "budget",
+            "risk_budget",
+            "allocation",
+            "allocated_capital",
+            "capital_allocation",
+        )),
+        ("telemetry_summary", _management_first_float(
+            telemetry,
+            "allocated_capital",
+            "capital_allocation",
+            "current_exposure",
+            "exposure",
+            "notional",
+            "gross_notional",
+            "market_value",
+            "summary.exposure",
+            "summary.notional",
+            "summary.gross_notional",
+            "summary.market_value",
+        )),
+        ("position_snapshots", _management_sum_first_float(
+            positions,
+            "allocated_capital",
+            "capital_allocation",
+            "exposure",
+            "gross_exposure",
+            "notional",
+            "gross_notional",
+            "market_value",
+        )),
+    ]
+    for source, amount in candidates:
+        if amount is not None:
+            return {
+                "amount": amount,
+                "source": source,
+                "position_count": len(positions),
+            }
+    return {
+        "amount": None,
+        "source": "unavailable",
+        "position_count": len(positions),
+    }
+
+
+def _management_strategy_allocation_runtime_drift(runtime_id: str) -> Dict[str, Any]:
+    report = read_store.get_paper_live_drift_report(runtime_id)
+    status = _trading_pulse_baseline_status(report)
+    drift_groups = (report or {}).get("drift_groups") or []
+    metric_counts = _trading_pulse_drift_metric_counts(drift_groups)
+    threshold_evaluation = (
+        _management_json_clone((report or {}).get("threshold_evaluation"))
+        if report
+        else {
+            "overall_status": "unavailable",
+            "summary": "Paper/live drift report unavailable for this runtime.",
+            "breached_metric_ids": [],
+        }
+    )
+    return {
+        "runtimeId": runtime_id or None,
+        "runtime_id": runtime_id or None,
+        "available": report is not None,
+        "status": status,
+        "href": f"/api/v1/operator/paper-live-drift/{runtime_id}" if runtime_id else None,
+        "thresholdEvaluation": threshold_evaluation,
+        "threshold_evaluation": threshold_evaluation,
+        **metric_counts,
+    }
+
+
+def _management_strategy_allocation_drift_summary(
+    runtime_drifts: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    available_count = sum(1 for item in runtime_drifts if item.get("available"))
+    breached_count = sum(int(item.get("breached_metric_count") or 0) for item in runtime_drifts)
+    watch_count = sum(int(item.get("watch_metric_count") or 0) for item in runtime_drifts)
+    statuses = [str(item.get("status") or "unknown").lower() for item in runtime_drifts]
+    if not statuses:
+        status = "unavailable"
+    elif any(item in _TRADING_PULSE_DRIFT_BREACH_STATUSES or item == "breached" for item in statuses):
+        status = "breached"
+    elif any(item in _TRADING_PULSE_DRIFT_WATCH_STATUSES or item == "watch" for item in statuses):
+        status = "watch"
+    elif available_count == 0:
+        status = "unavailable"
+    elif available_count < len(runtime_drifts):
+        status = "degraded"
+    elif all(item == "ok" for item in statuses):
+        status = "ok"
+    else:
+        status = statuses[0] if len(set(statuses)) == 1 else "mixed"
+    return {
+        "status": status,
+        "runtimeCount": len(runtime_drifts),
+        "runtime_count": len(runtime_drifts),
+        "availableRuntimeCount": available_count,
+        "available_runtime_count": available_count,
+        "breachedMetricCount": breached_count,
+        "breached_metric_count": breached_count,
+        "watchMetricCount": watch_count,
+        "watch_metric_count": watch_count,
+        "reports": runtime_drifts,
+    }
+
+
+def _management_strategy_allocation_runtime_facts(sources: Dict[str, Any]) -> List[Dict[str, Any]]:
+    plans_by_id = sources["plans_by_id"]
+    bindings_by_id = sources["bindings_by_id"]
+    pools_by_id = sources["pools_by_id"]
+    telemetry_by_runtime_id = sources["telemetry_by_runtime_id"]
+    facts: List[Dict[str, Any]] = []
+
+    for runtime in sources["runtime_bindings"]:
+        runtime_status = _management_normalized_status(runtime)
+        plan_id = _management_record_id(runtime, "plan_id", "deployment_plan_id")
+        plan = plans_by_id.get(plan_id, {})
+        plan_status = _management_normalized_status(plan) if plan else ""
+        if (
+            runtime_status not in _MANAGEMENT_STRATEGY_ALLOCATION_ACTIVE_STATUSES
+            and plan_status not in _MANAGEMENT_STRATEGY_ALLOCATION_ACTIVE_STATUSES
+        ):
+            continue
+
+        plan_binding_ids = [
+            str(value).strip()
+            for value in (plan.get("binding_ids") or [])
+            if str(value).strip()
+        ]
+        persona_binding_id = (
+            _management_record_id(runtime, "persona_capital_binding_id")
+            or (plan_binding_ids[0] if plan_binding_ids else "")
+        )
+        persona_binding = bindings_by_id.get(persona_binding_id, {})
+        runtime_id = _management_record_id(runtime, "runtime_id", "id", "binding_id")
+        runtime_binding_id = _management_record_id(runtime, "runtime_binding_id", "binding_id", "id")
+        telemetry = telemetry_by_runtime_id.get(runtime_id, {})
+        summary = telemetry.get("summary") if isinstance(telemetry.get("summary"), dict) else {}
+        strategy_id = str(
+            _management_first_non_empty(
+                _management_dict_value(runtime, "strategy_id", "strategy_ref"),
+                _management_dict_value(plan, "strategy_id", "strategy_ref"),
+                _management_dict_value(persona_binding, "strategy_id", "strategy_ref"),
+            )
+            or ""
+        )
+        capital_pool_id = str(
+            _management_first_non_empty(
+                _management_dict_value(runtime, "capital_pool_id", "pool_id"),
+                _management_dict_value(plan, "capital_pool_id", "target_pool_id", "pool_id"),
+                _management_dict_value(persona_binding, "capital_pool_id", "pool_id"),
+            )
+            or ""
+        )
+        if not strategy_id or not capital_pool_id:
+            continue
+
+        persona_id = str(
+            _management_first_non_empty(
+                _management_dict_value(runtime, "persona_id"),
+                _management_dict_value(plan, "persona_id"),
+                _management_dict_value(persona_binding, "persona_id"),
+            )
+            or ""
+        )
+        pool = pools_by_id.get(capital_pool_id, {})
+        allocation = _management_runtime_allocation_payload(runtime, plan, persona_binding, telemetry)
+        drift = _management_strategy_allocation_runtime_drift(runtime_id)
+        facts.append({
+            "runtime_id": runtime_id,
+            "runtime_binding_id": runtime_binding_id,
+            "deployment_plan_id": plan_id or _management_record_id(plan, "plan_id", "id"),
+            "persona_capital_binding_id": persona_binding_id,
+            "strategy_id": strategy_id,
+            "capital_pool_id": capital_pool_id,
+            "capital_pool_name": pool.get("name") or capital_pool_id,
+            "persona_id": persona_id,
+            "deployment_stage": str(
+                runtime.get("deployment_stage") or runtime.get("deployment_mode") or plan.get("target_stage") or ""
+            ),
+            "status": runtime_status or plan_status or "unknown",
+            "allocation_amount": allocation["amount"],
+            "allocation_source": allocation["source"],
+            "position_count": allocation["position_count"],
+            "total_pnl": _management_as_float(
+                _management_first_non_empty(telemetry.get("pnl"), summary.get("total_pnl"))
+            ),
+            "drawdown": _management_as_float(
+                _management_first_non_empty(telemetry.get("drawdown"), summary.get("max_drawdown"))
+            ),
+            "fill_rate": _management_as_float(
+                _management_first_non_empty(telemetry.get("fill_rate"), summary.get("fill_rate"))
+            ),
+            "total_trades": _management_as_float(
+                _management_first_non_empty(telemetry.get("total_trades"), summary.get("total_trades"))
+            ),
+            "telemetry_available": runtime_id in telemetry_by_runtime_id if runtime_id else False,
+            "drift": drift,
+        })
+
+    return facts
+
+
+def _management_strategy_allocation_rows(
+    facts: List[Dict[str, Any]],
+    sources: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    grouped: Dict[tuple[str, str], List[Dict[str, Any]]] = {}
+    for fact in facts:
+        grouped.setdefault((str(fact["strategy_id"]), str(fact["capital_pool_id"])), []).append(fact)
+
+    rows: List[Dict[str, Any]] = []
+    for (strategy_id, capital_pool_id), group_facts in grouped.items():
+        pool = sources["pools_by_id"].get(capital_pool_id, {})
+        strategy_label = _pm12_attribution_dimension_label(
+            "strategy",
+            strategy_id,
+            personas_by_id=sources["personas_by_id"],
+            strategies_by_id=sources["strategies_by_id"],
+            pools_by_id=sources["pools_by_id"],
+        )
+        amount_values = [
+            value
+            for value in (_management_as_float(fact.get("allocation_amount")) for fact in group_facts)
+            if value is not None
+        ]
+        allocation_amount = round(sum(amount_values), 6) if amount_values else None
+        risk_budget = _management_first_float(
+            pool,
+            "risk_budget",
+            "risk_budget_amount",
+            "budget",
+            "capital_allocation",
+            "allocation_limit",
+            "max_target_size",
+            "params.risk_budget",
+            "risk.budget",
+        )
+        allocation_utilization = None
+        if allocation_amount is not None and risk_budget not in (None, 0):
+            allocation_utilization = round(allocation_amount / risk_budget, 6)
+        sources_used = sorted({
+            str(fact.get("allocation_source") or "")
+            for fact in group_facts
+            if str(fact.get("allocation_source") or "")
+        })
+        runtime_ids = sorted({
+            str(fact.get("runtime_id") or "")
+            for fact in group_facts
+            if str(fact.get("runtime_id") or "")
+        })
+        runtime_binding_ids = sorted({
+            str(fact.get("runtime_binding_id") or "")
+            for fact in group_facts
+            if str(fact.get("runtime_binding_id") or "")
+        })
+        plan_ids = sorted({
+            str(fact.get("deployment_plan_id") or "")
+            for fact in group_facts
+            if str(fact.get("deployment_plan_id") or "")
+        })
+        persona_ids = sorted({
+            str(fact.get("persona_id") or "")
+            for fact in group_facts
+            if str(fact.get("persona_id") or "")
+        })
+        stages = sorted({
+            str(fact.get("deployment_stage") or "")
+            for fact in group_facts
+            if str(fact.get("deployment_stage") or "")
+        })
+        drift = _management_strategy_allocation_drift_summary([
+            fact["drift"] for fact in group_facts if isinstance(fact.get("drift"), dict)
+        ])
+        pnl_values = [
+            value
+            for value in (_management_as_float(fact.get("total_pnl")) for fact in group_facts)
+            if value is not None
+        ]
+        drawdown_values = [
+            value
+            for value in (_management_as_float(fact.get("drawdown")) for fact in group_facts)
+            if value is not None
+        ]
+        fill_rate_values = [
+            value
+            for value in (_management_as_float(fact.get("fill_rate")) for fact in group_facts)
+            if value is not None
+        ]
+        trade_total = _management_sum_numeric(group_facts, "total_trades")
+        row = {
+            "id": f"strategy-allocation-{strategy_id}-{capital_pool_id}",
+            "strategyId": strategy_id,
+            "strategy_id": strategy_id,
+            "strategyLabel": strategy_label,
+            "strategy_label": strategy_label,
+            "capitalPoolId": capital_pool_id,
+            "capital_pool_id": capital_pool_id,
+            "capitalPoolName": pool.get("name") or capital_pool_id,
+            "capital_pool_name": pool.get("name") or capital_pool_id,
+            "status": "active",
+            "deploymentStages": stages,
+            "deployment_stages": stages,
+            "runtimeIds": runtime_ids,
+            "runtime_ids": runtime_ids,
+            "runtimeBindingIds": runtime_binding_ids,
+            "runtime_binding_ids": runtime_binding_ids,
+            "deploymentPlanIds": plan_ids,
+            "deployment_plan_ids": plan_ids,
+            "personaIds": persona_ids,
+            "persona_ids": persona_ids,
+            "allocation": {
+                "amount": allocation_amount,
+                "riskBudget": risk_budget,
+                "risk_budget": risk_budget,
+                "utilization": allocation_utilization,
+                "source": "mixed" if len(sources_used) > 1 else (sources_used[0] if sources_used else "unavailable"),
+                "sources": sources_used,
+            },
+            "allocationAmount": allocation_amount,
+            "allocation_amount": allocation_amount,
+            "riskBudget": risk_budget,
+            "risk_budget": risk_budget,
+            "allocationUtilization": allocation_utilization,
+            "allocation_utilization": allocation_utilization,
+            "metrics": {
+                "totalPnl": round(sum(pnl_values), 6) if pnl_values else None,
+                "total_pnl": round(sum(pnl_values), 6) if pnl_values else None,
+                "worstDrawdown": max(drawdown_values) if drawdown_values else None,
+                "worst_drawdown": max(drawdown_values) if drawdown_values else None,
+                "averageFillRate": _management_avg(fill_rate_values),
+                "average_fill_rate": _management_avg(fill_rate_values),
+                "totalTrades": int(trade_total) if trade_total is not None else 0,
+                "total_trades": int(trade_total) if trade_total is not None else 0,
+                "runtimeCount": len(runtime_ids),
+                "runtime_count": len(runtime_ids),
+                "telemetryRuntimeCount": len([
+                    fact for fact in group_facts if fact.get("telemetry_available")
+                ]),
+                "telemetry_runtime_count": len([
+                    fact for fact in group_facts if fact.get("telemetry_available")
+                ]),
+            },
+            "drift": drift,
+            "paperLiveDrift": drift,
+            "paper_live_drift": drift,
+            "sourceRefs": {
+                "runtimeIds": runtime_ids,
+                "runtime_ids": runtime_ids,
+                "runtimeBindingIds": runtime_binding_ids,
+                "runtime_binding_ids": runtime_binding_ids,
+                "deploymentPlanIds": plan_ids,
+                "deployment_plan_ids": plan_ids,
+                "capitalPoolIds": [capital_pool_id],
+                "capital_pool_ids": [capital_pool_id],
+                "personaIds": persona_ids,
+                "persona_ids": persona_ids,
+                "strategyIds": [strategy_id],
+                "strategy_ids": [strategy_id],
+            },
+            "source_refs": {
+                "runtime_ids": runtime_ids,
+                "runtime_binding_ids": runtime_binding_ids,
+                "deployment_plan_ids": plan_ids,
+                "capital_pool_ids": [capital_pool_id],
+                "persona_ids": persona_ids,
+                "strategy_ids": [strategy_id],
+            },
+            "links": {
+                "strategy": _management_link("/bff/strategies", strategy_id),
+                "capitalPool": _management_link("/bff/capital-pools", capital_pool_id),
+                "capital_pool": _management_link("/bff/capital-pools", capital_pool_id),
+            },
+        }
+        rows.append(row)
+
+    severity = {"breached": 0, "watch": 1, "degraded": 2, "unknown": 3, "unavailable": 4, "mixed": 5, "ok": 6}
+    rows.sort(
+        key=lambda item: (
+            severity.get(str((item.get("drift") or {}).get("status") or ""), 7),
+            -(_management_as_float(item.get("allocation_amount")) or 0.0),
+            str(item.get("strategy_id") or ""),
+            str(item.get("capital_pool_id") or ""),
+        )
+    )
+    for rank, row in enumerate(rows, start=1):
+        row["rank"] = rank
+    return rows
+
+
+def _management_strategy_allocation_response(
+    *,
+    strategy_id: Optional[str],
+    capital_pool_id: Optional[str],
+    deployment_stage: Optional[str],
+    drift_status: Optional[str],
+    page_token: Optional[str],
+    page_size: int,
+) -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    sources = _pm12_performance_attribution_sources()
+    facts = _management_strategy_allocation_runtime_facts(sources)
+    strategy_filter = set(_split_csv_query(strategy_id) or [])
+    pool_filter = set(_split_csv_query(capital_pool_id) or [])
+    stage_filter = {item.lower() for item in (_split_csv_query(deployment_stage) or [])}
+    if strategy_filter:
+        facts = [fact for fact in facts if str(fact.get("strategy_id") or "") in strategy_filter]
+    if pool_filter:
+        facts = [fact for fact in facts if str(fact.get("capital_pool_id") or "") in pool_filter]
+    if stage_filter:
+        facts = [
+            fact
+            for fact in facts
+            if str(fact.get("deployment_stage") or "").strip().lower() in stage_filter
+        ]
+    rows = _management_strategy_allocation_rows(facts, sources)
+    drift_filter = {item.lower() for item in (_split_csv_query(drift_status) or [])}
+    if drift_filter:
+        rows = [
+            row
+            for row in rows
+            if str((row.get("drift") or {}).get("status") or "").lower() in drift_filter
+        ]
+    total = len(rows)
+    page_items, next_page_token = _page_slice(rows, page_token, page_size)
+
+    allocation_values = [
+        value
+        for value in (_management_as_float(row.get("allocation_amount")) for row in rows)
+        if value is not None
+    ]
+    pnl_values = [
+        value
+        for value in (_management_as_float((row.get("metrics") or {}).get("total_pnl")) for row in rows)
+        if value is not None
+    ]
+    drift_status_counts = _management_count_by(
+        [{"status": (row.get("drift") or {}).get("status")} for row in rows],
+        "status",
+    )
+    source_surfaces = {
+        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
+        "deployment_plans": _dataset_surface_status("deployment_plans", snapshot_at=snapshot_at),
+        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at),
+        "capital_pools": _dataset_surface_status("capital_pools", snapshot_at=snapshot_at),
+        "strategies": _dataset_surface_status("strategy_specs", snapshot_at=snapshot_at),
+        "telemetry_summaries": _dataset_surface_status(
+            "telemetry_summaries",
+            snapshot_at=snapshot_at,
+            has_data=bool(sources["telemetry_by_runtime_id"]) if sources["runtime_bindings"] else None,
+            missing_message="Telemetry summaries unavailable for active strategy allocation runtimes.",
+        ),
+        "paper_live_drift": _dataset_surface_status(
+            "paper_live_drift_reports",
+            snapshot_at=snapshot_at,
+        ),
+    }
+    active_runtime_count = len({
+        runtime_id
+        for row in rows
+        for runtime_id in (row.get("runtime_ids") or [])
+        if runtime_id
+    })
+    drift_available_count = sum(
+        int((row.get("drift") or {}).get("available_runtime_count") or 0)
+        for row in rows
+    )
+    if (
+        active_runtime_count
+        and drift_available_count < active_runtime_count
+        and source_surfaces["paper_live_drift"].get("status") == "ok"
+    ):
+        source_surfaces["paper_live_drift"]["status"] = "degraded"
+        source_surfaces["paper_live_drift"]["message"] = (
+            "Paper/live drift report missing for one or more active strategy allocation runtimes."
+        )
+    allocation_surface = _aggregate_group_surface(
+        "strategy_allocation",
+        list(source_surfaces.values()),
+        snapshot_at=snapshot_at,
+        unavailable_message="Strategy allocation aggregate unavailable.",
+        degraded_message="Strategy allocation is available, but one or more supporting surfaces are degraded.",
+    )
+    summary = {
+        "allocationCount": total,
+        "allocation_count": total,
+        "returnedAllocationCount": len(page_items),
+        "returned_allocation_count": len(page_items),
+        "strategyCount": len({row.get("strategy_id") for row in rows if row.get("strategy_id")}),
+        "strategy_count": len({row.get("strategy_id") for row in rows if row.get("strategy_id")}),
+        "capitalPoolCount": len({row.get("capital_pool_id") for row in rows if row.get("capital_pool_id")}),
+        "capital_pool_count": len({row.get("capital_pool_id") for row in rows if row.get("capital_pool_id")}),
+        "activeRuntimeCount": active_runtime_count,
+        "active_runtime_count": active_runtime_count,
+        "totalAllocatedCapital": round(sum(allocation_values), 6) if allocation_values else None,
+        "total_allocated_capital": round(sum(allocation_values), 6) if allocation_values else None,
+        "totalPnl": round(sum(pnl_values), 6) if pnl_values else None,
+        "total_pnl": round(sum(pnl_values), 6) if pnl_values else None,
+        "driftBreachedCount": drift_status_counts.get("breached", 0),
+        "drift_breached_count": drift_status_counts.get("breached", 0),
+        "driftWatchCount": drift_status_counts.get("watch", 0),
+        "drift_watch_count": drift_status_counts.get("watch", 0),
+        "driftUnavailableCount": drift_status_counts.get("unavailable", 0),
+        "drift_unavailable_count": drift_status_counts.get("unavailable", 0),
+        "byDriftStatus": drift_status_counts,
+        "by_drift_status": drift_status_counts,
+        "basis": "active_runtime_strategy_pool_allocation",
+    }
+    data = {
+        "id": "management-strategy-allocation",
+        "items": page_items,
+        "rows": page_items,
+        "summary": summary,
+    }
+    return {
+        "data": data,
+        "items": page_items,
+        "rows": page_items,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "strategy_allocation": allocation_surface,
+                **source_surfaces,
+            },
+            "composition_sources": [
+                "GET /api/v1/runtime-bindings",
+                "GET /api/v1/deployment-plans",
+                "GET /api/v1/persona-capital-bindings",
+                "GET /bff/capital-pools",
+                "GET /bff/strategies",
+                "GET /api/v1/telemetry/{runtime_id}/summary",
+                "GET /api/v1/operator/paper-live-drift/{runtime_id}",
+            ],
+            "policy": "read_only_strategy_allocation",
+        },
+    }
+
+
+@app.get("/bff/management/strategy-allocation")
+async def bff_management_strategy_allocation(
+    strategy_id: Optional[str] = None,
+    capital_pool_id: Optional[str] = None,
+    deployment_stage: Optional[str] = None,
+    drift_status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: active strategy allocation slice across capital pools with paper/live drift."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _management_strategy_allocation_response(
+        strategy_id=strategy_id,
+        capital_pool_id=capital_pool_id,
+        deployment_stage=deployment_stage,
+        drift_status=drift_status,
+        page_token=page_token,
+        page_size=page_size,
+    )
+
+
 @app.get("/bff/management/portfolio-book")
 async def bff_management_portfolio_book(
     page_token: Optional[str] = None,
@@ -25721,6 +26332,7 @@ _PM12_LEAGUE_RANKING_CRITERIA = {
     "execution": ("executionScore", "Execution"),
     "activity": ("activityScore", "Activity"),
 }
+_PM12_LEAGUE_MOVER_DIRECTIONS = {"all", "up", "down", "flat", "new"}
 _PM12_LEAGUE_FORMULA_VERSION = "pm12-default-v1"
 _PM12_QUARTERLY_FORMULA_DOC_REF = (
     "docs/04/pantheon_bff_api_gap_2026-05-23/"
@@ -26847,6 +27459,123 @@ def _pm12_persona_league_tier_payload(rows: List[Dict[str, Any]]) -> tuple[List[
     return tiers, assignments, summary
 
 
+def _pm12_normalize_mover_direction(direction: Optional[str]) -> str:
+    normalized = str(direction or "all").strip().lower() or "all"
+    if normalized not in _PM12_LEAGUE_MOVER_DIRECTIONS:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "invalid_direction",
+                "message": "direction must be one of all, up, down, flat, or new.",
+                "field": "direction",
+            },
+        )
+    return normalized
+
+
+def _pm12_persona_league_mover_items(
+    rows: List[Dict[str, Any]],
+    *,
+    direction: str,
+    limit: int,
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    ranked_items = sorted(
+        (_pm12_persona_league_ranking_item(row) for row in rows),
+        key=lambda item: (
+            _management_number(item.get("overallScore")) or 0.0,
+            str(item.get("personaId") or ""),
+        ),
+        reverse=True,
+    )
+    movers: List[Dict[str, Any]] = []
+    direction_counts = {"up": 0, "down": 0, "flat": 0, "new": 0}
+    for current_rank, item in enumerate(ranked_items, start=1):
+        persona_id = str(item.get("personaId") or item.get("persona_id") or item.get("id") or "")
+        current_score = _management_number(item.get("overallScore")) or 0.0
+        movement_direction = "new"
+        direction_counts[movement_direction] += 1
+        mover = {
+            **item,
+            "id": f"persona-league-mover-{persona_id}",
+            "moverId": f"persona-league-mover-{persona_id}",
+            "mover_id": f"persona-league-mover-{persona_id}",
+            "currentRank": current_rank,
+            "current_rank": current_rank,
+            "previousRank": None,
+            "previous_rank": None,
+            "rankDelta": None,
+            "rank_delta": None,
+            "direction": movement_direction,
+            "currentScore": current_score,
+            "current_score": current_score,
+            "previousScore": None,
+            "previous_score": None,
+            "scoreDelta": None,
+            "score_delta": None,
+            "scoreDeltaDisplay": "baseline unavailable",
+            "score_delta_display": "baseline unavailable",
+            "baselineStatus": "unavailable",
+            "baseline_status": "unavailable",
+            "basis": "current_persona_league_snapshot_no_historical_baseline",
+            "rank": current_rank,
+            "score": current_score,
+            "scoreField": "overallScore",
+            "score_field": "overallScore",
+            "formulaVersion": _PM12_LEAGUE_FORMULA_VERSION,
+            "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
+            "movement": {
+                "direction": movement_direction,
+                "rank_delta": None,
+                "score_delta": None,
+                "baseline_status": "unavailable",
+                "basis": "current_persona_league_snapshot_no_historical_baseline",
+            },
+        }
+        movers.append(mover)
+
+    if direction != "all":
+        movers = [item for item in movers if item.get("direction") == direction]
+    movers = sorted(
+        movers,
+        key=lambda item: (
+            item.get("baselineStatus") != "unavailable",
+            abs(_management_number(item.get("scoreDelta")) or 0.0),
+            -int(item.get("currentRank") or 0),
+            str(item.get("personaId") or ""),
+        ),
+        reverse=True,
+    )
+    limited = movers[:limit]
+    top_mover = limited[0] if limited else None
+    summary = {
+        "personaCount": len(rows),
+        "persona_count": len(rows),
+        "moverCount": len(movers),
+        "mover_count": len(movers),
+        "returnedCount": len(limited),
+        "returned_count": len(limited),
+        "direction": direction,
+        "formulaVersion": _PM12_LEAGUE_FORMULA_VERSION,
+        "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
+        "baselineStatus": "unavailable",
+        "baseline_status": "unavailable",
+        "baselineUnavailableCount": len(ranked_items),
+        "baseline_unavailable_count": len(ranked_items),
+        "upCount": direction_counts["up"],
+        "up_count": direction_counts["up"],
+        "downCount": direction_counts["down"],
+        "down_count": direction_counts["down"],
+        "flatCount": direction_counts["flat"],
+        "flat_count": direction_counts["flat"],
+        "newCount": direction_counts["new"],
+        "new_count": direction_counts["new"],
+        "topMoverPersonaId": (top_mover or {}).get("personaId") if isinstance(top_mover, dict) else None,
+        "top_mover_persona_id": (top_mover or {}).get("personaId") if isinstance(top_mover, dict) else None,
+        "basis": "current_persona_league_snapshot_no_historical_baseline",
+    }
+    return limited, summary
+
+
 def _pm12_heatmap_bucket_delta(bucket: str) -> tuple[str, timedelta]:
     bucket_key = str(bucket or "").strip().lower() or "day"
     delta = _PM12_HEATMAP_BUCKET_DELTAS.get(bucket_key)
@@ -27165,6 +27894,76 @@ async def bff_management_persona_league_rankings(
                 "GET /bff/personas",
                 "GET /bff/v5/execution/persona-health",
             ],
+        },
+    }
+
+
+@app.get("/bff/management/persona-league/movers")
+async def bff_management_persona_league_movers(
+    state: Optional[str] = None,
+    archetype: Optional[str] = None,
+    q: str = Query(default=""),
+    direction: Optional[str] = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 persona-league movement list computed from league rows."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    normalized_direction = _pm12_normalize_mover_direction(direction)
+    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
+    movers, summary = _pm12_persona_league_mover_items(
+        rows,
+        direction=normalized_direction,
+        limit=limit,
+    )
+    source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
+    history_surface = _composed_surface_status(
+        snapshot_at=snapshot_at,
+        available=False,
+        missing_message="Historical persona league baseline is unavailable; movers are current-snapshot entries.",
+    )
+    movers_surface = _aggregate_group_surface(
+        "persona_league_movers",
+        [*source_surfaces.values(), history_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Persona league movers aggregate unavailable.",
+        degraded_message="Persona league movers are degraded because one or more source surfaces are degraded.",
+    )
+    data = {
+        "id": "management-persona-league-movers",
+        "items": movers,
+        "movers": movers,
+        "summary": summary,
+        "policy": "read_only_governance_advisory",
+    }
+    return {
+        "data": data,
+        "items": movers,
+        "movers": movers,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": None,
+            "total": summary["moverCount"],
+            "page_size": len(movers),
+        },
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": {
+                "persona_league_movers": movers_surface,
+                "persona_league_history": history_surface,
+                **source_surfaces,
+            },
+            "composition_sources": [
+                "GET /bff/management/persona-league",
+                "GET /bff/management/persona-league/rankings",
+                "GET /bff/management/persona-league/tiers",
+                "GET /bff/personas",
+                "GET /bff/v5/execution/persona-health",
+            ],
+            "policy": "read_only_governance_advisory",
+            "baseline_status": "unavailable",
         },
     }
 
