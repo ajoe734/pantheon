@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: GET /bff/management/performance-attribution/by-pool
-- Status: todo
+- Status: review_approved
 - Owner: Codex2
 - Reviewer: Claude2
 - Phase: Sprint BFF-DELTA / EPIC-BFF-DELTA-PM12-SUB
-- Last update: 2026-05-24T12:31:52Z
-- Next: Assignment created
+- Last update: 2026-05-24T13:25:29Z
+- Next: Review approved: by-pool route is a clean narrow wrapper mirroring by-persona pattern. Backend adds /bff/management/performance-attribution/by-pool with correct auth/CORS/envelope. Frontend type/path/fetch helpers match contract. 3 tests cover happy-path, 401-unauth, 204-CORS-preflight. OpenAPI and wiring-contract assertions present. Focused pytest 49 passed (3 existing warnings). No scope creep. Owner to finalize closeout.
 
 ## Summary
 -
@@ -23,7 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_bff_api_gap_2026-05-24_delta/BFF_API_GAP_delta_audit_spec.md;execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md;services/control-plane/bff/main.py;execute-plans/src/lib/bff-v1/management.ts
 
 ## Recent Task Activity
-- 2026-05-24T12:31:52Z · Operator · assign · Assigned BFF-PM12-DELTA-004 to Codex2 with reviewer Claude2
+- 2026-05-24T13:22:09Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-05-24T13:22:09Z · Orchestrator · worker_worktree_reused · -
+- 2026-05-24T13:22:09Z · Orchestrator · worker_started · Worker started via claude_cli: review_ready_dispatch
+- 2026-05-24T13:25:29Z · Claude2 · review_approved · Review approved: by-pool route is a clean narrow wrapper mirroring by-persona pattern. Backend adds /bff/management/performance-attribution/by-pool with correct auth/CORS/envelope. Frontend type/path/fetch helpers match contract. 3 tests cover happy-path, 401-unauth, 204-CORS-preflight. OpenAPI and wiring-contract assertions present. Focused pytest 49 passed (3 existing warnings). No scope creep. Owner to finalize closeout.
+- 2026-05-24T13:26:35Z · unknown · worker_commit · Worker commit 91f8acef3b7a recorded 1 staged file(s) for BFF-PM12-DELTA-004.
+- 2026-05-24T13:27:12Z · Orchestrator · worker_superseded · Worker superseded after task responsibility moved to another agent.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md

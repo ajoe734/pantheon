@@ -168,3 +168,89 @@ pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py se
 
 Result: 46 passed, 3 existing `datetime.utcnow()` deprecation warnings in
 `services/control-plane/bff/read_store.py`.
+
+## BFF-PM12-DELTA-005
+
+Route:
+
+```text
+GET /bff/management/portfolio-book/positions
+```
+
+Purpose:
+
+Provide a dedicated strict-live Management Console route for PM-12 global
+portfolio positions. The backend route is a read-only projection over the
+existing PM-12 portfolio-book holdings composer, preserving runtime,
+capital-pool, persona, strategy, symbol, quantity, mark, market value, PnL,
+links, and source refs while adding `position_id` / `positionId` aliases for
+frontend table identity.
+
+Frontend contract:
+
+- `paths.managementPortfolioBookPositions()`
+- `managementPortfolioBookPositionsPath(query)`
+- `fetchManagementPortfolioBookPositions(query, init, baseUrl)`
+
+Backend acceptance:
+
+- unauthenticated request: HTTP 401
+- authenticated request: HTTP 200
+- CORS preflight: HTTP 204
+- response envelope: `data`, `items`, `positions`, `summary`, `page_info`, `meta`
+- supported query: `capital_pool_id`, `persona_id`, `runtime_id`,
+  `deployment_stage`, `status`, `q`, `page_token`, `page_size`
+- `meta.surfaces.portfolio_book_positions`: `bff_composed`
+- no new positions source of truth; composed from runtime bindings,
+  deployment plans, persona bindings, capital pools, and telemetry summaries
+
+Validation:
+
+```bash
+pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py
+```
+
+Result: 58 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
+## BFF-PM12-DELTA-006
+
+Route:
+
+```text
+GET /bff/management/portfolio-book/exposure
+```
+
+Purpose:
+
+Provide a dedicated strict-live Management Console route for PM-12
+portfolio-book exposure. The backend route is a narrow read-only aggregate
+around the existing PM-12 portfolio-book pool composer and surfaces risk
+budget, current exposure, utilization, risk state, source refs, and capital
+pool drilldown links.
+
+Frontend contract:
+
+- `paths.managementPortfolioBookExposure()`
+- `managementPortfolioBookExposurePath(query)`
+- `fetchManagementPortfolioBookExposure(query, init, baseUrl)`
+
+Backend acceptance:
+
+- unauthenticated request: HTTP 401
+- authenticated request: HTTP 200
+- CORS preflight: HTTP 204
+- response envelope: `data`, `items`, `exposures`, `summary`, `page_info`, `meta`
+- `data.id`: `pm12-portfolio-book-exposure`
+- `meta.policy`: `read_only_portfolio_exposure`
+- no new exposure source of truth; composed from capital pools, persona
+  bindings, deployment plans, runtime bindings, and telemetry summaries
+
+Validation:
+
+```bash
+pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py
+```
+
+Result: 53 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.

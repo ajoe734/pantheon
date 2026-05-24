@@ -460,6 +460,53 @@ export interface ManagementPortfolioBookHoldingsQuery {
   page_size?: number;
 }
 
+export interface ManagementPortfolioBookPosition extends ManagementPortfolioBookHolding {
+  position_id: string;
+  positionId?: string;
+}
+
+export interface ManagementPortfolioBookPositionsSummary {
+  position_count: number;
+  returned_position_count: number;
+  active_position_count: number;
+  paper_position_count: number;
+  live_position_count: number;
+  runtime_count: number;
+  telemetry_runtime_count: number;
+  total_notional?: number | null;
+  total_market_value?: number | null;
+  total_unrealized_pnl?: number | null;
+  total_realized_pnl?: number | null;
+  total_pnl?: number | null;
+  latest_mark_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface ManagementPortfolioBookPositionsResponse {
+  data: {
+    summary: ManagementPortfolioBookPositionsSummary;
+    items: ManagementPortfolioBookPosition[];
+    positions: ManagementPortfolioBookPosition[];
+    [key: string]: unknown;
+  };
+  items: ManagementPortfolioBookPosition[];
+  positions: ManagementPortfolioBookPosition[];
+  summary: ManagementPortfolioBookPositionsSummary;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size?: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces?: Record<string, ManagementSurfaceRef>;
+    composition_sources?: string[];
+    [key: string]: unknown;
+  };
+}
+
+export type ManagementPortfolioBookPositionsQuery = ManagementPortfolioBookHoldingsQuery;
+
 export interface ManagementPersonaLeagueQuery {
   state?: string;
   archetype?: string;
@@ -1326,6 +1373,11 @@ export interface ManagementPerformanceAttributionQuery {
   page_size?: number;
 }
 
+export type ManagementPerformanceAttributionByStrategyQuery = Omit<
+  ManagementPerformanceAttributionQuery,
+  "dimension"
+>;
+
 export type ManagementPerformanceAttributionByPersonaQuery = Omit<
   ManagementPerformanceAttributionQuery,
   "dimension"
@@ -1959,6 +2011,131 @@ export interface ManagementStrategyAllocationResponse {
   };
 }
 
+export interface ManagementPortfolioBookExposureQuery {
+  status?: string;
+  risk_policy_ref?: string;
+  capital_pool_id?: string;
+  page_token?: string;
+  page_size?: number;
+}
+
+export type ManagementPortfolioBookExposureRiskState =
+  | "within_budget"
+  | "near_limit"
+  | "over_budget"
+  | "unknown"
+  | string;
+
+export interface ManagementPortfolioBookExposureItem {
+  id: string;
+  pool_id: string;
+  capital_pool_id?: string;
+  capitalPoolId?: string;
+  name?: string;
+  status?: string;
+  risk_policy_ref?: string;
+  riskPolicyRef?: string;
+  currency?: string;
+  risk_budget?: number | null;
+  riskBudget?: number | null;
+  current_exposure?: number | null;
+  currentExposure?: number | null;
+  exposure_amount?: number | null;
+  exposureAmount?: number | null;
+  available_budget?: number | null;
+  availableBudget?: number | null;
+  risk_budget_utilization?: number | null;
+  riskBudgetUtilization?: number | null;
+  risk_state?: ManagementPortfolioBookExposureRiskState;
+  riskState?: ManagementPortfolioBookExposureRiskState;
+  exposure_source?: string | null;
+  exposureSource?: string | null;
+  exposure?: Record<string, unknown>;
+  risk?: Record<string, unknown>;
+  pnl?: number | null;
+  total_pnl?: number | null;
+  pnl_summary?: Record<string, unknown>;
+  telemetry?: Record<string, unknown>;
+  binding_count?: number;
+  active_binding_count?: number;
+  deployment_count?: number;
+  approved_deployment_count?: number;
+  runtime_count?: number;
+  active_runtime_count?: number;
+  paper_runtime_count?: number;
+  live_runtime_count?: number;
+  deployment_stages?: string[];
+  sourceRefs?: Record<string, unknown>;
+  source_refs?: Record<string, unknown>;
+  links?: Record<string, string | null | undefined>;
+  [key: string]: unknown;
+}
+
+export interface ManagementPortfolioBookExposureSummary {
+  exposure_count: number;
+  exposureCount?: number;
+  returned_exposure_count: number;
+  returnedExposureCount?: number;
+  total_pools: number;
+  totalPools?: number;
+  active_pool_count: number;
+  activePoolCount?: number;
+  risk_budget_total?: number | null;
+  riskBudgetTotal?: number | null;
+  current_exposure_total?: number | null;
+  currentExposureTotal?: number | null;
+  available_budget_total?: number | null;
+  availableBudgetTotal?: number | null;
+  risk_budget_utilization?: number | null;
+  riskBudgetUtilization?: number | null;
+  over_budget_count: number;
+  overBudgetCount?: number;
+  near_limit_count: number;
+  nearLimitCount?: number;
+  unknown_exposure_count: number;
+  unknownExposureCount?: number;
+  telemetry_runtime_count?: number;
+  telemetryRuntimeCount?: number;
+  total_pnl?: number | null;
+  totalPnl?: number | null;
+  max_drawdown?: number | null;
+  maxDrawdown?: number | null;
+  average_fill_rate?: number | null;
+  averageFillRate?: number | null;
+  total_trades?: number;
+  totalTrades?: number;
+  latest_telemetry_at?: string | null;
+  latestTelemetryAt?: string | null;
+  basis?: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementPortfolioBookExposureResponse {
+  data: {
+    id: string;
+    summary: ManagementPortfolioBookExposureSummary;
+    items: ManagementPortfolioBookExposureItem[];
+    exposures: ManagementPortfolioBookExposureItem[];
+    [key: string]: unknown;
+  };
+  items: ManagementPortfolioBookExposureItem[];
+  exposures: ManagementPortfolioBookExposureItem[];
+  summary: ManagementPortfolioBookExposureSummary;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    staleness?: Record<string, unknown>;
+    surfaces?: Record<string, ManagementSurfaceRef>;
+    composition_sources?: string[];
+    policy?: string;
+    [key: string]: unknown;
+  };
+}
+
 type ManagementQueryValue = string | number | boolean | undefined | null;
 
 function withQuery(path: string, query?: object): string {
@@ -2032,10 +2209,22 @@ export function managementPortfolioBookPoolsPath(query?: ManagementPortfolioBook
   return withQuery(paths.managementPortfolioBookPools(), query);
 }
 
+export function managementPortfolioBookExposurePath(
+  query?: ManagementPortfolioBookExposureQuery,
+): string {
+  return withQuery(paths.managementPortfolioBookExposure(), query);
+}
+
 export function managementPortfolioBookHoldingsPath(
   query?: ManagementPortfolioBookHoldingsQuery,
 ): string {
   return withQuery(paths.managementPortfolioBookHoldings(), query);
+}
+
+export function managementPortfolioBookPositionsPath(
+  query?: ManagementPortfolioBookPositionsQuery,
+): string {
+  return withQuery(paths.managementPortfolioBookPositions(), query);
 }
 
 export function managementPersonaLeaguePath(query?: ManagementPersonaLeagueQuery): string {
@@ -2092,6 +2281,12 @@ export function managementPerformanceAttributionPath(
   query?: ManagementPerformanceAttributionQuery,
 ): string {
   return withQuery(paths.managementPerformanceAttribution(), query);
+}
+
+export function managementPerformanceAttributionByStrategyPath(
+  query?: ManagementPerformanceAttributionByStrategyQuery,
+): string {
+  return withQuery(paths.managementPerformanceAttributionByStrategy(), query);
 }
 
 export function managementPerformanceAttributionByPersonaPath(
@@ -2308,6 +2503,25 @@ export async function fetchManagementPortfolioBookPools(
   return response.json() as Promise<ManagementPortfolioBookPoolsResponse>;
 }
 
+export async function fetchManagementPortfolioBookExposure(
+  query?: ManagementPortfolioBookExposureQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementPortfolioBookExposureResponse> {
+  const path = managementPortfolioBookExposurePath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementPortfolioBookExposureResponse>;
+}
+
 export async function fetchManagementPortfolioBookHoldings(
   query?: ManagementPortfolioBookHoldingsQuery,
   init?: RequestInit,
@@ -2325,6 +2539,25 @@ export async function fetchManagementPortfolioBookHoldings(
     throw new Error(`GET ${path} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementPortfolioBookHoldingsResponse>;
+}
+
+export async function fetchManagementPortfolioBookPositions(
+  query?: ManagementPortfolioBookPositionsQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementPortfolioBookPositionsResponse> {
+  const path = managementPortfolioBookPositionsPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementPortfolioBookPositionsResponse>;
 }
 
 export async function fetchManagementPersonaLeague(
@@ -2503,6 +2736,25 @@ export async function fetchManagementPerformanceAttribution(
   baseUrl = "",
 ): Promise<ManagementPerformanceAttributionResponse> {
   const path = managementPerformanceAttributionPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementPerformanceAttributionResponse>;
+}
+
+export async function fetchManagementPerformanceAttributionByStrategy(
+  query?: ManagementPerformanceAttributionByStrategyQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementPerformanceAttributionResponse> {
+  const path = managementPerformanceAttributionByStrategyPath(query);
   const headers = new Headers(init?.headers);
   headers.set("Accept", "application/json");
   const response = await fetch(`${baseUrl}${path}`, {
