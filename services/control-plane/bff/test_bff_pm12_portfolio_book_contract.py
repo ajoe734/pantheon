@@ -21,6 +21,8 @@ def _portfolio_store(
     *,
     telemetry_source: str = "canonical",
     telemetry: dict[str, dict[str, Any]] | None = None,
+    drift_reports: dict[str, dict[str, Any]] | None = None,
+    strategy_specs: list[dict[str, Any]] | None = None,
 ) -> TestClient:
     td = tempfile.TemporaryDirectory(prefix="bff_pm12_")
     monkeypatch.setattr(bff_main, "_BFF_PM12_TMPDIR", td, raising=False)
@@ -169,10 +171,16 @@ def _portfolio_store(
     store.list_deployment_plans = lambda status=None, capital_pool_id=None: deployment_plans
     store.list_runtime_bindings = lambda deployment_mode=None, version=None: runtime_bindings
     store.get_telemetry_summary = lambda runtime_id: telemetry_records.get(runtime_id)
+    store.get_paper_live_drift_report = lambda runtime_id: (drift_reports or {}).get(runtime_id)
+    store.list_strategy_specs = lambda **_: list(strategy_specs or [])
 
     def dataset_source(dataset: str, **_: Any) -> str:
         if dataset == "telemetry_summaries":
             return telemetry_source
+        if dataset == "paper_live_drift_reports":
+            return "service_store" if drift_reports is not None else "missing"
+        if dataset == "strategy_specs":
+            return "canonical" if strategy_specs is not None else "missing"
         return {
             "capital_pools": "canonical",
             "persona_bindings": "canonical",
@@ -234,6 +242,96 @@ def test_portfolio_book_requires_read_auth(monkeypatch) -> None:
     response = client.get("/bff/management/portfolio-book")
 
     assert response.status_code == 401, response.text
+
+
+def test_portfolio_book_exposure_composes_risk_budget_rollup(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get(
+        "/bff/management/portfolio-book/exposure",
+        headers=HEADERS,
+        params={"page_size": 20},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    summary = payload["summary"]
+    assert payload["data"]["id"] == "pm12-portfolio-book-exposure"
+    assert payload["items"] == payload["exposures"] == payload["data"]["items"]
+    assert payload["data"]["exposures"] == payload["items"]
+    assert payload["data"]["summary"] == payload["summary"]
+    assert summary["exposure_count"] == 2
+    assert summary["returned_exposure_count"] == 2
+    assert summary["risk_budget_total"] == 150.0
+    assert summary["current_exposure_total"] == 60.0
+    assert summary["available_budget_total"] == 90.0
+    assert summary["risk_budget_utilization"] == 0.4
+    assert summary["over_budget_count"] == 0
+    assert summary["near_limit_count"] == 0
+    assert summary["unknown_exposure_count"] == 0
+    assert summary["telemetry_runtime_count"] == 2
+    assert summary["total_pnl"] == 8.0
+    assert payload["page_info"] == {"next_page_token": None, "total": 2, "page_size": 20}
+
+    alpha = payload["items"][0]
+    assert alpha["pool_id"] == "pool-alpha"
+    assert alpha["capitalPoolId"] == "pool-alpha"
+    assert alpha["risk_budget"] == 100.0
+    assert alpha["current_exposure"] == 40.0
+    assert alpha["risk_budget_utilization"] == 0.4
+    assert alpha["risk_state"] == "within_budget"
+    assert alpha["available_budget"] == 60.0
+    assert alpha["exposure"]["source"] == "capital_pool"
+    assert alpha["sourceRefs"]["runtimeIds"] == ["runtime-alpha", "runtime-alpha-live"]
+    assert alpha["links"]["capitalPool"] == "/bff/capital-pools/pool-alpha"
+    assert payload["meta"]["surfaces"]["portfolio_book_exposure"]["source"] == "bff_composed"
+    assert payload["meta"]["surfaces"]["capital_pools"]["source"] == "canonical"
+    assert payload["meta"]["policy"] == "read_only_portfolio_exposure"
+    assert "GET /api/v1/telemetry/{runtime_id}/summary" in payload["meta"]["composition_sources"]
+
+
+def test_portfolio_book_exposure_filters_by_capital_pool(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get(
+        "/bff/management/portfolio-book/exposure",
+        headers=HEADERS,
+        params={"capital_pool_id": "pool-beta"},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["summary"]["exposure_count"] == 1
+    assert payload["summary"]["risk_budget_total"] == 50.0
+    assert payload["summary"]["current_exposure_total"] == 20.0
+    assert payload["summary"]["telemetry_runtime_count"] == 0
+    assert payload["summary"]["total_pnl"] is None
+    assert payload["items"][0]["pool_id"] == "pool-beta"
+
+
+def test_portfolio_book_exposure_requires_read_auth(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get("/bff/management/portfolio-book/exposure")
+
+    assert response.status_code == 401, response.text
+
+
+def test_portfolio_book_exposure_cors_preflight(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.options(
+        "/bff/management/portfolio-book/exposure",
+        headers={
+            "Origin": "https://preview--pantheon-dev.lovable.app",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "Authorization, X-BFF-Api-Version",
+        },
+    )
+
+    assert response.status_code == 204, response.text
+    assert response.text == ""
+    assert response.headers["access-control-allow-origin"] == "https://preview--pantheon-dev.lovable.app"
 
 
 def test_portfolio_book_holdings_composes_global_holdings_table(monkeypatch) -> None:
@@ -435,6 +533,144 @@ def test_performance_attribution_supports_all_pm12_dimensions(monkeypatch) -> No
     assert {"trend", "risk-off"}.issubset(regimes)
 
 
+def test_performance_attribution_by_persona_route(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get(
+        "/bff/management/performance-attribution/by-persona",
+        headers=HEADERS,
+        params={"period": "30d", "page_size": 20},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["data"]["id"] == "pm12-performance-attribution-by-persona"
+    assert payload["items"] == payload["rows"] == payload["data"]["rows"]
+    assert payload["data"]["items"] == payload["items"]
+    assert payload["summary"]["period"] == "30d"
+    assert payload["summary"]["dimensions"] == ["persona"]
+    assert payload["page_info"] == {"next_page_token": None, "total": 2, "page_size": 20}
+    assert {row["dimension"] for row in payload["items"]} == {"persona"}
+
+    rows = {row["dimension_key"]: row for row in payload["items"]}
+    assert rows["persona-alpha"]["label"] == "persona-alpha"
+    assert rows["persona-alpha"]["metrics"]["totalPnl"] == 10.0
+    assert rows["persona-alpha"]["links"]["persona"] == "/bff/personas/persona-alpha"
+    assert rows["persona-alpha"]["sourceRefs"]["runtimeIds"] == ["runtime-alpha"]
+    assert rows["unassigned"]["label"] == "Unassigned"
+    assert rows["unassigned"]["metrics"]["totalPnl"] == -2.0
+    assert payload["summary"]["totalPnl"] == 8.0
+    assert payload["meta"]["surfaces"]["performance_attribution_by_persona"]["source"] == "bff_composed"
+    assert payload["meta"]["surfaces"]["performance_attribution"]["source"] == "bff_composed"
+    assert payload["meta"]["policy"] == "read_only_performance_attribution"
+
+
+def test_performance_attribution_by_pool_route(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get(
+        "/bff/management/performance-attribution/by-pool",
+        headers=HEADERS,
+        params={"period": "30d", "page_size": 20},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["data"]["id"] == "pm12-performance-attribution-by-pool"
+    assert payload["items"] == payload["rows"] == payload["data"]["rows"]
+    assert payload["data"]["items"] == payload["items"]
+    assert payload["summary"]["period"] == "30d"
+    assert payload["summary"]["dimensions"] == ["pool"]
+    assert payload["page_info"] == {"next_page_token": None, "total": 2, "page_size": 20}
+    assert {row["dimension"] for row in payload["items"]} == {"pool"}
+
+    rows = {row["dimension_key"]: row for row in payload["items"]}
+    alpha = rows["pool-alpha"]
+    assert alpha["label"] == "Alpha Book"
+    assert alpha["metrics"]["totalPnl"] == 8.0
+    assert alpha["metrics"]["runtimeCount"] == 2
+    assert alpha["links"]["capitalPool"] == "/bff/capital-pools/pool-alpha"
+    assert alpha["links"]["capital_pool"] == "/bff/capital-pools/pool-alpha"
+    assert alpha["sourceRefs"]["runtimeIds"] == ["runtime-alpha", "runtime-alpha-live"]
+    assert alpha["sourceRefs"]["capitalPoolIds"] == ["pool-alpha"]
+    assert rows["pool-beta"]["label"] == "Beta Book"
+    assert rows["pool-beta"]["metrics"]["totalPnl"] is None
+    assert rows["pool-beta"]["metrics"]["telemetryRuntimeCount"] == 0
+    assert payload["summary"]["totalPnl"] == 8.0
+    assert payload["meta"]["surfaces"]["performance_attribution_by_pool"]["source"] == "bff_composed"
+    assert payload["meta"]["surfaces"]["performance_attribution"]["source"] == "bff_composed"
+    assert payload["meta"]["policy"] == "read_only_performance_attribution"
+
+
+def test_strategy_allocation_returns_active_strategy_allocations_with_drift(monkeypatch) -> None:
+    client = _portfolio_store(
+        monkeypatch,
+        drift_reports={
+            "runtime-alpha": {
+                "runtime_id": "runtime-alpha",
+                "threshold_evaluation": {
+                    "overall_status": "breached",
+                    "summary": "Drawdown drift exceeds paper threshold.",
+                    "breached_metric_ids": ["max_drawdown"],
+                },
+                "drift_groups": [
+                    {
+                        "group_id": "risk",
+                        "metrics": [
+                            {"metric_id": "max_drawdown", "status": "breached"},
+                            {"metric_id": "fill_rate", "status": "ok"},
+                        ],
+                    }
+                ],
+            }
+        },
+        strategy_specs=[
+            {
+                "strategy_id": "strategy-alpha",
+                "title": "Alpha Carry",
+                "lifecycle_state": "approved",
+            }
+        ],
+    )
+
+    response = client.get(
+        "/bff/management/strategy-allocation",
+        headers=HEADERS,
+        params={"page_size": 20},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["data"]["id"] == "management-strategy-allocation"
+    assert payload["items"] == payload["rows"] == payload["data"]["rows"]
+    assert payload["data"]["items"] == payload["items"]
+    assert payload["page_info"] == {"next_page_token": None, "total": 1, "page_size": 20}
+
+    row = payload["items"][0]
+    assert row["strategy_id"] == "strategy-alpha"
+    assert row["strategyLabel"] == "Alpha Carry"
+    assert row["capital_pool_id"] == "pool-alpha"
+    assert row["capitalPoolName"] == "Alpha Book"
+    assert row["allocationAmount"] == 30600.0
+    assert row["allocation"]["source"] == "position_snapshots"
+    assert row["runtimeIds"] == ["runtime-alpha"]
+    assert row["deploymentPlanIds"] == ["plan-alpha"]
+    assert row["personaIds"] == ["persona-alpha"]
+    assert row["drift"]["status"] == "breached"
+    assert row["drift"]["availableRuntimeCount"] == 1
+    assert row["drift"]["breachedMetricCount"] == 1
+    assert row["links"]["strategy"] == "/bff/strategies/strategy-alpha"
+    assert row["links"]["capitalPool"] == "/bff/capital-pools/pool-alpha"
+    assert payload["summary"]["allocationCount"] == 1
+    assert payload["summary"]["activeRuntimeCount"] == 1
+    assert payload["summary"]["totalAllocatedCapital"] == 30600.0
+    assert payload["summary"]["byDriftStatus"] == {"breached": 1}
+    assert payload["summary"]["basis"] == "active_runtime_strategy_pool_allocation"
+    assert payload["meta"]["surfaces"]["strategy_allocation"]["source"] == "bff_composed"
+    assert payload["meta"]["surfaces"]["paper_live_drift"]["source"] == "service_store"
+    assert payload["meta"]["policy"] == "read_only_strategy_allocation"
+
+
 def test_performance_attribution_rejects_invalid_dimension(monkeypatch) -> None:
     client = _portfolio_store(monkeypatch)
 
@@ -445,7 +681,9 @@ def test_performance_attribution_rejects_invalid_dimension(monkeypatch) -> None:
     )
 
     assert response.status_code == 422, response.text
-    assert response.json()["detail"]["error"] == "invalid_dimension"
+    body = response.json()
+    assert "detail" not in body
+    assert body["error"]["code"] == "invalid_dimension"
 
 
 def test_performance_attribution_requires_read_auth(monkeypatch) -> None:
@@ -454,6 +692,81 @@ def test_performance_attribution_requires_read_auth(monkeypatch) -> None:
     response = client.get("/bff/management/performance-attribution")
 
     assert response.status_code == 401, response.text
+
+
+def test_performance_attribution_by_persona_requires_read_auth(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get("/bff/management/performance-attribution/by-persona")
+
+    assert response.status_code == 401, response.text
+
+
+def test_performance_attribution_by_pool_requires_read_auth(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get("/bff/management/performance-attribution/by-pool")
+
+    assert response.status_code == 401, response.text
+
+
+def test_strategy_allocation_requires_read_auth(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get("/bff/management/strategy-allocation")
+
+    assert response.status_code == 401, response.text
+
+
+def test_performance_attribution_by_persona_cors_preflight(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.options(
+        "/bff/management/performance-attribution/by-persona",
+        headers={
+            "Origin": "https://preview--pantheon-dev.lovable.app",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "Authorization, X-BFF-Api-Version",
+        },
+    )
+
+    assert response.status_code == 204, response.text
+    assert response.text == ""
+    assert response.headers["access-control-allow-origin"] == "https://preview--pantheon-dev.lovable.app"
+
+
+def test_performance_attribution_by_pool_cors_preflight(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.options(
+        "/bff/management/performance-attribution/by-pool",
+        headers={
+            "Origin": "https://preview--pantheon-dev.lovable.app",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "Authorization, X-BFF-Api-Version",
+        },
+    )
+
+    assert response.status_code == 204, response.text
+    assert response.text == ""
+    assert response.headers["access-control-allow-origin"] == "https://preview--pantheon-dev.lovable.app"
+
+
+def test_strategy_allocation_cors_preflight(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.options(
+        "/bff/management/strategy-allocation",
+        headers={
+            "Origin": "https://preview--pantheon-dev.lovable.app",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "Authorization, X-BFF-Api-Version",
+        },
+    )
+
+    assert response.status_code == 204, response.text
+    assert response.text == ""
+    assert response.headers["access-control-allow-origin"] == "https://preview--pantheon-dev.lovable.app"
 
 
 def test_portfolio_book_reports_degraded_telemetry_without_hiding_core_book(monkeypatch) -> None:
@@ -557,3 +870,9 @@ def test_portfolio_book_is_registered_in_openapi() -> None:
     assert "get" in schema["paths"]["/bff/management/performance-attribution"]
     assert "/bff/management/performance-attribution/by-strategy" in schema["paths"]
     assert "get" in schema["paths"]["/bff/management/performance-attribution/by-strategy"]
+    assert "/bff/management/performance-attribution/by-persona" in schema["paths"]
+    assert "get" in schema["paths"]["/bff/management/performance-attribution/by-persona"]
+    assert "/bff/management/performance-attribution/by-pool" in schema["paths"]
+    assert "get" in schema["paths"]["/bff/management/performance-attribution/by-pool"]
+    assert "/bff/management/strategy-allocation" in schema["paths"]
+    assert "get" in schema["paths"]["/bff/management/strategy-allocation"]

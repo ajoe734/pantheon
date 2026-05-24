@@ -15,9 +15,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
 from fastapi import Body, Cookie, FastAPI, HTTPException, BackgroundTasks, Header, Query, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 sys.path.insert(0, os.path.dirname(__file__))
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -146,8 +149,8 @@ _DEV_LOVABLE_CORS_ORIGINS = {
     # Pantheon Frontend Lovable project preview URLs (dev tier).
     "https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com",
     "https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app",
-    # BFF-B1-001: execute-plans Lovable project (UUID 140c41d5) published preview.
-    "https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com",
+    # BFF-B1-001-DELTA: 140c41d5 published URL intentionally NOT in dev-only set —
+    # it must survive the production-strict filter so live OPTIONS succeeds.
 }
 
 # BFF-B1-001: Lovable dynamic preview URLs include a commit hash that changes per
@@ -165,6 +168,17 @@ _LOVABLE_PREVIEW_ORIGIN_REGEX = (
 _LOVABLE_PREVIEW_ORIGIN_PATTERN = re.compile(
     r"^" + _LOVABLE_PREVIEW_ORIGIN_REGEX + r"$"
 )
+
+
+class _PantheonCORSMiddleware(CORSMiddleware):
+    def preflight_response(self, request_headers: Any) -> Response:
+        response = super().preflight_response(request_headers)
+        if response.status_code != 200:
+            return response
+        headers = dict(response.headers)
+        headers.pop("content-length", None)
+        headers.pop("content-type", None)
+        return Response(status_code=204, headers=headers)
 
 
 def _normalized_origin(origin: str) -> str:
@@ -235,7 +249,7 @@ def _build_bff_app() -> FastAPI:
         )
         if preview_regex:
             middleware_kwargs["allow_origin_regex"] = preview_regex
-        built_app.add_middleware(CORSMiddleware, **middleware_kwargs)
+        built_app.add_middleware(_PantheonCORSMiddleware, **middleware_kwargs)
     return built_app
 
 
@@ -289,6 +303,218 @@ register_fastapi_health_routes(
     },
     details=lambda: {"version": "0.2.0", "data_dir": BFF_DATA_DIR},
 )
+
+_ERROR_CODE_BY_STATUS = {
+    400: ErrorCode.INVALID_REQUEST.value,
+    401: ErrorCode.INVALID_TOKEN.value,
+    403: ErrorCode.INSUFFICIENT_ROLE.value,
+    404: ErrorCode.OBJECT_NOT_FOUND.value,
+    409: ErrorCode.INVALID_STATE.value,
+    422: ErrorCode.INVALID_PARAMS.value,
+    428: ErrorCode.PRECONDITION_NOT_MET.value,
+    500: ErrorCode.DOWNSTREAM_UNAVAILABLE.value,
+}
+
+
+def _clean_correlation_id(value: Any) -> Optional[str]:
+    clean = str(value or "").strip()
+    return clean or None
+
+
+def _error_response_correlation_id(
+    request: Request,
+    headers: Optional[Dict[str, Any]] = None,
+) -> str:
+    return (
+        _clean_correlation_id(request.headers.get("x-correlation-id"))
+        or _clean_correlation_id((headers or {}).get("X-Correlation-Id"))
+        or _clean_correlation_id((headers or {}).get("x-correlation-id"))
+        or str(uuid.uuid4())
+    )
+
+
+def _status_error_code(status_code: int) -> str:
+    if status_code >= 500:
+        return ErrorCode.DOWNSTREAM_UNAVAILABLE.value
+    return _ERROR_CODE_BY_STATUS.get(status_code, ErrorCode.INVALID_REQUEST.value)
+
+
+def _status_error_message(status_code: int, fallback: Any = None) -> str:
+    clean = str(fallback or "").strip()
+    if clean and clean != "{}":
+        return clean
+    if status_code == 404:
+        return "Not Found"
+    if status_code == 422:
+        return "Request validation failed"
+    if status_code >= 500:
+        return "Internal server error"
+    return "Request failed"
+
+
+def _error_details_without_correlation(value: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(value, dict):
+        return None
+    return {
+        key: item
+        for key, item in value.items()
+        if key != "correlationId"
+    }
+
+
+def _pack_d_error_response(
+    *,
+    status_code: int,
+    code: Any,
+    message: Any,
+    correlation_id: str,
+    details: Optional[Dict[str, Any]] = None,
+    headers: Optional[Dict[str, Any]] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> JSONResponse:
+    error_payload: Dict[str, Any] = {
+        "code": str(getattr(code, "value", code)),
+        "message": str(message or _status_error_message(status_code)),
+    }
+    if details is not None:
+        error_payload["details"] = details
+    content: Dict[str, Any] = {
+        "error": error_payload,
+        "meta": {"correlationId": correlation_id},
+    }
+    if extra:
+        content.update(extra)
+    response_headers = dict(headers or {})
+    response_headers["X-Correlation-Id"] = correlation_id
+    return JSONResponse(
+        status_code=status_code,
+        content=jsonable_encoder(content),
+        headers=response_headers,
+    )
+
+
+def _pack_d_direct_error_response(
+    *,
+    status_code: int,
+    code: Any,
+    message: Any,
+    details: Optional[Dict[str, Any]] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> JSONResponse:
+    return _pack_d_error_response(
+        status_code=status_code,
+        code=code,
+        message=message,
+        correlation_id=str(uuid.uuid4()),
+        details=details,
+        extra=extra,
+    )
+
+
+def _pack_d_http_exception_response(
+    request: Request,
+    exc: StarletteHTTPException,
+) -> JSONResponse:
+    headers = dict(getattr(exc, "headers", None) or {})
+    correlation_id = _error_response_correlation_id(request, headers)
+    detail = exc.detail
+    source = detail
+    if (
+        isinstance(detail, dict)
+        and isinstance(detail.get("detail"), dict)
+        and "error" in detail["detail"]
+    ):
+        source = detail["detail"]
+
+    error: Dict[str, Any] = {}
+    if isinstance(source, dict) and isinstance(source.get("error"), dict):
+        error = dict(source["error"])
+    elif isinstance(source, dict) and source.get("error") is not None:
+        error = {
+            "code": source.get("error"),
+            "message": source.get("message") or source.get("error"),
+        }
+
+    code = error.get("code") or _status_error_code(exc.status_code)
+    message = error.get("message") or _status_error_message(exc.status_code, detail)
+    details = _error_details_without_correlation(error.get("details"))
+    if details is None and not isinstance(source, dict):
+        details = {"reason": str(source or message)}
+
+    extra: Dict[str, Any] = {}
+    if isinstance(source, dict):
+        for key, value in source.items():
+            if key in {"error", "correlationId", "meta", "detail"}:
+                continue
+            extra[key] = value
+
+    return _pack_d_error_response(
+        status_code=exc.status_code,
+        code=code,
+        message=message,
+        correlation_id=correlation_id,
+        details=details,
+        headers=headers,
+        extra=extra,
+    )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _bff_http_exception_handler(
+    request: Request,
+    exc: StarletteHTTPException,
+) -> JSONResponse:
+    return _pack_d_http_exception_response(request, exc)
+
+
+@app.exception_handler(RequestValidationError)
+async def _bff_request_validation_error_handler(
+    request: Request,
+    exc: RequestValidationError,
+) -> JSONResponse:
+    correlation_id = _error_response_correlation_id(request)
+    return _pack_d_error_response(
+        status_code=422,
+        code=ErrorCode.INVALID_PARAMS.value,
+        message="Request validation failed",
+        correlation_id=correlation_id,
+        details={
+            "reason": "REQUEST_VALIDATION_ERROR",
+            "errors": exc.errors(),
+        },
+    )
+
+
+@app.exception_handler(ValueError)
+async def _bff_value_error_handler(
+    request: Request,
+    exc: ValueError,
+) -> JSONResponse:
+    correlation_id = _error_response_correlation_id(request)
+    return _pack_d_error_response(
+        status_code=400,
+        code=ErrorCode.INVALID_REQUEST.value,
+        message=str(exc) or "Invalid request",
+        correlation_id=correlation_id,
+        details={"reason": "VALUE_ERROR"},
+    )
+
+
+@app.exception_handler(Exception)
+async def _bff_unhandled_exception_handler(
+    request: Request,
+    exc: Exception,
+) -> JSONResponse:
+    log.exception("Unhandled BFF request error", exc_info=True)
+    correlation_id = _error_response_correlation_id(request)
+    return _pack_d_error_response(
+        status_code=500,
+        code=ErrorCode.DOWNSTREAM_UNAVAILABLE.value,
+        message="Internal server error",
+        correlation_id=correlation_id,
+        details={"reason": "INTERNAL_SERVER_ERROR"},
+    )
+
 command_store = CommandStore(os.path.join(BFF_DATA_DIR, "commands.jsonl"))
 session_lifecycle_store = SessionLifecycleStore(os.path.join(BFF_DATA_DIR, "session_lifecycle.json"))
 read_store = ReadSurfaceStore(
@@ -3698,7 +3924,7 @@ def _first_nonblank(*values: Any) -> Optional[str]:
 
 
 def _bff_me_correlation_id(x_correlation_id: Optional[str]) -> str:
-    return str(x_correlation_id or "").strip() or f"bff-me-{uuid.uuid4().hex}"
+    return str(x_correlation_id or "").strip() or str(uuid.uuid4())
 
 
 def _bff_me_error_with_correlation(exc: HTTPException, correlation_id: str) -> HTTPException:
@@ -9432,12 +9658,11 @@ def _rw03_validate_date_range(date_range: Any) -> str:
 
 
 def _rw02_invalid_query(detail: str) -> JSONResponse:
-    return JSONResponse(
+    return _pack_d_direct_error_response(
         status_code=400,
-        content={
-            "error": "invalid_search_query",
-            "detail": detail,
-        },
+        code="invalid_search_query",
+        message="Invalid research search query",
+        details={"reason": detail},
     )
 
 
@@ -13398,16 +13623,12 @@ async def search_research_corpus(
     index_adapter = read_store.get_research_search_index()
     adapter_state = _rw02_adapter_state(index_adapter, snapshot_at=snapshot_at)
     if index_adapter is None or adapter_state == "unavailable":
-        return JSONResponse(
+        return _pack_d_direct_error_response(
             status_code=503,
-            content={
-                "error": "search_unavailable",
-                "meta": {
-                    "surfaces": {
-                        "search_results": "unavailable",
-                    }
-                },
-            },
+            code="search_unavailable",
+            message="Search results are unavailable",
+            details={"reason": "SEARCH_RESULTS_UNAVAILABLE"},
+            extra={"surfaces": {"search_results": "unavailable"}},
         )
 
     items = read_store.list_research_search_results(
@@ -14016,17 +14237,13 @@ async def compare_artifacts(
         if not (artifact.get("allowedActions") or {}).get("canCompare")
     ]
     if non_comparable:
-        return JSONResponse(
+        return _pack_d_direct_error_response(
             status_code=422,
-            content={
-                "error": {
-                    "code": ErrorCode.INVALID_STATE.value,
-                    "message": "One or more artifacts cannot be compared",
-                    "details": {
-                        "reason": "Compare accepts only sealed or superseded artifacts.",
-                        "precondition_failed": "artifact_status",
-                    },
-                },
+            code=ErrorCode.INVALID_STATE.value,
+            message="One or more artifacts cannot be compared",
+            details={
+                "reason": "Compare accepts only sealed or superseded artifacts.",
+                "precondition_failed": "artifact_status",
                 "non_comparable_artifacts": non_comparable,
             },
         )
@@ -15029,9 +15246,11 @@ async def get_institutional_memory_entry(
         include_snapshot_fallback=False,
     )
     if entry is None:
-        return JSONResponse(
+        return _pack_d_direct_error_response(
             status_code=404,
-            content={"error": "entry_not_found", "entry_id": entry_id},
+            code="entry_not_found",
+            message="Institutional memory entry not found",
+            details={"reason": f"entry_id={entry_id!r} was not found", "entry_id": entry_id},
         )
 
     source_event = entry.get("source_event") if isinstance(entry.get("source_event"), dict) else {}
@@ -16068,9 +16287,11 @@ async def get_mutation_review(
 
     decision, approval_decision, linked_incident, linked_postmortem = _mutation_review_inputs(decision_id)
     if decision is None:
-        return JSONResponse(
+        return _pack_d_direct_error_response(
             status_code=404,
-            content={"error": "decision_not_found", "decision_id": decision_id},
+            code="decision_not_found",
+            message="Mutation review decision not found",
+            details={"reason": f"decision_id={decision_id!r} was not found", "decision_id": decision_id},
         )
 
     payload = _mutation_review_projection(
@@ -16083,16 +16304,12 @@ async def get_mutation_review(
     )
 
     if payload["meta"]["surfaces"]["mutation_review"] == "unavailable":
-        return JSONResponse(
+        return _pack_d_direct_error_response(
             status_code=503,
-            content={
-                "error": "evidence_unavailable",
-                "meta": {
-                    "surfaces": {
-                        "mutation_review": "unavailable",
-                    }
-                },
-            },
+            code="evidence_unavailable",
+            message="Mutation review evidence is unavailable",
+            details={"reason": "MUTATION_REVIEW_UNAVAILABLE"},
+            extra={"surfaces": {"mutation_review": "unavailable"}},
         )
 
     required_fields = (
@@ -16107,17 +16324,15 @@ async def get_mutation_review(
     )
     missing_fields = [field for field in required_fields if payload.get(field) in (None, "")]
     if missing_fields:
-        return JSONResponse(
+        return _pack_d_direct_error_response(
             status_code=503,
-            content={
-                "error": "evidence_unavailable",
-                "detail": f"Mutation review projection is missing required fields: {missing_fields}",
-                "meta": {
-                    "surfaces": {
-                        "mutation_review": "unavailable",
-                    }
-                },
+            code="evidence_unavailable",
+            message="Mutation review projection is missing required fields",
+            details={
+                "reason": f"Mutation review projection is missing required fields: {missing_fields}",
+                "missing_fields": missing_fields,
             },
+            extra={"surfaces": {"mutation_review": "unavailable"}},
         )
 
     return payload
@@ -20461,6 +20676,119 @@ def _management_portfolio_book_pool_sources(
     }
 
 
+def _management_exposure_risk_state(utilization: Optional[float]) -> str:
+    if utilization is None:
+        return "unknown"
+    if utilization > 1:
+        return "over_budget"
+    if utilization >= 0.8:
+        return "near_limit"
+    return "within_budget"
+
+
+def _management_portfolio_book_exposure_item(entry: Dict[str, Any]) -> Dict[str, Any]:
+    pool_id = str(entry.get("pool_id") or entry.get("id") or "")
+    risk_budget = _management_as_float(entry.get("risk_budget"))
+    current_exposure = _management_as_float(entry.get("current_exposure"))
+    utilization = _management_as_float(entry.get("risk_budget_utilization"))
+    if utilization is None and current_exposure is not None and risk_budget not in (None, 0):
+        utilization = round(current_exposure / risk_budget, 6)
+    exposure = entry.get("exposure") if isinstance(entry.get("exposure"), dict) else {}
+    runtime_ids = [
+        str(value)
+        for value in (entry.get("runtime_ids") or [])
+        if str(value).strip()
+    ]
+    binding_ids = [
+        str(value)
+        for value in (entry.get("binding_ids") or [])
+        if str(value).strip()
+    ]
+    deployment_ids = [
+        str(value)
+        for value in (entry.get("deployment_ids") or [])
+        if str(value).strip()
+    ]
+    risk_state = _management_exposure_risk_state(utilization)
+    return {
+        "id": f"portfolio-book-exposure-{pool_id or 'unassigned'}",
+        "pool_id": pool_id,
+        "capitalPoolId": pool_id,
+        "capital_pool_id": pool_id,
+        "name": entry.get("name") or pool_id,
+        "status": entry.get("status") or "unknown",
+        "risk_policy_ref": entry.get("risk_policy_ref"),
+        "riskPolicyRef": entry.get("risk_policy_ref"),
+        "currency": entry.get("currency"),
+        "risk_budget": risk_budget,
+        "riskBudget": risk_budget,
+        "current_exposure": current_exposure,
+        "currentExposure": current_exposure,
+        "exposure_amount": current_exposure,
+        "exposureAmount": current_exposure,
+        "risk_budget_utilization": utilization,
+        "riskBudgetUtilization": utilization,
+        "risk_state": risk_state,
+        "riskState": risk_state,
+        "exposure_source": exposure.get("source"),
+        "exposureSource": exposure.get("source"),
+        "available_budget": (
+            round(risk_budget - current_exposure, 6)
+            if risk_budget is not None and current_exposure is not None
+            else None
+        ),
+        "availableBudget": (
+            round(risk_budget - current_exposure, 6)
+            if risk_budget is not None and current_exposure is not None
+            else None
+        ),
+        "risk": entry.get("risk"),
+        "exposure": {
+            **exposure,
+            "amount": current_exposure,
+            "risk_budget": risk_budget,
+            "riskBudget": risk_budget,
+            "risk_budget_utilization": utilization,
+            "riskBudgetUtilization": utilization,
+            "risk_state": risk_state,
+            "riskState": risk_state,
+        },
+        "pnl": entry.get("pnl"),
+        "total_pnl": entry.get("total_pnl"),
+        "pnl_summary": entry.get("pnl_summary"),
+        "telemetry": entry.get("telemetry"),
+        "binding_count": entry.get("binding_count", 0),
+        "active_binding_count": entry.get("active_binding_count", 0),
+        "deployment_count": entry.get("deployment_count", 0),
+        "approved_deployment_count": entry.get("approved_deployment_count", 0),
+        "runtime_count": entry.get("runtime_count", 0),
+        "active_runtime_count": entry.get("active_runtime_count", 0),
+        "paper_runtime_count": entry.get("paper_runtime_count", 0),
+        "live_runtime_count": entry.get("live_runtime_count", 0),
+        "deployment_stages": entry.get("deployment_stages") or [],
+        "sourceRefs": {
+            "runtimeIds": runtime_ids,
+            "runtime_ids": runtime_ids,
+            "bindingIds": binding_ids,
+            "binding_ids": binding_ids,
+            "deploymentIds": deployment_ids,
+            "deployment_ids": deployment_ids,
+            "capitalPoolIds": [pool_id] if pool_id else [],
+            "capital_pool_ids": [pool_id] if pool_id else [],
+        },
+        "source_refs": {
+            "runtime_ids": runtime_ids,
+            "binding_ids": binding_ids,
+            "deployment_ids": deployment_ids,
+            "capital_pool_ids": [pool_id] if pool_id else [],
+        },
+        "links": {
+            "capitalPool": _management_link("/bff/capital-pools", pool_id),
+            "capital_pool": _management_link("/bff/capital-pools", pool_id),
+        },
+    }
+
+
 def _management_link(path: str, record_id: Optional[str]) -> Optional[str]:
     if not record_id:
         return None
@@ -21331,6 +21659,617 @@ def _pm12_performance_attribution_rows(
     return rows
 
 
+_MANAGEMENT_STRATEGY_ALLOCATION_ACTIVE_STATUSES = {
+    "active",
+    "approved",
+    "bound",
+    "executed",
+    "executing",
+    "healthy",
+    "ready",
+    "running",
+}
+
+
+def _management_runtime_allocation_payload(
+    runtime: Dict[str, Any],
+    plan: Dict[str, Any],
+    persona_binding: Dict[str, Any],
+    telemetry: Dict[str, Any],
+) -> Dict[str, Any]:
+    summary = telemetry.get("summary") if isinstance(telemetry.get("summary"), dict) else {}
+    positions = _management_position_records(telemetry)
+    candidates = [
+        ("runtime_bindings", _management_first_float(
+            runtime,
+            "allocated_capital",
+            "capital_allocation",
+            "current_exposure",
+            "exposure",
+            "notional",
+            "metrics.exposure",
+            "summary.exposure",
+        )),
+        ("deployment_plans", _management_first_float(
+            plan,
+            "target_size",
+            "targetSize",
+            "target_notional",
+            "notional",
+            "requested_capital",
+            "capital_allocation",
+            "params.target_size",
+            "params.notional",
+        )),
+        ("persona_bindings", _management_first_float(
+            persona_binding,
+            "budget",
+            "risk_budget",
+            "allocation",
+            "allocated_capital",
+            "capital_allocation",
+        )),
+        ("telemetry_summary", _management_first_float(
+            telemetry,
+            "allocated_capital",
+            "capital_allocation",
+            "current_exposure",
+            "exposure",
+            "notional",
+            "gross_notional",
+            "market_value",
+            "summary.exposure",
+            "summary.notional",
+            "summary.gross_notional",
+            "summary.market_value",
+        )),
+        ("position_snapshots", _management_sum_first_float(
+            positions,
+            "allocated_capital",
+            "capital_allocation",
+            "exposure",
+            "gross_exposure",
+            "notional",
+            "gross_notional",
+            "market_value",
+        )),
+    ]
+    for source, amount in candidates:
+        if amount is not None:
+            return {
+                "amount": amount,
+                "source": source,
+                "position_count": len(positions),
+            }
+    return {
+        "amount": None,
+        "source": "unavailable",
+        "position_count": len(positions),
+    }
+
+
+def _management_strategy_allocation_runtime_drift(runtime_id: str) -> Dict[str, Any]:
+    report = read_store.get_paper_live_drift_report(runtime_id)
+    status = _trading_pulse_baseline_status(report)
+    drift_groups = (report or {}).get("drift_groups") or []
+    metric_counts = _trading_pulse_drift_metric_counts(drift_groups)
+    threshold_evaluation = (
+        _management_json_clone((report or {}).get("threshold_evaluation"))
+        if report
+        else {
+            "overall_status": "unavailable",
+            "summary": "Paper/live drift report unavailable for this runtime.",
+            "breached_metric_ids": [],
+        }
+    )
+    return {
+        "runtimeId": runtime_id or None,
+        "runtime_id": runtime_id or None,
+        "available": report is not None,
+        "status": status,
+        "href": f"/api/v1/operator/paper-live-drift/{runtime_id}" if runtime_id else None,
+        "thresholdEvaluation": threshold_evaluation,
+        "threshold_evaluation": threshold_evaluation,
+        **metric_counts,
+    }
+
+
+def _management_strategy_allocation_drift_summary(
+    runtime_drifts: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    available_count = sum(1 for item in runtime_drifts if item.get("available"))
+    breached_count = sum(int(item.get("breached_metric_count") or 0) for item in runtime_drifts)
+    watch_count = sum(int(item.get("watch_metric_count") or 0) for item in runtime_drifts)
+    statuses = [str(item.get("status") or "unknown").lower() for item in runtime_drifts]
+    if not statuses:
+        status = "unavailable"
+    elif any(item in _TRADING_PULSE_DRIFT_BREACH_STATUSES or item == "breached" for item in statuses):
+        status = "breached"
+    elif any(item in _TRADING_PULSE_DRIFT_WATCH_STATUSES or item == "watch" for item in statuses):
+        status = "watch"
+    elif available_count == 0:
+        status = "unavailable"
+    elif available_count < len(runtime_drifts):
+        status = "degraded"
+    elif all(item == "ok" for item in statuses):
+        status = "ok"
+    else:
+        status = statuses[0] if len(set(statuses)) == 1 else "mixed"
+    return {
+        "status": status,
+        "runtimeCount": len(runtime_drifts),
+        "runtime_count": len(runtime_drifts),
+        "availableRuntimeCount": available_count,
+        "available_runtime_count": available_count,
+        "breachedMetricCount": breached_count,
+        "breached_metric_count": breached_count,
+        "watchMetricCount": watch_count,
+        "watch_metric_count": watch_count,
+        "reports": runtime_drifts,
+    }
+
+
+def _management_strategy_allocation_runtime_facts(sources: Dict[str, Any]) -> List[Dict[str, Any]]:
+    plans_by_id = sources["plans_by_id"]
+    bindings_by_id = sources["bindings_by_id"]
+    pools_by_id = sources["pools_by_id"]
+    telemetry_by_runtime_id = sources["telemetry_by_runtime_id"]
+    facts: List[Dict[str, Any]] = []
+
+    for runtime in sources["runtime_bindings"]:
+        runtime_status = _management_normalized_status(runtime)
+        plan_id = _management_record_id(runtime, "plan_id", "deployment_plan_id")
+        plan = plans_by_id.get(plan_id, {})
+        plan_status = _management_normalized_status(plan) if plan else ""
+        if (
+            runtime_status not in _MANAGEMENT_STRATEGY_ALLOCATION_ACTIVE_STATUSES
+            and plan_status not in _MANAGEMENT_STRATEGY_ALLOCATION_ACTIVE_STATUSES
+        ):
+            continue
+
+        plan_binding_ids = [
+            str(value).strip()
+            for value in (plan.get("binding_ids") or [])
+            if str(value).strip()
+        ]
+        persona_binding_id = (
+            _management_record_id(runtime, "persona_capital_binding_id")
+            or (plan_binding_ids[0] if plan_binding_ids else "")
+        )
+        persona_binding = bindings_by_id.get(persona_binding_id, {})
+        runtime_id = _management_record_id(runtime, "runtime_id", "id", "binding_id")
+        runtime_binding_id = _management_record_id(runtime, "runtime_binding_id", "binding_id", "id")
+        telemetry = telemetry_by_runtime_id.get(runtime_id, {})
+        summary = telemetry.get("summary") if isinstance(telemetry.get("summary"), dict) else {}
+        strategy_id = str(
+            _management_first_non_empty(
+                _management_dict_value(runtime, "strategy_id", "strategy_ref"),
+                _management_dict_value(plan, "strategy_id", "strategy_ref"),
+                _management_dict_value(persona_binding, "strategy_id", "strategy_ref"),
+            )
+            or ""
+        )
+        capital_pool_id = str(
+            _management_first_non_empty(
+                _management_dict_value(runtime, "capital_pool_id", "pool_id"),
+                _management_dict_value(plan, "capital_pool_id", "target_pool_id", "pool_id"),
+                _management_dict_value(persona_binding, "capital_pool_id", "pool_id"),
+            )
+            or ""
+        )
+        if not strategy_id or not capital_pool_id:
+            continue
+
+        persona_id = str(
+            _management_first_non_empty(
+                _management_dict_value(runtime, "persona_id"),
+                _management_dict_value(plan, "persona_id"),
+                _management_dict_value(persona_binding, "persona_id"),
+            )
+            or ""
+        )
+        pool = pools_by_id.get(capital_pool_id, {})
+        allocation = _management_runtime_allocation_payload(runtime, plan, persona_binding, telemetry)
+        drift = _management_strategy_allocation_runtime_drift(runtime_id)
+        facts.append({
+            "runtime_id": runtime_id,
+            "runtime_binding_id": runtime_binding_id,
+            "deployment_plan_id": plan_id or _management_record_id(plan, "plan_id", "id"),
+            "persona_capital_binding_id": persona_binding_id,
+            "strategy_id": strategy_id,
+            "capital_pool_id": capital_pool_id,
+            "capital_pool_name": pool.get("name") or capital_pool_id,
+            "persona_id": persona_id,
+            "deployment_stage": str(
+                runtime.get("deployment_stage") or runtime.get("deployment_mode") or plan.get("target_stage") or ""
+            ),
+            "status": runtime_status or plan_status or "unknown",
+            "allocation_amount": allocation["amount"],
+            "allocation_source": allocation["source"],
+            "position_count": allocation["position_count"],
+            "total_pnl": _management_as_float(
+                _management_first_non_empty(telemetry.get("pnl"), summary.get("total_pnl"))
+            ),
+            "drawdown": _management_as_float(
+                _management_first_non_empty(telemetry.get("drawdown"), summary.get("max_drawdown"))
+            ),
+            "fill_rate": _management_as_float(
+                _management_first_non_empty(telemetry.get("fill_rate"), summary.get("fill_rate"))
+            ),
+            "total_trades": _management_as_float(
+                _management_first_non_empty(telemetry.get("total_trades"), summary.get("total_trades"))
+            ),
+            "telemetry_available": runtime_id in telemetry_by_runtime_id if runtime_id else False,
+            "drift": drift,
+        })
+
+    return facts
+
+
+def _management_strategy_allocation_rows(
+    facts: List[Dict[str, Any]],
+    sources: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    grouped: Dict[tuple[str, str], List[Dict[str, Any]]] = {}
+    for fact in facts:
+        grouped.setdefault((str(fact["strategy_id"]), str(fact["capital_pool_id"])), []).append(fact)
+
+    rows: List[Dict[str, Any]] = []
+    for (strategy_id, capital_pool_id), group_facts in grouped.items():
+        pool = sources["pools_by_id"].get(capital_pool_id, {})
+        strategy_label = _pm12_attribution_dimension_label(
+            "strategy",
+            strategy_id,
+            personas_by_id=sources["personas_by_id"],
+            strategies_by_id=sources["strategies_by_id"],
+            pools_by_id=sources["pools_by_id"],
+        )
+        amount_values = [
+            value
+            for value in (_management_as_float(fact.get("allocation_amount")) for fact in group_facts)
+            if value is not None
+        ]
+        allocation_amount = round(sum(amount_values), 6) if amount_values else None
+        risk_budget = _management_first_float(
+            pool,
+            "risk_budget",
+            "risk_budget_amount",
+            "budget",
+            "capital_allocation",
+            "allocation_limit",
+            "max_target_size",
+            "params.risk_budget",
+            "risk.budget",
+        )
+        allocation_utilization = None
+        if allocation_amount is not None and risk_budget not in (None, 0):
+            allocation_utilization = round(allocation_amount / risk_budget, 6)
+        sources_used = sorted({
+            str(fact.get("allocation_source") or "")
+            for fact in group_facts
+            if str(fact.get("allocation_source") or "")
+        })
+        runtime_ids = sorted({
+            str(fact.get("runtime_id") or "")
+            for fact in group_facts
+            if str(fact.get("runtime_id") or "")
+        })
+        runtime_binding_ids = sorted({
+            str(fact.get("runtime_binding_id") or "")
+            for fact in group_facts
+            if str(fact.get("runtime_binding_id") or "")
+        })
+        plan_ids = sorted({
+            str(fact.get("deployment_plan_id") or "")
+            for fact in group_facts
+            if str(fact.get("deployment_plan_id") or "")
+        })
+        persona_ids = sorted({
+            str(fact.get("persona_id") or "")
+            for fact in group_facts
+            if str(fact.get("persona_id") or "")
+        })
+        stages = sorted({
+            str(fact.get("deployment_stage") or "")
+            for fact in group_facts
+            if str(fact.get("deployment_stage") or "")
+        })
+        drift = _management_strategy_allocation_drift_summary([
+            fact["drift"] for fact in group_facts if isinstance(fact.get("drift"), dict)
+        ])
+        pnl_values = [
+            value
+            for value in (_management_as_float(fact.get("total_pnl")) for fact in group_facts)
+            if value is not None
+        ]
+        drawdown_values = [
+            value
+            for value in (_management_as_float(fact.get("drawdown")) for fact in group_facts)
+            if value is not None
+        ]
+        fill_rate_values = [
+            value
+            for value in (_management_as_float(fact.get("fill_rate")) for fact in group_facts)
+            if value is not None
+        ]
+        trade_total = _management_sum_numeric(group_facts, "total_trades")
+        row = {
+            "id": f"strategy-allocation-{strategy_id}-{capital_pool_id}",
+            "strategyId": strategy_id,
+            "strategy_id": strategy_id,
+            "strategyLabel": strategy_label,
+            "strategy_label": strategy_label,
+            "capitalPoolId": capital_pool_id,
+            "capital_pool_id": capital_pool_id,
+            "capitalPoolName": pool.get("name") or capital_pool_id,
+            "capital_pool_name": pool.get("name") or capital_pool_id,
+            "status": "active",
+            "deploymentStages": stages,
+            "deployment_stages": stages,
+            "runtimeIds": runtime_ids,
+            "runtime_ids": runtime_ids,
+            "runtimeBindingIds": runtime_binding_ids,
+            "runtime_binding_ids": runtime_binding_ids,
+            "deploymentPlanIds": plan_ids,
+            "deployment_plan_ids": plan_ids,
+            "personaIds": persona_ids,
+            "persona_ids": persona_ids,
+            "allocation": {
+                "amount": allocation_amount,
+                "riskBudget": risk_budget,
+                "risk_budget": risk_budget,
+                "utilization": allocation_utilization,
+                "source": "mixed" if len(sources_used) > 1 else (sources_used[0] if sources_used else "unavailable"),
+                "sources": sources_used,
+            },
+            "allocationAmount": allocation_amount,
+            "allocation_amount": allocation_amount,
+            "riskBudget": risk_budget,
+            "risk_budget": risk_budget,
+            "allocationUtilization": allocation_utilization,
+            "allocation_utilization": allocation_utilization,
+            "metrics": {
+                "totalPnl": round(sum(pnl_values), 6) if pnl_values else None,
+                "total_pnl": round(sum(pnl_values), 6) if pnl_values else None,
+                "worstDrawdown": max(drawdown_values) if drawdown_values else None,
+                "worst_drawdown": max(drawdown_values) if drawdown_values else None,
+                "averageFillRate": _management_avg(fill_rate_values),
+                "average_fill_rate": _management_avg(fill_rate_values),
+                "totalTrades": int(trade_total) if trade_total is not None else 0,
+                "total_trades": int(trade_total) if trade_total is not None else 0,
+                "runtimeCount": len(runtime_ids),
+                "runtime_count": len(runtime_ids),
+                "telemetryRuntimeCount": len([
+                    fact for fact in group_facts if fact.get("telemetry_available")
+                ]),
+                "telemetry_runtime_count": len([
+                    fact for fact in group_facts if fact.get("telemetry_available")
+                ]),
+            },
+            "drift": drift,
+            "paperLiveDrift": drift,
+            "paper_live_drift": drift,
+            "sourceRefs": {
+                "runtimeIds": runtime_ids,
+                "runtime_ids": runtime_ids,
+                "runtimeBindingIds": runtime_binding_ids,
+                "runtime_binding_ids": runtime_binding_ids,
+                "deploymentPlanIds": plan_ids,
+                "deployment_plan_ids": plan_ids,
+                "capitalPoolIds": [capital_pool_id],
+                "capital_pool_ids": [capital_pool_id],
+                "personaIds": persona_ids,
+                "persona_ids": persona_ids,
+                "strategyIds": [strategy_id],
+                "strategy_ids": [strategy_id],
+            },
+            "source_refs": {
+                "runtime_ids": runtime_ids,
+                "runtime_binding_ids": runtime_binding_ids,
+                "deployment_plan_ids": plan_ids,
+                "capital_pool_ids": [capital_pool_id],
+                "persona_ids": persona_ids,
+                "strategy_ids": [strategy_id],
+            },
+            "links": {
+                "strategy": _management_link("/bff/strategies", strategy_id),
+                "capitalPool": _management_link("/bff/capital-pools", capital_pool_id),
+                "capital_pool": _management_link("/bff/capital-pools", capital_pool_id),
+            },
+        }
+        rows.append(row)
+
+    severity = {"breached": 0, "watch": 1, "degraded": 2, "unknown": 3, "unavailable": 4, "mixed": 5, "ok": 6}
+    rows.sort(
+        key=lambda item: (
+            severity.get(str((item.get("drift") or {}).get("status") or ""), 7),
+            -(_management_as_float(item.get("allocation_amount")) or 0.0),
+            str(item.get("strategy_id") or ""),
+            str(item.get("capital_pool_id") or ""),
+        )
+    )
+    for rank, row in enumerate(rows, start=1):
+        row["rank"] = rank
+    return rows
+
+
+def _management_strategy_allocation_response(
+    *,
+    strategy_id: Optional[str],
+    capital_pool_id: Optional[str],
+    deployment_stage: Optional[str],
+    drift_status: Optional[str],
+    page_token: Optional[str],
+    page_size: int,
+) -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    sources = _pm12_performance_attribution_sources()
+    facts = _management_strategy_allocation_runtime_facts(sources)
+    strategy_filter = set(_split_csv_query(strategy_id) or [])
+    pool_filter = set(_split_csv_query(capital_pool_id) or [])
+    stage_filter = {item.lower() for item in (_split_csv_query(deployment_stage) or [])}
+    if strategy_filter:
+        facts = [fact for fact in facts if str(fact.get("strategy_id") or "") in strategy_filter]
+    if pool_filter:
+        facts = [fact for fact in facts if str(fact.get("capital_pool_id") or "") in pool_filter]
+    if stage_filter:
+        facts = [
+            fact
+            for fact in facts
+            if str(fact.get("deployment_stage") or "").strip().lower() in stage_filter
+        ]
+    rows = _management_strategy_allocation_rows(facts, sources)
+    drift_filter = {item.lower() for item in (_split_csv_query(drift_status) or [])}
+    if drift_filter:
+        rows = [
+            row
+            for row in rows
+            if str((row.get("drift") or {}).get("status") or "").lower() in drift_filter
+        ]
+    total = len(rows)
+    page_items, next_page_token = _page_slice(rows, page_token, page_size)
+
+    allocation_values = [
+        value
+        for value in (_management_as_float(row.get("allocation_amount")) for row in rows)
+        if value is not None
+    ]
+    pnl_values = [
+        value
+        for value in (_management_as_float((row.get("metrics") or {}).get("total_pnl")) for row in rows)
+        if value is not None
+    ]
+    drift_status_counts = _management_count_by(
+        [{"status": (row.get("drift") or {}).get("status")} for row in rows],
+        "status",
+    )
+    source_surfaces = {
+        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
+        "deployment_plans": _dataset_surface_status("deployment_plans", snapshot_at=snapshot_at),
+        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at),
+        "capital_pools": _dataset_surface_status("capital_pools", snapshot_at=snapshot_at),
+        "strategies": _dataset_surface_status("strategy_specs", snapshot_at=snapshot_at),
+        "telemetry_summaries": _dataset_surface_status(
+            "telemetry_summaries",
+            snapshot_at=snapshot_at,
+            has_data=bool(sources["telemetry_by_runtime_id"]) if sources["runtime_bindings"] else None,
+            missing_message="Telemetry summaries unavailable for active strategy allocation runtimes.",
+        ),
+        "paper_live_drift": _dataset_surface_status(
+            "paper_live_drift_reports",
+            snapshot_at=snapshot_at,
+        ),
+    }
+    active_runtime_count = len({
+        runtime_id
+        for row in rows
+        for runtime_id in (row.get("runtime_ids") or [])
+        if runtime_id
+    })
+    drift_available_count = sum(
+        int((row.get("drift") or {}).get("available_runtime_count") or 0)
+        for row in rows
+    )
+    if (
+        active_runtime_count
+        and drift_available_count < active_runtime_count
+        and source_surfaces["paper_live_drift"].get("status") == "ok"
+    ):
+        source_surfaces["paper_live_drift"]["status"] = "degraded"
+        source_surfaces["paper_live_drift"]["message"] = (
+            "Paper/live drift report missing for one or more active strategy allocation runtimes."
+        )
+    allocation_surface = _aggregate_group_surface(
+        "strategy_allocation",
+        list(source_surfaces.values()),
+        snapshot_at=snapshot_at,
+        unavailable_message="Strategy allocation aggregate unavailable.",
+        degraded_message="Strategy allocation is available, but one or more supporting surfaces are degraded.",
+    )
+    summary = {
+        "allocationCount": total,
+        "allocation_count": total,
+        "returnedAllocationCount": len(page_items),
+        "returned_allocation_count": len(page_items),
+        "strategyCount": len({row.get("strategy_id") for row in rows if row.get("strategy_id")}),
+        "strategy_count": len({row.get("strategy_id") for row in rows if row.get("strategy_id")}),
+        "capitalPoolCount": len({row.get("capital_pool_id") for row in rows if row.get("capital_pool_id")}),
+        "capital_pool_count": len({row.get("capital_pool_id") for row in rows if row.get("capital_pool_id")}),
+        "activeRuntimeCount": active_runtime_count,
+        "active_runtime_count": active_runtime_count,
+        "totalAllocatedCapital": round(sum(allocation_values), 6) if allocation_values else None,
+        "total_allocated_capital": round(sum(allocation_values), 6) if allocation_values else None,
+        "totalPnl": round(sum(pnl_values), 6) if pnl_values else None,
+        "total_pnl": round(sum(pnl_values), 6) if pnl_values else None,
+        "driftBreachedCount": drift_status_counts.get("breached", 0),
+        "drift_breached_count": drift_status_counts.get("breached", 0),
+        "driftWatchCount": drift_status_counts.get("watch", 0),
+        "drift_watch_count": drift_status_counts.get("watch", 0),
+        "driftUnavailableCount": drift_status_counts.get("unavailable", 0),
+        "drift_unavailable_count": drift_status_counts.get("unavailable", 0),
+        "byDriftStatus": drift_status_counts,
+        "by_drift_status": drift_status_counts,
+        "basis": "active_runtime_strategy_pool_allocation",
+    }
+    data = {
+        "id": "management-strategy-allocation",
+        "items": page_items,
+        "rows": page_items,
+        "summary": summary,
+    }
+    return {
+        "data": data,
+        "items": page_items,
+        "rows": page_items,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "strategy_allocation": allocation_surface,
+                **source_surfaces,
+            },
+            "composition_sources": [
+                "GET /api/v1/runtime-bindings",
+                "GET /api/v1/deployment-plans",
+                "GET /api/v1/persona-capital-bindings",
+                "GET /bff/capital-pools",
+                "GET /bff/strategies",
+                "GET /api/v1/telemetry/{runtime_id}/summary",
+                "GET /api/v1/operator/paper-live-drift/{runtime_id}",
+            ],
+            "policy": "read_only_strategy_allocation",
+        },
+    }
+
+
+@app.get("/bff/management/strategy-allocation")
+async def bff_management_strategy_allocation(
+    strategy_id: Optional[str] = None,
+    capital_pool_id: Optional[str] = None,
+    deployment_stage: Optional[str] = None,
+    drift_status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: active strategy allocation slice across capital pools with paper/live drift."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _management_strategy_allocation_response(
+        strategy_id=strategy_id,
+        capital_pool_id=capital_pool_id,
+        deployment_stage=deployment_stage,
+        drift_status=drift_status,
+        page_token=page_token,
+        page_size=page_size,
+    )
+
+
 @app.get("/bff/management/portfolio-book")
 async def bff_management_portfolio_book(
     page_token: Optional[str] = None,
@@ -21548,6 +22487,182 @@ async def bff_management_portfolio_book_pools(
                 "GET /api/v1/runtime-bindings",
                 "GET /api/v1/telemetry/{runtime_id}/summary",
             ],
+        },
+    }
+
+
+@app.get("/bff/management/portfolio-book/exposure")
+async def bff_management_portfolio_book_exposure(
+    status: Optional[str] = None,
+    risk_policy_ref: Optional[str] = None,
+    capital_pool_id: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 portfolio-book exposure and risk-budget rollup."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    sources = _management_portfolio_book_pool_sources(
+        status=status,
+        risk_policy_ref=risk_policy_ref,
+    )
+    entries = sources["entries"]
+    if capital_pool_id:
+        requested = {item.strip() for item in capital_pool_id.split(",") if item.strip()}
+        entries = [
+            entry
+            for entry in entries
+            if str(entry.get("pool_id") or entry.get("id") or "") in requested
+        ]
+
+    exposure_items = [
+        _management_portfolio_book_exposure_item(entry)
+        for entry in entries
+    ]
+    total = len(exposure_items)
+    page_items, next_page_token = _page_slice(exposure_items, page_token, page_size)
+
+    risk_budgets = [
+        value
+        for item in exposure_items
+        for value in [_management_as_float(item.get("risk_budget"))]
+        if value is not None
+    ]
+    exposures = [
+        value
+        for item in exposure_items
+        for value in [_management_as_float(item.get("current_exposure"))]
+        if value is not None
+    ]
+    exposure_runtime_ids = {
+        runtime_id
+        for item in exposure_items
+        for runtime_id in (
+            (item.get("sourceRefs") or {}).get("runtimeIds") or []
+        )
+        if str(runtime_id).strip()
+    }
+    portfolio_telemetry = _management_telemetry_rollup([
+        sources["telemetry_by_runtime_id"][runtime_id]
+        for runtime_id in sorted(exposure_runtime_ids)
+        if runtime_id in sources["telemetry_by_runtime_id"]
+    ])
+    risk_budget_total = round(sum(risk_budgets), 6) if risk_budgets else None
+    current_exposure_total = round(sum(exposures), 6) if exposures else None
+    utilization = None
+    if current_exposure_total is not None and risk_budget_total not in (None, 0):
+        utilization = round(current_exposure_total / risk_budget_total, 6)
+    available_budget_total = (
+        round(risk_budget_total - current_exposure_total, 6)
+        if risk_budget_total is not None and current_exposure_total is not None
+        else None
+    )
+    active_pool_count = len([
+        item for item in exposure_items
+        if str(item.get("status") or "").strip().lower() in {"active", "ready"}
+    ])
+    over_budget_count = len([
+        item for item in exposure_items if item.get("risk_state") == "over_budget"
+    ])
+    near_limit_count = len([
+        item for item in exposure_items if item.get("risk_state") == "near_limit"
+    ])
+    unknown_exposure_count = len([
+        item for item in exposure_items if item.get("risk_state") == "unknown"
+    ])
+
+    source_surfaces = {
+        "capital_pools": _dataset_surface_status("capital_pools", snapshot_at=snapshot_at),
+        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at),
+        "deployment_plans": _dataset_surface_status("deployment_plans", snapshot_at=snapshot_at),
+        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
+        "telemetry_summaries": _dataset_surface_status(
+            "telemetry_summaries",
+            snapshot_at=snapshot_at,
+            has_data=bool(sources["telemetry_by_runtime_id"]) if sources["runtime_bindings"] else None,
+            missing_message="Telemetry summaries unavailable for portfolio-book exposure runtimes.",
+        ),
+    }
+    exposure_surface = _aggregate_group_surface(
+        "portfolio_book_exposure",
+        list(source_surfaces.values()),
+        snapshot_at=snapshot_at,
+        unavailable_message="Portfolio-book exposure composition has no readable source records.",
+        degraded_message="Portfolio-book exposure composition is degraded because one or more source surfaces are degraded.",
+    )
+
+    summary = {
+        "exposure_count": total,
+        "exposureCount": total,
+        "returned_exposure_count": len(page_items),
+        "returnedExposureCount": len(page_items),
+        "total_pools": total,
+        "totalPools": total,
+        "active_pool_count": active_pool_count,
+        "activePoolCount": active_pool_count,
+        "risk_budget_total": risk_budget_total,
+        "riskBudgetTotal": risk_budget_total,
+        "current_exposure_total": current_exposure_total,
+        "currentExposureTotal": current_exposure_total,
+        "available_budget_total": available_budget_total,
+        "availableBudgetTotal": available_budget_total,
+        "risk_budget_utilization": utilization,
+        "riskBudgetUtilization": utilization,
+        "over_budget_count": over_budget_count,
+        "overBudgetCount": over_budget_count,
+        "near_limit_count": near_limit_count,
+        "nearLimitCount": near_limit_count,
+        "unknown_exposure_count": unknown_exposure_count,
+        "unknownExposureCount": unknown_exposure_count,
+        "telemetry_runtime_count": portfolio_telemetry["runtime_count"],
+        "telemetryRuntimeCount": portfolio_telemetry["runtime_count"],
+        "total_pnl": portfolio_telemetry["total_pnl"],
+        "totalPnl": portfolio_telemetry["total_pnl"],
+        "max_drawdown": portfolio_telemetry["max_drawdown"],
+        "maxDrawdown": portfolio_telemetry["max_drawdown"],
+        "average_fill_rate": portfolio_telemetry["average_fill_rate"],
+        "averageFillRate": portfolio_telemetry["average_fill_rate"],
+        "total_trades": portfolio_telemetry["total_trades"],
+        "totalTrades": portfolio_telemetry["total_trades"],
+        "latest_telemetry_at": portfolio_telemetry["latest_collected_at"],
+        "latestTelemetryAt": portfolio_telemetry["latest_collected_at"],
+        "basis": "capital_pool_exposure_with_runtime_telemetry",
+    }
+    data = {
+        "id": "pm12-portfolio-book-exposure",
+        "summary": summary,
+        "items": page_items,
+        "exposures": page_items,
+    }
+
+    return {
+        "data": data,
+        "items": page_items,
+        "exposures": page_items,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "total": total,
+            "surfaces": {
+                "portfolio_book_exposure": exposure_surface,
+                **source_surfaces,
+            },
+            "composition_sources": [
+                "GET /bff/capital-pools",
+                "GET /api/v1/persona-capital-bindings",
+                "GET /api/v1/deployment-plans",
+                "GET /api/v1/runtime-bindings",
+                "GET /api/v1/telemetry/{runtime_id}/summary",
+            ],
+            "policy": "read_only_portfolio_exposure",
         },
     }
 
@@ -25506,6 +26621,7 @@ _PM12_LEAGUE_RANKING_CRITERIA = {
     "execution": ("executionScore", "Execution"),
     "activity": ("activityScore", "Activity"),
 }
+_PM12_LEAGUE_MOVER_DIRECTIONS = {"all", "up", "down", "flat", "new"}
 _PM12_LEAGUE_FORMULA_VERSION = "pm12-default-v1"
 _PM12_QUARTERLY_FORMULA_DOC_REF = (
     "docs/04/pantheon_bff_api_gap_2026-05-23/"
@@ -25516,6 +26632,21 @@ _PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID = (
 )
 _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT = "2026-05-23T00:00:00Z"
 _PM12_QUARTER_PATTERN = re.compile(r"^(?P<year>\d{4})-Q(?P<quarter>[1-4])$", re.IGNORECASE)
+_PM12_HEATMAP_BUCKET_DELTAS = {
+    "hour": timedelta(hours=1),
+    "day": timedelta(days=1),
+    "week": timedelta(days=7),
+}
+_PM12_TELEMETRY_HISTORY_KEYS = (
+    "history",
+    "samples",
+    "series",
+    "time_series",
+    "timeSeries",
+    "buckets",
+    "time_buckets",
+    "timeBuckets",
+)
 _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER = (
     "promote_to_canary_candidate",
     "increase_research_budget",
@@ -25653,15 +26784,33 @@ def _pm12_persona_runtime_ids(row: Dict[str, Any]) -> List[str]:
     return values
 
 
-def _pm12_persona_telemetry_metrics(row: Dict[str, Any]) -> Dict[str, Any]:
-    runtime_ids = _pm12_persona_runtime_ids(row)
-    telemetry = [
-        summary
-        for runtime_id in runtime_ids
-        for summary in [read_store.get_telemetry_summary(runtime_id)]
-        if isinstance(summary, dict)
-    ]
-    telemetry = _sort_records_latest_first(telemetry, ("collected_at", "updated_at", "created_at"))
+def _pm12_telemetry_record_timestamp(record: Dict[str, Any]) -> Optional[datetime]:
+    for key in (
+        "collected_at",
+        "collectedAt",
+        "bucket_start",
+        "bucketStart",
+        "timestamp",
+        "updated_at",
+        "updatedAt",
+        "created_at",
+        "createdAt",
+    ):
+        parsed = _audit_datetime(record.get(key))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _pm12_telemetry_metrics_from_records(
+    runtime_ids: List[str],
+    telemetry: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    telemetry = sorted(
+        telemetry,
+        key=lambda item: _pm12_telemetry_record_timestamp(item) or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
     pnl_values = [
         value
         for value in (_management_number(item.get("pnl")) for item in telemetry)
@@ -25687,6 +26836,8 @@ def _pm12_persona_telemetry_metrics(row: Dict[str, Any]) -> Dict[str, Any]:
         for value in (_management_number(item.get("total_trades")) for item in telemetry)
         if value is not None
     ]
+    latest_timestamp = _pm12_telemetry_record_timestamp(telemetry[0]) if telemetry else None
+    latest_timestamp_iso = _pm12_iso_z(latest_timestamp) if latest_timestamp else None
     return {
         "runtimeIds": runtime_ids,
         "runtime_ids": runtime_ids,
@@ -25702,9 +26853,56 @@ def _pm12_persona_telemetry_metrics(row: Dict[str, Any]) -> Dict[str, Any]:
         "avg_slippage_bps": _management_avg(slippage_values),
         "totalTrades": int(sum(trade_values)) if trade_values else 0,
         "total_trades": int(sum(trade_values)) if trade_values else 0,
-        "latestTelemetryAt": telemetry[0].get("collected_at") if telemetry else None,
-        "latest_telemetry_at": telemetry[0].get("collected_at") if telemetry else None,
+        "latestTelemetryAt": latest_timestamp_iso,
+        "latest_telemetry_at": latest_timestamp_iso,
     }
+
+
+def _pm12_persona_telemetry_records(row: Dict[str, Any]) -> List[Dict[str, Any]]:
+    records: List[Dict[str, Any]] = []
+    seen = set()
+    for runtime_id in _pm12_persona_runtime_ids(row):
+        summary = read_store.get_telemetry_summary(runtime_id)
+        if not isinstance(summary, dict):
+            continue
+        candidates: List[Dict[str, Any]] = [dict(summary)]
+        for key in _PM12_TELEMETRY_HISTORY_KEYS:
+            raw_history = summary.get(key)
+            if isinstance(raw_history, list):
+                candidates.extend(dict(item) for item in raw_history if isinstance(item, dict))
+        for candidate in candidates:
+            candidate.setdefault("runtime_id", runtime_id)
+            dedupe_key = (
+                str(candidate.get("runtime_id") or ""),
+                str(
+                    candidate.get("collected_at")
+                    or candidate.get("collectedAt")
+                    or candidate.get("bucket_start")
+                    or candidate.get("bucketStart")
+                    or candidate.get("timestamp")
+                    or candidate.get("updated_at")
+                    or candidate.get("updatedAt")
+                    or candidate.get("created_at")
+                    or candidate.get("createdAt")
+                    or ""
+                ),
+            )
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            records.append(candidate)
+    return records
+
+
+def _pm12_persona_telemetry_metrics(row: Dict[str, Any]) -> Dict[str, Any]:
+    return _pm12_telemetry_metrics_from_records(
+        _pm12_persona_runtime_ids(row),
+        [
+            record
+            for record in _pm12_persona_telemetry_records(row)
+            if isinstance(record, dict)
+        ],
+    )
 
 
 def _pm12_persona_league_scores(row: Dict[str, Any], metrics: Dict[str, Any]) -> Dict[str, float]:
@@ -26001,6 +27199,164 @@ def _pm12_quarterly_ranking_items(
             "basis": "latest_available_persona_league_metrics_with_quarter_window",
         })
     return items
+
+
+def _pm12_quarterly_find_persona_item(
+    ranked_items: List[Dict[str, Any]],
+    persona_id: str,
+) -> Optional[Dict[str, Any]]:
+    clean_persona_id = str(persona_id or "").strip()
+    if not clean_persona_id:
+        return None
+    for item in ranked_items:
+        item_persona_id = str(item.get("personaId") or item.get("persona_id") or item.get("id") or "").strip()
+        if item_persona_id == clean_persona_id:
+            return item
+    return None
+
+
+def _pm12_quarterly_find_persona_row(
+    rows: List[Dict[str, Any]],
+    persona_id: str,
+) -> Dict[str, Any]:
+    clean_persona_id = str(persona_id or "").strip()
+    for row in rows:
+        row_persona_id = str(row.get("personaId") or row.get("persona_id") or row.get("id") or "").strip()
+        if row_persona_id == clean_persona_id:
+            return row
+    return {}
+
+
+def _pm12_quarterly_component_score(
+    components: Dict[str, Any],
+    score_field: str,
+) -> float:
+    snake_score_fields = {
+        "pnlScore": "pnl_score",
+        "riskScore": "risk_score",
+        "executionScore": "execution_score",
+        "activityScore": "activity_score",
+    }
+    value = _management_number(components.get(score_field))
+    if value is None:
+        value = _management_number(components.get(snake_score_fields.get(score_field, "")))
+    return value or 0.0
+
+
+def _pm12_quarterly_drilldown_contributions(item: Dict[str, Any]) -> List[Dict[str, Any]]:
+    components = item.get("components") if isinstance(item.get("components"), dict) else {}
+    formula = _pm12_quarter_formula_payload()
+    contribution_rows: List[Dict[str, Any]] = []
+    total_weighted = 0.0
+
+    for component in formula.get("components") or []:
+        key = str(component.get("key") or "").strip()
+        if key not in _PM12_LEAGUE_RANKING_CRITERIA:
+            continue
+        score_field, label = _PM12_LEAGUE_RANKING_CRITERIA[key]
+        weight = _management_number(component.get("weight")) or 0.0
+        score = _pm12_quarterly_component_score(components, score_field)
+        weighted = round(score * weight, 6)
+        total_weighted += weighted
+        contribution_rows.append({
+            "id": f"{item.get('personaId')}-{key}",
+            "key": key,
+            "label": label,
+            "scoreField": score_field,
+            "score_field": score_field,
+            "score": score,
+            "weight": weight,
+            "weightedContribution": weighted,
+            "weighted_contribution": weighted,
+            "basis": "component_score_x_formula_weight",
+        })
+
+    denominator = total_weighted if total_weighted > 0 else None
+    for row in contribution_rows:
+        weighted = _management_number(row.get("weightedContribution")) or 0.0
+        share = round(weighted / denominator, 6) if denominator else 0.0
+        row["contributionShare"] = share
+        row["contribution_share"] = share
+
+    return contribution_rows
+
+
+def _pm12_quarterly_drilldown_payload(
+    *,
+    item: Dict[str, Any],
+    row: Dict[str, Any],
+    quarter_window: Dict[str, Any],
+    ranked_count: int,
+    evidence_refs: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    persona_id = str(item.get("personaId") or item.get("persona_id") or item.get("id") or "")
+    formula = _pm12_quarter_formula_payload()
+    contributions = _pm12_quarterly_drilldown_contributions(item)
+    total_weighted = round(
+        sum(_management_number(entry.get("weightedContribution")) or 0.0 for entry in contributions),
+        6,
+    )
+    score = _management_number(item.get("score")) or _management_number(item.get("overallScore")) or total_weighted
+    source_breakdown = {
+        "metrics": item.get("metrics") or {},
+        "components": item.get("components") or {},
+        "routePolicy": row.get("routePolicy") or {},
+        "route_policy": row.get("routePolicy") or {},
+        "capabilities": row.get("capabilities") or {},
+        "bindings": row.get("bindings") or {},
+        "sessions": row.get("sessions") or {},
+        "evaluations": row.get("evaluations") or {},
+        "memory": row.get("memory") or {},
+        "health": row.get("health") or {},
+        "allowedActions": row.get("allowedActions") or {},
+        "allowed_actions": row.get("allowedActions") or {},
+    }
+    summary = {
+        "quarter": quarter_window["quarter"],
+        "personaId": persona_id,
+        "persona_id": persona_id,
+        "rank": item.get("rank"),
+        "rankedCount": ranked_count,
+        "ranked_count": ranked_count,
+        "score": score,
+        "overallScore": item.get("overallScore"),
+        "overall_score": item.get("overall_score") or item.get("overallScore"),
+        "formulaVersion": item.get("formulaVersion") or formula["formulaVersion"],
+        "formula_version": item.get("formula_version") or formula["formula_version"],
+        "componentCount": len(contributions),
+        "component_count": len(contributions),
+        "totalWeightedContribution": total_weighted,
+        "total_weighted_contribution": total_weighted,
+        "evidenceRefCount": len(evidence_refs),
+        "evidence_ref_count": len(evidence_refs),
+        "basis": item.get("basis") or formula["basis"],
+    }
+    return {
+        "id": f"pm12-quarterly-ranking-drilldown-{quarter_window['quarter'].lower()}-{persona_id}",
+        "quarter": quarter_window["quarter"],
+        "quarterWindow": quarter_window,
+        "quarter_window": quarter_window,
+        "personaId": persona_id,
+        "persona_id": persona_id,
+        "rank": item.get("rank"),
+        "score": score,
+        "rankingItem": item,
+        "ranking_item": item,
+        "formula": formula,
+        "contributions": contributions,
+        "contributionBreakdown": contributions,
+        "contribution_breakdown": contributions,
+        "sourceBreakdown": source_breakdown,
+        "source_breakdown": source_breakdown,
+        "evidenceRefs": evidence_refs,
+        "evidence_refs": evidence_refs,
+        "summary": summary,
+        "links": {
+            "parentRanking": f"/bff/management/quarterly-ranking?quarter={quarter_window['quarter']}",
+            "parent_ranking": f"/bff/management/quarterly-ranking?quarter={quarter_window['quarter']}",
+            "persona": f"/bff/personas/{persona_id}",
+        },
+    }
 
 
 def _pm12_add_recommendation_action(action_ids: List[str], action_id: str) -> None:
@@ -26392,6 +27748,341 @@ def _pm12_persona_league_tier_payload(rows: List[Dict[str, Any]]) -> tuple[List[
     return tiers, assignments, summary
 
 
+def _pm12_normalize_mover_direction(direction: Optional[str]) -> str:
+    normalized = str(direction or "all").strip().lower() or "all"
+    if normalized not in _PM12_LEAGUE_MOVER_DIRECTIONS:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "invalid_direction",
+                "message": "direction must be one of all, up, down, flat, or new.",
+                "field": "direction",
+            },
+        )
+    return normalized
+
+
+def _pm12_persona_league_mover_items(
+    rows: List[Dict[str, Any]],
+    *,
+    direction: str,
+    limit: int,
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    ranked_items = sorted(
+        (_pm12_persona_league_ranking_item(row) for row in rows),
+        key=lambda item: (
+            _management_number(item.get("overallScore")) or 0.0,
+            str(item.get("personaId") or ""),
+        ),
+        reverse=True,
+    )
+    movers: List[Dict[str, Any]] = []
+    direction_counts = {"up": 0, "down": 0, "flat": 0, "new": 0}
+    for current_rank, item in enumerate(ranked_items, start=1):
+        persona_id = str(item.get("personaId") or item.get("persona_id") or item.get("id") or "")
+        current_score = _management_number(item.get("overallScore")) or 0.0
+        movement_direction = "new"
+        direction_counts[movement_direction] += 1
+        mover = {
+            **item,
+            "id": f"persona-league-mover-{persona_id}",
+            "moverId": f"persona-league-mover-{persona_id}",
+            "mover_id": f"persona-league-mover-{persona_id}",
+            "currentRank": current_rank,
+            "current_rank": current_rank,
+            "previousRank": None,
+            "previous_rank": None,
+            "rankDelta": None,
+            "rank_delta": None,
+            "direction": movement_direction,
+            "currentScore": current_score,
+            "current_score": current_score,
+            "previousScore": None,
+            "previous_score": None,
+            "scoreDelta": None,
+            "score_delta": None,
+            "scoreDeltaDisplay": "baseline unavailable",
+            "score_delta_display": "baseline unavailable",
+            "baselineStatus": "unavailable",
+            "baseline_status": "unavailable",
+            "basis": "current_persona_league_snapshot_no_historical_baseline",
+            "rank": current_rank,
+            "score": current_score,
+            "scoreField": "overallScore",
+            "score_field": "overallScore",
+            "formulaVersion": _PM12_LEAGUE_FORMULA_VERSION,
+            "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
+            "movement": {
+                "direction": movement_direction,
+                "rank_delta": None,
+                "score_delta": None,
+                "baseline_status": "unavailable",
+                "basis": "current_persona_league_snapshot_no_historical_baseline",
+            },
+        }
+        movers.append(mover)
+
+    if direction != "all":
+        movers = [item for item in movers if item.get("direction") == direction]
+    movers = sorted(
+        movers,
+        key=lambda item: (
+            item.get("baselineStatus") != "unavailable",
+            abs(_management_number(item.get("scoreDelta")) or 0.0),
+            -int(item.get("currentRank") or 0),
+            str(item.get("personaId") or ""),
+        ),
+        reverse=True,
+    )
+    limited = movers[:limit]
+    top_mover = limited[0] if limited else None
+    summary = {
+        "personaCount": len(rows),
+        "persona_count": len(rows),
+        "moverCount": len(movers),
+        "mover_count": len(movers),
+        "returnedCount": len(limited),
+        "returned_count": len(limited),
+        "direction": direction,
+        "formulaVersion": _PM12_LEAGUE_FORMULA_VERSION,
+        "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
+        "baselineStatus": "unavailable",
+        "baseline_status": "unavailable",
+        "baselineUnavailableCount": len(ranked_items),
+        "baseline_unavailable_count": len(ranked_items),
+        "upCount": direction_counts["up"],
+        "up_count": direction_counts["up"],
+        "downCount": direction_counts["down"],
+        "down_count": direction_counts["down"],
+        "flatCount": direction_counts["flat"],
+        "flat_count": direction_counts["flat"],
+        "newCount": direction_counts["new"],
+        "new_count": direction_counts["new"],
+        "topMoverPersonaId": (top_mover or {}).get("personaId") if isinstance(top_mover, dict) else None,
+        "top_mover_persona_id": (top_mover or {}).get("personaId") if isinstance(top_mover, dict) else None,
+        "basis": "current_persona_league_snapshot_no_historical_baseline",
+    }
+    return limited, summary
+
+
+def _pm12_heatmap_bucket_delta(bucket: str) -> tuple[str, timedelta]:
+    bucket_key = str(bucket or "").strip().lower() or "day"
+    delta = _PM12_HEATMAP_BUCKET_DELTAS.get(bucket_key)
+    if delta is None:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "invalid_heatmap_bucket",
+                "message": "bucket must be one of: hour, day, week.",
+                "field": "bucket",
+            },
+        )
+    return bucket_key, delta
+
+
+def _pm12_floor_bucket_start(value: datetime, bucket: str) -> datetime:
+    value = value.astimezone(timezone.utc)
+    if bucket == "hour":
+        return value.replace(minute=0, second=0, microsecond=0)
+    if bucket == "week":
+        day_start = value.replace(hour=0, minute=0, second=0, microsecond=0)
+        return day_start - timedelta(days=day_start.weekday())
+    return value.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _pm12_heatmap_bucket_label(start_at: datetime, bucket: str) -> str:
+    if bucket == "hour":
+        return start_at.strftime("%Y-%m-%d %H:00 UTC")
+    if bucket == "week":
+        year, week, _weekday = start_at.isocalendar()
+        return f"{year}-W{week:02d}"
+    return start_at.date().isoformat()
+
+
+def _pm12_heatmap_buckets(
+    snapshot_at: str,
+    *,
+    bucket: str,
+    bucket_count: int,
+) -> tuple[str, List[Dict[str, Any]]]:
+    bucket_key, delta = _pm12_heatmap_bucket_delta(bucket)
+    snapshot_dt = _audit_datetime(snapshot_at) or datetime.now(timezone.utc)
+    current_bucket_start = _pm12_floor_bucket_start(snapshot_dt, bucket_key)
+    first_start = current_bucket_start - (delta * (bucket_count - 1))
+    buckets: List[Dict[str, Any]] = []
+    for index in range(bucket_count):
+        start_at = first_start + (delta * index)
+        end_at = start_at + delta
+        start_iso = _pm12_iso_z(start_at)
+        end_iso = _pm12_iso_z(end_at)
+        buckets.append({
+            "id": f"{bucket_key}-{start_iso}",
+            "bucketId": f"{bucket_key}-{start_iso}",
+            "bucket_id": f"{bucket_key}-{start_iso}",
+            "index": index,
+            "label": _pm12_heatmap_bucket_label(start_at, bucket_key),
+            "startAt": start_iso,
+            "start_at": start_iso,
+            "endAt": end_iso,
+            "end_at": end_iso,
+            "endExclusiveAt": end_iso,
+            "end_exclusive_at": end_iso,
+        })
+    return bucket_key, buckets
+
+
+def _pm12_records_for_heatmap_bucket(
+    records: List[Dict[str, Any]],
+    *,
+    start_at: datetime,
+    end_at: datetime,
+) -> tuple[List[Dict[str, Any]], str]:
+    observed = [
+        record
+        for record in records
+        for timestamp in [_pm12_telemetry_record_timestamp(record)]
+        if timestamp is not None and start_at <= timestamp < end_at
+    ]
+    if observed:
+        return observed, "observed"
+    carried = [
+        record
+        for record in records
+        for timestamp in [_pm12_telemetry_record_timestamp(record)]
+        if timestamp is not None and timestamp < end_at
+    ]
+    if carried:
+        latest = sorted(
+            carried,
+            key=lambda item: _pm12_telemetry_record_timestamp(item) or datetime.min.replace(tzinfo=timezone.utc),
+            reverse=True,
+        )[:1]
+        return latest, "carried_forward"
+    return [], "latest_available"
+
+
+def _pm12_persona_league_heatmap_cell(
+    row: Dict[str, Any],
+    bucket: Dict[str, Any],
+    *,
+    runtime_ids: List[str],
+    records: List[Dict[str, Any]],
+    latest_metrics: Dict[str, Any],
+) -> Dict[str, Any]:
+    start_at = _audit_datetime(bucket.get("startAt")) or datetime.now(timezone.utc)
+    end_at = _audit_datetime(bucket.get("endAt")) or start_at
+    bucket_records, source = _pm12_records_for_heatmap_bucket(
+        records,
+        start_at=start_at,
+        end_at=end_at,
+    )
+    metrics = (
+        _pm12_telemetry_metrics_from_records(runtime_ids, bucket_records)
+        if bucket_records
+        else latest_metrics
+    )
+    scores = _pm12_persona_league_scores(row, metrics)
+    overall_score = scores["overallScore"]
+    components = {
+        **scores,
+        "overall_score": scores["overallScore"],
+        "pnl_score": scores["pnlScore"],
+        "risk_score": scores["riskScore"],
+        "execution_score": scores["executionScore"],
+        "activity_score": scores["activityScore"],
+    }
+    return {
+        "id": f"{row.get('personaId') or row.get('id')}:{bucket['bucketId']}",
+        "personaId": row.get("personaId") or row.get("id"),
+        "persona_id": row.get("personaId") or row.get("id"),
+        "bucketId": bucket["bucketId"],
+        "bucket_id": bucket["bucketId"],
+        "bucketIndex": bucket["index"],
+        "bucket_index": bucket["index"],
+        "score": overall_score,
+        "compositeScore": overall_score,
+        "composite_score": overall_score,
+        "overallScore": overall_score,
+        "overall_score": overall_score,
+        "components": components,
+        "metrics": metrics,
+        "formulaVersion": _PM12_LEAGUE_FORMULA_VERSION,
+        "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
+        "source": source,
+        "observedTelemetryCount": len(bucket_records),
+        "observed_telemetry_count": len(bucket_records),
+        "latestTelemetryAt": metrics.get("latestTelemetryAt"),
+        "latest_telemetry_at": metrics.get("latest_telemetry_at"),
+    }
+
+
+def _pm12_persona_league_heatmap_rows(
+    rows: List[Dict[str, Any]],
+    buckets: List[Dict[str, Any]],
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
+    heatmap_rows: List[Dict[str, Any]] = []
+    cells: List[Dict[str, Any]] = []
+    score_values: List[float] = []
+    for row in rows:
+        runtime_ids = _pm12_persona_runtime_ids(row)
+        records = _pm12_persona_telemetry_records(row)
+        latest_metrics = _pm12_telemetry_metrics_from_records(runtime_ids, records)
+        ranking_item = _pm12_persona_league_ranking_item(row)
+        row_cells = [
+            _pm12_persona_league_heatmap_cell(
+                row,
+                bucket,
+                runtime_ids=runtime_ids,
+                records=records,
+                latest_metrics=latest_metrics,
+            )
+            for bucket in buckets
+        ]
+        for cell in row_cells:
+            score = _management_number(cell.get("score"))
+            if score is not None:
+                score_values.append(score)
+        cells.extend(row_cells)
+        heatmap_rows.append({
+            "id": ranking_item.get("personaId"),
+            "personaId": ranking_item.get("personaId"),
+            "persona_id": ranking_item.get("persona_id"),
+            "name": ranking_item.get("name"),
+            "owner": ranking_item.get("owner"),
+            "state": ranking_item.get("state"),
+            "risk": ranking_item.get("risk"),
+            "archetype": ranking_item.get("archetype"),
+            "tier": ranking_item.get("tier"),
+            "tierId": ranking_item.get("tierId"),
+            "tier_id": ranking_item.get("tier_id"),
+            "tierLabel": ranking_item.get("tierLabel"),
+            "tier_label": ranking_item.get("tier_label"),
+            "latestScore": ranking_item.get("overallScore"),
+            "latest_score": ranking_item.get("overallScore"),
+            "runtimeIds": runtime_ids,
+            "runtime_ids": runtime_ids,
+            "cells": row_cells,
+            "links": ranking_item.get("links") or {},
+        })
+    summary = {
+        "personaCount": len(rows),
+        "persona_count": len(rows),
+        "bucketCount": len(buckets),
+        "bucket_count": len(buckets),
+        "cellCount": len(cells),
+        "cell_count": len(cells),
+        "formulaVersion": _PM12_LEAGUE_FORMULA_VERSION,
+        "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
+        "minScore": min(score_values) if score_values else None,
+        "min_score": min(score_values) if score_values else None,
+        "maxScore": max(score_values) if score_values else None,
+        "max_score": max(score_values) if score_values else None,
+        "averageScore": _management_avg(score_values),
+        "average_score": _management_avg(score_values),
+    }
+    return heatmap_rows, cells, summary
+
+
 @app.get("/bff/management/persona-league")
 async def bff_management_persona_league(
     state: Optional[str] = None,
@@ -26496,6 +28187,76 @@ async def bff_management_persona_league_rankings(
     }
 
 
+@app.get("/bff/management/persona-league/movers")
+async def bff_management_persona_league_movers(
+    state: Optional[str] = None,
+    archetype: Optional[str] = None,
+    q: str = Query(default=""),
+    direction: Optional[str] = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 persona-league movement list computed from league rows."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    normalized_direction = _pm12_normalize_mover_direction(direction)
+    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
+    movers, summary = _pm12_persona_league_mover_items(
+        rows,
+        direction=normalized_direction,
+        limit=limit,
+    )
+    source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
+    history_surface = _composed_surface_status(
+        snapshot_at=snapshot_at,
+        available=False,
+        missing_message="Historical persona league baseline is unavailable; movers are current-snapshot entries.",
+    )
+    movers_surface = _aggregate_group_surface(
+        "persona_league_movers",
+        [*source_surfaces.values(), history_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Persona league movers aggregate unavailable.",
+        degraded_message="Persona league movers are degraded because one or more source surfaces are degraded.",
+    )
+    data = {
+        "id": "management-persona-league-movers",
+        "items": movers,
+        "movers": movers,
+        "summary": summary,
+        "policy": "read_only_governance_advisory",
+    }
+    return {
+        "data": data,
+        "items": movers,
+        "movers": movers,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": None,
+            "total": summary["moverCount"],
+            "page_size": len(movers),
+        },
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": {
+                "persona_league_movers": movers_surface,
+                "persona_league_history": history_surface,
+                **source_surfaces,
+            },
+            "composition_sources": [
+                "GET /bff/management/persona-league",
+                "GET /bff/management/persona-league/rankings",
+                "GET /bff/management/persona-league/tiers",
+                "GET /bff/personas",
+                "GET /bff/v5/execution/persona-health",
+            ],
+            "policy": "read_only_governance_advisory",
+            "baseline_status": "unavailable",
+        },
+    }
+
+
 @app.get("/bff/management/persona-league/tiers")
 async def bff_management_persona_league_tiers(
     state: Optional[str] = None,
@@ -26528,6 +28289,83 @@ async def bff_management_persona_league_tiers(
             "snapshot_at": snapshot_at,
             "surfaces": {
                 "persona_league_tiers": tiers_surface,
+                **source_surfaces,
+            },
+            "composition_sources": [
+                "GET /bff/management/persona-league",
+                "GET /bff/management/persona-league/rankings",
+                "GET /bff/personas",
+                "GET /bff/v5/execution/persona-health",
+            ],
+            "policy": "read_only_governance_advisory",
+        },
+    }
+
+
+@app.get("/bff/management/persona-league/heatmap")
+async def bff_management_persona_league_heatmap(
+    state: Optional[str] = None,
+    archetype: Optional[str] = None,
+    q: str = Query(default=""),
+    bucket: str = Query(default="day"),
+    bucket_count: int = Query(default=7, ge=1, le=90),
+    limit: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: persona x time-bucket league heatmap using the PM-12 composite score."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)[:limit]
+    bucket_key, buckets = _pm12_heatmap_buckets(
+        snapshot_at,
+        bucket=bucket,
+        bucket_count=bucket_count,
+    )
+    heatmap_rows, cells, summary = _pm12_persona_league_heatmap_rows(rows, buckets)
+    summary = {
+        **summary,
+        "bucket": bucket_key,
+        "returnedPersonaCount": len(heatmap_rows),
+        "returned_persona_count": len(heatmap_rows),
+    }
+    source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
+    heatmap_surface = _aggregate_group_surface(
+        "persona_league_heatmap",
+        list(source_surfaces.values()),
+        snapshot_at=snapshot_at,
+        unavailable_message="Persona league heatmap aggregate unavailable.",
+        degraded_message="Persona league heatmap is degraded because one or more source surfaces are degraded.",
+    )
+    data = {
+        "id": "persona-league-heatmap",
+        "heatmapId": "persona-league-heatmap",
+        "heatmap_id": "persona-league-heatmap",
+        "bucket": bucket_key,
+        "buckets": buckets,
+        "rows": heatmap_rows,
+        "cells": cells,
+        "summary": summary,
+        "formulaVersion": _PM12_LEAGUE_FORMULA_VERSION,
+        "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
+        "basis": "persona_x_time_bucket_composite_score",
+    }
+    return {
+        "data": data,
+        "items": heatmap_rows,
+        "rows": heatmap_rows,
+        "buckets": buckets,
+        "cells": cells,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": None,
+            "total": len(heatmap_rows),
+            "page_size": len(heatmap_rows),
+        },
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": {
+                "persona_league_heatmap": heatmap_surface,
                 **source_surfaces,
             },
             "composition_sources": [
@@ -26707,6 +28545,130 @@ async def bff_management_quarterly_ranking(
     }
 
 
+@app.get("/bff/management/quarterly-ranking/drilldown")
+async def bff_management_quarterly_ranking_drilldown(
+    response: Response,
+    persona_id: Optional[str] = Query(default=None, alias="personaId"),
+    persona_id_snake: Optional[str] = Query(default=None, alias="persona_id"),
+    quarter: Optional[str] = Query(default=None),
+    state: Optional[str] = None,
+    archetype: Optional[str] = None,
+    q: str = Query(default=""),
+    authorization: Optional[str] = Header(default=None),
+    x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
+):
+    """BFF: PM-12 single-persona contribution breakdown for quarterly ranking."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    correlation_id = str(x_correlation_id or "").strip() or f"pm12-drilldown-{uuid.uuid4().hex}"
+    response.headers["X-Correlation-Id"] = correlation_id
+
+    resolved_persona_id = str(persona_id or persona_id_snake or "").strip()
+    if not resolved_persona_id:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "personaId is required",
+            "Quarterly ranking drilldown requires personaId or persona_id.",
+            precondition_failed="personaId",
+            correlation_id=correlation_id,
+        )
+
+    snapshot_at = utc_now()
+    quarter_window = _pm12_quarter_window(quarter, snapshot_at)
+    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
+    ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
+    ranking_item = _pm12_quarterly_find_persona_item(ranked_items, resolved_persona_id)
+    if ranking_item is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Quarterly ranking persona not found",
+            f"Persona {resolved_persona_id} is not present in the requested quarterly ranking.",
+            precondition_failed="personaId",
+            correlation_id=correlation_id,
+        )
+
+    public_evidence_refs, redacted_count, evidence_dataset_available = _pm12_public_quarter_evidence_refs(
+        identity,
+        quarter_window,
+    )
+    row = _pm12_quarterly_find_persona_row(rows, resolved_persona_id)
+    drilldown = _pm12_quarterly_drilldown_payload(
+        item=ranking_item,
+        row=row,
+        quarter_window=quarter_window,
+        ranked_count=len(ranked_items),
+        evidence_refs=public_evidence_refs,
+    )
+
+    source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
+    formula_surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
+    evidence_surface = _dataset_surface_status(
+        "evidence_refs",
+        snapshot_at=snapshot_at,
+        has_data=evidence_dataset_available,
+        missing_message="Evidence reference read surface is unavailable.",
+    )
+    quarterly_surface = _aggregate_group_surface(
+        "quarterly_ranking",
+        [*source_surfaces.values(), formula_surface, evidence_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Quarterly ranking aggregate unavailable.",
+        degraded_message="Quarterly ranking is degraded because one or more source surfaces are degraded.",
+    )
+    drilldown_surface = _aggregate_group_surface(
+        "quarterly_ranking_drilldown",
+        [quarterly_surface, formula_surface, evidence_surface, *source_surfaces.values()],
+        snapshot_at=snapshot_at,
+        unavailable_message="Quarterly ranking drilldown aggregate unavailable.",
+        degraded_message="Quarterly ranking drilldown is degraded because one or more source surfaces are degraded.",
+    )
+    summary = dict(drilldown["summary"])
+    summary["redactedEvidenceCount"] = redacted_count
+    summary["redacted_evidence_count"] = redacted_count
+
+    return {
+        "data": drilldown,
+        "item": ranking_item,
+        "rankingItem": ranking_item,
+        "ranking_item": ranking_item,
+        "contributions": drilldown["contributions"],
+        "contributionBreakdown": drilldown["contributionBreakdown"],
+        "contribution_breakdown": drilldown["contribution_breakdown"],
+        "sourceBreakdown": drilldown["sourceBreakdown"],
+        "source_breakdown": drilldown["source_breakdown"],
+        "formula": drilldown["formula"],
+        "quarterWindow": quarter_window,
+        "quarter_window": quarter_window,
+        "evidenceRefs": public_evidence_refs,
+        "evidence_refs": public_evidence_refs,
+        "summary": summary,
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "correlationId": correlation_id,
+            "correlation_id": correlation_id,
+            "surfaces": {
+                "quarterly_ranking_drilldown": drilldown_surface,
+                "quarterly_ranking": quarterly_surface,
+                "formula": formula_surface,
+                "evidence_refs": evidence_surface,
+                "knowledge_evidence": evidence_surface,
+                **source_surfaces,
+            },
+            "composition_sources": [
+                "GET /bff/management/quarterly-ranking",
+                "GET /bff/management/persona-league",
+                "GET /bff/management/persona-league/rankings",
+                "GET /bff/management/persona-league/tiers",
+                "GET /api/v1/knowledge/evidence",
+            ],
+            "policy": "read_only_governance_advisory",
+            "redacted_evidence_count": redacted_count,
+        },
+    }
+
+
 @app.get("/bff/management/quarterly-ranking/recommendations")
 async def bff_management_quarterly_ranking_recommendations(
     quarter: Optional[str] = Query(default=None),
@@ -26874,13 +28836,14 @@ async def bff_management_quarterly_ranking_recommendations(
     }
 
 
-def _build_management_performance_attribution_payload(
+def _pm12_performance_attribution_response(
     *,
     dimensions: List[str],
     period: str,
     page_token: Optional[str],
     page_size: int,
-    payload_id: str = "pm12-performance-attribution",
+    data_id: str = "pm12-performance-attribution",
+    surface_key: str = "performance_attribution",
 ) -> Dict[str, Any]:
     snapshot_at = utc_now()
     period_key = str(period or "").strip() or "latest"
@@ -26911,12 +28874,18 @@ def _build_management_performance_attribution_payload(
         "strategies": _dataset_surface_status("strategy_specs", snapshot_at=snapshot_at),
     }
     attribution_surface = _aggregate_group_surface(
-        "performance_attribution",
+        surface_key,
         list(source_surfaces.values()),
         snapshot_at=snapshot_at,
         unavailable_message="Performance attribution aggregate unavailable.",
         degraded_message="Performance attribution is degraded because one or more source surfaces are degraded.",
     )
+    surfaces = {
+        surface_key: attribution_surface,
+        **source_surfaces,
+    }
+    if surface_key != "performance_attribution":
+        surfaces["performance_attribution"] = attribution_surface
     summary = {
         "period": period_key,
         "dimensions": dimensions,
@@ -26951,7 +28920,7 @@ def _build_management_performance_attribution_payload(
         "basis": "latest_runtime_telemetry_snapshot",
     }
     data = {
-        "id": payload_id,
+        "id": data_id,
         "period": period_key,
         "dimensions": dimensions,
         "items": page_items,
@@ -26970,10 +28939,7 @@ def _build_management_performance_attribution_payload(
         },
         "meta": {
             **_snapshot_meta(snapshot_at),
-            "surfaces": {
-                "performance_attribution": attribution_surface,
-                **source_surfaces,
-            },
+            "surfaces": surfaces,
             "composition_sources": [
                 "GET /api/v1/runtime-bindings",
                 "GET /api/v1/telemetry/{runtime_id}/summary",
@@ -27001,9 +28967,8 @@ async def bff_management_performance_attribution(
     """BFF: PM-12 performance attribution by persona/strategy/pool/asset/broker/runtime/regime."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
-    dimensions = _pm12_normalize_attribution_dimensions(dimension)
-    return _build_management_performance_attribution_payload(
-        dimensions=dimensions,
+    return _pm12_performance_attribution_response(
+        dimensions=_pm12_normalize_attribution_dimensions(dimension),
         period=period,
         page_token=page_token,
         page_size=page_size,
@@ -27029,12 +28994,53 @@ async def bff_management_performance_attribution_by_strategy(
     """BFF: PM-12 performance attribution grouped by strategy."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
-    return _build_management_performance_attribution_payload(
+    return _pm12_performance_attribution_response(
         dimensions=["strategy"],
         period=period,
         page_token=page_token,
         page_size=page_size,
-        payload_id="pm12-performance-attribution-by-strategy",
+        data_id="pm12-performance-attribution-by-strategy",
+        surface_key="performance_attribution_by_strategy",
+    )
+
+
+@app.get("/bff/management/performance-attribution/by-persona")
+async def bff_management_performance_attribution_by_persona(
+    period: str = Query(default="latest"),
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 performance attribution grouped by persona."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _pm12_performance_attribution_response(
+        dimensions=["persona"],
+        period=period,
+        page_token=page_token,
+        page_size=page_size,
+        data_id="pm12-performance-attribution-by-persona",
+        surface_key="performance_attribution_by_persona",
+    )
+
+
+@app.get("/bff/management/performance-attribution/by-pool")
+async def bff_management_performance_attribution_by_pool(
+    period: str = Query(default="latest"),
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 performance attribution grouped by capital pool."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _pm12_performance_attribution_response(
+        dimensions=["pool"],
+        period=period,
+        page_token=page_token,
+        page_size=page_size,
+        data_id="pm12-performance-attribution-by-pool",
+        surface_key="performance_attribution_by_pool",
     )
 
 
