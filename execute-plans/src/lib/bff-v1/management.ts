@@ -943,6 +943,106 @@ export interface ManagementQuarterlyRankingResponse {
   };
 }
 
+export interface ManagementQuarterlyRankingDrilldownQuery {
+  personaId: string;
+  quarter?: string;
+  state?: string;
+  archetype?: string;
+  q?: string;
+}
+
+export interface ManagementQuarterlyRankingContribution {
+  id: string;
+  key: string;
+  label: string;
+  scoreField: string;
+  score_field: string;
+  score: number;
+  weight: number;
+  weightedContribution: number;
+  weighted_contribution: number;
+  contributionShare: number;
+  contribution_share: number;
+  basis: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementQuarterlyRankingDrilldownSummary {
+  quarter: string;
+  personaId: string;
+  persona_id: string;
+  rank?: number | null;
+  rankedCount: number;
+  ranked_count: number;
+  score: number;
+  overallScore?: number | null;
+  overall_score?: number | null;
+  formulaVersion: string;
+  formula_version: string;
+  componentCount: number;
+  component_count: number;
+  totalWeightedContribution: number;
+  total_weighted_contribution: number;
+  evidenceRefCount: number;
+  evidence_ref_count: number;
+  redactedEvidenceCount?: number;
+  redacted_evidence_count?: number;
+  basis: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementQuarterlyRankingDrilldownData {
+  id: string;
+  quarter: string;
+  quarterWindow: ManagementQuarterlyRankingWindow;
+  quarter_window: ManagementQuarterlyRankingWindow;
+  personaId: string;
+  persona_id: string;
+  rank?: number | null;
+  score: number;
+  rankingItem: ManagementQuarterlyRankingItem;
+  ranking_item: ManagementQuarterlyRankingItem;
+  formula: ManagementQuarterlyRankingFormula;
+  contributions: ManagementQuarterlyRankingContribution[];
+  contributionBreakdown: ManagementQuarterlyRankingContribution[];
+  contribution_breakdown: ManagementQuarterlyRankingContribution[];
+  sourceBreakdown: Record<string, unknown>;
+  source_breakdown: Record<string, unknown>;
+  evidenceRefs: ManagementEvidenceItem[];
+  evidence_refs: ManagementEvidenceItem[];
+  summary: ManagementQuarterlyRankingDrilldownSummary;
+  links?: Record<string, string | null | undefined>;
+  [key: string]: unknown;
+}
+
+export interface ManagementQuarterlyRankingDrilldownResponse {
+  data: ManagementQuarterlyRankingDrilldownData;
+  item: ManagementQuarterlyRankingItem;
+  rankingItem: ManagementQuarterlyRankingItem;
+  ranking_item: ManagementQuarterlyRankingItem;
+  contributions: ManagementQuarterlyRankingContribution[];
+  contributionBreakdown: ManagementQuarterlyRankingContribution[];
+  contribution_breakdown: ManagementQuarterlyRankingContribution[];
+  sourceBreakdown: Record<string, unknown>;
+  source_breakdown: Record<string, unknown>;
+  formula: ManagementQuarterlyRankingFormula;
+  quarterWindow: ManagementQuarterlyRankingWindow;
+  quarter_window: ManagementQuarterlyRankingWindow;
+  evidenceRefs: ManagementEvidenceItem[];
+  evidence_refs: ManagementEvidenceItem[];
+  summary: ManagementQuarterlyRankingDrilldownSummary;
+  meta: {
+    snapshot_at?: string;
+    correlationId?: string;
+    correlation_id?: string;
+    surfaces?: Record<string, ManagementSurfaceRef>;
+    composition_sources?: string[];
+    policy?: string;
+    redacted_evidence_count?: number;
+    [key: string]: unknown;
+  };
+}
+
 export interface ManagementQuarterlyRankingRecommendationsQuery {
   quarter?: string;
   state?: string;
@@ -1735,6 +1835,12 @@ export function managementQuarterlyRankingPath(
   return withQuery(paths.managementQuarterlyRanking(), query);
 }
 
+export function managementQuarterlyRankingDrilldownPath(
+  query: ManagementQuarterlyRankingDrilldownQuery,
+): string {
+  return withQuery(paths.managementQuarterlyRankingDrilldown(), query);
+}
+
 export function managementQuarterlyRankingFormulaPath(): string {
   return paths.managementQuarterlyRankingFormula();
 }
@@ -2046,6 +2152,25 @@ export async function fetchManagementQuarterlyRanking(
     throw new Error(`GET ${path} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementQuarterlyRankingResponse>;
+}
+
+export async function fetchManagementQuarterlyRankingDrilldown(
+  query: ManagementQuarterlyRankingDrilldownQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementQuarterlyRankingDrilldownResponse> {
+  const path = managementQuarterlyRankingDrilldownPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementQuarterlyRankingDrilldownResponse>;
 }
 
 export async function fetchManagementQuarterlyRankingFormula(
