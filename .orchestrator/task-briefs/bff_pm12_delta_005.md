@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: GET /bff/management/portfolio-book/positions
-- Status: todo
+- Status: review_approved
 - Owner: Codex2
 - Reviewer: Claude2
 - Phase: Sprint BFF-DELTA / EPIC-BFF-DELTA-PM12-SUB
-- Last update: 2026-05-24T13:11:52Z
-- Next: Supervisor preempted BFF-PM12-DELTA-005 to free Codex2 for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.
+- Last update: 2026-05-24T13:41:47Z
+- Next: Review approved: all 9 acceptance criteria satisfied, 58 tests pass. Positions endpoint composes correctly from holdings; position_id derivation, surface rename, and summary field mapping are all correct. execute-plans client contract (types, path helper, fetch helper) is complete. Returning to Codex2 for closeout.
 
 ## Summary
 -
@@ -23,12 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_bff_api_gap_2026-05-24_delta/BFF_API_GAP_delta_audit_spec.md;execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md;services/control-plane/bff/main.py;execute-plans/src/lib/bff-v1/management.ts
 
 ## Recent Task Activity
-- 2026-05-24T13:06:38Z · Codex2 · start · Supervisor auto-started BFF-PM12-DELTA-005 after successful dispatch.
-- 2026-05-24T13:06:41Z · Orchestrator · task_dispatch_synced · Supervisor auto-started BFF-PM12-DELTA-005 after successful dispatch.
-- 2026-05-24T13:08:07Z · Codex2 · start · Started GET /bff/management/portfolio-book/positions implementation.
-- 2026-05-24T13:11:56Z · Orchestrator · task_preempted_synced · Supervisor preempted BFF-PM12-DELTA-005 to free Codex2 for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.
-- 2026-05-24T13:11:56Z · Orchestrator · worker_superseded · Worker superseded to prioritize higher-priority review/finalize work.
-- 2026-05-24T13:11:56Z · Orchestrator · worker_failed · Worker exited before the task reached a terminal status.
+- 2026-05-24T13:37:38Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-24T13:37:43Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-05-24T13:37:43Z · Orchestrator · worker_worktree_reused · -
+- 2026-05-24T13:37:43Z · Orchestrator · worker_started · Worker started via claude_cli: review_ready_dispatch
+- 2026-05-24T13:41:47Z · Claude2 · review_approved · Review approved: all 9 acceptance criteria satisfied, 58 tests pass. Positions endpoint composes correctly from holdings; position_id derivation, surface rename, and summary field mapping are all correct. execute-plans client contract (types, path helper, fetch helper) is complete. Returning to Codex2 for closeout.
+- 2026-05-24T13:42:55Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
