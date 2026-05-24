@@ -82,3 +82,13 @@ error-envelope assertions and the newer supported-dimension assertion.
 - Post-refresh verification:
   - `pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py` - 58 passed, 3 existing `datetime.utcnow()` deprecation warnings
   - `git diff --check` - passed
+
+PR #528 then became `BEHIND` again after `BFF-PM12-DELTA-003` merged into
+`dev`. The branch was refreshed with `origin/dev` on 2026-05-24 without
+additional conflict.
+
+- Dev refresh merge commit: `803d22b2d2ef0d9b4c5a964ff7d65bbbf8fd7f1e`
+- Merged dev commit: `95b3f943` (`BFF-PM12-DELTA-003`)
+- Post-refresh verification:
+  - `pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py` - 59 passed, 3 existing `datetime.utcnow()` deprecation warnings
+  - `git diff --check` - passed
