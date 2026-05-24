@@ -2011,6 +2011,144 @@ export interface ManagementStrategyAllocationResponse {
   };
 }
 
+export interface ManagementRiskRadarQuery {
+  persona_id?: string;
+  strategy_id?: string;
+  capital_pool_id?: string;
+  risk_state?: string;
+  page_token?: string;
+  page_size?: number;
+}
+
+export type ManagementRiskRadarState = "ok" | "watch" | "critical" | "unknown" | string;
+
+export interface ManagementRiskRadarMetricIndicator {
+  id: "drawdown" | "exposure" | "value-at-risk" | string;
+  metric: string;
+  label?: string;
+  value?: number | null;
+  risk_budget?: number | null;
+  utilization?: number | null;
+  status: ManagementRiskRadarState;
+  source?: string;
+  watch_threshold?: number;
+  critical_threshold?: number;
+  basis?: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementRiskRadarItem {
+  id: string;
+  rank: number;
+  personaId: string;
+  persona_id: string;
+  personaLabel?: string;
+  persona_label?: string;
+  strategyId: string;
+  strategy_id: string;
+  strategyLabel?: string;
+  strategy_label?: string;
+  capitalPoolId: string;
+  capital_pool_id: string;
+  capitalPoolName?: string;
+  capital_pool_name?: string;
+  riskState: ManagementRiskRadarState;
+  risk_state: ManagementRiskRadarState;
+  riskScore?: number;
+  risk_score?: number;
+  deploymentStages?: string[];
+  deployment_stages?: string[];
+  runtimeStatuses?: string[];
+  runtime_statuses?: string[];
+  indicators: ManagementRiskRadarMetricIndicator[];
+  metrics: Record<string, unknown>;
+  drawdown?: number | null;
+  worstDrawdown?: number | null;
+  worst_drawdown?: number | null;
+  exposure?: number | null;
+  totalExposure?: number | null;
+  total_exposure?: number | null;
+  valueAtRisk?: number | null;
+  value_at_risk?: number | null;
+  riskBudget?: number | null;
+  risk_budget?: number | null;
+  exposureUtilization?: number | null;
+  exposure_utilization?: number | null;
+  valueAtRiskUtilization?: number | null;
+  value_at_risk_utilization?: number | null;
+  sourceRefs?: Record<string, unknown>;
+  source_refs?: Record<string, unknown>;
+  links?: Record<string, string | null | undefined>;
+  [key: string]: unknown;
+}
+
+export interface ManagementRiskRadarSummary {
+  indicatorCount: number;
+  indicator_count: number;
+  returnedIndicatorCount: number;
+  returned_indicator_count: number;
+  personaCount: number;
+  persona_count: number;
+  strategyCount: number;
+  strategy_count: number;
+  capitalPoolCount: number;
+  capital_pool_count: number;
+  criticalCount: number;
+  critical_count: number;
+  watchCount: number;
+  watch_count: number;
+  unknownCount: number;
+  unknown_count: number;
+  okCount: number;
+  ok_count: number;
+  byRiskState: Record<string, number>;
+  by_risk_state: Record<string, number>;
+  totalExposure?: number | null;
+  total_exposure?: number | null;
+  worstDrawdown?: number | null;
+  worst_drawdown?: number | null;
+  valueAtRiskTotal?: number | null;
+  value_at_risk_total?: number | null;
+  basis?: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementRiskRadarResponse {
+  data: {
+    id: "management-risk-radar" | string;
+    items: ManagementRiskRadarItem[];
+    rows: ManagementRiskRadarItem[];
+    indicators: ManagementRiskRadarItem[];
+    summary: ManagementRiskRadarSummary;
+    [key: string]: unknown;
+  };
+  items: ManagementRiskRadarItem[];
+  rows: ManagementRiskRadarItem[];
+  indicators: ManagementRiskRadarItem[];
+  summary: ManagementRiskRadarSummary;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces: {
+      risk_radar: ManagementSurfaceRef;
+      runtime_bindings?: ManagementSurfaceRef;
+      deployment_plans?: ManagementSurfaceRef;
+      persona_bindings?: ManagementSurfaceRef;
+      capital_pools?: ManagementSurfaceRef;
+      strategies?: ManagementSurfaceRef;
+      telemetry_summaries?: ManagementSurfaceRef;
+      [key: string]: ManagementSurfaceRef | undefined;
+    };
+    composition_sources?: string[];
+    policy?: string;
+    [key: string]: unknown;
+  };
+}
+
 export interface ManagementPortfolioBookExposureQuery {
   status?: string;
   risk_policy_ref?: string;
@@ -2199,6 +2337,10 @@ export function managementStrategyAllocationPath(
   query?: ManagementStrategyAllocationQuery,
 ): string {
   return withQuery(paths.managementStrategyAllocation(), query);
+}
+
+export function managementRiskRadarPath(query?: ManagementRiskRadarQuery): string {
+  return withQuery(paths.managementRiskRadar(), query);
 }
 
 export function managementPortfolioBookPath(): string {
@@ -2482,6 +2624,25 @@ export async function fetchManagementStrategyAllocation(
     throw new Error(`GET ${path} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementStrategyAllocationResponse>;
+}
+
+export async function fetchManagementRiskRadar(
+  query?: ManagementRiskRadarQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementRiskRadarResponse> {
+  const path = managementRiskRadarPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementRiskRadarResponse>;
 }
 
 export async function fetchManagementPortfolioBookPools(
