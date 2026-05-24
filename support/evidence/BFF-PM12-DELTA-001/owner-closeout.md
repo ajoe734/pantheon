@@ -60,3 +60,17 @@ git diff --check
   refreshed to current `origin/dev`; the branch tip must again carry the
   BFF-PM12-DELTA-001 task subject and required Codex2 closeout trailers for
   the `done` gate.
+
+## Publication Refresh
+
+PR #516 became `BEHIND` after BFF-PM12-DELTA-004 merged into `dev`. The task
+branch was refreshed with `origin/dev` using a non-interactive merge on
+2026-05-24.
+
+- Dev refresh merge commit: `fe0defcc64cd4827e86c262e0e91c90fb30dc72b`
+- Merged dev commit: `0c5c24e1` (`BFF-PM12-DELTA-004`)
+- Post-refresh verification:
+  - `pytest services/control-plane/bff/test_bff_management_delta_routes.py -q` - 5 passed in 2.88s
+  - `pytest services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py -q` - 30 passed in 9.03s
+  - `python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/test_bff_management_delta_routes.py` - passed
+  - `git diff --check` - passed
