@@ -71,3 +71,14 @@ on 2026-05-24.
 - Post-refresh verification:
   - `pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py` - 53 passed, 3 existing `datetime.utcnow()` deprecation warnings
   - `git diff --check` - passed
+
+PR #528 later reported `CONFLICTING` after `BFF-PM12-DELTA-005` merged into
+`dev`. The task branch was refreshed with `origin/dev` again on 2026-05-24,
+resolving the single PM12 test conflict by keeping both this task's top-level
+error-envelope assertions and the newer supported-dimension assertion.
+
+- Dev refresh merge commit: `2c2bc920df4cb23df16a9bc28da7c3230a45e2a0`
+- Merged dev commit: `b2fac79f` (`BFF-PM12-DELTA-005`)
+- Post-refresh verification:
+  - `pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py` - 58 passed, 3 existing `datetime.utcnow()` deprecation warnings
+  - `git diff --check` - passed
