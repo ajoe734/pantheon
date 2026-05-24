@@ -108,6 +108,7 @@ export const paths = {
   managementCockpit: () => `${BASE}/management/cockpit`,
   managementBoardPack: () => `${BASE}/management/board-pack`,
   managementGovernanceLedger: () => `${BASE}/management/governance-ledger`,
+  managementHiqBacklog: () => `${BASE}/management/hiq-backlog`,
   managementTradingPulse: () => `${BASE}/management/trading-pulse`,
   managementTradingPulseRankings: () => `${BASE}/management/trading-pulse/rankings`,
   managementEvidence: () => `${BASE}/management/evidence`,
