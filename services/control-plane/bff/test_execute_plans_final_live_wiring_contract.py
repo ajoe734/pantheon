@@ -59,6 +59,7 @@ FINAL_CONTRACT_METHOD_PATHS = {
     ("GET", "/bff/jobs/{id}"),
     ("GET", "/bff/management/board-pack"),
     ("GET", "/bff/management/cockpit"),
+    ("GET", "/bff/management/cost-attribution"),
     ("GET", "/bff/management/evidence"),
     ("GET", "/bff/management/evolution-journal"),
     ("GET", "/bff/management/governance-ledger"),
@@ -189,6 +190,7 @@ LIVE_PROBE_CONCRETE_ROUTES = [
     ("GET", "/bff/jobs"),
     ("GET", "/bff/management/board-pack"),
     ("GET", "/bff/management/cockpit"),
+    ("GET", "/bff/management/cost-attribution"),
     ("GET", "/bff/management/evidence"),
     ("GET", "/bff/management/evolution-journal"),
     ("GET", "/bff/management/governance-ledger"),
@@ -426,6 +428,11 @@ def test_execute_plans_management_board_pack_client_exports_are_present() -> Non
     assert "ManagementGovernanceLedgerResponse" in management_ts
     assert "managementGovernanceLedgerPath" in management_ts
     assert "fetchManagementGovernanceLedger" in management_ts
+    assert "managementCostAttribution: () => `${BASE}/management/cost-attribution`" in paths_ts
+    assert "ManagementCostAttributionQuery" in management_ts
+    assert "ManagementCostAttributionResponse" in management_ts
+    assert "managementCostAttributionPath" in management_ts
+    assert "fetchManagementCostAttribution" in management_ts
     assert "managementHiqBacklog: () => `${BASE}/management/hiq-backlog`" in paths_ts
     assert "ManagementHiqBacklogQuery" in management_ts
     assert "ManagementHiqBacklogResponse" in management_ts

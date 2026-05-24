@@ -830,3 +830,82 @@ def test_governance_ledger_cors_preflight_and_openapi() -> None:
             assert "get" in schema["paths"]["/bff/management/governance-ledger"]
         finally:
             bff_main.read_store = original
+
+
+def test_cost_attribution_success() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+
+            anonymous = client.get("/bff/management/cost-attribution")
+            assert anonymous.status_code == 401, anonymous.text
+
+            response = client.get(
+                "/bff/management/cost-attribution",
+                headers=HEADERS,
+                params={"page_size": 20},
+            )
+
+            assert response.status_code == 200, response.text
+            body = response.json()
+            data = body["data"]
+
+            assert data["id"] == "management-cost-attribution"
+            assert body["items"] == body["rows"] == data["rows"]
+            assert body["attributions"] == body["items"]
+            assert body["summary"] == data["summary"]
+            assert body["page_info"]["page_size"] == 20
+            assert body["summary"]["policy"] == "read_only_cost_attribution"
+            assert body["meta"]["policy"] == "read_only_cost_attribution"
+            assert "cost_attribution" in body["meta"]["surfaces"]
+            assert body["meta"]["surfaces"]["cost_attribution"]["source"] == "bff_composed"
+            assert "GET /bff/capital-pools" in body["meta"]["composition_sources"]
+            assert "row_count" in body["summary"]
+            assert "total_cost" in body["summary"]
+        finally:
+            bff_main.read_store = original
+
+
+def test_cost_attribution_filter_by_persona() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+
+            response = client.get(
+                "/bff/management/cost-attribution",
+                headers=HEADERS,
+                params={"persona_id": "nonexistent-persona-xyz", "page_size": 10},
+            )
+
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert body["page_info"]["total"] == 0
+            assert body["items"] == []
+        finally:
+            bff_main.read_store = original
+
+
+def test_cost_attribution_cors_preflight_and_openapi() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            response = client.options(
+                "/bff/management/cost-attribution",
+                headers={
+                    "Origin": LOVABLE_ORIGIN,
+                    "Access-Control-Request-Method": "GET",
+                    "Access-Control-Request-Headers": "Authorization, X-Correlation-Id",
+                },
+            )
+
+            assert response.status_code in {200, 204}
+            assert response.headers["access-control-allow-origin"] == LOVABLE_ORIGIN
+
+            schema = client.get("/openapi.json").json()
+            assert "/bff/management/cost-attribution" in schema["paths"]
+            assert "get" in schema["paths"]["/bff/management/cost-attribution"]
+        finally:
+            bff_main.read_store = original

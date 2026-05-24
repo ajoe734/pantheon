@@ -125,6 +125,7 @@ export const paths = {
   managementCapitalFlow: () => `${BASE}/management/capital-flow`,
   managementRiskRadar: () => `${BASE}/management/risk-radar`,
   managementIncidentTimeline: () => `${BASE}/management/incident-timeline`,
+  managementCostAttribution: () => `${BASE}/management/cost-attribution`,
   managementPortfolioBook: () => `${BASE}/management/portfolio-book`,
   managementPortfolioBookPools: () => `${BASE}/management/portfolio-book/pools`,
   managementPortfolioBookExposure: () => `${BASE}/management/portfolio-book/exposure`,

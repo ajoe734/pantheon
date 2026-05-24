@@ -572,6 +572,53 @@ pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py se
 Result: 66 passed, 3 existing `datetime.utcnow()` deprecation warnings in
 `services/control-plane/bff/read_store.py`.
 
+## BFF-MGMT-DELTA-008
+
+Route:
+
+```text
+GET /bff/management/cost-attribution
+```
+
+Purpose:
+
+Provide a strict-live Management Console route for read-only cost attribution
+across personas, strategies, and capital pools. The backend route composes
+existing runtime, deployment, binding, pool, strategy, and telemetry surfaces
+to derive commission cost, slippage cost, and infrastructure cost for each
+persona/strategy/pool combination. It does not introduce a new cost ledger or
+mutate capital.
+
+Frontend contract:
+
+- `paths.managementCostAttribution()`
+- `managementCostAttributionPath(query)`
+- `fetchManagementCostAttribution(query, init, baseUrl)`
+
+Backend acceptance:
+
+- unauthenticated request: HTTP 401
+- authenticated request: HTTP 200
+- CORS preflight: HTTP 204
+- response envelope: `data`, `items`, `rows`, `attributions`, `summary`, `page_info`, `meta`
+- supported query: `persona_id`, `strategy_id`, `capital_pool_id`, `period`,
+  `page_token`, `page_size`
+- `data.id`: `management-cost-attribution`
+- `meta.policy`: `read_only_cost_attribution`
+- rows include `cost_id`, identifiers, `total_cost`, `commission_cost`,
+  `slippage_cost`, `infrastructure_cost`, `allocated_capital`, and source refs
+- no new cost source of truth; composed from runtime bindings, deployment
+  plans, persona bindings, capital pools, strategies, and telemetry summaries
+
+Validation:
+
+```bash
+python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py -q
+```
+
+Result: 84 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
 ## BFF-MGMT-DELTA-005
 
 Route:

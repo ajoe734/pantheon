@@ -1259,6 +1259,105 @@ Result: 66 passed, 3 existing `datetime.utcnow()` deprecation warnings in
 
 ---
 
+## BFF-MGMT-DELTA-008 Management Cost Attribution Route
+
+Task: BFF-MGMT-DELTA-008
+Owner: Claude2
+Reviewer: Claude
+
+### Scope
+
+Add a strict-live Management Console route for read-only cost attribution across
+personas, strategies, and capital pools:
+
+```text
+GET /bff/management/cost-attribution?persona_id=&strategy_id=&capital_pool_id=&period=&page_token=&page_size=
+```
+
+The route composes runtime bindings, deployment plans, persona-capital bindings,
+capital pools, strategy summaries, and runtime telemetry summaries. It derives
+cost components (commission, slippage, infrastructure) from existing telemetry
+surfaces without introducing a new cost ledger or mutating capital.
+
+### Contract
+
+The response uses the canonical aggregate envelope:
+
+```json
+{
+  "data": {
+    "id": "management-cost-attribution",
+    "items": [],
+    "rows": [],
+    "attributions": [],
+    "summary": {},
+    "policy": "read_only_cost_attribution"
+  },
+  "items": [],
+  "rows": [],
+  "attributions": [],
+  "summary": {},
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 50 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": [],
+    "policy": "read_only_cost_attribution"
+  }
+}
+```
+
+Rows include `cost_id`, capital-pool/persona/strategy identifiers and labels,
+`total_cost`, `commission_cost` (from trade count × commission rate placeholder),
+`slippage_cost` (from avg_slippage_bps × total_notional), `infrastructure_cost`
+(from allocated capital × fee rate placeholder), `allocated_capital`,
+`risk_budget`, trade/notional metrics, `latest_at`, cost basis description,
+source refs, and drilldown links.
+
+### Composition Sources
+
+- `GET /api/v1/runtime-bindings`
+- `GET /api/v1/deployment-plans`
+- `GET /api/v1/persona-capital-bindings`
+- `GET /bff/capital-pools`
+- `GET /bff/strategies`
+- `GET /api/v1/telemetry/{runtime_id}/summary`
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Path registered in FastAPI/OpenAPI | Implemented |
+| 2 | Cost attribution rows compose from runtime, deployment, binding, pool, strategy, and telemetry surfaces | Implemented |
+| 3 | Supports `persona_id`, `strategy_id`, `capital_pool_id`, `period`, `page_token`, and `page_size` query parameters | Implemented |
+| 4 | Anonymous request returns HTTP 401 | Implemented |
+| 5 | Authenticated request returns HTTP 200 | Implemented |
+| 6 | Response keeps canonical aggregate envelope | Implemented |
+| 7 | CORS preflight returns HTTP 204 | Implemented |
+| 8 | Focused pytest cases cover success, filter, auth, preflight, and OpenAPI presence | Implemented |
+| 9 | execute-plans exposes typed path and fetch helpers | Implemented |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_management_delta_routes.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-24_delta/BFF_API_GAP_delta_audit_spec.md`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
+
+### Validation
+
+```bash
+python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py -q
+```
+
+Result: 84 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
+---
+
 ## BFF-MGMT-DELTA-005 Management Risk Radar Route
 
 Task: BFF-MGMT-DELTA-005

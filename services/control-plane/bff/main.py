@@ -31857,6 +31857,324 @@ async def bff_management_governance_ledger(
     )
 
 
+_MANAGEMENT_COST_ATTRIBUTION_COMMISSION_RATE = 0.0003  # 3 bps per trade as a placeholder rate
+
+
+def _management_cost_attribution_rows(
+    facts: List[Dict[str, Any]],
+    sources: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    grouped: Dict[tuple[str, str, str], List[Dict[str, Any]]] = {}
+    for fact in facts:
+        pool_key = _pm12_dimension_key(fact.get("capital_pool_id"))
+        persona_key = _pm12_dimension_key(fact.get("persona_id"))
+        strategy_key = _pm12_dimension_key(fact.get("strategy_id"))
+        grouped.setdefault((pool_key, persona_key, strategy_key), []).append(fact)
+
+    rows: List[Dict[str, Any]] = []
+    for (pool_key, persona_key, strategy_key), group_facts in grouped.items():
+        metrics = _pm12_attribution_metrics(group_facts)
+        total_trades = _management_as_float(metrics.get("total_trades")) or 0.0
+        total_notional = _management_as_float(metrics.get("total_notional"))
+        avg_slippage_bps = _management_as_float(metrics.get("average_slippage_bps"))
+
+        commission_cost: Optional[float] = round(
+            total_trades * _MANAGEMENT_COST_ATTRIBUTION_COMMISSION_RATE, 6
+        ) if total_trades else None
+        slippage_cost: Optional[float] = None
+        if avg_slippage_bps is not None and total_notional not in (None, 0):
+            slippage_cost = round(abs(avg_slippage_bps) * total_notional / 10000.0, 6)
+        infrastructure_cost: Optional[float] = None
+        pool = sources["pools_by_id"].get(pool_key, {})
+        allocated_capital = _management_as_float(
+            _management_first_non_empty(
+                metrics.get("total_exposure"),
+                metrics.get("total_notional"),
+                metrics.get("total_market_value"),
+            )
+        )
+        risk_budget = _management_first_float(
+            pool,
+            "risk_budget",
+            "risk_budget_amount",
+            "budget",
+            "capital_allocation",
+            "allocation_limit",
+            "max_target_size",
+            "params.risk_budget",
+            "risk.budget",
+        )
+        if allocated_capital is not None:
+            infrastructure_cost = round(allocated_capital * 0.0001, 6)
+
+        total_cost: Optional[float] = None
+        cost_parts = [
+            value
+            for value in (commission_cost, slippage_cost, infrastructure_cost)
+            if value is not None
+        ]
+        if cost_parts:
+            total_cost = round(sum(cost_parts), 6)
+
+        runtime_ids = sorted({
+            str(fact.get("runtime_id") or "")
+            for fact in group_facts
+            if str(fact.get("runtime_id") or "")
+        })
+        pool_label = _pm12_attribution_dimension_label(
+            "pool",
+            pool_key,
+            personas_by_id=sources["personas_by_id"],
+            strategies_by_id=sources["strategies_by_id"],
+            pools_by_id=sources["pools_by_id"],
+        )
+        persona_label = _pm12_attribution_dimension_label(
+            "persona",
+            persona_key,
+            personas_by_id=sources["personas_by_id"],
+            strategies_by_id=sources["strategies_by_id"],
+            pools_by_id=sources["pools_by_id"],
+        )
+        strategy_label = _pm12_attribution_dimension_label(
+            "strategy",
+            strategy_key,
+            personas_by_id=sources["personas_by_id"],
+            strategies_by_id=sources["strategies_by_id"],
+            pools_by_id=sources["pools_by_id"],
+        )
+        latest_at = _management_latest_timestamp(group_facts, "collected_at")
+        row = {
+            "id": f"cost-attribution-{pool_key}-{persona_key}-{strategy_key}",
+            "costId": f"cost-attribution-{pool_key}-{persona_key}-{strategy_key}",
+            "cost_id": f"cost-attribution-{pool_key}-{persona_key}-{strategy_key}",
+            "capitalPoolId": pool_key,
+            "capital_pool_id": pool_key,
+            "capitalPoolName": pool_label,
+            "capital_pool_name": pool_label,
+            "personaId": persona_key,
+            "persona_id": persona_key,
+            "personaLabel": persona_label,
+            "persona_label": persona_label,
+            "strategyId": strategy_key,
+            "strategy_id": strategy_key,
+            "strategyLabel": strategy_label,
+            "strategy_label": strategy_label,
+            "runtimeIds": runtime_ids,
+            "runtime_ids": runtime_ids,
+            "totalCost": total_cost,
+            "total_cost": total_cost,
+            "commissionCost": commission_cost,
+            "commission_cost": commission_cost,
+            "slippageCost": slippage_cost,
+            "slippage_cost": slippage_cost,
+            "infrastructureCost": infrastructure_cost,
+            "infrastructure_cost": infrastructure_cost,
+            "allocatedCapital": allocated_capital,
+            "allocated_capital": allocated_capital,
+            "riskBudget": risk_budget,
+            "risk_budget": risk_budget,
+            "totalTrades": int(total_trades) if total_trades else 0,
+            "total_trades": int(total_trades) if total_trades else 0,
+            "totalNotional": total_notional,
+            "total_notional": total_notional,
+            "avgSlippageBps": avg_slippage_bps,
+            "avg_slippage_bps": avg_slippage_bps,
+            "latestAt": latest_at,
+            "latest_at": latest_at,
+            "costBasis": "composed_from_telemetry_slippage_and_capital_allocation",
+            "cost_basis": "composed_from_telemetry_slippage_and_capital_allocation",
+            "sourceRefs": {
+                "runtimeIds": runtime_ids,
+                "runtime_ids": runtime_ids,
+                "capitalPoolId": pool_key,
+                "capital_pool_id": pool_key,
+                "personaId": persona_key,
+                "persona_id": persona_key,
+                "strategyId": strategy_key,
+                "strategy_id": strategy_key,
+            },
+            "links": {
+                "persona": f"/bff/personas/{persona_key}" if persona_key else None,
+                "strategy": f"/bff/strategies/{strategy_key}" if strategy_key else None,
+                "capitalPool": f"/bff/capital-pools/{pool_key}" if pool_key else None,
+                "performanceAttribution": (
+                    f"/bff/management/performance-attribution/by-persona"
+                    if persona_key else "/bff/management/performance-attribution"
+                ),
+            },
+        }
+        rows.append(row)
+
+    rows.sort(
+        key=lambda r: (
+            r.get("total_cost") is None,
+            -(r.get("total_cost") or 0.0),
+            r.get("id") or "",
+        )
+    )
+    return rows
+
+
+def _management_cost_attribution_response(
+    *,
+    persona_id: Optional[str],
+    strategy_id: Optional[str],
+    capital_pool_id: Optional[str],
+    period: str,
+    page_token: Optional[str],
+    page_size: int,
+) -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    sources = _pm12_performance_attribution_sources()
+    period_key = str(period or "").strip() or "latest"
+    facts = _pm12_performance_attribution_facts(sources, period_key)
+
+    pool_filter = set(_split_csv_query(capital_pool_id) or [])
+    persona_filter = set(_split_csv_query(persona_id) or [])
+    strategy_filter = set(_split_csv_query(strategy_id) or [])
+
+    if pool_filter:
+        facts = [fact for fact in facts if str(fact.get("capital_pool_id") or "") in pool_filter]
+    if persona_filter:
+        facts = [fact for fact in facts if str(fact.get("persona_id") or "") in persona_filter]
+    if strategy_filter:
+        facts = [fact for fact in facts if str(fact.get("strategy_id") or "") in strategy_filter]
+
+    rows = _management_cost_attribution_rows(facts, sources)
+    total = len(rows)
+    page_items, next_page_token = _page_slice(rows, page_token, page_size)
+
+    total_cost_values = [
+        value
+        for value in (_management_as_float(row.get("total_cost")) for row in rows)
+        if value is not None
+    ]
+    commission_values = [
+        value
+        for value in (_management_as_float(row.get("commission_cost")) for row in rows)
+        if value is not None
+    ]
+    slippage_values = [
+        value
+        for value in (_management_as_float(row.get("slippage_cost")) for row in rows)
+        if value is not None
+    ]
+    infrastructure_values = [
+        value
+        for value in (_management_as_float(row.get("infrastructure_cost")) for row in rows)
+        if value is not None
+    ]
+
+    source_surfaces = {
+        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
+        "deployment_plans": _dataset_surface_status("deployment_plans", snapshot_at=snapshot_at),
+        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at),
+        "capital_pools": _dataset_surface_status("capital_pools", snapshot_at=snapshot_at),
+        "strategies": _dataset_surface_status("strategy_specs", snapshot_at=snapshot_at),
+        "telemetry_summaries": _dataset_surface_status(
+            "telemetry_summaries",
+            snapshot_at=snapshot_at,
+            has_data=bool(sources["telemetry_by_runtime_id"]) if sources["runtime_bindings"] else None,
+            missing_message="Telemetry summaries unavailable for cost-attribution runtime projections.",
+        ),
+    }
+    cost_attribution_surface = _aggregate_group_surface(
+        "cost_attribution",
+        list(source_surfaces.values()),
+        snapshot_at=snapshot_at,
+        unavailable_message="Cost-attribution has no readable source records.",
+        degraded_message="Cost-attribution is available, but one or more supporting surfaces are degraded.",
+    )
+    summary = {
+        "rowCount": total,
+        "row_count": total,
+        "returnedRowCount": len(page_items),
+        "returned_row_count": len(page_items),
+        "capitalPoolCount": len({row.get("capital_pool_id") for row in rows if row.get("capital_pool_id")}),
+        "capital_pool_count": len({row.get("capital_pool_id") for row in rows if row.get("capital_pool_id")}),
+        "personaCount": len({row.get("persona_id") for row in rows if row.get("persona_id")}),
+        "persona_count": len({row.get("persona_id") for row in rows if row.get("persona_id")}),
+        "strategyCount": len({row.get("strategy_id") for row in rows if row.get("strategy_id")}),
+        "strategy_count": len({row.get("strategy_id") for row in rows if row.get("strategy_id")}),
+        "totalCost": round(sum(total_cost_values), 6) if total_cost_values else None,
+        "total_cost": round(sum(total_cost_values), 6) if total_cost_values else None,
+        "totalCommissionCost": round(sum(commission_values), 6) if commission_values else None,
+        "total_commission_cost": round(sum(commission_values), 6) if commission_values else None,
+        "totalSlippageCost": round(sum(slippage_values), 6) if slippage_values else None,
+        "total_slippage_cost": round(sum(slippage_values), 6) if slippage_values else None,
+        "totalInfrastructureCost": round(sum(infrastructure_values), 6) if infrastructure_values else None,
+        "total_infrastructure_cost": round(sum(infrastructure_values), 6) if infrastructure_values else None,
+        "period": period_key,
+        "policy": "read_only_cost_attribution",
+        "basis": "composed_from_telemetry_slippage_and_capital_allocation",
+    }
+    data = {
+        "id": "management-cost-attribution",
+        "items": page_items,
+        "rows": page_items,
+        "attributions": page_items,
+        "summary": summary,
+        "policy": "read_only_cost_attribution",
+    }
+    return {
+        "data": data,
+        "items": page_items,
+        "rows": page_items,
+        "attributions": page_items,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "cost_attribution": cost_attribution_surface,
+                **source_surfaces,
+            },
+            "composition_sources": [
+                "GET /api/v1/runtime-bindings",
+                "GET /api/v1/deployment-plans",
+                "GET /api/v1/persona-capital-bindings",
+                "GET /bff/capital-pools",
+                "GET /bff/strategies",
+                "GET /api/v1/telemetry/{runtime_id}/summary",
+            ],
+            "policy": "read_only_cost_attribution",
+            "filters": {
+                "persona_id": persona_id,
+                "strategy_id": strategy_id,
+                "capital_pool_id": capital_pool_id,
+                "period": period_key,
+            },
+        },
+    }
+
+
+@app.get("/bff/management/cost-attribution")
+async def bff_management_cost_attribution(
+    persona_id: Optional[str] = Query(default=None),
+    strategy_id: Optional[str] = Query(default=None),
+    capital_pool_id: Optional[str] = Query(default=None),
+    period: str = Query(default="latest"),
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: read-only cost attribution across personas, strategies, and capital pools."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _management_cost_attribution_response(
+        persona_id=persona_id,
+        strategy_id=strategy_id,
+        capital_pool_id=capital_pool_id,
+        period=period,
+        page_token=page_token,
+        page_size=page_size,
+    )
+
+
 def _management_payload_summary(payload: Dict[str, Any]) -> Dict[str, Any]:
     summary = payload.get("summary")
     if isinstance(summary, dict):
