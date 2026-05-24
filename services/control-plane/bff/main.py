@@ -20472,6 +20472,119 @@ def _management_portfolio_book_pool_sources(
     }
 
 
+def _management_exposure_risk_state(utilization: Optional[float]) -> str:
+    if utilization is None:
+        return "unknown"
+    if utilization > 1:
+        return "over_budget"
+    if utilization >= 0.8:
+        return "near_limit"
+    return "within_budget"
+
+
+def _management_portfolio_book_exposure_item(entry: Dict[str, Any]) -> Dict[str, Any]:
+    pool_id = str(entry.get("pool_id") or entry.get("id") or "")
+    risk_budget = _management_as_float(entry.get("risk_budget"))
+    current_exposure = _management_as_float(entry.get("current_exposure"))
+    utilization = _management_as_float(entry.get("risk_budget_utilization"))
+    if utilization is None and current_exposure is not None and risk_budget not in (None, 0):
+        utilization = round(current_exposure / risk_budget, 6)
+    exposure = entry.get("exposure") if isinstance(entry.get("exposure"), dict) else {}
+    runtime_ids = [
+        str(value)
+        for value in (entry.get("runtime_ids") or [])
+        if str(value).strip()
+    ]
+    binding_ids = [
+        str(value)
+        for value in (entry.get("binding_ids") or [])
+        if str(value).strip()
+    ]
+    deployment_ids = [
+        str(value)
+        for value in (entry.get("deployment_ids") or [])
+        if str(value).strip()
+    ]
+    risk_state = _management_exposure_risk_state(utilization)
+    return {
+        "id": f"portfolio-book-exposure-{pool_id or 'unassigned'}",
+        "pool_id": pool_id,
+        "capitalPoolId": pool_id,
+        "capital_pool_id": pool_id,
+        "name": entry.get("name") or pool_id,
+        "status": entry.get("status") or "unknown",
+        "risk_policy_ref": entry.get("risk_policy_ref"),
+        "riskPolicyRef": entry.get("risk_policy_ref"),
+        "currency": entry.get("currency"),
+        "risk_budget": risk_budget,
+        "riskBudget": risk_budget,
+        "current_exposure": current_exposure,
+        "currentExposure": current_exposure,
+        "exposure_amount": current_exposure,
+        "exposureAmount": current_exposure,
+        "risk_budget_utilization": utilization,
+        "riskBudgetUtilization": utilization,
+        "risk_state": risk_state,
+        "riskState": risk_state,
+        "exposure_source": exposure.get("source"),
+        "exposureSource": exposure.get("source"),
+        "available_budget": (
+            round(risk_budget - current_exposure, 6)
+            if risk_budget is not None and current_exposure is not None
+            else None
+        ),
+        "availableBudget": (
+            round(risk_budget - current_exposure, 6)
+            if risk_budget is not None and current_exposure is not None
+            else None
+        ),
+        "risk": entry.get("risk"),
+        "exposure": {
+            **exposure,
+            "amount": current_exposure,
+            "risk_budget": risk_budget,
+            "riskBudget": risk_budget,
+            "risk_budget_utilization": utilization,
+            "riskBudgetUtilization": utilization,
+            "risk_state": risk_state,
+            "riskState": risk_state,
+        },
+        "pnl": entry.get("pnl"),
+        "total_pnl": entry.get("total_pnl"),
+        "pnl_summary": entry.get("pnl_summary"),
+        "telemetry": entry.get("telemetry"),
+        "binding_count": entry.get("binding_count", 0),
+        "active_binding_count": entry.get("active_binding_count", 0),
+        "deployment_count": entry.get("deployment_count", 0),
+        "approved_deployment_count": entry.get("approved_deployment_count", 0),
+        "runtime_count": entry.get("runtime_count", 0),
+        "active_runtime_count": entry.get("active_runtime_count", 0),
+        "paper_runtime_count": entry.get("paper_runtime_count", 0),
+        "live_runtime_count": entry.get("live_runtime_count", 0),
+        "deployment_stages": entry.get("deployment_stages") or [],
+        "sourceRefs": {
+            "runtimeIds": runtime_ids,
+            "runtime_ids": runtime_ids,
+            "bindingIds": binding_ids,
+            "binding_ids": binding_ids,
+            "deploymentIds": deployment_ids,
+            "deployment_ids": deployment_ids,
+            "capitalPoolIds": [pool_id] if pool_id else [],
+            "capital_pool_ids": [pool_id] if pool_id else [],
+        },
+        "source_refs": {
+            "runtime_ids": runtime_ids,
+            "binding_ids": binding_ids,
+            "deployment_ids": deployment_ids,
+            "capital_pool_ids": [pool_id] if pool_id else [],
+        },
+        "links": {
+            "capitalPool": _management_link("/bff/capital-pools", pool_id),
+            "capital_pool": _management_link("/bff/capital-pools", pool_id),
+        },
+    }
+
+
 def _management_link(path: str, record_id: Optional[str]) -> Optional[str]:
     if not record_id:
         return None
@@ -22170,6 +22283,182 @@ async def bff_management_portfolio_book_pools(
                 "GET /api/v1/runtime-bindings",
                 "GET /api/v1/telemetry/{runtime_id}/summary",
             ],
+        },
+    }
+
+
+@app.get("/bff/management/portfolio-book/exposure")
+async def bff_management_portfolio_book_exposure(
+    status: Optional[str] = None,
+    risk_policy_ref: Optional[str] = None,
+    capital_pool_id: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 portfolio-book exposure and risk-budget rollup."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    sources = _management_portfolio_book_pool_sources(
+        status=status,
+        risk_policy_ref=risk_policy_ref,
+    )
+    entries = sources["entries"]
+    if capital_pool_id:
+        requested = {item.strip() for item in capital_pool_id.split(",") if item.strip()}
+        entries = [
+            entry
+            for entry in entries
+            if str(entry.get("pool_id") or entry.get("id") or "") in requested
+        ]
+
+    exposure_items = [
+        _management_portfolio_book_exposure_item(entry)
+        for entry in entries
+    ]
+    total = len(exposure_items)
+    page_items, next_page_token = _page_slice(exposure_items, page_token, page_size)
+
+    risk_budgets = [
+        value
+        for item in exposure_items
+        for value in [_management_as_float(item.get("risk_budget"))]
+        if value is not None
+    ]
+    exposures = [
+        value
+        for item in exposure_items
+        for value in [_management_as_float(item.get("current_exposure"))]
+        if value is not None
+    ]
+    exposure_runtime_ids = {
+        runtime_id
+        for item in exposure_items
+        for runtime_id in (
+            (item.get("sourceRefs") or {}).get("runtimeIds") or []
+        )
+        if str(runtime_id).strip()
+    }
+    portfolio_telemetry = _management_telemetry_rollup([
+        sources["telemetry_by_runtime_id"][runtime_id]
+        for runtime_id in sorted(exposure_runtime_ids)
+        if runtime_id in sources["telemetry_by_runtime_id"]
+    ])
+    risk_budget_total = round(sum(risk_budgets), 6) if risk_budgets else None
+    current_exposure_total = round(sum(exposures), 6) if exposures else None
+    utilization = None
+    if current_exposure_total is not None and risk_budget_total not in (None, 0):
+        utilization = round(current_exposure_total / risk_budget_total, 6)
+    available_budget_total = (
+        round(risk_budget_total - current_exposure_total, 6)
+        if risk_budget_total is not None and current_exposure_total is not None
+        else None
+    )
+    active_pool_count = len([
+        item for item in exposure_items
+        if str(item.get("status") or "").strip().lower() in {"active", "ready"}
+    ])
+    over_budget_count = len([
+        item for item in exposure_items if item.get("risk_state") == "over_budget"
+    ])
+    near_limit_count = len([
+        item for item in exposure_items if item.get("risk_state") == "near_limit"
+    ])
+    unknown_exposure_count = len([
+        item for item in exposure_items if item.get("risk_state") == "unknown"
+    ])
+
+    source_surfaces = {
+        "capital_pools": _dataset_surface_status("capital_pools", snapshot_at=snapshot_at),
+        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at),
+        "deployment_plans": _dataset_surface_status("deployment_plans", snapshot_at=snapshot_at),
+        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
+        "telemetry_summaries": _dataset_surface_status(
+            "telemetry_summaries",
+            snapshot_at=snapshot_at,
+            has_data=bool(sources["telemetry_by_runtime_id"]) if sources["runtime_bindings"] else None,
+            missing_message="Telemetry summaries unavailable for portfolio-book exposure runtimes.",
+        ),
+    }
+    exposure_surface = _aggregate_group_surface(
+        "portfolio_book_exposure",
+        list(source_surfaces.values()),
+        snapshot_at=snapshot_at,
+        unavailable_message="Portfolio-book exposure composition has no readable source records.",
+        degraded_message="Portfolio-book exposure composition is degraded because one or more source surfaces are degraded.",
+    )
+
+    summary = {
+        "exposure_count": total,
+        "exposureCount": total,
+        "returned_exposure_count": len(page_items),
+        "returnedExposureCount": len(page_items),
+        "total_pools": total,
+        "totalPools": total,
+        "active_pool_count": active_pool_count,
+        "activePoolCount": active_pool_count,
+        "risk_budget_total": risk_budget_total,
+        "riskBudgetTotal": risk_budget_total,
+        "current_exposure_total": current_exposure_total,
+        "currentExposureTotal": current_exposure_total,
+        "available_budget_total": available_budget_total,
+        "availableBudgetTotal": available_budget_total,
+        "risk_budget_utilization": utilization,
+        "riskBudgetUtilization": utilization,
+        "over_budget_count": over_budget_count,
+        "overBudgetCount": over_budget_count,
+        "near_limit_count": near_limit_count,
+        "nearLimitCount": near_limit_count,
+        "unknown_exposure_count": unknown_exposure_count,
+        "unknownExposureCount": unknown_exposure_count,
+        "telemetry_runtime_count": portfolio_telemetry["runtime_count"],
+        "telemetryRuntimeCount": portfolio_telemetry["runtime_count"],
+        "total_pnl": portfolio_telemetry["total_pnl"],
+        "totalPnl": portfolio_telemetry["total_pnl"],
+        "max_drawdown": portfolio_telemetry["max_drawdown"],
+        "maxDrawdown": portfolio_telemetry["max_drawdown"],
+        "average_fill_rate": portfolio_telemetry["average_fill_rate"],
+        "averageFillRate": portfolio_telemetry["average_fill_rate"],
+        "total_trades": portfolio_telemetry["total_trades"],
+        "totalTrades": portfolio_telemetry["total_trades"],
+        "latest_telemetry_at": portfolio_telemetry["latest_collected_at"],
+        "latestTelemetryAt": portfolio_telemetry["latest_collected_at"],
+        "basis": "capital_pool_exposure_with_runtime_telemetry",
+    }
+    data = {
+        "id": "pm12-portfolio-book-exposure",
+        "summary": summary,
+        "items": page_items,
+        "exposures": page_items,
+    }
+
+    return {
+        "data": data,
+        "items": page_items,
+        "exposures": page_items,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "total": total,
+            "surfaces": {
+                "portfolio_book_exposure": exposure_surface,
+                **source_surfaces,
+            },
+            "composition_sources": [
+                "GET /bff/capital-pools",
+                "GET /api/v1/persona-capital-bindings",
+                "GET /api/v1/deployment-plans",
+                "GET /api/v1/runtime-bindings",
+                "GET /api/v1/telemetry/{runtime_id}/summary",
+            ],
+            "policy": "read_only_portfolio_exposure",
         },
     }
 

@@ -1959,6 +1959,131 @@ export interface ManagementStrategyAllocationResponse {
   };
 }
 
+export interface ManagementPortfolioBookExposureQuery {
+  status?: string;
+  risk_policy_ref?: string;
+  capital_pool_id?: string;
+  page_token?: string;
+  page_size?: number;
+}
+
+export type ManagementPortfolioBookExposureRiskState =
+  | "within_budget"
+  | "near_limit"
+  | "over_budget"
+  | "unknown"
+  | string;
+
+export interface ManagementPortfolioBookExposureItem {
+  id: string;
+  pool_id: string;
+  capital_pool_id?: string;
+  capitalPoolId?: string;
+  name?: string;
+  status?: string;
+  risk_policy_ref?: string;
+  riskPolicyRef?: string;
+  currency?: string;
+  risk_budget?: number | null;
+  riskBudget?: number | null;
+  current_exposure?: number | null;
+  currentExposure?: number | null;
+  exposure_amount?: number | null;
+  exposureAmount?: number | null;
+  available_budget?: number | null;
+  availableBudget?: number | null;
+  risk_budget_utilization?: number | null;
+  riskBudgetUtilization?: number | null;
+  risk_state?: ManagementPortfolioBookExposureRiskState;
+  riskState?: ManagementPortfolioBookExposureRiskState;
+  exposure_source?: string | null;
+  exposureSource?: string | null;
+  exposure?: Record<string, unknown>;
+  risk?: Record<string, unknown>;
+  pnl?: number | null;
+  total_pnl?: number | null;
+  pnl_summary?: Record<string, unknown>;
+  telemetry?: Record<string, unknown>;
+  binding_count?: number;
+  active_binding_count?: number;
+  deployment_count?: number;
+  approved_deployment_count?: number;
+  runtime_count?: number;
+  active_runtime_count?: number;
+  paper_runtime_count?: number;
+  live_runtime_count?: number;
+  deployment_stages?: string[];
+  sourceRefs?: Record<string, unknown>;
+  source_refs?: Record<string, unknown>;
+  links?: Record<string, string | null | undefined>;
+  [key: string]: unknown;
+}
+
+export interface ManagementPortfolioBookExposureSummary {
+  exposure_count: number;
+  exposureCount?: number;
+  returned_exposure_count: number;
+  returnedExposureCount?: number;
+  total_pools: number;
+  totalPools?: number;
+  active_pool_count: number;
+  activePoolCount?: number;
+  risk_budget_total?: number | null;
+  riskBudgetTotal?: number | null;
+  current_exposure_total?: number | null;
+  currentExposureTotal?: number | null;
+  available_budget_total?: number | null;
+  availableBudgetTotal?: number | null;
+  risk_budget_utilization?: number | null;
+  riskBudgetUtilization?: number | null;
+  over_budget_count: number;
+  overBudgetCount?: number;
+  near_limit_count: number;
+  nearLimitCount?: number;
+  unknown_exposure_count: number;
+  unknownExposureCount?: number;
+  telemetry_runtime_count?: number;
+  telemetryRuntimeCount?: number;
+  total_pnl?: number | null;
+  totalPnl?: number | null;
+  max_drawdown?: number | null;
+  maxDrawdown?: number | null;
+  average_fill_rate?: number | null;
+  averageFillRate?: number | null;
+  total_trades?: number;
+  totalTrades?: number;
+  latest_telemetry_at?: string | null;
+  latestTelemetryAt?: string | null;
+  basis?: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementPortfolioBookExposureResponse {
+  data: {
+    id: string;
+    summary: ManagementPortfolioBookExposureSummary;
+    items: ManagementPortfolioBookExposureItem[];
+    exposures: ManagementPortfolioBookExposureItem[];
+    [key: string]: unknown;
+  };
+  items: ManagementPortfolioBookExposureItem[];
+  exposures: ManagementPortfolioBookExposureItem[];
+  summary: ManagementPortfolioBookExposureSummary;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    staleness?: Record<string, unknown>;
+    surfaces?: Record<string, ManagementSurfaceRef>;
+    composition_sources?: string[];
+    policy?: string;
+    [key: string]: unknown;
+  };
+}
+
 type ManagementQueryValue = string | number | boolean | undefined | null;
 
 function withQuery(path: string, query?: object): string {
@@ -2030,6 +2155,12 @@ export function managementPortfolioBookPath(): string {
 
 export function managementPortfolioBookPoolsPath(query?: ManagementPortfolioBookPoolQuery): string {
   return withQuery(paths.managementPortfolioBookPools(), query);
+}
+
+export function managementPortfolioBookExposurePath(
+  query?: ManagementPortfolioBookExposureQuery,
+): string {
+  return withQuery(paths.managementPortfolioBookExposure(), query);
 }
 
 export function managementPortfolioBookHoldingsPath(
@@ -2306,6 +2437,25 @@ export async function fetchManagementPortfolioBookPools(
     throw new Error(`GET ${path} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementPortfolioBookPoolsResponse>;
+}
+
+export async function fetchManagementPortfolioBookExposure(
+  query?: ManagementPortfolioBookExposureQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementPortfolioBookExposureResponse> {
+  const path = managementPortfolioBookExposurePath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementPortfolioBookExposureResponse>;
 }
 
 export async function fetchManagementPortfolioBookHoldings(

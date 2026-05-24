@@ -244,6 +244,96 @@ def test_portfolio_book_requires_read_auth(monkeypatch) -> None:
     assert response.status_code == 401, response.text
 
 
+def test_portfolio_book_exposure_composes_risk_budget_rollup(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get(
+        "/bff/management/portfolio-book/exposure",
+        headers=HEADERS,
+        params={"page_size": 20},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    summary = payload["summary"]
+    assert payload["data"]["id"] == "pm12-portfolio-book-exposure"
+    assert payload["items"] == payload["exposures"] == payload["data"]["items"]
+    assert payload["data"]["exposures"] == payload["items"]
+    assert payload["data"]["summary"] == payload["summary"]
+    assert summary["exposure_count"] == 2
+    assert summary["returned_exposure_count"] == 2
+    assert summary["risk_budget_total"] == 150.0
+    assert summary["current_exposure_total"] == 60.0
+    assert summary["available_budget_total"] == 90.0
+    assert summary["risk_budget_utilization"] == 0.4
+    assert summary["over_budget_count"] == 0
+    assert summary["near_limit_count"] == 0
+    assert summary["unknown_exposure_count"] == 0
+    assert summary["telemetry_runtime_count"] == 2
+    assert summary["total_pnl"] == 8.0
+    assert payload["page_info"] == {"next_page_token": None, "total": 2, "page_size": 20}
+
+    alpha = payload["items"][0]
+    assert alpha["pool_id"] == "pool-alpha"
+    assert alpha["capitalPoolId"] == "pool-alpha"
+    assert alpha["risk_budget"] == 100.0
+    assert alpha["current_exposure"] == 40.0
+    assert alpha["risk_budget_utilization"] == 0.4
+    assert alpha["risk_state"] == "within_budget"
+    assert alpha["available_budget"] == 60.0
+    assert alpha["exposure"]["source"] == "capital_pool"
+    assert alpha["sourceRefs"]["runtimeIds"] == ["runtime-alpha", "runtime-alpha-live"]
+    assert alpha["links"]["capitalPool"] == "/bff/capital-pools/pool-alpha"
+    assert payload["meta"]["surfaces"]["portfolio_book_exposure"]["source"] == "bff_composed"
+    assert payload["meta"]["surfaces"]["capital_pools"]["source"] == "canonical"
+    assert payload["meta"]["policy"] == "read_only_portfolio_exposure"
+    assert "GET /api/v1/telemetry/{runtime_id}/summary" in payload["meta"]["composition_sources"]
+
+
+def test_portfolio_book_exposure_filters_by_capital_pool(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get(
+        "/bff/management/portfolio-book/exposure",
+        headers=HEADERS,
+        params={"capital_pool_id": "pool-beta"},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["summary"]["exposure_count"] == 1
+    assert payload["summary"]["risk_budget_total"] == 50.0
+    assert payload["summary"]["current_exposure_total"] == 20.0
+    assert payload["summary"]["telemetry_runtime_count"] == 0
+    assert payload["summary"]["total_pnl"] is None
+    assert payload["items"][0]["pool_id"] == "pool-beta"
+
+
+def test_portfolio_book_exposure_requires_read_auth(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get("/bff/management/portfolio-book/exposure")
+
+    assert response.status_code == 401, response.text
+
+
+def test_portfolio_book_exposure_cors_preflight(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.options(
+        "/bff/management/portfolio-book/exposure",
+        headers={
+            "Origin": "https://preview--pantheon-dev.lovable.app",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "Authorization, X-BFF-Api-Version",
+        },
+    )
+
+    assert response.status_code == 204, response.text
+    assert response.text == ""
+    assert response.headers["access-control-allow-origin"] == "https://preview--pantheon-dev.lovable.app"
+
+
 def test_portfolio_book_holdings_composes_global_holdings_table(monkeypatch) -> None:
     client = _portfolio_store(monkeypatch)
 
