@@ -2257,6 +2257,123 @@ export interface ManagementRiskRadarResponse {
   };
 }
 
+export interface ManagementIncidentTimelineQuery {
+  status?: string;
+  severity?: string;
+  capital_pool_id?: string;
+  affected_pool_id?: string;
+  runtime_id?: string;
+  sort_order?: "asc" | "desc" | string;
+  page_token?: string;
+  page_size?: number;
+}
+
+export type ManagementIncidentSeverityBucket = "high" | "medium" | "low" | string;
+
+export interface ManagementIncidentTimelineItem {
+  id: string;
+  incidentId?: string;
+  incident_id: string;
+  timelineId?: string | null;
+  timeline_id?: string | null;
+  sequence: number;
+  timelineSequence?: number;
+  timeline_sequence?: number;
+  title?: string;
+  status: string;
+  severity: string;
+  severityBucket: ManagementIncidentSeverityBucket;
+  severity_bucket: ManagementIncidentSeverityBucket;
+  occurredAt?: string | null;
+  occurred_at?: string | null;
+  updatedAt?: string | null;
+  updated_at?: string | null;
+  runtimeId?: string | null;
+  runtime_id?: string | null;
+  deploymentPlanId?: string | null;
+  deployment_plan_id?: string | null;
+  capitalPoolId?: string | null;
+  capital_pool_id?: string | null;
+  artifactId?: string | null;
+  artifact_id?: string | null;
+  lineageRef?: string | null;
+  lineage_ref?: string | null;
+  evidenceSummary?: string | null;
+  evidence_summary?: string | null;
+  telemetryEventIds?: string[];
+  telemetry_event_ids?: string[];
+  sourceRefs?: Record<string, unknown>;
+  source_refs?: Record<string, unknown>;
+  links?: Record<string, string | null | undefined>;
+  [key: string]: unknown;
+}
+
+export interface ManagementIncidentTimelineSummary {
+  incidentCount: number;
+  incident_count: number;
+  returnedIncidentCount: number;
+  returned_incident_count: number;
+  activeIncidentCount: number;
+  active_incident_count: number;
+  resolvedIncidentCount: number;
+  resolved_incident_count: number;
+  highSeverityCount: number;
+  high_severity_count: number;
+  mediumSeverityCount: number;
+  medium_severity_count: number;
+  lowSeverityCount: number;
+  low_severity_count: number;
+  severityBuckets: Record<string, number>;
+  severity_buckets: Record<string, number>;
+  byStatus: Record<string, number>;
+  by_status: Record<string, number>;
+  firstIncidentAt?: string | null;
+  first_incident_at?: string | null;
+  latestIncidentAt?: string | null;
+  latest_incident_at?: string | null;
+  sortOrder?: string;
+  sort_order?: string;
+  basis?: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementIncidentTimelineResponse {
+  data: {
+    id: "management-incident-timeline" | string;
+    items: ManagementIncidentTimelineItem[];
+    rows: ManagementIncidentTimelineItem[];
+    incidents: ManagementIncidentTimelineItem[];
+    events: ManagementIncidentTimelineItem[];
+    summary: ManagementIncidentTimelineSummary;
+    severityBuckets: Record<string, number>;
+    severity_buckets: Record<string, number>;
+    [key: string]: unknown;
+  };
+  items: ManagementIncidentTimelineItem[];
+  rows: ManagementIncidentTimelineItem[];
+  incidents: ManagementIncidentTimelineItem[];
+  events: ManagementIncidentTimelineItem[];
+  summary: ManagementIncidentTimelineSummary;
+  severityBuckets: Record<string, number>;
+  severity_buckets: Record<string, number>;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces: {
+      incident_timeline: ManagementSurfaceRef;
+      incidents?: ManagementSurfaceRef;
+      [key: string]: ManagementSurfaceRef | undefined;
+    };
+    composition_sources?: string[];
+    policy?: string;
+    [key: string]: unknown;
+  };
+}
+
 export interface ManagementPortfolioBookExposureQuery {
   status?: string;
   risk_policy_ref?: string;
@@ -2453,6 +2570,12 @@ export function managementStrategyAllocationPath(
 
 export function managementRiskRadarPath(query?: ManagementRiskRadarQuery): string {
   return withQuery(paths.managementRiskRadar(), query);
+}
+
+export function managementIncidentTimelinePath(
+  query?: ManagementIncidentTimelineQuery,
+): string {
+  return withQuery(paths.managementIncidentTimeline(), query);
 }
 
 export function managementPortfolioBookPath(): string {
@@ -2774,6 +2897,25 @@ export async function fetchManagementRiskRadar(
     throw new Error(`GET ${path} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementRiskRadarResponse>;
+}
+
+export async function fetchManagementIncidentTimeline(
+  query?: ManagementIncidentTimelineQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementIncidentTimelineResponse> {
+  const path = managementIncidentTimelinePath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementIncidentTimelineResponse>;
 }
 
 export async function fetchManagementPortfolioBookPools(

@@ -181,6 +181,94 @@ Result: 62 passed, 3 existing `datetime.utcnow()` deprecation warnings in
 
 ---
 
+## BFF-MGMT-DELTA-006 Management Incident Timeline Route
+
+Task: BFF-MGMT-DELTA-006
+Owner: Codex
+Reviewer: Claude
+
+### Scope
+
+Add a strict-live Management Console route for chronological incident review:
+
+```text
+GET /bff/management/incident-timeline?status=&severity=&capital_pool_id=&runtime_id=&page_token=&page_size=
+```
+
+The route composes the existing IncidentCase read surface already exposed by
+`/bff/incidents`. It is read-only, preserves IncidentCase evidence fields, and
+does not introduce a new incident source of truth.
+
+### Contract
+
+The response uses the canonical aggregate envelope:
+
+```json
+{
+  "data": {
+    "id": "management-incident-timeline",
+    "items": [],
+    "rows": [],
+    "incidents": [],
+    "events": [],
+    "summary": {},
+    "severityBuckets": { "high": 0, "medium": 0, "low": 0 }
+  },
+  "items": [],
+  "rows": [],
+  "incidents": [],
+  "events": [],
+  "summary": {},
+  "severityBuckets": { "high": 0, "medium": 0, "low": 0 },
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 50 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": [],
+    "policy": "read_only_incident_timeline"
+  }
+}
+```
+
+Timeline rows are sorted by incident occurrence time and include incident,
+runtime, deployment, capital pool, artifact, telemetry-event, lineage, evidence
+summary, source refs, detail links, and severity bucket aliases.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Path registered in FastAPI/OpenAPI | Implemented |
+| 2 | Incident rows are chronologically sorted | Implemented |
+| 3 | Severity buckets expose `high`, `medium`, and `low` counts | Implemented |
+| 4 | Anonymous request returns HTTP 401 | Implemented |
+| 5 | Authenticated request returns HTTP 200 | Implemented |
+| 6 | Response keeps canonical aggregate envelope | Implemented |
+| 7 | CORS preflight returns HTTP 204 | Implemented |
+| 8 | Focused pytest cases cover `incident_timeline` success, filter, auth, and preflight | Implemented |
+| 9 | execute-plans exposes typed path and fetch helpers | Implemented |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_management_delta_routes.py`
+- `services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
+
+### Validation
+
+```bash
+pytest -q services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py
+```
+
+Result: 75 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
+---
+
 ## DELTA-2 PM-12 Persona Performance Attribution Route
 
 Task: BFF-PM12-DELTA-002

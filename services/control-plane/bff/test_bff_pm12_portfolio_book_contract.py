@@ -1129,3 +1129,5 @@ def test_portfolio_book_is_registered_in_openapi() -> None:
     assert "get" in schema["paths"]["/bff/management/strategy-allocation"]
     assert "/bff/management/risk-radar" in schema["paths"]
     assert "get" in schema["paths"]["/bff/management/risk-radar"]
+    assert "/bff/management/incident-timeline" in schema["paths"]
+    assert "get" in schema["paths"]["/bff/management/incident-timeline"]
