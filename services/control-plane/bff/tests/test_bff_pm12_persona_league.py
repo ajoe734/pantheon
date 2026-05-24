@@ -164,7 +164,10 @@ def test_pm12_persona_league_movers_rejects_invalid_direction() -> None:
             )
 
             assert response.status_code == 422, response.text
-            assert response.json()["detail"]["error"] == "invalid_direction"
+            body = response.json()
+            assert "detail" not in body
+            assert body["error"]["code"] == "invalid_direction"
+            assert body["field"] == "direction"
         finally:
             bff_main.read_store = original
 
@@ -316,7 +319,10 @@ def test_pm12_quarterly_ranking_rejects_invalid_quarter() -> None:
             )
 
             assert response.status_code == 422, response.text
-            assert response.json()["detail"]["error"] == "invalid_quarter"
+            body = response.json()
+            assert "detail" not in body
+            assert body["error"]["code"] == "invalid_quarter"
+            assert body["field"] == "quarter"
 
             recommendations = client.get(
                 "/bff/management/quarterly-ranking/recommendations",
@@ -325,7 +331,10 @@ def test_pm12_quarterly_ranking_rejects_invalid_quarter() -> None:
             )
 
             assert recommendations.status_code == 422, recommendations.text
-            assert recommendations.json()["detail"]["error"] == "invalid_quarter"
+            recommendations_body = recommendations.json()
+            assert "detail" not in recommendations_body
+            assert recommendations_body["error"]["code"] == "invalid_quarter"
+            assert recommendations_body["field"] == "quarter"
         finally:
             bff_main.read_store = original
 

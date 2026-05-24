@@ -460,6 +460,53 @@ export interface ManagementPortfolioBookHoldingsQuery {
   page_size?: number;
 }
 
+export interface ManagementPortfolioBookPosition extends ManagementPortfolioBookHolding {
+  position_id: string;
+  positionId?: string;
+}
+
+export interface ManagementPortfolioBookPositionsSummary {
+  position_count: number;
+  returned_position_count: number;
+  active_position_count: number;
+  paper_position_count: number;
+  live_position_count: number;
+  runtime_count: number;
+  telemetry_runtime_count: number;
+  total_notional?: number | null;
+  total_market_value?: number | null;
+  total_unrealized_pnl?: number | null;
+  total_realized_pnl?: number | null;
+  total_pnl?: number | null;
+  latest_mark_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface ManagementPortfolioBookPositionsResponse {
+  data: {
+    summary: ManagementPortfolioBookPositionsSummary;
+    items: ManagementPortfolioBookPosition[];
+    positions: ManagementPortfolioBookPosition[];
+    [key: string]: unknown;
+  };
+  items: ManagementPortfolioBookPosition[];
+  positions: ManagementPortfolioBookPosition[];
+  summary: ManagementPortfolioBookPositionsSummary;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size?: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces?: Record<string, ManagementSurfaceRef>;
+    composition_sources?: string[];
+    [key: string]: unknown;
+  };
+}
+
+export type ManagementPortfolioBookPositionsQuery = ManagementPortfolioBookHoldingsQuery;
+
 export interface ManagementPersonaLeagueQuery {
   state?: string;
   archetype?: string;
@@ -1326,6 +1373,11 @@ export interface ManagementPerformanceAttributionQuery {
   page_size?: number;
 }
 
+export type ManagementPerformanceAttributionByStrategyQuery = Omit<
+  ManagementPerformanceAttributionQuery,
+  "dimension"
+>;
+
 export type ManagementPerformanceAttributionByPersonaQuery = Omit<
   ManagementPerformanceAttributionQuery,
   "dimension"
@@ -2169,6 +2221,12 @@ export function managementPortfolioBookHoldingsPath(
   return withQuery(paths.managementPortfolioBookHoldings(), query);
 }
 
+export function managementPortfolioBookPositionsPath(
+  query?: ManagementPortfolioBookPositionsQuery,
+): string {
+  return withQuery(paths.managementPortfolioBookPositions(), query);
+}
+
 export function managementPersonaLeaguePath(query?: ManagementPersonaLeagueQuery): string {
   return withQuery(paths.managementPersonaLeague(), query);
 }
@@ -2223,6 +2281,12 @@ export function managementPerformanceAttributionPath(
   query?: ManagementPerformanceAttributionQuery,
 ): string {
   return withQuery(paths.managementPerformanceAttribution(), query);
+}
+
+export function managementPerformanceAttributionByStrategyPath(
+  query?: ManagementPerformanceAttributionByStrategyQuery,
+): string {
+  return withQuery(paths.managementPerformanceAttributionByStrategy(), query);
 }
 
 export function managementPerformanceAttributionByPersonaPath(
@@ -2477,6 +2541,25 @@ export async function fetchManagementPortfolioBookHoldings(
   return response.json() as Promise<ManagementPortfolioBookHoldingsResponse>;
 }
 
+export async function fetchManagementPortfolioBookPositions(
+  query?: ManagementPortfolioBookPositionsQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementPortfolioBookPositionsResponse> {
+  const path = managementPortfolioBookPositionsPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementPortfolioBookPositionsResponse>;
+}
+
 export async function fetchManagementPersonaLeague(
   query?: ManagementPersonaLeagueQuery,
   init?: RequestInit,
@@ -2653,6 +2736,25 @@ export async function fetchManagementPerformanceAttribution(
   baseUrl = "",
 ): Promise<ManagementPerformanceAttributionResponse> {
   const path = managementPerformanceAttributionPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementPerformanceAttributionResponse>;
+}
+
+export async function fetchManagementPerformanceAttributionByStrategy(
+  query?: ManagementPerformanceAttributionByStrategyQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementPerformanceAttributionResponse> {
+  const path = managementPerformanceAttributionByStrategyPath(query);
   const headers = new Headers(init?.headers);
   headers.set("Accept", "application/json");
   const response = await fetch(`${baseUrl}${path}`, {

@@ -92,7 +92,9 @@ def test_nl_ask_anonymous_returns_401() -> None:
     )
     assert resp.status_code == 401
     body = resp.json()
-    assert "detail" in body
+    assert "detail" not in body
+    assert body["error"]["code"] == "INVALID_TOKEN"
+    assert body["meta"]["correlationId"]
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +182,9 @@ def test_nl_ask_missing_question_returns_422() -> None:
             )
             assert resp.status_code == 422, resp.text
             body = resp.json()
-            assert "detail" in body
+            assert "detail" not in body
+            assert body["error"]["code"] == "INVALID_PARAMS"
+            assert body["meta"]["correlationId"]
         finally:
             bff_main.read_store = original
 

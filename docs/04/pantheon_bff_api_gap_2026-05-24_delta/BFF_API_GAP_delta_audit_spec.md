@@ -449,6 +449,88 @@ Result: 46 passed, 3 existing `datetime.utcnow()` deprecation warnings in
 
 ---
 
+## DELTA-5 PM-12 Portfolio Book Positions Route
+
+Task: BFF-PM12-DELTA-005
+Owner: Codex2
+Reviewer: Claude2
+
+### Scope
+
+Add a dedicated portfolio-book positions route for execute-plans strict live
+rendering:
+
+```text
+GET /bff/management/portfolio-book/positions?capital_pool_id=&persona_id=&runtime_id=&deployment_stage=&status=&q=&page_token=&page_size=
+```
+
+The route reuses the existing PM-12 portfolio-book holdings composition and
+projects holdings as position rows. It does not introduce a new positions
+source of truth and does not change
+`GET /bff/management/portfolio-book/holdings`.
+
+### Contract
+
+The response uses the canonical aggregate envelope:
+
+```json
+{
+  "data": {
+    "summary": {},
+    "items": [],
+    "positions": []
+  },
+  "items": [],
+  "positions": [],
+  "summary": {},
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 50 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": []
+  }
+}
+```
+
+Position rows keep the existing holding fields, including runtime, capital
+pool, persona, strategy, symbol, quantity, mark price, market value, PnL, links,
+and source refs. Each row additionally exposes `position_id` and `positionId`
+derived from the composed holding identity.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Path registered in FastAPI/OpenAPI | Implemented |
+| 2 | Positions list composes from portfolio-book holdings sources | Implemented |
+| 3 | Accepts pool/persona/runtime/stage/status/search/page query parameters | Implemented |
+| 4 | Anonymous request returns HTTP 401 | Implemented |
+| 5 | Authenticated request returns HTTP 200 | Implemented |
+| 6 | Response keeps canonical aggregate envelope | Implemented |
+| 7 | CORS preflight returns HTTP 204 | Implemented |
+| 8 | Focused pytest cases cover list, filter, auth, preflight, and degraded telemetry | Implemented |
+| 9 | execute-plans exposes typed path and fetch helpers | Implemented |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
+
+### Validation
+
+```bash
+pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py
+```
+
+Result: 58 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
+---
+
 ## DELTA-6 PM-12 Portfolio Book Exposure Route
 
 Task: BFF-PM12-DELTA-006
