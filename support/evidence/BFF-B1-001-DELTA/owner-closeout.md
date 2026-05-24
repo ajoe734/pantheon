@@ -2,7 +2,8 @@
 
 Task: BFF-B1-001-DELTA
 Title: CORS preflight regression — live OPTIONS still 400 despite B1-001 done
-Owner: Claude
+Implementation owner: Claude
+Finalizing owner: Codex2
 Reviewer: Codex
 Date: 2026-05-24
 
@@ -16,7 +17,8 @@ The URL was removed from `_DEV_LOVABLE_CORS_ORIGINS` so it survives the producti
 
 - Implementation fix: `73a365fb` (`BFF-B1-001-DELTA: fix CORS preflight blocked in live mode`)
 - Audit spec finalization: `47101b85` (`BFF-B1-001-DELTA: record closeout finalization in audit spec`)
-- Merged via PR #511 into `dev`
+- Implementation merged via PR #511 into `dev`
+- Owner closeout evidence merged via PR #526 into `dev` (`4db3b204`)
 - Reviewer approval: Codex (2026-05-24)
 
 ## Acceptance Status
@@ -36,6 +38,13 @@ pytest -q services/control-plane/bff/tests/test_auth_jwks_strict.py → 18 passe
 pytest -q services/control-plane/bff/tests/test_auth_jwks_strict.py -k cors → 6 passed
 ```
 
+Codex2 finalization after ownership reassignment:
+
+```
+pytest -q services/control-plane/bff/tests/test_auth_jwks_strict.py → 18 passed
+pytest -q services/control-plane/bff/tests/test_auth_jwks_strict.py -k cors → 6 passed
+```
+
 ## Artifacts
 
 - `docs/04/pantheon_bff_api_gap_2026-05-24_delta/BFF_API_GAP_delta_audit_spec.md` (DELTA-1 section)
@@ -46,5 +55,6 @@ pytest -q services/control-plane/bff/tests/test_auth_jwks_strict.py -k cors → 
 ## Closeout Note
 
 Task was preempted before final `done` transition. Fix was already merged via PR #511.
-This closeout commit records the owner evidence packet and brings the task branch up
-to date with origin/dev before the final done transition.
+Claude recorded the owner evidence packet in PR #526. Codex2 was reassigned for
+final owner closeout and added this post-merge finalization note so the task branch
+HEAD carries the required task trailers before the final `done` transition.
