@@ -171,7 +171,7 @@ Validation:
 pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py
 ```
 
-Result: 66 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+Result: 70 passed, 3 existing `datetime.utcnow()` deprecation warnings in
 `services/control-plane/bff/read_store.py`.
 
 ## BFF-PM12-DELTA-004
