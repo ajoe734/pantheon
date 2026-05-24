@@ -30322,6 +30322,412 @@ async def bff_management_performance_attribution_by_pool(
     )
 
 
+def _governance_ledger_entry(
+    *,
+    entry_id: str,
+    source_type: str,
+    source_dataset: str,
+    event_type: str,
+    status: Optional[str],
+    actor: Optional[str],
+    target_type: Optional[str],
+    target_id: Optional[str],
+    occurred_at: Optional[str],
+    title: str,
+    summary: Optional[str],
+    risk_level: Optional[str] = None,
+    href: Optional[str] = None,
+    evidence_refs: Optional[List[Dict[str, Any]]] = None,
+    audit_context: Optional[Dict[str, Any]] = None,
+    source_record: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    return {
+        "id": entry_id,
+        "entry_id": entry_id,
+        "ledgerId": entry_id,
+        "ledger_id": entry_id,
+        "sourceType": source_type,
+        "source_type": source_type,
+        "sourceDataset": source_dataset,
+        "source_dataset": source_dataset,
+        "eventType": event_type,
+        "event_type": event_type,
+        "status": status,
+        "outcome": status,
+        "actor": actor,
+        "targetType": target_type,
+        "target_type": target_type,
+        "targetId": target_id,
+        "target_id": target_id,
+        "riskLevel": risk_level,
+        "risk_level": risk_level,
+        "occurredAt": occurred_at,
+        "occurred_at": occurred_at,
+        "createdAt": occurred_at,
+        "created_at": occurred_at,
+        "title": title,
+        "summary": summary,
+        "href": href,
+        "links": {
+            "self": href,
+            "audit": (
+                f"/bff/audit/entities/{target_type}/{target_id}"
+                if target_type and target_id
+                else "/bff/audit"
+            ),
+        },
+        "evidenceRefs": _management_json_clone(evidence_refs or []),
+        "evidence_refs": _management_json_clone(evidence_refs or []),
+        "auditContext": _management_json_clone(audit_context or {}),
+        "audit_context": _management_json_clone(audit_context or {}),
+        "sourceRecord": _management_json_clone(source_record or {}),
+        "source_record": _management_json_clone(source_record or {}),
+    }
+
+
+def _governance_ledger_approval_entry(record: Dict[str, Any], *, dataset: str) -> Optional[Dict[str, Any]]:
+    decision_id = str(record.get("decision_id") or record.get("id") or "").strip()
+    if not decision_id:
+        return None
+    context = record.get("decision_context") if isinstance(record.get("decision_context"), dict) else {}
+    evidence_refs = context.get("evidence_refs") if isinstance(context.get("evidence_refs"), list) else []
+    status = str(
+        record.get("decision_state")
+        or record.get("state")
+        or record.get("outcome")
+        or record.get("decision")
+        or "unknown"
+    )
+    event_type = "approval.pending" if status.lower() in {"pending", "proposed", "under_review", "reviewed", "in_review"} else "approval.decision"
+    target_type = str(record.get("decision_type") or record.get("target_type") or "ApprovalDecision")
+    occurred_at = str(
+        record.get("submitted_at")
+        or record.get("created_at")
+        or record.get("decided_at")
+        or record.get("updated_at")
+        or ""
+    ) or None
+    return _governance_ledger_entry(
+        entry_id=f"ledger-approval-{decision_id}",
+        source_type="approval",
+        source_dataset=dataset,
+        event_type=event_type,
+        status=status,
+        actor=record.get("submitted_by") or record.get("actor_id") or record.get("created_by"),
+        target_type=target_type,
+        target_id=decision_id,
+        occurred_at=occurred_at,
+        title=f"Approval: {target_type}",
+        summary=context.get("risk_summary") or record.get("rationale") or record.get("reason"),
+        risk_level=record.get("risk_level"),
+        href=f"/bff/approvals/{decision_id}",
+        evidence_refs=evidence_refs,
+        audit_context={"decision_id": decision_id, "status": status},
+        source_record=record,
+    )
+
+
+def _governance_ledger_intervention_entry(record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    intervention_id = str(record.get("intervention_id") or record.get("id") or "").strip()
+    if not intervention_id:
+        return None
+    status = str(record.get("status") or "unknown")
+    kind = str(record.get("kind") or record.get("type") or "intervention")
+    target_type = record.get("target_type") or "Intervention"
+    target_id = record.get("target_id") or intervention_id
+    occurred_at = str(
+        record.get("triggered_at")
+        or record.get("created_at")
+        or record.get("updated_at")
+        or ""
+    ) or None
+    evidence_refs = record.get("evidence_refs") if isinstance(record.get("evidence_refs"), list) else []
+    return _governance_ledger_entry(
+        entry_id=f"ledger-intervention-{intervention_id}",
+        source_type="intervention",
+        source_dataset="v5_interventions",
+        event_type=f"intervention.{status.lower()}",
+        status=status,
+        actor=record.get("triggered_by") or record.get("actor") or record.get("owner"),
+        target_type=str(target_type),
+        target_id=str(target_id),
+        occurred_at=occurred_at,
+        title=f"Intervention: {kind}",
+        summary=record.get("description") or record.get("summary") or record.get("reason"),
+        risk_level=record.get("severity") or record.get("risk_level"),
+        href=f"/bff/v5/interventions/{intervention_id}",
+        evidence_refs=evidence_refs,
+        audit_context={"intervention_id": intervention_id, "kind": kind, "status": status},
+        source_record=record,
+    )
+
+
+def _governance_ledger_audit_source_type(event: Dict[str, Any]) -> Optional[str]:
+    action_type = str(event.get("action_type") or event.get("event_type") or "").strip()
+    target_type = str(event.get("target_type") or "").strip()
+    metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+    haystack = " ".join(
+        str(value or "")
+        for value in (
+            action_type,
+            target_type,
+            metadata.get("route"),
+            metadata.get("source_route"),
+        )
+    ).lower()
+    if "override" in haystack:
+        return "override"
+    if "intervention" in haystack:
+        return "intervention"
+    if "approval" in haystack or "approve" in haystack:
+        return "approval"
+    return None
+
+
+def _governance_ledger_audit_entry(event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    source_type = _governance_ledger_audit_source_type(event)
+    if source_type is None:
+        return None
+    event_id = str(event.get("entry_id") or event.get("id") or event.get("auditId") or "").strip()
+    if not event_id:
+        return None
+    target_type = str(event.get("target_type") or "").strip() or None
+    target_id = str(event.get("target_id") or event.get("entity_id") or "").strip() or None
+    event_type = str(event.get("action_type") or event.get("event_type") or f"{source_type}.audit")
+    href = "/bff/audit"
+    if source_type == "approval" and target_id:
+        href = f"/bff/approvals/{target_id}"
+    elif source_type == "intervention" and target_id:
+        href = f"/bff/v5/interventions/{target_id}"
+    elif target_type and target_id:
+        href = f"/bff/audit/entities/{target_type}/{target_id}"
+    return _governance_ledger_entry(
+        entry_id=f"ledger-audit-{event_id}",
+        source_type=source_type,
+        source_dataset="governance_audit_events",
+        event_type=event_type,
+        status=event.get("outcome") or event.get("status"),
+        actor=event.get("actor"),
+        target_type=target_type,
+        target_id=target_id,
+        occurred_at=str(event.get("timestamp") or "") or None,
+        title=f"{source_type.replace('_', ' ').title()} audit: {event_type}",
+        summary=(event.get("audit_context") or {}).get("reason")
+        if isinstance(event.get("audit_context"), dict)
+        else event.get("reason"),
+        risk_level=event.get("risk_level"),
+        href=href,
+        evidence_refs=event.get("evidence_refs") if isinstance(event.get("evidence_refs"), list) else [],
+        audit_context=event.get("audit_context") if isinstance(event.get("audit_context"), dict) else {},
+        source_record=event,
+    )
+
+
+def _governance_ledger_entry_sort_key(entry: Dict[str, Any]) -> tuple[datetime, str]:
+    parsed = _audit_datetime(entry.get("occurred_at") or entry.get("created_at"))
+    return (
+        parsed or datetime.min.replace(tzinfo=timezone.utc),
+        str(entry.get("id") or ""),
+    )
+
+
+def _governance_ledger_entry_matches(
+    entry: Dict[str, Any],
+    *,
+    source_types: Optional[List[str]],
+    statuses: Optional[List[str]],
+    q: str,
+) -> bool:
+    if source_types:
+        allowed_source_types = {value.strip().lower() for value in source_types if value.strip()}
+        if str(entry.get("source_type") or "").lower() not in allowed_source_types:
+            return False
+    if statuses:
+        allowed_statuses = {value.strip().lower() for value in statuses if value.strip()}
+        if str(entry.get("status") or "").lower() not in allowed_statuses:
+            return False
+    needle = q.strip().lower()
+    if needle:
+        haystack = " ".join(
+            str(entry.get(field) or "")
+            for field in (
+                "id",
+                "source_type",
+                "event_type",
+                "status",
+                "actor",
+                "target_type",
+                "target_id",
+                "title",
+                "summary",
+            )
+        ).lower()
+        if needle not in haystack:
+            return False
+    return True
+
+
+def _management_governance_ledger_response(
+    *,
+    source_type: Optional[str],
+    status: Optional[str],
+    q: str,
+    page_token: Optional[str],
+    page_size: int,
+) -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    entries_by_id: Dict[str, Dict[str, Any]] = {}
+
+    for item in read_store.list_approval_queue_items():
+        entry = _governance_ledger_approval_entry(item, dataset="approval_queue_items")
+        if entry:
+            entries_by_id[entry["id"]] = entry
+    for item in read_store.list_approval_decisions():
+        entry = _governance_ledger_approval_entry(item, dataset="approval_decisions")
+        if entry:
+            entries_by_id.setdefault(entry["id"], entry)
+    for item in _v5_intervention_records():
+        entry = _governance_ledger_intervention_entry(item)
+        if entry:
+            entries_by_id[entry["id"]] = entry
+    for event in _list_governance_audit_events():
+        entry = _governance_ledger_audit_entry(event)
+        if entry:
+            entries_by_id[entry["id"]] = entry
+
+    source_types = _split_csv_query(source_type)
+    statuses = _split_csv_query(status)
+    entries = [
+        entry
+        for entry in entries_by_id.values()
+        if _governance_ledger_entry_matches(
+            entry,
+            source_types=source_types,
+            statuses=statuses,
+            q=q,
+        )
+    ]
+    entries.sort(key=_governance_ledger_entry_sort_key, reverse=True)
+    total = len(entries)
+    page_items, next_page_token = _page_slice(entries, page_token, page_size)
+
+    source_counts = _management_count_by(entries, "sourceType")
+    status_counts = _management_count_by(entries, "status")
+    event_type_counts = _management_count_by(entries, "eventType")
+    latest_at = entries[0].get("occurred_at") if entries else None
+    summary = {
+        "ledgerCount": total,
+        "ledger_count": total,
+        "returnedLedgerCount": len(page_items),
+        "returned_ledger_count": len(page_items),
+        "approvalCount": source_counts.get("approval", 0),
+        "approval_count": source_counts.get("approval", 0),
+        "interventionCount": source_counts.get("intervention", 0),
+        "intervention_count": source_counts.get("intervention", 0),
+        "overrideCount": source_counts.get("override", 0),
+        "override_count": source_counts.get("override", 0),
+        "bySourceType": source_counts,
+        "by_source_type": source_counts,
+        "byStatus": status_counts,
+        "by_status": status_counts,
+        "byEventType": event_type_counts,
+        "by_event_type": event_type_counts,
+        "latestAt": latest_at,
+        "latest_at": latest_at,
+        "policy": "read_only_governance_ledger",
+        "basis": "composed_from_approval_intervention_override_audit_surfaces",
+    }
+
+    audit_surface = _dataset_surface_status("governance_audit_events", snapshot_at=snapshot_at)
+    approval_queue_surface = _dataset_surface_status("approval_queue_items", snapshot_at=snapshot_at)
+    approval_decision_surface = _dataset_surface_status("approval_decisions", snapshot_at=snapshot_at)
+    intervention_source = "bff_local_registry" if _V5_INTERVENTIONS_STORE else None
+    intervention_surface = _dataset_surface_status(
+        "v5_interventions",
+        snapshot_at=snapshot_at,
+        source=intervention_source,
+    )
+    override_surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
+    ledger_surface = _aggregate_group_surface(
+        "governance_ledger",
+        [
+            audit_surface,
+            approval_queue_surface,
+            approval_decision_surface,
+            intervention_surface,
+            override_surface,
+        ],
+        snapshot_at=snapshot_at,
+        unavailable_message="Governance ledger aggregate unavailable.",
+        degraded_message="Governance ledger is available, but one or more contributing surfaces are degraded.",
+    )
+    data = {
+        "id": "management-governance-ledger",
+        "items": page_items,
+        "entries": page_items,
+        "ledger": page_items,
+        "summary": summary,
+        "policy": "read_only_governance_ledger",
+    }
+    return {
+        "data": data,
+        "items": page_items,
+        "entries": page_items,
+        "ledger": page_items,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "governance_ledger": ledger_surface,
+                "audit": audit_surface,
+                "governance_audit_events": audit_surface,
+                "approval_queue": approval_queue_surface,
+                "approval_queue_items": approval_queue_surface,
+                "approval_decisions": approval_decision_surface,
+                "v5_interventions": intervention_surface,
+                "governance_overrides": override_surface,
+            },
+            "composition_sources": [
+                "GET /bff/audit",
+                "GET /bff/approvals",
+                "GET /bff/v5/interventions",
+            ],
+            "policy": "read_only_governance_ledger",
+            "filters": {
+                "source_type": source_type,
+                "status": status,
+                "q": q,
+            },
+        },
+    }
+
+
+@app.get("/bff/management/governance-ledger")
+async def bff_management_governance_ledger(
+    source_type: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+    q: str = Query(default=""),
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: unified read-only governance ledger for approvals, interventions, and overrides."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _management_governance_ledger_response(
+        source_type=source_type,
+        status=status,
+        q=q,
+        page_token=page_token,
+        page_size=page_size,
+    )
+
+
 def _management_payload_summary(payload: Dict[str, Any]) -> Dict[str, Any]:
     summary = payload.get("summary")
     if isinstance(summary, dict):

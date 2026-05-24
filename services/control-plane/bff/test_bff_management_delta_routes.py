@@ -308,3 +308,92 @@ def test_quarterly_ranking_drilldown_accepts_cors_preflight() -> None:
             assert "authorization" in response.headers["access-control-allow-headers"].lower()
         finally:
             bff_main.read_store = original
+
+
+def test_governance_ledger_unifies_approval_intervention_and_override_sources() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            bff_main.read_store._data.setdefault("governance_audit_events", []).append(
+                {
+                    "entry_id": "audit-override-001",
+                    "actor": "operator-jane",
+                    "action_type": "ManualRiskOverride",
+                    "target_type": "RebalanceOverride",
+                    "target_id": "override-001",
+                    "timestamp": "2026-05-24T14:20:00Z",
+                    "outcome": "accepted",
+                    "audit_context": {"reason": "Operator override audit fixture."},
+                    "evidence_refs": [],
+                }
+            )
+
+            anonymous = client.get("/bff/management/governance-ledger")
+            assert anonymous.status_code == 401, anonymous.text
+
+            response = client.get(
+                "/bff/management/governance-ledger",
+                headers=HEADERS,
+                params={"page_size": 20},
+            )
+
+            assert response.status_code == 200, response.text
+            body = response.json()
+            data = body["data"]
+
+            assert data["id"] == "management-governance-ledger"
+            assert body["items"] == body["entries"] == data["entries"]
+            assert body["ledger"] == body["items"]
+            assert body["summary"] == data["summary"]
+            assert body["page_info"]["total"] == body["summary"]["ledger_count"]
+            assert body["page_info"]["page_size"] == 20
+            assert body["summary"]["approval_count"] >= 1
+            assert body["summary"]["intervention_count"] >= 1
+            assert body["summary"]["override_count"] == 1
+            assert body["summary"]["by_source_type"]["override"] == 1
+            assert body["summary"]["policy"] == "read_only_governance_ledger"
+            assert body["meta"]["policy"] == "read_only_governance_ledger"
+            assert body["meta"]["surfaces"]["governance_ledger"]["source"] == "bff_composed"
+            assert "GET /bff/audit" in body["meta"]["composition_sources"]
+            assert "GET /bff/approvals" in body["meta"]["composition_sources"]
+            assert "GET /bff/v5/interventions" in body["meta"]["composition_sources"]
+            assert any(item["source_type"] == "approval" for item in body["items"])
+            assert any(item["source_type"] == "intervention" for item in body["items"])
+            assert any(item["source_type"] == "override" for item in body["items"])
+
+            override = client.get(
+                "/bff/management/governance-ledger",
+                headers=HEADERS,
+                params={"source_type": "override"},
+            )
+            assert override.status_code == 200, override.text
+            override_body = override.json()
+            assert override_body["summary"]["ledger_count"] == 1
+            assert override_body["items"][0]["event_type"] == "ManualRiskOverride"
+        finally:
+            bff_main.read_store = original
+
+
+def test_governance_ledger_cors_preflight_and_openapi() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            response = client.options(
+                "/bff/management/governance-ledger",
+                headers={
+                    "Origin": LOVABLE_ORIGIN,
+                    "Access-Control-Request-Method": "GET",
+                    "Access-Control-Request-Headers": "Authorization, X-Correlation-Id",
+                },
+            )
+
+            assert response.status_code in {200, 204}
+            assert response.headers["access-control-allow-origin"] == LOVABLE_ORIGIN
+
+            schema = client.get("/openapi.json").json()
+            assert "/bff/management/governance-ledger" in schema["paths"]
+            assert "get" in schema["paths"]["/bff/management/governance-ledger"]
+        finally:
+            bff_main.read_store = original
