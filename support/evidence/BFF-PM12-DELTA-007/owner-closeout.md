@@ -54,6 +54,19 @@ python3 -m pytest services/control-plane/bff/test_bff_pm12_portfolio_book_contra
 Result: 66 passed, with 3 existing `datetime.utcnow()` deprecation warnings in
 `services/control-plane/bff/read_store.py`.
 
+Owner revalidation after refreshing the closeout branch with `origin/dev` at
+`c2327e15`:
+
+```bash
+git diff --check
+python3 -m pytest services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py \
+  services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py \
+  services/control-plane/bff/tests/test_auth_jwks_strict.py -q
+```
+
+Result: 70 passed, with 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
 ## Closeout Notes
 
 - No new PM-12 Management source of truth was introduced.
