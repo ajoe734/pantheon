@@ -122,6 +122,7 @@ def _portfolio_store(
             "runtime_id": "runtime-alpha",
             "pnl": 10.0,
             "drawdown": 0.05,
+            "value_at_risk": 3.5,
             "fill_rate": 0.9,
             "total_trades": 12,
             "collected_at": "2026-05-23T08:00:00Z",
@@ -515,6 +516,41 @@ def test_performance_attribution_groups_requested_dimension(monkeypatch) -> None
     assert "GET /api/v1/telemetry/{runtime_id}/summary" in payload["meta"]["composition_sources"]
 
 
+def test_attribution_by_strategy_route_contract(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    anonymous = client.get("/bff/management/performance-attribution/by-strategy")
+    assert anonymous.status_code == 401, anonymous.text
+
+    preflight = client.options("/bff/management/performance-attribution/by-strategy")
+    assert preflight.status_code == 204, preflight.text
+
+    response = client.get(
+        "/bff/management/performance-attribution/by-strategy",
+        headers=HEADERS,
+        params={"period": "30d", "page_size": 20},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["data"]["id"] == "pm12-performance-attribution-by-strategy"
+    assert payload["items"] == payload["rows"] == payload["data"]["rows"]
+    assert payload["data"]["items"] == payload["items"]
+    assert payload["summary"]["period"] == "30d"
+    assert payload["summary"]["dimensions"] == ["strategy"]
+    assert payload["page_info"] == {"next_page_token": None, "total": 3, "page_size": 20}
+    assert {row["dimension"] for row in payload["items"]} == {"strategy"}
+
+    rows = {row["dimension_key"]: row for row in payload["items"]}
+    assert rows["strategy-alpha"]["metrics"]["totalPnl"] == 10.0
+    assert rows["strategy-alpha"]["sourceRefs"]["strategyIds"] == ["strategy-alpha"]
+    assert rows["strategy-alpha"]["links"]["strategy"] == "/bff/strategies/strategy-alpha"
+    assert rows["unassigned"]["metrics"]["totalPnl"] == -2.0
+    assert rows["strategy-beta"]["metrics"]["totalPnl"] is None
+    assert payload["meta"]["policy"] == "read_only_performance_attribution"
+    assert payload["meta"]["surfaces"]["performance_attribution"]["source"] == "bff_composed"
+
+
 def test_performance_attribution_supports_all_pm12_dimensions(monkeypatch) -> None:
     client = _portfolio_store(monkeypatch)
 
@@ -705,6 +741,77 @@ def test_strategy_allocation_returns_active_strategy_allocations_with_drift(monk
     assert payload["meta"]["surfaces"]["strategy_allocation"]["source"] == "bff_composed"
     assert payload["meta"]["surfaces"]["paper_live_drift"]["source"] == "service_store"
     assert payload["meta"]["policy"] == "read_only_strategy_allocation"
+
+
+def test_risk_radar_composes_persona_strategy_exposure_drawdown_and_var(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get(
+        "/bff/management/risk-radar",
+        headers=HEADERS,
+        params={"persona_id": "persona-alpha", "strategy_id": "strategy-alpha", "page_size": 20},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["data"]["id"] == "management-risk-radar"
+    assert payload["items"] == payload["rows"] == payload["indicators"] == payload["data"]["rows"]
+    assert payload["data"]["items"] == payload["items"]
+    assert payload["data"]["indicators"] == payload["items"]
+    assert payload["page_info"] == {"next_page_token": None, "total": 1, "page_size": 20}
+
+    row = payload["items"][0]
+    assert row["persona_id"] == "persona-alpha"
+    assert row["strategy_id"] == "strategy-alpha"
+    assert row["capital_pool_id"] == "pool-alpha"
+    assert row["risk_state"] == "critical"
+    assert row["metrics"]["worstDrawdown"] == 0.05
+    assert row["metrics"]["totalExposure"] == 30600.0
+    assert row["metrics"]["valueAtRisk"] == 3.5
+    assert row["metrics"]["valueAtRiskSource"] == "telemetry_value_at_risk"
+    assert row["sourceRefs"]["runtimeIds"] == ["runtime-alpha"]
+
+    indicator_statuses = {indicator["id"]: indicator["status"] for indicator in row["indicators"]}
+    assert indicator_statuses["drawdown"] == "ok"
+    assert indicator_statuses["exposure"] == "critical"
+    assert indicator_statuses["value-at-risk"] == "ok"
+
+    summary = payload["summary"]
+    assert summary["indicator_count"] == 1
+    assert summary["returned_indicator_count"] == 1
+    assert summary["critical_count"] == 1
+    assert summary["total_exposure"] == 30600.0
+    assert summary["worst_drawdown"] == 0.05
+    assert summary["value_at_risk_total"] == 3.5
+    assert payload["meta"]["surfaces"]["risk_radar"]["source"] == "bff_composed"
+    assert payload["meta"]["surfaces"]["telemetry_summaries"]["source"] == "canonical"
+    assert payload["meta"]["policy"] == "read_only_risk_radar"
+    assert "GET /api/v1/telemetry/{runtime_id}/summary" in payload["meta"]["composition_sources"]
+
+
+def test_risk_radar_requires_read_auth(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get("/bff/management/risk-radar")
+
+    assert response.status_code == 401, response.text
+
+
+def test_risk_radar_cors_preflight(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.options(
+        "/bff/management/risk-radar",
+        headers={
+            "Origin": "https://preview--pantheon-dev.lovable.app",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "Authorization, X-BFF-Api-Version",
+        },
+    )
+
+    assert response.status_code == 204, response.text
+    assert response.text == ""
+    assert response.headers["access-control-allow-origin"] == "https://preview--pantheon-dev.lovable.app"
 
 
 def test_performance_attribution_rejects_invalid_dimension(monkeypatch) -> None:
@@ -940,9 +1047,13 @@ def test_portfolio_book_is_registered_in_openapi() -> None:
     assert "get" in schema["paths"]["/bff/management/portfolio-book/positions"]
     assert "/bff/management/performance-attribution" in schema["paths"]
     assert "get" in schema["paths"]["/bff/management/performance-attribution"]
+    assert "/bff/management/performance-attribution/by-strategy" in schema["paths"]
+    assert "get" in schema["paths"]["/bff/management/performance-attribution/by-strategy"]
     assert "/bff/management/performance-attribution/by-persona" in schema["paths"]
     assert "get" in schema["paths"]["/bff/management/performance-attribution/by-persona"]
     assert "/bff/management/performance-attribution/by-pool" in schema["paths"]
     assert "get" in schema["paths"]["/bff/management/performance-attribution/by-pool"]
     assert "/bff/management/strategy-allocation" in schema["paths"]
     assert "get" in schema["paths"]["/bff/management/strategy-allocation"]
+    assert "/bff/management/risk-radar" in schema["paths"]
+    assert "get" in schema["paths"]["/bff/management/risk-radar"]

@@ -21399,6 +21399,33 @@ def _pm12_performance_attribution_facts(sources: Dict[str, Any], period_key: str
                     _management_dict_value(summary, "max_drawdown"),
                 )
             )
+            value_at_risk = _management_as_float(
+                _management_first_non_empty(
+                    _management_first_float(
+                        position,
+                        "value_at_risk",
+                        "valueAtRisk",
+                        "var",
+                        "VaR",
+                        "risk.value_at_risk",
+                        "risk.valueAtRisk",
+                        "risk.var",
+                    ),
+                    _management_first_float(
+                        telemetry,
+                        "value_at_risk",
+                        "valueAtRisk",
+                        "var",
+                        "VaR",
+                        "risk.value_at_risk",
+                        "risk.valueAtRisk",
+                        "risk.var",
+                        "summary.value_at_risk",
+                        "summary.valueAtRisk",
+                        "summary.var",
+                    ),
+                )
+            )
             fill_rate = _management_as_float(
                 _management_first_non_empty(
                     _management_dict_value(position, "fill_rate"),
@@ -21452,6 +21479,7 @@ def _pm12_performance_attribution_facts(sources: Dict[str, Any], period_key: str
                 "market_value": market_value,
                 "exposure": exposure,
                 "drawdown": drawdown,
+                "value_at_risk": value_at_risk,
                 "fill_rate": fill_rate,
                 "avg_slippage_bps": avg_slippage_bps,
                 "total_trades": total_trades,
@@ -22247,6 +22275,426 @@ def _management_strategy_allocation_response(
     }
 
 
+_MANAGEMENT_RISK_RADAR_STATES = {"ok", "watch", "critical", "unknown"}
+_MANAGEMENT_RISK_RADAR_SEVERITY = {"critical": 0, "watch": 1, "unknown": 2, "ok": 3}
+
+
+def _management_risk_metric_status(
+    value: Optional[float],
+    *,
+    watch: float,
+    critical: float,
+) -> str:
+    if value is None:
+        return "unknown"
+    if value >= critical:
+        return "critical"
+    if value >= watch:
+        return "watch"
+    return "ok"
+
+
+def _management_risk_overall_state(statuses: List[str]) -> str:
+    normalized = [status if status in _MANAGEMENT_RISK_RADAR_STATES else "unknown" for status in statuses]
+    if any(status == "critical" for status in normalized):
+        return "critical"
+    if any(status == "watch" for status in normalized):
+        return "watch"
+    if normalized and all(status == "unknown" for status in normalized):
+        return "unknown"
+    return "ok"
+
+
+def _management_risk_radar_rows(
+    facts: List[Dict[str, Any]],
+    sources: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    grouped: Dict[tuple[str, str, str], List[Dict[str, Any]]] = {}
+    for fact in facts:
+        persona_key = _pm12_dimension_key(fact.get("persona_id"))
+        strategy_key = _pm12_dimension_key(fact.get("strategy_id"))
+        pool_key = _pm12_dimension_key(fact.get("capital_pool_id"))
+        grouped.setdefault((persona_key, strategy_key, pool_key), []).append(fact)
+
+    rows: List[Dict[str, Any]] = []
+    for (persona_key, strategy_key, pool_key), group_facts in grouped.items():
+        metrics = _pm12_attribution_metrics(group_facts)
+        exposure = _management_as_float(metrics.get("total_exposure"))
+        drawdown = _management_as_float(metrics.get("worst_drawdown"))
+        var_values = [
+            value
+            for value in (_management_as_float(fact.get("value_at_risk")) for fact in group_facts)
+            if value is not None
+        ]
+        value_at_risk = round(sum(var_values), 6) if var_values else None
+        var_source = "telemetry_value_at_risk" if var_values else "unavailable"
+        if value_at_risk is None and exposure is not None and drawdown is not None:
+            value_at_risk = round(abs(exposure * drawdown), 6)
+            var_source = "exposure_x_drawdown"
+
+        pool = sources["pools_by_id"].get(pool_key, {}) if pool_key != "unassigned" else {}
+        risk_budget = _management_first_float(
+            pool,
+            "risk_budget",
+            "risk_budget_amount",
+            "budget",
+            "capital_allocation",
+            "allocation_limit",
+            "max_target_size",
+            "params.risk_budget",
+            "risk.budget",
+        )
+        exposure_utilization = None
+        if exposure is not None and risk_budget not in (None, 0):
+            exposure_utilization = round(exposure / risk_budget, 6)
+        value_at_risk_utilization = None
+        if value_at_risk is not None and risk_budget not in (None, 0):
+            value_at_risk_utilization = round(value_at_risk / risk_budget, 6)
+
+        drawdown_status = _management_risk_metric_status(drawdown, watch=0.06, critical=0.10)
+        exposure_status = _management_risk_metric_status(
+            exposure_utilization,
+            watch=0.80,
+            critical=1.00,
+        )
+        var_status = _management_risk_metric_status(
+            value_at_risk_utilization,
+            watch=0.05,
+            critical=0.10,
+        )
+        risk_state = _management_risk_overall_state([drawdown_status, exposure_status, var_status])
+        risk_score = {
+            "critical": 100.0,
+            "watch": 65.0,
+            "unknown": 40.0,
+            "ok": 20.0,
+        }[risk_state]
+
+        runtime_ids = sorted({
+            str(fact.get("runtime_id") or "")
+            for fact in group_facts
+            if str(fact.get("runtime_id") or "")
+        })
+        runtime_binding_ids = sorted({
+            str(fact.get("runtime_binding_id") or "")
+            for fact in group_facts
+            if str(fact.get("runtime_binding_id") or "")
+        })
+        plan_ids = sorted({
+            str(fact.get("deployment_plan_id") or "")
+            for fact in group_facts
+            if str(fact.get("deployment_plan_id") or "")
+        })
+        pool_ids = sorted({
+            str(fact.get("capital_pool_id") or "")
+            for fact in group_facts
+            if str(fact.get("capital_pool_id") or "")
+        })
+        persona_ids = sorted({
+            str(fact.get("persona_id") or "")
+            for fact in group_facts
+            if str(fact.get("persona_id") or "")
+        })
+        strategy_ids = sorted({
+            str(fact.get("strategy_id") or "")
+            for fact in group_facts
+            if str(fact.get("strategy_id") or "")
+        })
+        stages = sorted({
+            str(fact.get("deployment_stage") or "")
+            for fact in group_facts
+            if str(fact.get("deployment_stage") or "")
+        })
+        statuses = sorted({
+            str(fact.get("status") or "")
+            for fact in group_facts
+            if str(fact.get("status") or "")
+        })
+        indicator_items = [
+            {
+                "id": "drawdown",
+                "metric": "drawdown",
+                "label": "Worst drawdown",
+                "value": drawdown,
+                "status": drawdown_status,
+                "watch_threshold": 0.06,
+                "critical_threshold": 0.10,
+                "basis": "max_runtime_drawdown",
+            },
+            {
+                "id": "exposure",
+                "metric": "exposure",
+                "label": "Exposure utilization",
+                "value": exposure,
+                "risk_budget": risk_budget,
+                "utilization": exposure_utilization,
+                "status": exposure_status,
+                "watch_threshold": 0.80,
+                "critical_threshold": 1.00,
+                "basis": "position_or_runtime_exposure_over_pool_risk_budget",
+            },
+            {
+                "id": "value-at-risk",
+                "metric": "value_at_risk",
+                "label": "Value at risk",
+                "value": value_at_risk,
+                "risk_budget": risk_budget,
+                "utilization": value_at_risk_utilization,
+                "status": var_status,
+                "source": var_source,
+                "watch_threshold": 0.05,
+                "critical_threshold": 0.10,
+                "basis": "telemetry_var_or_exposure_x_drawdown",
+            },
+        ]
+        persona_label = _pm12_attribution_dimension_label(
+            "persona",
+            persona_key,
+            personas_by_id=sources["personas_by_id"],
+            strategies_by_id=sources["strategies_by_id"],
+            pools_by_id=sources["pools_by_id"],
+        )
+        strategy_label = _pm12_attribution_dimension_label(
+            "strategy",
+            strategy_key,
+            personas_by_id=sources["personas_by_id"],
+            strategies_by_id=sources["strategies_by_id"],
+            pools_by_id=sources["pools_by_id"],
+        )
+        pool_label = _pm12_attribution_dimension_label(
+            "pool",
+            pool_key,
+            personas_by_id=sources["personas_by_id"],
+            strategies_by_id=sources["strategies_by_id"],
+            pools_by_id=sources["pools_by_id"],
+        )
+        row = {
+            "id": f"risk-radar-{persona_key}-{strategy_key}-{pool_key}",
+            "personaId": persona_key,
+            "persona_id": persona_key,
+            "personaLabel": persona_label,
+            "persona_label": persona_label,
+            "strategyId": strategy_key,
+            "strategy_id": strategy_key,
+            "strategyLabel": strategy_label,
+            "strategy_label": strategy_label,
+            "capitalPoolId": pool_key,
+            "capital_pool_id": pool_key,
+            "capitalPoolName": pool_label,
+            "capital_pool_name": pool_label,
+            "riskState": risk_state,
+            "risk_state": risk_state,
+            "riskScore": risk_score,
+            "risk_score": risk_score,
+            "deploymentStages": stages,
+            "deployment_stages": stages,
+            "runtimeStatuses": statuses,
+            "runtime_statuses": statuses,
+            "indicators": indicator_items,
+            "metrics": {
+                **metrics,
+                "valueAtRisk": value_at_risk,
+                "value_at_risk": value_at_risk,
+                "valueAtRiskSource": var_source,
+                "value_at_risk_source": var_source,
+                "riskBudget": risk_budget,
+                "risk_budget": risk_budget,
+                "exposureUtilization": exposure_utilization,
+                "exposure_utilization": exposure_utilization,
+                "valueAtRiskUtilization": value_at_risk_utilization,
+                "value_at_risk_utilization": value_at_risk_utilization,
+            },
+            "drawdown": drawdown,
+            "worstDrawdown": drawdown,
+            "worst_drawdown": drawdown,
+            "exposure": exposure,
+            "totalExposure": exposure,
+            "total_exposure": exposure,
+            "valueAtRisk": value_at_risk,
+            "value_at_risk": value_at_risk,
+            "riskBudget": risk_budget,
+            "risk_budget": risk_budget,
+            "exposureUtilization": exposure_utilization,
+            "exposure_utilization": exposure_utilization,
+            "valueAtRiskUtilization": value_at_risk_utilization,
+            "value_at_risk_utilization": value_at_risk_utilization,
+            "sourceRefs": {
+                "runtimeIds": runtime_ids,
+                "runtime_ids": runtime_ids,
+                "runtimeBindingIds": runtime_binding_ids,
+                "runtime_binding_ids": runtime_binding_ids,
+                "deploymentPlanIds": plan_ids,
+                "deployment_plan_ids": plan_ids,
+                "capitalPoolIds": pool_ids,
+                "capital_pool_ids": pool_ids,
+                "personaIds": persona_ids,
+                "persona_ids": persona_ids,
+                "strategyIds": strategy_ids,
+                "strategy_ids": strategy_ids,
+            },
+            "source_refs": {
+                "runtime_ids": runtime_ids,
+                "runtime_binding_ids": runtime_binding_ids,
+                "deployment_plan_ids": plan_ids,
+                "capital_pool_ids": pool_ids,
+                "persona_ids": persona_ids,
+                "strategy_ids": strategy_ids,
+            },
+            "links": {
+                "persona": _management_link("/bff/personas", persona_key if persona_key != "unassigned" else None),
+                "strategy": _management_link("/bff/strategies", strategy_key if strategy_key != "unassigned" else None),
+                "capitalPool": _management_link("/bff/capital-pools", pool_key if pool_key != "unassigned" else None),
+                "capital_pool": _management_link("/bff/capital-pools", pool_key if pool_key != "unassigned" else None),
+            },
+        }
+        rows.append(row)
+
+    rows.sort(
+        key=lambda item: (
+            _MANAGEMENT_RISK_RADAR_SEVERITY.get(str(item.get("risk_state") or ""), 4),
+            -(_management_as_float(item.get("value_at_risk")) or 0.0),
+            -(_management_as_float(item.get("total_exposure")) or 0.0),
+            str(item.get("persona_id") or ""),
+            str(item.get("strategy_id") or ""),
+            str(item.get("capital_pool_id") or ""),
+        )
+    )
+    for rank, row in enumerate(rows, start=1):
+        row["rank"] = rank
+    return rows
+
+
+def _management_risk_radar_response(
+    *,
+    persona_id: Optional[str],
+    strategy_id: Optional[str],
+    capital_pool_id: Optional[str],
+    risk_state: Optional[str],
+    page_token: Optional[str],
+    page_size: int,
+) -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    sources = _pm12_performance_attribution_sources()
+    facts = _pm12_performance_attribution_facts(sources, "latest")
+    persona_filter = set(_split_csv_query(persona_id) or [])
+    strategy_filter = set(_split_csv_query(strategy_id) or [])
+    pool_filter = set(_split_csv_query(capital_pool_id) or [])
+    if persona_filter:
+        facts = [fact for fact in facts if str(fact.get("persona_id") or "") in persona_filter]
+    if strategy_filter:
+        facts = [fact for fact in facts if str(fact.get("strategy_id") or "") in strategy_filter]
+    if pool_filter:
+        facts = [fact for fact in facts if str(fact.get("capital_pool_id") or "") in pool_filter]
+
+    rows = _management_risk_radar_rows(facts, sources)
+    risk_filter = {item.lower() for item in (_split_csv_query(risk_state) or [])}
+    if risk_filter:
+        rows = [row for row in rows if str(row.get("risk_state") or "").lower() in risk_filter]
+
+    total = len(rows)
+    page_items, next_page_token = _page_slice(rows, page_token, page_size)
+    risk_counts = _management_count_by([{"risk_state": row.get("risk_state")} for row in rows], "risk_state")
+    exposure_values = [
+        value
+        for value in (_management_as_float(row.get("total_exposure")) for row in rows)
+        if value is not None
+    ]
+    drawdown_values = [
+        value
+        for value in (_management_as_float(row.get("worst_drawdown")) for row in rows)
+        if value is not None
+    ]
+    var_values = [
+        value
+        for value in (_management_as_float(row.get("value_at_risk")) for row in rows)
+        if value is not None
+    ]
+    source_surfaces = {
+        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
+        "deployment_plans": _dataset_surface_status("deployment_plans", snapshot_at=snapshot_at),
+        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at),
+        "capital_pools": _dataset_surface_status("capital_pools", snapshot_at=snapshot_at),
+        "strategies": _dataset_surface_status("strategy_specs", snapshot_at=snapshot_at),
+        "telemetry_summaries": _dataset_surface_status(
+            "telemetry_summaries",
+            snapshot_at=snapshot_at,
+            has_data=bool(sources["telemetry_by_runtime_id"]) if sources["runtime_bindings"] else None,
+            missing_message="Telemetry summaries unavailable for risk-radar runtimes.",
+        ),
+    }
+    risk_surface = _aggregate_group_surface(
+        "risk_radar",
+        list(source_surfaces.values()),
+        snapshot_at=snapshot_at,
+        unavailable_message="Risk-radar aggregate unavailable.",
+        degraded_message="Risk radar is available, but one or more supporting surfaces are degraded.",
+    )
+    summary = {
+        "indicatorCount": total,
+        "indicator_count": total,
+        "returnedIndicatorCount": len(page_items),
+        "returned_indicator_count": len(page_items),
+        "personaCount": len({row.get("persona_id") for row in rows if row.get("persona_id")}),
+        "persona_count": len({row.get("persona_id") for row in rows if row.get("persona_id")}),
+        "strategyCount": len({row.get("strategy_id") for row in rows if row.get("strategy_id")}),
+        "strategy_count": len({row.get("strategy_id") for row in rows if row.get("strategy_id")}),
+        "capitalPoolCount": len({row.get("capital_pool_id") for row in rows if row.get("capital_pool_id")}),
+        "capital_pool_count": len({row.get("capital_pool_id") for row in rows if row.get("capital_pool_id")}),
+        "criticalCount": risk_counts.get("critical", 0),
+        "critical_count": risk_counts.get("critical", 0),
+        "watchCount": risk_counts.get("watch", 0),
+        "watch_count": risk_counts.get("watch", 0),
+        "unknownCount": risk_counts.get("unknown", 0),
+        "unknown_count": risk_counts.get("unknown", 0),
+        "okCount": risk_counts.get("ok", 0),
+        "ok_count": risk_counts.get("ok", 0),
+        "byRiskState": risk_counts,
+        "by_risk_state": risk_counts,
+        "totalExposure": round(sum(exposure_values), 6) if exposure_values else None,
+        "total_exposure": round(sum(exposure_values), 6) if exposure_values else None,
+        "worstDrawdown": max(drawdown_values) if drawdown_values else None,
+        "worst_drawdown": max(drawdown_values) if drawdown_values else None,
+        "valueAtRiskTotal": round(sum(var_values), 6) if var_values else None,
+        "value_at_risk_total": round(sum(var_values), 6) if var_values else None,
+        "basis": "runtime_telemetry_by_persona_strategy_pool",
+    }
+    data = {
+        "id": "management-risk-radar",
+        "items": page_items,
+        "rows": page_items,
+        "indicators": page_items,
+        "summary": summary,
+    }
+    return {
+        "data": data,
+        "items": page_items,
+        "rows": page_items,
+        "indicators": page_items,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "risk_radar": risk_surface,
+                **source_surfaces,
+            },
+            "composition_sources": [
+                "GET /api/v1/runtime-bindings",
+                "GET /api/v1/deployment-plans",
+                "GET /api/v1/persona-capital-bindings",
+                "GET /bff/capital-pools",
+                "GET /bff/strategies",
+                "GET /api/v1/telemetry/{runtime_id}/summary",
+            ],
+            "policy": "read_only_risk_radar",
+        },
+    }
+
+
 @app.get("/bff/management/strategy-allocation")
 async def bff_management_strategy_allocation(
     strategy_id: Optional[str] = None,
@@ -22265,6 +22713,29 @@ async def bff_management_strategy_allocation(
         capital_pool_id=capital_pool_id,
         deployment_stage=deployment_stage,
         drift_status=drift_status,
+        page_token=page_token,
+        page_size=page_size,
+    )
+
+
+@app.get("/bff/management/risk-radar")
+async def bff_management_risk_radar(
+    persona_id: Optional[str] = None,
+    strategy_id: Optional[str] = None,
+    capital_pool_id: Optional[str] = None,
+    risk_state: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: read-only cross-persona and strategy risk indicators."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _management_risk_radar_response(
+        persona_id=persona_id,
+        strategy_id=strategy_id,
+        capital_pool_id=capital_pool_id,
+        risk_state=risk_state,
         page_token=page_token,
         page_size=page_size,
     )
@@ -29067,6 +29538,35 @@ async def bff_management_performance_attribution(
         period=period,
         page_token=page_token,
         page_size=page_size,
+    )
+
+
+@app.options(
+    "/bff/management/performance-attribution/by-strategy",
+    status_code=204,
+    include_in_schema=False,
+)
+async def bff_management_performance_attribution_by_strategy_options():
+    return Response(status_code=204)
+
+
+@app.get("/bff/management/performance-attribution/by-strategy")
+async def bff_management_performance_attribution_by_strategy(
+    period: str = Query(default="latest"),
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 performance attribution grouped by strategy."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _pm12_performance_attribution_response(
+        dimensions=["strategy"],
+        period=period,
+        page_token=page_token,
+        page_size=page_size,
+        data_id="pm12-performance-attribution-by-strategy",
+        surface_key="performance_attribution_by_strategy",
     )
 
 

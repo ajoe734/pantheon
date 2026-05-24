@@ -117,6 +117,7 @@ export const paths = {
   managementReadinessBffHa: () => `${BASE}/management/readiness/bff-ha`,
   managementReadinessStrictPublish: () => `${BASE}/management/readiness/strict-publish`,
   managementStrategyAllocation: () => `${BASE}/management/strategy-allocation`,
+  managementRiskRadar: () => `${BASE}/management/risk-radar`,
   managementPortfolioBook: () => `${BASE}/management/portfolio-book`,
   managementPortfolioBookPools: () => `${BASE}/management/portfolio-book/pools`,
   managementPortfolioBookExposure: () => `${BASE}/management/portfolio-book/exposure`,
@@ -132,6 +133,7 @@ export const paths = {
   managementQuarterlyRankingFormula: () => `${BASE}/management/quarterly-ranking/formula`,
   managementQuarterlyRankingRecommendations: () => `${BASE}/management/quarterly-ranking/recommendations`,
   managementPerformanceAttribution: () => `${BASE}/management/performance-attribution`,
+  managementPerformanceAttributionByStrategy: () => `${BASE}/management/performance-attribution/by-strategy`,
   managementPerformanceAttributionByPersona: () => `${BASE}/management/performance-attribution/by-persona`,
   managementPerformanceAttributionByPool: () => `${BASE}/management/performance-attribution/by-pool`,
 
