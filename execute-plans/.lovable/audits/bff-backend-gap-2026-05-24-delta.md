@@ -254,3 +254,48 @@ pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py se
 
 Result: 53 passed, 3 existing `datetime.utcnow()` deprecation warnings in
 `services/control-plane/bff/read_store.py`.
+
+## BFF-MGMT-DELTA-005
+
+Route:
+
+```text
+GET /bff/management/risk-radar
+```
+
+Purpose:
+
+Provide a strict-live Management Console route for cross-persona and strategy
+risk indicators. The backend route is a read-only aggregate over runtime
+bindings, deployment plans, persona-capital bindings, capital pools, strategy
+summaries, and telemetry summaries. It surfaces drawdown, exposure,
+value-at-risk, risk state, runtime source refs, and detail links without
+introducing a new risk source of truth.
+
+Frontend contract:
+
+- `paths.managementRiskRadar()`
+- `managementRiskRadarPath(query)`
+- `fetchManagementRiskRadar(query, init, baseUrl)`
+
+Backend acceptance:
+
+- unauthenticated request: HTTP 401
+- authenticated request: HTTP 200
+- CORS preflight: HTTP 204
+- response envelope: `data`, `items`, `rows`, `indicators`, `summary`, `page_info`, `meta`
+- `data.id`: `management-risk-radar`
+- `meta.policy`: `read_only_risk_radar`
+- rows include persona, strategy, capital pool, drawdown, exposure,
+  value-at-risk, metric indicator statuses, and source refs
+- no new risk source of truth; composed from runtime bindings, deployment
+  plans, persona bindings, capital pools, strategies, and telemetry summaries
+
+Validation:
+
+```bash
+pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py
+```
+
+Result: 61 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.

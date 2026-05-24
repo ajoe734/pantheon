@@ -603,3 +603,88 @@ pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py se
 
 Result: 53 passed, 3 existing `datetime.utcnow()` deprecation warnings in
 `services/control-plane/bff/read_store.py`.
+
+---
+
+## BFF-MGMT-DELTA-005 Management Risk Radar Route
+
+Task: BFF-MGMT-DELTA-005
+Owner: Codex
+Reviewer: Claude
+
+### Scope
+
+Add a strict-live Management Console route for cross-persona and strategy risk
+indicators:
+
+```text
+GET /bff/management/risk-radar?persona_id=&strategy_id=&capital_pool_id=&risk_state=&page_token=&page_size=
+```
+
+The route composes runtime bindings, deployment plans, persona-capital
+bindings, capital pools, strategy summaries, and telemetry summaries. It is
+read-only, does not mutate capital, and does not introduce a new risk source of
+truth.
+
+### Contract
+
+The response uses the canonical aggregate envelope:
+
+```json
+{
+  "data": {
+    "id": "management-risk-radar",
+    "items": [],
+    "rows": [],
+    "indicators": [],
+    "summary": {}
+  },
+  "items": [],
+  "rows": [],
+  "indicators": [],
+  "summary": {},
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 50 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": [],
+    "policy": "read_only_risk_radar"
+  }
+}
+```
+
+Rows are grouped by persona, strategy, and capital pool. Each row includes
+drawdown, exposure, value-at-risk, risk-budget utilization, per-metric
+indicator statuses, runtime/deployment source refs, and links back to persona,
+strategy, and capital-pool details when those identifiers are known.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Path registered in FastAPI/OpenAPI | Implemented |
+| 2 | Cross persona and strategy risk indicators include drawdown, exposure, and value-at-risk | Implemented |
+| 3 | Anonymous request returns HTTP 401 | Implemented |
+| 4 | Authenticated request returns HTTP 200 | Implemented |
+| 5 | Response keeps canonical aggregate envelope | Implemented |
+| 6 | CORS preflight returns HTTP 204 | Implemented |
+| 7 | Focused pytest cases cover `risk_radar` success, auth, and preflight | Implemented |
+| 8 | execute-plans exposes typed path and fetch helpers | Implemented |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
+
+### Validation
+
+```bash
+pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py
+```
+
+Result: 61 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
