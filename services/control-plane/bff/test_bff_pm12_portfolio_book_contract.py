@@ -814,6 +814,76 @@ def test_risk_radar_cors_preflight(monkeypatch) -> None:
     assert response.headers["access-control-allow-origin"] == "https://preview--pantheon-dev.lovable.app"
 
 
+def test_management_board_pack_composes_pm12_sections(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get(
+        "/bff/management/board-pack",
+        headers=HEADERS,
+        params={"period": "30d", "section_limit": 2},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    data = payload["data"]
+    assert data["id"] == "management-board-pack"
+    assert payload["items"] == payload["sections"] == data["sections"]
+    assert payload["summary"] == data["summary"]
+    assert payload["page_info"] == {"next_page_token": None, "total": 8, "page_size": 8}
+    assert payload["summary"]["section_count"] == 8
+    assert payload["summary"]["period"] == "30d"
+    assert payload["summary"]["section_limit"] == 2
+    assert payload["summary"]["policy"] == "read_only_management_board_pack"
+
+    section_ids = {section["id"] for section in payload["sections"]}
+    assert {
+        "portfolio_book",
+        "portfolio_book_exposure",
+        "portfolio_book_positions",
+        "strategy_allocation",
+        "persona_league",
+        "persona_league_movers",
+        "performance_attribution_by_persona",
+        "performance_attribution_by_pool",
+    }.issubset(section_ids)
+
+    assert data["portfolioBook"]["data"]["summary"]["capital_pool_count"] == 2
+    assert data["portfolio_book_exposure"]["data"]["id"] == "pm12-portfolio-book-exposure"
+    assert data["portfolioBookPositions"]["data"]["summary"]["position_count"] == 3
+    assert data["strategyAllocation"]["data"]["id"] == "management-strategy-allocation"
+    assert data["performanceAttribution"]["byPersona"]["summary"]["dimensions"] == ["persona"]
+    assert data["performance_attribution"]["by_pool"]["summary"]["dimensions"] == ["pool"]
+    assert data["personaLeague"]["movers"]["data"]["id"] == "management-persona-league-movers"
+    assert payload["meta"]["surfaces"]["management_board_pack"]["source"] == "bff_composed"
+    assert payload["meta"]["surfaces"]["board_pack"] == payload["meta"]["surfaces"]["management_board_pack"]
+    assert "GET /bff/management/strategy-allocation" in payload["meta"]["composition_sources"]
+
+
+def test_management_board_pack_requires_read_auth(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get("/bff/management/board-pack")
+
+    assert response.status_code == 401, response.text
+
+
+def test_management_board_pack_cors_preflight(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.options(
+        "/bff/management/board-pack",
+        headers={
+            "Origin": "https://preview--pantheon-dev.lovable.app",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "Authorization, X-BFF-Api-Version",
+        },
+    )
+
+    assert response.status_code == 204, response.text
+    assert response.text == ""
+    assert response.headers["access-control-allow-origin"] == "https://preview--pantheon-dev.lovable.app"
+
+
 def test_performance_attribution_rejects_invalid_dimension(monkeypatch) -> None:
     client = _portfolio_store(monkeypatch)
 
@@ -1037,6 +1107,8 @@ def test_portfolio_book_is_registered_in_openapi() -> None:
     bff_main.app.openapi_schema = None
     schema = bff_main.app.openapi()
 
+    assert "/bff/management/board-pack" in schema["paths"]
+    assert "get" in schema["paths"]["/bff/management/board-pack"]
     assert "/bff/management/portfolio-book" in schema["paths"]
     assert "get" in schema["paths"]["/bff/management/portfolio-book"]
     assert "/bff/management/portfolio-book/pools" in schema["paths"]

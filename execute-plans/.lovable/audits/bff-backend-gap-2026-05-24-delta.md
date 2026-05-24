@@ -255,6 +255,48 @@ pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py se
 Result: 53 passed, 3 existing `datetime.utcnow()` deprecation warnings in
 `services/control-plane/bff/read_store.py`.
 
+## BFF-PM12-DELTA-007
+
+Route:
+
+```text
+GET /bff/management/board-pack
+```
+
+Purpose:
+
+Provide a dedicated strict-live Management Console board packet for PM-12. The
+backend route composes existing read-only Management surfaces into a single
+board-level payload for first-screen rendering without creating a new source of
+truth.
+
+Frontend contract:
+
+- `paths.managementBoardPack()`
+- `managementBoardPackPath(query)`
+- `fetchManagementBoardPack(query, init, baseUrl)`
+
+Backend acceptance:
+
+- unauthenticated request: HTTP 401
+- authenticated request: HTTP 200
+- CORS preflight: HTTP 204
+- response envelope: `data`, `items`, `sections`, `summary`, `page_info`, `meta`
+- `data.id`: `management-board-pack`
+- supported query: `period`, `state`, `archetype`, `q`, `section_limit`
+- `meta.policy`: `read_only_management_board_pack`
+- no new PM-12 source of truth; composed from portfolio-book, exposure,
+  positions, strategy allocation, persona league, movers, and attribution routes
+
+Validation:
+
+```bash
+pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py
+```
+
+Result: 66 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
 ## BFF-MGMT-DELTA-005
 
 Route:

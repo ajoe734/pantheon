@@ -67,6 +67,114 @@ export interface ManagementCockpitResponse {
   meta: ManagementCockpitMeta;
 }
 
+export interface ManagementBoardPackQuery {
+  period?: string;
+  state?: string;
+  archetype?: string;
+  q?: string;
+  section_limit?: number;
+}
+
+export interface ManagementBoardPackSection {
+  id: string;
+  section_id: string;
+  label: string;
+  href: string;
+  status: ManagementSurfaceStatus;
+  source?: string;
+  item_count?: number;
+  itemCount?: number;
+  returned_item_count?: number;
+  returnedItemCount?: number;
+  summary?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface ManagementBoardPackSummary {
+  section_count: number;
+  sectionCount: number;
+  section_ids: string[];
+  sectionIds: string[];
+  by_status: Record<string, number>;
+  byStatus: Record<string, number>;
+  ok_section_count: number;
+  okSectionCount: number;
+  degraded_section_count: number;
+  degradedSectionCount: number;
+  unavailable_section_count: number;
+  unavailableSectionCount: number;
+  period: string;
+  section_limit: number;
+  sectionLimit: number;
+  policy: string;
+  basis: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementBoardPackResponse {
+  data: {
+    id: "management-board-pack" | string;
+    snapshotAt?: string;
+    snapshot_at?: string;
+    period: string;
+    sectionLimit: number;
+    section_limit: number;
+    sections: ManagementBoardPackSection[];
+    summary: ManagementBoardPackSummary;
+    portfolioBook?: Record<string, unknown>;
+    portfolio_book?: Record<string, unknown>;
+    portfolioBookExposure?: ManagementPortfolioBookExposureResponse;
+    portfolio_book_exposure?: ManagementPortfolioBookExposureResponse;
+    portfolioBookPositions?: ManagementPortfolioBookPositionsResponse;
+    portfolio_book_positions?: ManagementPortfolioBookPositionsResponse;
+    strategyAllocation?: ManagementStrategyAllocationResponse;
+    strategy_allocation?: ManagementStrategyAllocationResponse;
+    personaLeague?: {
+      league?: ManagementPersonaLeagueResponse;
+      movers?: ManagementPersonaLeagueMoversResponse;
+      [key: string]: unknown;
+    };
+    persona_league?: {
+      league?: ManagementPersonaLeagueResponse;
+      movers?: ManagementPersonaLeagueMoversResponse;
+      [key: string]: unknown;
+    };
+    performanceAttribution?: {
+      byPersona?: ManagementPerformanceAttributionResponse;
+      by_persona?: ManagementPerformanceAttributionResponse;
+      byPool?: ManagementPerformanceAttributionResponse;
+      by_pool?: ManagementPerformanceAttributionResponse;
+      [key: string]: unknown;
+    };
+    performance_attribution?: {
+      byPersona?: ManagementPerformanceAttributionResponse;
+      by_persona?: ManagementPerformanceAttributionResponse;
+      byPool?: ManagementPerformanceAttributionResponse;
+      by_pool?: ManagementPerformanceAttributionResponse;
+      [key: string]: unknown;
+    };
+    policy?: string;
+    [key: string]: unknown;
+  };
+  items: ManagementBoardPackSection[];
+  sections: ManagementBoardPackSection[];
+  summary: ManagementBoardPackSummary;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces?: Record<string, ManagementSurfaceRef>;
+    composition_sources?: string[];
+    period?: string;
+    section_limit?: number;
+    policy?: string;
+    [key: string]: unknown;
+  };
+}
+
 export interface ManagementTradingPulseSummary {
   runtimeCount: number;
   runtime_count: number;
@@ -2291,6 +2399,10 @@ export function managementCockpitPath(): string {
   return paths.managementCockpit();
 }
 
+export function managementBoardPackPath(query?: ManagementBoardPackQuery): string {
+  return withQuery(paths.managementBoardPack(), query);
+}
+
 export function managementTradingPulsePath(): string {
   return paths.managementTradingPulse();
 }
@@ -2458,6 +2570,25 @@ export async function fetchManagementCockpit(
     throw new Error(`GET ${managementCockpitPath()} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementCockpitResponse>;
+}
+
+export async function fetchManagementBoardPack(
+  query?: ManagementBoardPackQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementBoardPackResponse> {
+  const path = managementBoardPackPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementBoardPackResponse>;
 }
 
 export async function fetchManagementTradingPulse(
