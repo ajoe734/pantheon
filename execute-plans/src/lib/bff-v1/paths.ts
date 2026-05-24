@@ -123,11 +123,14 @@ export const paths = {
   managementPersonaLeagueMovers: () => `${BASE}/management/persona-league/movers`,
   managementPersonaLeagueRankings: () => `${BASE}/management/persona-league/rankings`,
   managementPersonaLeagueTiers: () => `${BASE}/management/persona-league/tiers`,
+  managementPersonaLeagueHeatmap: () => `${BASE}/management/persona-league/heatmap`,
   managementQuarterlyRanking: () => `${BASE}/management/quarterly-ranking`,
   managementQuarterlyRankingDrilldown: () => `${BASE}/management/quarterly-ranking/drilldown`,
   managementQuarterlyRankingFormula: () => `${BASE}/management/quarterly-ranking/formula`,
   managementQuarterlyRankingRecommendations: () => `${BASE}/management/quarterly-ranking/recommendations`,
   managementPerformanceAttribution: () => `${BASE}/management/performance-attribution`,
+  managementPerformanceAttributionByPersona: () => `${BASE}/management/performance-attribution/by-persona`,
+  managementPerformanceAttributionByPool: () => `${BASE}/management/performance-attribution/by-pool`,
 
   // ---- Research ----
   researchExperiments: () => `${BASE}/research-experiments`,
