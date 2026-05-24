@@ -148,6 +148,8 @@ Result: `git diff --check HEAD~2..HEAD` exited 0; focused
 route/live-wiring suite passed with 31 tests and 3 existing
 `datetime.utcnow()` deprecation warnings in
 `services/control-plane/bff/read_store.py`.
+Additional owner validation: broader BFF delta/auth suite passed with 93 tests
+and the same 3 existing warnings.
 
 ## BFF-MGMT-DELTA-011
 
