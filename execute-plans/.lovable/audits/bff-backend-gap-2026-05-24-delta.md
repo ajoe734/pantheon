@@ -52,6 +52,57 @@ python3 -m pytest services/control-plane/bff/tests/test_bff_pm12_persona_league.
 Result: 62 passed, 3 existing `datetime.utcnow()` deprecation warnings in
 `services/control-plane/bff/read_store.py`.
 
+## BFF-MGMT-DELTA-011
+
+Route:
+
+```text
+GET /bff/management/hiq-backlog
+```
+
+Purpose:
+
+Provide a strict-live Management Console route for the HIQ operator backlog.
+The backend route is a read-only aggregate over existing v5 intervention,
+sentinel finding, and human-inbox read surfaces; it does not introduce a new
+backlog source of truth and does not mutate interventions, findings, approvals,
+or capital.
+
+Frontend contract:
+
+- `paths.managementHiqBacklog()`
+- `managementHiqBacklogPath(query)`
+- `fetchManagementHiqBacklog(query, init, baseUrl)`
+
+Backend acceptance:
+
+- unauthenticated request: HTTP 401
+- authenticated request: HTTP 200
+- CORS preflight: HTTP 204/200
+- response envelope: `data`, `items`, `rows`, `backlog`, `summary`,
+  `page_info`, `meta`
+- supported query: `source_type`, `status`, `kind`, `priority`, `q`,
+  `page_token`, `page_size`
+- default backlog filter: `kind=hiq_sentinel,risk_breach` and open/pending
+  backlog statuses unless caller passes `kind=all` or `status=all`
+- `data.id`: `management-hiq-backlog`
+- `meta.policy`: `read_only_hiq_backlog`
+- no new HIQ source of truth; composed from v5 interventions, sentinel
+  findings, and human-inbox surfaces
+
+Validation:
+
+```bash
+git diff --check
+python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q
+python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py -q
+```
+
+Result: `git diff --check` exited 0; focused route/live-wiring suite passed
+with 22 tests; broader BFF delta suite passed with 84 tests and 3 existing
+`datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
 ## BFF-MGMT-DELTA-006
 
 Route:
