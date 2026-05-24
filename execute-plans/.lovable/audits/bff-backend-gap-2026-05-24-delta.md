@@ -52,6 +52,94 @@ python3 -m pytest services/control-plane/bff/tests/test_bff_pm12_persona_league.
 Result: 62 passed, 3 existing `datetime.utcnow()` deprecation warnings in
 `services/control-plane/bff/read_store.py`.
 
+## BFF-MGMT-DELTA-006
+
+Route:
+
+```text
+GET /bff/management/incident-timeline
+```
+
+Purpose:
+
+Provide a strict-live Management Console route for incident timeline rendering.
+The backend route is a read-only aggregate over the existing IncidentCase read
+surface used by `/bff/incidents`; it preserves incident evidence fields and
+adds chronological timeline fields plus severity buckets for high, medium, and
+low incidents.
+
+Frontend contract:
+
+- `paths.managementIncidentTimeline()`
+- `managementIncidentTimelinePath(query)`
+- `fetchManagementIncidentTimeline(query, init, baseUrl)`
+
+Backend acceptance:
+
+- unauthenticated request: HTTP 401
+- authenticated request: HTTP 200
+- CORS preflight: HTTP 204
+- response envelope: `data`, `items`, `rows`, `incidents`, `events`,
+  `summary`, `severityBuckets`, `page_info`, `meta`
+- `data.id`: `management-incident-timeline`
+- `meta.policy`: `read_only_incident_timeline`
+- rows are sorted by occurrence time and include `severityBucket` /
+  `severity_bucket`
+- `summary.severityBuckets` exposes `high`, `medium`, and `low`
+- no new incident source of truth; composed from IncidentCase read surfaces
+
+Validation:
+
+```bash
+pytest -q services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py
+```
+
+Result: 75 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
+## BFF-MGMT-DELTA-007
+
+Route:
+
+```text
+GET /bff/management/governance-ledger
+```
+
+Purpose:
+
+Provide a strict-live Management Console route for a unified governance ledger.
+The backend route composes approval queue/decision records, v5 interventions,
+and governance audit events that represent approvals, interventions, and
+overrides. It is read-only and does not introduce a new governance source of
+truth.
+
+Frontend contract:
+
+- `paths.managementGovernanceLedger()`
+- `managementGovernanceLedgerPath(query)`
+- `fetchManagementGovernanceLedger(query, init, baseUrl)`
+
+Backend acceptance:
+
+- unauthenticated request: HTTP 401
+- authenticated request: HTTP 200
+- CORS preflight: HTTP 204
+- response envelope: `data`, `items`, `entries`, `ledger`, `summary`, `page_info`, `meta`
+- supported query: `source_type`, `status`, `q`, `page_token`, `page_size`
+- `data.id`: `management-governance-ledger`
+- `meta.policy`: `read_only_governance_ledger`
+- no new governance source of truth; composed from audit, approvals, and v5
+  intervention read surfaces
+
+Validation:
+
+```bash
+python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py -q
+```
+
+Result: 81 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
 ## BFF-PM12-DELTA-002
 
 Route:
@@ -128,6 +216,50 @@ pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py se
 ```
 
 Result: 49 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
+## BFF-MGMT-DELTA-004
+
+Route:
+
+```text
+GET /bff/management/capital-flow
+```
+
+Purpose:
+
+Provide a strict-live Management Console route for read-only capital flow
+projections across capital pools, personas, strategies, and runtime deployment
+stages. The backend composes existing runtime, deployment, binding, pool,
+strategy, and telemetry surfaces; it does not introduce a new capital ledger or
+mutate capital.
+
+Frontend contract:
+
+- `paths.managementCapitalFlow()`
+- `managementCapitalFlowPath(query)`
+- `fetchManagementCapitalFlow(query, init, baseUrl)`
+
+Backend acceptance:
+
+- unauthenticated request: HTTP 401
+- authenticated request: HTTP 200
+- CORS preflight: HTTP 204
+- response envelope: `data`, `items`, `rows`, `flows`, `summary`, `page_info`, `meta`
+- supported query: `capital_pool_id`, `persona_id`, `strategy_id`,
+  `deployment_stage`, `direction`, `page_token`, `page_size`
+- `data.id`: `management-capital-flow`
+- `meta.policy`: `read_only_capital_flow`
+- no new capital source of truth; composed from runtime bindings, deployment
+  plans, persona bindings, capital pools, strategies, and telemetry summaries
+
+Validation:
+
+```bash
+python3 -m pytest services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py -q
+```
+
+Result: 79 passed, 3 existing `datetime.utcnow()` deprecation warnings in
 `services/control-plane/bff/read_store.py`.
 
 ## BFF-PM12-DELTA-004

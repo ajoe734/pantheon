@@ -107,6 +107,7 @@ export const paths = {
   // ---- P1 Management aggregate APIs ----
   managementCockpit: () => `${BASE}/management/cockpit`,
   managementBoardPack: () => `${BASE}/management/board-pack`,
+  managementGovernanceLedger: () => `${BASE}/management/governance-ledger`,
   managementTradingPulse: () => `${BASE}/management/trading-pulse`,
   managementTradingPulseRankings: () => `${BASE}/management/trading-pulse/rankings`,
   managementEvidence: () => `${BASE}/management/evidence`,
@@ -118,7 +119,9 @@ export const paths = {
   managementReadinessBffHa: () => `${BASE}/management/readiness/bff-ha`,
   managementReadinessStrictPublish: () => `${BASE}/management/readiness/strict-publish`,
   managementStrategyAllocation: () => `${BASE}/management/strategy-allocation`,
+  managementCapitalFlow: () => `${BASE}/management/capital-flow`,
   managementRiskRadar: () => `${BASE}/management/risk-radar`,
+  managementIncidentTimeline: () => `${BASE}/management/incident-timeline`,
   managementPortfolioBook: () => `${BASE}/management/portfolio-book`,
   managementPortfolioBookPools: () => `${BASE}/management/portfolio-book/pools`,
   managementPortfolioBookExposure: () => `${BASE}/management/portfolio-book/exposure`,

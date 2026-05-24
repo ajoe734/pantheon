@@ -22275,8 +22275,397 @@ def _management_strategy_allocation_response(
     }
 
 
+_MANAGEMENT_CAPITAL_FLOW_DIRECTIONS = {"inflow", "outflow", "flat", "unknown"}
+
+
+def _management_capital_flow_direction(net_flow: Optional[float]) -> str:
+    if net_flow is None:
+        return "unknown"
+    if net_flow > 0:
+        return "inflow"
+    if net_flow < 0:
+        return "outflow"
+    return "flat"
+
+
+def _management_capital_flow_rows(
+    facts: List[Dict[str, Any]],
+    sources: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    grouped: Dict[tuple[str, str, str, str], List[Dict[str, Any]]] = {}
+    for fact in facts:
+        pool_key = _pm12_dimension_key(fact.get("capital_pool_id"))
+        persona_key = _pm12_dimension_key(fact.get("persona_id"))
+        strategy_key = _pm12_dimension_key(fact.get("strategy_id"))
+        stage_key = _pm12_dimension_key(fact.get("deployment_stage"))
+        grouped.setdefault((pool_key, persona_key, strategy_key, stage_key), []).append(fact)
+
+    rows: List[Dict[str, Any]] = []
+    for (pool_key, persona_key, strategy_key, stage_key), group_facts in grouped.items():
+        metrics = _pm12_attribution_metrics(group_facts)
+        net_flow = _management_as_float(metrics.get("total_pnl"))
+        direction = _management_capital_flow_direction(net_flow)
+        inflow_amount = net_flow if net_flow is not None and net_flow > 0 else 0.0
+        outflow_amount = abs(net_flow) if net_flow is not None and net_flow < 0 else 0.0
+        allocated_capital = _management_as_float(
+            _management_first_non_empty(
+                metrics.get("total_exposure"),
+                metrics.get("total_notional"),
+                metrics.get("total_market_value"),
+            )
+        )
+        pool = sources["pools_by_id"].get(pool_key, {})
+        risk_budget = _management_first_float(
+            pool,
+            "risk_budget",
+            "risk_budget_amount",
+            "budget",
+            "capital_allocation",
+            "allocation_limit",
+            "max_target_size",
+            "params.risk_budget",
+            "risk.budget",
+        )
+        utilization = None
+        if allocated_capital is not None and risk_budget not in (None, 0):
+            utilization = round(allocated_capital / risk_budget, 6)
+        available_capital = (
+            round(risk_budget - allocated_capital, 6)
+            if risk_budget is not None and allocated_capital is not None
+            else None
+        )
+        runtime_ids = sorted({
+            str(fact.get("runtime_id") or "")
+            for fact in group_facts
+            if str(fact.get("runtime_id") or "")
+        })
+        runtime_binding_ids = sorted({
+            str(fact.get("runtime_binding_id") or "")
+            for fact in group_facts
+            if str(fact.get("runtime_binding_id") or "")
+        })
+        plan_ids = sorted({
+            str(fact.get("deployment_plan_id") or "")
+            for fact in group_facts
+            if str(fact.get("deployment_plan_id") or "")
+        })
+        persona_binding_ids = sorted({
+            str(fact.get("persona_capital_binding_id") or "")
+            for fact in group_facts
+            if str(fact.get("persona_capital_binding_id") or "")
+        })
+        statuses = sorted({
+            str(fact.get("status") or "")
+            for fact in group_facts
+            if str(fact.get("status") or "")
+        })
+        latest_flow_at = _management_latest_timestamp(group_facts, "collected_at")
+        pool_label = _pm12_attribution_dimension_label(
+            "pool",
+            pool_key,
+            personas_by_id=sources["personas_by_id"],
+            strategies_by_id=sources["strategies_by_id"],
+            pools_by_id=sources["pools_by_id"],
+        )
+        persona_label = _pm12_attribution_dimension_label(
+            "persona",
+            persona_key,
+            personas_by_id=sources["personas_by_id"],
+            strategies_by_id=sources["strategies_by_id"],
+            pools_by_id=sources["pools_by_id"],
+        )
+        strategy_label = _pm12_attribution_dimension_label(
+            "strategy",
+            strategy_key,
+            personas_by_id=sources["personas_by_id"],
+            strategies_by_id=sources["strategies_by_id"],
+            pools_by_id=sources["pools_by_id"],
+        )
+        row = {
+            "id": f"capital-flow-{pool_key}-{persona_key}-{strategy_key}-{stage_key}",
+            "flowId": f"capital-flow-{pool_key}-{persona_key}-{strategy_key}-{stage_key}",
+            "flow_id": f"capital-flow-{pool_key}-{persona_key}-{strategy_key}-{stage_key}",
+            "direction": direction,
+            "status": "active" if any(status in _MANAGEMENT_STRATEGY_ALLOCATION_ACTIVE_STATUSES for status in statuses) else (
+                statuses[0] if len(statuses) == 1 else ("mixed" if statuses else "unknown")
+            ),
+            "capitalPoolId": pool_key,
+            "capital_pool_id": pool_key,
+            "capitalPoolName": pool_label,
+            "capital_pool_name": pool_label,
+            "personaId": persona_key,
+            "persona_id": persona_key,
+            "personaLabel": persona_label,
+            "persona_label": persona_label,
+            "strategyId": strategy_key,
+            "strategy_id": strategy_key,
+            "strategyLabel": strategy_label,
+            "strategy_label": strategy_label,
+            "deploymentStage": stage_key,
+            "deployment_stage": stage_key,
+            "runtimeIds": runtime_ids,
+            "runtime_ids": runtime_ids,
+            "runtimeBindingIds": runtime_binding_ids,
+            "runtime_binding_ids": runtime_binding_ids,
+            "deploymentPlanIds": plan_ids,
+            "deployment_plan_ids": plan_ids,
+            "personaCapitalBindingIds": persona_binding_ids,
+            "persona_capital_binding_ids": persona_binding_ids,
+            "runtimeStatuses": statuses,
+            "runtime_statuses": statuses,
+            "amount": abs(net_flow) if net_flow is not None else None,
+            "netCapitalFlow": net_flow,
+            "net_capital_flow": net_flow,
+            "inflowAmount": round(inflow_amount, 6),
+            "inflow_amount": round(inflow_amount, 6),
+            "outflowAmount": round(outflow_amount, 6),
+            "outflow_amount": round(outflow_amount, 6),
+            "allocatedCapital": allocated_capital,
+            "allocated_capital": allocated_capital,
+            "currentExposure": allocated_capital,
+            "current_exposure": allocated_capital,
+            "riskBudget": risk_budget,
+            "risk_budget": risk_budget,
+            "availableCapital": available_capital,
+            "available_capital": available_capital,
+            "riskBudgetUtilization": utilization,
+            "risk_budget_utilization": utilization,
+            "latestFlowAt": latest_flow_at,
+            "latest_flow_at": latest_flow_at,
+            "metrics": {
+                **metrics,
+                "netCapitalFlow": net_flow,
+                "net_capital_flow": net_flow,
+                "inflowAmount": round(inflow_amount, 6),
+                "inflow_amount": round(inflow_amount, 6),
+                "outflowAmount": round(outflow_amount, 6),
+                "outflow_amount": round(outflow_amount, 6),
+                "allocatedCapital": allocated_capital,
+                "allocated_capital": allocated_capital,
+                "riskBudget": risk_budget,
+                "risk_budget": risk_budget,
+                "riskBudgetUtilization": utilization,
+                "risk_budget_utilization": utilization,
+            },
+            "sourceRefs": {
+                "runtimeIds": runtime_ids,
+                "runtime_ids": runtime_ids,
+                "runtimeBindingIds": runtime_binding_ids,
+                "runtime_binding_ids": runtime_binding_ids,
+                "deploymentPlanIds": plan_ids,
+                "deployment_plan_ids": plan_ids,
+                "personaCapitalBindingIds": persona_binding_ids,
+                "persona_capital_binding_ids": persona_binding_ids,
+                "capitalPoolIds": [] if pool_key == "unassigned" else [pool_key],
+                "capital_pool_ids": [] if pool_key == "unassigned" else [pool_key],
+                "personaIds": [] if persona_key == "unassigned" else [persona_key],
+                "persona_ids": [] if persona_key == "unassigned" else [persona_key],
+                "strategyIds": [] if strategy_key == "unassigned" else [strategy_key],
+                "strategy_ids": [] if strategy_key == "unassigned" else [strategy_key],
+            },
+            "source_refs": {
+                "runtime_ids": runtime_ids,
+                "runtime_binding_ids": runtime_binding_ids,
+                "deployment_plan_ids": plan_ids,
+                "persona_capital_binding_ids": persona_binding_ids,
+                "capital_pool_ids": [] if pool_key == "unassigned" else [pool_key],
+                "persona_ids": [] if persona_key == "unassigned" else [persona_key],
+                "strategy_ids": [] if strategy_key == "unassigned" else [strategy_key],
+            },
+            "links": {
+                "capitalPool": _management_link("/bff/capital-pools", pool_key if pool_key != "unassigned" else None),
+                "capital_pool": _management_link("/bff/capital-pools", pool_key if pool_key != "unassigned" else None),
+                "persona": _management_link("/bff/personas", persona_key if persona_key != "unassigned" else None),
+                "strategy": _management_link("/bff/strategies", strategy_key if strategy_key != "unassigned" else None),
+            },
+        }
+        rows.append(row)
+
+    rows.sort(
+        key=lambda item: (
+            {"outflow": 0, "unknown": 1, "flat": 2, "inflow": 3}.get(str(item.get("direction") or ""), 4),
+            -abs(_management_as_float(item.get("net_capital_flow")) or 0.0),
+            str(item.get("capital_pool_id") or ""),
+            str(item.get("persona_id") or ""),
+            str(item.get("strategy_id") or ""),
+        )
+    )
+    for rank, row in enumerate(rows, start=1):
+        row["rank"] = rank
+    return rows
+
+
+def _management_capital_flow_response(
+    *,
+    capital_pool_id: Optional[str],
+    persona_id: Optional[str],
+    strategy_id: Optional[str],
+    deployment_stage: Optional[str],
+    direction: Optional[str],
+    page_token: Optional[str],
+    page_size: int,
+) -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    sources = _pm12_performance_attribution_sources()
+    facts = _pm12_performance_attribution_facts(sources, "latest")
+    pool_filter = set(_split_csv_query(capital_pool_id) or [])
+    persona_filter = set(_split_csv_query(persona_id) or [])
+    strategy_filter = set(_split_csv_query(strategy_id) or [])
+    stage_filter = {item.lower() for item in (_split_csv_query(deployment_stage) or [])}
+    direction_filter = {item.lower() for item in (_split_csv_query(direction) or [])}
+    invalid_directions = sorted(direction_filter - _MANAGEMENT_CAPITAL_FLOW_DIRECTIONS)
+    if invalid_directions:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "invalid_direction",
+                "field": "direction",
+                "invalid": invalid_directions,
+                "supported": sorted(_MANAGEMENT_CAPITAL_FLOW_DIRECTIONS),
+            },
+        )
+
+    if pool_filter:
+        facts = [fact for fact in facts if str(fact.get("capital_pool_id") or "") in pool_filter]
+    if persona_filter:
+        facts = [fact for fact in facts if str(fact.get("persona_id") or "") in persona_filter]
+    if strategy_filter:
+        facts = [fact for fact in facts if str(fact.get("strategy_id") or "") in strategy_filter]
+    if stage_filter:
+        facts = [
+            fact
+            for fact in facts
+            if str(fact.get("deployment_stage") or "").strip().lower() in stage_filter
+        ]
+
+    rows = _management_capital_flow_rows(facts, sources)
+    if direction_filter:
+        rows = [
+            row
+            for row in rows
+            if str(row.get("direction") or "").strip().lower() in direction_filter
+        ]
+
+    total = len(rows)
+    page_items, next_page_token = _page_slice(rows, page_token, page_size)
+    net_values = [
+        value
+        for value in (_management_as_float(row.get("net_capital_flow")) for row in rows)
+        if value is not None
+    ]
+    allocated_values = [
+        value
+        for value in (_management_as_float(row.get("allocated_capital")) for row in rows)
+        if value is not None
+    ]
+    direction_counts = _management_count_by([{"direction": row.get("direction")} for row in rows], "direction")
+    telemetry_runtime_count = len({
+        runtime_id
+        for row in rows
+        for runtime_id in (row.get("runtime_ids") or [])
+        if runtime_id in sources["telemetry_by_runtime_id"]
+    })
+    source_surfaces = {
+        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
+        "deployment_plans": _dataset_surface_status("deployment_plans", snapshot_at=snapshot_at),
+        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at),
+        "capital_pools": _dataset_surface_status("capital_pools", snapshot_at=snapshot_at),
+        "strategies": _dataset_surface_status("strategy_specs", snapshot_at=snapshot_at),
+        "telemetry_summaries": _dataset_surface_status(
+            "telemetry_summaries",
+            snapshot_at=snapshot_at,
+            has_data=bool(sources["telemetry_by_runtime_id"]) if sources["runtime_bindings"] else None,
+            missing_message="Telemetry summaries unavailable for capital-flow runtime projections.",
+        ),
+    }
+    capital_flow_surface = _aggregate_group_surface(
+        "capital_flow",
+        list(source_surfaces.values()),
+        snapshot_at=snapshot_at,
+        unavailable_message="Capital-flow projection has no readable source records.",
+        degraded_message="Capital-flow projection is available, but one or more supporting surfaces are degraded.",
+    )
+    summary = {
+        "flowCount": total,
+        "flow_count": total,
+        "returnedFlowCount": len(page_items),
+        "returned_flow_count": len(page_items),
+        "capitalPoolCount": len({row.get("capital_pool_id") for row in rows if row.get("capital_pool_id")}),
+        "capital_pool_count": len({row.get("capital_pool_id") for row in rows if row.get("capital_pool_id")}),
+        "personaCount": len({row.get("persona_id") for row in rows if row.get("persona_id")}),
+        "persona_count": len({row.get("persona_id") for row in rows if row.get("persona_id")}),
+        "strategyCount": len({row.get("strategy_id") for row in rows if row.get("strategy_id")}),
+        "strategy_count": len({row.get("strategy_id") for row in rows if row.get("strategy_id")}),
+        "runtimeCount": len({
+            runtime_id
+            for row in rows
+            for runtime_id in (row.get("runtime_ids") or [])
+            if runtime_id
+        }),
+        "runtime_count": len({
+            runtime_id
+            for row in rows
+            for runtime_id in (row.get("runtime_ids") or [])
+            if runtime_id
+        }),
+        "telemetryRuntimeCount": telemetry_runtime_count,
+        "telemetry_runtime_count": telemetry_runtime_count,
+        "netCapitalFlow": round(sum(net_values), 6) if net_values else None,
+        "net_capital_flow": round(sum(net_values), 6) if net_values else None,
+        "totalInflow": round(sum(value for value in net_values if value > 0), 6) if net_values else None,
+        "total_inflow": round(sum(value for value in net_values if value > 0), 6) if net_values else None,
+        "totalOutflow": round(sum(abs(value) for value in net_values if value < 0), 6) if net_values else None,
+        "total_outflow": round(sum(abs(value) for value in net_values if value < 0), 6) if net_values else None,
+        "allocatedCapitalTotal": round(sum(allocated_values), 6) if allocated_values else None,
+        "allocated_capital_total": round(sum(allocated_values), 6) if allocated_values else None,
+        "byDirection": direction_counts,
+        "by_direction": direction_counts,
+        "latestFlowAt": _management_latest_timestamp(rows, "latest_flow_at"),
+        "latest_flow_at": _management_latest_timestamp(rows, "latest_flow_at"),
+        "basis": "runtime_capital_flow_projection_from_allocations_and_pnl",
+    }
+    data = {
+        "id": "management-capital-flow",
+        "items": page_items,
+        "rows": page_items,
+        "flows": page_items,
+        "summary": summary,
+    }
+    return {
+        "data": data,
+        "items": page_items,
+        "rows": page_items,
+        "flows": page_items,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "capital_flow": capital_flow_surface,
+                **source_surfaces,
+            },
+            "composition_sources": [
+                "GET /api/v1/runtime-bindings",
+                "GET /api/v1/deployment-plans",
+                "GET /api/v1/persona-capital-bindings",
+                "GET /bff/capital-pools",
+                "GET /bff/strategies",
+                "GET /api/v1/telemetry/{runtime_id}/summary",
+            ],
+            "policy": "read_only_capital_flow",
+        },
+    }
+
+
 _MANAGEMENT_RISK_RADAR_STATES = {"ok", "watch", "critical", "unknown"}
 _MANAGEMENT_RISK_RADAR_SEVERITY = {"critical": 0, "watch": 1, "unknown": 2, "ok": 3}
+_MANAGEMENT_INCIDENT_SEVERITY_BUCKETS = ("high", "medium", "low")
+_MANAGEMENT_INCIDENT_HIGH_SEVERITIES = {"critical", "high", "sev1", "sev2", "p0", "p1"}
+_MANAGEMENT_INCIDENT_MEDIUM_SEVERITIES = {"medium", "moderate", "warning", "warn", "sev3", "p2"}
 
 
 def _management_risk_metric_status(
@@ -22695,6 +23084,277 @@ def _management_risk_radar_response(
     }
 
 
+def _management_incident_severity_bucket(severity: Any) -> str:
+    normalized = str(severity or "").strip().lower()
+    if normalized in _MANAGEMENT_INCIDENT_HIGH_SEVERITIES:
+        return "high"
+    if normalized in _MANAGEMENT_INCIDENT_MEDIUM_SEVERITIES:
+        return "medium"
+    return "low"
+
+
+def _management_incident_time(incident: Dict[str, Any]) -> Optional[str]:
+    value = _management_first_non_empty(
+        incident.get("opened_at"),
+        incident.get("openedAt"),
+        incident.get("created_at"),
+        incident.get("createdAt"),
+        incident.get("submitted_at"),
+        incident.get("submittedAt"),
+        incident.get("updated_at"),
+        incident.get("updatedAt"),
+        incident.get("resolved_at"),
+        incident.get("resolvedAt"),
+    )
+    return str(value) if value not in (None, "") else None
+
+
+def _management_incident_sort_key(item: Dict[str, Any]) -> tuple[datetime, str]:
+    parsed = _audit_datetime(item.get("occurred_at") or item.get("created_at") or item.get("opened_at"))
+    return (
+        parsed or datetime.min.replace(tzinfo=timezone.utc),
+        str(item.get("incident_id") or item.get("id") or ""),
+    )
+
+
+def _management_incident_timeline_item(incident: Dict[str, Any]) -> Dict[str, Any]:
+    payload = _project_bff_incident_case(incident)
+    incident_id = str(payload.get("incident_id") or payload.get("id") or "").strip()
+    severity = str(payload.get("severity") or "low").strip().lower() or "low"
+    severity_bucket = _management_incident_severity_bucket(severity)
+    occurred_at = _management_incident_time(payload)
+    updated_at = _management_first_non_empty(
+        payload.get("updated_at"),
+        payload.get("updatedAt"),
+        payload.get("resolved_at"),
+        payload.get("resolvedAt"),
+        occurred_at,
+    )
+    runtime_id = str(payload.get("runtime_id") or "").strip()
+    deployment_plan_id = str(payload.get("deployment_plan_id") or "").strip()
+    capital_pool_id = str(payload.get("capital_pool_id") or payload.get("affected_pool_id") or "").strip()
+    persona_binding_id = str(payload.get("persona_capital_binding_id") or "").strip()
+    artifact_id = str(payload.get("artifact_id") or "").strip()
+    telemetry_event_ids = [
+        str(value)
+        for value in (payload.get("telemetry_event_ids") or [])
+        if str(value or "").strip()
+    ]
+    item = {
+        **payload,
+        "id": payload.get("id") or incident_id,
+        "incidentId": incident_id,
+        "incident_id": incident_id,
+        "timelineId": f"incident-timeline-{incident_id}" if incident_id else None,
+        "timeline_id": f"incident-timeline-{incident_id}" if incident_id else None,
+        "title": payload.get("title") or incident_id or "Untitled incident",
+        "status": str(payload.get("status") or "unknown").strip().lower() or "unknown",
+        "severity": severity,
+        "severityBucket": severity_bucket,
+        "severity_bucket": severity_bucket,
+        "occurredAt": occurred_at,
+        "occurred_at": occurred_at,
+        "updatedAt": updated_at,
+        "updated_at": updated_at,
+        "runtimeId": runtime_id or None,
+        "runtime_id": runtime_id or None,
+        "deploymentPlanId": deployment_plan_id or None,
+        "deployment_plan_id": deployment_plan_id or None,
+        "capitalPoolId": capital_pool_id or None,
+        "capital_pool_id": capital_pool_id or None,
+        "personaCapitalBindingId": persona_binding_id or None,
+        "persona_capital_binding_id": persona_binding_id or None,
+        "artifactId": artifact_id or None,
+        "artifact_id": artifact_id or None,
+        "telemetryEventIds": telemetry_event_ids,
+        "telemetry_event_ids": telemetry_event_ids,
+        "lineageRef": payload.get("lineage_ref"),
+        "lineage_ref": payload.get("lineage_ref"),
+        "evidenceSummary": payload.get("evidence_summary"),
+        "evidence_summary": payload.get("evidence_summary"),
+        "sourceRefs": {
+            "incidentIds": [incident_id] if incident_id else [],
+            "incident_ids": [incident_id] if incident_id else [],
+            "runtimeIds": [runtime_id] if runtime_id else [],
+            "runtime_ids": [runtime_id] if runtime_id else [],
+            "deploymentPlanIds": [deployment_plan_id] if deployment_plan_id else [],
+            "deployment_plan_ids": [deployment_plan_id] if deployment_plan_id else [],
+            "capitalPoolIds": [capital_pool_id] if capital_pool_id else [],
+            "capital_pool_ids": [capital_pool_id] if capital_pool_id else [],
+            "personaCapitalBindingIds": [persona_binding_id] if persona_binding_id else [],
+            "persona_capital_binding_ids": [persona_binding_id] if persona_binding_id else [],
+            "artifactIds": [artifact_id] if artifact_id else [],
+            "artifact_ids": [artifact_id] if artifact_id else [],
+            "telemetryEventIds": telemetry_event_ids,
+            "telemetry_event_ids": telemetry_event_ids,
+        },
+        "source_refs": {
+            "incident_ids": [incident_id] if incident_id else [],
+            "runtime_ids": [runtime_id] if runtime_id else [],
+            "deployment_plan_ids": [deployment_plan_id] if deployment_plan_id else [],
+            "capital_pool_ids": [capital_pool_id] if capital_pool_id else [],
+            "persona_capital_binding_ids": [persona_binding_id] if persona_binding_id else [],
+            "artifact_ids": [artifact_id] if artifact_id else [],
+            "telemetry_event_ids": telemetry_event_ids,
+        },
+        "links": {
+            "incident": _management_link("/bff/incidents", incident_id),
+            "runtime": _management_link("/bff/runtimes", runtime_id or None),
+            "deployment": _management_link("/bff/deployments", deployment_plan_id or None),
+            "capitalPool": _management_link("/bff/capital-pools", capital_pool_id or None),
+            "capital_pool": _management_link("/bff/capital-pools", capital_pool_id or None),
+        },
+    }
+    return item
+
+
+def _management_incident_timeline_matches(
+    item: Dict[str, Any],
+    *,
+    status_filter: set[str],
+    severity_filter: set[str],
+    pool_filter: set[str],
+    runtime_filter: set[str],
+) -> bool:
+    if status_filter and str(item.get("status") or "").lower() not in status_filter:
+        return False
+    if severity_filter and (
+        str(item.get("severity") or "").lower() not in severity_filter
+        and str(item.get("severity_bucket") or "").lower() not in severity_filter
+    ):
+        return False
+    if pool_filter and str(item.get("capital_pool_id") or "") not in pool_filter:
+        return False
+    if runtime_filter and str(item.get("runtime_id") or "") not in runtime_filter:
+        return False
+    return True
+
+
+def _management_incident_timeline_response(
+    *,
+    status: Optional[str],
+    severity: Optional[str],
+    capital_pool_id: Optional[str],
+    affected_pool_id: Optional[str],
+    runtime_id: Optional[str],
+    sort_order: Optional[str],
+    page_token: Optional[str],
+    page_size: int,
+) -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    incident_surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
+    source_surfaces = {"incidents": incident_surface}
+
+    incidents = _list_bff_incidents()
+    status_filter = {item.lower() for item in (_split_csv_query(status) or [])}
+    severity_filter = {item.lower() for item in (_split_csv_query(severity) or [])}
+    pool_filter = set(_split_csv_query(capital_pool_id or affected_pool_id) or [])
+    runtime_filter = set(_split_csv_query(runtime_id) or [])
+    items = [
+        item
+        for item in (_management_incident_timeline_item(incident) for incident in incidents)
+        if _management_incident_timeline_matches(
+            item,
+            status_filter=status_filter,
+            severity_filter=severity_filter,
+            pool_filter=pool_filter,
+            runtime_filter=runtime_filter,
+        )
+    ]
+    reverse = str(sort_order or "asc").strip().lower() == "desc"
+    items.sort(key=_management_incident_sort_key, reverse=reverse)
+    for sequence, item in enumerate(items, start=1):
+        item["sequence"] = sequence
+        item["timelineSequence"] = sequence
+        item["timeline_sequence"] = sequence
+
+    if incident_surface.get("status") == "unavailable":
+        items = []
+
+    total = len(items)
+    page_items, next_page_token = _page_slice(items, page_token, page_size)
+    severity_buckets = {bucket: 0 for bucket in _MANAGEMENT_INCIDENT_SEVERITY_BUCKETS}
+    for item in items:
+        bucket = str(item.get("severity_bucket") or "low")
+        severity_buckets[bucket if bucket in severity_buckets else "low"] += 1
+    status_counts = _management_count_by(items, "status")
+    timeline_surface = _aggregate_group_surface(
+        "incident_timeline",
+        list(source_surfaces.values()),
+        snapshot_at=snapshot_at,
+        unavailable_message="Incident timeline aggregate unavailable.",
+        degraded_message="Incident timeline is available, but the incident read surface is degraded.",
+    )
+    first_incident_at = items[0].get("occurred_at") if items else None
+    latest_incident_at = items[-1].get("occurred_at") if items else None
+    if reverse:
+        first_incident_at, latest_incident_at = latest_incident_at, first_incident_at
+    summary = {
+        "incidentCount": total,
+        "incident_count": total,
+        "returnedIncidentCount": len(page_items),
+        "returned_incident_count": len(page_items),
+        "activeIncidentCount": sum(1 for item in items if item.get("status") in {"open", "in_progress"}),
+        "active_incident_count": sum(1 for item in items if item.get("status") in {"open", "in_progress"}),
+        "resolvedIncidentCount": sum(1 for item in items if item.get("status") == "resolved"),
+        "resolved_incident_count": sum(1 for item in items if item.get("status") == "resolved"),
+        "highSeverityCount": severity_buckets["high"],
+        "high_severity_count": severity_buckets["high"],
+        "mediumSeverityCount": severity_buckets["medium"],
+        "medium_severity_count": severity_buckets["medium"],
+        "lowSeverityCount": severity_buckets["low"],
+        "low_severity_count": severity_buckets["low"],
+        "severityBuckets": severity_buckets,
+        "severity_buckets": severity_buckets,
+        "byStatus": status_counts,
+        "by_status": status_counts,
+        "firstIncidentAt": first_incident_at,
+        "first_incident_at": first_incident_at,
+        "latestIncidentAt": latest_incident_at,
+        "latest_incident_at": latest_incident_at,
+        "sortOrder": "desc" if reverse else "asc",
+        "sort_order": "desc" if reverse else "asc",
+        "basis": "incident_case_opened_at_chronology",
+    }
+    data = {
+        "id": "management-incident-timeline",
+        "items": page_items,
+        "rows": page_items,
+        "incidents": page_items,
+        "events": page_items,
+        "summary": summary,
+        "severityBuckets": severity_buckets,
+        "severity_buckets": severity_buckets,
+    }
+    return {
+        "data": data,
+        "items": page_items,
+        "rows": page_items,
+        "incidents": page_items,
+        "events": page_items,
+        "summary": summary,
+        "severityBuckets": severity_buckets,
+        "severity_buckets": severity_buckets,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "incident_timeline": timeline_surface,
+                **source_surfaces,
+            },
+            "composition_sources": [
+                "GET /bff/incidents",
+                "GET /api/v1/incidents",
+            ],
+            "policy": "read_only_incident_timeline",
+        },
+    }
+
+
 @app.get("/bff/management/strategy-allocation")
 async def bff_management_strategy_allocation(
     strategy_id: Optional[str] = None,
@@ -22718,6 +23378,31 @@ async def bff_management_strategy_allocation(
     )
 
 
+@app.get("/bff/management/capital-flow")
+async def bff_management_capital_flow(
+    capital_pool_id: Optional[str] = None,
+    persona_id: Optional[str] = None,
+    strategy_id: Optional[str] = None,
+    deployment_stage: Optional[str] = None,
+    direction: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: read-only capital flow projection across pools, personas, and strategies."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _management_capital_flow_response(
+        capital_pool_id=capital_pool_id,
+        persona_id=persona_id,
+        strategy_id=strategy_id,
+        deployment_stage=deployment_stage,
+        direction=direction,
+        page_token=page_token,
+        page_size=page_size,
+    )
+
+
 @app.get("/bff/management/risk-radar")
 async def bff_management_risk_radar(
     persona_id: Optional[str] = None,
@@ -22736,6 +23421,33 @@ async def bff_management_risk_radar(
         strategy_id=strategy_id,
         capital_pool_id=capital_pool_id,
         risk_state=risk_state,
+        page_token=page_token,
+        page_size=page_size,
+    )
+
+
+@app.get("/bff/management/incident-timeline")
+async def bff_management_incident_timeline(
+    status: Optional[str] = None,
+    severity: Optional[str] = None,
+    capital_pool_id: Optional[str] = None,
+    affected_pool_id: Optional[str] = None,
+    runtime_id: Optional[str] = None,
+    sort_order: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: read-only Management Console incident chronology."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _management_incident_timeline_response(
+        status=status,
+        severity=severity,
+        capital_pool_id=capital_pool_id,
+        affected_pool_id=affected_pool_id,
+        runtime_id=runtime_id,
+        sort_order=sort_order,
         page_token=page_token,
         page_size=page_size,
     )
@@ -29607,6 +30319,412 @@ async def bff_management_performance_attribution_by_pool(
         page_size=page_size,
         data_id="pm12-performance-attribution-by-pool",
         surface_key="performance_attribution_by_pool",
+    )
+
+
+def _governance_ledger_entry(
+    *,
+    entry_id: str,
+    source_type: str,
+    source_dataset: str,
+    event_type: str,
+    status: Optional[str],
+    actor: Optional[str],
+    target_type: Optional[str],
+    target_id: Optional[str],
+    occurred_at: Optional[str],
+    title: str,
+    summary: Optional[str],
+    risk_level: Optional[str] = None,
+    href: Optional[str] = None,
+    evidence_refs: Optional[List[Dict[str, Any]]] = None,
+    audit_context: Optional[Dict[str, Any]] = None,
+    source_record: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    return {
+        "id": entry_id,
+        "entry_id": entry_id,
+        "ledgerId": entry_id,
+        "ledger_id": entry_id,
+        "sourceType": source_type,
+        "source_type": source_type,
+        "sourceDataset": source_dataset,
+        "source_dataset": source_dataset,
+        "eventType": event_type,
+        "event_type": event_type,
+        "status": status,
+        "outcome": status,
+        "actor": actor,
+        "targetType": target_type,
+        "target_type": target_type,
+        "targetId": target_id,
+        "target_id": target_id,
+        "riskLevel": risk_level,
+        "risk_level": risk_level,
+        "occurredAt": occurred_at,
+        "occurred_at": occurred_at,
+        "createdAt": occurred_at,
+        "created_at": occurred_at,
+        "title": title,
+        "summary": summary,
+        "href": href,
+        "links": {
+            "self": href,
+            "audit": (
+                f"/bff/audit/entities/{target_type}/{target_id}"
+                if target_type and target_id
+                else "/bff/audit"
+            ),
+        },
+        "evidenceRefs": _management_json_clone(evidence_refs or []),
+        "evidence_refs": _management_json_clone(evidence_refs or []),
+        "auditContext": _management_json_clone(audit_context or {}),
+        "audit_context": _management_json_clone(audit_context or {}),
+        "sourceRecord": _management_json_clone(source_record or {}),
+        "source_record": _management_json_clone(source_record or {}),
+    }
+
+
+def _governance_ledger_approval_entry(record: Dict[str, Any], *, dataset: str) -> Optional[Dict[str, Any]]:
+    decision_id = str(record.get("decision_id") or record.get("id") or "").strip()
+    if not decision_id:
+        return None
+    context = record.get("decision_context") if isinstance(record.get("decision_context"), dict) else {}
+    evidence_refs = context.get("evidence_refs") if isinstance(context.get("evidence_refs"), list) else []
+    status = str(
+        record.get("decision_state")
+        or record.get("state")
+        or record.get("outcome")
+        or record.get("decision")
+        or "unknown"
+    )
+    event_type = "approval.pending" if status.lower() in {"pending", "proposed", "under_review", "reviewed", "in_review"} else "approval.decision"
+    target_type = str(record.get("decision_type") or record.get("target_type") or "ApprovalDecision")
+    occurred_at = str(
+        record.get("submitted_at")
+        or record.get("created_at")
+        or record.get("decided_at")
+        or record.get("updated_at")
+        or ""
+    ) or None
+    return _governance_ledger_entry(
+        entry_id=f"ledger-approval-{decision_id}",
+        source_type="approval",
+        source_dataset=dataset,
+        event_type=event_type,
+        status=status,
+        actor=record.get("submitted_by") or record.get("actor_id") or record.get("created_by"),
+        target_type=target_type,
+        target_id=decision_id,
+        occurred_at=occurred_at,
+        title=f"Approval: {target_type}",
+        summary=context.get("risk_summary") or record.get("rationale") or record.get("reason"),
+        risk_level=record.get("risk_level"),
+        href=f"/bff/approvals/{decision_id}",
+        evidence_refs=evidence_refs,
+        audit_context={"decision_id": decision_id, "status": status},
+        source_record=record,
+    )
+
+
+def _governance_ledger_intervention_entry(record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    intervention_id = str(record.get("intervention_id") or record.get("id") or "").strip()
+    if not intervention_id:
+        return None
+    status = str(record.get("status") or "unknown")
+    kind = str(record.get("kind") or record.get("type") or "intervention")
+    target_type = record.get("target_type") or "Intervention"
+    target_id = record.get("target_id") or intervention_id
+    occurred_at = str(
+        record.get("triggered_at")
+        or record.get("created_at")
+        or record.get("updated_at")
+        or ""
+    ) or None
+    evidence_refs = record.get("evidence_refs") if isinstance(record.get("evidence_refs"), list) else []
+    return _governance_ledger_entry(
+        entry_id=f"ledger-intervention-{intervention_id}",
+        source_type="intervention",
+        source_dataset="v5_interventions",
+        event_type=f"intervention.{status.lower()}",
+        status=status,
+        actor=record.get("triggered_by") or record.get("actor") or record.get("owner"),
+        target_type=str(target_type),
+        target_id=str(target_id),
+        occurred_at=occurred_at,
+        title=f"Intervention: {kind}",
+        summary=record.get("description") or record.get("summary") or record.get("reason"),
+        risk_level=record.get("severity") or record.get("risk_level"),
+        href=f"/bff/v5/interventions/{intervention_id}",
+        evidence_refs=evidence_refs,
+        audit_context={"intervention_id": intervention_id, "kind": kind, "status": status},
+        source_record=record,
+    )
+
+
+def _governance_ledger_audit_source_type(event: Dict[str, Any]) -> Optional[str]:
+    action_type = str(event.get("action_type") or event.get("event_type") or "").strip()
+    target_type = str(event.get("target_type") or "").strip()
+    metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+    haystack = " ".join(
+        str(value or "")
+        for value in (
+            action_type,
+            target_type,
+            metadata.get("route"),
+            metadata.get("source_route"),
+        )
+    ).lower()
+    if "override" in haystack:
+        return "override"
+    if "intervention" in haystack:
+        return "intervention"
+    if "approval" in haystack or "approve" in haystack:
+        return "approval"
+    return None
+
+
+def _governance_ledger_audit_entry(event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    source_type = _governance_ledger_audit_source_type(event)
+    if source_type is None:
+        return None
+    event_id = str(event.get("entry_id") or event.get("id") or event.get("auditId") or "").strip()
+    if not event_id:
+        return None
+    target_type = str(event.get("target_type") or "").strip() or None
+    target_id = str(event.get("target_id") or event.get("entity_id") or "").strip() or None
+    event_type = str(event.get("action_type") or event.get("event_type") or f"{source_type}.audit")
+    href = "/bff/audit"
+    if source_type == "approval" and target_id:
+        href = f"/bff/approvals/{target_id}"
+    elif source_type == "intervention" and target_id:
+        href = f"/bff/v5/interventions/{target_id}"
+    elif target_type and target_id:
+        href = f"/bff/audit/entities/{target_type}/{target_id}"
+    return _governance_ledger_entry(
+        entry_id=f"ledger-audit-{event_id}",
+        source_type=source_type,
+        source_dataset="governance_audit_events",
+        event_type=event_type,
+        status=event.get("outcome") or event.get("status"),
+        actor=event.get("actor"),
+        target_type=target_type,
+        target_id=target_id,
+        occurred_at=str(event.get("timestamp") or "") or None,
+        title=f"{source_type.replace('_', ' ').title()} audit: {event_type}",
+        summary=(event.get("audit_context") or {}).get("reason")
+        if isinstance(event.get("audit_context"), dict)
+        else event.get("reason"),
+        risk_level=event.get("risk_level"),
+        href=href,
+        evidence_refs=event.get("evidence_refs") if isinstance(event.get("evidence_refs"), list) else [],
+        audit_context=event.get("audit_context") if isinstance(event.get("audit_context"), dict) else {},
+        source_record=event,
+    )
+
+
+def _governance_ledger_entry_sort_key(entry: Dict[str, Any]) -> tuple[datetime, str]:
+    parsed = _audit_datetime(entry.get("occurred_at") or entry.get("created_at"))
+    return (
+        parsed or datetime.min.replace(tzinfo=timezone.utc),
+        str(entry.get("id") or ""),
+    )
+
+
+def _governance_ledger_entry_matches(
+    entry: Dict[str, Any],
+    *,
+    source_types: Optional[List[str]],
+    statuses: Optional[List[str]],
+    q: str,
+) -> bool:
+    if source_types:
+        allowed_source_types = {value.strip().lower() for value in source_types if value.strip()}
+        if str(entry.get("source_type") or "").lower() not in allowed_source_types:
+            return False
+    if statuses:
+        allowed_statuses = {value.strip().lower() for value in statuses if value.strip()}
+        if str(entry.get("status") or "").lower() not in allowed_statuses:
+            return False
+    needle = q.strip().lower()
+    if needle:
+        haystack = " ".join(
+            str(entry.get(field) or "")
+            for field in (
+                "id",
+                "source_type",
+                "event_type",
+                "status",
+                "actor",
+                "target_type",
+                "target_id",
+                "title",
+                "summary",
+            )
+        ).lower()
+        if needle not in haystack:
+            return False
+    return True
+
+
+def _management_governance_ledger_response(
+    *,
+    source_type: Optional[str],
+    status: Optional[str],
+    q: str,
+    page_token: Optional[str],
+    page_size: int,
+) -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    entries_by_id: Dict[str, Dict[str, Any]] = {}
+
+    for item in read_store.list_approval_queue_items():
+        entry = _governance_ledger_approval_entry(item, dataset="approval_queue_items")
+        if entry:
+            entries_by_id[entry["id"]] = entry
+    for item in read_store.list_approval_decisions():
+        entry = _governance_ledger_approval_entry(item, dataset="approval_decisions")
+        if entry:
+            entries_by_id.setdefault(entry["id"], entry)
+    for item in _v5_intervention_records():
+        entry = _governance_ledger_intervention_entry(item)
+        if entry:
+            entries_by_id[entry["id"]] = entry
+    for event in _list_governance_audit_events():
+        entry = _governance_ledger_audit_entry(event)
+        if entry:
+            entries_by_id[entry["id"]] = entry
+
+    source_types = _split_csv_query(source_type)
+    statuses = _split_csv_query(status)
+    entries = [
+        entry
+        for entry in entries_by_id.values()
+        if _governance_ledger_entry_matches(
+            entry,
+            source_types=source_types,
+            statuses=statuses,
+            q=q,
+        )
+    ]
+    entries.sort(key=_governance_ledger_entry_sort_key, reverse=True)
+    total = len(entries)
+    page_items, next_page_token = _page_slice(entries, page_token, page_size)
+
+    source_counts = _management_count_by(entries, "sourceType")
+    status_counts = _management_count_by(entries, "status")
+    event_type_counts = _management_count_by(entries, "eventType")
+    latest_at = entries[0].get("occurred_at") if entries else None
+    summary = {
+        "ledgerCount": total,
+        "ledger_count": total,
+        "returnedLedgerCount": len(page_items),
+        "returned_ledger_count": len(page_items),
+        "approvalCount": source_counts.get("approval", 0),
+        "approval_count": source_counts.get("approval", 0),
+        "interventionCount": source_counts.get("intervention", 0),
+        "intervention_count": source_counts.get("intervention", 0),
+        "overrideCount": source_counts.get("override", 0),
+        "override_count": source_counts.get("override", 0),
+        "bySourceType": source_counts,
+        "by_source_type": source_counts,
+        "byStatus": status_counts,
+        "by_status": status_counts,
+        "byEventType": event_type_counts,
+        "by_event_type": event_type_counts,
+        "latestAt": latest_at,
+        "latest_at": latest_at,
+        "policy": "read_only_governance_ledger",
+        "basis": "composed_from_approval_intervention_override_audit_surfaces",
+    }
+
+    audit_surface = _dataset_surface_status("governance_audit_events", snapshot_at=snapshot_at)
+    approval_queue_surface = _dataset_surface_status("approval_queue_items", snapshot_at=snapshot_at)
+    approval_decision_surface = _dataset_surface_status("approval_decisions", snapshot_at=snapshot_at)
+    intervention_source = "bff_local_registry" if _V5_INTERVENTIONS_STORE else None
+    intervention_surface = _dataset_surface_status(
+        "v5_interventions",
+        snapshot_at=snapshot_at,
+        source=intervention_source,
+    )
+    override_surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
+    ledger_surface = _aggregate_group_surface(
+        "governance_ledger",
+        [
+            audit_surface,
+            approval_queue_surface,
+            approval_decision_surface,
+            intervention_surface,
+            override_surface,
+        ],
+        snapshot_at=snapshot_at,
+        unavailable_message="Governance ledger aggregate unavailable.",
+        degraded_message="Governance ledger is available, but one or more contributing surfaces are degraded.",
+    )
+    data = {
+        "id": "management-governance-ledger",
+        "items": page_items,
+        "entries": page_items,
+        "ledger": page_items,
+        "summary": summary,
+        "policy": "read_only_governance_ledger",
+    }
+    return {
+        "data": data,
+        "items": page_items,
+        "entries": page_items,
+        "ledger": page_items,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "governance_ledger": ledger_surface,
+                "audit": audit_surface,
+                "governance_audit_events": audit_surface,
+                "approval_queue": approval_queue_surface,
+                "approval_queue_items": approval_queue_surface,
+                "approval_decisions": approval_decision_surface,
+                "v5_interventions": intervention_surface,
+                "governance_overrides": override_surface,
+            },
+            "composition_sources": [
+                "GET /bff/audit",
+                "GET /bff/approvals",
+                "GET /bff/v5/interventions",
+            ],
+            "policy": "read_only_governance_ledger",
+            "filters": {
+                "source_type": source_type,
+                "status": status,
+                "q": q,
+            },
+        },
+    }
+
+
+@app.get("/bff/management/governance-ledger")
+async def bff_management_governance_ledger(
+    source_type: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+    q: str = Query(default=""),
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: unified read-only governance ledger for approvals, interventions, and overrides."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _management_governance_ledger_response(
+        source_type=source_type,
+        status=status,
+        q=q,
+        page_token=page_token,
+        page_size=page_size,
     )
 
 
