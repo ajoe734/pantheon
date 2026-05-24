@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+from typing import Any
 
 from fastapi.testclient import TestClient
 
@@ -97,6 +98,144 @@ def test_persona_league_heatmap_cors_preflight() -> None:
 
     assert response.status_code in {200, 204}
     assert response.headers.get("access-control-allow-origin") == LOVABLE_ORIGIN
+
+
+def _incident_timeline_client(monkeypatch) -> TestClient:
+    td = tempfile.TemporaryDirectory(prefix="bff_mgmt_incident_timeline_")
+    monkeypatch.setattr(bff_main, "_BFF_MGMT_INCIDENT_TIMELINE_TMPDIR", td, raising=False)
+    store = ReadSurfaceStore(
+        os.path.join(td.name, "read_surfaces.json"),
+        allow_local_snapshot_fallback=False,
+    )
+    incidents = [
+        {
+            "incident_id": "inc-delta-high",
+            "title": "Critical runtime drawdown",
+            "severity": "critical",
+            "status": "open",
+            "created_at": "2026-05-24T09:15:00Z",
+            "opened_at": "2026-05-24T09:15:00Z",
+            "runtime_id": "runtime-alpha",
+            "deployment_plan_id": "plan-alpha",
+            "capital_pool_id": "pool-alpha",
+            "artifact_id": "artifact-alpha",
+            "artifact_version": "v1",
+            "telemetry_event_ids": ["tel-high"],
+            "evidence_summary": "Drawdown crossed critical threshold.",
+        },
+        {
+            "incident_id": "inc-delta-low",
+            "title": "Resolved low-severity audit drift",
+            "severity": "low",
+            "status": "resolved",
+            "created_at": "2026-05-24T07:00:00Z",
+            "opened_at": "2026-05-24T07:00:00Z",
+            "runtime_id": "runtime-beta",
+            "deployment_plan_id": "plan-beta",
+            "capital_pool_id": "pool-beta",
+        },
+        {
+            "incident_id": "inc-delta-medium",
+            "title": "Medium latency warning",
+            "severity": "medium",
+            "status": "in_progress",
+            "created_at": "2026-05-24T08:30:00Z",
+            "opened_at": "2026-05-24T08:30:00Z",
+            "runtime_id": "runtime-alpha",
+            "deployment_plan_id": "plan-alpha",
+            "capital_pool_id": "pool-alpha",
+        },
+    ]
+    store.list_incidents = lambda **_: list(incidents)
+
+    def dataset_source(dataset: str, **_: Any) -> str:
+        return "service_store" if dataset == "incidents" else "missing"
+
+    store.dataset_source = dataset_source
+    monkeypatch.setattr(bff_main, "read_store", store)
+    return TestClient(bff_main.app, raise_server_exceptions=False)
+
+
+def test_incident_timeline_returns_chronological_bucketed_incidents(monkeypatch) -> None:
+    client = _incident_timeline_client(monkeypatch)
+
+    response = client.get(
+        "/bff/management/incident-timeline",
+        headers=HEADERS,
+        params={"page_size": 10},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    data = body["data"]
+
+    assert data["id"] == "management-incident-timeline"
+    assert body["items"] == body["rows"] == body["incidents"] == body["events"] == data["items"]
+    assert data["rows"] == data["incidents"] == data["events"] == body["items"]
+    assert [item["incident_id"] for item in body["items"]] == [
+        "inc-delta-low",
+        "inc-delta-medium",
+        "inc-delta-high",
+    ]
+    assert [item["sequence"] for item in body["items"]] == [1, 2, 3]
+    assert body["items"][2]["severity_bucket"] == "high"
+    assert body["items"][2]["lineage_ref"] == "artifact-alpha@v1"
+    assert body["items"][2]["sourceRefs"]["runtimeIds"] == ["runtime-alpha"]
+    assert body["items"][2]["links"]["incident"] == "/bff/incidents/inc-delta-high"
+
+    assert body["severityBuckets"] == {"high": 1, "medium": 1, "low": 1}
+    assert body["summary"]["severityBuckets"] == body["severityBuckets"]
+    assert body["summary"]["incident_count"] == 3
+    assert body["summary"]["active_incident_count"] == 2
+    assert body["summary"]["resolved_incident_count"] == 1
+    assert body["summary"]["first_incident_at"] == "2026-05-24T07:00:00Z"
+    assert body["summary"]["latest_incident_at"] == "2026-05-24T09:15:00Z"
+    assert body["page_info"] == {"next_page_token": None, "total": 3, "page_size": 10}
+    assert body["meta"]["surfaces"]["incident_timeline"]["source"] == "bff_composed"
+    assert body["meta"]["surfaces"]["incidents"]["source"] == "service_store"
+    assert body["meta"]["policy"] == "read_only_incident_timeline"
+    assert "GET /bff/incidents" in body["meta"]["composition_sources"]
+
+
+def test_incident_timeline_filters_by_runtime(monkeypatch) -> None:
+    client = _incident_timeline_client(monkeypatch)
+
+    response = client.get(
+        "/bff/management/incident-timeline",
+        headers=HEADERS,
+        params={"runtime_id": "runtime-beta"},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["summary"]["incident_count"] == 1
+    assert body["items"][0]["incident_id"] == "inc-delta-low"
+    assert body["severityBuckets"] == {"high": 0, "medium": 0, "low": 1}
+
+
+def test_incident_timeline_requires_auth(monkeypatch) -> None:
+    client = _incident_timeline_client(monkeypatch)
+
+    response = client.get("/bff/management/incident-timeline")
+
+    assert response.status_code == 401, response.text
+
+
+def test_incident_timeline_cors_preflight(monkeypatch) -> None:
+    client = _incident_timeline_client(monkeypatch)
+
+    response = client.options(
+        "/bff/management/incident-timeline",
+        headers={
+            "Origin": "https://preview--pantheon-dev.lovable.app",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "Authorization, X-BFF-Api-Version",
+        },
+    )
+
+    assert response.status_code == 204, response.text
+    assert response.text == ""
+    assert response.headers["access-control-allow-origin"] == "https://preview--pantheon-dev.lovable.app"
 
 
 def test_quarterly_ranking_drilldown_returns_persona_contribution_breakdown() -> None:

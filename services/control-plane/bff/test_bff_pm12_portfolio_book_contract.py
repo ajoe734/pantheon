@@ -743,6 +743,80 @@ def test_strategy_allocation_returns_active_strategy_allocations_with_drift(monk
     assert payload["meta"]["policy"] == "read_only_strategy_allocation"
 
 
+def test_capital_flow_returns_read_only_capital_flow_projection(monkeypatch) -> None:
+    client = _portfolio_store(
+        monkeypatch,
+        strategy_specs=[
+            {
+                "strategy_id": "strategy-alpha",
+                "title": "Alpha Carry",
+                "lifecycle_state": "approved",
+            }
+        ],
+    )
+
+    response = client.get(
+        "/bff/management/capital-flow",
+        headers=HEADERS,
+        params={"strategy_id": "strategy-alpha", "page_size": 20},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["data"]["id"] == "management-capital-flow"
+    assert payload["items"] == payload["rows"] == payload["flows"] == payload["data"]["rows"]
+    assert payload["data"]["items"] == payload["items"]
+    assert payload["data"]["flows"] == payload["items"]
+    assert payload["page_info"] == {"next_page_token": None, "total": 1, "page_size": 20}
+
+    row = payload["items"][0]
+    assert row["capital_pool_id"] == "pool-alpha"
+    assert row["capitalPoolName"] == "Alpha Book"
+    assert row["persona_id"] == "persona-alpha"
+    assert row["strategy_id"] == "strategy-alpha"
+    assert row["strategyLabel"] == "Alpha Carry"
+    assert row["deployment_stage"] == "paper"
+    assert row["direction"] == "inflow"
+    assert row["netCapitalFlow"] == 10.0
+    assert row["inflowAmount"] == 10.0
+    assert row["outflowAmount"] == 0.0
+    assert row["allocatedCapital"] == 30600.0
+    assert row["runtimeIds"] == ["runtime-alpha"]
+    assert row["deploymentPlanIds"] == ["plan-alpha"]
+    assert row["personaCapitalBindingIds"] == ["binding-alpha"]
+    assert row["links"]["capitalPool"] == "/bff/capital-pools/pool-alpha"
+    assert row["links"]["persona"] == "/bff/personas/persona-alpha"
+    assert row["links"]["strategy"] == "/bff/strategies/strategy-alpha"
+    assert payload["summary"]["flowCount"] == 1
+    assert payload["summary"]["netCapitalFlow"] == 10.0
+    assert payload["summary"]["totalInflow"] == 10.0
+    assert payload["summary"]["totalOutflow"] == 0
+    assert payload["summary"]["byDirection"] == {"inflow": 1}
+    assert payload["summary"]["basis"] == "runtime_capital_flow_projection_from_allocations_and_pnl"
+    assert payload["meta"]["surfaces"]["capital_flow"]["source"] == "bff_composed"
+    assert payload["meta"]["surfaces"]["telemetry_summaries"]["source"] == "canonical"
+    assert payload["meta"]["policy"] == "read_only_capital_flow"
+
+
+def test_capital_flow_filters_outflows(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get(
+        "/bff/management/capital-flow",
+        headers=HEADERS,
+        params={"direction": "outflow", "page_size": 20},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["summary"]["flowCount"] == 1
+    row = payload["items"][0]
+    assert row["direction"] == "outflow"
+    assert row["runtimeIds"] == ["runtime-alpha-live"]
+    assert row["netCapitalFlow"] == -2.0
+    assert row["outflowAmount"] == 2.0
+
+
 def test_risk_radar_composes_persona_strategy_exposure_drawdown_and_var(monkeypatch) -> None:
     client = _portfolio_store(monkeypatch)
 
@@ -814,6 +888,76 @@ def test_risk_radar_cors_preflight(monkeypatch) -> None:
     assert response.headers["access-control-allow-origin"] == "https://preview--pantheon-dev.lovable.app"
 
 
+def test_management_board_pack_composes_pm12_sections(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get(
+        "/bff/management/board-pack",
+        headers=HEADERS,
+        params={"period": "30d", "section_limit": 2},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    data = payload["data"]
+    assert data["id"] == "management-board-pack"
+    assert payload["items"] == payload["sections"] == data["sections"]
+    assert payload["summary"] == data["summary"]
+    assert payload["page_info"] == {"next_page_token": None, "total": 8, "page_size": 8}
+    assert payload["summary"]["section_count"] == 8
+    assert payload["summary"]["period"] == "30d"
+    assert payload["summary"]["section_limit"] == 2
+    assert payload["summary"]["policy"] == "read_only_management_board_pack"
+
+    section_ids = {section["id"] for section in payload["sections"]}
+    assert {
+        "portfolio_book",
+        "portfolio_book_exposure",
+        "portfolio_book_positions",
+        "strategy_allocation",
+        "persona_league",
+        "persona_league_movers",
+        "performance_attribution_by_persona",
+        "performance_attribution_by_pool",
+    }.issubset(section_ids)
+
+    assert data["portfolioBook"]["data"]["summary"]["capital_pool_count"] == 2
+    assert data["portfolio_book_exposure"]["data"]["id"] == "pm12-portfolio-book-exposure"
+    assert data["portfolioBookPositions"]["data"]["summary"]["position_count"] == 3
+    assert data["strategyAllocation"]["data"]["id"] == "management-strategy-allocation"
+    assert data["performanceAttribution"]["byPersona"]["summary"]["dimensions"] == ["persona"]
+    assert data["performance_attribution"]["by_pool"]["summary"]["dimensions"] == ["pool"]
+    assert data["personaLeague"]["movers"]["data"]["id"] == "management-persona-league-movers"
+    assert payload["meta"]["surfaces"]["management_board_pack"]["source"] == "bff_composed"
+    assert payload["meta"]["surfaces"]["board_pack"] == payload["meta"]["surfaces"]["management_board_pack"]
+    assert "GET /bff/management/strategy-allocation" in payload["meta"]["composition_sources"]
+
+
+def test_management_board_pack_requires_read_auth(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get("/bff/management/board-pack")
+
+    assert response.status_code == 401, response.text
+
+
+def test_management_board_pack_cors_preflight(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.options(
+        "/bff/management/board-pack",
+        headers={
+            "Origin": "https://preview--pantheon-dev.lovable.app",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "Authorization, X-BFF-Api-Version",
+        },
+    )
+
+    assert response.status_code == 204, response.text
+    assert response.text == ""
+    assert response.headers["access-control-allow-origin"] == "https://preview--pantheon-dev.lovable.app"
+
+
 def test_performance_attribution_rejects_invalid_dimension(monkeypatch) -> None:
     client = _portfolio_store(monkeypatch)
 
@@ -860,6 +1004,14 @@ def test_strategy_allocation_requires_read_auth(monkeypatch) -> None:
     client = _portfolio_store(monkeypatch)
 
     response = client.get("/bff/management/strategy-allocation")
+
+    assert response.status_code == 401, response.text
+
+
+def test_capital_flow_requires_read_auth(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.get("/bff/management/capital-flow")
 
     assert response.status_code == 401, response.text
 
@@ -920,6 +1072,23 @@ def test_strategy_allocation_cors_preflight(monkeypatch) -> None:
 
     response = client.options(
         "/bff/management/strategy-allocation",
+        headers={
+            "Origin": "https://preview--pantheon-dev.lovable.app",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "Authorization, X-BFF-Api-Version",
+        },
+    )
+
+    assert response.status_code == 204, response.text
+    assert response.text == ""
+    assert response.headers["access-control-allow-origin"] == "https://preview--pantheon-dev.lovable.app"
+
+
+def test_capital_flow_cors_preflight(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    response = client.options(
+        "/bff/management/capital-flow",
         headers={
             "Origin": "https://preview--pantheon-dev.lovable.app",
             "Access-Control-Request-Method": "GET",
@@ -1037,6 +1206,8 @@ def test_portfolio_book_is_registered_in_openapi() -> None:
     bff_main.app.openapi_schema = None
     schema = bff_main.app.openapi()
 
+    assert "/bff/management/board-pack" in schema["paths"]
+    assert "get" in schema["paths"]["/bff/management/board-pack"]
     assert "/bff/management/portfolio-book" in schema["paths"]
     assert "get" in schema["paths"]["/bff/management/portfolio-book"]
     assert "/bff/management/portfolio-book/pools" in schema["paths"]
@@ -1055,5 +1226,9 @@ def test_portfolio_book_is_registered_in_openapi() -> None:
     assert "get" in schema["paths"]["/bff/management/performance-attribution/by-pool"]
     assert "/bff/management/strategy-allocation" in schema["paths"]
     assert "get" in schema["paths"]["/bff/management/strategy-allocation"]
+    assert "/bff/management/capital-flow" in schema["paths"]
+    assert "get" in schema["paths"]["/bff/management/capital-flow"]
     assert "/bff/management/risk-radar" in schema["paths"]
     assert "get" in schema["paths"]["/bff/management/risk-radar"]
+    assert "/bff/management/incident-timeline" in schema["paths"]
+    assert "get" in schema["paths"]["/bff/management/incident-timeline"]
