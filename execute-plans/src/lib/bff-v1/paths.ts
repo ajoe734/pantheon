@@ -109,6 +109,7 @@ export const paths = {
   managementBoardPack: () => `${BASE}/management/board-pack`,
   managementTradingPulse: () => `${BASE}/management/trading-pulse`,
   managementTradingPulseRankings: () => `${BASE}/management/trading-pulse/rankings`,
+  managementSentinelPulse: () => `${BASE}/management/sentinel-pulse`,
   managementEvidence: () => `${BASE}/management/evidence`,
   managementEvolutionJournal: () => `${BASE}/management/evolution-journal`,
   managementPersonaIntent: () => `${BASE}/management/persona-intent`,

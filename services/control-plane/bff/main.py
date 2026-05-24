@@ -7213,6 +7213,304 @@ def _build_management_anomalies_payload(snapshot_at: str) -> Dict[str, Any]:
     }
 
 
+_MANAGEMENT_SENTINEL_ACTIVE_STATUSES = {"active", "open", "pending", "escalated", "claimed", "in_review"}
+_MANAGEMENT_SENTINEL_PENDING_INTERVENTION_STATUSES = {"pending", "open", "claimed", "in_review", "escalated"}
+
+
+def _management_sentinel_pulse_finding(record: Dict[str, Any]) -> Dict[str, Any]:
+    finding_id = str(record.get("id") or record.get("finding_id") or "").strip()
+    severity = str(record.get("severity") or record.get("risk_level") or "medium").strip().lower() or "medium"
+    status = str(record.get("status") or "unknown").strip().lower() or "unknown"
+    kind = str(record.get("kind") or "sentinel_finding").strip().lower() or "sentinel_finding"
+    incident_id = str(record.get("incident_id") or record.get("source_incident_id") or "").strip() or None
+    loop_run_id = str(record.get("loop_run_id") or record.get("loopRunId") or "").strip() or None
+    runtime_id = str(record.get("runtime_id") or record.get("runtimeId") or "").strip() or None
+    title = str(record.get("title") or record.get("summary") or finding_id or "Sentinel finding")
+    triggered_at = (
+        record.get("triggered_at")
+        or record.get("created_at")
+        or record.get("raised_at")
+        or record.get("updated_at")
+    )
+    links = {
+        "finding": f"/bff/v5/sentinel/findings/{finding_id}" if finding_id else None,
+        "sentinelFindings": "/bff/v5/sentinel/findings",
+        "sentinel_findings": "/bff/v5/sentinel/findings",
+    }
+    source_refs = {
+        "findingId": finding_id or None,
+        "finding_id": finding_id or None,
+        "incidentId": incident_id,
+        "incident_id": incident_id,
+        "loopRunId": loop_run_id,
+        "loop_run_id": loop_run_id,
+        "runtimeId": runtime_id,
+        "runtime_id": runtime_id,
+    }
+    return {
+        "id": finding_id,
+        "findingId": finding_id,
+        "finding_id": finding_id,
+        "kind": kind,
+        "severity": severity,
+        "riskLevel": severity,
+        "risk_level": severity,
+        "status": status,
+        "title": title,
+        "summary": record.get("summary") or title,
+        "triggeredAt": triggered_at,
+        "triggered_at": triggered_at,
+        "createdAt": record.get("created_at"),
+        "created_at": record.get("created_at"),
+        "updatedAt": record.get("updated_at"),
+        "updated_at": record.get("updated_at"),
+        "target": record.get("target") if isinstance(record.get("target"), dict) else {},
+        "sourceRefs": source_refs,
+        "source_refs": source_refs,
+        "links": links,
+        "sourceRecord": record,
+        "source_record": record,
+    }
+
+
+def _management_sentinel_pulse_intervention(record: Dict[str, Any]) -> Dict[str, Any]:
+    intervention_id = str(record.get("intervention_id") or record.get("id") or "").strip()
+    finding_id = str(record.get("finding_id") or record.get("sentinel_finding_id") or "").strip() or None
+    severity = str(record.get("severity") or record.get("risk_level") or "medium").strip().lower() or "medium"
+    status = str(record.get("status") or "unknown").strip().lower() or "unknown"
+    kind = str(record.get("kind") or "sentinel_intervention").strip().lower() or "sentinel_intervention"
+    title = str(record.get("title") or record.get("summary") or record.get("description") or intervention_id)
+    triggered_at = (
+        record.get("triggered_at")
+        or record.get("created_at")
+        or record.get("updated_at")
+        or record.get("submitted_at")
+    )
+    links = {
+        "intervention": f"/bff/v5/interventions/{intervention_id}" if intervention_id else None,
+        "interventions": "/bff/v5/interventions",
+        "finding": f"/bff/v5/sentinel/findings/{finding_id}" if finding_id else None,
+    }
+    source_refs = {
+        "interventionId": intervention_id or None,
+        "intervention_id": intervention_id or None,
+        "findingId": finding_id,
+        "finding_id": finding_id,
+    }
+    return {
+        "id": intervention_id,
+        "interventionId": intervention_id,
+        "intervention_id": intervention_id,
+        "findingId": finding_id,
+        "finding_id": finding_id,
+        "kind": kind,
+        "severity": severity,
+        "riskLevel": severity,
+        "risk_level": severity,
+        "status": status,
+        "title": title,
+        "summary": record.get("summary") or record.get("description") or title,
+        "triggeredAt": triggered_at,
+        "triggered_at": triggered_at,
+        "sourceRefs": source_refs,
+        "source_refs": source_refs,
+        "links": links,
+        "sourceRecord": record,
+        "source_record": record,
+    }
+
+
+def _management_sentinel_pulse_matches(item: Dict[str, Any], q: str) -> bool:
+    needle = q.strip().lower()
+    if not needle:
+        return True
+    searchable = [
+        item.get("id"),
+        item.get("findingId"),
+        item.get("finding_id"),
+        item.get("kind"),
+        item.get("severity"),
+        item.get("status"),
+        item.get("title"),
+        item.get("summary"),
+    ]
+    source_refs = item.get("sourceRefs") if isinstance(item.get("sourceRefs"), dict) else {}
+    searchable.extend(source_refs.values())
+    return any(needle in str(value or "").lower() for value in searchable)
+
+
+def _build_management_sentinel_pulse_response(
+    *,
+    kind: Optional[str],
+    status: Optional[str],
+    severity: Optional[str],
+    q: str,
+    page_token: Optional[str],
+    page_size: int,
+) -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    kind_filter = kind.strip().lower() if isinstance(kind, str) and kind.strip() else None
+    status_filter = status.strip().lower() if isinstance(status, str) and status.strip() else None
+    severity_filter = severity.strip().lower() if isinstance(severity, str) and severity.strip() else None
+
+    sentinel_available, raw_findings = read_store.list_sentinel_findings(
+        kind=kind_filter,
+        status=status_filter,
+        severity=severity_filter,
+    )
+    findings = [
+        item for item in (
+            _management_sentinel_pulse_finding(record)
+            for record in raw_findings
+            if isinstance(record, dict)
+        )
+        if item.get("id") and _management_sentinel_pulse_matches(item, q)
+    ]
+    findings.sort(key=_management_record_time, reverse=True)
+    page_findings, next_page_token = _page_slice(findings, page_token, page_size)
+
+    interventions = [
+        _management_sentinel_pulse_intervention(record)
+        for record in _v5_intervention_records()
+        if isinstance(record, dict)
+    ]
+    interventions = [item for item in interventions if item.get("id")]
+    interventions.sort(key=_management_record_time, reverse=True)
+
+    active_findings = [
+        item for item in findings
+        if str(item.get("status") or "").lower() in _MANAGEMENT_SENTINEL_ACTIVE_STATUSES
+    ]
+    critical_findings = [
+        item for item in findings
+        if str(item.get("severity") or "").lower() == "critical"
+    ]
+    pending_interventions = [
+        item for item in interventions
+        if str(item.get("status") or "").lower() in _MANAGEMENT_SENTINEL_PENDING_INTERVENTION_STATUSES
+    ]
+    by_status = _management_count_by(findings, "status")
+    by_severity = _management_count_by(findings, "severity")
+    by_kind = _management_count_by(findings, "kind")
+    highest_severity = _highest_ranked_value(
+        [str(item.get("severity") or "") for item in findings],
+        _ALERT_SEVERITY_ORDER,
+    )
+    summary = {
+        "findingCount": len(findings),
+        "finding_count": len(findings),
+        "returnedFindingCount": len(page_findings),
+        "returned_finding_count": len(page_findings),
+        "activeFindingCount": len(active_findings),
+        "active_finding_count": len(active_findings),
+        "criticalFindingCount": len(critical_findings),
+        "critical_finding_count": len(critical_findings),
+        "interventionCount": len(interventions),
+        "intervention_count": len(interventions),
+        "pendingInterventionCount": len(pending_interventions),
+        "pending_intervention_count": len(pending_interventions),
+        "highestSeverity": highest_severity,
+        "highest_severity": highest_severity,
+        "byStatus": by_status,
+        "by_status": by_status,
+        "bySeverity": by_severity,
+        "by_severity": by_severity,
+        "byKind": by_kind,
+        "by_kind": by_kind,
+        "policy": "read_only_sentinel_pulse",
+        "basis": "composed_from_v5_sentinel_findings_and_interventions",
+    }
+    cards = [
+        {
+            "cardId": "active-findings",
+            "card_id": "active-findings",
+            "label": "Active Findings",
+            "value": summary["activeFindingCount"],
+            "details": {"byStatus": by_status, "by_status": by_status},
+        },
+        {
+            "cardId": "critical-findings",
+            "card_id": "critical-findings",
+            "label": "Critical Findings",
+            "value": summary["criticalFindingCount"],
+            "details": {"highestSeverity": highest_severity, "highest_severity": highest_severity},
+        },
+        {
+            "cardId": "pending-interventions",
+            "card_id": "pending-interventions",
+            "label": "Pending Interventions",
+            "value": summary["pendingInterventionCount"],
+            "details": {"interventionCount": summary["interventionCount"]},
+        },
+    ]
+
+    incident_source = read_store.dataset_source("incidents")
+    sentinel_dataset = "incidents" if incident_source != "missing" else "sentinel_findings"
+    sentinel_surface = _dataset_surface_status(
+        sentinel_dataset,
+        snapshot_at=snapshot_at,
+        source=None if sentinel_available else "missing",
+    )
+    intervention_surface = _dataset_surface_status(
+        "v5_interventions",
+        snapshot_at=snapshot_at,
+    )
+    if interventions and intervention_surface.get("status") == "unavailable":
+        intervention_surface = dict(_surface_status())
+        intervention_surface["source"] = "bff_local_registry"
+    pulse_surface = _aggregate_group_surface(
+        "management_sentinel_pulse",
+        [sentinel_surface, intervention_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Sentinel pulse aggregate unavailable.",
+        degraded_message="Sentinel pulse is degraded because sentinel findings or interventions are unavailable.",
+    )
+    data = {
+        "id": "management-sentinel-pulse",
+        "snapshotAt": snapshot_at,
+        "snapshot_at": snapshot_at,
+        "items": page_findings,
+        "findings": page_findings,
+        "interventions": interventions,
+        "cards": cards,
+        "summary": summary,
+        "policy": "read_only_sentinel_pulse",
+    }
+    return {
+        "data": data,
+        "items": page_findings,
+        "findings": page_findings,
+        "interventions": interventions,
+        "cards": cards,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": len(findings),
+            "page_size": page_size,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "management_sentinel_pulse": pulse_surface,
+                "sentinel_pulse": pulse_surface,
+                "sentinel_findings": sentinel_surface,
+                "v5_interventions": intervention_surface,
+            },
+            "composition_sources": [
+                "GET /bff/v5/sentinel/findings",
+                "GET /bff/v5/interventions",
+            ],
+            "filters": {
+                "kind": kind_filter,
+                "status": status_filter,
+                "severity": severity_filter,
+                "q": q,
+            },
+            "policy": "read_only_sentinel_pulse",
+        },
+    }
+
+
 def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
     ref_id = str(item.get("ref_id") or item.get("id") or "").strip()
     display_label = item.get("display_label") or ref_id
@@ -12355,6 +12653,30 @@ async def bff_management_trading_pulse_rankings(
 
     snapshot_at = utc_now()
     return _build_management_trading_pulse_rankings_payload(snapshot_at, limit=limit)
+
+
+@app.get("/bff/management/sentinel-pulse")
+async def bff_management_sentinel_pulse(
+    kind: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+    severity: Optional[str] = Query(default=None),
+    q: str = Query(default=""),
+    page_token: Optional[str] = Query(default=None),
+    page_size: int = Query(default=20, ge=1, le=100),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: Management Sentinel Pulse composed from v5 sentinel read surfaces."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    return _build_management_sentinel_pulse_response(
+        kind=kind,
+        status=status,
+        severity=severity,
+        q=q,
+        page_token=page_token,
+        page_size=page_size,
+    )
 
 
 @app.get("/api/v1/operator/paper-live-drift/{runtime_id}")

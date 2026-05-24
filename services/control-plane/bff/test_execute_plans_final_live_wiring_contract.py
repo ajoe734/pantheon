@@ -62,6 +62,7 @@ FINAL_CONTRACT_METHOD_PATHS = {
     ("GET", "/bff/management/evidence"),
     ("GET", "/bff/management/evolution-journal"),
     ("GET", "/bff/management/persona-intent"),
+    ("GET", "/bff/management/sentinel-pulse"),
     ("GET", "/bff/management/strategy-allocation"),
     ("GET", "/bff/management/capital-flow"),
     ("GET", "/bff/management/risk-radar"),
@@ -188,6 +189,7 @@ LIVE_PROBE_CONCRETE_ROUTES = [
     ("GET", "/bff/management/evidence"),
     ("GET", "/bff/management/evolution-journal"),
     ("GET", "/bff/management/persona-intent"),
+    ("GET", "/bff/management/sentinel-pulse"),
     ("GET", "/bff/management/strategy-allocation"),
     ("GET", "/bff/management/capital-flow"),
     ("GET", "/bff/management/risk-radar"),
@@ -413,6 +415,18 @@ def test_execute_plans_management_board_pack_client_exports_are_present() -> Non
     assert "ManagementBoardPackResponse" in management_ts
     assert "managementBoardPackPath" in management_ts
     assert "fetchManagementBoardPack" in management_ts
+
+
+def test_execute_plans_management_sentinel_pulse_client_exports_are_present() -> None:
+    repo_root = BFF_DIR.parents[2]
+    paths_ts = (repo_root / "execute-plans/src/lib/bff-v1/paths.ts").read_text()
+    management_ts = (repo_root / "execute-plans/src/lib/bff-v1/management.ts").read_text()
+
+    assert "managementSentinelPulse: () => `${BASE}/management/sentinel-pulse`" in paths_ts
+    assert "ManagementSentinelPulseQuery" in management_ts
+    assert "ManagementSentinelPulseResponse" in management_ts
+    assert "managementSentinelPulsePath" in management_ts
+    assert "fetchManagementSentinelPulse" in management_ts
 
 
 def test_execute_plans_live_probe_catalog_no_longer_404s_anonymously() -> None:
