@@ -100,6 +100,57 @@ Result: `git diff --check` exited 0; broader BFF delta suite passed with 86
 tests and 3 existing `datetime.utcnow()` deprecation warnings in
 `services/control-plane/bff/read_store.py`.
 
+## BFF-MGMT-DELTA-012
+
+Route:
+
+```text
+GET /bff/management/intervention-stream
+```
+
+Purpose:
+
+Provide a strict-live Management Console route for recent intervention
+activity. The backend route is a read-only aggregate over existing v5
+intervention records and intervention audit events; it does not introduce a new
+intervention event source of truth and does not mutate interventions, audit
+records, approvals, or capital.
+
+Frontend contract:
+
+- `paths.managementInterventionStream()`
+- `managementInterventionStreamPath(query)`
+- `fetchManagementInterventionStream(query, init, baseUrl)`
+
+Backend acceptance:
+
+- unauthenticated request: HTTP 401
+- authenticated request: HTTP 200
+- CORS preflight: HTTP 204/200
+- response envelope: `data`, `items`, `rows`, `events`, `stream`, `summary`,
+  `page_info`, `meta`
+- supported query: `persona_id`, `personaId`, `status`, `kind`, `q`,
+  `window_hours`, `windowHours`, `page_token`, `page_size`
+- default window: latest 24 hours
+- `data.id`: `management-intervention-stream`
+- `meta.policy`: `read_only_intervention_stream`
+- no new intervention stream source of truth; composed from v5 interventions
+  and audit surfaces
+
+Validation:
+
+```bash
+git diff --check
+python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q
+```
+
+Result: `git diff --check HEAD~2..HEAD` exited 0; focused
+route/live-wiring suite passed with 31 tests and 3 existing
+`datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+Additional owner validation: broader BFF delta/auth suite passed with 93 tests
+and the same 3 existing warnings.
+
 ## BFF-MGMT-DELTA-011
 
 Route:

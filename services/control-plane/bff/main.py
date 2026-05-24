@@ -25889,6 +25889,471 @@ def _management_hiq_backlog_response(
     }
 
 
+def _intervention_stream_filter_values(value: Optional[str]) -> Optional[set[str]]:
+    if not value:
+        return None
+    tokens = {token.strip().lower() for token in value.split(",") if token.strip()}
+    if not tokens or "all" in tokens:
+        return None
+    return tokens
+
+
+def _intervention_stream_time(record: Dict[str, Any]) -> Optional[str]:
+    value = _management_first_non_empty(
+        record.get("occurred_at"),
+        record.get("occurredAt"),
+        record.get("triggered_at"),
+        record.get("triggeredAt"),
+        record.get("created_at"),
+        record.get("createdAt"),
+        record.get("updated_at"),
+        record.get("updatedAt"),
+        record.get("timestamp"),
+    )
+    return str(value).strip() if value not in (None, "") else None
+
+
+def _intervention_stream_persona_id(record: Dict[str, Any]) -> Optional[str]:
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    audit_context = record.get("audit_context") if isinstance(record.get("audit_context"), dict) else {}
+    value = _management_first_non_empty(
+        record.get("persona_id"),
+        record.get("personaId"),
+        metadata.get("persona_id"),
+        metadata.get("personaId"),
+        audit_context.get("persona_id"),
+        audit_context.get("personaId"),
+    )
+    if value not in (None, ""):
+        return str(value).strip()
+    target_type = str(record.get("target_type") or record.get("targetType") or "").strip().lower()
+    target_id = str(record.get("target_id") or record.get("targetId") or "").strip()
+    if target_type == "persona" and target_id:
+        return target_id
+    return None
+
+
+def _intervention_stream_source_refs(
+    record: Dict[str, Any],
+    *,
+    intervention_id: str,
+    persona_id: Optional[str],
+    source_dataset: str,
+) -> Dict[str, Any]:
+    runtime_ids = [
+        str(value)
+        for value in (
+            record.get("runtime_id"),
+            record.get("runtimeId"),
+        )
+        if value
+    ]
+    persona_ids = [
+        str(value)
+        for value in (
+            record.get("persona_id"),
+            record.get("personaId"),
+            persona_id,
+        )
+        if value
+    ]
+    strategy_ids = [
+        str(value)
+        for value in (
+            record.get("strategy_id"),
+            record.get("strategyId"),
+        )
+        if value
+    ]
+    incident_ids = [
+        str(value)
+        for value in (
+            record.get("incident_id"),
+            record.get("incidentId"),
+        )
+        if value
+    ]
+    return {
+        "sourceDataset": source_dataset,
+        "source_dataset": source_dataset,
+        "interventionIds": [intervention_id],
+        "intervention_ids": [intervention_id],
+        "runtimeIds": sorted(set(runtime_ids)),
+        "runtime_ids": sorted(set(runtime_ids)),
+        "personaIds": sorted(set(persona_ids)),
+        "persona_ids": sorted(set(persona_ids)),
+        "strategyIds": sorted(set(strategy_ids)),
+        "strategy_ids": sorted(set(strategy_ids)),
+        "incidentIds": sorted(set(incident_ids)),
+        "incident_ids": sorted(set(incident_ids)),
+    }
+
+
+def _intervention_stream_target(record: Dict[str, Any], *, intervention_id: str) -> Dict[str, Any]:
+    return _hiq_backlog_target(record, fallback_type="Intervention", fallback_id=intervention_id)
+
+
+def _intervention_stream_record_event(record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    intervention_id = _management_record_id(record, "intervention_id", "id")
+    if not intervention_id:
+        return None
+    status = _management_normalized_status(record)
+    kind = str(record.get("kind") or record.get("type") or "intervention").strip().lower() or "intervention"
+    occurred_at = _intervention_stream_time(record)
+    persona_id = _intervention_stream_persona_id(record)
+    priority = _human_inbox_priority(
+        record.get("priority") or record.get("severity") or record.get("risk_level"),
+        fallback="medium",
+    )
+    target = _intervention_stream_target(record, intervention_id=intervention_id)
+    source_refs = _intervention_stream_source_refs(
+        record,
+        intervention_id=intervention_id,
+        persona_id=persona_id,
+        source_dataset="v5_interventions",
+    )
+    event_id = f"intervention-stream-{intervention_id}-{status}"
+    return {
+        "id": event_id,
+        "eventId": event_id,
+        "event_id": event_id,
+        "eventType": f"intervention.{status}",
+        "event_type": f"intervention.{status}",
+        "eventSource": "v5_interventions",
+        "event_source": "v5_interventions",
+        "sourceType": "intervention",
+        "source_type": "intervention",
+        "sourceDataset": "v5_interventions",
+        "source_dataset": "v5_interventions",
+        "interventionId": intervention_id,
+        "intervention_id": intervention_id,
+        "personaId": persona_id,
+        "persona_id": persona_id,
+        "runtimeId": record.get("runtime_id") or record.get("runtimeId"),
+        "runtime_id": record.get("runtime_id") or record.get("runtimeId"),
+        "strategyId": record.get("strategy_id") or record.get("strategyId"),
+        "strategy_id": record.get("strategy_id") or record.get("strategyId"),
+        "kind": kind,
+        "status": status,
+        "priority": priority,
+        "riskLevel": str(record.get("risk_level") or priority).strip().lower(),
+        "risk_level": str(record.get("risk_level") or priority).strip().lower(),
+        "severity": record.get("severity") or priority,
+        "occurredAt": occurred_at,
+        "occurred_at": occurred_at,
+        "createdAt": record.get("created_at") or record.get("createdAt") or occurred_at,
+        "created_at": record.get("created_at") or record.get("createdAt") or occurred_at,
+        "updatedAt": record.get("updated_at") or record.get("updatedAt") or occurred_at,
+        "updated_at": record.get("updated_at") or record.get("updatedAt") or occurred_at,
+        "actor": record.get("triggered_by") or record.get("actor") or record.get("owner"),
+        "title": record.get("title") or f"{kind.replace('_', ' ').title()} intervention",
+        "summary": record.get("description") or record.get("summary") or "Intervention event projected from v5 interventions.",
+        "target": target,
+        "sourceRefs": source_refs,
+        "source_refs": source_refs,
+        "links": {
+            "source": f"/bff/v5/interventions/{intervention_id}",
+            "humanInbox": f"/bff/management/human-inbox/intervention:{intervention_id}",
+            "human_inbox": f"/bff/management/human-inbox/intervention:{intervention_id}",
+        },
+        "sourceRecord": _management_json_clone(record),
+        "source_record": _management_json_clone(record),
+    }
+
+
+def _intervention_stream_audit_event(event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if _governance_ledger_audit_source_type(event) != "intervention":
+        return None
+    audit_context = event.get("audit_context") if isinstance(event.get("audit_context"), dict) else {}
+    metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+    target_type = str(event.get("target_type") or event.get("targetType") or "").strip()
+    intervention_id = str(
+        _management_first_non_empty(
+            audit_context.get("intervention_id"),
+            audit_context.get("interventionId"),
+            metadata.get("intervention_id"),
+            metadata.get("interventionId"),
+            event.get("intervention_id"),
+            event.get("interventionId"),
+            event.get("target_id") if target_type.lower() == "intervention" else None,
+            event.get("entity_id") if target_type.lower() == "intervention" else None,
+        )
+        or ""
+    ).strip()
+    event_id = _management_record_id(event, "entry_id", "auditId", "id")
+    if not event_id:
+        return None
+    if not intervention_id:
+        intervention_id = event_id
+    status = str(event.get("outcome") or event.get("status") or "recorded").strip().lower() or "recorded"
+    action_type = str(event.get("action_type") or event.get("event_type") or "intervention.audit").strip()
+    kind = str(audit_context.get("kind") or metadata.get("kind") or "intervention").strip().lower()
+    persona_id = _intervention_stream_persona_id(event)
+    occurred_at = _intervention_stream_time(event)
+    source_refs = _intervention_stream_source_refs(
+        event,
+        intervention_id=intervention_id,
+        persona_id=persona_id,
+        source_dataset="governance_audit_events",
+    )
+    projected_id = f"intervention-stream-audit-{event_id}"
+    return {
+        "id": projected_id,
+        "eventId": projected_id,
+        "event_id": projected_id,
+        "eventType": action_type,
+        "event_type": action_type,
+        "eventSource": "governance_audit_events",
+        "event_source": "governance_audit_events",
+        "sourceType": "intervention",
+        "source_type": "intervention",
+        "sourceDataset": "governance_audit_events",
+        "source_dataset": "governance_audit_events",
+        "interventionId": intervention_id,
+        "intervention_id": intervention_id,
+        "personaId": persona_id,
+        "persona_id": persona_id,
+        "kind": kind,
+        "status": status,
+        "priority": _human_inbox_priority(event.get("priority") or event.get("risk_level"), fallback="medium"),
+        "riskLevel": str(event.get("risk_level") or "medium").strip().lower(),
+        "risk_level": str(event.get("risk_level") or "medium").strip().lower(),
+        "occurredAt": occurred_at,
+        "occurred_at": occurred_at,
+        "createdAt": occurred_at,
+        "created_at": occurred_at,
+        "updatedAt": occurred_at,
+        "updated_at": occurred_at,
+        "actor": event.get("actor"),
+        "title": f"Intervention audit: {action_type}",
+        "summary": audit_context.get("reason") or event.get("reason") or event.get("summary"),
+        "target": {
+            "type": target_type or "Intervention",
+            "id": str(event.get("target_id") or event.get("entity_id") or intervention_id).strip(),
+        },
+        "sourceRefs": source_refs,
+        "source_refs": source_refs,
+        "links": {
+            "source": "/bff/audit",
+            "intervention": f"/bff/v5/interventions/{intervention_id}",
+        },
+        "sourceRecord": _management_json_clone(event),
+        "source_record": _management_json_clone(event),
+    }
+
+
+def _intervention_stream_item_matches(
+    item: Dict[str, Any],
+    *,
+    persona_ids: Optional[set[str]],
+    statuses: Optional[set[str]],
+    kinds: Optional[set[str]],
+    q: str,
+    window_start: datetime,
+) -> bool:
+    occurred_at = _audit_datetime(item.get("occurred_at") or item.get("occurredAt"))
+    if occurred_at is not None and occurred_at < window_start:
+        return False
+    if persona_ids and str(item.get("persona_id") or item.get("personaId") or "").lower() not in persona_ids:
+        return False
+    if statuses and str(item.get("status") or "").lower() not in statuses:
+        return False
+    if kinds and str(item.get("kind") or "").lower() not in kinds:
+        return False
+    needle = q.strip().lower()
+    if needle:
+        target = item.get("target") if isinstance(item.get("target"), dict) else {}
+        haystack = " ".join(
+            str(value or "")
+            for value in (
+                item.get("id"),
+                item.get("event_type"),
+                item.get("event_source"),
+                item.get("intervention_id"),
+                item.get("persona_id"),
+                item.get("runtime_id"),
+                item.get("strategy_id"),
+                item.get("kind"),
+                item.get("status"),
+                item.get("title"),
+                item.get("summary"),
+                target.get("type"),
+                target.get("id"),
+            )
+        ).lower()
+        if needle not in haystack:
+            return False
+    return True
+
+
+def _intervention_stream_sort_key(item: Dict[str, Any]) -> tuple[datetime, str]:
+    return (
+        _audit_datetime(item.get("occurred_at") or item.get("occurredAt"))
+        or datetime.min.replace(tzinfo=timezone.utc),
+        str(item.get("id") or ""),
+    )
+
+
+def _management_intervention_stream_response(
+    *,
+    persona_id: Optional[str],
+    status: Optional[str],
+    kind: Optional[str],
+    q: str,
+    window_hours: int,
+    page_token: Optional[str],
+    page_size: int,
+) -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    snapshot_dt = _audit_datetime(snapshot_at) or datetime.now(timezone.utc)
+    window_start_dt = snapshot_dt - timedelta(hours=window_hours)
+    window_start_at = window_start_dt.isoformat().replace("+00:00", "Z")
+
+    persona_ids = _intervention_stream_filter_values(persona_id)
+    statuses = _intervention_stream_filter_values(status)
+    kinds = _intervention_stream_filter_values(kind)
+
+    intervention_records = _v5_intervention_records()
+    audit_events = _list_governance_audit_events()
+    events_by_id: Dict[str, Dict[str, Any]] = {}
+    for record in intervention_records:
+        item = _intervention_stream_record_event(record)
+        if item:
+            events_by_id[item["id"]] = item
+    for event in audit_events:
+        item = _intervention_stream_audit_event(event)
+        if item:
+            events_by_id.setdefault(item["id"], item)
+
+    events = [
+        item
+        for item in events_by_id.values()
+        if _intervention_stream_item_matches(
+            item,
+            persona_ids=persona_ids,
+            statuses=statuses,
+            kinds=kinds,
+            q=q,
+            window_start=window_start_dt,
+        )
+    ]
+    events.sort(key=_intervention_stream_sort_key, reverse=True)
+    for sequence, item in enumerate(events, start=1):
+        item["streamSequence"] = sequence
+        item["stream_sequence"] = sequence
+
+    total = len(events)
+    page_items, next_page_token = _page_slice(events, page_token, page_size)
+    persona_counts = _management_count_by(events, "personaId")
+    status_counts = _management_count_by(events, "status")
+    kind_counts = _management_count_by(events, "kind")
+    source_counts = _management_count_by(events, "eventSource")
+    latest_at = events[0].get("occurred_at") if events else None
+    summary = {
+        "eventCount": total,
+        "event_count": total,
+        "returnedEventCount": len(page_items),
+        "returned_event_count": len(page_items),
+        "interventionCount": len(
+            {
+                str(item.get("intervention_id") or "")
+                for item in events
+                if str(item.get("intervention_id") or "").strip()
+            }
+        ),
+        "intervention_count": len(
+            {
+                str(item.get("intervention_id") or "")
+                for item in events
+                if str(item.get("intervention_id") or "").strip()
+            }
+        ),
+        "personaCount": len([persona for persona in persona_counts if persona != "unknown"]),
+        "persona_count": len([persona for persona in persona_counts if persona != "unknown"]),
+        "windowHours": window_hours,
+        "window_hours": window_hours,
+        "windowStartAt": window_start_at,
+        "window_start_at": window_start_at,
+        "windowEndAt": snapshot_at,
+        "window_end_at": snapshot_at,
+        "latestAt": latest_at,
+        "latest_at": latest_at,
+        "byPersona": persona_counts,
+        "by_persona": persona_counts,
+        "byStatus": status_counts,
+        "by_status": status_counts,
+        "byKind": kind_counts,
+        "by_kind": kind_counts,
+        "byEventSource": source_counts,
+        "by_event_source": source_counts,
+        "policy": "read_only_intervention_stream",
+        "basis": "composed_from_v5_interventions_and_governance_audit_events",
+    }
+
+    intervention_source = "bff_local_registry" if _V5_INTERVENTIONS_STORE else None
+    intervention_surface = _dataset_surface_status(
+        "v5_interventions",
+        snapshot_at=snapshot_at,
+        source=intervention_source,
+    )
+    if intervention_records and intervention_surface.get("status") == "unavailable":
+        intervention_surface = dict(_surface_status())
+        intervention_surface["source"] = "service_store"
+    audit_surface = _dataset_surface_status("governance_audit_events", snapshot_at=snapshot_at)
+    if audit_events and audit_surface.get("status") == "unavailable":
+        audit_surface = dict(_surface_status())
+        audit_surface["source"] = "service_store"
+    stream_surface = _aggregate_group_surface(
+        "intervention_stream",
+        [intervention_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Intervention stream aggregate unavailable.",
+        degraded_message="Intervention stream is available, but one or more contributing surfaces are degraded.",
+    )
+    data = {
+        "id": "management-intervention-stream",
+        "items": page_items,
+        "rows": page_items,
+        "events": page_items,
+        "stream": page_items,
+        "summary": summary,
+        "policy": "read_only_intervention_stream",
+    }
+    return {
+        "data": data,
+        "items": page_items,
+        "rows": page_items,
+        "events": page_items,
+        "stream": page_items,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "intervention_stream": stream_surface,
+                "v5_interventions": intervention_surface,
+                "governance_audit_events": audit_surface,
+            },
+            "composition_sources": [
+                "GET /bff/v5/interventions",
+                "GET /bff/audit",
+            ],
+            "policy": "read_only_intervention_stream",
+            "filters": {
+                "persona_id": persona_id,
+                "status": status,
+                "kind": kind,
+                "q": q,
+                "window_hours": window_hours,
+            },
+        },
+    }
+
+
 _EVOLUTION_JOURNAL_TYPE_ALIASES = {
     "decision": "evolution_decision",
     "evolution": "evolution_decision",
@@ -26909,6 +27374,33 @@ async def bff_management_hiq_backlog(
         kind=kind,
         priority=priority,
         q=q,
+        page_token=page_token,
+        page_size=page_size,
+    )
+
+
+@app.get("/bff/management/intervention-stream")
+async def bff_management_intervention_stream(
+    persona_id: Optional[str] = Query(default=None),
+    personaId: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+    kind: Optional[str] = Query(default=None),
+    q: str = Query(default=""),
+    window_hours: int = Query(default=24, ge=1, le=720),
+    windowHours: Optional[int] = Query(default=None, ge=1, le=720),
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: read-only intervention event stream for Management Console review."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _management_intervention_stream_response(
+        persona_id=persona_id or personaId,
+        status=status,
+        kind=kind,
+        q=q,
+        window_hours=windowHours or window_hours,
         page_token=page_token,
         page_size=page_size,
     )

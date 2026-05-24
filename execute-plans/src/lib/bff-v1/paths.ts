@@ -109,6 +109,7 @@ export const paths = {
   managementBoardPack: () => `${BASE}/management/board-pack`,
   managementGovernanceLedger: () => `${BASE}/management/governance-ledger`,
   managementHiqBacklog: () => `${BASE}/management/hiq-backlog`,
+  managementInterventionStream: () => `${BASE}/management/intervention-stream`,
   managementTradingPulse: () => `${BASE}/management/trading-pulse`,
   managementTradingPulseRankings: () => `${BASE}/management/trading-pulse/rankings`,
   managementSentinelPulse: () => `${BASE}/management/sentinel-pulse`,

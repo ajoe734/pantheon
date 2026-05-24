@@ -287,6 +287,105 @@ tests and 3 existing `datetime.utcnow()` deprecation warnings in
 
 ---
 
+## BFF-MGMT-DELTA-012 Management Intervention Stream Route
+
+Task: BFF-MGMT-DELTA-012
+Owner: Codex
+Reviewer: Claude
+
+### Scope
+
+Add a strict-live Management Console route for recent intervention activity:
+
+```text
+GET /bff/management/intervention-stream?persona_id=&status=&kind=&q=&window_hours=&page_token=&page_size=
+```
+
+The route composes existing v5 intervention records and intervention audit
+events into a read-only event stream. It does not introduce a new intervention
+event source of truth and does not mutate interventions, audit records,
+approvals, or capital.
+
+### Contract
+
+The response uses the canonical aggregate envelope:
+
+```json
+{
+  "data": {
+    "id": "management-intervention-stream",
+    "items": [],
+    "rows": [],
+    "events": [],
+    "stream": [],
+    "summary": {},
+    "policy": "read_only_intervention_stream"
+  },
+  "items": [],
+  "rows": [],
+  "events": [],
+  "stream": [],
+  "summary": {},
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 50 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": [],
+    "policy": "read_only_intervention_stream"
+  }
+}
+```
+
+Stream rows expose stable event identity, event type/source, intervention id,
+persona/runtime/strategy refs, kind, status, priority, occurred time, actor,
+target, source refs, links, and a redaction-safe source record snapshot. The
+default window is the latest 24 hours; callers may pass `window_hours` up to
+720 hours when reviewing older intervention activity.
+
+### Composition Sources
+
+- `GET /bff/v5/interventions`
+- `GET /bff/audit`
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Path registered in FastAPI/OpenAPI | Implemented |
+| 2 | Composes recent intervention records and intervention audit events | Implemented |
+| 3 | Default response window is 24 hours and summary groups events by persona | Implemented |
+| 4 | Accepts `persona_id`, `status`, `kind`, `q`, `window_hours`, `page_token`, and `page_size` query parameters | Implemented |
+| 5 | Anonymous request returns HTTP 401 | Implemented |
+| 6 | Authenticated request returns HTTP 200 | Implemented |
+| 7 | Response keeps canonical aggregate envelope | Implemented |
+| 8 | CORS preflight returns HTTP 204/200 with matching allow-origin | Implemented |
+| 9 | execute-plans exposes typed path and fetch helpers | Implemented |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_management_delta_routes.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
+
+### Validation
+
+```bash
+git diff --check
+python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q
+```
+
+Result: `git diff --check HEAD~2..HEAD` exited 0; focused
+route/live-wiring suite passed with 31 tests and 3 existing
+`datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+Additional owner validation: broader BFF delta/auth suite passed with 93 tests
+and the same 3 existing warnings.
+
+---
+
 ## BFF-MGMT-DELTA-011 Management HIQ Backlog Route
 
 Task: BFF-MGMT-DELTA-011
