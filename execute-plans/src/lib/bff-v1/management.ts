@@ -2993,11 +2993,65 @@ export interface ManagementIncidentTimelineResponse {
   };
 }
 
+export interface ManagementCostAttributionQuery {
+  persona_id?: string;
+  strategy_id?: string;
+  capital_pool_id?: string;
+  period?: string;
+  page_token?: string;
+  page_size?: number;
+}
+
 export interface ManagementLoopThroughputQuery {
   status?: string;
   runtime_id?: string;
   page_token?: string;
   page_size?: number;
+}
+
+export interface ManagementCostAttributionRow {
+  id: string;
+  costId: string;
+  cost_id: string;
+  capitalPoolId?: string | null;
+  capital_pool_id?: string | null;
+  capitalPoolName?: string | null;
+  capital_pool_name?: string | null;
+  personaId?: string | null;
+  persona_id?: string | null;
+  personaLabel?: string | null;
+  persona_label?: string | null;
+  strategyId?: string | null;
+  strategy_id?: string | null;
+  strategyLabel?: string | null;
+  strategy_label?: string | null;
+  runtimeIds?: string[];
+  runtime_ids?: string[];
+  totalCost?: number | null;
+  total_cost?: number | null;
+  commissionCost?: number | null;
+  commission_cost?: number | null;
+  slippageCost?: number | null;
+  slippage_cost?: number | null;
+  infrastructureCost?: number | null;
+  infrastructure_cost?: number | null;
+  allocatedCapital?: number | null;
+  allocated_capital?: number | null;
+  riskBudget?: number | null;
+  risk_budget?: number | null;
+  totalTrades?: number;
+  total_trades?: number;
+  totalNotional?: number | null;
+  total_notional?: number | null;
+  avgSlippageBps?: number | null;
+  avg_slippage_bps?: number | null;
+  latestAt?: string | null;
+  latest_at?: string | null;
+  costBasis?: string;
+  cost_basis?: string;
+  sourceRefs?: Record<string, unknown>;
+  links?: Record<string, string | null | undefined>;
+  [key: string]: unknown;
 }
 
 export interface ManagementLoopThroughputItem {
@@ -3029,6 +3083,69 @@ export interface ManagementLoopThroughputItem {
   source_refs?: Record<string, unknown>;
   links?: Record<string, string | null | undefined>;
   [key: string]: unknown;
+}
+
+export interface ManagementCostAttributionSummary {
+  rowCount: number;
+  row_count: number;
+  returnedRowCount: number;
+  returned_row_count: number;
+  capitalPoolCount: number;
+  capital_pool_count: number;
+  personaCount: number;
+  persona_count: number;
+  strategyCount: number;
+  strategy_count: number;
+  totalCost?: number | null;
+  total_cost?: number | null;
+  totalCommissionCost?: number | null;
+  total_commission_cost?: number | null;
+  totalSlippageCost?: number | null;
+  total_slippage_cost?: number | null;
+  totalInfrastructureCost?: number | null;
+  total_infrastructure_cost?: number | null;
+  period: string;
+  policy: string;
+  basis: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementCostAttributionResponse {
+  data: {
+    id: "management-cost-attribution" | string;
+    items: ManagementCostAttributionRow[];
+    rows: ManagementCostAttributionRow[];
+    attributions: ManagementCostAttributionRow[];
+    summary: ManagementCostAttributionSummary;
+    policy?: string;
+    [key: string]: unknown;
+  };
+  items: ManagementCostAttributionRow[];
+  rows: ManagementCostAttributionRow[];
+  attributions: ManagementCostAttributionRow[];
+  summary: ManagementCostAttributionSummary;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces: {
+      cost_attribution: ManagementSurfaceRef;
+      runtime_bindings?: ManagementSurfaceRef;
+      deployment_plans?: ManagementSurfaceRef;
+      persona_bindings?: ManagementSurfaceRef;
+      capital_pools?: ManagementSurfaceRef;
+      strategies?: ManagementSurfaceRef;
+      telemetry_summaries?: ManagementSurfaceRef;
+      [key: string]: ManagementSurfaceRef | undefined;
+    };
+    composition_sources?: string[];
+    policy?: string;
+    filters?: Record<string, unknown>;
+    [key: string]: unknown;
+  };
 }
 
 export interface ManagementLoopThroughputSummary {
@@ -3327,6 +3444,12 @@ export function managementIncidentTimelinePath(
   query?: ManagementIncidentTimelineQuery,
 ): string {
   return withQuery(paths.managementIncidentTimeline(), query);
+}
+
+export function managementCostAttributionPath(
+  query?: ManagementCostAttributionQuery,
+): string {
+  return withQuery(paths.managementCostAttribution(), query);
 }
 
 export function managementLoopThroughputPath(
@@ -4109,4 +4232,23 @@ export async function fetchManagementPerformanceAttributionByPool(
     throw new Error(`GET ${path} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementPerformanceAttributionResponse>;
+}
+
+export async function fetchManagementCostAttribution(
+  query?: ManagementCostAttributionQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementCostAttributionResponse> {
+  const path = managementCostAttributionPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementCostAttributionResponse>;
 }
