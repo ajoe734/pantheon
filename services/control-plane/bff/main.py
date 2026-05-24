@@ -15,9 +15,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
 from fastapi import Body, Cookie, FastAPI, HTTPException, BackgroundTasks, Header, Query, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 sys.path.insert(0, os.path.dirname(__file__))
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -300,6 +303,218 @@ register_fastapi_health_routes(
     },
     details=lambda: {"version": "0.2.0", "data_dir": BFF_DATA_DIR},
 )
+
+_ERROR_CODE_BY_STATUS = {
+    400: ErrorCode.INVALID_REQUEST.value,
+    401: ErrorCode.INVALID_TOKEN.value,
+    403: ErrorCode.INSUFFICIENT_ROLE.value,
+    404: ErrorCode.OBJECT_NOT_FOUND.value,
+    409: ErrorCode.INVALID_STATE.value,
+    422: ErrorCode.INVALID_PARAMS.value,
+    428: ErrorCode.PRECONDITION_NOT_MET.value,
+    500: ErrorCode.DOWNSTREAM_UNAVAILABLE.value,
+}
+
+
+def _clean_correlation_id(value: Any) -> Optional[str]:
+    clean = str(value or "").strip()
+    return clean or None
+
+
+def _error_response_correlation_id(
+    request: Request,
+    headers: Optional[Dict[str, Any]] = None,
+) -> str:
+    return (
+        _clean_correlation_id(request.headers.get("x-correlation-id"))
+        or _clean_correlation_id((headers or {}).get("X-Correlation-Id"))
+        or _clean_correlation_id((headers or {}).get("x-correlation-id"))
+        or str(uuid.uuid4())
+    )
+
+
+def _status_error_code(status_code: int) -> str:
+    if status_code >= 500:
+        return ErrorCode.DOWNSTREAM_UNAVAILABLE.value
+    return _ERROR_CODE_BY_STATUS.get(status_code, ErrorCode.INVALID_REQUEST.value)
+
+
+def _status_error_message(status_code: int, fallback: Any = None) -> str:
+    clean = str(fallback or "").strip()
+    if clean and clean != "{}":
+        return clean
+    if status_code == 404:
+        return "Not Found"
+    if status_code == 422:
+        return "Request validation failed"
+    if status_code >= 500:
+        return "Internal server error"
+    return "Request failed"
+
+
+def _error_details_without_correlation(value: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(value, dict):
+        return None
+    return {
+        key: item
+        for key, item in value.items()
+        if key != "correlationId"
+    }
+
+
+def _pack_d_error_response(
+    *,
+    status_code: int,
+    code: Any,
+    message: Any,
+    correlation_id: str,
+    details: Optional[Dict[str, Any]] = None,
+    headers: Optional[Dict[str, Any]] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> JSONResponse:
+    error_payload: Dict[str, Any] = {
+        "code": str(getattr(code, "value", code)),
+        "message": str(message or _status_error_message(status_code)),
+    }
+    if details is not None:
+        error_payload["details"] = details
+    content: Dict[str, Any] = {
+        "error": error_payload,
+        "meta": {"correlationId": correlation_id},
+    }
+    if extra:
+        content.update(extra)
+    response_headers = dict(headers or {})
+    response_headers["X-Correlation-Id"] = correlation_id
+    return JSONResponse(
+        status_code=status_code,
+        content=jsonable_encoder(content),
+        headers=response_headers,
+    )
+
+
+def _pack_d_direct_error_response(
+    *,
+    status_code: int,
+    code: Any,
+    message: Any,
+    details: Optional[Dict[str, Any]] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> JSONResponse:
+    return _pack_d_error_response(
+        status_code=status_code,
+        code=code,
+        message=message,
+        correlation_id=str(uuid.uuid4()),
+        details=details,
+        extra=extra,
+    )
+
+
+def _pack_d_http_exception_response(
+    request: Request,
+    exc: StarletteHTTPException,
+) -> JSONResponse:
+    headers = dict(getattr(exc, "headers", None) or {})
+    correlation_id = _error_response_correlation_id(request, headers)
+    detail = exc.detail
+    source = detail
+    if (
+        isinstance(detail, dict)
+        and isinstance(detail.get("detail"), dict)
+        and "error" in detail["detail"]
+    ):
+        source = detail["detail"]
+
+    error: Dict[str, Any] = {}
+    if isinstance(source, dict) and isinstance(source.get("error"), dict):
+        error = dict(source["error"])
+    elif isinstance(source, dict) and source.get("error") is not None:
+        error = {
+            "code": source.get("error"),
+            "message": source.get("message") or source.get("error"),
+        }
+
+    code = error.get("code") or _status_error_code(exc.status_code)
+    message = error.get("message") or _status_error_message(exc.status_code, detail)
+    details = _error_details_without_correlation(error.get("details"))
+    if details is None and not isinstance(source, dict):
+        details = {"reason": str(source or message)}
+
+    extra: Dict[str, Any] = {}
+    if isinstance(source, dict):
+        for key, value in source.items():
+            if key in {"error", "correlationId", "meta", "detail"}:
+                continue
+            extra[key] = value
+
+    return _pack_d_error_response(
+        status_code=exc.status_code,
+        code=code,
+        message=message,
+        correlation_id=correlation_id,
+        details=details,
+        headers=headers,
+        extra=extra,
+    )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _bff_http_exception_handler(
+    request: Request,
+    exc: StarletteHTTPException,
+) -> JSONResponse:
+    return _pack_d_http_exception_response(request, exc)
+
+
+@app.exception_handler(RequestValidationError)
+async def _bff_request_validation_error_handler(
+    request: Request,
+    exc: RequestValidationError,
+) -> JSONResponse:
+    correlation_id = _error_response_correlation_id(request)
+    return _pack_d_error_response(
+        status_code=422,
+        code=ErrorCode.INVALID_PARAMS.value,
+        message="Request validation failed",
+        correlation_id=correlation_id,
+        details={
+            "reason": "REQUEST_VALIDATION_ERROR",
+            "errors": exc.errors(),
+        },
+    )
+
+
+@app.exception_handler(ValueError)
+async def _bff_value_error_handler(
+    request: Request,
+    exc: ValueError,
+) -> JSONResponse:
+    correlation_id = _error_response_correlation_id(request)
+    return _pack_d_error_response(
+        status_code=400,
+        code=ErrorCode.INVALID_REQUEST.value,
+        message=str(exc) or "Invalid request",
+        correlation_id=correlation_id,
+        details={"reason": "VALUE_ERROR"},
+    )
+
+
+@app.exception_handler(Exception)
+async def _bff_unhandled_exception_handler(
+    request: Request,
+    exc: Exception,
+) -> JSONResponse:
+    log.exception("Unhandled BFF request error", exc_info=True)
+    correlation_id = _error_response_correlation_id(request)
+    return _pack_d_error_response(
+        status_code=500,
+        code=ErrorCode.DOWNSTREAM_UNAVAILABLE.value,
+        message="Internal server error",
+        correlation_id=correlation_id,
+        details={"reason": "INTERNAL_SERVER_ERROR"},
+    )
+
 command_store = CommandStore(os.path.join(BFF_DATA_DIR, "commands.jsonl"))
 session_lifecycle_store = SessionLifecycleStore(os.path.join(BFF_DATA_DIR, "session_lifecycle.json"))
 read_store = ReadSurfaceStore(
@@ -3709,7 +3924,7 @@ def _first_nonblank(*values: Any) -> Optional[str]:
 
 
 def _bff_me_correlation_id(x_correlation_id: Optional[str]) -> str:
-    return str(x_correlation_id or "").strip() or f"bff-me-{uuid.uuid4().hex}"
+    return str(x_correlation_id or "").strip() or str(uuid.uuid4())
 
 
 def _bff_me_error_with_correlation(exc: HTTPException, correlation_id: str) -> HTTPException:
@@ -9443,12 +9658,11 @@ def _rw03_validate_date_range(date_range: Any) -> str:
 
 
 def _rw02_invalid_query(detail: str) -> JSONResponse:
-    return JSONResponse(
+    return _pack_d_direct_error_response(
         status_code=400,
-        content={
-            "error": "invalid_search_query",
-            "detail": detail,
-        },
+        code="invalid_search_query",
+        message="Invalid research search query",
+        details={"reason": detail},
     )
 
 
@@ -13409,16 +13623,12 @@ async def search_research_corpus(
     index_adapter = read_store.get_research_search_index()
     adapter_state = _rw02_adapter_state(index_adapter, snapshot_at=snapshot_at)
     if index_adapter is None or adapter_state == "unavailable":
-        return JSONResponse(
+        return _pack_d_direct_error_response(
             status_code=503,
-            content={
-                "error": "search_unavailable",
-                "meta": {
-                    "surfaces": {
-                        "search_results": "unavailable",
-                    }
-                },
-            },
+            code="search_unavailable",
+            message="Search results are unavailable",
+            details={"reason": "SEARCH_RESULTS_UNAVAILABLE"},
+            extra={"surfaces": {"search_results": "unavailable"}},
         )
 
     items = read_store.list_research_search_results(
@@ -14027,17 +14237,13 @@ async def compare_artifacts(
         if not (artifact.get("allowedActions") or {}).get("canCompare")
     ]
     if non_comparable:
-        return JSONResponse(
+        return _pack_d_direct_error_response(
             status_code=422,
-            content={
-                "error": {
-                    "code": ErrorCode.INVALID_STATE.value,
-                    "message": "One or more artifacts cannot be compared",
-                    "details": {
-                        "reason": "Compare accepts only sealed or superseded artifacts.",
-                        "precondition_failed": "artifact_status",
-                    },
-                },
+            code=ErrorCode.INVALID_STATE.value,
+            message="One or more artifacts cannot be compared",
+            details={
+                "reason": "Compare accepts only sealed or superseded artifacts.",
+                "precondition_failed": "artifact_status",
                 "non_comparable_artifacts": non_comparable,
             },
         )
@@ -15040,9 +15246,11 @@ async def get_institutional_memory_entry(
         include_snapshot_fallback=False,
     )
     if entry is None:
-        return JSONResponse(
+        return _pack_d_direct_error_response(
             status_code=404,
-            content={"error": "entry_not_found", "entry_id": entry_id},
+            code="entry_not_found",
+            message="Institutional memory entry not found",
+            details={"reason": f"entry_id={entry_id!r} was not found", "entry_id": entry_id},
         )
 
     source_event = entry.get("source_event") if isinstance(entry.get("source_event"), dict) else {}
@@ -16079,9 +16287,11 @@ async def get_mutation_review(
 
     decision, approval_decision, linked_incident, linked_postmortem = _mutation_review_inputs(decision_id)
     if decision is None:
-        return JSONResponse(
+        return _pack_d_direct_error_response(
             status_code=404,
-            content={"error": "decision_not_found", "decision_id": decision_id},
+            code="decision_not_found",
+            message="Mutation review decision not found",
+            details={"reason": f"decision_id={decision_id!r} was not found", "decision_id": decision_id},
         )
 
     payload = _mutation_review_projection(
@@ -16094,16 +16304,12 @@ async def get_mutation_review(
     )
 
     if payload["meta"]["surfaces"]["mutation_review"] == "unavailable":
-        return JSONResponse(
+        return _pack_d_direct_error_response(
             status_code=503,
-            content={
-                "error": "evidence_unavailable",
-                "meta": {
-                    "surfaces": {
-                        "mutation_review": "unavailable",
-                    }
-                },
-            },
+            code="evidence_unavailable",
+            message="Mutation review evidence is unavailable",
+            details={"reason": "MUTATION_REVIEW_UNAVAILABLE"},
+            extra={"surfaces": {"mutation_review": "unavailable"}},
         )
 
     required_fields = (
@@ -16118,17 +16324,15 @@ async def get_mutation_review(
     )
     missing_fields = [field for field in required_fields if payload.get(field) in (None, "")]
     if missing_fields:
-        return JSONResponse(
+        return _pack_d_direct_error_response(
             status_code=503,
-            content={
-                "error": "evidence_unavailable",
-                "detail": f"Mutation review projection is missing required fields: {missing_fields}",
-                "meta": {
-                    "surfaces": {
-                        "mutation_review": "unavailable",
-                    }
-                },
+            code="evidence_unavailable",
+            message="Mutation review projection is missing required fields",
+            details={
+                "reason": f"Mutation review projection is missing required fields: {missing_fields}",
+                "missing_fields": missing_fields,
             },
+            extra={"surfaces": {"mutation_review": "unavailable"}},
         )
 
     return payload
