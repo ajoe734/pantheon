@@ -146,8 +146,8 @@ _DEV_LOVABLE_CORS_ORIGINS = {
     # Pantheon Frontend Lovable project preview URLs (dev tier).
     "https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com",
     "https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app",
-    # BFF-B1-001: execute-plans Lovable project (UUID 140c41d5) published preview.
-    "https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com",
+    # BFF-B1-001-DELTA: 140c41d5 published URL intentionally NOT in dev-only set —
+    # it must survive the production-strict filter so live OPTIONS succeeds.
 }
 
 # BFF-B1-001: Lovable dynamic preview URLs include a commit hash that changes per
