@@ -165,8 +165,10 @@ def _build_commit_message(task_id: str, pending: dict[str, object]) -> str:
     archives = pending["archives"]  # type: ignore[index]
     idx = 1 if pending["index_modified"] else 0
     total = len(briefs) + len(archives) + idx
+    # Subject capped at 72 chars by check_commit_trailers.py.
+    # task_id alone is ~40 chars; keep description very tight.
     lines = [
-        f"{task_id}: auto-backfill {total} supervisor-side files",
+        f"{task_id}: backfill {total} files",
         "",
         "Supervisor periodic housekeeping run via",
         ".orchestrator/auto_commit_archive.py. Backfills files generated",
@@ -217,6 +219,7 @@ def run_backfill_pr(pending: dict[str, object], *, dry_run: bool = False) -> tup
         return True, f"dry-run: would open {task_id} with {len(files)} files"
 
     cleanup_paths: list[Path] = []
+    pr_opened = False
     try:
         _run(["git", "-C", str(ROOT), "fetch", "origin", "dev", "--quiet"], check=False)
         _run(
@@ -250,12 +253,13 @@ def run_backfill_pr(pending: dict[str, object], *, dry_run: bool = False) -> tup
 
         _run(["git", "-C", str(worktree_path), "reset", "--mixed", "HEAD", "--quiet"], check=False)
         _run(["bash", "scripts/git/task_finalize.sh", task_id], cwd=worktree_path)
+        pr_opened = True
         return True, f"opened PR for {task_id} ({len(files)} files)"
     except subprocess.CalledProcessError as exc:
+        pr_opened = False
         return False, f"command failed: {' '.join(exc.cmd)}\nstderr: {(exc.stderr or '')[:400]}"
     finally:
-        # Clean tmp message + index immediately; leave worktree until PR merges.
-        # Leftover worktree gets pruned by the orphan-worktree housekeeping pass.
+        # Always clean tmp message + index.
         for p in cleanup_paths:
             if p == worktree_path:
                 continue
@@ -263,6 +267,13 @@ def run_backfill_pr(pending: dict[str, object], *, dry_run: bool = False) -> tup
                 p.unlink()
             except FileNotFoundError:
                 pass
+        # On failure (PR not opened), also tear down the half-built worktree +
+        # branch so the next run starts clean. On success, leave them in place;
+        # task_finalize.sh has already pushed the branch and the worktree is
+        # safe to prune via the orphan-worktree housekeeping pass after merge.
+        if not pr_opened and worktree_path.exists():
+            _run(["git", "-C", str(ROOT), "worktree", "remove", "--force", str(worktree_path)], check=False)
+            _run(["git", "-C", str(ROOT), "branch", "-D", f"task/{task_id}"], check=False)
 
 
 def main(argv: list[str] | None = None) -> int:
