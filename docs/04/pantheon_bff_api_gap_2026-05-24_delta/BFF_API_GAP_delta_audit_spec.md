@@ -191,6 +191,100 @@ Result: 62 passed, 3 existing `datetime.utcnow()` deprecation warnings in
 
 ---
 
+## BFF-MGMT-DELTA-010 Management Loop Throughput Route
+
+Task: BFF-MGMT-DELTA-010
+Owner: Codex2
+Reviewer: Codex
+
+### Scope
+
+Add a strict-live Management Console route for loop execution throughput:
+
+```text
+GET /bff/management/loop-throughput?status=&runtime_id=&page_token=&page_size=
+```
+
+The route composes the existing v5 loop-run read surface exposed by
+`GET /bff/v5/loop-runs`. It is read-only, reports throughput and queue health
+for Management Console rendering, and does not introduce a new loop source of
+truth.
+
+### Contract
+
+The response uses the canonical aggregate envelope:
+
+```json
+{
+  "data": {
+    "id": "management-loop-throughput",
+    "items": [],
+    "rows": [],
+    "loops": [],
+    "summary": {},
+    "metrics": {}
+  },
+  "items": [],
+  "rows": [],
+  "loops": [],
+  "summary": {},
+  "metrics": {},
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 50 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": [],
+    "policy": "read_only_loop_throughput"
+  }
+}
+```
+
+Rows normalize loop id, status, runtime/binding/incident refs, queued/start/end
+timestamps, queue lag seconds, duration seconds, source refs, and links back to
+`/bff/v5/loop-runs/{id}`. Summary reports loop count, returned count, runtime
+count, queue depth, active/completed/failed counts, runs per minute, completed
+runs per minute, observed window minutes, average/max queue lag, and status
+buckets.
+
+### Composition Sources
+
+- `GET /bff/v5/loop-runs`
+- `GET /api/v1/loop-runs`
+- `GET /bff/incidents` when v5 loop runs are incident-derived
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Path registered in FastAPI/OpenAPI | Implemented |
+| 2 | Response reports v5 loop runs per minute, queue depth, and lag | Implemented |
+| 3 | Anonymous request returns HTTP 401 | Implemented |
+| 4 | Authenticated request returns HTTP 200 | Implemented |
+| 5 | Response keeps canonical aggregate envelope | Implemented |
+| 6 | CORS preflight returns HTTP 204 | Implemented |
+| 7 | Focused pytest case covers `loop_throughput` success, auth, filter, preflight, and OpenAPI | Implemented |
+| 8 | execute-plans exposes typed path and fetch helpers | Implemented |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_management_delta_routes.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
+
+### Validation
+
+```bash
+python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py -q
+```
+
+Result: 39 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
+---
+
 ## BFF-MGMT-DELTA-006 Management Incident Timeline Route
 
 Task: BFF-MGMT-DELTA-006

@@ -238,6 +238,118 @@ def test_incident_timeline_cors_preflight(monkeypatch) -> None:
     assert response.headers["access-control-allow-origin"] == "https://preview--pantheon-dev.lovable.app"
 
 
+def _loop_throughput_client(monkeypatch) -> TestClient:
+    td = tempfile.TemporaryDirectory(prefix="bff_mgmt_loop_throughput_")
+    monkeypatch.setattr(bff_main, "_BFF_MGMT_LOOP_THROUGHPUT_TMPDIR", td, raising=False)
+    store = ReadSurfaceStore(
+        os.path.join(td.name, "read_surfaces.json"),
+        allow_local_snapshot_fallback=False,
+    )
+    loop_runs = [
+        {
+            "id": "loop-queued",
+            "status": "queued",
+            "runtime_id": "runtime-alpha",
+            "binding_id": "binding-alpha",
+            "queued_at": "2026-05-24T10:00:00Z",
+        },
+        {
+            "id": "loop-running",
+            "status": "running",
+            "runtime_id": "runtime-alpha",
+            "binding_id": "binding-alpha",
+            "queued_at": "2026-05-24T10:01:00Z",
+            "started_at": "2026-05-24T10:03:00Z",
+        },
+        {
+            "id": "loop-completed",
+            "status": "completed",
+            "runtime_id": "runtime-alpha",
+            "binding_id": "binding-alpha",
+            "queued_at": "2026-05-24T10:02:00Z",
+            "started_at": "2026-05-24T10:04:00Z",
+            "completed_at": "2026-05-24T10:08:00Z",
+        },
+    ]
+    store.list_loop_runs = lambda: (True, list(loop_runs))
+
+    def dataset_source(dataset: str, **_: Any) -> str:
+        return "service_store" if dataset == "loop_runs" else "missing"
+
+    store.dataset_source = dataset_source
+    monkeypatch.setattr(bff_main, "read_store", store)
+    return TestClient(bff_main.app, raise_server_exceptions=False)
+
+
+def test_loop_throughput_reports_queue_depth_lag_and_rate(monkeypatch) -> None:
+    client = _loop_throughput_client(monkeypatch)
+
+    anonymous = client.get("/bff/management/loop-throughput")
+    assert anonymous.status_code == 401, anonymous.text
+
+    response = client.get(
+        "/bff/management/loop-throughput",
+        headers=HEADERS,
+        params={"runtime_id": "runtime-alpha", "page_size": 10},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    data = body["data"]
+
+    assert data["id"] == "management-loop-throughput"
+    assert body["items"] == body["rows"] == body["loops"] == data["items"]
+    assert data["rows"] == data["loops"] == body["items"]
+    assert body["page_info"] == {"next_page_token": None, "total": 3, "page_size": 10}
+    assert body["summary"] == data["summary"] == body["metrics"]
+    assert body["summary"]["loop_count"] == 3
+    assert body["summary"]["queue_depth"] == 1
+    assert body["summary"]["active_loop_count"] == 1
+    assert body["summary"]["completed_loop_count"] == 1
+    assert body["summary"]["runs_per_minute"] == 0.375
+    assert body["summary"]["max_queue_lag_seconds"] == 120.0
+    assert body["summary"]["average_queue_lag_seconds"] == 120.0
+    assert body["summary"]["by_status"] == {"completed": 1, "running": 1, "queued": 1}
+    assert body["items"][0]["loop_run_id"] == "loop-completed"
+    assert body["items"][0]["queue_lag_seconds"] == 120.0
+    assert body["items"][0]["duration_seconds"] == 240.0
+    assert body["items"][0]["links"]["loop_run"] == "/bff/v5/loop-runs/loop-completed"
+    assert body["meta"]["surfaces"]["loop_throughput"]["source"] == "bff_composed"
+    assert body["meta"]["surfaces"]["loop_runs"]["source"] == "service_store"
+    assert body["meta"]["policy"] == "read_only_loop_throughput"
+    assert "GET /bff/v5/loop-runs" in body["meta"]["composition_sources"]
+
+    queued = client.get(
+        "/bff/management/loop-throughput",
+        headers=HEADERS,
+        params={"status": "queued"},
+    )
+    assert queued.status_code == 200, queued.text
+    assert queued.json()["summary"]["queue_depth"] == 1
+    assert queued.json()["items"][0]["loop_run_id"] == "loop-queued"
+
+
+def test_loop_throughput_cors_preflight_and_openapi(monkeypatch) -> None:
+    client = _loop_throughput_client(monkeypatch)
+
+    response = client.options(
+        "/bff/management/loop-throughput",
+        headers={
+            "Origin": "https://preview--pantheon-dev.lovable.app",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "Authorization, X-BFF-Api-Version",
+        },
+    )
+
+    assert response.status_code == 204, response.text
+    assert response.text == ""
+    assert response.headers["access-control-allow-origin"] == "https://preview--pantheon-dev.lovable.app"
+
+    schema = client.get("/openapi.json").json()
+    assert "/bff/management/loop-throughput" in schema["paths"]
+    assert "get" in schema["paths"]["/bff/management/loop-throughput"]
+
+
 def test_quarterly_ranking_drilldown_returns_persona_contribution_breakdown() -> None:
     with tempfile.TemporaryDirectory() as td:
         original = bff_main.read_store
