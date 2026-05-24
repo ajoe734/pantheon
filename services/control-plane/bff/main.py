@@ -26003,6 +26003,164 @@ def _pm12_quarterly_ranking_items(
     return items
 
 
+def _pm12_quarterly_find_persona_item(
+    ranked_items: List[Dict[str, Any]],
+    persona_id: str,
+) -> Optional[Dict[str, Any]]:
+    clean_persona_id = str(persona_id or "").strip()
+    if not clean_persona_id:
+        return None
+    for item in ranked_items:
+        item_persona_id = str(item.get("personaId") or item.get("persona_id") or item.get("id") or "").strip()
+        if item_persona_id == clean_persona_id:
+            return item
+    return None
+
+
+def _pm12_quarterly_find_persona_row(
+    rows: List[Dict[str, Any]],
+    persona_id: str,
+) -> Dict[str, Any]:
+    clean_persona_id = str(persona_id or "").strip()
+    for row in rows:
+        row_persona_id = str(row.get("personaId") or row.get("persona_id") or row.get("id") or "").strip()
+        if row_persona_id == clean_persona_id:
+            return row
+    return {}
+
+
+def _pm12_quarterly_component_score(
+    components: Dict[str, Any],
+    score_field: str,
+) -> float:
+    snake_score_fields = {
+        "pnlScore": "pnl_score",
+        "riskScore": "risk_score",
+        "executionScore": "execution_score",
+        "activityScore": "activity_score",
+    }
+    value = _management_number(components.get(score_field))
+    if value is None:
+        value = _management_number(components.get(snake_score_fields.get(score_field, "")))
+    return value or 0.0
+
+
+def _pm12_quarterly_drilldown_contributions(item: Dict[str, Any]) -> List[Dict[str, Any]]:
+    components = item.get("components") if isinstance(item.get("components"), dict) else {}
+    formula = _pm12_quarter_formula_payload()
+    contribution_rows: List[Dict[str, Any]] = []
+    total_weighted = 0.0
+
+    for component in formula.get("components") or []:
+        key = str(component.get("key") or "").strip()
+        if key not in _PM12_LEAGUE_RANKING_CRITERIA:
+            continue
+        score_field, label = _PM12_LEAGUE_RANKING_CRITERIA[key]
+        weight = _management_number(component.get("weight")) or 0.0
+        score = _pm12_quarterly_component_score(components, score_field)
+        weighted = round(score * weight, 6)
+        total_weighted += weighted
+        contribution_rows.append({
+            "id": f"{item.get('personaId')}-{key}",
+            "key": key,
+            "label": label,
+            "scoreField": score_field,
+            "score_field": score_field,
+            "score": score,
+            "weight": weight,
+            "weightedContribution": weighted,
+            "weighted_contribution": weighted,
+            "basis": "component_score_x_formula_weight",
+        })
+
+    denominator = total_weighted if total_weighted > 0 else None
+    for row in contribution_rows:
+        weighted = _management_number(row.get("weightedContribution")) or 0.0
+        share = round(weighted / denominator, 6) if denominator else 0.0
+        row["contributionShare"] = share
+        row["contribution_share"] = share
+
+    return contribution_rows
+
+
+def _pm12_quarterly_drilldown_payload(
+    *,
+    item: Dict[str, Any],
+    row: Dict[str, Any],
+    quarter_window: Dict[str, Any],
+    ranked_count: int,
+    evidence_refs: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    persona_id = str(item.get("personaId") or item.get("persona_id") or item.get("id") or "")
+    formula = _pm12_quarter_formula_payload()
+    contributions = _pm12_quarterly_drilldown_contributions(item)
+    total_weighted = round(
+        sum(_management_number(entry.get("weightedContribution")) or 0.0 for entry in contributions),
+        6,
+    )
+    score = _management_number(item.get("score")) or _management_number(item.get("overallScore")) or total_weighted
+    source_breakdown = {
+        "metrics": item.get("metrics") or {},
+        "components": item.get("components") or {},
+        "routePolicy": row.get("routePolicy") or {},
+        "route_policy": row.get("routePolicy") or {},
+        "capabilities": row.get("capabilities") or {},
+        "bindings": row.get("bindings") or {},
+        "sessions": row.get("sessions") or {},
+        "evaluations": row.get("evaluations") or {},
+        "memory": row.get("memory") or {},
+        "health": row.get("health") or {},
+        "allowedActions": row.get("allowedActions") or {},
+        "allowed_actions": row.get("allowedActions") or {},
+    }
+    summary = {
+        "quarter": quarter_window["quarter"],
+        "personaId": persona_id,
+        "persona_id": persona_id,
+        "rank": item.get("rank"),
+        "rankedCount": ranked_count,
+        "ranked_count": ranked_count,
+        "score": score,
+        "overallScore": item.get("overallScore"),
+        "overall_score": item.get("overall_score") or item.get("overallScore"),
+        "formulaVersion": item.get("formulaVersion") or formula["formulaVersion"],
+        "formula_version": item.get("formula_version") or formula["formula_version"],
+        "componentCount": len(contributions),
+        "component_count": len(contributions),
+        "totalWeightedContribution": total_weighted,
+        "total_weighted_contribution": total_weighted,
+        "evidenceRefCount": len(evidence_refs),
+        "evidence_ref_count": len(evidence_refs),
+        "basis": item.get("basis") or formula["basis"],
+    }
+    return {
+        "id": f"pm12-quarterly-ranking-drilldown-{quarter_window['quarter'].lower()}-{persona_id}",
+        "quarter": quarter_window["quarter"],
+        "quarterWindow": quarter_window,
+        "quarter_window": quarter_window,
+        "personaId": persona_id,
+        "persona_id": persona_id,
+        "rank": item.get("rank"),
+        "score": score,
+        "rankingItem": item,
+        "ranking_item": item,
+        "formula": formula,
+        "contributions": contributions,
+        "contributionBreakdown": contributions,
+        "contribution_breakdown": contributions,
+        "sourceBreakdown": source_breakdown,
+        "source_breakdown": source_breakdown,
+        "evidenceRefs": evidence_refs,
+        "evidence_refs": evidence_refs,
+        "summary": summary,
+        "links": {
+            "parentRanking": f"/bff/management/quarterly-ranking?quarter={quarter_window['quarter']}",
+            "parent_ranking": f"/bff/management/quarterly-ranking?quarter={quarter_window['quarter']}",
+            "persona": f"/bff/personas/{persona_id}",
+        },
+    }
+
+
 def _pm12_add_recommendation_action(action_ids: List[str], action_id: str) -> None:
     if action_id in _PM12_QUARTERLY_RECOMMENDATION_ACTIONS and action_id not in action_ids:
         action_ids.append(action_id)
@@ -26696,6 +26854,130 @@ async def bff_management_quarterly_ranking(
                 **source_surfaces,
             },
             "composition_sources": [
+                "GET /bff/management/persona-league",
+                "GET /bff/management/persona-league/rankings",
+                "GET /bff/management/persona-league/tiers",
+                "GET /api/v1/knowledge/evidence",
+            ],
+            "policy": "read_only_governance_advisory",
+            "redacted_evidence_count": redacted_count,
+        },
+    }
+
+
+@app.get("/bff/management/quarterly-ranking/drilldown")
+async def bff_management_quarterly_ranking_drilldown(
+    response: Response,
+    persona_id: Optional[str] = Query(default=None, alias="personaId"),
+    persona_id_snake: Optional[str] = Query(default=None, alias="persona_id"),
+    quarter: Optional[str] = Query(default=None),
+    state: Optional[str] = None,
+    archetype: Optional[str] = None,
+    q: str = Query(default=""),
+    authorization: Optional[str] = Header(default=None),
+    x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
+):
+    """BFF: PM-12 single-persona contribution breakdown for quarterly ranking."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    correlation_id = str(x_correlation_id or "").strip() or f"pm12-drilldown-{uuid.uuid4().hex}"
+    response.headers["X-Correlation-Id"] = correlation_id
+
+    resolved_persona_id = str(persona_id or persona_id_snake or "").strip()
+    if not resolved_persona_id:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "personaId is required",
+            "Quarterly ranking drilldown requires personaId or persona_id.",
+            precondition_failed="personaId",
+            correlation_id=correlation_id,
+        )
+
+    snapshot_at = utc_now()
+    quarter_window = _pm12_quarter_window(quarter, snapshot_at)
+    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
+    ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
+    ranking_item = _pm12_quarterly_find_persona_item(ranked_items, resolved_persona_id)
+    if ranking_item is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Quarterly ranking persona not found",
+            f"Persona {resolved_persona_id} is not present in the requested quarterly ranking.",
+            precondition_failed="personaId",
+            correlation_id=correlation_id,
+        )
+
+    public_evidence_refs, redacted_count, evidence_dataset_available = _pm12_public_quarter_evidence_refs(
+        identity,
+        quarter_window,
+    )
+    row = _pm12_quarterly_find_persona_row(rows, resolved_persona_id)
+    drilldown = _pm12_quarterly_drilldown_payload(
+        item=ranking_item,
+        row=row,
+        quarter_window=quarter_window,
+        ranked_count=len(ranked_items),
+        evidence_refs=public_evidence_refs,
+    )
+
+    source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
+    formula_surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
+    evidence_surface = _dataset_surface_status(
+        "evidence_refs",
+        snapshot_at=snapshot_at,
+        has_data=evidence_dataset_available,
+        missing_message="Evidence reference read surface is unavailable.",
+    )
+    quarterly_surface = _aggregate_group_surface(
+        "quarterly_ranking",
+        [*source_surfaces.values(), formula_surface, evidence_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Quarterly ranking aggregate unavailable.",
+        degraded_message="Quarterly ranking is degraded because one or more source surfaces are degraded.",
+    )
+    drilldown_surface = _aggregate_group_surface(
+        "quarterly_ranking_drilldown",
+        [quarterly_surface, formula_surface, evidence_surface, *source_surfaces.values()],
+        snapshot_at=snapshot_at,
+        unavailable_message="Quarterly ranking drilldown aggregate unavailable.",
+        degraded_message="Quarterly ranking drilldown is degraded because one or more source surfaces are degraded.",
+    )
+    summary = dict(drilldown["summary"])
+    summary["redactedEvidenceCount"] = redacted_count
+    summary["redacted_evidence_count"] = redacted_count
+
+    return {
+        "data": drilldown,
+        "item": ranking_item,
+        "rankingItem": ranking_item,
+        "ranking_item": ranking_item,
+        "contributions": drilldown["contributions"],
+        "contributionBreakdown": drilldown["contributionBreakdown"],
+        "contribution_breakdown": drilldown["contribution_breakdown"],
+        "sourceBreakdown": drilldown["sourceBreakdown"],
+        "source_breakdown": drilldown["source_breakdown"],
+        "formula": drilldown["formula"],
+        "quarterWindow": quarter_window,
+        "quarter_window": quarter_window,
+        "evidenceRefs": public_evidence_refs,
+        "evidence_refs": public_evidence_refs,
+        "summary": summary,
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "correlationId": correlation_id,
+            "correlation_id": correlation_id,
+            "surfaces": {
+                "quarterly_ranking_drilldown": drilldown_surface,
+                "quarterly_ranking": quarterly_surface,
+                "formula": formula_surface,
+                "evidence_refs": evidence_surface,
+                "knowledge_evidence": evidence_surface,
+                **source_surfaces,
+            },
+            "composition_sources": [
+                "GET /bff/management/quarterly-ranking",
                 "GET /bff/management/persona-league",
                 "GET /bff/management/persona-league/rankings",
                 "GET /bff/management/persona-league/tiers",
