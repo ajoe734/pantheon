@@ -2874,6 +2874,114 @@ export interface ManagementIncidentTimelineResponse {
   };
 }
 
+export interface ManagementLoopThroughputQuery {
+  status?: string;
+  runtime_id?: string;
+  page_token?: string;
+  page_size?: number;
+}
+
+export interface ManagementLoopThroughputItem {
+  id: string;
+  loopRunId: string;
+  loop_run_id: string;
+  sequence: number;
+  rank: number;
+  status: string;
+  runtimeId?: string | null;
+  runtime_id?: string | null;
+  bindingId?: string | null;
+  binding_id?: string | null;
+  incidentId?: string | null;
+  incident_id?: string | null;
+  queuedAt?: string | null;
+  queued_at?: string | null;
+  startedAt?: string | null;
+  started_at?: string | null;
+  completedAt?: string | null;
+  completed_at?: string | null;
+  eventAt?: string | null;
+  event_at?: string | null;
+  queueLagSeconds?: number | null;
+  queue_lag_seconds?: number | null;
+  durationSeconds?: number | null;
+  duration_seconds?: number | null;
+  sourceRefs?: Record<string, unknown>;
+  source_refs?: Record<string, unknown>;
+  links?: Record<string, string | null | undefined>;
+  [key: string]: unknown;
+}
+
+export interface ManagementLoopThroughputSummary {
+  loopCount: number;
+  loop_count: number;
+  returnedLoopCount: number;
+  returned_loop_count: number;
+  runtimeCount: number;
+  runtime_count: number;
+  queueDepth: number;
+  queue_depth: number;
+  activeLoopCount: number;
+  active_loop_count: number;
+  completedLoopCount: number;
+  completed_loop_count: number;
+  failedLoopCount: number;
+  failed_loop_count: number;
+  runsPerMinute: number;
+  runs_per_minute: number;
+  completedRunsPerMinute: number;
+  completed_runs_per_minute: number;
+  observedWindowMinutes?: number | null;
+  observed_window_minutes?: number | null;
+  averageQueueLagSeconds?: number | null;
+  average_queue_lag_seconds?: number | null;
+  maxQueueLagSeconds?: number | null;
+  max_queue_lag_seconds?: number | null;
+  queueLagSampleCount: number;
+  queue_lag_sample_count: number;
+  byStatus: Record<string, number>;
+  by_status: Record<string, number>;
+  latestLoopAt?: string | null;
+  latest_loop_at?: string | null;
+  basis?: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementLoopThroughputResponse {
+  data: {
+    id: "management-loop-throughput" | string;
+    items: ManagementLoopThroughputItem[];
+    rows: ManagementLoopThroughputItem[];
+    loops: ManagementLoopThroughputItem[];
+    summary: ManagementLoopThroughputSummary;
+    metrics: ManagementLoopThroughputSummary;
+    [key: string]: unknown;
+  };
+  items: ManagementLoopThroughputItem[];
+  rows: ManagementLoopThroughputItem[];
+  loops: ManagementLoopThroughputItem[];
+  summary: ManagementLoopThroughputSummary;
+  metrics: ManagementLoopThroughputSummary;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces: {
+      loop_throughput: ManagementSurfaceRef;
+      loop_runs?: ManagementSurfaceRef;
+      incidents?: ManagementSurfaceRef;
+      [key: string]: ManagementSurfaceRef | undefined;
+    };
+    composition_sources?: string[];
+    policy?: string;
+    filters?: Record<string, unknown>;
+    [key: string]: unknown;
+  };
+}
+
 export interface ManagementPortfolioBookExposureQuery {
   status?: string;
   risk_policy_ref?: string;
@@ -3094,6 +3202,12 @@ export function managementIncidentTimelinePath(
   query?: ManagementIncidentTimelineQuery,
 ): string {
   return withQuery(paths.managementIncidentTimeline(), query);
+}
+
+export function managementLoopThroughputPath(
+  query?: ManagementLoopThroughputQuery,
+): string {
+  return withQuery(paths.managementLoopThroughput(), query);
 }
 
 export function managementPortfolioBookPath(): string {
@@ -3510,6 +3624,25 @@ export async function fetchManagementIncidentTimeline(
     throw new Error(`GET ${path} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementIncidentTimelineResponse>;
+}
+
+export async function fetchManagementLoopThroughput(
+  query?: ManagementLoopThroughputQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementLoopThroughputResponse> {
+  const path = managementLoopThroughputPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementLoopThroughputResponse>;
 }
 
 export async function fetchManagementPortfolioBookPools(

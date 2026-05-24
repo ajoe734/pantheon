@@ -63,6 +63,7 @@ FINAL_CONTRACT_METHOD_PATHS = {
     ("GET", "/bff/management/evolution-journal"),
     ("GET", "/bff/management/governance-ledger"),
     ("GET", "/bff/management/hiq-backlog"),
+    ("GET", "/bff/management/loop-throughput"),
     ("GET", "/bff/management/persona-intent"),
     ("GET", "/bff/management/sentinel-pulse"),
     ("GET", "/bff/management/strategy-allocation"),
@@ -192,6 +193,7 @@ LIVE_PROBE_CONCRETE_ROUTES = [
     ("GET", "/bff/management/evolution-journal"),
     ("GET", "/bff/management/governance-ledger"),
     ("GET", "/bff/management/hiq-backlog"),
+    ("GET", "/bff/management/loop-throughput"),
     ("GET", "/bff/management/persona-intent"),
     ("GET", "/bff/management/sentinel-pulse"),
     ("GET", "/bff/management/strategy-allocation"),
@@ -429,6 +431,11 @@ def test_execute_plans_management_board_pack_client_exports_are_present() -> Non
     assert "ManagementHiqBacklogResponse" in management_ts
     assert "managementHiqBacklogPath" in management_ts
     assert "fetchManagementHiqBacklog" in management_ts
+    assert "managementLoopThroughput: () => `${BASE}/management/loop-throughput`" in paths_ts
+    assert "ManagementLoopThroughputQuery" in management_ts
+    assert "ManagementLoopThroughputResponse" in management_ts
+    assert "managementLoopThroughputPath" in management_ts
+    assert "fetchManagementLoopThroughput" in management_ts
 
 
 def test_execute_plans_management_sentinel_pulse_client_exports_are_present() -> None:

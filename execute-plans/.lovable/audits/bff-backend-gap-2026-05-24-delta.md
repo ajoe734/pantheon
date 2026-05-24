@@ -52,6 +52,54 @@ python3 -m pytest services/control-plane/bff/tests/test_bff_pm12_persona_league.
 Result: 62 passed, 3 existing `datetime.utcnow()` deprecation warnings in
 `services/control-plane/bff/read_store.py`.
 
+## BFF-MGMT-DELTA-010
+
+Route:
+
+```text
+GET /bff/management/loop-throughput
+```
+
+Purpose:
+
+Provide a strict-live Management Console route for loop execution throughput.
+The backend route is a read-only aggregate over the v5 loop-run surface used by
+`/bff/v5/loop-runs`; it exposes loop runs per minute, queue depth, queue lag,
+status buckets, runtime refs, and loop detail links without introducing a new
+loop source of truth.
+
+Frontend contract:
+
+- `paths.managementLoopThroughput()`
+- `managementLoopThroughputPath(query)`
+- `fetchManagementLoopThroughput(query, init, baseUrl)`
+
+Backend acceptance:
+
+- unauthenticated request: HTTP 401
+- authenticated request: HTTP 200
+- CORS preflight: HTTP 204
+- response envelope: `data`, `items`, `rows`, `loops`, `summary`, `metrics`,
+  `page_info`, `meta`
+- supported query: `status`, `runtime_id`, `page_token`, `page_size`
+- `data.id`: `management-loop-throughput`
+- `summary.runs_per_minute`, `summary.queue_depth`, and
+  `summary.max_queue_lag_seconds` are populated from v5 loop-run timestamps
+- `meta.policy`: `read_only_loop_throughput`
+- no new loop source of truth; composed from v5 loop runs and incident-derived
+  loop runs where applicable
+
+Validation:
+
+```bash
+git diff --check
+python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py -q
+```
+
+Result: `git diff --check` exited 0; broader BFF delta suite passed with 86
+tests and 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
 ## BFF-MGMT-DELTA-011
 
 Route:

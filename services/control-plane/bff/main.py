@@ -23677,6 +23677,339 @@ def _management_incident_timeline_response(
     }
 
 
+_MANAGEMENT_LOOP_QUEUED_STATUSES = {"queued", "pending", "scheduled", "waiting", "ready"}
+_MANAGEMENT_LOOP_ACTIVE_STATUSES = {"active", "running", "in_progress", "open", "executing"}
+_MANAGEMENT_LOOP_COMPLETED_STATUSES = {"completed", "complete", "done", "resolved", "succeeded", "success"}
+_MANAGEMENT_LOOP_FAILED_STATUSES = {"failed", "error", "cancelled", "canceled", "aborted"}
+
+
+def _management_loop_nested_time(record: Dict[str, Any], *keys: str) -> Optional[str]:
+    for key in keys:
+        value = record.get(key)
+        if value not in (None, ""):
+            return str(value)
+    for period_key in ("activePeriod", "active_period", "active_period_window"):
+        period = record.get(period_key)
+        if not isinstance(period, dict):
+            continue
+        for key in keys:
+            if key in {"active_start", "activePeriod.start", "active_period.start"}:
+                value = period.get("start") or period.get("started_at") or period.get("startedAt")
+            elif key in {"active_end", "activePeriod.end", "active_period.end"}:
+                value = period.get("end") or period.get("completed_at") or period.get("completedAt")
+            else:
+                value = None
+            if value not in (None, ""):
+                return str(value)
+    return None
+
+
+def _management_loop_seconds_between(start: Optional[str], end: Optional[str]) -> Optional[float]:
+    start_dt = _audit_datetime(start)
+    end_dt = _audit_datetime(end)
+    if start_dt is None or end_dt is None:
+        return None
+    return round(max((end_dt - start_dt).total_seconds(), 0.0), 6)
+
+
+def _management_loop_run_item(record: Dict[str, Any], *, fallback_index: int) -> Dict[str, Any]:
+    loop_id = str(
+        _management_first_non_empty(
+            record.get("id"),
+            record.get("loop_run_id"),
+            record.get("loopRunId"),
+            record.get("run_id"),
+            record.get("runId"),
+            record.get("derived_from_incident_id"),
+            f"loop-run-{fallback_index}",
+        )
+    )
+    status = _management_normalized_status(record)
+    runtime_id = str(_management_first_non_empty(record.get("runtime_id"), record.get("runtimeId")) or "").strip()
+    binding_id = str(_management_first_non_empty(record.get("binding_id"), record.get("bindingId")) or "").strip()
+    incident_id = str(
+        _management_first_non_empty(
+            record.get("incident_id"),
+            record.get("incidentId"),
+            record.get("derived_from_incident_id"),
+        )
+        or ""
+    ).strip()
+    queued_at = _management_loop_nested_time(
+        record,
+        "queued_at",
+        "queuedAt",
+        "enqueued_at",
+        "enqueuedAt",
+        "submitted_at",
+        "submittedAt",
+        "created_at",
+        "createdAt",
+    )
+    started_at = _management_loop_nested_time(
+        record,
+        "started_at",
+        "startedAt",
+        "active_start",
+        "activePeriod.start",
+        "active_period.start",
+    )
+    completed_at = _management_loop_nested_time(
+        record,
+        "completed_at",
+        "completedAt",
+        "ended_at",
+        "endedAt",
+        "finished_at",
+        "finishedAt",
+        "resolved_at",
+        "resolvedAt",
+        "active_end",
+        "activePeriod.end",
+        "active_period.end",
+    )
+    event_at = completed_at or started_at or queued_at
+    queue_lag_seconds = _management_loop_seconds_between(queued_at, started_at)
+    duration_seconds = _management_loop_seconds_between(started_at, completed_at)
+    return {
+        "id": loop_id,
+        "loopRunId": loop_id,
+        "loop_run_id": loop_id,
+        "status": status,
+        "runtimeId": runtime_id or None,
+        "runtime_id": runtime_id or None,
+        "bindingId": binding_id or None,
+        "binding_id": binding_id or None,
+        "incidentId": incident_id or None,
+        "incident_id": incident_id or None,
+        "queuedAt": queued_at,
+        "queued_at": queued_at,
+        "startedAt": started_at,
+        "started_at": started_at,
+        "completedAt": completed_at,
+        "completed_at": completed_at,
+        "eventAt": event_at,
+        "event_at": event_at,
+        "queueLagSeconds": queue_lag_seconds,
+        "queue_lag_seconds": queue_lag_seconds,
+        "durationSeconds": duration_seconds,
+        "duration_seconds": duration_seconds,
+        "sourceRefs": {
+            "loopRunIds": [loop_id] if loop_id else [],
+            "loop_run_ids": [loop_id] if loop_id else [],
+            "runtimeIds": [runtime_id] if runtime_id else [],
+            "runtime_ids": [runtime_id] if runtime_id else [],
+            "bindingIds": [binding_id] if binding_id else [],
+            "binding_ids": [binding_id] if binding_id else [],
+            "incidentIds": [incident_id] if incident_id else [],
+            "incident_ids": [incident_id] if incident_id else [],
+        },
+        "source_refs": {
+            "loop_run_ids": [loop_id] if loop_id else [],
+            "runtime_ids": [runtime_id] if runtime_id else [],
+            "binding_ids": [binding_id] if binding_id else [],
+            "incident_ids": [incident_id] if incident_id else [],
+        },
+        "links": {
+            "loopRun": _management_link("/bff/v5/loop-runs", loop_id),
+            "loop_run": _management_link("/bff/v5/loop-runs", loop_id),
+            "runtime": _management_link("/bff/runtimes", runtime_id or None),
+            "incident": _management_link("/bff/incidents", incident_id or None),
+        },
+    }
+
+
+def _management_loop_runs_per_minute(items: List[Dict[str, Any]]) -> float:
+    timestamps = [
+        parsed
+        for parsed in (_audit_datetime(item.get("event_at")) for item in items)
+        if parsed is not None
+    ]
+    if not timestamps:
+        return 0.0
+    observed_minutes = max((max(timestamps) - min(timestamps)).total_seconds() / 60.0, 1.0)
+    return round(len(items) / observed_minutes, 6)
+
+
+def _management_loop_observed_window_minutes(items: List[Dict[str, Any]]) -> Optional[float]:
+    timestamps = [
+        parsed
+        for parsed in (_audit_datetime(item.get("event_at")) for item in items)
+        if parsed is not None
+    ]
+    if not timestamps:
+        return None
+    return round(max((max(timestamps) - min(timestamps)).total_seconds() / 60.0, 0.0), 6)
+
+
+def _management_loop_throughput_response(
+    *,
+    status: Optional[str],
+    runtime_id: Optional[str],
+    page_token: Optional[str],
+    page_size: int,
+) -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    available, raw_records = read_store.list_loop_runs()
+    source_dataset = (
+        "loop_runs"
+        if available and read_store.dataset_source("incidents") == "missing"
+        else "incidents"
+    )
+    loop_surface = _dataset_surface_status(
+        source_dataset,
+        snapshot_at=snapshot_at,
+        source=None if available else "missing",
+    )
+
+    status_filter = {item.lower() for item in (_split_csv_query(status) or [])}
+    runtime_filter = set(_split_csv_query(runtime_id) or [])
+    rows = [
+        item
+        for index, record in enumerate(raw_records if available else [], start=1)
+        if isinstance(record, dict)
+        for item in [_management_loop_run_item(record, fallback_index=index)]
+        if (not status_filter or str(item.get("status") or "").lower() in status_filter)
+        and (not runtime_filter or str(item.get("runtime_id") or "") in runtime_filter)
+    ]
+    rows.sort(
+        key=lambda item: (
+            _audit_datetime(item.get("event_at")) or datetime.min.replace(tzinfo=timezone.utc),
+            str(item.get("loop_run_id") or ""),
+        ),
+        reverse=True,
+    )
+    for sequence, item in enumerate(rows, start=1):
+        item["sequence"] = sequence
+        item["rank"] = sequence
+
+    total = len(rows)
+    page_items, next_page_token = _page_slice(rows, page_token, page_size)
+    status_counts = _management_count_by(rows, "status")
+    queue_lags = [
+        value
+        for value in (_management_as_float(item.get("queue_lag_seconds")) for item in rows)
+        if value is not None
+    ]
+    completed_rows = [
+        item
+        for item in rows
+        if str(item.get("status") or "").lower() in _MANAGEMENT_LOOP_COMPLETED_STATUSES
+    ]
+    summary = {
+        "loopCount": total,
+        "loop_count": total,
+        "returnedLoopCount": len(page_items),
+        "returned_loop_count": len(page_items),
+        "runtimeCount": len({item.get("runtime_id") for item in rows if item.get("runtime_id")}),
+        "runtime_count": len({item.get("runtime_id") for item in rows if item.get("runtime_id")}),
+        "queueDepth": sum(
+            1 for item in rows if str(item.get("status") or "").lower() in _MANAGEMENT_LOOP_QUEUED_STATUSES
+        ),
+        "queue_depth": sum(
+            1 for item in rows if str(item.get("status") or "").lower() in _MANAGEMENT_LOOP_QUEUED_STATUSES
+        ),
+        "activeLoopCount": sum(
+            1 for item in rows if str(item.get("status") or "").lower() in _MANAGEMENT_LOOP_ACTIVE_STATUSES
+        ),
+        "active_loop_count": sum(
+            1 for item in rows if str(item.get("status") or "").lower() in _MANAGEMENT_LOOP_ACTIVE_STATUSES
+        ),
+        "completedLoopCount": len(completed_rows),
+        "completed_loop_count": len(completed_rows),
+        "failedLoopCount": sum(
+            1 for item in rows if str(item.get("status") or "").lower() in _MANAGEMENT_LOOP_FAILED_STATUSES
+        ),
+        "failed_loop_count": sum(
+            1 for item in rows if str(item.get("status") or "").lower() in _MANAGEMENT_LOOP_FAILED_STATUSES
+        ),
+        "runsPerMinute": _management_loop_runs_per_minute(rows),
+        "runs_per_minute": _management_loop_runs_per_minute(rows),
+        "completedRunsPerMinute": _management_loop_runs_per_minute(completed_rows),
+        "completed_runs_per_minute": _management_loop_runs_per_minute(completed_rows),
+        "observedWindowMinutes": _management_loop_observed_window_minutes(rows),
+        "observed_window_minutes": _management_loop_observed_window_minutes(rows),
+        "averageQueueLagSeconds": _management_avg(queue_lags),
+        "average_queue_lag_seconds": _management_avg(queue_lags),
+        "maxQueueLagSeconds": max(queue_lags) if queue_lags else None,
+        "max_queue_lag_seconds": max(queue_lags) if queue_lags else None,
+        "queueLagSampleCount": len(queue_lags),
+        "queue_lag_sample_count": len(queue_lags),
+        "byStatus": status_counts,
+        "by_status": status_counts,
+        "latestLoopAt": rows[0].get("event_at") if rows else None,
+        "latest_loop_at": rows[0].get("event_at") if rows else None,
+        "basis": "v5_loop_runs_event_window",
+    }
+    throughput_surface = _aggregate_group_surface(
+        "loop_throughput",
+        [loop_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Loop-throughput aggregate unavailable.",
+        degraded_message="Loop-throughput aggregate is available, but the v5 loop-runs surface is degraded.",
+    )
+    data = {
+        "id": "management-loop-throughput",
+        "items": page_items,
+        "rows": page_items,
+        "loops": page_items,
+        "summary": summary,
+        "metrics": summary,
+    }
+    surfaces = {
+        "loop_throughput": throughput_surface,
+        "loop_runs": loop_surface,
+    }
+    if source_dataset == "incidents":
+        surfaces["incidents"] = loop_surface
+    return {
+        "data": data,
+        "items": page_items,
+        "rows": page_items,
+        "loops": page_items,
+        "summary": summary,
+        "metrics": summary,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": surfaces,
+            "composition_sources": [
+                "GET /bff/v5/loop-runs",
+                "GET /api/v1/loop-runs",
+                "GET /bff/incidents",
+            ],
+            "policy": "read_only_loop_throughput",
+            "filters": {
+                "status": status,
+                "runtime_id": runtime_id,
+            },
+        },
+    }
+
+
+@app.get("/bff/management/loop-throughput")
+async def bff_management_loop_throughput(
+    status: Optional[str] = None,
+    runtime_id: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: read-only Management Console loop throughput over v5 loop runs."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _management_loop_throughput_response(
+        status=status,
+        runtime_id=runtime_id,
+        page_token=page_token,
+        page_size=page_size,
+    )
+
+
 @app.get("/bff/management/strategy-allocation")
 async def bff_management_strategy_allocation(
     strategy_id: Optional[str] = None,
