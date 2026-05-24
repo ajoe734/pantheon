@@ -280,6 +280,119 @@ export interface ManagementGovernanceLedgerResponse {
   };
 }
 
+export interface ManagementHiqBacklogQuery {
+  source_type?: "intervention" | "sentinel_finding" | string;
+  status?: string;
+  kind?: string;
+  priority?: "critical" | "high" | "medium" | "low" | "unknown" | string;
+  q?: string;
+  page_token?: string;
+  page_size?: number;
+}
+
+export type ManagementHiqBacklogSourceType =
+  | "intervention"
+  | "sentinel_finding"
+  | string;
+
+export interface ManagementHiqBacklogItem {
+  id: string;
+  backlogId: string;
+  backlog_id: string;
+  sourceType: ManagementHiqBacklogSourceType;
+  source_type: ManagementHiqBacklogSourceType;
+  sourceId: string;
+  source_id: string;
+  humanInboxId?: string | null;
+  human_inbox_id?: string | null;
+  kind: string;
+  status: string;
+  actionState: string;
+  action_state: string;
+  priority: string;
+  riskLevel?: string | null;
+  risk_level?: string | null;
+  severity?: string | null;
+  title: string;
+  summary?: string | null;
+  createdAt?: string | null;
+  created_at?: string | null;
+  updatedAt?: string | null;
+  updated_at?: string | null;
+  target?: Record<string, unknown>;
+  triggeredBy?: string | null;
+  triggered_by?: string | null;
+  correlationId?: string | null;
+  correlation_id?: string | null;
+  sourceRefs?: Record<string, unknown>;
+  source_refs?: Record<string, unknown>;
+  links?: Record<string, string | null | undefined>;
+  allowedActions?: Record<string, unknown>;
+  allowed_actions?: Record<string, unknown>;
+  sourceRecord?: Record<string, unknown>;
+  source_record?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface ManagementHiqBacklogSummary {
+  backlogCount: number;
+  backlog_count: number;
+  returnedBacklogCount: number;
+  returned_backlog_count: number;
+  interventionCount: number;
+  intervention_count: number;
+  sentinelFindingCount: number;
+  sentinel_finding_count: number;
+  pendingCount: number;
+  pending_count: number;
+  criticalCount: number;
+  critical_count: number;
+  highCount: number;
+  high_count: number;
+  bySourceType: Record<string, number>;
+  by_source_type: Record<string, number>;
+  byStatus: Record<string, number>;
+  by_status: Record<string, number>;
+  byKind: Record<string, number>;
+  by_kind: Record<string, number>;
+  byPriority: Record<string, number>;
+  by_priority: Record<string, number>;
+  latestAt?: string | null;
+  latest_at?: string | null;
+  policy: string;
+  basis: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementHiqBacklogResponse {
+  data: {
+    id: "management-hiq-backlog" | string;
+    items: ManagementHiqBacklogItem[];
+    rows: ManagementHiqBacklogItem[];
+    backlog: ManagementHiqBacklogItem[];
+    summary: ManagementHiqBacklogSummary;
+    policy?: string;
+    [key: string]: unknown;
+  };
+  items: ManagementHiqBacklogItem[];
+  rows: ManagementHiqBacklogItem[];
+  backlog: ManagementHiqBacklogItem[];
+  summary: ManagementHiqBacklogSummary;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces?: Record<string, ManagementSurfaceRef>;
+    composition_sources?: string[];
+    policy?: string;
+    filters?: Record<string, unknown>;
+    [key: string]: unknown;
+  };
+}
+
 export interface ManagementTradingPulseSummary {
   runtimeCount: number;
   runtime_count: number;
@@ -2767,6 +2880,10 @@ export function managementGovernanceLedgerPath(
   return withQuery(paths.managementGovernanceLedger(), query);
 }
 
+export function managementHiqBacklogPath(query?: ManagementHiqBacklogQuery): string {
+  return withQuery(paths.managementHiqBacklog(), query);
+}
+
 export function managementTradingPulsePath(): string {
   return paths.managementTradingPulse();
 }
@@ -2982,6 +3099,25 @@ export async function fetchManagementGovernanceLedger(
     throw new Error(`GET ${path} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementGovernanceLedgerResponse>;
+}
+
+export async function fetchManagementHiqBacklog(
+  query?: ManagementHiqBacklogQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementHiqBacklogResponse> {
+  const path = managementHiqBacklogPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementHiqBacklogResponse>;
 }
 
 export async function fetchManagementTradingPulse(

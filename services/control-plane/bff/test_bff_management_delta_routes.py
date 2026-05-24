@@ -238,6 +238,185 @@ def test_incident_timeline_cors_preflight(monkeypatch) -> None:
     assert response.headers["access-control-allow-origin"] == "https://preview--pantheon-dev.lovable.app"
 
 
+def _hiq_backlog_client(monkeypatch) -> TestClient:
+    td = tempfile.TemporaryDirectory(prefix="bff_mgmt_hiq_backlog_")
+    monkeypatch.setattr(bff_main, "_BFF_MGMT_HIQ_BACKLOG_TMPDIR", td, raising=False)
+    store = ReadSurfaceStore(
+        os.path.join(td.name, "read_surfaces.json"),
+        allow_local_snapshot_fallback=False,
+    )
+    sentinel_findings = [
+        {
+            "finding_id": "sf-hiq-open-high",
+            "kind": "hiq_sentinel",
+            "status": "open",
+            "severity": "high",
+            "title": "HiQ sentinel risk alert",
+            "description": "Sentinel found a high-risk HIQ condition.",
+            "created_at": "2026-05-24T10:10:00Z",
+            "runtime_id": "runtime-alpha",
+            "incident_id": "inc-hiq-open-high",
+        },
+        {
+            "finding_id": "sf-loop-open",
+            "kind": "loop_anomaly",
+            "status": "open",
+            "severity": "medium",
+            "title": "Loop anomaly",
+            "created_at": "2026-05-24T10:00:00Z",
+        },
+    ]
+    store.list_approval_queue_items = lambda **_: []
+    store.list_sentinel_findings = lambda **_: (True, list(sentinel_findings))
+
+    def dataset_source(dataset: str, **_: Any) -> str:
+        if dataset in {"sentinel_findings", "v5_interventions"}:
+            return "service_store"
+        return "missing"
+
+    store.dataset_source = dataset_source
+    monkeypatch.setattr(bff_main, "read_store", store)
+    bff_main._V5_INTERVENTIONS_STORE.clear()
+    bff_main._V5_INTERVENTIONS_STORE.extend(
+        [
+            {
+                "intervention_id": "intv-hiq-critical",
+                "kind": "hiq_sentinel",
+                "status": "pending",
+                "target_type": "Runtime",
+                "target_id": "runtime-alpha",
+                "triggered_at": "2026-05-24T11:00:00Z",
+                "triggered_by": "sentinel",
+                "description": "Critical HIQ sentinel intervention.",
+                "correlation_id": "corr-hiq-critical",
+            },
+            {
+                "intervention_id": "intv-risk-high",
+                "kind": "risk_breach",
+                "status": "escalated",
+                "severity": "high",
+                "target_type": "CapitalPool",
+                "target_id": "pool-alpha",
+                "triggered_at": "2026-05-24T10:30:00Z",
+                "triggered_by": "risk-radar",
+                "description": "Risk breach waiting for operator review.",
+            },
+            {
+                "intervention_id": "intv-loop-anomaly",
+                "kind": "loop_anomaly",
+                "status": "pending",
+                "target_type": "LoopRun",
+                "target_id": "loop-alpha",
+                "triggered_at": "2026-05-24T10:40:00Z",
+            },
+            {
+                "intervention_id": "intv-hiq-remediated",
+                "kind": "hiq_sentinel",
+                "status": "remediated",
+                "target_type": "Runtime",
+                "target_id": "runtime-beta",
+                "triggered_at": "2026-05-24T09:30:00Z",
+            },
+        ]
+    )
+    return TestClient(bff_main.app, raise_server_exceptions=False)
+
+
+def test_hiq_backlog_composes_open_hiq_interventions_and_findings(monkeypatch) -> None:
+    original_store = bff_main.read_store
+    original_interventions = list(bff_main._V5_INTERVENTIONS_STORE)
+    try:
+        client = _hiq_backlog_client(monkeypatch)
+
+        response = client.get(
+            "/bff/management/hiq-backlog",
+            headers=HEADERS,
+            params={"page_size": 10},
+        )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        data = body["data"]
+        ids = {item["source_id"] for item in body["items"]}
+
+        assert data["id"] == "management-hiq-backlog"
+        assert body["items"] == body["rows"] == body["backlog"] == data["items"]
+        assert ids == {"intv-hiq-critical", "intv-risk-high", "sf-hiq-open-high"}
+        assert body["summary"]["backlog_count"] == 3
+        assert body["summary"]["intervention_count"] == 2
+        assert body["summary"]["sentinel_finding_count"] == 1
+        assert body["summary"]["by_kind"]["hiq_sentinel"] == 2
+        assert body["summary"]["by_kind"]["risk_breach"] == 1
+        assert body["meta"]["policy"] == "read_only_hiq_backlog"
+        assert body["meta"]["surfaces"]["hiq_backlog"]["source"] == "bff_composed"
+        assert "GET /bff/v5/interventions" in body["meta"]["composition_sources"]
+        assert "GET /bff/v5/sentinel/findings" in body["meta"]["composition_sources"]
+        assert "GET /bff/management/human-inbox" in body["meta"]["composition_sources"]
+
+        intervention = next(item for item in body["items"] if item["source_id"] == "intv-hiq-critical")
+        assert intervention["priority"] == "critical"
+        assert intervention["links"]["source"] == "/bff/v5/interventions/intv-hiq-critical"
+        assert intervention["links"]["humanInbox"] == (
+            "/bff/management/human-inbox/intervention:intv-hiq-critical"
+        )
+        assert intervention["allowedActions"]["canRemediate"] is True
+    finally:
+        bff_main.read_store = original_store
+        bff_main._V5_INTERVENTIONS_STORE.clear()
+        bff_main._V5_INTERVENTIONS_STORE.extend(original_interventions)
+
+
+def test_hiq_backlog_filters_and_requires_auth(monkeypatch) -> None:
+    original_store = bff_main.read_store
+    original_interventions = list(bff_main._V5_INTERVENTIONS_STORE)
+    try:
+        client = _hiq_backlog_client(monkeypatch)
+
+        anonymous = client.get("/bff/management/hiq-backlog")
+        assert anonymous.status_code == 401, anonymous.text
+
+        response = client.get(
+            "/bff/management/hiq-backlog",
+            headers=HEADERS,
+            params={"kind": "hiq_sentinel", "status": "pending", "source_type": "intervention"},
+        )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["summary"]["backlog_count"] == 1
+        assert body["items"][0]["source_id"] == "intv-hiq-critical"
+    finally:
+        bff_main.read_store = original_store
+        bff_main._V5_INTERVENTIONS_STORE.clear()
+        bff_main._V5_INTERVENTIONS_STORE.extend(original_interventions)
+
+
+def test_hiq_backlog_cors_preflight_and_openapi(monkeypatch) -> None:
+    original_store = bff_main.read_store
+    original_interventions = list(bff_main._V5_INTERVENTIONS_STORE)
+    try:
+        client = _hiq_backlog_client(monkeypatch)
+        response = client.options(
+            "/bff/management/hiq-backlog",
+            headers={
+                "Origin": LOVABLE_ORIGIN,
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "Authorization, X-Correlation-Id",
+            },
+        )
+
+        assert response.status_code in {200, 204}
+        assert response.headers["access-control-allow-origin"] == LOVABLE_ORIGIN
+
+        schema = client.get("/openapi.json").json()
+        assert "/bff/management/hiq-backlog" in schema["paths"]
+        assert "get" in schema["paths"]["/bff/management/hiq-backlog"]
+    finally:
+        bff_main.read_store = original_store
+        bff_main._V5_INTERVENTIONS_STORE.clear()
+        bff_main._V5_INTERVENTIONS_STORE.extend(original_interventions)
+
+
 def test_quarterly_ranking_drilldown_returns_persona_contribution_breakdown() -> None:
     with tempfile.TemporaryDirectory() as td:
         original = bff_main.read_store
