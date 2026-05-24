@@ -15,9 +15,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
 from fastapi import Body, Cookie, FastAPI, HTTPException, BackgroundTasks, Header, Query, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 sys.path.insert(0, os.path.dirname(__file__))
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -300,6 +303,218 @@ register_fastapi_health_routes(
     },
     details=lambda: {"version": "0.2.0", "data_dir": BFF_DATA_DIR},
 )
+
+_ERROR_CODE_BY_STATUS = {
+    400: ErrorCode.INVALID_REQUEST.value,
+    401: ErrorCode.INVALID_TOKEN.value,
+    403: ErrorCode.INSUFFICIENT_ROLE.value,
+    404: ErrorCode.OBJECT_NOT_FOUND.value,
+    409: ErrorCode.INVALID_STATE.value,
+    422: ErrorCode.INVALID_PARAMS.value,
+    428: ErrorCode.PRECONDITION_NOT_MET.value,
+    500: ErrorCode.DOWNSTREAM_UNAVAILABLE.value,
+}
+
+
+def _clean_correlation_id(value: Any) -> Optional[str]:
+    clean = str(value or "").strip()
+    return clean or None
+
+
+def _error_response_correlation_id(
+    request: Request,
+    headers: Optional[Dict[str, Any]] = None,
+) -> str:
+    return (
+        _clean_correlation_id(request.headers.get("x-correlation-id"))
+        or _clean_correlation_id((headers or {}).get("X-Correlation-Id"))
+        or _clean_correlation_id((headers or {}).get("x-correlation-id"))
+        or str(uuid.uuid4())
+    )
+
+
+def _status_error_code(status_code: int) -> str:
+    if status_code >= 500:
+        return ErrorCode.DOWNSTREAM_UNAVAILABLE.value
+    return _ERROR_CODE_BY_STATUS.get(status_code, ErrorCode.INVALID_REQUEST.value)
+
+
+def _status_error_message(status_code: int, fallback: Any = None) -> str:
+    clean = str(fallback or "").strip()
+    if clean and clean != "{}":
+        return clean
+    if status_code == 404:
+        return "Not Found"
+    if status_code == 422:
+        return "Request validation failed"
+    if status_code >= 500:
+        return "Internal server error"
+    return "Request failed"
+
+
+def _error_details_without_correlation(value: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(value, dict):
+        return None
+    return {
+        key: item
+        for key, item in value.items()
+        if key != "correlationId"
+    }
+
+
+def _pack_d_error_response(
+    *,
+    status_code: int,
+    code: Any,
+    message: Any,
+    correlation_id: str,
+    details: Optional[Dict[str, Any]] = None,
+    headers: Optional[Dict[str, Any]] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> JSONResponse:
+    error_payload: Dict[str, Any] = {
+        "code": str(getattr(code, "value", code)),
+        "message": str(message or _status_error_message(status_code)),
+    }
+    if details is not None:
+        error_payload["details"] = details
+    content: Dict[str, Any] = {
+        "error": error_payload,
+        "meta": {"correlationId": correlation_id},
+    }
+    if extra:
+        content.update(extra)
+    response_headers = dict(headers or {})
+    response_headers["X-Correlation-Id"] = correlation_id
+    return JSONResponse(
+        status_code=status_code,
+        content=jsonable_encoder(content),
+        headers=response_headers,
+    )
+
+
+def _pack_d_direct_error_response(
+    *,
+    status_code: int,
+    code: Any,
+    message: Any,
+    details: Optional[Dict[str, Any]] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> JSONResponse:
+    return _pack_d_error_response(
+        status_code=status_code,
+        code=code,
+        message=message,
+        correlation_id=str(uuid.uuid4()),
+        details=details,
+        extra=extra,
+    )
+
+
+def _pack_d_http_exception_response(
+    request: Request,
+    exc: StarletteHTTPException,
+) -> JSONResponse:
+    headers = dict(getattr(exc, "headers", None) or {})
+    correlation_id = _error_response_correlation_id(request, headers)
+    detail = exc.detail
+    source = detail
+    if (
+        isinstance(detail, dict)
+        and isinstance(detail.get("detail"), dict)
+        and "error" in detail["detail"]
+    ):
+        source = detail["detail"]
+
+    error: Dict[str, Any] = {}
+    if isinstance(source, dict) and isinstance(source.get("error"), dict):
+        error = dict(source["error"])
+    elif isinstance(source, dict) and source.get("error") is not None:
+        error = {
+            "code": source.get("error"),
+            "message": source.get("message") or source.get("error"),
+        }
+
+    code = error.get("code") or _status_error_code(exc.status_code)
+    message = error.get("message") or _status_error_message(exc.status_code, detail)
+    details = _error_details_without_correlation(error.get("details"))
+    if details is None and not isinstance(source, dict):
+        details = {"reason": str(source or message)}
+
+    extra: Dict[str, Any] = {}
+    if isinstance(source, dict):
+        for key, value in source.items():
+            if key in {"error", "correlationId", "meta", "detail"}:
+                continue
+            extra[key] = value
+
+    return _pack_d_error_response(
+        status_code=exc.status_code,
+        code=code,
+        message=message,
+        correlation_id=correlation_id,
+        details=details,
+        headers=headers,
+        extra=extra,
+    )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _bff_http_exception_handler(
+    request: Request,
+    exc: StarletteHTTPException,
+) -> JSONResponse:
+    return _pack_d_http_exception_response(request, exc)
+
+
+@app.exception_handler(RequestValidationError)
+async def _bff_request_validation_error_handler(
+    request: Request,
+    exc: RequestValidationError,
+) -> JSONResponse:
+    correlation_id = _error_response_correlation_id(request)
+    return _pack_d_error_response(
+        status_code=422,
+        code=ErrorCode.INVALID_PARAMS.value,
+        message="Request validation failed",
+        correlation_id=correlation_id,
+        details={
+            "reason": "REQUEST_VALIDATION_ERROR",
+            "errors": exc.errors(),
+        },
+    )
+
+
+@app.exception_handler(ValueError)
+async def _bff_value_error_handler(
+    request: Request,
+    exc: ValueError,
+) -> JSONResponse:
+    correlation_id = _error_response_correlation_id(request)
+    return _pack_d_error_response(
+        status_code=400,
+        code=ErrorCode.INVALID_REQUEST.value,
+        message=str(exc) or "Invalid request",
+        correlation_id=correlation_id,
+        details={"reason": "VALUE_ERROR"},
+    )
+
+
+@app.exception_handler(Exception)
+async def _bff_unhandled_exception_handler(
+    request: Request,
+    exc: Exception,
+) -> JSONResponse:
+    log.exception("Unhandled BFF request error", exc_info=True)
+    correlation_id = _error_response_correlation_id(request)
+    return _pack_d_error_response(
+        status_code=500,
+        code=ErrorCode.DOWNSTREAM_UNAVAILABLE.value,
+        message="Internal server error",
+        correlation_id=correlation_id,
+        details={"reason": "INTERNAL_SERVER_ERROR"},
+    )
+
 command_store = CommandStore(os.path.join(BFF_DATA_DIR, "commands.jsonl"))
 session_lifecycle_store = SessionLifecycleStore(os.path.join(BFF_DATA_DIR, "session_lifecycle.json"))
 read_store = ReadSurfaceStore(
@@ -3709,7 +3924,7 @@ def _first_nonblank(*values: Any) -> Optional[str]:
 
 
 def _bff_me_correlation_id(x_correlation_id: Optional[str]) -> str:
-    return str(x_correlation_id or "").strip() or f"bff-me-{uuid.uuid4().hex}"
+    return str(x_correlation_id or "").strip() or str(uuid.uuid4())
 
 
 def _bff_me_error_with_correlation(exc: HTTPException, correlation_id: str) -> HTTPException:
@@ -9443,12 +9658,11 @@ def _rw03_validate_date_range(date_range: Any) -> str:
 
 
 def _rw02_invalid_query(detail: str) -> JSONResponse:
-    return JSONResponse(
+    return _pack_d_direct_error_response(
         status_code=400,
-        content={
-            "error": "invalid_search_query",
-            "detail": detail,
-        },
+        code="invalid_search_query",
+        message="Invalid research search query",
+        details={"reason": detail},
     )
 
 
@@ -13409,16 +13623,12 @@ async def search_research_corpus(
     index_adapter = read_store.get_research_search_index()
     adapter_state = _rw02_adapter_state(index_adapter, snapshot_at=snapshot_at)
     if index_adapter is None or adapter_state == "unavailable":
-        return JSONResponse(
+        return _pack_d_direct_error_response(
             status_code=503,
-            content={
-                "error": "search_unavailable",
-                "meta": {
-                    "surfaces": {
-                        "search_results": "unavailable",
-                    }
-                },
-            },
+            code="search_unavailable",
+            message="Search results are unavailable",
+            details={"reason": "SEARCH_RESULTS_UNAVAILABLE"},
+            extra={"surfaces": {"search_results": "unavailable"}},
         )
 
     items = read_store.list_research_search_results(
@@ -14027,17 +14237,13 @@ async def compare_artifacts(
         if not (artifact.get("allowedActions") or {}).get("canCompare")
     ]
     if non_comparable:
-        return JSONResponse(
+        return _pack_d_direct_error_response(
             status_code=422,
-            content={
-                "error": {
-                    "code": ErrorCode.INVALID_STATE.value,
-                    "message": "One or more artifacts cannot be compared",
-                    "details": {
-                        "reason": "Compare accepts only sealed or superseded artifacts.",
-                        "precondition_failed": "artifact_status",
-                    },
-                },
+            code=ErrorCode.INVALID_STATE.value,
+            message="One or more artifacts cannot be compared",
+            details={
+                "reason": "Compare accepts only sealed or superseded artifacts.",
+                "precondition_failed": "artifact_status",
                 "non_comparable_artifacts": non_comparable,
             },
         )
@@ -15040,9 +15246,11 @@ async def get_institutional_memory_entry(
         include_snapshot_fallback=False,
     )
     if entry is None:
-        return JSONResponse(
+        return _pack_d_direct_error_response(
             status_code=404,
-            content={"error": "entry_not_found", "entry_id": entry_id},
+            code="entry_not_found",
+            message="Institutional memory entry not found",
+            details={"reason": f"entry_id={entry_id!r} was not found", "entry_id": entry_id},
         )
 
     source_event = entry.get("source_event") if isinstance(entry.get("source_event"), dict) else {}
@@ -16079,9 +16287,11 @@ async def get_mutation_review(
 
     decision, approval_decision, linked_incident, linked_postmortem = _mutation_review_inputs(decision_id)
     if decision is None:
-        return JSONResponse(
+        return _pack_d_direct_error_response(
             status_code=404,
-            content={"error": "decision_not_found", "decision_id": decision_id},
+            code="decision_not_found",
+            message="Mutation review decision not found",
+            details={"reason": f"decision_id={decision_id!r} was not found", "decision_id": decision_id},
         )
 
     payload = _mutation_review_projection(
@@ -16094,16 +16304,12 @@ async def get_mutation_review(
     )
 
     if payload["meta"]["surfaces"]["mutation_review"] == "unavailable":
-        return JSONResponse(
+        return _pack_d_direct_error_response(
             status_code=503,
-            content={
-                "error": "evidence_unavailable",
-                "meta": {
-                    "surfaces": {
-                        "mutation_review": "unavailable",
-                    }
-                },
-            },
+            code="evidence_unavailable",
+            message="Mutation review evidence is unavailable",
+            details={"reason": "MUTATION_REVIEW_UNAVAILABLE"},
+            extra={"surfaces": {"mutation_review": "unavailable"}},
         )
 
     required_fields = (
@@ -16118,17 +16324,15 @@ async def get_mutation_review(
     )
     missing_fields = [field for field in required_fields if payload.get(field) in (None, "")]
     if missing_fields:
-        return JSONResponse(
+        return _pack_d_direct_error_response(
             status_code=503,
-            content={
-                "error": "evidence_unavailable",
-                "detail": f"Mutation review projection is missing required fields: {missing_fields}",
-                "meta": {
-                    "surfaces": {
-                        "mutation_review": "unavailable",
-                    }
-                },
+            code="evidence_unavailable",
+            message="Mutation review projection is missing required fields",
+            details={
+                "reason": f"Mutation review projection is missing required fields: {missing_fields}",
+                "missing_fields": missing_fields,
             },
+            extra={"surfaces": {"mutation_review": "unavailable"}},
         )
 
     return payload
@@ -20472,6 +20676,119 @@ def _management_portfolio_book_pool_sources(
     }
 
 
+def _management_exposure_risk_state(utilization: Optional[float]) -> str:
+    if utilization is None:
+        return "unknown"
+    if utilization > 1:
+        return "over_budget"
+    if utilization >= 0.8:
+        return "near_limit"
+    return "within_budget"
+
+
+def _management_portfolio_book_exposure_item(entry: Dict[str, Any]) -> Dict[str, Any]:
+    pool_id = str(entry.get("pool_id") or entry.get("id") or "")
+    risk_budget = _management_as_float(entry.get("risk_budget"))
+    current_exposure = _management_as_float(entry.get("current_exposure"))
+    utilization = _management_as_float(entry.get("risk_budget_utilization"))
+    if utilization is None and current_exposure is not None and risk_budget not in (None, 0):
+        utilization = round(current_exposure / risk_budget, 6)
+    exposure = entry.get("exposure") if isinstance(entry.get("exposure"), dict) else {}
+    runtime_ids = [
+        str(value)
+        for value in (entry.get("runtime_ids") or [])
+        if str(value).strip()
+    ]
+    binding_ids = [
+        str(value)
+        for value in (entry.get("binding_ids") or [])
+        if str(value).strip()
+    ]
+    deployment_ids = [
+        str(value)
+        for value in (entry.get("deployment_ids") or [])
+        if str(value).strip()
+    ]
+    risk_state = _management_exposure_risk_state(utilization)
+    return {
+        "id": f"portfolio-book-exposure-{pool_id or 'unassigned'}",
+        "pool_id": pool_id,
+        "capitalPoolId": pool_id,
+        "capital_pool_id": pool_id,
+        "name": entry.get("name") or pool_id,
+        "status": entry.get("status") or "unknown",
+        "risk_policy_ref": entry.get("risk_policy_ref"),
+        "riskPolicyRef": entry.get("risk_policy_ref"),
+        "currency": entry.get("currency"),
+        "risk_budget": risk_budget,
+        "riskBudget": risk_budget,
+        "current_exposure": current_exposure,
+        "currentExposure": current_exposure,
+        "exposure_amount": current_exposure,
+        "exposureAmount": current_exposure,
+        "risk_budget_utilization": utilization,
+        "riskBudgetUtilization": utilization,
+        "risk_state": risk_state,
+        "riskState": risk_state,
+        "exposure_source": exposure.get("source"),
+        "exposureSource": exposure.get("source"),
+        "available_budget": (
+            round(risk_budget - current_exposure, 6)
+            if risk_budget is not None and current_exposure is not None
+            else None
+        ),
+        "availableBudget": (
+            round(risk_budget - current_exposure, 6)
+            if risk_budget is not None and current_exposure is not None
+            else None
+        ),
+        "risk": entry.get("risk"),
+        "exposure": {
+            **exposure,
+            "amount": current_exposure,
+            "risk_budget": risk_budget,
+            "riskBudget": risk_budget,
+            "risk_budget_utilization": utilization,
+            "riskBudgetUtilization": utilization,
+            "risk_state": risk_state,
+            "riskState": risk_state,
+        },
+        "pnl": entry.get("pnl"),
+        "total_pnl": entry.get("total_pnl"),
+        "pnl_summary": entry.get("pnl_summary"),
+        "telemetry": entry.get("telemetry"),
+        "binding_count": entry.get("binding_count", 0),
+        "active_binding_count": entry.get("active_binding_count", 0),
+        "deployment_count": entry.get("deployment_count", 0),
+        "approved_deployment_count": entry.get("approved_deployment_count", 0),
+        "runtime_count": entry.get("runtime_count", 0),
+        "active_runtime_count": entry.get("active_runtime_count", 0),
+        "paper_runtime_count": entry.get("paper_runtime_count", 0),
+        "live_runtime_count": entry.get("live_runtime_count", 0),
+        "deployment_stages": entry.get("deployment_stages") or [],
+        "sourceRefs": {
+            "runtimeIds": runtime_ids,
+            "runtime_ids": runtime_ids,
+            "bindingIds": binding_ids,
+            "binding_ids": binding_ids,
+            "deploymentIds": deployment_ids,
+            "deployment_ids": deployment_ids,
+            "capitalPoolIds": [pool_id] if pool_id else [],
+            "capital_pool_ids": [pool_id] if pool_id else [],
+        },
+        "source_refs": {
+            "runtime_ids": runtime_ids,
+            "binding_ids": binding_ids,
+            "deployment_ids": deployment_ids,
+            "capital_pool_ids": [pool_id] if pool_id else [],
+        },
+        "links": {
+            "capitalPool": _management_link("/bff/capital-pools", pool_id),
+            "capital_pool": _management_link("/bff/capital-pools", pool_id),
+        },
+    }
+
+
 def _management_link(path: str, record_id: Optional[str]) -> Optional[str]:
     if not record_id:
         return None
@@ -22170,6 +22487,182 @@ async def bff_management_portfolio_book_pools(
                 "GET /api/v1/runtime-bindings",
                 "GET /api/v1/telemetry/{runtime_id}/summary",
             ],
+        },
+    }
+
+
+@app.get("/bff/management/portfolio-book/exposure")
+async def bff_management_portfolio_book_exposure(
+    status: Optional[str] = None,
+    risk_policy_ref: Optional[str] = None,
+    capital_pool_id: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 portfolio-book exposure and risk-budget rollup."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    sources = _management_portfolio_book_pool_sources(
+        status=status,
+        risk_policy_ref=risk_policy_ref,
+    )
+    entries = sources["entries"]
+    if capital_pool_id:
+        requested = {item.strip() for item in capital_pool_id.split(",") if item.strip()}
+        entries = [
+            entry
+            for entry in entries
+            if str(entry.get("pool_id") or entry.get("id") or "") in requested
+        ]
+
+    exposure_items = [
+        _management_portfolio_book_exposure_item(entry)
+        for entry in entries
+    ]
+    total = len(exposure_items)
+    page_items, next_page_token = _page_slice(exposure_items, page_token, page_size)
+
+    risk_budgets = [
+        value
+        for item in exposure_items
+        for value in [_management_as_float(item.get("risk_budget"))]
+        if value is not None
+    ]
+    exposures = [
+        value
+        for item in exposure_items
+        for value in [_management_as_float(item.get("current_exposure"))]
+        if value is not None
+    ]
+    exposure_runtime_ids = {
+        runtime_id
+        for item in exposure_items
+        for runtime_id in (
+            (item.get("sourceRefs") or {}).get("runtimeIds") or []
+        )
+        if str(runtime_id).strip()
+    }
+    portfolio_telemetry = _management_telemetry_rollup([
+        sources["telemetry_by_runtime_id"][runtime_id]
+        for runtime_id in sorted(exposure_runtime_ids)
+        if runtime_id in sources["telemetry_by_runtime_id"]
+    ])
+    risk_budget_total = round(sum(risk_budgets), 6) if risk_budgets else None
+    current_exposure_total = round(sum(exposures), 6) if exposures else None
+    utilization = None
+    if current_exposure_total is not None and risk_budget_total not in (None, 0):
+        utilization = round(current_exposure_total / risk_budget_total, 6)
+    available_budget_total = (
+        round(risk_budget_total - current_exposure_total, 6)
+        if risk_budget_total is not None and current_exposure_total is not None
+        else None
+    )
+    active_pool_count = len([
+        item for item in exposure_items
+        if str(item.get("status") or "").strip().lower() in {"active", "ready"}
+    ])
+    over_budget_count = len([
+        item for item in exposure_items if item.get("risk_state") == "over_budget"
+    ])
+    near_limit_count = len([
+        item for item in exposure_items if item.get("risk_state") == "near_limit"
+    ])
+    unknown_exposure_count = len([
+        item for item in exposure_items if item.get("risk_state") == "unknown"
+    ])
+
+    source_surfaces = {
+        "capital_pools": _dataset_surface_status("capital_pools", snapshot_at=snapshot_at),
+        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at),
+        "deployment_plans": _dataset_surface_status("deployment_plans", snapshot_at=snapshot_at),
+        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
+        "telemetry_summaries": _dataset_surface_status(
+            "telemetry_summaries",
+            snapshot_at=snapshot_at,
+            has_data=bool(sources["telemetry_by_runtime_id"]) if sources["runtime_bindings"] else None,
+            missing_message="Telemetry summaries unavailable for portfolio-book exposure runtimes.",
+        ),
+    }
+    exposure_surface = _aggregate_group_surface(
+        "portfolio_book_exposure",
+        list(source_surfaces.values()),
+        snapshot_at=snapshot_at,
+        unavailable_message="Portfolio-book exposure composition has no readable source records.",
+        degraded_message="Portfolio-book exposure composition is degraded because one or more source surfaces are degraded.",
+    )
+
+    summary = {
+        "exposure_count": total,
+        "exposureCount": total,
+        "returned_exposure_count": len(page_items),
+        "returnedExposureCount": len(page_items),
+        "total_pools": total,
+        "totalPools": total,
+        "active_pool_count": active_pool_count,
+        "activePoolCount": active_pool_count,
+        "risk_budget_total": risk_budget_total,
+        "riskBudgetTotal": risk_budget_total,
+        "current_exposure_total": current_exposure_total,
+        "currentExposureTotal": current_exposure_total,
+        "available_budget_total": available_budget_total,
+        "availableBudgetTotal": available_budget_total,
+        "risk_budget_utilization": utilization,
+        "riskBudgetUtilization": utilization,
+        "over_budget_count": over_budget_count,
+        "overBudgetCount": over_budget_count,
+        "near_limit_count": near_limit_count,
+        "nearLimitCount": near_limit_count,
+        "unknown_exposure_count": unknown_exposure_count,
+        "unknownExposureCount": unknown_exposure_count,
+        "telemetry_runtime_count": portfolio_telemetry["runtime_count"],
+        "telemetryRuntimeCount": portfolio_telemetry["runtime_count"],
+        "total_pnl": portfolio_telemetry["total_pnl"],
+        "totalPnl": portfolio_telemetry["total_pnl"],
+        "max_drawdown": portfolio_telemetry["max_drawdown"],
+        "maxDrawdown": portfolio_telemetry["max_drawdown"],
+        "average_fill_rate": portfolio_telemetry["average_fill_rate"],
+        "averageFillRate": portfolio_telemetry["average_fill_rate"],
+        "total_trades": portfolio_telemetry["total_trades"],
+        "totalTrades": portfolio_telemetry["total_trades"],
+        "latest_telemetry_at": portfolio_telemetry["latest_collected_at"],
+        "latestTelemetryAt": portfolio_telemetry["latest_collected_at"],
+        "basis": "capital_pool_exposure_with_runtime_telemetry",
+    }
+    data = {
+        "id": "pm12-portfolio-book-exposure",
+        "summary": summary,
+        "items": page_items,
+        "exposures": page_items,
+    }
+
+    return {
+        "data": data,
+        "items": page_items,
+        "exposures": page_items,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "total": total,
+            "surfaces": {
+                "portfolio_book_exposure": exposure_surface,
+                **source_surfaces,
+            },
+            "composition_sources": [
+                "GET /bff/capital-pools",
+                "GET /api/v1/persona-capital-bindings",
+                "GET /api/v1/deployment-plans",
+                "GET /api/v1/runtime-bindings",
+                "GET /api/v1/telemetry/{runtime_id}/summary",
+            ],
+            "policy": "read_only_portfolio_exposure",
         },
     }
 
