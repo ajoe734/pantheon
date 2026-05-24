@@ -6118,6 +6118,69 @@ def prune_orphan_worktrees(config: dict[str, Any], state: dict[str, Any]) -> boo
     return False
 
 
+def auto_commit_archive_settings(config: dict[str, Any]) -> dict[str, Any]:
+    raw = config.get("auto_commit_archive")
+    settings = raw if isinstance(raw, dict) else {}
+    return {
+        "enabled": bool(settings.get("enabled", True)),
+        "tick_interval_seconds": int(settings.get("tick_interval_seconds", 1800) or 0),
+        "script_timeout_seconds": int(settings.get("script_timeout_seconds", 180)),
+    }
+
+
+def maybe_auto_commit_archive(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    """Periodically run .orchestrator/auto_commit_archive.py so supervisor-side
+    archive metadata + task briefs are not stranded as untracked files in the
+    main worktree. Returns True iff the script ran AND produced a PR (so the
+    caller can mark state as changed and refresh runtime artifacts)."""
+    settings = auto_commit_archive_settings(config)
+    if not settings["enabled"]:
+        return False
+
+    interval = settings["tick_interval_seconds"]
+    bucket = state.setdefault("auto_commit_archive", {})
+    if interval > 0:
+        last_at = bucket.get("last_run_at")
+        last_dt = _parse_iso_utc(str(last_at or ""))
+        now = datetime.now(timezone.utc)
+        if last_dt is not None and (now - last_dt).total_seconds() < interval:
+            return False
+    bucket["last_run_at"] = utc_now()
+
+    try:
+        repo_root = config_path(config, "status_file").parents[0]
+    except KeyError:
+        bucket["last_error"] = "status_file path not configured"
+        return False
+    script = repo_root / ".orchestrator" / "auto_commit_archive.py"
+    if not script.exists():
+        bucket["last_error"] = "script missing"
+        return False
+
+    try:
+        proc = subprocess.run(
+            ["python3", str(script), "--quiet"],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            timeout=settings["script_timeout_seconds"],
+        )
+    except subprocess.TimeoutExpired:
+        bucket["last_error"] = "timeout"
+        return False
+    except OSError as exc:
+        bucket["last_error"] = f"spawn failed: {exc}"
+        return False
+
+    bucket["last_exit"] = proc.returncode
+    stdout_tail = (proc.stdout or "").strip().splitlines()[-1:] if proc.stdout else []
+    stderr_tail = (proc.stderr or "").strip().splitlines()[-1:] if proc.stderr else []
+    bucket["last_stdout"] = stdout_tail[0] if stdout_tail else ""
+    bucket["last_stderr"] = stderr_tail[0] if stderr_tail else ""
+    # Script prints "auto_commit_archive: opened PR for ..." when it actually opens one.
+    return proc.returncode == 0 and "opened PR for" in (proc.stdout or "")
+
+
 def trim_worker_history(state: dict[str, Any], max_entries: int) -> None:
     workers = state.get("workers", {})
     if len(workers) <= max_entries:
@@ -8375,6 +8438,7 @@ def run_once(
         trim_worker_history(state, int(config.get("supervisor", {}).get("max_worker_history", 200)))
         trim_seen_events(state, int(config.get("watcher", {}).get("max_seen_events", 2000)))
         changed = prune_orphan_worktrees(config, state) or changed
+        changed = maybe_auto_commit_archive(config, state) or changed
 
         loop_finished_at = utc_now()
         stamp_supervisor_runtime_state(
