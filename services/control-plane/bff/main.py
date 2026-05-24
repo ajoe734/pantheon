@@ -24886,6 +24886,8 @@ _HUMAN_INBOX_PRIORITY_RANK = {
     "low": 1,
     "unknown": 0,
 }
+_HIQ_BACKLOG_DEFAULT_KINDS = {"hiq_sentinel", "risk_breach"}
+_HIQ_BACKLOG_DEFAULT_STATUSES = {"pending", "escalated", "open", "active", "in_progress"}
 
 
 def _human_inbox_csv_filter(value: Optional[str]) -> Optional[set[str]]:
@@ -25116,6 +25118,453 @@ def _human_inbox_detail_match(item: Dict[str, Any], item_id: str) -> bool:
         str(item.get("intervention_id") or ""),
     }
     return clean in candidates
+
+
+def _hiq_backlog_filter_values(value: Optional[str], *, default: Optional[set[str]] = None) -> Optional[set[str]]:
+    tokens = _split_csv_query(value)
+    if not tokens:
+        return set(default) if default is not None else None
+    normalized = {token.strip().lower() for token in tokens if token.strip()}
+    if not normalized or "all" in normalized:
+        return None
+    return normalized
+
+
+def _hiq_backlog_target(record: Dict[str, Any], *, fallback_type: str, fallback_id: str) -> Dict[str, Any]:
+    target_type = str(record.get("target_type") or record.get("targetType") or fallback_type).strip() or fallback_type
+    target_id = str(
+        record.get("target_id")
+        or record.get("targetId")
+        or record.get("runtime_id")
+        or record.get("runtimeId")
+        or record.get("persona_id")
+        or record.get("personaId")
+        or record.get("strategy_id")
+        or record.get("strategyId")
+        or fallback_id
+    ).strip()
+    return {"type": target_type, "id": target_id or None}
+
+
+def _hiq_backlog_source_refs(record: Dict[str, Any], *, source_type: str, source_id: str) -> Dict[str, Any]:
+    runtime_ids = [
+        value
+        for value in (
+            record.get("runtime_id"),
+            record.get("runtimeId"),
+        )
+        if value
+    ]
+    persona_ids = [
+        value
+        for value in (
+            record.get("persona_id"),
+            record.get("personaId"),
+        )
+        if value
+    ]
+    strategy_ids = [
+        value
+        for value in (
+            record.get("strategy_id"),
+            record.get("strategyId"),
+        )
+        if value
+    ]
+    incident_ids = [
+        value
+        for value in (
+            record.get("incident_id"),
+            record.get("incidentId"),
+        )
+        if value
+    ]
+    return {
+        "sourceType": source_type,
+        "source_type": source_type,
+        "sourceId": source_id,
+        "source_id": source_id,
+        "runtimeIds": runtime_ids,
+        "runtime_ids": runtime_ids,
+        "personaIds": persona_ids,
+        "persona_ids": persona_ids,
+        "strategyIds": strategy_ids,
+        "strategy_ids": strategy_ids,
+        "incidentIds": incident_ids,
+        "incident_ids": incident_ids,
+    }
+
+
+def _hiq_backlog_intervention_item(
+    record: Dict[str, Any],
+    *,
+    human_inbox_item: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    intervention_id = _management_record_id(record, "intervention_id", "id")
+    if not intervention_id:
+        return None
+    status = str(record.get("status") or "pending").strip().lower() or "pending"
+    kind = str(record.get("kind") or "hiq_sentinel").strip().lower() or "hiq_sentinel"
+    priority = _human_inbox_priority(
+        record.get("priority") or record.get("severity") or record.get("risk_level"),
+        fallback="critical" if status == "pending" and kind == "hiq_sentinel" else "high",
+    )
+    action_state = "pending" if status in _HUMAN_INBOX_OPEN_INTERVENTION_STATUSES else "resolved"
+    created_at = str(record.get("triggered_at") or record.get("created_at") or "").strip() or None
+    updated_at = str(record.get("remediated_at") or record.get("updated_at") or created_at or "").strip() or None
+    source_refs = _hiq_backlog_source_refs(record, source_type="intervention", source_id=intervention_id)
+    human_inbox_id = f"intervention:{intervention_id}"
+    allowed_actions = _management_json_clone(
+        (human_inbox_item or {}).get("allowedActions")
+        or (human_inbox_item or {}).get("allowed_actions")
+        or record.get("allowedActions")
+        or {}
+    )
+    if isinstance(allowed_actions, dict):
+        allowed_actions.setdefault("canReview", True)
+        allowed_actions.setdefault("canRemediate", status in _HUMAN_INBOX_OPEN_INTERVENTION_STATUSES)
+        allowed_actions.setdefault("canDecide", status in _HUMAN_INBOX_OPEN_INTERVENTION_STATUSES)
+    else:
+        allowed_actions = {
+            "canReview": True,
+            "canRemediate": status in _HUMAN_INBOX_OPEN_INTERVENTION_STATUSES,
+            "canDecide": status in _HUMAN_INBOX_OPEN_INTERVENTION_STATUSES,
+        }
+    return {
+        "id": f"hiq-backlog-intervention-{intervention_id}",
+        "backlogId": f"hiq-backlog-intervention-{intervention_id}",
+        "backlog_id": f"hiq-backlog-intervention-{intervention_id}",
+        "sourceType": "intervention",
+        "source_type": "intervention",
+        "sourceId": intervention_id,
+        "source_id": intervention_id,
+        "humanInboxId": human_inbox_id,
+        "human_inbox_id": human_inbox_id,
+        "kind": kind,
+        "status": status,
+        "actionState": action_state,
+        "action_state": action_state,
+        "priority": priority,
+        "riskLevel": str(record.get("risk_level") or priority).strip().lower(),
+        "risk_level": str(record.get("risk_level") or priority).strip().lower(),
+        "severity": record.get("severity") or priority,
+        "title": record.get("title") or f"{kind.replace('_', ' ').title()} intervention",
+        "summary": record.get("description") or "HIQ intervention is waiting for operator action.",
+        "createdAt": created_at,
+        "created_at": created_at,
+        "updatedAt": updated_at,
+        "updated_at": updated_at,
+        "target": _hiq_backlog_target(record, fallback_type="Intervention", fallback_id=intervention_id),
+        "triggeredBy": record.get("triggered_by"),
+        "triggered_by": record.get("triggered_by"),
+        "correlationId": record.get("correlation_id"),
+        "correlation_id": record.get("correlation_id"),
+        "sourceRefs": source_refs,
+        "source_refs": source_refs,
+        "links": {
+            "source": f"/bff/v5/interventions/{intervention_id}",
+            "humanInbox": f"/bff/management/human-inbox/{human_inbox_id}",
+            "human_inbox": f"/bff/management/human-inbox/{human_inbox_id}",
+        },
+        "allowedActions": allowed_actions,
+        "allowed_actions": allowed_actions,
+        "sourceRecord": _management_json_clone(record),
+        "source_record": _management_json_clone(record),
+    }
+
+
+def _hiq_backlog_sentinel_item(record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    finding_id = _management_record_id(
+        record,
+        "finding_id",
+        "sentinel_finding_id",
+        "incident_id",
+        "id",
+    )
+    if not finding_id:
+        return None
+    status = str(record.get("status") or "open").strip().lower() or "open"
+    kind = str(record.get("kind") or "hiq_sentinel").strip().lower() or "hiq_sentinel"
+    priority = _human_inbox_priority(
+        record.get("priority") or record.get("severity") or record.get("risk_level"),
+        fallback="high",
+    )
+    action_state = "pending" if status in _HIQ_BACKLOG_DEFAULT_STATUSES else "resolved"
+    created_at = str(
+        record.get("created_at")
+        or record.get("triggered_at")
+        or record.get("opened_at")
+        or record.get("timestamp")
+        or ""
+    ).strip() or None
+    updated_at = str(record.get("updated_at") or record.get("resolved_at") or created_at or "").strip() or None
+    source_refs = _hiq_backlog_source_refs(record, source_type="sentinel_finding", source_id=finding_id)
+    return {
+        "id": f"hiq-backlog-sentinel-{finding_id}",
+        "backlogId": f"hiq-backlog-sentinel-{finding_id}",
+        "backlog_id": f"hiq-backlog-sentinel-{finding_id}",
+        "sourceType": "sentinel_finding",
+        "source_type": "sentinel_finding",
+        "sourceId": finding_id,
+        "source_id": finding_id,
+        "kind": kind,
+        "status": status,
+        "actionState": action_state,
+        "action_state": action_state,
+        "priority": priority,
+        "riskLevel": str(record.get("risk_level") or priority).strip().lower(),
+        "risk_level": str(record.get("risk_level") or priority).strip().lower(),
+        "severity": record.get("severity") or priority,
+        "title": record.get("title") or f"{kind.replace('_', ' ').title()} finding",
+        "summary": record.get("description") or record.get("summary") or "Sentinel finding is waiting for HIQ review.",
+        "createdAt": created_at,
+        "created_at": created_at,
+        "updatedAt": updated_at,
+        "updated_at": updated_at,
+        "target": _hiq_backlog_target(record, fallback_type="SentinelFinding", fallback_id=finding_id),
+        "sourceRefs": source_refs,
+        "source_refs": source_refs,
+        "links": {
+            "source": f"/bff/v5/sentinel/findings/{finding_id}",
+            "humanInbox": "/bff/management/human-inbox",
+            "human_inbox": "/bff/management/human-inbox",
+        },
+        "allowedActions": {
+            "canReview": True,
+            "canOpenIntervention": False,
+            "canRemediate": False,
+        },
+        "allowed_actions": {
+            "canReview": True,
+            "canOpenIntervention": False,
+            "canRemediate": False,
+        },
+        "sourceRecord": _management_json_clone(record),
+        "source_record": _management_json_clone(record),
+    }
+
+
+def _hiq_backlog_item_matches(
+    item: Dict[str, Any],
+    *,
+    source_types: Optional[set[str]],
+    statuses: Optional[set[str]],
+    priorities: Optional[set[str]],
+    kinds: Optional[set[str]],
+    q: str,
+) -> bool:
+    if source_types and str(item.get("source_type") or "").lower() not in source_types:
+        return False
+    if statuses:
+        item_statuses = {
+            str(item.get("status") or "").lower(),
+            str(item.get("action_state") or "").lower(),
+        }
+        if not item_statuses.intersection(statuses):
+            return False
+    if priorities:
+        item_priorities = {
+            str(item.get("priority") or "").lower(),
+            str(item.get("risk_level") or "").lower(),
+            str(item.get("severity") or "").lower(),
+        }
+        if not item_priorities.intersection(priorities):
+            return False
+    if kinds and str(item.get("kind") or "").lower() not in kinds:
+        return False
+    needle = q.strip().lower()
+    if needle:
+        target = item.get("target") if isinstance(item.get("target"), dict) else {}
+        haystack = " ".join(
+            str(value or "")
+            for value in (
+                item.get("id"),
+                item.get("source_type"),
+                item.get("source_id"),
+                item.get("kind"),
+                item.get("status"),
+                item.get("priority"),
+                item.get("title"),
+                item.get("summary"),
+                target.get("type"),
+                target.get("id"),
+            )
+        ).lower()
+        if needle not in haystack:
+            return False
+    return True
+
+
+def _hiq_backlog_sort_key(item: Dict[str, Any]) -> tuple[int, datetime, str]:
+    return (
+        _HUMAN_INBOX_PRIORITY_RANK.get(str(item.get("priority") or "unknown").lower(), 0),
+        _audit_datetime(item.get("created_at") or item.get("updated_at")) or datetime.min.replace(tzinfo=timezone.utc),
+        str(item.get("id") or ""),
+    )
+
+
+def _management_hiq_backlog_response(
+    *,
+    source_type: Optional[str],
+    status: Optional[str],
+    kind: Optional[str],
+    priority: Optional[str],
+    q: str,
+    page_token: Optional[str],
+    page_size: int,
+) -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    source_types = _hiq_backlog_filter_values(source_type)
+    statuses = _hiq_backlog_filter_values(status, default=_HIQ_BACKLOG_DEFAULT_STATUSES)
+    priorities = _hiq_backlog_filter_values(priority)
+    kinds = _hiq_backlog_filter_values(kind, default=_HIQ_BACKLOG_DEFAULT_KINDS)
+
+    human_inbox_items, approval_records, inbox_intervention_records = _human_inbox_all_items()
+    inbox_by_source_id = {
+        str(item.get("source_id") or ""): item
+        for item in human_inbox_items
+        if str(item.get("source_type") or "") == "intervention" and item.get("source_id")
+    }
+
+    intervention_records = _v5_intervention_records()
+    available_sentinel_findings, sentinel_findings = read_store.list_sentinel_findings()
+    items: List[Dict[str, Any]] = []
+    for record in intervention_records:
+        projected = _hiq_backlog_intervention_item(
+            record,
+            human_inbox_item=inbox_by_source_id.get(str(record.get("intervention_id") or record.get("id") or "")),
+        )
+        if projected is not None:
+            items.append(projected)
+    for record in sentinel_findings:
+        projected = _hiq_backlog_sentinel_item(record)
+        if projected is not None:
+            items.append(projected)
+
+    filtered = [
+        item
+        for item in items
+        if _hiq_backlog_item_matches(
+            item,
+            source_types=source_types,
+            statuses=statuses,
+            priorities=priorities,
+            kinds=kinds,
+            q=q,
+        )
+    ]
+    filtered.sort(key=_hiq_backlog_sort_key, reverse=True)
+    total = len(filtered)
+    page_items, next_page_token = _page_slice(filtered, page_token, page_size)
+
+    source_counts = _management_count_by(filtered, "sourceType")
+    status_counts = _management_count_by(filtered, "status")
+    kind_counts = _management_count_by(filtered, "kind")
+    priority_counts = _management_count_by(filtered, "priority")
+    latest_at = filtered[0].get("created_at") if filtered else None
+    pending_count = len([item for item in filtered if item.get("action_state") == "pending"])
+    summary = {
+        "backlogCount": total,
+        "backlog_count": total,
+        "returnedBacklogCount": len(page_items),
+        "returned_backlog_count": len(page_items),
+        "interventionCount": source_counts.get("intervention", 0),
+        "intervention_count": source_counts.get("intervention", 0),
+        "sentinelFindingCount": source_counts.get("sentinel_finding", 0),
+        "sentinel_finding_count": source_counts.get("sentinel_finding", 0),
+        "pendingCount": pending_count,
+        "pending_count": pending_count,
+        "criticalCount": priority_counts.get("critical", 0),
+        "critical_count": priority_counts.get("critical", 0),
+        "highCount": priority_counts.get("high", 0),
+        "high_count": priority_counts.get("high", 0),
+        "bySourceType": source_counts,
+        "by_source_type": source_counts,
+        "byStatus": status_counts,
+        "by_status": status_counts,
+        "byKind": kind_counts,
+        "by_kind": kind_counts,
+        "byPriority": priority_counts,
+        "by_priority": priority_counts,
+        "latestAt": latest_at,
+        "latest_at": latest_at,
+        "policy": "read_only_hiq_backlog",
+        "basis": "composed_from_v5_interventions_sentinel_findings_and_human_inbox",
+    }
+
+    intervention_source = "bff_local_registry" if _V5_INTERVENTIONS_STORE else None
+    intervention_surface = _dataset_surface_status(
+        "v5_interventions",
+        snapshot_at=snapshot_at,
+        source=intervention_source,
+    )
+    incidents_source = read_store.dataset_source("incidents")
+    if incidents_source != "missing":
+        sentinel_surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
+    else:
+        sentinel_surface = _dataset_surface_status(
+            "sentinel_findings",
+            snapshot_at=snapshot_at,
+            source=None if available_sentinel_findings else "missing",
+        )
+    human_inbox_surfaces = _human_inbox_surfaces(
+        snapshot_at=snapshot_at,
+        approval_records=approval_records,
+        intervention_records=inbox_intervention_records,
+    )
+    hiq_surface = _aggregate_group_surface(
+        "hiq_backlog",
+        [
+            intervention_surface,
+            sentinel_surface,
+            human_inbox_surfaces["human_inbox"],
+        ],
+        snapshot_at=snapshot_at,
+        unavailable_message="HIQ backlog aggregate unavailable.",
+        degraded_message="HIQ backlog is available, but one or more contributing surfaces are degraded.",
+    )
+    data = {
+        "id": "management-hiq-backlog",
+        "items": page_items,
+        "rows": page_items,
+        "backlog": page_items,
+        "summary": summary,
+        "policy": "read_only_hiq_backlog",
+    }
+    return {
+        "data": data,
+        "items": page_items,
+        "rows": page_items,
+        "backlog": page_items,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "hiq_backlog": hiq_surface,
+                "v5_interventions": intervention_surface,
+                "sentinel_findings": sentinel_surface,
+                **human_inbox_surfaces,
+            },
+            "composition_sources": [
+                "GET /bff/v5/interventions",
+                "GET /bff/v5/sentinel/findings",
+                "GET /bff/management/human-inbox",
+            ],
+            "policy": "read_only_hiq_backlog",
+            "filters": {
+                "source_type": source_type,
+                "status": status,
+                "kind": kind,
+                "priority": priority,
+                "q": q,
+            },
+        },
+    }
 
 
 _EVOLUTION_JOURNAL_TYPE_ALIASES = {
@@ -26115,6 +26564,31 @@ async def bff_management_human_inbox_detail(
         ErrorCode.OBJECT_NOT_FOUND,
         "Human inbox item not found",
         f"Human inbox item {item_id} does not exist",
+    )
+
+
+@app.get("/bff/management/hiq-backlog")
+async def bff_management_hiq_backlog(
+    source_type: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+    kind: Optional[str] = Query(default=None),
+    priority: Optional[str] = Query(default=None),
+    q: str = Query(default=""),
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: read-only HIQ backlog aggregate for sentinel and intervention review."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _management_hiq_backlog_response(
+        source_type=source_type,
+        status=status,
+        kind=kind,
+        priority=priority,
+        q=q,
+        page_token=page_token,
+        page_size=page_size,
     )
 
 
