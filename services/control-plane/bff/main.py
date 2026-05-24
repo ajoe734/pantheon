@@ -25517,6 +25517,7 @@ _PM12_LEAGUE_RANKING_CRITERIA = {
     "execution": ("executionScore", "Execution"),
     "activity": ("activityScore", "Activity"),
 }
+_PM12_LEAGUE_MOVER_DIRECTIONS = {"all", "up", "down", "flat", "new"}
 _PM12_LEAGUE_FORMULA_VERSION = "pm12-default-v1"
 _PM12_QUARTERLY_FORMULA_DOC_REF = (
     "docs/04/pantheon_bff_api_gap_2026-05-23/"
@@ -26643,6 +26644,123 @@ def _pm12_persona_league_tier_payload(rows: List[Dict[str, Any]]) -> tuple[List[
     return tiers, assignments, summary
 
 
+def _pm12_normalize_mover_direction(direction: Optional[str]) -> str:
+    normalized = str(direction or "all").strip().lower() or "all"
+    if normalized not in _PM12_LEAGUE_MOVER_DIRECTIONS:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "invalid_direction",
+                "message": "direction must be one of all, up, down, flat, or new.",
+                "field": "direction",
+            },
+        )
+    return normalized
+
+
+def _pm12_persona_league_mover_items(
+    rows: List[Dict[str, Any]],
+    *,
+    direction: str,
+    limit: int,
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    ranked_items = sorted(
+        (_pm12_persona_league_ranking_item(row) for row in rows),
+        key=lambda item: (
+            _management_number(item.get("overallScore")) or 0.0,
+            str(item.get("personaId") or ""),
+        ),
+        reverse=True,
+    )
+    movers: List[Dict[str, Any]] = []
+    direction_counts = {"up": 0, "down": 0, "flat": 0, "new": 0}
+    for current_rank, item in enumerate(ranked_items, start=1):
+        persona_id = str(item.get("personaId") or item.get("persona_id") or item.get("id") or "")
+        current_score = _management_number(item.get("overallScore")) or 0.0
+        movement_direction = "new"
+        direction_counts[movement_direction] += 1
+        mover = {
+            **item,
+            "id": f"persona-league-mover-{persona_id}",
+            "moverId": f"persona-league-mover-{persona_id}",
+            "mover_id": f"persona-league-mover-{persona_id}",
+            "currentRank": current_rank,
+            "current_rank": current_rank,
+            "previousRank": None,
+            "previous_rank": None,
+            "rankDelta": None,
+            "rank_delta": None,
+            "direction": movement_direction,
+            "currentScore": current_score,
+            "current_score": current_score,
+            "previousScore": None,
+            "previous_score": None,
+            "scoreDelta": None,
+            "score_delta": None,
+            "scoreDeltaDisplay": "baseline unavailable",
+            "score_delta_display": "baseline unavailable",
+            "baselineStatus": "unavailable",
+            "baseline_status": "unavailable",
+            "basis": "current_persona_league_snapshot_no_historical_baseline",
+            "rank": current_rank,
+            "score": current_score,
+            "scoreField": "overallScore",
+            "score_field": "overallScore",
+            "formulaVersion": _PM12_LEAGUE_FORMULA_VERSION,
+            "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
+            "movement": {
+                "direction": movement_direction,
+                "rank_delta": None,
+                "score_delta": None,
+                "baseline_status": "unavailable",
+                "basis": "current_persona_league_snapshot_no_historical_baseline",
+            },
+        }
+        movers.append(mover)
+
+    if direction != "all":
+        movers = [item for item in movers if item.get("direction") == direction]
+    movers = sorted(
+        movers,
+        key=lambda item: (
+            item.get("baselineStatus") != "unavailable",
+            abs(_management_number(item.get("scoreDelta")) or 0.0),
+            -int(item.get("currentRank") or 0),
+            str(item.get("personaId") or ""),
+        ),
+        reverse=True,
+    )
+    limited = movers[:limit]
+    top_mover = limited[0] if limited else None
+    summary = {
+        "personaCount": len(rows),
+        "persona_count": len(rows),
+        "moverCount": len(movers),
+        "mover_count": len(movers),
+        "returnedCount": len(limited),
+        "returned_count": len(limited),
+        "direction": direction,
+        "formulaVersion": _PM12_LEAGUE_FORMULA_VERSION,
+        "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
+        "baselineStatus": "unavailable",
+        "baseline_status": "unavailable",
+        "baselineUnavailableCount": len(ranked_items),
+        "baseline_unavailable_count": len(ranked_items),
+        "upCount": direction_counts["up"],
+        "up_count": direction_counts["up"],
+        "downCount": direction_counts["down"],
+        "down_count": direction_counts["down"],
+        "flatCount": direction_counts["flat"],
+        "flat_count": direction_counts["flat"],
+        "newCount": direction_counts["new"],
+        "new_count": direction_counts["new"],
+        "topMoverPersonaId": (top_mover or {}).get("personaId") if isinstance(top_mover, dict) else None,
+        "top_mover_persona_id": (top_mover or {}).get("personaId") if isinstance(top_mover, dict) else None,
+        "basis": "current_persona_league_snapshot_no_historical_baseline",
+    }
+    return limited, summary
+
+
 def _pm12_heatmap_bucket_delta(bucket: str) -> tuple[str, timedelta]:
     bucket_key = str(bucket or "").strip().lower() or "day"
     delta = _PM12_HEATMAP_BUCKET_DELTAS.get(bucket_key)
@@ -26961,6 +27079,76 @@ async def bff_management_persona_league_rankings(
                 "GET /bff/personas",
                 "GET /bff/v5/execution/persona-health",
             ],
+        },
+    }
+
+
+@app.get("/bff/management/persona-league/movers")
+async def bff_management_persona_league_movers(
+    state: Optional[str] = None,
+    archetype: Optional[str] = None,
+    q: str = Query(default=""),
+    direction: Optional[str] = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 persona-league movement list computed from league rows."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    normalized_direction = _pm12_normalize_mover_direction(direction)
+    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
+    movers, summary = _pm12_persona_league_mover_items(
+        rows,
+        direction=normalized_direction,
+        limit=limit,
+    )
+    source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
+    history_surface = _composed_surface_status(
+        snapshot_at=snapshot_at,
+        available=False,
+        missing_message="Historical persona league baseline is unavailable; movers are current-snapshot entries.",
+    )
+    movers_surface = _aggregate_group_surface(
+        "persona_league_movers",
+        [*source_surfaces.values(), history_surface],
+        snapshot_at=snapshot_at,
+        unavailable_message="Persona league movers aggregate unavailable.",
+        degraded_message="Persona league movers are degraded because one or more source surfaces are degraded.",
+    )
+    data = {
+        "id": "management-persona-league-movers",
+        "items": movers,
+        "movers": movers,
+        "summary": summary,
+        "policy": "read_only_governance_advisory",
+    }
+    return {
+        "data": data,
+        "items": movers,
+        "movers": movers,
+        "summary": summary,
+        "page_info": {
+            "next_page_token": None,
+            "total": summary["moverCount"],
+            "page_size": len(movers),
+        },
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": {
+                "persona_league_movers": movers_surface,
+                "persona_league_history": history_surface,
+                **source_surfaces,
+            },
+            "composition_sources": [
+                "GET /bff/management/persona-league",
+                "GET /bff/management/persona-league/rankings",
+                "GET /bff/management/persona-league/tiers",
+                "GET /bff/personas",
+                "GET /bff/v5/execution/persona-health",
+            ],
+            "policy": "read_only_governance_advisory",
+            "baseline_status": "unavailable",
         },
     }
 
