@@ -70,6 +70,16 @@ assert successful preflight as HTTP 204 with the matching
 - `services/control-plane/bff/tests/test_auth_jwks_strict.py`
 - `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
 
+### Finalization
+
+- Fix commit: `73a365fb` (`BFF-B1-001-DELTA: fix CORS preflight blocked in live mode`)
+- Merged via PR #511 into `dev`
+- Reviewer approval: Codex (2026-05-24)
+- Closeout verification (2026-05-24):
+  - `pytest -q services/control-plane/bff/tests/test_auth_jwks_strict.py` → 18 passed
+  - `pytest -q services/control-plane/bff/tests/test_auth_jwks_strict.py -k cors` → 6 passed
+- Status: closed
+
 ---
 
 ## BFF-MGMT-DELTA-001 Persona League Movers Route
