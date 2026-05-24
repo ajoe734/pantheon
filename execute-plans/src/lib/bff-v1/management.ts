@@ -592,6 +592,103 @@ export interface ManagementPersonaLeagueRankingsResponse {
   };
 }
 
+export interface ManagementPersonaLeagueMoversQuery {
+  state?: string;
+  archetype?: string;
+  q?: string;
+  direction?: "all" | "up" | "down" | "flat" | "new" | string;
+  limit?: number;
+}
+
+export interface ManagementPersonaLeagueMover extends ManagementPersonaLeagueRankingItem {
+  moverId: string;
+  mover_id: string;
+  currentRank: number;
+  current_rank: number;
+  previousRank?: number | null;
+  previous_rank?: number | null;
+  rankDelta?: number | null;
+  rank_delta?: number | null;
+  direction: "up" | "down" | "flat" | "new" | string;
+  currentScore: number;
+  current_score: number;
+  previousScore?: number | null;
+  previous_score?: number | null;
+  scoreDelta?: number | null;
+  score_delta?: number | null;
+  scoreDeltaDisplay?: string | null;
+  score_delta_display?: string | null;
+  baselineStatus: "ok" | "unavailable" | string;
+  baseline_status: "ok" | "unavailable" | string;
+  formulaVersion: string;
+  formula_version: string;
+  movement: {
+    direction: string;
+    rank_delta?: number | null;
+    score_delta?: number | null;
+    baseline_status?: string;
+    basis?: string;
+    [key: string]: unknown;
+  };
+  basis?: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementPersonaLeagueMoversSummary {
+  personaCount: number;
+  persona_count: number;
+  moverCount: number;
+  mover_count: number;
+  returnedCount: number;
+  returned_count: number;
+  direction: string;
+  formulaVersion: string;
+  formula_version: string;
+  baselineStatus: string;
+  baseline_status: string;
+  baselineUnavailableCount: number;
+  baseline_unavailable_count: number;
+  upCount: number;
+  up_count: number;
+  downCount: number;
+  down_count: number;
+  flatCount: number;
+  flat_count: number;
+  newCount: number;
+  new_count: number;
+  topMoverPersonaId?: string | null;
+  top_mover_persona_id?: string | null;
+  basis?: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementPersonaLeagueMoversResponse {
+  data: {
+    id: "management-persona-league-movers" | string;
+    items: ManagementPersonaLeagueMover[];
+    movers: ManagementPersonaLeagueMover[];
+    summary: ManagementPersonaLeagueMoversSummary;
+    policy?: string;
+    [key: string]: unknown;
+  };
+  items: ManagementPersonaLeagueMover[];
+  movers: ManagementPersonaLeagueMover[];
+  summary: ManagementPersonaLeagueMoversSummary;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces?: Record<string, ManagementSurfaceRef>;
+    composition_sources?: string[];
+    policy?: string;
+    baseline_status?: string;
+    [key: string]: unknown;
+  };
+}
+
 export interface ManagementPersonaLeagueTiersQuery {
   state?: string;
   archetype?: string;
@@ -1705,6 +1802,12 @@ export function managementPersonaLeaguePath(query?: ManagementPersonaLeagueQuery
   return withQuery(paths.managementPersonaLeague(), query);
 }
 
+export function managementPersonaLeagueMoversPath(
+  query?: ManagementPersonaLeagueMoversQuery,
+): string {
+  return withQuery(paths.managementPersonaLeagueMovers(), query);
+}
+
 export function managementPersonaLeagueRankingsPath(
   query?: ManagementPersonaLeagueRankingsQuery,
 ): string {
@@ -1964,6 +2067,25 @@ export async function fetchManagementPersonaLeague(
     throw new Error(`GET ${path} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementPersonaLeagueResponse>;
+}
+
+export async function fetchManagementPersonaLeagueMovers(
+  query?: ManagementPersonaLeagueMoversQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementPersonaLeagueMoversResponse> {
+  const path = managementPersonaLeagueMoversPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementPersonaLeagueMoversResponse>;
 }
 
 export async function fetchManagementPersonaLeagueRankings(

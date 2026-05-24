@@ -2,17 +2,18 @@
 
 Status: active
 Date: 2026-05-24
-Sprint: Sprint BFF-DELTA / EPIC-BFF-DELTA-INFRA
-Task: BFF-B1-001-DELTA
-Owner: Claude
-Reviewer: Codex
+Sprint: Sprint BFF-DELTA
 
-This document records the CORS preflight regression found after BFF-B1-001 closed
-and specifies the exact fix applied.
+This document records additive BFF delta fixes found after the 2026-05-23 final
+integration spec shipped.
 
 ---
 
 ## §DELTA-1 CORS Preflight Regression — execute-plans Origin Blocked in Live Mode
+
+Task: BFF-B1-001-DELTA
+Owner: Claude
+Reviewer: Codex
 
 ### Gap
 
@@ -89,6 +90,94 @@ _DEV_LOVABLE_CORS_ORIGINS = {
 - `docs/04/pantheon_bff_api_gap_2026-05-24_delta/BFF_API_GAP_delta_audit_spec.md` — this file
 - `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md` — execute-plans-side audit
 
-### Task
+---
 
-BFF-B1-001-DELTA — Owner: Claude, Reviewer: Codex
+## §DELTA-2 Persona League Movers
+
+Task: BFF-MGMT-DELTA-001
+Owner: Codex
+Reviewer: Claude
+
+### Route
+
+`GET /bff/management/persona-league/movers`
+
+Query parameters:
+
+| Parameter | Notes |
+|---|---|
+| `state` | Optional normalized persona lifecycle filter. |
+| `archetype` | Optional persona archetype filter. |
+| `q` | Optional case-insensitive search across persona id, name, owner, and archetype. |
+| `direction` | Optional `all`, `up`, `down`, `flat`, or `new`; defaults to `all`. |
+| `limit` | Optional response limit, 1-200; defaults to 20. |
+
+### Response Shape
+
+The route returns a read-only Management list envelope:
+
+```json
+{
+  "data": {
+    "id": "management-persona-league-movers",
+    "items": [],
+    "movers": [],
+    "summary": {},
+    "policy": "read_only_governance_advisory"
+  },
+  "items": [],
+  "movers": [],
+  "summary": {},
+  "page_info": {
+    "next_page_token": null,
+    "total": 0,
+    "page_size": 0
+  },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": [],
+    "policy": "read_only_governance_advisory"
+  }
+}
+```
+
+Each mover item includes persona identifiers, current rank and score, previous
+rank and score placeholders, rank and score deltas, direction, tier, metrics,
+score components, links, formula version, and movement basis.
+
+Historical persona-league snapshots are not yet a first-class read source in
+the BFF. Until that source exists, returned items use
+`baselineStatus=unavailable`, `direction=new`, null delta fields, and
+`basis=current_persona_league_snapshot_no_historical_baseline`.
+
+### Composition Sources
+
+- `GET /bff/management/persona-league`
+- `GET /bff/management/persona-league/rankings`
+- `GET /bff/management/persona-league/tiers`
+- `GET /bff/personas`
+- `GET /bff/v5/execution/persona-health`
+
+`meta.surfaces` includes `persona_league_movers`, `persona_league_history`,
+and the PM-12 persona-league source surfaces. The history surface is degraded
+while historical baseline data is unavailable.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated GET returns `data`, `items`, `movers`, `summary`, `page_info`, and `meta` | Implemented BFF-MGMT-DELTA-001 |
+| 2 | Route supports `state`, `archetype`, `q`, `direction`, and `limit` | Implemented BFF-MGMT-DELTA-001 |
+| 3 | Invalid `direction` returns HTTP 422 | Implemented BFF-MGMT-DELTA-001 |
+| 4 | Missing auth returns HTTP 401 | Implemented BFF-MGMT-DELTA-001 |
+| 5 | execute-plans exposes path, query/response types, and fetch helper | Implemented BFF-MGMT-DELTA-001 |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_pm12_persona_league.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
