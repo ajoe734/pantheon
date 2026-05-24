@@ -717,7 +717,12 @@ def test_performance_attribution_rejects_invalid_dimension(monkeypatch) -> None:
     )
 
     assert response.status_code == 422, response.text
-    assert response.json()["detail"]["error"] == "invalid_dimension"
+    payload = response.json()
+    assert "detail" not in payload
+    assert payload["error"]["code"] == "invalid_dimension"
+    assert payload["field"] == "dimension"
+    assert payload["invalid"] == ["desk"]
+    assert "persona" in payload["supported"]
 
 
 def test_performance_attribution_requires_read_auth(monkeypatch) -> None:
