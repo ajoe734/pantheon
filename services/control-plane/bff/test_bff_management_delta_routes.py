@@ -28,6 +28,148 @@ def _fresh_client(td: str, *, fallback: bool = True) -> TestClient:
     return TestClient(bff_main.app, raise_server_exceptions=False)
 
 
+def _sentinel_pulse_client(monkeypatch) -> TestClient:
+    store = ReadSurfaceStore(
+        os.path.join(tempfile.mkdtemp(prefix="bff_sentinel_pulse_"), "read_surfaces.json"),
+        allow_local_snapshot_fallback=False,
+    )
+    findings = [
+        {
+            "id": "finding-critical",
+            "finding_id": "finding-critical",
+            "kind": "hiq_sentinel",
+            "status": "open",
+            "severity": "critical",
+            "title": "Sentinel capital breach",
+            "summary": "Critical sentinel finding for runtime-alpha",
+            "runtime_id": "runtime-alpha",
+            "incident_id": "incident-alpha",
+            "triggered_at": "2026-05-24T08:00:00Z",
+        },
+        {
+            "id": "finding-low",
+            "finding_id": "finding-low",
+            "kind": "strategy_drift",
+            "status": "resolved",
+            "severity": "low",
+            "title": "Resolved strategy drift",
+            "triggered_at": "2026-05-23T08:00:00Z",
+        },
+    ]
+    interventions = [
+        {
+            "id": "intv-critical",
+            "intervention_id": "intv-critical",
+            "finding_id": "finding-critical",
+            "kind": "hiq_sentinel",
+            "status": "pending",
+            "severity": "critical",
+            "summary": "Review sentinel remediation",
+            "triggered_at": "2026-05-24T08:05:00Z",
+        }
+    ]
+
+    def list_sentinel_findings(
+        *,
+        kind: str | None = None,
+        status: str | None = None,
+        severity: str | None = None,
+    ) -> tuple[bool, list[dict[str, Any]]]:
+        rows = list(findings)
+        if kind:
+            rows = [row for row in rows if row["kind"] == kind]
+        if status:
+            rows = [row for row in rows if row["status"] == status]
+        if severity:
+            rows = [row for row in rows if row["severity"] == severity]
+        return True, rows
+
+    def list_v5_interventions(
+        *,
+        status: str | None = None,
+        kind: str | None = None,
+    ) -> list[dict[str, Any]]:
+        rows = list(interventions)
+        if status:
+            rows = [row for row in rows if row["status"] == status]
+        if kind:
+            rows = [row for row in rows if row["kind"] == kind]
+        return rows
+
+    def dataset_source(dataset: str, **_: Any) -> str:
+        if dataset in {"sentinel_findings", "v5_interventions"}:
+            return "canonical"
+        return "missing"
+
+    store.list_sentinel_findings = list_sentinel_findings
+    store.list_v5_interventions = list_v5_interventions
+    store.dataset_source = dataset_source
+    monkeypatch.setattr(bff_main, "_V5_INTERVENTIONS_STORE", [], raising=False)
+    monkeypatch.setattr(bff_main, "read_store", store)
+    return TestClient(bff_main.app, raise_server_exceptions=False)
+
+
+def test_sentinel_pulse_composes_findings_and_interventions(monkeypatch) -> None:
+    client = _sentinel_pulse_client(monkeypatch)
+
+    response = client.get(
+        "/bff/management/sentinel-pulse",
+        headers=HEADERS,
+        params={"severity": "critical", "q": "runtime-alpha", "page_size": 5},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    data = body["data"]
+
+    assert data["id"] == "management-sentinel-pulse"
+    assert body["items"] == body["findings"] == data["findings"]
+    assert data["items"] == body["items"]
+    assert data["interventions"] == body["interventions"]
+    assert body["page_info"] == {"next_page_token": None, "total": 1, "page_size": 5}
+
+    finding = body["items"][0]
+    assert finding["findingId"] == "finding-critical"
+    assert finding["severity"] == "critical"
+    assert finding["sourceRefs"]["runtimeId"] == "runtime-alpha"
+    assert finding["links"]["finding"] == "/bff/v5/sentinel/findings/finding-critical"
+
+    assert body["interventions"][0]["interventionId"] == "intv-critical"
+    assert body["summary"]["findingCount"] == 1
+    assert body["summary"]["activeFindingCount"] == 1
+    assert body["summary"]["criticalFindingCount"] == 1
+    assert body["summary"]["pendingInterventionCount"] == 1
+    assert body["summary"]["highestSeverity"] == "critical"
+    assert body["summary"]["policy"] == "read_only_sentinel_pulse"
+    assert body["meta"]["surfaces"]["management_sentinel_pulse"]["source"] == "bff_composed"
+    assert body["meta"]["surfaces"]["sentinel_findings"]["source"] == "canonical"
+    assert body["meta"]["surfaces"]["v5_interventions"]["source"] == "canonical"
+    assert "GET /bff/v5/sentinel/findings" in body["meta"]["composition_sources"]
+
+
+def test_sentinel_pulse_requires_auth(monkeypatch) -> None:
+    client = _sentinel_pulse_client(monkeypatch)
+
+    response = client.get("/bff/management/sentinel-pulse")
+
+    assert response.status_code == 401, response.text
+
+
+def test_sentinel_pulse_cors_preflight() -> None:
+    client = TestClient(bff_main.app, raise_server_exceptions=False)
+    response = client.options(
+        "/bff/management/sentinel-pulse",
+        headers={
+            "Origin": LOVABLE_ORIGIN,
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "authorization",
+        },
+    )
+
+    assert response.status_code in {200, 204}
+    assert response.headers.get("access-control-allow-origin") == LOVABLE_ORIGIN
+
+
 def test_persona_league_heatmap() -> None:
     with tempfile.TemporaryDirectory() as td:
         original = bff_main.read_store

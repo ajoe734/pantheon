@@ -369,6 +369,89 @@ Result: 81 passed, 3 existing `datetime.utcnow()` deprecation warnings in
 
 ---
 
+## BFF-MGMT-DELTA-009 Management Sentinel Pulse Route
+
+Task: BFF-MGMT-DELTA-009
+Owner: Codex
+Reviewer: Claude
+
+### Scope
+
+Add a strict-live Management Console route for the sentinel first-screen pulse:
+
+```text
+GET /bff/management/sentinel-pulse?kind=&status=&severity=&q=&page_token=&page_size=
+```
+
+The route composes existing v5 sentinel findings and v5 interventions. It is
+read-only, does not remediate or mutate interventions, and does not introduce a
+new sentinel source of truth.
+
+### Contract
+
+The response uses the canonical aggregate envelope:
+
+```json
+{
+  "data": {
+    "id": "management-sentinel-pulse",
+    "items": [],
+    "findings": [],
+    "interventions": [],
+    "cards": [],
+    "summary": {},
+    "policy": "read_only_sentinel_pulse"
+  },
+  "items": [],
+  "findings": [],
+  "interventions": [],
+  "cards": [],
+  "summary": {},
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 20 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": [],
+    "policy": "read_only_sentinel_pulse"
+  }
+}
+```
+
+Finding rows include finding identifiers, kind, status, severity/risk level,
+title/summary, timestamps, target/source references, links to v5 sentinel
+detail, and the source record. Intervention rows expose intervention
+identifiers, status, severity/risk level, finding references, v5 links, and the
+source record.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Path registered in FastAPI/OpenAPI | Implemented |
+| 2 | Authenticated request returns HTTP 200 | Implemented |
+| 3 | Anonymous request returns HTTP 401 | Implemented |
+| 4 | CORS preflight succeeds for Lovable origin | Implemented |
+| 5 | Response keeps canonical aggregate envelope with `data`, `items`, `findings`, `interventions`, `cards`, `summary`, `page_info`, and `meta` | Implemented |
+| 6 | Supports `kind`, `status`, `severity`, `q`, `page_token`, and `page_size` | Implemented |
+| 7 | execute-plans exposes typed path and fetch helpers | Implemented |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_management_delta_routes.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
+
+### Validation
+
+```bash
+python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q
+```
+
+---
+
 ## DELTA-2 PM-12 Persona Performance Attribution Route
 
 Task: BFF-PM12-DELTA-002
