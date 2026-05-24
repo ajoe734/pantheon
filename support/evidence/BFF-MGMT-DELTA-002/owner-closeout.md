@@ -42,12 +42,12 @@ Commands run from `task/BFF-MGMT-DELTA-002` on 2026-05-24 after merging current
 
 ```bash
 python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q
-# 23 passed, 3 warnings in 10.42s
+# 23 passed, 3 warnings in 10.23s
 
-python3 -m compileall -q services/control-plane/bff/main.py services/control-plane/bff/test_bff_management_delta_routes.py
+python3 -m compileall -q services/control-plane/bff/main.py services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/tests/test_bff_pm12_persona_league.py
 # passed
 
-git diff --check
+git diff --check origin/dev...HEAD
 # passed
 ```
 
@@ -61,6 +61,10 @@ Warnings are existing `datetime.utcnow()` deprecation warnings in
 - The heatmap uses the existing PM-12 persona league composite score formula and
   records `_PM12_LEAGUE_FORMULA_VERSION` on both top-level payload data and
   individual cells.
+- After refreshing against the latest `origin/dev`, adjacent PM-12 invalid
+  parameter assertions were aligned with the new top-level BFF error envelope
+  shape (`error.code` plus retained `field`) introduced by the shared envelope
+  work.
 - The task branch was refreshed with `origin/dev` using a non-interactive merge
   commit so the review artifact and closeout evidence compose with adjacent
   BFF delta route work before publication.
