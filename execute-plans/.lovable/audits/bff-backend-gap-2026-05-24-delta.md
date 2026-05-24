@@ -144,8 +144,8 @@ git diff --check
 python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q
 ```
 
-Result: `git diff --check HEAD~1..HEAD` exited 0; focused
-route/live-wiring suite passed with 25 tests and 3 existing
+Result: `git diff --check HEAD~2..HEAD` exited 0; focused
+route/live-wiring suite passed with 31 tests and 3 existing
 `datetime.utcnow()` deprecation warnings in
 `services/control-plane/bff/read_store.py`.
 
