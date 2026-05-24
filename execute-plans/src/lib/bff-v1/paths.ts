@@ -122,6 +122,7 @@ export const paths = {
   managementPersonaLeague: () => `${BASE}/management/persona-league`,
   managementPersonaLeagueRankings: () => `${BASE}/management/persona-league/rankings`,
   managementPersonaLeagueTiers: () => `${BASE}/management/persona-league/tiers`,
+  managementPersonaLeagueHeatmap: () => `${BASE}/management/persona-league/heatmap`,
   managementQuarterlyRanking: () => `${BASE}/management/quarterly-ranking`,
   managementQuarterlyRankingFormula: () => `${BASE}/management/quarterly-ranking/formula`,
   managementQuarterlyRankingRecommendations: () => `${BASE}/management/quarterly-ranking/recommendations`,

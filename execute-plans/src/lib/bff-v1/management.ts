@@ -664,6 +664,112 @@ export interface ManagementPersonaLeagueTiersResponse {
   };
 }
 
+export interface ManagementPersonaLeagueHeatmapQuery {
+  state?: string;
+  archetype?: string;
+  q?: string;
+  bucket?: "hour" | "day" | "week" | string;
+  bucket_count?: number;
+  limit?: number;
+}
+
+export interface ManagementPersonaLeagueHeatmapBucket {
+  id: string;
+  bucketId: string;
+  bucket_id: string;
+  index: number;
+  label: string;
+  startAt: string;
+  start_at: string;
+  endAt: string;
+  end_at: string;
+  endExclusiveAt: string;
+  end_exclusive_at: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementPersonaLeagueHeatmapCell {
+  id: string;
+  personaId: string;
+  persona_id: string;
+  bucketId: string;
+  bucket_id: string;
+  bucketIndex: number;
+  bucket_index: number;
+  score: number;
+  compositeScore: number;
+  composite_score: number;
+  overallScore: number;
+  overall_score: number;
+  components: Record<string, number>;
+  metrics: Record<string, unknown>;
+  formulaVersion: string;
+  formula_version: string;
+  source: string;
+  observedTelemetryCount: number;
+  observed_telemetry_count: number;
+  latestTelemetryAt?: string | null;
+  latest_telemetry_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface ManagementPersonaLeagueHeatmapRow {
+  id: string;
+  personaId: string;
+  persona_id: string;
+  name?: string;
+  owner?: string;
+  state?: string;
+  risk?: string;
+  archetype?: string;
+  tier?: string;
+  tierId?: string;
+  tier_id?: string;
+  tierLabel?: string;
+  tier_label?: string;
+  latestScore?: number;
+  latest_score?: number;
+  runtimeIds: string[];
+  runtime_ids: string[];
+  cells: ManagementPersonaLeagueHeatmapCell[];
+  links?: Record<string, string | null | undefined>;
+  [key: string]: unknown;
+}
+
+export interface ManagementPersonaLeagueHeatmapResponse {
+  data: {
+    id: string;
+    heatmapId: string;
+    heatmap_id: string;
+    bucket: string;
+    buckets: ManagementPersonaLeagueHeatmapBucket[];
+    rows: ManagementPersonaLeagueHeatmapRow[];
+    cells: ManagementPersonaLeagueHeatmapCell[];
+    summary: Record<string, unknown>;
+    formulaVersion: string;
+    formula_version: string;
+    basis: string;
+    [key: string]: unknown;
+  };
+  items: ManagementPersonaLeagueHeatmapRow[];
+  rows: ManagementPersonaLeagueHeatmapRow[];
+  buckets: ManagementPersonaLeagueHeatmapBucket[];
+  cells: ManagementPersonaLeagueHeatmapCell[];
+  summary: Record<string, unknown>;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces?: Record<string, ManagementSurfaceRef>;
+    composition_sources?: string[];
+    policy?: string;
+    [key: string]: unknown;
+  };
+}
+
 export interface ManagementQuarterlyRankingQuery {
   quarter?: string;
   state?: string;
@@ -1617,6 +1723,12 @@ export function managementPersonaLeagueTiersPath(
   return withQuery(paths.managementPersonaLeagueTiers(), query);
 }
 
+export function managementPersonaLeagueHeatmapPath(
+  query?: ManagementPersonaLeagueHeatmapQuery,
+): string {
+  return withQuery(paths.managementPersonaLeagueHeatmap(), query);
+}
+
 export function managementQuarterlyRankingPath(
   query?: ManagementQuarterlyRankingQuery,
 ): string {
@@ -1896,6 +2008,25 @@ export async function fetchManagementPersonaLeagueTiers(
     throw new Error(`GET ${path} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementPersonaLeagueTiersResponse>;
+}
+
+export async function fetchManagementPersonaLeagueHeatmap(
+  query?: ManagementPersonaLeagueHeatmapQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementPersonaLeagueHeatmapResponse> {
+  const path = managementPersonaLeagueHeatmapPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementPersonaLeagueHeatmapResponse>;
 }
 
 export async function fetchManagementQuarterlyRanking(
