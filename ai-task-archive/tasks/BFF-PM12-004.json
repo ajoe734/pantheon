@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "task_id": "BFF-PM12-004",
+  "archived_at": "2026-05-23T08:59:32Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-PM12-004",
+    "title": "GET /bff/management/persona-league table",
+    "summary_zh": null,
+    "phase": "Sprint BFF-4 / EPIC-BFF-GAP-PM12",
+    "owner": "Codex2",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "BFF-B2-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#b34-pm-12-composition-sources",
+      "execute-plans/src/lib/bff-v1/management.ts",
+      "services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "Composes personas + strategy bindings + PnL + risk + execution metrics",
+      "FE Persona League table renders live"
+    ],
+    "next": "PR #449 merged at 834848a68f40; owner closeout verified PM12 persona-league focused pytest + final live wiring contract (10 passed).",
+    "last_update": "2026-05-23T08:59:32Z",
+    "review_notes_zh": [
+      "審查通過：persona-league 路由實作完整；3 項 PM12 測試 + 7 項 live-wiring contract 測試全數通過；6 條 acceptance criteria 均已驗證",
+      "後續追蹤事項：無"
+    ],
+    "review_file": "support/reviews/BFF-PM12-004-review-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T08:59:32Z",
+      "repository_id": "execute_plans",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-pm12-004",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-PM12-004",
+      "git_clean_required": false,
+      "commit": "3b5eaa4c5e9d7b75261746af75407072a1582e0a",
+      "commit_subject": "BFF-PM12-004: merge dev for closeout PR",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "merge refresh for task/BFF-PM12-004 closeout publication",
+        "Not changing": "persona-league runtime implementation, reviewer artifact, or owner evidence content",
+        "Composes with": "PR #449 auto-merge into dev after branch CI",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q (10 passed)",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-PM12-004",
+        "Reviewer": "Claude2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-PM12-004",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "f33f134c3230235facd1c1d0bc7fb88ddc35703c",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-PM12-004",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "PR #442 merged at 331e89a9; PM-12 persona league route ready for reviewer approval",
+      "status": "done",
+      "created_at": "2026-05-23T08:32:52Z",
+      "resolved_at": "2026-05-23T08:44:34Z"
+    },
+    {
+      "task_id": "BFF-PM12-004",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Review approved — all 6 acceptance criteria verified, 10 tests pass; returning to Codex2 for closeout",
+      "status": "done",
+      "created_at": "2026-05-23T08:44:34Z",
+      "resolved_at": "2026-05-23T08:59:33Z"
+    }
+  ],
+  "blockers": []
+}

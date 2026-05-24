@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "BFF-PM12-003",
+  "archived_at": "2026-05-23T10:08:56Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-PM12-003",
+    "title": "GET /bff/management/portfolio-book/pools pool summaries",
+    "summary_zh": null,
+    "phase": "Sprint BFF-4 / EPIC-BFF-GAP-PM12",
+    "owner": "Codex2",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "BFF-PM12-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#b34-pm-12-composition-sources",
+      "execute-plans/src/lib/bff-v1/management.ts",
+      "services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "Returns capital pool list + exposure + risk budget + PnL",
+      "FE Capital pool summary table renders live"
+    ],
+    "next": "Closed after PR #463 merged (a4a6cbd582f3e0c7b21a900f638b101d06a67a3f); closeout evidence recorded; verification: py_compile clean, portfolio-book contract 11 passed, PM-12 regression 7 passed.",
+    "last_update": "2026-05-23T10:08:56Z",
+    "review_notes_zh": [
+      "審查通過：route shape、composition logic、degraded-surface handling、auth gate、pagination、FE 合約及 OpenAPI 註冊均符合 B3-016 規格；11/11 合約測試通過，5/5 persona league 測試無回歸"
+    ],
+    "review_file": "support/reviews/BFF-PM12-003-review-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T10:08:56Z",
+      "repository_id": "execute_plans",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-pm12-003",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-PM12-003",
+      "git_clean_required": false,
+      "commit": "c551f5eff01ded5177699554c014595ac171528d",
+      "commit_subject": "BFF-PM12-003: record owner closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "support/evidence/BFF-PM12-003 owner closeout, Claude2 review artifact, and task brief closeout record",
+        "Not changing": "services/control-plane/bff/main.py runtime implementation or execute-plans client contract",
+        "Composes with": "PR #454 implementation merge and BFF-PM12-003 done transition",
+        "Verified": "python3 -m py_compile services/control-plane/bff/main.py; python3 -m pytest services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py -v (11 passed); python3 -m pytest services/control-plane/bff/tests/test_bff_pm12_persona_league.py -v (7 passed)",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-PM12-003",
+        "Reviewer": "Claude2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-PM12-003",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "9dbc291efc1c1c7cb110a314023ed0615bf3f81a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-PM12-003",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Implementation merged in PR #454 (merge 4d6ff8cb); ready for Claude2 review. Local validation: python3 -m pytest services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py; python3 -m py_compile services/control-plane/bff/main.py && python3 -m pytest services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/tests/test_bff_pm12_persona_league.py. GitHub checks passed: Commit trailers, Runtime mirror guard, Smoke acceptance.",
+      "status": "done",
+      "created_at": "2026-05-23T09:26:15Z",
+      "resolved_at": "2026-05-23T09:41:01Z"
+    },
+    {
+      "task_id": "BFF-PM12-003",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Review approved: all contract tests pass (11/11), py_compile clean, FE types complete, no issues found. Returning to Codex2 for closeout.",
+      "status": "done",
+      "created_at": "2026-05-23T09:41:01Z",
+      "resolved_at": "2026-05-23T10:08:57Z"
+    }
+  ],
+  "blockers": []
+}

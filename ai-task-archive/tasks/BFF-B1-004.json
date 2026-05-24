@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "task_id": "BFF-B1-004",
+  "archived_at": "2026-05-23T07:00:13Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-B1-004",
+    "title": "PATCH /bff/me/locale operator locale preference",
+    "summary_zh": null,
+    "phase": "Sprint BFF-1 / EPIC-BFF-GAP-P0",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BFF-B1-003"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#11-session-bootstrap;services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "Persists operator locale; /bff/me reflects new locale on next call;Validates locale code; returns typed error on invalid input;Idempotent for same locale value"
+    ],
+    "next": "Owner finalized: PATCH /bff/me/locale implemented and reviewed by Codex. pytest 6 locale + 39 full BFF suite passed. PR #418 (impl), #423 (review record), #424 (closeout) all merged into dev. Task complete.",
+    "last_update": "2026-05-23T07:00:13Z",
+    "review_notes_zh": [
+      "審查通過：PATCH /bff/me/locale 的 locale normalization、session persistence、匿名 401、missing/invalid payload 400、以及後續 GET /bff/me persistence 均有測試覆蓋；python3 -m pytest services/control-plane/bff/tests/test_bff_me_locale.py 與 python3 -m pytest services/control-plane/bff/tests/ 皆通過。"
+    ],
+    "review_file": "support/reviews/BFF-B1-004-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T07:00:13Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-b1-004",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-B1-004",
+      "git_clean_required": false,
+      "commit": "36cee0ad13fd02aa82fa8c45e5b7e3d39b140294",
+      "commit_subject": "BFF-B1-004: closeout PATCH /bff/me/locale",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Verified": "pytest 6 passed (locale) + 39 passed (full bff suite); PR #418 and PR #423 merged into dev",
+        "LLM-Agent": "Claude",
+        "Task-ID": "BFF-B1-004",
+        "Reviewer": "Codex"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-B1-004",
+      "ahead": 0,
+      "behind": 14,
+      "push_status": "behind",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "bc624273edde95d5e03dca95febf44ee62a8a697",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-B1-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation complete: PATCH /bff/me/locale endpoint (already in main.py), 6 tests in test_bff_me_locale.py, spec §16 added. All 39 BFF tests green. PR #418 merged to dev at 2026-05-23T06:21:25Z.",
+      "status": "done",
+      "created_at": "2026-05-23T06:21:41Z",
+      "resolved_at": "2026-05-23T06:26:49Z"
+    },
+    {
+      "task_id": "BFF-B1-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Codex review approved after local verification; review packet recorded in support/reviews/BFF-B1-004-review-codex.md.",
+      "status": "done",
+      "created_at": "2026-05-23T06:26:49Z",
+      "resolved_at": "2026-05-23T07:00:13Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "task_id": "BFF-B3-006",
+  "archived_at": "2026-05-23T09:55:51Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-B3-006",
+    "title": "GET /bff/management/evidence Evidence Explorer aggregate",
+    "summary_zh": null,
+    "phase": "Sprint BFF-3 / EPIC-BFF-GAP-MGMT",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BFF-B2-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#b3--p1-management-aggregate-apis",
+      "execute-plans/src/lib/bff-v1/management.ts",
+      "services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "Adapts /api/v1/knowledge/evidence into Management Evidence Explorer shape",
+      "Evidence rows include working links",
+      "FE Evidence Explorer renders live"
+    ],
+    "next": "Done: implementation PR #451, closeout PR #457, and done-gate PR #459 are merged to dev (HEAD f46a3c1c is ancestor of origin/dev d7c1b122); merge gate was verified manually because this task's execute-plans artifact is routed as repo execute_plans/main in the status registry. Verification rerun: BFF evidence 3 passed, execute-plans wiring 7 passed.",
+    "last_update": "2026-05-23T09:55:51Z",
+    "review_notes_zh": [
+      "審查通過：Evidence Explorer aggregate 實作完整，5 項驗收條件均達標，PR #451 已合併"
+    ],
+    "review_file": "support/reviews/BFF-B3-006-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T09:55:51Z",
+      "repository_id": "execute_plans",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-b3-006/execute-plans",
+      "repository_slug": "ajoe734/execute-plans",
+      "branch": "task/BFF-B3-006",
+      "git_clean_required": false,
+      "commit": "f46a3c1c5eb5eb98f84cf12596352c32cd79fabb",
+      "commit_subject": "BFF-B3-006: refresh done gate after dev advance",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "BFF-B3-006 owner closeout evidence.",
+        "Not changing": "implementation code, reviewed API behavior, or canonical architecture policy.",
+        "Composes with": "PR #458 dev advancement and open PR #459 done-gate closeout refresh.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-B3-006",
+        "Reviewer": "Claude",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/tests/test_bff_b3_management_evidence.py -q; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-B3-006",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-B3-006",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "PR #451 merged to dev (merge commit 117a00e7e092e724453a62ea11fc5d83423e3c54). Backend/FE contract validation passed; please review and approve status closeout.",
+      "status": "done",
+      "created_at": "2026-05-23T09:09:16Z",
+      "resolved_at": "2026-05-23T09:22:21Z"
+    },
+    {
+      "task_id": "BFF-B3-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: evidence aggregate backend+FE contract complete, all 5 acceptance criteria satisfied, PR #451 merged to dev",
+      "status": "done",
+      "created_at": "2026-05-23T09:22:21Z",
+      "resolved_at": "2026-05-23T09:55:51Z"
+    }
+  ],
+  "blockers": []
+}

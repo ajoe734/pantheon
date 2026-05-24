@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "task_id": "BFF-B6-003",
+  "archived_at": "2026-05-23T12:34:24Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-B6-003",
+    "title": "NL high-risk refusal policy",
+    "summary_zh": null,
+    "phase": "Sprint BFF-6 / EPIC-BFF-GAP-NL",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BFF-B6-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#b6--p2-management-natural-language-api",
+      "services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "Command-like high-risk prompts return refused=true with Human Inbox link in followups",
+      "Refusal does not call upstream model provider",
+      "Audit log records refusal reason"
+    ],
+    "next": "PR #493 merged into dev at 74124fd16465b589b8eed74d7acb4dc31b2463ae; owner closeout commit 2b9479420e75d98603e859f03612157b52e4a68f; verified python3 -m pytest services/control-plane/bff/tests/test_bff_b6_003_nl_high_risk_refusal.py services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py -q (15 passed).",
+    "last_update": "2026-05-23T12:34:24Z",
+    "review_notes_zh": [
+      "審查通過：NL 高風險拒絕策略實作完整",
+      "分類器在冪等性、surface collection、session 建立、SSE 前執行",
+      "所有 6 類高風險 pattern 定義正確",
+      "HTTP 403 回應含全部必要欄位",
+      "15 個測試全通過",
+      "無副作用（無 idempotency 記錄、無 Agora session、無 SSE）",
+      "audit event 已記錄"
+    ],
+    "review_file": "/tmp/bff-b6-003-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T12:34:24Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-b6-003",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-B6-003",
+      "git_clean_required": false,
+      "commit": "2b9479420e75d98603e859f03612157b52e4a68f",
+      "commit_subject": "BFF-B6-003: finalize NL high-risk refusal",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Verified": "python3 -m pytest services/control-plane/bff/tests/test_bff_b6_003_nl_high_risk_refusal.py services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py -q (15 passed)",
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-B6-003",
+        "Reviewer": "Claude"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-B6-003",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "74124fd16465b589b8eed74d7acb4dc31b2463ae",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-B6-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-23T12:13:02Z",
+      "resolved_at": "2026-05-23T12:13:11Z"
+    },
+    {
+      "task_id": "BFF-B6-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implementation committed and PR #492 opened with auto-merge enabled. Validation: python3 -m pytest services/control-plane/bff/tests/test_bff_b6_003_nl_high_risk_refusal.py services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py (15 passed).",
+      "status": "done",
+      "created_at": "2026-05-23T12:21:24Z",
+      "resolved_at": "2026-05-23T12:25:23Z"
+    },
+    {
+      "task_id": "BFF-B6-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: NL high-risk refusal policy is complete. All 15 tests pass, all 8 acceptance criteria met. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-23T12:25:23Z",
+      "resolved_at": "2026-05-23T12:34:25Z"
+    }
+  ],
+  "blockers": []
+}
