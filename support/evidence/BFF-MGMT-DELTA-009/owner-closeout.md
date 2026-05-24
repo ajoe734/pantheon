@@ -51,6 +51,23 @@ Result:
 services/control-plane/bff/read_store.py
 ```
 
+After merging `origin/task/BFF-MGMT-DELTA-009` into the refreshed task branch
+to preserve a normal non-force push path, the same focused gates were rerun:
+
+```bash
+git diff --check
+python3 -m py_compile services/control-plane/bff/main.py
+python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py \
+  services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q
+```
+
+Result:
+
+```text
+26 passed, 3 existing datetime.utcnow DeprecationWarnings in
+services/control-plane/bff/read_store.py
+```
+
 ## Closeout Notes
 
 - No new sentinel source of truth was introduced.
