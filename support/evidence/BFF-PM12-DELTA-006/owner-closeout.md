@@ -37,7 +37,7 @@ pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py \
 Result: 59 passed, with 3 existing `datetime.utcnow()` deprecation warnings in
 `services/control-plane/bff/read_store.py`.
 
-Owner closeout revalidation after syncing with current `origin/dev`:
+Owner closeout revalidation before opening closeout PR:
 
 ```bash
 git diff --check
@@ -47,6 +47,19 @@ python3 -m pytest services/control-plane/bff/test_bff_pm12_portfolio_book_contra
 ```
 
 Result: 59 passed, with 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
+Owner revalidation after refreshing the closeout branch with `origin/dev` at
+`a5d7182c`:
+
+```bash
+git diff --check
+python3 -m pytest services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py \
+  services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py \
+  services/control-plane/bff/tests/test_auth_jwks_strict.py -q
+```
+
+Result: 62 passed, with 3 existing `datetime.utcnow()` deprecation warnings in
 `services/control-plane/bff/read_store.py`.
 
 ## Closeout Notes
