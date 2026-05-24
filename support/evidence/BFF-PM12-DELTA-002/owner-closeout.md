@@ -12,6 +12,9 @@ delivery record. The implementation PR was merged as #514 at `d35bcbea`, and
 the reviewer approval is recorded in
 `support/reviews/BFF-PM12-DELTA-002-review-claude2.md`.
 
+The closeout PR branch was refreshed against `origin/dev` at `e8f5c83d` after
+GitHub reported the PR branch behind the merge target.
+
 ## Delivered Behavior
 
 - Dedicated FastAPI route for persona-grouped PM-12 performance attribution.
@@ -29,5 +32,5 @@ the reviewer approval is recorded in
 pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py
 ```
 
-Result: 46 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+Result after refresh: 49 passed, 3 existing `datetime.utcnow()` deprecation warnings in
 `services/control-plane/bff/read_store.py`.
