@@ -156,3 +156,89 @@ pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py se
 
 Result: 43 passed, 3 existing `datetime.utcnow()` deprecation warnings in
 `services/control-plane/bff/read_store.py`.
+
+---
+
+## DELTA-4 PM-12 Capital Pool Performance Attribution Route
+
+Task: BFF-PM12-DELTA-004
+Owner: Codex2
+Reviewer: Claude2
+
+### Scope
+
+Add a dedicated capital-pool grouped attribution route for execute-plans strict
+live rendering:
+
+```text
+GET /bff/management/performance-attribution/by-pool?period=&page_token=&page_size=
+```
+
+The route reuses the PM-12 performance attribution composition logic and fixes
+the attribution dimension to `pool`. It does not introduce a new performance
+source of truth and does not change the generic
+`GET /bff/management/performance-attribution` route.
+
+### Contract
+
+The response uses the canonical aggregate envelope:
+
+```json
+{
+  "data": {
+    "id": "pm12-performance-attribution-by-pool",
+    "period": "latest",
+    "dimensions": ["pool"],
+    "items": [],
+    "rows": [],
+    "summary": {}
+  },
+  "items": [],
+  "rows": [],
+  "summary": {},
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 50 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": [],
+    "policy": "read_only_performance_attribution"
+  }
+}
+```
+
+Rows keep the existing attribution row schema: `dimension`,
+`dimensionKey` / `dimension_key`, `label`, `rank`, `period`, nested `metrics`,
+top-level contribution fields, `sourceRefs` / `source_refs`, and capital-pool
+drilldown links when available.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Path registered in FastAPI/OpenAPI | Implemented |
+| 2 | Attribution grouped by capital pool dimension | Implemented |
+| 3 | Accepts `period`, `page_token`, and `page_size` query parameters | Implemented |
+| 4 | Anonymous request returns HTTP 401 | Implemented |
+| 5 | Authenticated request returns HTTP 200 | Implemented |
+| 6 | Response keeps canonical aggregate envelope | Implemented |
+| 7 | CORS preflight returns HTTP 204 | Implemented |
+| 8 | Focused pytest case covers `attribution_by_pool` | Implemented |
+| 9 | execute-plans exposes typed path and fetch helpers | Implemented |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
+
+### Validation
+
+```bash
+pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py
+```
+
+Result: 46 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.

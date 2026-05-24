@@ -27703,6 +27703,26 @@ async def bff_management_performance_attribution_by_persona(
     )
 
 
+@app.get("/bff/management/performance-attribution/by-pool")
+async def bff_management_performance_attribution_by_pool(
+    period: str = Query(default="latest"),
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 performance attribution grouped by capital pool."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _pm12_performance_attribution_response(
+        dimensions=["pool"],
+        period=period,
+        page_token=page_token,
+        page_size=page_size,
+        data_id="pm12-performance-attribution-by-pool",
+        surface_key="performance_attribution_by_pool",
+    )
+
+
 @app.post("/bff/personas/{persona_id}/actions/{action_id}", status_code=202)
 async def bff_persona_action(
     persona_id: str,
