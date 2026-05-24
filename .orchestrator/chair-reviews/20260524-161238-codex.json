@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Idle capacity exists and no provider-wide guardrail is active; current blocked or human-gate parents are excluded from sidecar generation.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "OPS-BFF-LUPIN-DEV-REDEPLOY-20260524",
+    "PROD-WRITES-001-V2",
+    "LIVE-SCALE-001-V2"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "OPS-BFF-LUPIN-DEV-REDEPLOY-20260524",
+    "OPS-AUTO-COMMIT-FIX-001",
+    "OPS-TASK-BRANCH-CLEANUP-20260524"
+  ]
+}
