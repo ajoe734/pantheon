@@ -436,3 +436,88 @@ pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py se
 
 Result: 46 passed, 3 existing `datetime.utcnow()` deprecation warnings in
 `services/control-plane/bff/read_store.py`.
+
+---
+
+## DELTA-6 PM-12 Portfolio Book Exposure Route
+
+Task: BFF-PM12-DELTA-006
+Owner: Codex2
+Reviewer: Claude2
+
+### Scope
+
+Add a dedicated portfolio-book exposure route for execute-plans strict live
+rendering:
+
+```text
+GET /bff/management/portfolio-book/exposure?status=&risk_policy_ref=&capital_pool_id=&page_token=&page_size=
+```
+
+The route reuses the existing PM-12 portfolio-book pool composition and exposes
+the risk-budget / current-exposure view as a first-class read-only aggregate.
+It does not introduce a new exposure source of truth and does not change
+`GET /bff/management/portfolio-book/pools`.
+
+### Contract
+
+The response uses the canonical aggregate envelope:
+
+```json
+{
+  "data": {
+    "id": "pm12-portfolio-book-exposure",
+    "summary": {},
+    "items": [],
+    "exposures": []
+  },
+  "items": [],
+  "exposures": [],
+  "summary": {},
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 50 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": [],
+    "policy": "read_only_portfolio_exposure"
+  }
+}
+```
+
+Exposure rows keep the portfolio-book pool identifiers and include
+`risk_budget` / `riskBudget`, `current_exposure` / `currentExposure`,
+`risk_budget_utilization` / `riskBudgetUtilization`, `risk_state` /
+`riskState`, `available_budget` / `availableBudget`, source refs, and capital
+pool drilldown links when available.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Path registered in FastAPI/OpenAPI | Implemented |
+| 2 | Exposure rows compose from portfolio-book pool sources | Implemented |
+| 3 | Accepts `status`, `risk_policy_ref`, `capital_pool_id`, `page_token`, and `page_size` query parameters | Implemented |
+| 4 | Anonymous request returns HTTP 401 | Implemented |
+| 5 | Authenticated request returns HTTP 200 | Implemented |
+| 6 | Response keeps canonical aggregate envelope | Implemented |
+| 7 | CORS preflight returns HTTP 204 | Implemented |
+| 8 | Focused pytest cases cover exposure rollup, filter, auth, and preflight | Implemented |
+| 9 | execute-plans exposes typed path and fetch helpers | Implemented |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
+
+### Validation
+
+```bash
+pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py
+```
+
+Result: 53 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
