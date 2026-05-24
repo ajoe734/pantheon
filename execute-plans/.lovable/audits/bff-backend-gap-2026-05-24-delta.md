@@ -52,6 +52,51 @@ python3 -m pytest services/control-plane/bff/tests/test_bff_pm12_persona_league.
 Result: 62 passed, 3 existing `datetime.utcnow()` deprecation warnings in
 `services/control-plane/bff/read_store.py`.
 
+## BFF-MGMT-DELTA-006
+
+Route:
+
+```text
+GET /bff/management/incident-timeline
+```
+
+Purpose:
+
+Provide a strict-live Management Console route for incident timeline rendering.
+The backend route is a read-only aggregate over the existing IncidentCase read
+surface used by `/bff/incidents`; it preserves incident evidence fields and
+adds chronological timeline fields plus severity buckets for high, medium, and
+low incidents.
+
+Frontend contract:
+
+- `paths.managementIncidentTimeline()`
+- `managementIncidentTimelinePath(query)`
+- `fetchManagementIncidentTimeline(query, init, baseUrl)`
+
+Backend acceptance:
+
+- unauthenticated request: HTTP 401
+- authenticated request: HTTP 200
+- CORS preflight: HTTP 204
+- response envelope: `data`, `items`, `rows`, `incidents`, `events`,
+  `summary`, `severityBuckets`, `page_info`, `meta`
+- `data.id`: `management-incident-timeline`
+- `meta.policy`: `read_only_incident_timeline`
+- rows are sorted by occurrence time and include `severityBucket` /
+  `severity_bucket`
+- `summary.severityBuckets` exposes `high`, `medium`, and `low`
+- no new incident source of truth; composed from IncidentCase read surfaces
+
+Validation:
+
+```bash
+pytest -q services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py
+```
+
+Result: 71 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
 ## BFF-PM12-DELTA-002
 
 Route:

@@ -22277,6 +22277,9 @@ def _management_strategy_allocation_response(
 
 _MANAGEMENT_RISK_RADAR_STATES = {"ok", "watch", "critical", "unknown"}
 _MANAGEMENT_RISK_RADAR_SEVERITY = {"critical": 0, "watch": 1, "unknown": 2, "ok": 3}
+_MANAGEMENT_INCIDENT_SEVERITY_BUCKETS = ("high", "medium", "low")
+_MANAGEMENT_INCIDENT_HIGH_SEVERITIES = {"critical", "high", "sev1", "sev2", "p0", "p1"}
+_MANAGEMENT_INCIDENT_MEDIUM_SEVERITIES = {"medium", "moderate", "warning", "warn", "sev3", "p2"}
 
 
 def _management_risk_metric_status(
@@ -22695,6 +22698,277 @@ def _management_risk_radar_response(
     }
 
 
+def _management_incident_severity_bucket(severity: Any) -> str:
+    normalized = str(severity or "").strip().lower()
+    if normalized in _MANAGEMENT_INCIDENT_HIGH_SEVERITIES:
+        return "high"
+    if normalized in _MANAGEMENT_INCIDENT_MEDIUM_SEVERITIES:
+        return "medium"
+    return "low"
+
+
+def _management_incident_time(incident: Dict[str, Any]) -> Optional[str]:
+    value = _management_first_non_empty(
+        incident.get("opened_at"),
+        incident.get("openedAt"),
+        incident.get("created_at"),
+        incident.get("createdAt"),
+        incident.get("submitted_at"),
+        incident.get("submittedAt"),
+        incident.get("updated_at"),
+        incident.get("updatedAt"),
+        incident.get("resolved_at"),
+        incident.get("resolvedAt"),
+    )
+    return str(value) if value not in (None, "") else None
+
+
+def _management_incident_sort_key(item: Dict[str, Any]) -> tuple[datetime, str]:
+    parsed = _audit_datetime(item.get("occurred_at") or item.get("created_at") or item.get("opened_at"))
+    return (
+        parsed or datetime.min.replace(tzinfo=timezone.utc),
+        str(item.get("incident_id") or item.get("id") or ""),
+    )
+
+
+def _management_incident_timeline_item(incident: Dict[str, Any]) -> Dict[str, Any]:
+    payload = _project_bff_incident_case(incident)
+    incident_id = str(payload.get("incident_id") or payload.get("id") or "").strip()
+    severity = str(payload.get("severity") or "low").strip().lower() or "low"
+    severity_bucket = _management_incident_severity_bucket(severity)
+    occurred_at = _management_incident_time(payload)
+    updated_at = _management_first_non_empty(
+        payload.get("updated_at"),
+        payload.get("updatedAt"),
+        payload.get("resolved_at"),
+        payload.get("resolvedAt"),
+        occurred_at,
+    )
+    runtime_id = str(payload.get("runtime_id") or "").strip()
+    deployment_plan_id = str(payload.get("deployment_plan_id") or "").strip()
+    capital_pool_id = str(payload.get("capital_pool_id") or payload.get("affected_pool_id") or "").strip()
+    persona_binding_id = str(payload.get("persona_capital_binding_id") or "").strip()
+    artifact_id = str(payload.get("artifact_id") or "").strip()
+    telemetry_event_ids = [
+        str(value)
+        for value in (payload.get("telemetry_event_ids") or [])
+        if str(value or "").strip()
+    ]
+    item = {
+        **payload,
+        "id": payload.get("id") or incident_id,
+        "incidentId": incident_id,
+        "incident_id": incident_id,
+        "timelineId": f"incident-timeline-{incident_id}" if incident_id else None,
+        "timeline_id": f"incident-timeline-{incident_id}" if incident_id else None,
+        "title": payload.get("title") or incident_id or "Untitled incident",
+        "status": str(payload.get("status") or "unknown").strip().lower() or "unknown",
+        "severity": severity,
+        "severityBucket": severity_bucket,
+        "severity_bucket": severity_bucket,
+        "occurredAt": occurred_at,
+        "occurred_at": occurred_at,
+        "updatedAt": updated_at,
+        "updated_at": updated_at,
+        "runtimeId": runtime_id or None,
+        "runtime_id": runtime_id or None,
+        "deploymentPlanId": deployment_plan_id or None,
+        "deployment_plan_id": deployment_plan_id or None,
+        "capitalPoolId": capital_pool_id or None,
+        "capital_pool_id": capital_pool_id or None,
+        "personaCapitalBindingId": persona_binding_id or None,
+        "persona_capital_binding_id": persona_binding_id or None,
+        "artifactId": artifact_id or None,
+        "artifact_id": artifact_id or None,
+        "telemetryEventIds": telemetry_event_ids,
+        "telemetry_event_ids": telemetry_event_ids,
+        "lineageRef": payload.get("lineage_ref"),
+        "lineage_ref": payload.get("lineage_ref"),
+        "evidenceSummary": payload.get("evidence_summary"),
+        "evidence_summary": payload.get("evidence_summary"),
+        "sourceRefs": {
+            "incidentIds": [incident_id] if incident_id else [],
+            "incident_ids": [incident_id] if incident_id else [],
+            "runtimeIds": [runtime_id] if runtime_id else [],
+            "runtime_ids": [runtime_id] if runtime_id else [],
+            "deploymentPlanIds": [deployment_plan_id] if deployment_plan_id else [],
+            "deployment_plan_ids": [deployment_plan_id] if deployment_plan_id else [],
+            "capitalPoolIds": [capital_pool_id] if capital_pool_id else [],
+            "capital_pool_ids": [capital_pool_id] if capital_pool_id else [],
+            "personaCapitalBindingIds": [persona_binding_id] if persona_binding_id else [],
+            "persona_capital_binding_ids": [persona_binding_id] if persona_binding_id else [],
+            "artifactIds": [artifact_id] if artifact_id else [],
+            "artifact_ids": [artifact_id] if artifact_id else [],
+            "telemetryEventIds": telemetry_event_ids,
+            "telemetry_event_ids": telemetry_event_ids,
+        },
+        "source_refs": {
+            "incident_ids": [incident_id] if incident_id else [],
+            "runtime_ids": [runtime_id] if runtime_id else [],
+            "deployment_plan_ids": [deployment_plan_id] if deployment_plan_id else [],
+            "capital_pool_ids": [capital_pool_id] if capital_pool_id else [],
+            "persona_capital_binding_ids": [persona_binding_id] if persona_binding_id else [],
+            "artifact_ids": [artifact_id] if artifact_id else [],
+            "telemetry_event_ids": telemetry_event_ids,
+        },
+        "links": {
+            "incident": _management_link("/bff/incidents", incident_id),
+            "runtime": _management_link("/bff/runtimes", runtime_id or None),
+            "deployment": _management_link("/bff/deployments", deployment_plan_id or None),
+            "capitalPool": _management_link("/bff/capital-pools", capital_pool_id or None),
+            "capital_pool": _management_link("/bff/capital-pools", capital_pool_id or None),
+        },
+    }
+    return item
+
+
+def _management_incident_timeline_matches(
+    item: Dict[str, Any],
+    *,
+    status_filter: set[str],
+    severity_filter: set[str],
+    pool_filter: set[str],
+    runtime_filter: set[str],
+) -> bool:
+    if status_filter and str(item.get("status") or "").lower() not in status_filter:
+        return False
+    if severity_filter and (
+        str(item.get("severity") or "").lower() not in severity_filter
+        and str(item.get("severity_bucket") or "").lower() not in severity_filter
+    ):
+        return False
+    if pool_filter and str(item.get("capital_pool_id") or "") not in pool_filter:
+        return False
+    if runtime_filter and str(item.get("runtime_id") or "") not in runtime_filter:
+        return False
+    return True
+
+
+def _management_incident_timeline_response(
+    *,
+    status: Optional[str],
+    severity: Optional[str],
+    capital_pool_id: Optional[str],
+    affected_pool_id: Optional[str],
+    runtime_id: Optional[str],
+    sort_order: Optional[str],
+    page_token: Optional[str],
+    page_size: int,
+) -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    incident_surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
+    source_surfaces = {"incidents": incident_surface}
+
+    incidents = _list_bff_incidents()
+    status_filter = {item.lower() for item in (_split_csv_query(status) or [])}
+    severity_filter = {item.lower() for item in (_split_csv_query(severity) or [])}
+    pool_filter = set(_split_csv_query(capital_pool_id or affected_pool_id) or [])
+    runtime_filter = set(_split_csv_query(runtime_id) or [])
+    items = [
+        item
+        for item in (_management_incident_timeline_item(incident) for incident in incidents)
+        if _management_incident_timeline_matches(
+            item,
+            status_filter=status_filter,
+            severity_filter=severity_filter,
+            pool_filter=pool_filter,
+            runtime_filter=runtime_filter,
+        )
+    ]
+    reverse = str(sort_order or "asc").strip().lower() == "desc"
+    items.sort(key=_management_incident_sort_key, reverse=reverse)
+    for sequence, item in enumerate(items, start=1):
+        item["sequence"] = sequence
+        item["timelineSequence"] = sequence
+        item["timeline_sequence"] = sequence
+
+    if incident_surface.get("status") == "unavailable":
+        items = []
+
+    total = len(items)
+    page_items, next_page_token = _page_slice(items, page_token, page_size)
+    severity_buckets = {bucket: 0 for bucket in _MANAGEMENT_INCIDENT_SEVERITY_BUCKETS}
+    for item in items:
+        bucket = str(item.get("severity_bucket") or "low")
+        severity_buckets[bucket if bucket in severity_buckets else "low"] += 1
+    status_counts = _management_count_by(items, "status")
+    timeline_surface = _aggregate_group_surface(
+        "incident_timeline",
+        list(source_surfaces.values()),
+        snapshot_at=snapshot_at,
+        unavailable_message="Incident timeline aggregate unavailable.",
+        degraded_message="Incident timeline is available, but the incident read surface is degraded.",
+    )
+    first_incident_at = items[0].get("occurred_at") if items else None
+    latest_incident_at = items[-1].get("occurred_at") if items else None
+    if reverse:
+        first_incident_at, latest_incident_at = latest_incident_at, first_incident_at
+    summary = {
+        "incidentCount": total,
+        "incident_count": total,
+        "returnedIncidentCount": len(page_items),
+        "returned_incident_count": len(page_items),
+        "activeIncidentCount": sum(1 for item in items if item.get("status") in {"open", "in_progress"}),
+        "active_incident_count": sum(1 for item in items if item.get("status") in {"open", "in_progress"}),
+        "resolvedIncidentCount": sum(1 for item in items if item.get("status") == "resolved"),
+        "resolved_incident_count": sum(1 for item in items if item.get("status") == "resolved"),
+        "highSeverityCount": severity_buckets["high"],
+        "high_severity_count": severity_buckets["high"],
+        "mediumSeverityCount": severity_buckets["medium"],
+        "medium_severity_count": severity_buckets["medium"],
+        "lowSeverityCount": severity_buckets["low"],
+        "low_severity_count": severity_buckets["low"],
+        "severityBuckets": severity_buckets,
+        "severity_buckets": severity_buckets,
+        "byStatus": status_counts,
+        "by_status": status_counts,
+        "firstIncidentAt": first_incident_at,
+        "first_incident_at": first_incident_at,
+        "latestIncidentAt": latest_incident_at,
+        "latest_incident_at": latest_incident_at,
+        "sortOrder": "desc" if reverse else "asc",
+        "sort_order": "desc" if reverse else "asc",
+        "basis": "incident_case_opened_at_chronology",
+    }
+    data = {
+        "id": "management-incident-timeline",
+        "items": page_items,
+        "rows": page_items,
+        "incidents": page_items,
+        "events": page_items,
+        "summary": summary,
+        "severityBuckets": severity_buckets,
+        "severity_buckets": severity_buckets,
+    }
+    return {
+        "data": data,
+        "items": page_items,
+        "rows": page_items,
+        "incidents": page_items,
+        "events": page_items,
+        "summary": summary,
+        "severityBuckets": severity_buckets,
+        "severity_buckets": severity_buckets,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": page_size,
+        },
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "incident_timeline": timeline_surface,
+                **source_surfaces,
+            },
+            "composition_sources": [
+                "GET /bff/incidents",
+                "GET /api/v1/incidents",
+            ],
+            "policy": "read_only_incident_timeline",
+        },
+    }
+
+
 @app.get("/bff/management/strategy-allocation")
 async def bff_management_strategy_allocation(
     strategy_id: Optional[str] = None,
@@ -22736,6 +23010,33 @@ async def bff_management_risk_radar(
         strategy_id=strategy_id,
         capital_pool_id=capital_pool_id,
         risk_state=risk_state,
+        page_token=page_token,
+        page_size=page_size,
+    )
+
+
+@app.get("/bff/management/incident-timeline")
+async def bff_management_incident_timeline(
+    status: Optional[str] = None,
+    severity: Optional[str] = None,
+    capital_pool_id: Optional[str] = None,
+    affected_pool_id: Optional[str] = None,
+    runtime_id: Optional[str] = None,
+    sort_order: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: read-only Management Console incident chronology."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _management_incident_timeline_response(
+        status=status,
+        severity=severity,
+        capital_pool_id=capital_pool_id,
+        affected_pool_id=affected_pool_id,
+        runtime_id=runtime_id,
+        sort_order=sort_order,
         page_token=page_token,
         page_size=page_size,
     )
