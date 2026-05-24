@@ -59,3 +59,15 @@ git diff --check
   assertion that still expected the pre-`BFF-INFRA-ENVELOPE-001` `detail`
   error shape. The test was narrowly updated to assert the current top-level
   Pack-D error envelope without changing route behavior.
+
+## Publication Refresh
+
+PR #528 reported `BEHIND` after `BFF-MGMT-DELTA-002` merged into `dev`. The
+task branch was refreshed again with `origin/dev` using a non-interactive merge
+on 2026-05-24.
+
+- Dev refresh merge commit: `848b97c8bbf6d8f055f431923d3018fcf69dc76d`
+- Merged dev commit: `0c34ebc8` (`BFF-MGMT-DELTA-002`)
+- Post-refresh verification:
+  - `pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py` - 53 passed, 3 existing `datetime.utcnow()` deprecation warnings
+  - `git diff --check` - passed
