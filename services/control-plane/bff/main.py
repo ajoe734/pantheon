@@ -167,6 +167,17 @@ _LOVABLE_PREVIEW_ORIGIN_PATTERN = re.compile(
 )
 
 
+class _PantheonCORSMiddleware(CORSMiddleware):
+    def preflight_response(self, request_headers: Any) -> Response:
+        response = super().preflight_response(request_headers)
+        if response.status_code != 200:
+            return response
+        headers = dict(response.headers)
+        headers.pop("content-length", None)
+        headers.pop("content-type", None)
+        return Response(status_code=204, headers=headers)
+
+
 def _normalized_origin(origin: str) -> str:
     return origin.strip().rstrip("/")
 
@@ -235,7 +246,7 @@ def _build_bff_app() -> FastAPI:
         )
         if preview_regex:
             middleware_kwargs["allow_origin_regex"] = preview_regex
-        built_app.add_middleware(CORSMiddleware, **middleware_kwargs)
+        built_app.add_middleware(_PantheonCORSMiddleware, **middleware_kwargs)
     return built_app
 
 
@@ -27533,19 +27544,16 @@ async def bff_management_quarterly_ranking_recommendations(
     }
 
 
-@app.get("/bff/management/performance-attribution")
-async def bff_management_performance_attribution(
-    dimension: Optional[str] = Query(default=None),
-    period: str = Query(default="latest"),
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=50, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: PM-12 performance attribution by persona/strategy/pool/asset/broker/runtime/regime."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
+def _pm12_performance_attribution_response(
+    *,
+    dimensions: List[str],
+    period: str,
+    page_token: Optional[str],
+    page_size: int,
+    data_id: str = "pm12-performance-attribution",
+    surface_key: str = "performance_attribution",
+) -> Dict[str, Any]:
     snapshot_at = utc_now()
-    dimensions = _pm12_normalize_attribution_dimensions(dimension)
     period_key = str(period or "").strip() or "latest"
     sources = _pm12_performance_attribution_sources()
     facts = _pm12_performance_attribution_facts(sources, period_key)
@@ -27574,12 +27582,18 @@ async def bff_management_performance_attribution(
         "strategies": _dataset_surface_status("strategy_specs", snapshot_at=snapshot_at),
     }
     attribution_surface = _aggregate_group_surface(
-        "performance_attribution",
+        surface_key,
         list(source_surfaces.values()),
         snapshot_at=snapshot_at,
         unavailable_message="Performance attribution aggregate unavailable.",
         degraded_message="Performance attribution is degraded because one or more source surfaces are degraded.",
     )
+    surfaces = {
+        surface_key: attribution_surface,
+        **source_surfaces,
+    }
+    if surface_key != "performance_attribution":
+        surfaces["performance_attribution"] = attribution_surface
     summary = {
         "period": period_key,
         "dimensions": dimensions,
@@ -27614,7 +27628,7 @@ async def bff_management_performance_attribution(
         "basis": "latest_runtime_telemetry_snapshot",
     }
     data = {
-        "id": "pm12-performance-attribution",
+        "id": data_id,
         "period": period_key,
         "dimensions": dimensions,
         "items": page_items,
@@ -27633,10 +27647,7 @@ async def bff_management_performance_attribution(
         },
         "meta": {
             **_snapshot_meta(snapshot_at),
-            "surfaces": {
-                "performance_attribution": attribution_surface,
-                **source_surfaces,
-            },
+            "surfaces": surfaces,
             "composition_sources": [
                 "GET /api/v1/runtime-bindings",
                 "GET /api/v1/telemetry/{runtime_id}/summary",
@@ -27651,6 +27662,45 @@ async def bff_management_performance_attribution(
             "policy": "read_only_performance_attribution",
         },
     }
+
+
+@app.get("/bff/management/performance-attribution")
+async def bff_management_performance_attribution(
+    dimension: Optional[str] = Query(default=None),
+    period: str = Query(default="latest"),
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 performance attribution by persona/strategy/pool/asset/broker/runtime/regime."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _pm12_performance_attribution_response(
+        dimensions=_pm12_normalize_attribution_dimensions(dimension),
+        period=period,
+        page_token=page_token,
+        page_size=page_size,
+    )
+
+
+@app.get("/bff/management/performance-attribution/by-persona")
+async def bff_management_performance_attribution_by_persona(
+    period: str = Query(default="latest"),
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: PM-12 performance attribution grouped by persona."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _pm12_performance_attribution_response(
+        dimensions=["persona"],
+        period=period,
+        page_token=page_token,
+        page_size=page_size,
+        data_id="pm12-performance-attribution-by-persona",
+        surface_key="performance_attribution_by_persona",
+    )
 
 
 @app.post("/bff/personas/{persona_id}/actions/{action_id}", status_code=202)

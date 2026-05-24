@@ -1229,6 +1229,11 @@ export interface ManagementPerformanceAttributionQuery {
   page_size?: number;
 }
 
+export type ManagementPerformanceAttributionByPersonaQuery = Omit<
+  ManagementPerformanceAttributionQuery,
+  "dimension"
+>;
+
 export interface ManagementPerformanceAttributionMetrics {
   runtimeCount: number;
   runtime_count: number;
@@ -1857,6 +1862,12 @@ export function managementPerformanceAttributionPath(
   return withQuery(paths.managementPerformanceAttribution(), query);
 }
 
+export function managementPerformanceAttributionByPersonaPath(
+  query?: ManagementPerformanceAttributionByPersonaQuery,
+): string {
+  return withQuery(paths.managementPerformanceAttributionByPersona(), query);
+}
+
 export async function fetchManagementCockpit(
   init?: RequestInit,
   baseUrl = "",
@@ -2216,6 +2227,25 @@ export async function fetchManagementPerformanceAttribution(
   baseUrl = "",
 ): Promise<ManagementPerformanceAttributionResponse> {
   const path = managementPerformanceAttributionPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementPerformanceAttributionResponse>;
+}
+
+export async function fetchManagementPerformanceAttributionByPersona(
+  query?: ManagementPerformanceAttributionByPersonaQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementPerformanceAttributionResponse> {
+  const path = managementPerformanceAttributionByPersonaPath(query);
   const headers = new Headers(init?.headers);
   headers.set("Accept", "application/json");
   const response = await fetch(`${baseUrl}${path}`, {
