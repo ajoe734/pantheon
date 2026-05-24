@@ -393,6 +393,125 @@ export interface ManagementHiqBacklogResponse {
   };
 }
 
+export interface ManagementInterventionStreamQuery {
+  persona_id?: string;
+  personaId?: string;
+  status?: string;
+  kind?: string;
+  q?: string;
+  window_hours?: number;
+  windowHours?: number;
+  page_token?: string;
+  page_size?: number;
+}
+
+export interface ManagementInterventionStreamItem {
+  id: string;
+  eventId: string;
+  event_id: string;
+  eventType: string;
+  event_type: string;
+  eventSource: string;
+  event_source: string;
+  sourceType: "intervention" | string;
+  source_type: "intervention" | string;
+  sourceDataset: string;
+  source_dataset: string;
+  interventionId: string;
+  intervention_id: string;
+  personaId?: string | null;
+  persona_id?: string | null;
+  runtimeId?: string | null;
+  runtime_id?: string | null;
+  strategyId?: string | null;
+  strategy_id?: string | null;
+  kind: string;
+  status: string;
+  priority?: string | null;
+  riskLevel?: string | null;
+  risk_level?: string | null;
+  severity?: string | null;
+  occurredAt?: string | null;
+  occurred_at?: string | null;
+  createdAt?: string | null;
+  created_at?: string | null;
+  updatedAt?: string | null;
+  updated_at?: string | null;
+  streamSequence?: number;
+  stream_sequence?: number;
+  actor?: string | null;
+  title: string;
+  summary?: string | null;
+  target?: Record<string, unknown>;
+  sourceRefs?: Record<string, unknown>;
+  source_refs?: Record<string, unknown>;
+  links?: Record<string, string | null | undefined>;
+  sourceRecord?: Record<string, unknown>;
+  source_record?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface ManagementInterventionStreamSummary {
+  eventCount: number;
+  event_count: number;
+  returnedEventCount: number;
+  returned_event_count: number;
+  interventionCount: number;
+  intervention_count: number;
+  personaCount: number;
+  persona_count: number;
+  windowHours: number;
+  window_hours: number;
+  windowStartAt: string;
+  window_start_at: string;
+  windowEndAt: string;
+  window_end_at: string;
+  latestAt?: string | null;
+  latest_at?: string | null;
+  byPersona: Record<string, number>;
+  by_persona: Record<string, number>;
+  byStatus: Record<string, number>;
+  by_status: Record<string, number>;
+  byKind: Record<string, number>;
+  by_kind: Record<string, number>;
+  byEventSource: Record<string, number>;
+  by_event_source: Record<string, number>;
+  policy: string;
+  basis: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementInterventionStreamResponse {
+  data: {
+    id: "management-intervention-stream" | string;
+    items: ManagementInterventionStreamItem[];
+    rows: ManagementInterventionStreamItem[];
+    events: ManagementInterventionStreamItem[];
+    stream: ManagementInterventionStreamItem[];
+    summary: ManagementInterventionStreamSummary;
+    policy?: string;
+    [key: string]: unknown;
+  };
+  items: ManagementInterventionStreamItem[];
+  rows: ManagementInterventionStreamItem[];
+  events: ManagementInterventionStreamItem[];
+  stream: ManagementInterventionStreamItem[];
+  summary: ManagementInterventionStreamSummary;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces?: Record<string, ManagementSurfaceRef>;
+    composition_sources?: string[];
+    policy?: string;
+    filters?: Record<string, unknown>;
+    [key: string]: unknown;
+  };
+}
+
 export interface ManagementTradingPulseSummary {
   runtimeCount: number;
   runtime_count: number;
@@ -3138,6 +3257,12 @@ export function managementHiqBacklogPath(query?: ManagementHiqBacklogQuery): str
   return withQuery(paths.managementHiqBacklog(), query);
 }
 
+export function managementInterventionStreamPath(
+  query?: ManagementInterventionStreamQuery,
+): string {
+  return withQuery(paths.managementInterventionStream(), query);
+}
+
 export function managementTradingPulsePath(): string {
   return paths.managementTradingPulse();
 }
@@ -3382,6 +3507,25 @@ export async function fetchManagementHiqBacklog(
     throw new Error(`GET ${path} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementHiqBacklogResponse>;
+}
+
+export async function fetchManagementInterventionStream(
+  query?: ManagementInterventionStreamQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementInterventionStreamResponse> {
+  const path = managementInterventionStreamPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementInterventionStreamResponse>;
 }
 
 export async function fetchManagementTradingPulse(

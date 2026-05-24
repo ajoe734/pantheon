@@ -64,6 +64,7 @@ FINAL_CONTRACT_METHOD_PATHS = {
     ("GET", "/bff/management/governance-ledger"),
     ("GET", "/bff/management/hiq-backlog"),
     ("GET", "/bff/management/loop-throughput"),
+    ("GET", "/bff/management/intervention-stream"),
     ("GET", "/bff/management/persona-intent"),
     ("GET", "/bff/management/sentinel-pulse"),
     ("GET", "/bff/management/strategy-allocation"),
@@ -194,6 +195,7 @@ LIVE_PROBE_CONCRETE_ROUTES = [
     ("GET", "/bff/management/governance-ledger"),
     ("GET", "/bff/management/hiq-backlog"),
     ("GET", "/bff/management/loop-throughput"),
+    ("GET", "/bff/management/intervention-stream"),
     ("GET", "/bff/management/persona-intent"),
     ("GET", "/bff/management/sentinel-pulse"),
     ("GET", "/bff/management/strategy-allocation"),
@@ -436,6 +438,11 @@ def test_execute_plans_management_board_pack_client_exports_are_present() -> Non
     assert "ManagementLoopThroughputResponse" in management_ts
     assert "managementLoopThroughputPath" in management_ts
     assert "fetchManagementLoopThroughput" in management_ts
+    assert "managementInterventionStream: () => `${BASE}/management/intervention-stream`" in paths_ts
+    assert "ManagementInterventionStreamQuery" in management_ts
+    assert "ManagementInterventionStreamResponse" in management_ts
+    assert "managementInterventionStreamPath" in management_ts
+    assert "fetchManagementInterventionStream" in management_ts
 
 
 def test_execute_plans_management_sentinel_pulse_client_exports_are_present() -> None:

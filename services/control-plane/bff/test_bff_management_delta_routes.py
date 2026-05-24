@@ -671,6 +671,172 @@ def test_hiq_backlog_cors_preflight_and_openapi(monkeypatch) -> None:
         bff_main._V5_INTERVENTIONS_STORE.extend(original_interventions)
 
 
+def _intervention_stream_client(monkeypatch) -> TestClient:
+    td = tempfile.TemporaryDirectory(prefix="bff_mgmt_intervention_stream_")
+    monkeypatch.setattr(bff_main, "_BFF_MGMT_INTERVENTION_STREAM_TMPDIR", td, raising=False)
+    monkeypatch.setattr(bff_main, "utc_now", lambda: "2026-05-24T12:00:00Z")
+    monkeypatch.setattr(bff_main.command_store, "_get_all_commands", lambda: [])
+    store = ReadSurfaceStore(
+        os.path.join(td.name, "read_surfaces.json"),
+        allow_local_snapshot_fallback=False,
+    )
+    audit_events = [
+        {
+            "entry_id": "audit-intv-alpha-decision",
+            "actor": "operator-jane",
+            "action_type": "intervention.decide",
+            "target_type": "Intervention",
+            "target_id": "intv-alpha",
+            "timestamp": "2026-05-24T11:10:00Z",
+            "outcome": "accepted",
+            "audit_context": {
+                "intervention_id": "intv-alpha",
+                "persona_id": "persona-alpha",
+                "reason": "Operator accepted intervention remediation.",
+            },
+        }
+    ]
+    store.list_governance_audit_events = lambda **_: list(audit_events)
+
+    def dataset_source(dataset: str, **_: Any) -> str:
+        if dataset in {"v5_interventions", "governance_audit_events"}:
+            return "service_store"
+        return "missing"
+
+    store.dataset_source = dataset_source
+    monkeypatch.setattr(bff_main, "read_store", store)
+    bff_main._V5_INTERVENTIONS_STORE.clear()
+    bff_main._V5_INTERVENTIONS_STORE.extend(
+        [
+            {
+                "intervention_id": "intv-alpha",
+                "kind": "hiq_sentinel",
+                "status": "pending",
+                "persona_id": "persona-alpha",
+                "runtime_id": "runtime-alpha",
+                "target_type": "Persona",
+                "target_id": "persona-alpha",
+                "triggered_at": "2026-05-24T11:00:00Z",
+                "triggered_by": "sentinel",
+                "description": "Alpha persona needs HIQ review.",
+            },
+            {
+                "intervention_id": "intv-beta",
+                "kind": "risk_breach",
+                "status": "escalated",
+                "persona_id": "persona-beta",
+                "runtime_id": "runtime-beta",
+                "target_type": "Persona",
+                "target_id": "persona-beta",
+                "triggered_at": "2026-05-24T10:30:00Z",
+                "triggered_by": "risk-radar",
+                "description": "Beta persona risk breach escalated.",
+            },
+            {
+                "intervention_id": "intv-old",
+                "kind": "hiq_sentinel",
+                "status": "pending",
+                "persona_id": "persona-old",
+                "triggered_at": "2026-05-22T09:00:00Z",
+            },
+        ]
+    )
+    return TestClient(bff_main.app, raise_server_exceptions=False)
+
+
+def test_intervention_stream_returns_recent_persona_events(monkeypatch) -> None:
+    original_store = bff_main.read_store
+    original_interventions = list(bff_main._V5_INTERVENTIONS_STORE)
+    try:
+        client = _intervention_stream_client(monkeypatch)
+
+        response = client.get(
+            "/bff/management/intervention-stream",
+            headers=HEADERS,
+            params={"page_size": 10},
+        )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        data = body["data"]
+
+        assert data["id"] == "management-intervention-stream"
+        assert body["items"] == body["rows"] == body["events"] == body["stream"] == data["items"]
+        assert [item["intervention_id"] for item in body["items"]] == [
+            "intv-alpha",
+            "intv-alpha",
+            "intv-beta",
+        ]
+        assert [item["stream_sequence"] for item in body["items"]] == [1, 2, 3]
+        assert body["summary"]["event_count"] == 3
+        assert body["summary"]["intervention_count"] == 2
+        assert body["summary"]["persona_count"] == 2
+        assert body["summary"]["by_persona"]["persona-alpha"] == 2
+        assert body["summary"]["by_persona"]["persona-beta"] == 1
+        assert body["summary"]["window_hours"] == 24
+        assert body["summary"]["latest_at"] == "2026-05-24T11:10:00Z"
+        assert body["meta"]["policy"] == "read_only_intervention_stream"
+        assert body["meta"]["surfaces"]["intervention_stream"]["source"] == "bff_composed"
+        assert "GET /bff/v5/interventions" in body["meta"]["composition_sources"]
+        assert "GET /bff/audit" in body["meta"]["composition_sources"]
+    finally:
+        bff_main.read_store = original_store
+        bff_main._V5_INTERVENTIONS_STORE.clear()
+        bff_main._V5_INTERVENTIONS_STORE.extend(original_interventions)
+
+
+def test_intervention_stream_filters_and_requires_auth(monkeypatch) -> None:
+    original_store = bff_main.read_store
+    original_interventions = list(bff_main._V5_INTERVENTIONS_STORE)
+    try:
+        client = _intervention_stream_client(monkeypatch)
+
+        anonymous = client.get("/bff/management/intervention-stream")
+        assert anonymous.status_code == 401, anonymous.text
+
+        response = client.get(
+            "/bff/management/intervention-stream",
+            headers=HEADERS,
+            params={"persona_id": "persona-beta", "status": "escalated"},
+        )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["summary"]["event_count"] == 1
+        assert body["items"][0]["intervention_id"] == "intv-beta"
+        assert body["items"][0]["persona_id"] == "persona-beta"
+    finally:
+        bff_main.read_store = original_store
+        bff_main._V5_INTERVENTIONS_STORE.clear()
+        bff_main._V5_INTERVENTIONS_STORE.extend(original_interventions)
+
+
+def test_intervention_stream_cors_preflight_and_openapi(monkeypatch) -> None:
+    original_store = bff_main.read_store
+    original_interventions = list(bff_main._V5_INTERVENTIONS_STORE)
+    try:
+        client = _intervention_stream_client(monkeypatch)
+        response = client.options(
+            "/bff/management/intervention-stream",
+            headers={
+                "Origin": LOVABLE_ORIGIN,
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "Authorization, X-Correlation-Id",
+            },
+        )
+
+        assert response.status_code in {200, 204}
+        assert response.headers["access-control-allow-origin"] == LOVABLE_ORIGIN
+
+        schema = client.get("/openapi.json").json()
+        assert "/bff/management/intervention-stream" in schema["paths"]
+        assert "get" in schema["paths"]["/bff/management/intervention-stream"]
+    finally:
+        bff_main.read_store = original_store
+        bff_main._V5_INTERVENTIONS_STORE.clear()
+        bff_main._V5_INTERVENTIONS_STORE.extend(original_interventions)
+
+
 def test_quarterly_ranking_drilldown_returns_persona_contribution_breakdown() -> None:
     with tempfile.TemporaryDirectory() as td:
         original = bff_main.read_store
