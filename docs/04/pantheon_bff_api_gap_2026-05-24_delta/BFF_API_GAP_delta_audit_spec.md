@@ -360,6 +360,9 @@ source record.
 python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q
 ```
 
+Result: 17 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
 ---
 
 ## DELTA-2 PM-12 Persona Performance Attribution Route
