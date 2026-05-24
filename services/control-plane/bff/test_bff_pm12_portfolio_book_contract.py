@@ -515,6 +515,41 @@ def test_performance_attribution_groups_requested_dimension(monkeypatch) -> None
     assert "GET /api/v1/telemetry/{runtime_id}/summary" in payload["meta"]["composition_sources"]
 
 
+def test_attribution_by_strategy_route_contract(monkeypatch) -> None:
+    client = _portfolio_store(monkeypatch)
+
+    anonymous = client.get("/bff/management/performance-attribution/by-strategy")
+    assert anonymous.status_code == 401, anonymous.text
+
+    preflight = client.options("/bff/management/performance-attribution/by-strategy")
+    assert preflight.status_code == 204, preflight.text
+
+    response = client.get(
+        "/bff/management/performance-attribution/by-strategy",
+        headers=HEADERS,
+        params={"period": "30d", "page_size": 20},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["data"]["id"] == "pm12-performance-attribution-by-strategy"
+    assert payload["items"] == payload["rows"] == payload["data"]["rows"]
+    assert payload["data"]["items"] == payload["items"]
+    assert payload["summary"]["period"] == "30d"
+    assert payload["summary"]["dimensions"] == ["strategy"]
+    assert payload["page_info"] == {"next_page_token": None, "total": 3, "page_size": 20}
+    assert {row["dimension"] for row in payload["items"]} == {"strategy"}
+
+    rows = {row["dimension_key"]: row for row in payload["items"]}
+    assert rows["strategy-alpha"]["metrics"]["totalPnl"] == 10.0
+    assert rows["strategy-alpha"]["sourceRefs"]["strategyIds"] == ["strategy-alpha"]
+    assert rows["strategy-alpha"]["links"]["strategy"] == "/bff/strategies/strategy-alpha"
+    assert rows["unassigned"]["metrics"]["totalPnl"] == -2.0
+    assert rows["strategy-beta"]["metrics"]["totalPnl"] is None
+    assert payload["meta"]["policy"] == "read_only_performance_attribution"
+    assert payload["meta"]["surfaces"]["performance_attribution"]["source"] == "bff_composed"
+
+
 def test_performance_attribution_supports_all_pm12_dimensions(monkeypatch) -> None:
     client = _portfolio_store(monkeypatch)
 
@@ -940,6 +975,8 @@ def test_portfolio_book_is_registered_in_openapi() -> None:
     assert "get" in schema["paths"]["/bff/management/portfolio-book/positions"]
     assert "/bff/management/performance-attribution" in schema["paths"]
     assert "get" in schema["paths"]["/bff/management/performance-attribution"]
+    assert "/bff/management/performance-attribution/by-strategy" in schema["paths"]
+    assert "get" in schema["paths"]["/bff/management/performance-attribution/by-strategy"]
     assert "/bff/management/performance-attribution/by-persona" in schema["paths"]
     assert "get" in schema["paths"]["/bff/management/performance-attribution/by-persona"]
     assert "/bff/management/performance-attribution/by-pool" in schema["paths"]
