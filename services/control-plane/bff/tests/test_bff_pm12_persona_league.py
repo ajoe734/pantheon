@@ -116,6 +116,59 @@ def test_pm12_persona_league_rankings_returns_computed_blocks() -> None:
             bff_main.read_store = original
 
 
+def test_pm12_persona_league_movers_returns_current_snapshot_movers() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            response = client.get(
+                "/bff/management/persona-league/movers",
+                headers=HEADERS,
+                params={"direction": "new", "limit": 1},
+            )
+
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert body["items"] == body["movers"] == body["data"]["items"]
+            assert body["data"]["movers"] == body["items"]
+            assert body["summary"]["personaCount"] >= 1
+            assert body["summary"]["moverCount"] >= 1
+            assert body["summary"]["returnedCount"] == 1
+            assert body["summary"]["direction"] == "new"
+            assert body["summary"]["baselineStatus"] == "unavailable"
+            assert body["summary"]["newCount"] == body["summary"]["personaCount"]
+            assert body["items"][0]["currentRank"] == 1
+            assert body["items"][0]["previousRank"] is None
+            assert body["items"][0]["rankDelta"] is None
+            assert body["items"][0]["scoreDelta"] is None
+            assert body["items"][0]["direction"] == "new"
+            assert body["items"][0]["baselineStatus"] == "unavailable"
+            assert body["items"][0]["movement"]["basis"] == "current_persona_league_snapshot_no_historical_baseline"
+            assert body["page_info"]["total"] == body["summary"]["moverCount"]
+            assert body["meta"]["policy"] == "read_only_governance_advisory"
+            assert body["meta"]["surfaces"]["persona_league_movers"]["status"] in {"ok", "degraded"}
+            assert "GET /bff/management/persona-league/rankings" in body["meta"]["composition_sources"]
+        finally:
+            bff_main.read_store = original
+
+
+def test_pm12_persona_league_movers_rejects_invalid_direction() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            response = client.get(
+                "/bff/management/persona-league/movers",
+                headers=HEADERS,
+                params={"direction": "sideways"},
+            )
+
+            assert response.status_code == 422, response.text
+            assert response.json()["detail"]["error"] == "invalid_direction"
+        finally:
+            bff_main.read_store = original
+
+
 def test_pm12_persona_league_tiers_returns_config_and_current_assignments() -> None:
     with tempfile.TemporaryDirectory() as td:
         original = bff_main.read_store
@@ -288,6 +341,9 @@ def test_pm12_persona_league_requires_auth() -> None:
 
             rankings = client.get("/bff/management/persona-league/rankings")
             assert rankings.status_code == 401, rankings.text
+
+            movers = client.get("/bff/management/persona-league/movers")
+            assert movers.status_code == 401, movers.text
 
             tiers = client.get("/bff/management/persona-league/tiers")
             assert tiers.status_code == 401, tiers.text

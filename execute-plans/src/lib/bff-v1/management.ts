@@ -592,6 +592,103 @@ export interface ManagementPersonaLeagueRankingsResponse {
   };
 }
 
+export interface ManagementPersonaLeagueMoversQuery {
+  state?: string;
+  archetype?: string;
+  q?: string;
+  direction?: "all" | "up" | "down" | "flat" | "new" | string;
+  limit?: number;
+}
+
+export interface ManagementPersonaLeagueMover extends ManagementPersonaLeagueRankingItem {
+  moverId: string;
+  mover_id: string;
+  currentRank: number;
+  current_rank: number;
+  previousRank?: number | null;
+  previous_rank?: number | null;
+  rankDelta?: number | null;
+  rank_delta?: number | null;
+  direction: "up" | "down" | "flat" | "new" | string;
+  currentScore: number;
+  current_score: number;
+  previousScore?: number | null;
+  previous_score?: number | null;
+  scoreDelta?: number | null;
+  score_delta?: number | null;
+  scoreDeltaDisplay?: string | null;
+  score_delta_display?: string | null;
+  baselineStatus: "ok" | "unavailable" | string;
+  baseline_status: "ok" | "unavailable" | string;
+  formulaVersion: string;
+  formula_version: string;
+  movement: {
+    direction: string;
+    rank_delta?: number | null;
+    score_delta?: number | null;
+    baseline_status?: string;
+    basis?: string;
+    [key: string]: unknown;
+  };
+  basis?: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementPersonaLeagueMoversSummary {
+  personaCount: number;
+  persona_count: number;
+  moverCount: number;
+  mover_count: number;
+  returnedCount: number;
+  returned_count: number;
+  direction: string;
+  formulaVersion: string;
+  formula_version: string;
+  baselineStatus: string;
+  baseline_status: string;
+  baselineUnavailableCount: number;
+  baseline_unavailable_count: number;
+  upCount: number;
+  up_count: number;
+  downCount: number;
+  down_count: number;
+  flatCount: number;
+  flat_count: number;
+  newCount: number;
+  new_count: number;
+  topMoverPersonaId?: string | null;
+  top_mover_persona_id?: string | null;
+  basis?: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementPersonaLeagueMoversResponse {
+  data: {
+    id: "management-persona-league-movers" | string;
+    items: ManagementPersonaLeagueMover[];
+    movers: ManagementPersonaLeagueMover[];
+    summary: ManagementPersonaLeagueMoversSummary;
+    policy?: string;
+    [key: string]: unknown;
+  };
+  items: ManagementPersonaLeagueMover[];
+  movers: ManagementPersonaLeagueMover[];
+  summary: ManagementPersonaLeagueMoversSummary;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces?: Record<string, ManagementSurfaceRef>;
+    composition_sources?: string[];
+    policy?: string;
+    baseline_status?: string;
+    [key: string]: unknown;
+  };
+}
+
 export interface ManagementPersonaLeagueTiersQuery {
   state?: string;
   archetype?: string;
@@ -1744,6 +1841,124 @@ export interface ManagementPortfolioBookPoolsResponse {
   };
 }
 
+export interface ManagementStrategyAllocationQuery {
+  strategy_id?: string;
+  capital_pool_id?: string;
+  deployment_stage?: string;
+  drift_status?: string;
+  page_token?: string;
+  page_size?: number;
+}
+
+export interface ManagementStrategyAllocationRow {
+  id: string;
+  rank: number;
+  strategyId: string;
+  strategy_id: string;
+  strategyLabel?: string;
+  strategy_label?: string;
+  capitalPoolId: string;
+  capital_pool_id: string;
+  capitalPoolName?: string;
+  capital_pool_name?: string;
+  status: string;
+  deploymentStages: string[];
+  deployment_stages: string[];
+  runtimeIds: string[];
+  runtime_ids: string[];
+  runtimeBindingIds?: string[];
+  runtime_binding_ids?: string[];
+  deploymentPlanIds?: string[];
+  deployment_plan_ids?: string[];
+  personaIds?: string[];
+  persona_ids?: string[];
+  allocation: {
+    amount?: number | null;
+    riskBudget?: number | null;
+    risk_budget?: number | null;
+    utilization?: number | null;
+    source?: string;
+    sources?: string[];
+    [key: string]: unknown;
+  };
+  allocationAmount?: number | null;
+  allocation_amount?: number | null;
+  riskBudget?: number | null;
+  risk_budget?: number | null;
+  allocationUtilization?: number | null;
+  allocation_utilization?: number | null;
+  metrics: Record<string, unknown>;
+  drift: Record<string, unknown>;
+  paperLiveDrift?: Record<string, unknown>;
+  paper_live_drift?: Record<string, unknown>;
+  sourceRefs?: Record<string, unknown>;
+  source_refs?: Record<string, unknown>;
+  links?: Record<string, string | null | undefined>;
+  [key: string]: unknown;
+}
+
+export interface ManagementStrategyAllocationSummary {
+  allocationCount: number;
+  allocation_count: number;
+  returnedAllocationCount: number;
+  returned_allocation_count: number;
+  strategyCount: number;
+  strategy_count: number;
+  capitalPoolCount: number;
+  capital_pool_count: number;
+  activeRuntimeCount: number;
+  active_runtime_count: number;
+  totalAllocatedCapital?: number | null;
+  total_allocated_capital?: number | null;
+  totalPnl?: number | null;
+  total_pnl?: number | null;
+  driftBreachedCount: number;
+  drift_breached_count: number;
+  driftWatchCount: number;
+  drift_watch_count: number;
+  driftUnavailableCount: number;
+  drift_unavailable_count: number;
+  byDriftStatus: Record<string, number>;
+  by_drift_status: Record<string, number>;
+  basis: string;
+  [key: string]: unknown;
+}
+
+export interface ManagementStrategyAllocationResponse {
+  data: {
+    id: "management-strategy-allocation" | string;
+    items: ManagementStrategyAllocationRow[];
+    rows: ManagementStrategyAllocationRow[];
+    summary: ManagementStrategyAllocationSummary;
+    [key: string]: unknown;
+  };
+  items: ManagementStrategyAllocationRow[];
+  rows: ManagementStrategyAllocationRow[];
+  summary: ManagementStrategyAllocationSummary;
+  page_info: {
+    next_page_token: string | null;
+    total: number;
+    page_size: number;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces: {
+      strategy_allocation: ManagementSurfaceRef;
+      runtime_bindings?: ManagementSurfaceRef;
+      deployment_plans?: ManagementSurfaceRef;
+      persona_bindings?: ManagementSurfaceRef;
+      capital_pools?: ManagementSurfaceRef;
+      strategies?: ManagementSurfaceRef;
+      telemetry_summaries?: ManagementSurfaceRef;
+      paper_live_drift?: ManagementSurfaceRef;
+      [key: string]: ManagementSurfaceRef | undefined;
+    };
+    composition_sources?: string[];
+    policy?: string;
+    [key: string]: unknown;
+  };
+}
+
 type ManagementQueryValue = string | number | boolean | undefined | null;
 
 function withQuery(path: string, query?: object): string {
@@ -1803,6 +2018,12 @@ export function managementReadinessStrictPublishPath(): string {
   return paths.managementReadinessStrictPublish();
 }
 
+export function managementStrategyAllocationPath(
+  query?: ManagementStrategyAllocationQuery,
+): string {
+  return withQuery(paths.managementStrategyAllocation(), query);
+}
+
 export function managementPortfolioBookPath(): string {
   return paths.managementPortfolioBook();
 }
@@ -1819,6 +2040,12 @@ export function managementPortfolioBookHoldingsPath(
 
 export function managementPersonaLeaguePath(query?: ManagementPersonaLeagueQuery): string {
   return withQuery(paths.managementPersonaLeague(), query);
+}
+
+export function managementPersonaLeagueMoversPath(
+  query?: ManagementPersonaLeagueMoversQuery,
+): string {
+  return withQuery(paths.managementPersonaLeagueMovers(), query);
 }
 
 export function managementPersonaLeagueRankingsPath(
@@ -2043,6 +2270,25 @@ export async function fetchManagementReadinessStrictPublish(
   return fetchManagementReadiness(managementReadinessStrictPublishPath(), init, baseUrl);
 }
 
+export async function fetchManagementStrategyAllocation(
+  query?: ManagementStrategyAllocationQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementStrategyAllocationResponse> {
+  const path = managementStrategyAllocationPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementStrategyAllocationResponse>;
+}
+
 export async function fetchManagementPortfolioBookPools(
   query?: ManagementPortfolioBookPoolQuery,
   init?: RequestInit,
@@ -2098,6 +2344,25 @@ export async function fetchManagementPersonaLeague(
     throw new Error(`GET ${path} failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<ManagementPersonaLeagueResponse>;
+}
+
+export async function fetchManagementPersonaLeagueMovers(
+  query?: ManagementPersonaLeagueMoversQuery,
+  init?: RequestInit,
+  baseUrl = "",
+): Promise<ManagementPersonaLeagueMoversResponse> {
+  const path = managementPersonaLeagueMoversPath(query);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    method: "GET",
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ManagementPersonaLeagueMoversResponse>;
 }
 
 export async function fetchManagementPersonaLeagueRankings(
