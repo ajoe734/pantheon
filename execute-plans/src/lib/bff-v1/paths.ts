@@ -106,6 +106,7 @@ export const paths = {
 
   // ---- P1 Management aggregate APIs ----
   managementCockpit: () => `${BASE}/management/cockpit`,
+  managementBoardPack: () => `${BASE}/management/board-pack`,
   managementTradingPulse: () => `${BASE}/management/trading-pulse`,
   managementTradingPulseRankings: () => `${BASE}/management/trading-pulse/rankings`,
   managementEvidence: () => `${BASE}/management/evidence`,

@@ -606,6 +606,101 @@ Result: 53 passed, 3 existing `datetime.utcnow()` deprecation warnings in
 
 ---
 
+## DELTA-7 PM-12 Management Board Pack Route
+
+Task: BFF-PM12-DELTA-007
+Owner: Codex2
+Reviewer: Claude2
+
+### Scope
+
+Add a dedicated board-pack route for execute-plans strict live rendering:
+
+```text
+GET /bff/management/board-pack?period=&state=&archetype=&q=&section_limit=
+```
+
+The route is a read-only packet over existing PM-12 Management read surfaces.
+It does not introduce a new source of truth and does not change the underlying
+portfolio-book, strategy-allocation, persona-league, or performance attribution
+routes.
+
+### Contract
+
+The response uses the canonical aggregate envelope:
+
+```json
+{
+  "data": {
+    "id": "management-board-pack",
+    "sections": [],
+    "summary": {},
+    "portfolioBook": {},
+    "portfolioBookExposure": {},
+    "portfolioBookPositions": {},
+    "strategyAllocation": {},
+    "personaLeague": {},
+    "performanceAttribution": {},
+    "policy": "read_only_management_board_pack"
+  },
+  "items": [],
+  "sections": [],
+  "summary": {},
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 0 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": [],
+    "policy": "read_only_management_board_pack"
+  }
+}
+```
+
+The packet includes section descriptors plus full nested responses for:
+
+- `GET /bff/management/portfolio-book`
+- `GET /bff/management/portfolio-book/exposure`
+- `GET /bff/management/portfolio-book/positions`
+- `GET /bff/management/strategy-allocation`
+- `GET /bff/management/persona-league`
+- `GET /bff/management/persona-league/movers`
+- `GET /bff/management/performance-attribution/by-persona`
+- `GET /bff/management/performance-attribution/by-pool`
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Path registered in FastAPI/OpenAPI | Implemented |
+| 2 | Board pack composes existing PM-12 Management surfaces without a new source of truth | Implemented |
+| 3 | Accepts `period`, `state`, `archetype`, `q`, and `section_limit` query parameters | Implemented |
+| 4 | Anonymous request returns HTTP 401 | Implemented |
+| 5 | Authenticated request returns HTTP 200 | Implemented |
+| 6 | Response keeps canonical aggregate envelope with `data`, `items`, `sections`, `summary`, `page_info`, and `meta` | Implemented |
+| 7 | CORS preflight returns HTTP 204 | Implemented |
+| 8 | Focused pytest cases cover composition, auth, preflight, OpenAPI, and execute-plans helper export checks | Implemented |
+| 9 | execute-plans exposes typed path and fetch helpers | Implemented |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
+
+### Validation
+
+```bash
+pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py
+```
+
+Result: 66 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
+---
+
 ## BFF-MGMT-DELTA-005 Management Risk Radar Route
 
 Task: BFF-MGMT-DELTA-005
