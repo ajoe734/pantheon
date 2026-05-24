@@ -129,6 +129,7 @@ export const paths = {
   managementQuarterlyRankingRecommendations: () => `${BASE}/management/quarterly-ranking/recommendations`,
   managementPerformanceAttribution: () => `${BASE}/management/performance-attribution`,
   managementPerformanceAttributionByPersona: () => `${BASE}/management/performance-attribution/by-persona`,
+  managementPerformanceAttributionByPool: () => `${BASE}/management/performance-attribution/by-pool`,
 
   // ---- Research ----
   researchExperiments: () => `${BASE}/research-experiments`,
