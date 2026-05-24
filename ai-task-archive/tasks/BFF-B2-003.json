@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "BFF-B2-003",
+  "archived_at": "2026-05-23T11:16:30Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-B2-003",
+    "title": "Capabilities facade: mcp-servers mcp-tools skills channels tools ranking-formulas",
+    "summary_zh": null,
+    "phase": "Sprint BFF-2 / EPIC-BFF-GAP-CORE",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "BFF-B2-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#b23-capabilities--research--search",
+      "services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "Implements /bff/mcp-servers /bff/mcp-tools /bff/skills /bff/channels /bff/tools /bff/ranking-formulas",
+      "List envelope per spec section 2.4",
+      "FE-compatible DTO matching execute-plans capability registry"
+    ],
+    "next": "PR #481 merged to dev at cc29749e3c1d; final Codex done-gate evidence published; focused pytest test_bff_b2_003_capabilities.py passed 23 tests.",
+    "last_update": "2026-05-23T11:16:30Z",
+    "review_notes_zh": [
+      "審查通過：8 個 B2.3 dedicated GET handlers route map 正確，catch-all dead decorators 已移除；focused pytest 23 passed，B2.1/B2.2/B2.3 suite 93 passed。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T11:16:30Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-b2-003",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-B2-003",
+      "git_clean_required": false,
+      "commit": "c6b8532854e7687d2afedff907abc3591f7ddfbf",
+      "commit_subject": "BFF-B2-003: record final done gate evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-B2-003",
+        "Reviewer": "Codex2",
+        "Verified": "pytest services/control-plane/bff/tests/test_bff_b2_003_capabilities.py -q (23 passed, 3 warnings after origin/dev refresh)"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-B2-003",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "cc29749e3c1d5770de532a3136cfc4e54d1503cf",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-B2-003",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "B2.3 capabilities facade implementation ready for review. PR #469 open at https://github.com/ajoe734/pantheon/pull/469. 8 new dedicated GET handlers: /bff/mcp-servers, /bff/mcp-servers/{id}, /bff/mcp-tools, /bff/mcp-tools/{id}, /bff/channels, /bff/channels/{id}, /bff/ranking-formulas, /bff/ranking-formulas/{id}. Dead catch-all decorators removed. 23 pytest cases pass. Spec B2.3 section added.",
+      "status": "done",
+      "created_at": "2026-05-23T10:22:31Z",
+      "resolved_at": "2026-05-23T10:27:36Z"
+    },
+    {
+      "task_id": "BFF-B2-003",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review approved by Codex2: dedicated capabilities facade handlers match B2.3 spec; pytest services/control-plane/bff/tests/test_bff_b2_003_capabilities.py passed 23 tests; pytest services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py services/control-plane/bff/tests/test_bff_b2_003_capabilities.py passed 93 tests. Returned to Claude for closeout finalization.",
+      "status": "done",
+      "created_at": "2026-05-23T10:27:36Z",
+      "resolved_at": "2026-05-23T10:54:56Z"
+    },
+    {
+      "task_id": "BFF-B2-003",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned ownership from Claude to Codex after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-05-23T10:54:56Z",
+      "resolved_at": "2026-05-23T11:16:31Z"
+    }
+  ],
+  "blockers": []
+}

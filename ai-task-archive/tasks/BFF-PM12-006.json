@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "BFF-PM12-006",
+  "archived_at": "2026-05-23T10:21:07Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-PM12-006",
+    "title": "GET /bff/management/quarterly-ranking",
+    "summary_zh": null,
+    "phase": "Sprint BFF-4 / EPIC-BFF-GAP-PM12",
+    "owner": "Codex2",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "BFF-PM12-004"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#b34-pm-12-composition-sources",
+      "execute-plans/src/lib/bff-v1/management.ts",
+      "services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "Accepts ?quarter=YYYY-Qn query",
+      "Composes persona league + formula + quarter window + evidence",
+      "FE quarterly ranking page renders live"
+    ],
+    "next": "Owner closeout complete: PR #465 merged at 10b887b49aa20a9ad6824f0434e2826bca421dc3 after local py_compile, PM-12 regression tests (7 passed), and execute-plans route inventory tests (7 passed, 3 existing read_store datetime.utcnow warnings).",
+    "last_update": "2026-05-23T10:21:07Z",
+    "review_notes_zh": [
+      "審查通過：quarterly-ranking 路由、TypeScript 合約、測試與路由清單均符合 AC1-AC5 全部驗收條件"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T10:21:07Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-pm12-006",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-PM12-006",
+      "git_clean_required": false,
+      "repository_fallback": {
+        "from_repository_id": "execute_plans",
+        "missing_repository_path": "/tmp/pantheon-worker-worktrees/pantheon/execute-plans",
+        "reason": "non-Pantheon artifact repository local_path is unavailable; using Pantheon because the task also has Pantheon artifacts"
+      },
+      "commit": "a1bb2b2e134d2e0354120e5c0666c7def4c03d52",
+      "commit_subject": "BFF-PM12-006: record owner closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "support/evidence/BFF-PM12-006 owner closeout, Claude2 review artifact, and task brief closeout record",
+        "Not changing": "services/control-plane/bff/main.py runtime implementation or execute-plans client contract",
+        "Composes with": "PR #458 implementation merge and BFF-PM12-006 done transition",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/control-plane/bff/main.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/tests/test_bff_pm12_persona_league.py -v (7 passed); PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q (7 passed, 3 existing warnings)",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-PM12-006",
+        "Reviewer": "Claude2"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-PM12-006",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "10b887b49aa20a9ad6824f0434e2826bca421dc3",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-PM12-006",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Implemented quarterly-ranking and opened PR #458 for review: https://github.com/ajoe734/pantheon/pull/458. Validation: pytest services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q; git diff --check.",
+      "status": "done",
+      "created_at": "2026-05-23T09:52:15Z",
+      "resolved_at": "2026-05-23T10:04:33Z"
+    },
+    {
+      "task_id": "BFF-PM12-006",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Review approved: all 5 AC verified — route composition, 422 on invalid quarter, 401 on missing auth, route inventory registered, typed TS helpers present. Returning to Codex2 for closeout.",
+      "status": "done",
+      "created_at": "2026-05-23T10:04:33Z",
+      "resolved_at": "2026-05-23T10:21:07Z"
+    }
+  ],
+  "blockers": []
+}

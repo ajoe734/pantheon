@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "BFF-PM12-001",
+  "archived_at": "2026-05-23T08:53:17Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-PM12-001",
+    "title": "GET /bff/management/portfolio-book summary",
+    "summary_zh": null,
+    "phase": "Sprint BFF-4 / EPIC-BFF-GAP-PM12",
+    "owner": "Codex2",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "BFF-B2-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#b32-pm-12-performance--portfolio-10-endpoints",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py",
+      ".orchestrator/task-briefs/bff_pm12_001.md",
+      "support/reviews/BFF-PM12-001-review-claude2.md"
+    ],
+    "acceptance": [
+      "Composes capital pools + runtime bindings + telemetry + holdings snapshot",
+      "FE Portfolio summary card renders live with total capital exposure PnL"
+    ],
+    "next": "Closeout complete: PR #447 merged into dev at d8243c09fbbb6cd7142f67966f3a1180e17dc17f; recorded task brief and Claude2 review artifact; focused BFF checks passed.",
+    "last_update": "2026-05-23T08:53:17Z",
+    "review_notes_zh": [
+      "審查通過：BFF endpoint 組合正確 (capital pools + runtime bindings + telemetry rollup)，auth gate 到位，4 tests 通過，regression 清零。後續追蹤：(1) spec 缺 §B3.2 portfolio-book 段落；(2) live wiring test 未含 portfolio-book 路由；(3) execute-plans management.ts 未建立 (外部 checkout，非本次阻擋點)。"
+    ],
+    "review_file": "support/reviews/BFF-PM12-001-review-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T08:53:17Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-pm12-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-PM12-001",
+      "git_clean_required": false,
+      "commit": "035dca8e816f6a8a8c68fcb282e83033ac9e7b8f",
+      "commit_subject": "BFF-PM12-001: merge dev for closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "Branch refresh for BFF-PM12-001 closeout after PR #446 merged",
+        "Not changing": "Portfolio-book implementation, execute-plans client code, live",
+        "Composes with": "dev at PR #446 plus the BFF-PM12-001 review artifact closeout",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-PM12-001",
+        "Reviewer": "Claude2",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/control-plane/bff/main.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py -q; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py -q; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_bff_runtimes_contract.py -q"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-PM12-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "d8243c09fbbb6cd7142f67966f3a1180e17dc17f",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-PM12-001",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Implementation and PR merge complete: added GET /bff/management/portfolio-book summary in services/control-plane BFF with focused PM12 contract tests. Commit 723fe75a7dfd1f6d52d9423a9234a32686c924e9, PR #441 merged at d0aade3fb23615c40aa100cbfd4c6984895ea771. Local validation and GitHub checks passed. Direct done was blocked because task is not review_approved yet.",
+      "status": "done",
+      "created_at": "2026-05-23T08:31:22Z",
+      "resolved_at": "2026-05-23T08:37:51Z"
+    },
+    {
+      "task_id": "BFF-PM12-001",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Review approved: portfolio-book endpoint composition, auth, and tests verified. Follow-up items noted in review file.",
+      "status": "done",
+      "created_at": "2026-05-23T08:37:51Z",
+      "resolved_at": "2026-05-23T08:53:18Z"
+    }
+  ],
+  "blockers": []
+}

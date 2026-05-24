@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "BFF-B2-005",
+  "archived_at": "2026-05-23T07:06:01Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-B2-005",
+    "title": "Agora canonical aliases (B7 6 endpoints)",
+    "summary_zh": null,
+    "phase": "Sprint BFF-2 / EPIC-BFF-GAP-CORE",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "BFF-B1-003"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#b7--agora-compatibility-apis;services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "Adds /bff/agora/ask/sessions and /bff/agora/ask/sessions/{id} aliases on top of existing /bff/agora/sessions;/bff/agora/signals /bff/agora/journal /bff/agora/postmortems verified and returns envelope;/bff/agora/inbox composes insights signals tasks per spec section B7"
+    ],
+    "next": "PR #431 merged at cfbc8640; owner closeout verified pytest services/control-plane/bff/test_bff_b2_005_agora_canonical_aliases.py -v (2 passed).",
+    "last_update": "2026-05-23T07:06:01Z",
+    "review_notes_zh": [
+      "審查通過：六個 B7 Agora 端點全部實作完成；focused pytest 2 passed；inbox 組合邏輯、alias 共享 canonical read surface 驗證無誤"
+    ],
+    "review_file": "support/reviews/BFF-B2-005-review-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T07:06:01Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-b2-005",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-B2-005",
+      "git_clean_required": false,
+      "commit": "8627035252e9be25bcdfb975a889943c5a8ee0ca",
+      "commit_subject": "BFF-B2-005: record owner closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "support/evidence/BFF-B2-005/owner-closeout.md",
+        "Not changing": "services/control-plane/bff/main.py runtime implementation or B7 tests",
+        "Composes with": "Claude2 review artifact and task closeout done transition",
+        "Verified": "pytest services/control-plane/bff/test_bff_b2_005_agora_canonical_aliases.py -v (2 passed)",
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-B2-005",
+        "Reviewer": "Claude2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-B2-005",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "cfbc86402dc968cad3b4bee8ff0d4a688365b601",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-B2-005",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-23T06:21:55Z",
+      "resolved_at": "2026-05-23T06:22:11Z"
+    },
+    {
+      "task_id": "BFF-B2-005",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Ready for review: PR #428 opened with B7 active acceptance completion. Local verification: BFF-B2-005 focused pytest, Agora extended pytest, final live wiring route checks, py_compile, git diff --check.",
+      "status": "done",
+      "created_at": "2026-05-23T06:48:23Z",
+      "resolved_at": "2026-05-23T06:55:26Z"
+    },
+    {
+      "task_id": "BFF-B2-005",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved and returned to Codex for finalization; all six B7 endpoints verified, pytest 2 passed",
+      "status": "done",
+      "created_at": "2026-05-23T06:55:26Z",
+      "resolved_at": "2026-05-23T07:06:01Z"
+    }
+  ],
+  "blockers": []
+}
