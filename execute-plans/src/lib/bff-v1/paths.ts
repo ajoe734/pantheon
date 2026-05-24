@@ -116,6 +116,7 @@ export const paths = {
   managementReadinessCapitalBindingLive: () => `${BASE}/management/readiness/capital-binding-live`,
   managementReadinessBffHa: () => `${BASE}/management/readiness/bff-ha`,
   managementReadinessStrictPublish: () => `${BASE}/management/readiness/strict-publish`,
+  managementStrategyAllocation: () => `${BASE}/management/strategy-allocation`,
   managementPortfolioBook: () => `${BASE}/management/portfolio-book`,
   managementPortfolioBookPools: () => `${BASE}/management/portfolio-book/pools`,
   managementPortfolioBookHoldings: () => `${BASE}/management/portfolio-book/holdings`,
