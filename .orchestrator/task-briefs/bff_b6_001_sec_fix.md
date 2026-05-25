@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Tenant scope on NL retrieval + evidence filter + classifier hardening + happy-path audit
-- Status: in_progress
+- Status: review
 - Owner: Codex2
 - Reviewer: Claude
 - Phase: Sprint BFF-6 / EPIC-BFF-GAP-NL-SEC-FIX
-- Last update: 2026-05-25T13:42:48Z
-- Next: PR #587 merged at 2026-05-25T13:41:24Z (merge 807eafdb); local focused B6 pytest passed: 23 passed. Status transition blocked because task is absent from ai-status.json.
+- Last update: 2026-05-25T13:58:25Z
+- Next: Implementation and owner review-handoff evidence are merged. Implementation PR #587 merged into dev at 807eafdbee2c0f6fe906adbfc15def38f65f8121; owner handoff PR #598 merged into dev at 7972176eb632dce1b81bdb6a2b50704c8d7a2a70. Verified locally: py_compile for BFF-B6 files passed; focused pytest for B6 management NL, high-risk refusal, and security hardening passed (23 passed); git diff --check passed. Please perform formal lifecycle review approval before owner done finalization.
 
 ## Summary
 -
@@ -27,12 +27,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md
 
 ## Recent Task Activity
-- 2026-05-25T13:21:29Z · Orchestrator · worker_started · Worker started via codex: owned_in_progress_dispatch
-- 2026-05-25T13:21:29Z · Codex2 · progress · Supervisor re-dispatched BFF-B6-001-SEC-FIX; task remains in progress.
-- 2026-05-25T13:21:32Z · Orchestrator · task_dispatch_synced · Supervisor re-dispatched BFF-B6-001-SEC-FIX; task remains in progress.
-- 2026-05-25T13:38:34Z · Codex2 · worker_commit · Worker commit 3a8d7b4cc472 recorded 4 staged file(s) for BFF-B6-001-SEC-FIX.
-- 2026-05-25T13:42:48Z · Codex2 · note · PR #587 merged at 2026-05-25T13:41:24Z (merge 807eafdb); local focused B6 pytest passed: 23 passed. Status transition blocked because task is absent from ai-status.json.
-- 2026-05-25T13:47:51Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
+- 2026-05-25T13:47:54Z · Orchestrator · worker_started · Worker started via codex: owned_in_progress_dispatch
+- 2026-05-25T13:47:54Z · Codex2 · progress · Supervisor re-dispatched BFF-B6-001-SEC-FIX; task remains in progress.
+- 2026-05-25T13:47:57Z · Orchestrator · task_dispatch_synced · Supervisor re-dispatched BFF-B6-001-SEC-FIX; task remains in progress.
+- 2026-05-25T13:53:36Z · Codex2 · worker_commit · Worker commit d1a837e8678d recorded 2 staged file(s) for BFF-B6-001-SEC-FIX.
+- 2026-05-25T13:58:25Z · Codex2 · handoff · Handoff to Claude: Implementation and owner review-handoff evidence are merged. Implementation PR #587 merged into dev at 807eafdbee2c0f6fe906adbfc15def38f65f8121; owner handoff PR #598 merged into dev at 7972176eb632dce1b81bdb6a2b50704c8d7a2a70. Verified locally: py_compile for BFF-B6 files passed; focused pytest for B6 management NL, high-risk refusal, and security hardening passed (23 passed); git diff --check passed. Please perform formal lifecycle review approval before owner done finalization.
+- 2026-05-25T14:03:33Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md

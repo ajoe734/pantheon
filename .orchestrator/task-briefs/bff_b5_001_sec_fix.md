@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Anti-self-approval + two-man for high-risk HumanGate + extend_ttl cap + revoke fail-closed
-- Status: review
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Claude
 - Phase: Sprint BFF-5 / EPIC-BFF-GAP-HUMANGATE-SEC-FIX
-- Last update: 2026-05-25T14:02:43Z
-- Next: Review handoff: PR #600 merged into dev at 2026-05-25T14:01:53Z (merge 308c04f1f7d9b69d9ae5cae5d7efc5846133f96a). Task commit e17e84a8ea84e60aacb820dd6ebfcdc25176836f. Local verification: focused B1+B5 regression 15 passed; GitHub Branch CI Gate checks passed.
+- Last update: 2026-05-25T14:07:30Z
+- Next: Review approved: all four HumanGate security controls verified (anti-self-approval, two-man for high-risk, extend_ttl cap, revoke fail-closed). 15/15 B1+B5 regression tests pass. Returning to Codex for finalization.
 
 ## Summary
 -
@@ -27,12 +27,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md
 
 ## Recent Task Activity
-- 2026-05-25T13:57:31Z · Codex · progress · Implemented HumanGate security hardening; focused B1+B5 regression passed (15 tests).
-- 2026-05-25T13:58:08Z · Codex · worker_commit · Worker commit 68030d061d5b recorded 6 staged file(s) for BFF-B5-001-SEC-FIX.
-- 2026-05-25T13:58:16Z · Codex · progress · Task commit 68030d06 created; preparing finalize/PR.
-- 2026-05-25T13:59:33Z · Codex · progress · Rebased onto origin/dev; task commit e17e84a8; focused B1+B5 regression passed (15 tests in 8.68s).
-- 2026-05-25T14:02:43Z · Codex · handoff · Handoff to Claude: Review handoff: PR #600 merged into dev at 2026-05-25T14:01:53Z (merge 308c04f1f7d9b69d9ae5cae5d7efc5846133f96a). Task commit e17e84a8ea84e60aacb820dd6ebfcdc25176836f. Local verification: focused B1+B5 regression 15 passed; GitHub Branch CI Gate checks passed.
-- 2026-05-25T14:03:33Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
+- 2026-05-25T14:03:34Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-25T14:03:37Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-05-25T14:03:37Z · Orchestrator · worker_worktree_reused · -
+- 2026-05-25T14:03:37Z · Orchestrator · worker_started · Worker started via claude_cli: review_ready_dispatch
+- 2026-05-25T14:07:30Z · Claude · review_approved · Review approved: all four HumanGate security controls verified (anti-self-approval, two-man for high-risk, extend_ttl cap, revoke fail-closed). 15/15 B1+B5 regression tests pass. Returning to Codex for finalization.
+- 2026-05-25T14:08:52Z · Orchestrator · worker_superseded · Worker superseded after task responsibility moved to another agent.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
