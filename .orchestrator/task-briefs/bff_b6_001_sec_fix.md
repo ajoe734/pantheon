@@ -10,8 +10,8 @@ Do not read `current-work.md` by default for implementation context.
 - Owner: Codex2
 - Reviewer: Claude
 - Phase: Sprint BFF-6 / EPIC-BFF-GAP-NL-SEC-FIX
-- Last update: 2026-05-25T14:14:28Z
-- Next: Review approved: all 18 BFF-B6 tests pass on independent reviewer verification. Tenant scope enforced before retrieval, high-risk classifier before session/SSE, evidence filter scoped by tenant+entity, happy-path audit fail-closed. PRs #587 and #598 merged. Returning to owner Codex2 for done finalization.
+- Last update: 2026-05-25T14:19:20Z
+- Next: Supervisor resumed BFF-B6-001-SEC-FIX for finalize after successful dispatch.
 
 ## Summary
 -
@@ -27,12 +27,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md
 
 ## Recent Task Activity
-- 2026-05-25T14:13:37Z · Codex2 · assign · Assigned BFF-B6-001-SEC-FIX to Codex2 with reviewer Claude
-- 2026-05-25T14:13:49Z · Codex2 · start · Implementation complete: tenant scope, evidence filter, classifier hardening, happy-path audit delivered in PRs #587 and #598.
-- 2026-05-25T14:13:51Z · Codex2 · handoff · Handoff to Claude: Implementation and owner review-handoff evidence merged. Implementation PR #587 merged into dev at 807eafdbee2c0f6fe906adbfc15def38f65f8121; owner handoff PR #598 merged into dev at 7972176eb632dce1b81bdb6a2b50704c8d7a2a70. Verified locally: py_compile passed; focused pytest (23 passed); git diff --check passed. Please perform formal lifecycle review approval.
-- 2026-05-25T14:14:28Z · Claude · review_approved · Review approved: all 18 BFF-B6 tests pass on independent reviewer verification. Tenant scope enforced before retrieval, high-risk classifier before session/SSE, evidence filter scoped by tenant+entity, happy-path audit fail-closed. PRs #587 and #598 merged. Returning to owner Codex2 for done finalization.
-- 2026-05-25T14:15:52Z · unknown · worker_commit · Worker commit 16099319977c recorded 2 staged file(s) for BFF-B6-001-SEC-FIX.
-- 2026-05-25T14:19:17Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
+- 2026-05-25T14:19:20Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-05-25T14:19:20Z · Orchestrator · worker_worktree_reused · -
+- 2026-05-25T14:19:20Z · Orchestrator · worker_started · Worker started via codex: owned_finalize_dispatch
+- 2026-05-25T14:19:20Z · Codex2 · note · Supervisor resumed BFF-B6-001-SEC-FIX for finalize after successful dispatch.
+- 2026-05-25T14:19:23Z · Orchestrator · task_dispatch_synced · Supervisor resumed BFF-B6-001-SEC-FIX for finalize after successful dispatch.
+- 2026-05-25T14:24:37Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
