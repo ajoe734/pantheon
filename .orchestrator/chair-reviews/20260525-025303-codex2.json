@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Active v3 execution work has safe support surfaces and no global approval or provider blocker.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "PROD-WRITES-001-V2",
+    "LIVE-SCALE-001-V2",
+    "OPS-BFF-LUPIN-DEV-REDEPLOY-20260525"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "OPS-BFF-LUPIN-DEV-REDEPLOY-20260525",
+    "BFF-INFRA-ERRORCODE-PACKD-001",
+    "OPS-DOC-BFF-NAMING-CANONICAL-001"
+  ]
+}
