@@ -9,6 +9,37 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
+from models import ErrorCode
+
+
+PACK_D_D21_ERROR_CODES = [
+    "RESOURCE_NOT_FOUND",
+    "AUTH_REQUIRED",
+    "AUTH_EXPIRED",
+    "FORBIDDEN",
+    "RATE_LIMITED",
+    "VALIDATION_FAILED",
+    "BUSINESS_RULE_VIOLATION",
+    "IDEMPOTENCY_CONFLICT",
+    "PRECONDITION_FAILED",
+    "CONFIRMATION_REQUIRED",
+    "TWO_MAN_SIGNATURE_REQUIRED",
+    "HUMAN_GATE_PENDING",
+    "HUMAN_GATE_REJECTED",
+    "HUMAN_GATE_EXPIRED",
+    "RESOURCE_CONFLICT",
+    "OPERATION_NOT_ALLOWED",
+    "DEPENDENCY_UNAVAILABLE",
+    "UPSTREAM_TIMEOUT",
+    "UPSTREAM_ERROR",
+    "INTERNAL_ERROR",
+    "NOT_IMPLEMENTED",
+    "MAINTENANCE_MODE",
+    "KILL_SWITCH_ACTIVE",
+    "SAFE_MODE_ACTIVE",
+    "DEGRADED_READ_ONLY",
+    "REQUEST_TOO_LARGE",
+]
 
 
 def _install_error_envelope_test_routes() -> None:
@@ -31,7 +62,7 @@ def _install_error_envelope_test_routes() -> None:
     async def _direct_json_response_probe():
         return bff_main._pack_d_direct_error_response(
             status_code=503,
-            code="synthetic_unavailable",
+            code="DOWNSTREAM_UNAVAILABLE",
             message="Synthetic direct response failure",
             details={"reason": "SYNTHETIC_DIRECT_RESPONSE"},
         )
@@ -67,6 +98,12 @@ def _assert_error_envelope(
     return body
 
 
+def test_error_code_enum_matches_pack_d_d21_allowlist() -> None:
+    observed = [code.value for code in ErrorCode]
+    assert observed == PACK_D_D21_ERROR_CODES
+    assert len(observed) == 26
+
+
 def test_401_error_envelope_uses_top_level_error_and_meta_correlation() -> None:
     response = _client().get(
         "/bff/me",
@@ -76,7 +113,7 @@ def test_401_error_envelope_uses_top_level_error_and_meta_correlation() -> None:
     body = _assert_error_envelope(
         response,
         status_code=401,
-        code="INVALID_TOKEN",
+        code="AUTH_REQUIRED",
         correlation_id="corr-envelope-401",
     )
     assert body["error"]["details"]["reason"] == "Token is absent or not a Bearer token"
@@ -92,7 +129,7 @@ def test_404_error_envelope_uses_top_level_error_and_meta_correlation() -> None:
     _assert_error_envelope(
         response,
         status_code=404,
-        code="OBJECT_NOT_FOUND",
+        code="RESOURCE_NOT_FOUND",
         correlation_id="corr-envelope-404",
     )
 
@@ -106,7 +143,7 @@ def test_422_request_validation_error_envelope_uses_pack_d_shape() -> None:
     body = _assert_error_envelope(
         response,
         status_code=422,
-        code="INVALID_PARAMS",
+        code="VALIDATION_FAILED",
         correlation_id="corr-envelope-422",
     )
     assert body["error"]["details"]["reason"] == "REQUEST_VALIDATION_ERROR"
@@ -121,7 +158,7 @@ def test_value_error_envelope_uses_pack_d_shape() -> None:
     body = _assert_error_envelope(
         response,
         status_code=400,
-        code="INVALID_REQUEST",
+        code="VALIDATION_FAILED",
         correlation_id="corr-envelope-value",
     )
     assert body["error"]["details"]["reason"] == "VALUE_ERROR"
@@ -133,7 +170,7 @@ def test_500_error_envelope_generates_uuid_correlation_when_missing() -> None:
     body = _assert_error_envelope(
         response,
         status_code=500,
-        code="DOWNSTREAM_UNAVAILABLE",
+        code="INTERNAL_ERROR",
         correlation_id=None,
     )
     assert body["error"]["message"] == "Internal server error"
@@ -146,7 +183,7 @@ def test_direct_json_error_response_uses_pack_d_shape() -> None:
     body = _assert_error_envelope(
         response,
         status_code=503,
-        code="synthetic_unavailable",
+        code="DEPENDENCY_UNAVAILABLE",
         correlation_id=None,
     )
     assert body["error"]["details"]["reason"] == "SYNTHETIC_DIRECT_RESPONSE"
