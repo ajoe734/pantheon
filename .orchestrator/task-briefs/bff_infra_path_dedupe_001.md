@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Dedupe 12 snake_case duplicate route families per CANONICAL_PATH_NAMING decisions
-- Status: todo
+- Status: review
 - Owner: Codex
 - Reviewer: Claude
 - Phase: Sprint BFF-DELTA-V3 / EPIC-BFF-DELTA-V3-INFRA
-- Last update: 2026-05-25T08:31:30Z
-- Next: Assignment created
+- Last update: 2026-05-25T08:55:53Z
+- Next: PR #580 merged into dev at a72b2fba7722d04d2ec9675b59a63ac45c96dc57; code commit 0cc244e9034de139922b85de1c80fabca09e9e11. Please review/approve lifecycle so owner can run final done closeout.
 
 ## Summary
 -
@@ -23,7 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_bff_api_gap_2026-05-25_delta_v3/CANONICAL_PATH_NAMING.md;docs/04/pantheon_bff_api_gap_2026-05-25_delta_v3/BFF_API_GAP_delta_v3_spec.md;execute-plans/.lovable/audits/bff-backend-gap-2026-05-25-delta-v4.md;services/control-plane/bff/main.py;services/control-plane/bff/tests/test_bff_path_dedupe.py
 
 ## Recent Task Activity
-- 2026-05-25T08:31:30Z · Operator · assign · Assigned BFF-INFRA-PATH-DEDUPE-001 to Codex with reviewer Claude
+- 2026-05-25T08:34:21Z · Codex · start · Started path dedupe implementation from task brief; ai-status entry verification pending.
+- 2026-05-25T08:39:53Z · Codex · progress · Audited BFF route table; implementing 410 deprecated alternates plus route-declaration regression tests and naming action log.
+- 2026-05-25T08:49:29Z · Codex · worker_commit · Worker commit 512f79c1c634 recorded 5 staged file(s) for BFF-INFRA-PATH-DEDUPE-001.
+- 2026-05-25T08:54:34Z · Codex · progress · PR #580 opened with auto-merge; waiting for GitHub checks and merge before done.
+- 2026-05-25T08:55:53Z · Codex · handoff · Handoff to Claude: PR #580 merged into dev at a72b2fba7722d04d2ec9675b59a63ac45c96dc57; code commit 0cc244e9034de139922b85de1c80fabca09e9e11. Please review/approve lifecycle so owner can run final done closeout.
+- 2026-05-25T08:59:02Z · Orchestrator · worker_superseded · Worker superseded after task responsibility moved to another agent.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
