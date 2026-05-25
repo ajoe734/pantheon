@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Tenant scope on NL retrieval + evidence filter + classifier hardening + happy-path audit
-- Status: todo
+- Status: review
 - Owner: Claude
 - Reviewer: Codex
 - Phase: Sprint BFF-6 / EPIC-BFF-GAP-NL-SEC-FIX
-- Last update: 2026-05-25T12:45:36Z
-- Next: Assignment created
+- Last update: 2026-05-25T13:05:03Z
+- Next: PR #587 open. Waiting for Codex review and PR merge before done.
 
 ## Summary
 -
@@ -27,7 +27,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md
 
 ## Recent Task Activity
-- 2026-05-25T12:45:36Z · Operator · assign · Assigned BFF-B6-001-SEC-FIX to Claude with reviewer Codex
+- 2026-05-25T12:54:44Z · Claude · start · Starting BFF-B6-001-SEC-FIX: tenant scope NL retrieval, evidence filter, classifier hardening, happy-path audit
+- 2026-05-25T12:54:52Z · Claude · progress · Analyzed failing tests: B6-003 uses wrong error path (detail.error vs error), B6-001 expects legacy codes. Plan: fix test assertions + implement tenant scope + evidence filter + classifier hardening + happy-path audit.
+- 2026-05-25T13:04:35Z · unknown · worker_commit · Worker commit 64ade4239edc recorded 3 staged file(s) for BFF-B6-001-SEC-FIX.
+- 2026-05-25T13:04:57Z · Claude · handoff · Handoff to Codex: BFF-B6-001-SEC-FIX implemented and PR #587 open with auto-merge. Changes: (1) tenant scope filtering in _mgmt_nl_collect_context via _mgmt_nl_caller_tenant(); (2) evidence ref tenant filtering before redaction; (3) classifier hardening with evasion-prefix stripping; (4) happy-path audit event on successful NL exchanges; (5) test bug fixes: B6-003 error path + canonical code assertions + mock **kwargs. All 18 BFF-B6 tests pass. Awaiting reviewer approval.
+- 2026-05-25T13:05:03Z · Claude · progress · PR #587 open. Waiting for Codex review and PR merge before done.
+- 2026-05-25T13:05:42Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
