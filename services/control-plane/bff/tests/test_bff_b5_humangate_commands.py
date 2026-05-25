@@ -51,6 +51,20 @@ def _isolated_b5_client() -> Iterator[TestClient]:
                 "correlation_id": "corr-b5-human-001",
             }
         )
+        bff_main._V5_INTERVENTIONS_STORE.append(
+            {
+                "intervention_id": "b5-revoke",
+                "kind": "hiq_sentinel",
+                "status": "pending",
+                "risk_level": "medium",
+                "target_type": "Runtime",
+                "target_id": "runtime-b5-revoke-001",
+                "triggered_at": "2026-05-23T10:01:00Z",
+                "description": "B5 HumanGate revocation source fixture.",
+                "triggered_by": "governance-queue",
+                "correlation_id": "corr-b5-revoke-001",
+            }
+        )
         try:
             yield TestClient(bff_main.app, raise_server_exceptions=False)
         finally:
@@ -246,3 +260,4 @@ def test_b5_commands_are_in_action_catalog_and_executor_dispatch() -> None:
     assert result is not None
     assert result["dispatch_path"] == "bff_action_adapter"
     assert result["live_capital_side_effects"] is False
+    assert result["two_man_signature_id"] is None

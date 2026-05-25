@@ -1913,6 +1913,14 @@ request-more-evidence, revoke, TTL extension, and recommendation submission.
   `human_gate.{decision}` audit events.
 - Validates HumanGate target type, role gates, bounded decisions, and positive
   TTL for `HumanGateExtendTtl`.
+- Security hardening (`BFF-B5-001-SEC-FIX`): `target.id` is authoritative for
+  HumanGate item identity; conflicting `params.human_gate_item_id` aliases are
+  rejected. Approval requester self-decisions are forbidden for
+  approve/reject/revoke. High-risk HumanGate approval decisions require
+  `twoManSignatureId`, `HumanGateExtendTtl` is capped by
+  `PANTHEON_HUMAN_GATE_MAX_TTL_SECONDS` (default 604800 seconds), and
+  `HumanGateRevoke` fails closed when the source record is missing or the
+  downstream effect has already executed.
 - Normalizes `QuarterlyRankingRecommendationSubmit` so the recommendation id,
   recommendation action id, command action, and audit event are persisted in the
   command-store params while preserving `liveCapitalSideEffects=false` in the
@@ -1935,6 +1943,11 @@ request-more-evidence, revoke, TTL extension, and recommendation submission.
 | 3 | Human Inbox decision flow can approve, reject, and request more evidence by using the composed inbox item id as a `HumanGateItem` target | Implemented BFF-B5-001 |
 | 4 | Quarterly ranking recommendation submission records governance intent and remains `liveCapitalSideEffects=false` / no direct live capital mutation | Implemented BFF-B5-001 |
 | 5 | B5 command names are present in the action catalog and command executor dispatch table | Implemented BFF-B5-001 |
+| 6 | HumanGate item id params must match `target.id`; conflicting aliases return HTTP 422 | Implemented BFF-B5-001-SEC-FIX |
+| 7 | HumanGate approve/reject/revoke return HTTP 403 when the caller is the underlying approval requester | Implemented BFF-B5-001-SEC-FIX |
+| 8 | High-risk HumanGate approval decisions require bound two-man evidence and persist `two_man_signature_id` | Implemented BFF-B5-001-SEC-FIX |
+| 9 | `HumanGateExtendTtl` rejects TTL extensions above `PANTHEON_HUMAN_GATE_MAX_TTL_SECONDS` | Implemented BFF-B5-001-SEC-FIX |
+| 10 | `HumanGateRevoke` returns HTTP 409 with a compensating-action suggestion once downstream execution has occurred | Implemented BFF-B5-001-SEC-FIX |
 
 ### Affected Files
 
@@ -1943,6 +1956,7 @@ request-more-evidence, revoke, TTL extension, and recommendation submission.
 - `services/control-plane/bff/action_catalog.py`
 - `services/control-plane/bff/command_executor.py`
 - `services/control-plane/bff/tests/test_bff_b5_humangate_commands.py`
+- `services/control-plane/bff/tests/test_bff_b5_001_security_hardening.py`
 - `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
 
 ### Task

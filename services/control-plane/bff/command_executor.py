@@ -623,6 +623,14 @@ def _execute_bff_action_adapter(
     """
     del auth_token, mfa_token
     source_route = params.get("frontend_source_route") or params.get("adapter_source_route")
+    two_man_signature_id = (
+        params.get("twoManSignatureId")
+        or params.get("two_man_signature_id")
+        or params.get("twoManApprovalId")
+        or params.get("two_man_approval_id")
+        or params.get("secondOperatorId")
+        or params.get("second_operator_id")
+    )
     return {
         "command_id": command_id,
         "dispatch_path": "bff_action_adapter",
@@ -632,6 +640,7 @@ def _execute_bff_action_adapter(
         "entity_id": params.get("entity_id"),
         "audit_event": params.get("audit_event"),
         "source_route": source_route,
+        "two_man_signature_id": two_man_signature_id,
         "deprecated_action_receipt": (
             params.get("adapter_source_route")
             == "POST /bff/actions/{entityType}/{entityId}/{actionId}"
