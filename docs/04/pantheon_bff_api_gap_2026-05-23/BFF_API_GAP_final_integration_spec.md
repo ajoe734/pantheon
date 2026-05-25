@@ -2368,6 +2368,41 @@ BFF-B6-002 — NL audit and evidence grounding — Owner: Claude, Reviewer: Code
 Evidence: `support/evidence/BFF-B6-002/audit.md`
 Verified: 11 passed (2026-05-23)
 
+### Security Follow-up: BFF-B6-001-SEC-FIX
+
+Review follow-up on the B6 NL surface closed the security hardening gaps that
+remained after BFF-B6-001/002/003:
+
+- Resolve the caller tenant before any NL summary composition; the NL collector
+  filters portfolio, trading-pulse, cockpit, and persona-fleet records by tenant
+  metadata when records carry tenant scope, while preserving tenant-agnostic
+  shared records.
+- Preserve tenant metadata in read-store projections for capital pools, runtime
+  bindings, and personas so BFF-level tenant filtering does not lose canonical
+  scope data.
+- Filter `evidenceRefs` in `ReadSurfaceStore.list_evidence_refs(...)` before
+  projection and before role/capability redaction, using caller tenant,
+  linked entities used by the composed NL snippets, and tenant-agnostic refs.
+- Reject `question` values larger than 2048 UTF-8 bytes before idempotency,
+  retrieval, session creation, audit, or SSE side effects.
+- Harden the high-risk classifier with word-boundary matching for ASCII terms,
+  common soft-prefix stripping, and CJK/synonym triggers for mutation requests.
+- Fail closed with HTTP 503 if the accepted-path Agora audit write fails; this
+  happens before session/message persistence, idempotency caching, or SSE emit.
+
+Security regression coverage lives in
+`services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py`.
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | NL portfolio/trading summaries exclude explicit cross-tenant records while retaining scoped records | ✅ test added |
+| 2 | Evidence refs include same-tenant and tenant-agnostic refs, exclude mismatched tenant refs, and exclude refs linked to entities not used in the composed snippets | ✅ test added |
+| 3 | Questions over 2048 bytes return typed HTTP 413 without NL side effects | ✅ test added |
+| 4 | High-risk classifier avoids substring false positives and catches CJK runtime-control synonyms | ✅ test added |
+| 5 | Happy-path audit write failure returns typed HTTP 503 before session, idempotency, or SSE side effects | ✅ test added |
+
+Task: BFF-B6-001-SEC-FIX — Owner: Codex2, Reviewer: Claude
+
 ---
 
 ## B6-003 — NL High-Risk Refusal Policy {#b6-003--nl-high-risk-refusal-policy}

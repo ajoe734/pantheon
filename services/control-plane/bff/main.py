@@ -12,7 +12,7 @@ import time
 import uuid
 from collections import deque
 from datetime import datetime, timedelta, timezone
-from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Set, Tuple
 
 from fastapi import Body, Cookie, FastAPI, HTTPException, BackgroundTasks, Header, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
@@ -27656,6 +27656,7 @@ async def bff_management_persona_fleet(
 _MGMT_NL_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 
 _MGMT_NL_VALID_FOCUS = {"cockpit", "trading_pulse", "portfolio", "persona_fleet", "all"}
+_MGMT_NL_MAX_QUESTION_BYTES = 2048
 
 _MGMT_NL_HIGH_RISK_REFUSAL_FOLLOWUPS = [
     {
@@ -27675,7 +27676,9 @@ _MGMT_NL_HIGH_RISK_PATTERNS: List[tuple[str, List[str], str]] = [
             "transfer funds", "move funds", "allocate funds", "withdraw funds",
             "increase allocation", "decrease allocation", "change allocation",
             "rebalance capital", "rebalance portfolio", "set capital", "add capital",
-            "remove capital", "fund the pool", "capital injection",
+            "remove capital", "fund the pool", "capital injection", "execute trade",
+            "place trade", "place order", "buy shares", "sell shares", "liquidate position",
+            "配置資金", "轉移資金", "資金轉移", "調倉", "加倉", "減倉", "下單", "買入", "賣出",
         ],
         "Use POST /bff/capital-pools/{id} or the governance approval flow to mutate capital allocations.",
     ),
@@ -27686,7 +27689,8 @@ _MGMT_NL_HIGH_RISK_PATTERNS: List[tuple[str, List[str], str]] = [
             "enable the live broker", "connect the live broker", "activate the live broker",
             "start broker", "enable shioaji", "connect shioaji", "enable ibkr",
             "connect ibkr", "enable pantheon_live_broker", "set pantheon_live_broker",
-            "turn on broker", "activate live trading",
+            "turn on broker", "activate live trading", "inject broker credentials",
+            "啟用實盤", "開啟實盤", "啟用券商", "連接券商", "啟用 live broker",
         ],
         "Live broker activation requires operator dual-signoff via the human gate. Use PROD-WRITES-001-V2.",
     ),
@@ -27694,8 +27698,10 @@ _MGMT_NL_HIGH_RISK_PATTERNS: List[tuple[str, List[str], str]] = [
         "strategy_deployment",
         [
             "deploy strategy", "retire strategy", "promote strategy", "activate strategy",
+            "redeploy strategy", "undeploy strategy",
             "rollback strategy", "deprecate strategy", "publish strategy",
             "make strategy live", "push strategy", "deactivate strategy",
+            "部署策略", "上線策略", "發布策略", "回滾策略", "停用策略",
         ],
         "Use POST /bff/strategies/{id}/actions with a confirm-token for strategy lifecycle changes.",
     ),
@@ -27705,6 +27711,7 @@ _MGMT_NL_HIGH_RISK_PATTERNS: List[tuple[str, List[str], str]] = [
             "activate persona", "deploy persona", "enable persona", "launch persona",
             "start persona", "run persona", "make persona live", "promote persona",
             "deactivate persona", "disable persona", "stop persona",
+            "啟用 persona", "啟動 persona", "上線 persona", "部署 persona", "停用 persona",
         ],
         "Use POST /bff/personas/{id}/actions with a confirm-token for persona lifecycle changes.",
     ),
@@ -27713,7 +27720,8 @@ _MGMT_NL_HIGH_RISK_PATTERNS: List[tuple[str, List[str], str]] = [
         [
             "restart runtime", "stop runtime", "start runtime", "kill runtime",
             "pause runtime", "resume runtime", "terminate runtime", "shut down runtime",
-            "shutdown runtime", "reset runtime", "reboot runtime",
+            "shutdown runtime", "reset runtime", "reboot runtime", "bring runtime back",
+            "重啟 runtime", "停止 runtime", "啟動 runtime", "暫停 runtime", "恢復 runtime",
         ],
         "Use POST /bff/runtimes/{id}/actions with appropriate governance gates for runtime control.",
     ),
@@ -27725,36 +27733,69 @@ _MGMT_NL_HIGH_RISK_PATTERNS: List[tuple[str, List[str], str]] = [
             "modify production", "update production config", "change production",
             "enable production writes", "disable production writes",
             "set vite_bff_real_writes", "set pantheon_env",
+            "切換功能", "更改 production", "修改 production", "開啟 production writes",
         ],
         "System-wide mutations require operator gate approval. Use the appropriate governance route.",
     ),
 ]
 
 
-def _mgmt_nl_high_risk_classify(question: str) -> Optional[Dict[str, Any]]:
-    """BFF-B6-003 / BFF-B6-001-SEC-FIX: classify a free-text NL question for high-risk
-    action patterns.  Returns a classification dict on match, or None when safe.
+def _mgmt_nl_validate_question_size(question: str) -> None:
+    question_size = len(question.encode("utf-8"))
+    if question_size <= _MGMT_NL_MAX_QUESTION_BYTES:
+        return
+    raise _bff_error(
+        413,
+        ErrorCode.REQUEST_TOO_LARGE,
+        "Management NL question exceeds the maximum size",
+        f"question must be at most {_MGMT_NL_MAX_QUESTION_BYTES} bytes",
+        precondition_failed="question_size",
+        suggestion="Shorten the question and attach large context through an approved evidence route",
+        details_extra={
+            "maxQuestionBytes": _MGMT_NL_MAX_QUESTION_BYTES,
+            "actualQuestionBytes": question_size,
+        },
+    )
 
-    Hardened in SEC-FIX: strips common evasion prefixes ("can you", "please",
-    "help me", etc.) before pattern matching so soft phrasing does not bypass
-    the classifier.
-    """
-    raw = question.strip().lower()
-    # Strip common softening prefixes to harden against evasion.
-    _EVASION_PREFIXES = (
+
+def _mgmt_nl_normalize_question_text(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip().lower())
+
+
+def _mgmt_nl_evasion_stripped_variants(question: str) -> List[str]:
+    raw = _mgmt_nl_normalize_question_text(question)
+    variants = [raw]
+    evasion_prefixes = (
         "can you please ", "can you ", "please ", "help me ", "i need you to ",
         "i want you to ", "could you please ", "could you ", "would you please ",
         "would you ", "should i ", "let's ", "let me ", "go ahead and ",
+        "kindly ", "請幫我", "請", "麻煩", "幫我",
     )
-    q_lower = raw
-    for prefix in _EVASION_PREFIXES:
-        if q_lower.startswith(prefix):
-            q_lower = q_lower[len(prefix):].strip()
+    for prefix in evasion_prefixes:
+        if raw.startswith(prefix):
+            stripped = raw[len(prefix):].strip()
+            if stripped and stripped not in variants:
+                variants.append(stripped)
             break
+    return variants
 
+
+def _mgmt_nl_term_matches(text: str, term: str) -> bool:
+    clean_term = _mgmt_nl_normalize_question_text(term)
+    if not clean_term:
+        return False
+    if re.fullmatch(r"[a-z0-9_ -]+", clean_term):
+        term_pattern = r"[\s_-]+".join(re.escape(part) for part in clean_term.split())
+        return bool(re.search(rf"(?<![a-z0-9_]){term_pattern}(?![a-z0-9_])", text))
+    return clean_term in text
+
+
+def _mgmt_nl_high_risk_classify(question: str) -> Optional[Dict[str, Any]]:
+    """Classify NL questions requesting high-risk mutations before any read work."""
+    variants = _mgmt_nl_evasion_stripped_variants(question)
     for category_key, trigger_terms, safe_alternatives in _MGMT_NL_HIGH_RISK_PATTERNS:
         for term in trigger_terms:
-            if term in raw or term in q_lower:
+            if any(_mgmt_nl_term_matches(variant, term) for variant in variants):
                 return {
                     "matched_category": category_key,
                     "matched_pattern": term,
@@ -27819,16 +27860,176 @@ def _mgmt_nl_surface_confidence(surfaces: Dict[str, Any]) -> str:
     return "partial"
 
 
-def _mgmt_nl_caller_tenant(identity: OperatorIdentity) -> str:
-    """BFF-B6-001-SEC-FIX: extract the caller's canonical tenant ID from identity claims."""
-    claims = identity.claims if isinstance(identity.claims, dict) else {}
-    tenant_id = _first_nonblank(
-        str(claims.get("tenant_id") or "").strip(),
-        str(claims.get("tenantId") or "").strip(),
-        str(claims.get("tid") or "").strip(),
-        str(claims.get("org_id") or "").strip(),
+def _mgmt_nl_caller_tenant(
+    identity: OperatorIdentity,
+    *,
+    requested_tenant: Optional[str] = None,
+) -> str:
+    tenant = _bff_me_tenant_payload(identity, requested_tenant=requested_tenant)
+    return str(tenant.get("id") or "pantheon-dev")
+
+
+def _mgmt_nl_scope_values(value: Any) -> List[str]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, str):
+        return [part.strip() for part in re.split(r"[\s,]+", value) if part.strip()]
+    if isinstance(value, dict):
+        values: List[str] = []
+        for key in ("id", "tenant_id", "tenantId", "value", "name"):
+            if value.get(key) not in (None, ""):
+                values.extend(_mgmt_nl_scope_values(value.get(key)))
+        return values
+    if isinstance(value, (list, tuple, set)):
+        values: List[str] = []
+        for item in value:
+            values.extend(_mgmt_nl_scope_values(item))
+        return values
+    return [str(value).strip()]
+
+
+def _mgmt_nl_record_tenant_ids(record: Dict[str, Any]) -> List[str]:
+    values: List[str] = []
+    direct_keys = (
+        "tenant_id",
+        "tenantId",
+        "tenant",
+        "tenant_ref",
+        "tenantRef",
+        "org_id",
+        "orgId",
+        "organization_id",
+        "organizationId",
+        "workspace_id",
+        "workspaceId",
     )
-    return tenant_id or _env_csv("PANTHEON_BFF_ALLOWED_TENANTS")[0] if _env_csv("PANTHEON_BFF_ALLOWED_TENANTS") else (tenant_id or "pantheon-dev")
+    for key in direct_keys:
+        if key in record:
+            values.extend(_mgmt_nl_scope_values(record.get(key)))
+    for key in ("metadata", "scope", "sourceRecord", "source_record", "source_document", "target_ref"):
+        nested = record.get(key)
+        if isinstance(nested, dict):
+            values.extend(_mgmt_nl_record_tenant_ids(nested))
+    seen = set()
+    result: List[str] = []
+    for value in values:
+        clean = str(value or "").strip()
+        if clean and clean not in seen:
+            seen.add(clean)
+            result.append(clean)
+    return result
+
+
+def _mgmt_nl_record_matches_tenant(record: Dict[str, Any], tenant_id: Optional[str]) -> bool:
+    clean_tenant = str(tenant_id or "").strip()
+    if not clean_tenant:
+        return True
+    record_tenants = _mgmt_nl_record_tenant_ids(record)
+    if not record_tenants:
+        return True
+    return "*" in record_tenants or clean_tenant in record_tenants
+
+
+def _mgmt_nl_filter_tenant_records(
+    records: List[Dict[str, Any]],
+    tenant_id: Optional[str],
+) -> List[Dict[str, Any]]:
+    return [
+        record
+        for record in records
+        if isinstance(record, dict) and _mgmt_nl_record_matches_tenant(record, tenant_id)
+    ]
+
+
+def _mgmt_nl_add_entity(
+    entities: Set[Tuple[str, str]],
+    entity_type: str,
+    entity_ref: Any,
+) -> None:
+    clean_type = str(entity_type or "").strip().lower()
+    clean_ref = str(entity_ref or "").strip()
+    if clean_type and clean_ref:
+        entities.add((clean_type, clean_ref))
+
+
+def _mgmt_nl_add_record_entities(
+    entities: Set[Tuple[str, str]],
+    records: List[Dict[str, Any]],
+    entity_type: str,
+    *keys: str,
+) -> None:
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        for key in keys:
+            value = record.get(key)
+            if value not in (None, ""):
+                _mgmt_nl_add_entity(entities, entity_type, value)
+
+
+def _mgmt_nl_scoped_runtime_rows(
+    runtime_bindings: List[Dict[str, Any]],
+    entities: Set[Tuple[str, str]],
+) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for binding in runtime_bindings:
+        runtime_id = str(binding.get("runtime_id") or binding.get("id") or binding.get("binding_id") or "").strip()
+        binding_id = str(binding.get("binding_id") or binding.get("runtime_binding_id") or binding.get("id") or "").strip()
+        _mgmt_nl_add_entity(entities, "runtime", runtime_id)
+        _mgmt_nl_add_entity(entities, "runtime_binding", binding_id)
+        if binding.get("capital_pool_id"):
+            _mgmt_nl_add_entity(entities, "capital_pool", binding.get("capital_pool_id"))
+        rows.append(_project_operator_runtime_state_row(binding))
+    return rows
+
+
+def _mgmt_nl_trading_pulse_snippet(
+    runtime_bindings: List[Dict[str, Any]],
+    entities: Set[Tuple[str, str]],
+) -> Dict[str, Any]:
+    runtime_rows = _mgmt_nl_scoped_runtime_rows(runtime_bindings, entities)
+    telemetry_rows = [
+        row.get("telemetry_summary")
+        for row in runtime_rows
+        if isinstance(row.get("telemetry_summary"), dict)
+    ]
+    pnl_values = [
+        value
+        for value in (_management_number((row.get("metrics") or {}).get("pnl")) for row in telemetry_rows)
+        if value is not None
+    ]
+    fill_rate_values = [
+        value
+        for value in (_management_number((row.get("metrics") or {}).get("fill_rate")) for row in telemetry_rows)
+        if value is not None
+    ]
+    trade_values = [
+        value
+        for value in (_management_number((row.get("metrics") or {}).get("total_trades")) for row in telemetry_rows)
+        if value is not None
+    ]
+    summary = {
+        "runtimeCount": len(runtime_rows),
+        "runtime_count": len(runtime_rows),
+        "telemetryCoverageCount": len(telemetry_rows),
+        "telemetry_coverage_count": len(telemetry_rows),
+        "byStatus": _management_count_by(runtime_rows, "status"),
+        "by_status": _management_count_by(runtime_rows, "status"),
+        "byStage": _management_count_by(runtime_rows, "deployment_stage"),
+        "by_stage": _management_count_by(runtime_rows, "deployment_stage"),
+        "totalPnl": round(sum(pnl_values), 6) if pnl_values else None,
+        "total_pnl": round(sum(pnl_values), 6) if pnl_values else None,
+        "averageFillRate": _management_avg(fill_rate_values),
+        "average_fill_rate": _management_avg(fill_rate_values),
+        "totalTrades": int(sum(trade_values)) if trade_values else 0,
+        "total_trades": int(sum(trade_values)) if trade_values else 0,
+    }
+    cards = [
+        {"cardId": "runtime-status", "card_id": "runtime-status", "label": "Runtime Status", "value": len(runtime_rows)},
+        {"cardId": "pnl", "card_id": "pnl", "label": "P&L", "value": summary["totalPnl"]},
+        {"cardId": "execution-quality", "card_id": "execution-quality", "label": "Execution Quality", "value": summary["averageFillRate"]},
+    ]
+    return {"summary": summary, "cards": cards}
 
 
 def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[str] = None) -> Dict[str, Any]:
@@ -27839,48 +28040,78 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
     use_all = focus in ("all", "")
     snippets: Dict[str, Any] = {}
     surfaces: Dict[str, Any] = {}
+    evidence_entities: Set[Tuple[str, str]] = set()
+    evidence_source_types: Set[str] = set()
 
     if use_all or focus == "cockpit":
         try:
-            cockpit = _build_management_cockpit_payload(snapshot_at)
-            cockpit_data = cockpit.get("data") or {}
+            alerts_payload = _build_operator_alerts_payload(snapshot_at)
+            alerts = _mgmt_nl_filter_tenant_records(
+                list(alerts_payload.get("alerts") or []),
+                tenant_id,
+            )
+            human_inbox_payload = _build_management_human_inbox_payload(snapshot_at)
+            inbox_items = _mgmt_nl_filter_tenant_records(
+                list(human_inbox_payload.get("items") or []),
+                tenant_id,
+            )
+            anomalies_payload = _build_management_anomalies_payload(snapshot_at)
+            anomalies = _mgmt_nl_filter_tenant_records(
+                list(anomalies_payload.get("items") or []),
+                tenant_id,
+            )
+            runtime_bindings = _mgmt_nl_filter_tenant_records(
+                list(read_store.list_runtime_bindings() or []),
+                tenant_id,
+            )
+            trading_pulse = _mgmt_nl_trading_pulse_snippet(runtime_bindings, evidence_entities)
+            _mgmt_nl_add_record_entities(evidence_entities, alerts, "alert", "alert_id", "id")
+            _mgmt_nl_add_record_entities(evidence_entities, inbox_items, "approval", "id", "item_id")
+            _mgmt_nl_add_record_entities(evidence_entities, anomalies, "incident", "id")
+            evidence_source_types.update({
+                "alert",
+                "incident",
+                "approval",
+                "runtime",
+                "runtime_binding",
+                "telemetry",
+            })
             snippets["cockpit"] = {
-                "trading_pulse_summary": (cockpit_data.get("tradingPulse") or {}).get("summary"),
-                "alerts_summary": (cockpit_data.get("alerts") or {}).get("summary"),
-                "human_inbox_summary": (cockpit_data.get("humanInbox") or {}).get("summary"),
-                "anomalies_summary": (cockpit_data.get("anomalies") or {}).get("summary"),
+                "trading_pulse_summary": trading_pulse.get("summary"),
+                "alerts_summary": _build_alert_summary(alerts),
+                "human_inbox_summary": {"total": len(inbox_items)},
+                "anomalies_summary": {"total": len(anomalies)},
             }
-            surfaces.update(cockpit.get("meta", {}).get("surfaces", {}))
+            surfaces["management_cockpit"] = {"status": "ok", "source": "bff_composed"}
         except Exception:
             surfaces["management_cockpit"] = {"status": "unavailable", "source": "error"}
 
     if use_all or focus == "trading_pulse":
         try:
-            pulse = _build_management_trading_pulse_payload(snapshot_at)
-            pulse_data = pulse.get("data") or {}
+            runtime_bindings = _mgmt_nl_filter_tenant_records(
+                list(read_store.list_runtime_bindings() or []),
+                tenant_id,
+            )
+            pulse_data = _mgmt_nl_trading_pulse_snippet(runtime_bindings, evidence_entities)
+            evidence_source_types.update({"runtime", "runtime_binding", "telemetry", "paper_live_drift"})
             snippets["trading_pulse"] = {
                 "summary": pulse_data.get("summary"),
                 "cards": pulse_data.get("cards"),
             }
-            surfaces.update(pulse.get("meta", {}).get("surfaces", {}))
+            surfaces["management_trading_pulse"] = {
+                "status": "ok" if runtime_bindings else "unavailable",
+                "source": "bff_composed",
+            }
         except Exception:
             surfaces["management_trading_pulse"] = {"status": "unavailable", "source": "error"}
 
     if use_all or focus == "portfolio":
         try:
-            pools = read_store.list_capital_pools() or []
-            runtime_bindings = read_store.list_runtime_bindings() or []
-            # BFF-B6-001-SEC-FIX: filter portfolio data to the caller's tenant when
-            # tenant_id fields are present in pool/binding records.
-            if tenant_id:
-                pools = [
-                    p for p in pools
-                    if not p.get("tenant_id") or p.get("tenant_id") == tenant_id
-                ]
-                runtime_bindings = [
-                    r for r in runtime_bindings
-                    if not r.get("tenant_id") or r.get("tenant_id") == tenant_id
-                ]
+            pools = _mgmt_nl_filter_tenant_records(list(read_store.list_capital_pools() or []), tenant_id)
+            runtime_bindings = _mgmt_nl_filter_tenant_records(list(read_store.list_runtime_bindings() or []), tenant_id)
+            _mgmt_nl_add_record_entities(evidence_entities, pools, "capital_pool", "pool_id", "id")
+            _mgmt_nl_add_record_entities(evidence_entities, runtime_bindings, "runtime", "runtime_id", "id", "binding_id")
+            evidence_source_types.update({"capital_pool", "runtime", "runtime_binding", "telemetry"})
             telemetry_values = [
                 read_store.get_telemetry_summary(
                     str(r.get("runtime_id") or r.get("id") or r.get("binding_id") or "")
@@ -27905,23 +28136,47 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
 
     if use_all or focus == "persona_fleet":
         try:
-            fleet = _project_persona_fleet_payload(
-                state=None,
-                health=None,
-                page_token=None,
-                page_size=20,
-            )
-            fleet_items = fleet.get("items") or []
-            fleet_summary = fleet.get("summary") or {}
+            personas = _mgmt_nl_filter_tenant_records(_list_persona_records(), tenant_id)
+            runtime_bindings = _mgmt_nl_filter_tenant_records(list(read_store.list_runtime_bindings() or []), tenant_id)
+            incidents = _mgmt_nl_filter_tenant_records(list(read_store.list_incidents() or []), tenant_id)
+            evolution_decisions = _mgmt_nl_filter_tenant_records(list(read_store.list_evolution_decisions() or []), tenant_id)
+            fleet_items = [
+                _project_persona_fleet_item(
+                    persona,
+                    all_runtime_bindings=runtime_bindings,
+                    all_incidents=incidents,
+                    all_evolution_decisions=evolution_decisions,
+                )
+                for persona in personas
+            ][:20]
+            _mgmt_nl_add_record_entities(evidence_entities, personas, "persona", "persona_id", "id")
+            _mgmt_nl_add_record_entities(evidence_entities, runtime_bindings, "runtime", "runtime_id", "id", "binding_id")
+            _mgmt_nl_add_record_entities(evidence_entities, incidents, "incident", "incident_id", "id")
+            _mgmt_nl_add_record_entities(evidence_entities, evolution_decisions, "evolution_decision", "decision_id", "id")
+            evidence_source_types.update({"persona", "runtime", "runtime_binding", "incident", "evolution_decision"})
+            fleet_summary = {
+                "total_personas": len(personas),
+                "returned_personas": len(fleet_items),
+                "critical_personas": len([item for item in fleet_items if item["health"]["status"] == "critical"]),
+                "degraded_personas": len([item for item in fleet_items if item["health"]["status"] == "degraded"]),
+                "healthy_personas": len([item for item in fleet_items if item["health"]["status"] == "healthy"]),
+                "bound_personas": len([item for item in fleet_items if item["bindings"]]),
+                "runtime_bound_personas": len([item for item in fleet_items if item["runtimeBindings"]]),
+            }
             snippets["persona_fleet"] = {
                 "total": len(fleet_items),
                 "summary": fleet_summary,
             }
-            surfaces.update(fleet.get("meta", {}).get("surfaces", {}))
+            surfaces["persona_fleet"] = {"status": "ok" if personas else "unavailable", "source": "bff_composed"}
         except Exception:
             surfaces["persona_fleet"] = {"status": "unavailable", "source": "error"}
 
-    return {"snippets": snippets, "surfaces": surfaces}
+    return {
+        "snippets": snippets,
+        "surfaces": surfaces,
+        "evidence_entities": evidence_entities,
+        "evidence_source_types": evidence_source_types,
+    }
 
 
 def _mgmt_nl_synthesize_answer(question: str, snippets: Dict[str, Any], focus: str) -> str:
@@ -27992,6 +28247,8 @@ async def bff_management_nl_ask(
     authorization: Optional[str] = Header(default=None),
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+    x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
 ):
     """BFF-B6-001/BFF-B6-003: POST /bff/management/nl/ask — Management NL query endpoint."""
     identity = _extract_identity(authorization)
@@ -27999,6 +28256,7 @@ async def bff_management_nl_ask(
     _reject_body_idempotency_key(payload)
 
     question = _agora_required_text(payload, "question")
+    _mgmt_nl_validate_question_size(question)
 
     # BFF-B6-003: high-risk refusal policy — must run before idempotency, surface
     # collection, session creation, or SSE emission.
@@ -28032,7 +28290,10 @@ async def bff_management_nl_ask(
         )
 
     # BFF-B6-001-SEC-FIX: resolve caller tenant scope before any retrieval.
-    caller_tenant_id = _mgmt_nl_caller_tenant(identity)
+    caller_tenant_id = _mgmt_nl_caller_tenant(
+        identity,
+        requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant),
+    )
 
     focus = str(payload.get("focus") or "all").strip().lower()
     if focus not in _MGMT_NL_VALID_FOCUS:
@@ -28054,6 +28315,8 @@ async def bff_management_nl_ask(
     context_bundle = _mgmt_nl_collect_context(focus, now, tenant_id=caller_tenant_id)
     snippets = context_bundle["snippets"]
     surfaces = context_bundle["surfaces"]
+    evidence_entities = context_bundle.get("evidence_entities") or set()
+    evidence_source_types = context_bundle.get("evidence_source_types") or set()
 
     answer = _mgmt_nl_synthesize_answer(question, snippets, focus)
     confidence = _mgmt_nl_surface_confidence(surfaces)
@@ -28063,19 +28326,19 @@ async def bff_management_nl_ask(
         nl_capabilities = _capabilities_for_identity(identity)
     except Exception:
         nl_capabilities = None
-    raw_evidence_refs = list(read_store.list_evidence_refs() or [])
+    raw_evidence_refs = list(
+        read_store.list_evidence_refs(
+            tenant_id=caller_tenant_id,
+            linked_entities=evidence_entities,
+            source_types=evidence_source_types,
+        )
+        or []
+    )
     for _eref in raw_evidence_refs:
         if isinstance(_eref, dict):
             _eid = str(_eref.get("ref_id") or _eref.get("id") or "").strip()
             if _eid:
                 _eref.setdefault("href", f"/api/v1/knowledge/evidence/{_eid}")
-            # BFF-B6-001-SEC-FIX: filter evidence refs to the caller's tenant when the
-            # ref carries an explicit tenant_id field.  Tenant-agnostic refs (no tenant_id)
-            # are always included.
-            ref_tenant = str(_eref.get("tenant_id") or "").strip()
-            if ref_tenant and caller_tenant_id and ref_tenant != caller_tenant_id:
-                _eref["_tenant_filtered"] = True
-    raw_evidence_refs = [e for e in raw_evidence_refs if not e.get("_tenant_filtered")]
     processed_evidence_refs, redacted_evidence_count = redact_evidence_refs(
         identity, raw_evidence_refs, capabilities=nl_capabilities
     )
@@ -28087,6 +28350,35 @@ async def bff_management_nl_ask(
         "target_id": message_id,
         "href": f"/bff/audit/entities/ManagementNLExchange/{message_id}",
     }
+
+    try:
+        accepted_audit = read_store.record_agora_audit_event(
+            {
+                "action": "management.nl.ask.accepted",
+                "targetType": "ManagementNLExchange",
+                "targetId": message_id,
+                "actorId": identity.operator_id,
+                "recordedAt": now,
+                "sessionId": session_id,
+                "focus": focus,
+                "tenantId": caller_tenant_id,
+                "confidence": confidence,
+                "sourceSurfaces": source_keys,
+            }
+        )
+    except Exception:
+        log.warning("Failed to record management NL happy-path audit event", exc_info=True)
+        raise _bff_error(
+            503,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
+            "Management NL audit write failed",
+            "happy_path_audit_write_failed",
+            precondition_failed="audit_write",
+            suggestion="Retry after the Agora audit store is available",
+        )
+
+    audit_ref["auditId"] = accepted_audit.get("auditId") or accepted_audit.get("eventId")
+    audit_ref["audit_id"] = audit_ref["auditId"]
 
     session = read_store.get_agora_session(session_id)
     if session is None:
@@ -28115,26 +28407,6 @@ async def bff_management_nl_ask(
         },
         created_at=now,
     )
-
-    # BFF-B6-001-SEC-FIX: happy-path audit — record a successful NL exchange event
-    # so successful queries appear in the audit trail alongside refusals.
-    try:
-        read_store.record_agora_audit_event(
-            {
-                "action": "management.nl.ask.accepted",
-                "targetType": "ManagementNLExchange",
-                "targetId": message_id,
-                "actorId": identity.operator_id,
-                "recordedAt": now,
-                "sessionId": session_id,
-                "focus": focus,
-                "tenantId": caller_tenant_id,
-                "confidence": confidence,
-                "sourceSurfaces": source_keys,
-            }
-        )
-    except Exception:
-        log.warning("Failed to record management NL happy-path audit event", exc_info=True)
 
     _publish_event(
         _sse_buffers["ask"],
