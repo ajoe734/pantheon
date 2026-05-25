@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "BFF-INFRA-ERRORCODE-PACKD-001",
+  "archived_at": "2026-05-25T03:32:02Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-INFRA-ERRORCODE-PACKD-001",
+    "title": "Align ErrorCode enum to Pack D §D21 26 canonical codes",
+    "summary_zh": null,
+    "phase": "Sprint BFF-DELTA-V3 / EPIC-BFF-DELTA-V3-INFRA",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-25_delta_v3/BFF_API_GAP_delta_v3_spec.md;execute-plans/.lovable/audits/bff-backend-gap-2026-05-25-delta-v3.md;services/control-plane/bff/main.py;services/control-plane/bff/test_bff_error_envelope_shape.py"
+    ],
+    "acceptance": [
+      "Audit services/control-plane/bff/main.py ErrorCode enum against Pack D §D21 canonical 26-code allowlist;Rename OBJECT_NOT_FOUND to RESOURCE_NOT_FOUND and align all other non-canonical names;Status-code mapping table updated; 404 maps to RESOURCE_NOT_FOUND;Contract test test_bff_error_envelope_shape.py extended to assert exactly Pack D §D21 26-code allowlist;Any code outside allowlist fails the test;Live verification (after OPS-BFF-LUPIN-DEV-REDEPLOY-20260525 done): GET /bff/strategies/__nonexistent__ returns error.code RESOURCE_NOT_FOUND"
+    ],
+    "next": "Closeout complete: implementation PR #559 merged at 9304c09c; owner closeout PR #561 merged at c040284a71e2971d2436c5a5a549407dd0ab6ce3 with head aafa85e0e4c07da46d0b53a86dec9bf463820eab; verification passed: 12 focused pytest, 25 smoke tests, git diff --check.",
+    "last_update": "2026-05-25T03:32:02Z",
+    "review_notes_zh": [
+      "審查通過：ErrorCode enum 完整對齊 Pack D D21 26 碼規範，legacy 轉換覆蓋所有舊代碼，正規化邊界正確，12 focused + 25 smoke 全 pass"
+    ],
+    "review_file": "support/reviews/BFF-INFRA-ERRORCODE-PACKD-001-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-25T03:32:02Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-infra-errorcode-packd-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-INFRA-ERRORCODE-PACKD-001",
+      "git_clean_required": false,
+      "commit": "aafa85e0e4c07da46d0b53a86dec9bf463820eab",
+      "commit_subject": "BFF-INFRA-ERRORCODE-PACKD-001: record owner closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "owner closeout evidence and generated task-scoped orchestrator brief for Pack D error-code alignment.",
+        "Not changing": "BFF runtime implementation, ErrorCode enum, envelope tests, canonical L1 policy, or absent delta-v3 doc/audit paths.",
+        "Composes with": "implementation PR #559 merged into dev, Claude review approval record, and current origin/dev d4b8dcb3.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-INFRA-ERRORCODE-PACKD-001",
+        "Reviewer": "Claude",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_bff_error_envelope_shape.py services/control-plane/bff/test_final_contract_primitives.py -q (12 passed); PYTHONDONTWRITEBYTECODE=1 python3 services/control-plane/bff/smoke_test.py (25 passed); git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-INFRA-ERRORCODE-PACKD-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "c040284a71e2971d2436c5a5a549407dd0ab6ce3",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-INFRA-ERRORCODE-PACKD-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implementation commit 385cc120 pushed in PR #559. Verified: python3 -m pytest services/control-plane/bff/test_bff_error_envelope_shape.py services/control-plane/bff/test_final_contract_primitives.py -q; python3 services/control-plane/bff/smoke_test.py. Awaiting Claude review; live /bff/strategies/__nonexistent__ verification remains gated on OPS-BFF-LUPIN-DEV-REDEPLOY-20260525.",
+      "status": "done",
+      "created_at": "2026-05-25T03:12:49Z",
+      "resolved_at": "2026-05-25T03:15:47Z"
+    },
+    {
+      "task_id": "BFF-INFRA-ERRORCODE-PACKD-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: enum aligns to Pack D D21 26-code allowlist, legacy normalization correct, all tests pass. Returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-25T03:15:47Z",
+      "resolved_at": "2026-05-25T03:32:03Z"
+    }
+  ],
+  "blockers": []
+}
