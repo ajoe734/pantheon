@@ -1033,6 +1033,8 @@ _ACTIONS_DEPRECATION_MESSAGE = (
     "/bff/actions/* is deprecated; submit the equivalent command envelope to "
     "/bff/v1/commands."
 )
+_PATH_DEDUPE_DEPRECATED_SINCE = "2026-05-25T08:40:02Z"
+_PATH_DEDUPE_SUNSET_HTTP_DATE = "Mon, 25 May 2026 00:00:00 GMT"
 
 
 def _foundation_environment_scope() -> EnvironmentScope:
@@ -10822,6 +10824,46 @@ def _apply_legacy_action_deprecation_headers(response: Response) -> None:
     response.headers["X-Pantheon-Deprecated-Route"] = "/bff/actions/*"
 
 
+def _deprecated_bff_path_response(*, route: str, replacement: str) -> JSONResponse:
+    message = f"{route} is deprecated; use {replacement}."
+    headers = {
+        "Deprecation": "true",
+        "Sunset": _PATH_DEDUPE_SUNSET_HTTP_DATE,
+        "Link": f'<{replacement}>; rel="successor-version"',
+        "Warning": f'299 - "{message}"',
+        "X-Deprecated": "true",
+        "X-Deprecated-At": _PATH_DEDUPE_DEPRECATED_SINCE,
+        "X-Pantheon-Deprecated-Route": route,
+        "X-Pantheon-Replacement-Route": replacement,
+    }
+    return JSONResponse(
+        status_code=410,
+        headers=headers,
+        content={
+            "detail": {
+                "error": {
+                    "code": ErrorCode.OPERATION_NOT_ALLOWED.value,
+                    "message": "Deprecated BFF route",
+                    "details": {
+                        "reason": "route_deprecated",
+                        "route": route,
+                        "replacement": replacement,
+                        "deprecated_since": _PATH_DEDUPE_DEPRECATED_SINCE,
+                    },
+                }
+            },
+            "meta": {
+                "deprecated": True,
+                "deprecation": {
+                    "route": route,
+                    "replacement": replacement,
+                    "deprecated_since": _PATH_DEDUPE_DEPRECATED_SINCE,
+                },
+            },
+        },
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Degraded-mode helper
 # --------------------------------------------------------------------------- #
@@ -19939,6 +19981,10 @@ async def bff_capital_pool_action(
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
     """BFF: capital pool action — routes through command/precondition machinery."""
+    return _deprecated_bff_path_response(
+        route="/bff/capital-pools/{pool_id}/actions/{action_id}",
+        replacement="/bff/actions/capitalPool/{pool_id}/{action_id}",
+    )
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     _reject_body_idempotency_key(payload)
@@ -19971,6 +20017,10 @@ async def bff_list_ranking_formulas(
     authorization: Optional[str] = Header(default=None),
 ):
     """BFF: ranking formula list."""
+    return _deprecated_bff_path_response(
+        route="/bff/ranking/formulas",
+        replacement="/bff/ranking-formulas",
+    )
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     snapshot_at = utc_now()
@@ -19989,12 +20039,16 @@ async def bff_list_ranking_formulas(
 
 @app.post("/bff/ranking/formulas", status_code=201)
 async def bff_create_ranking_formula(
-    payload: Dict[str, Any] = Body(...),
+    payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
     """BFF: create ranking formula — Idempotency-Key required."""
+    return _deprecated_bff_path_response(
+        route="/bff/ranking/formulas",
+        replacement="/bff/ranking-formulas",
+    )
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     _reject_body_idempotency_key(payload)
@@ -20027,6 +20081,10 @@ async def bff_get_ranking_formula(
     authorization: Optional[str] = Header(default=None),
 ):
     """BFF: ranking formula detail."""
+    return _deprecated_bff_path_response(
+        route="/bff/ranking/formulas/{formula_id}",
+        replacement="/bff/ranking-formulas/{formula_id}",
+    )
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     snapshot_at = utc_now()
@@ -20049,12 +20107,16 @@ async def bff_get_ranking_formula(
 @app.patch("/bff/ranking/formulas/{formula_id}")
 async def bff_patch_ranking_formula(
     formula_id: str,
-    payload: Dict[str, Any] = Body(...),
+    payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
     """BFF: patch ranking formula — Idempotency-Key required."""
+    return _deprecated_bff_path_response(
+        route="/bff/ranking/formulas/{formula_id}",
+        replacement="/bff/ranking-formulas/{formula_id}",
+    )
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     _reject_body_idempotency_key(payload)
@@ -20097,6 +20159,10 @@ async def bff_ranking_formula_action(
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
     """BFF: ranking formula action — routes through command/precondition machinery."""
+    return _deprecated_bff_path_response(
+        route="/bff/ranking/formulas/{formula_id}/actions/{action_id}",
+        replacement="/bff/actions/rankingFormula/{formula_id}/{action_id}",
+    )
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     _reject_body_idempotency_key(payload)
@@ -20250,6 +20316,10 @@ async def bff_rebalance_action(
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
     """BFF: rebalance action — routes through command/precondition machinery."""
+    return _deprecated_bff_path_response(
+        route="/bff/rebalances/{rebalance_id}/actions/{action_id}",
+        replacement="/bff/actions/rebalance/{rebalance_id}/{action_id}",
+    )
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     _reject_body_idempotency_key(payload)
@@ -28926,6 +28996,10 @@ async def bff_strategy_action(
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
     """BFF: strategy action — routes through command/precondition machinery."""
+    return _deprecated_bff_path_response(
+        route="/bff/strategies/{strategy_id}/actions/{action_id}",
+        replacement="/bff/actions/strategy/{strategy_id}/{action_id}",
+    )
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     _reject_body_idempotency_key(payload)
@@ -33118,6 +33192,10 @@ async def bff_persona_action(
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
     """BFF: persona action — routes through command/precondition machinery."""
+    return _deprecated_bff_path_response(
+        route="/bff/personas/{persona_id}/actions/{action_id}",
+        replacement="/bff/actions/persona/{persona_id}/{action_id}",
+    )
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     _reject_body_idempotency_key(payload)
@@ -35496,6 +35574,10 @@ async def bff_tool_action(
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
     """BFF: tool action — routes through command/precondition machinery."""
+    return _deprecated_bff_path_response(
+        route="/bff/tools/{tool_id}/actions/{action_id}",
+        replacement="/bff/actions/tool/{tool_id}/{action_id}",
+    )
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     _reject_body_idempotency_key(payload)
@@ -35528,6 +35610,10 @@ async def bff_list_mcp_servers(
     authorization: Optional[str] = Header(default=None),
 ):
     """BFF: MCP server list (Part 06 compatibility surface)."""
+    return _deprecated_bff_path_response(
+        route="/bff/mcp/servers",
+        replacement="/bff/mcp-servers",
+    )
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     snapshot_at = utc_now()
@@ -35591,6 +35677,10 @@ async def bff_get_mcp_server(
     authorization: Optional[str] = Header(default=None),
 ):
     """BFF: MCP server detail (Part 06 compatibility surface)."""
+    return _deprecated_bff_path_response(
+        route="/bff/mcp/servers/{server_id}",
+        replacement="/bff/mcp-servers/{server_id}",
+    )
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     clean_id = _validate_mcp_server_id(server_id)
@@ -35676,6 +35766,10 @@ async def bff_mcp_tool_action_compat(
     (POST /bff/mcp-tools/{tool_id}/{action}) when action_id matches a
     lifecycle verb, otherwise routes through the generic command machinery.
     """
+    return _deprecated_bff_path_response(
+        route="/bff/mcp/tools/{tool_id}/actions/{action_id}",
+        replacement="/bff/mcp-tools/{tool_id}/{action_id}",
+    )
     identity = _extract_identity(authorization)
     _require_mcp_tool_write_role(identity)
     _reject_body_idempotency_key(payload)
@@ -35834,6 +35928,10 @@ async def bff_skill_action(
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
     """BFF: skill action — routes through command/precondition machinery."""
+    return _deprecated_bff_path_response(
+        route="/bff/skills/{skill_id}/actions/{action_id}",
+        replacement="/bff/actions/skill/{skill_id}/{action_id}",
+    )
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     _reject_body_idempotency_key(payload)
@@ -36411,6 +36509,10 @@ async def bff_deployment_action(
     authorization: Optional[str] = Header(default=None),
 ):
     """BFF: submit an action against a deployment plan."""
+    return _deprecated_bff_path_response(
+        route="/bff/deployments/{deployment_id}/actions/{action_id}",
+        replacement="/bff/actions/deployment/{deployment_id}/{action_id}",
+    )
     identity = _extract_identity(authorization)
     _require_operator_role(identity)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
@@ -36524,6 +36626,10 @@ async def bff_runtime_action(
     authorization: Optional[str] = Header(default=None),
 ):
     """BFF: submit an action against a runtime binding."""
+    return _deprecated_bff_path_response(
+        route="/bff/runtimes/{runtime_id}/actions/{action_id}",
+        replacement="/bff/actions/runtime/{runtime_id}/{action_id}",
+    )
     identity = _extract_identity(authorization)
     _require_operator_role(identity)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
@@ -36760,6 +36866,10 @@ async def bff_incident_action(
     authorization: Optional[str] = Header(default=None),
 ):
     """BFF: submit an action against an incident."""
+    return _deprecated_bff_path_response(
+        route="/bff/incidents/{incident_id}/actions/{action_id}",
+        replacement="/bff/actions/incident/{incident_id}/{action_id}",
+    )
     identity = _extract_identity(authorization)
     _require_operator_role(identity)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
@@ -38644,9 +38754,9 @@ async def sem_create_deployment_command(
     )
 
 
-@app.patch("/bff/deployments/{id}", status_code=202)
+@app.patch("/bff/deployments/{deployment_id}", status_code=202)
 async def sem_patch_deployment_command(
-    id: str,
+    deployment_id: str,
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -38657,7 +38767,7 @@ async def sem_patch_deployment_command(
     return _sem_command_response(
         command_type=CommandType.DEPLOYMENT_PATCH,
         target_type=ObjectType.DEPLOYMENT,
-        target_id=id,
+        target_id=deployment_id,
         payload=payload,
         identity=identity,
         idempotency_key=idempotency_key,
@@ -38665,9 +38775,9 @@ async def sem_patch_deployment_command(
     )
 
 
-@app.patch("/bff/rebalances/{id}", status_code=202)
+@app.patch("/bff/rebalances/{rebalance_id}", status_code=202)
 async def sem_patch_rebalance_command(
-    id: str,
+    rebalance_id: str,
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -38678,7 +38788,7 @@ async def sem_patch_rebalance_command(
     return _sem_command_response(
         command_type=CommandType.REBALANCE_PATCH,
         target_type=ObjectType.REBALANCE,
-        target_id=id,
+        target_id=rebalance_id,
         payload=payload,
         identity=identity,
         idempotency_key=idempotency_key,
@@ -41390,17 +41500,14 @@ async def bff_approvals_batch_decide(
 @app.post("/bff/incidents/{id}/resolve", status_code=202)
 @app.post("/bff/incidents/{id}/rollback-deployment", status_code=202)
 @app.post("/bff/incidents/{id}/start-mitigation", status_code=202)
-@app.post("/bff/mcp-servers/{id}/import-tools", status_code=202)
 async def sem_final_generic_id_command_alias(id: str, payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None)):
     _require_read_role(_extract_identity(authorization))
     return JSONResponse(status_code=202, content={"status": "accepted", "data": {"id": id, "status": "accepted"}, "meta": {"snapshot_at": utc_now()}})
 
 
 @app.post("/bff/artifacts", status_code=201)
-@app.post("/bff/personas", status_code=201)
 @app.post("/bff/ranking-formulas", status_code=201)
 @app.post("/bff/research-experiments", status_code=201)
-@app.post("/bff/strategies", status_code=201)
 async def sem_final_generic_create_alias(payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None)):
     _require_read_role(_extract_identity(authorization))
     status = 202 if "decision" in payload else 201

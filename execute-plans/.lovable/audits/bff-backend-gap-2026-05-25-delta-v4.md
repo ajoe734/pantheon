@@ -171,3 +171,29 @@ Expected Pack D fields:
   }
 }
 ```
+
+## PATH-DEDUPE-001: BFF duplicate path family cleanup
+
+Route families:
+
+- personas, capital-pools, deployments, rebalances, incidents, runtimes, skills, tools
+- mcp-servers vs mcp/servers
+- mcp-tools vs mcp/tools
+- ranking-formulas vs ranking/formulas
+- strategy actions
+
+Backend fix:
+
+- canonical path parameter declarations stay snake_case (`{persona_id}`, `{pool_id}`,
+  `{deployment_id}`, etc.)
+- short-form `{id}` duplicate declarations for the scoped route families are removed
+- alternate URL shapes return HTTP 410 with `X-Deprecated: true`,
+  `X-Deprecated-At: 2026-05-25T08:40:02Z`, and `X-Pantheon-Replacement-Route`
+- FE-used forms stay active: `/bff/mcp-servers`, `/bff/mcp-tools`,
+  `/bff/ranking-formulas`, and the generic `/bff/actions/{type}/{id}/{action}` path
+
+Validation:
+
+```bash
+python3 -m pytest services/control-plane/bff/tests/test_bff_path_dedupe.py -q
+```
