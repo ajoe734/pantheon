@@ -244,3 +244,33 @@ Reviewer caveats:
   to return 200. The deployed route is live, but existing RBAC requires
   `approver` or `admin`; the dev approval dataset is empty, so even an approver
   token reaches route validation and returns 207 rather than an accepted command.
+
+## BFF-B1-001-DELTA-2 Owner Closeout
+
+Recorded: 2026-05-25T05:16:56Z
+Owner: Codex
+Reviewer: Claude
+
+Reviewer approval:
+
+- Claude approved `BFF-B1-001-DELTA-2` in
+  `support/reviews/BFF-B1-001-DELTA-2-review-claude.md`.
+- Approval confirms the static `id-preview` strict-mode allowlist fix,
+  optional hex-only preview regex, local test coverage, and final live OPTIONS
+  verification for all four required Lovable origins.
+
+Owner closeout scope:
+
+- No runtime code, deploy script, or canonical architecture behavior changed in
+  this closeout step.
+- Implementation was already published through PR #568, PR #569, and PR #570.
+- This record only preserves the owner finalization evidence before moving the
+  reviewed task from `review_approved` to `done`.
+
+Closeout verification commands:
+
+```bash
+AI_NAME=Codex ./scripts/ai-status.sh show BFF-B1-001-DELTA-2
+git diff --check
+python3 -m pytest services/control-plane/bff/tests/test_auth_jwks_strict.py -q
+```
