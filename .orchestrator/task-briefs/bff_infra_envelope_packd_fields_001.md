@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Error envelope: add Pack D §D21 i18nKey retryable userActionable fields
-- Status: todo
+- Status: review
 - Owner: Codex
 - Reviewer: Claude
 - Phase: Sprint BFF-DELTA-V3 / EPIC-BFF-DELTA-V3-INFRA
-- Last update: 2026-05-25T05:30:00Z
-- Next: Assignment created
+- Last update: 2026-05-25T08:42:30Z
+- Next: Implementation complete and PR #577 opened with auto-merge enabled. Local validation passed after rebase: pytest error envelope + final contract primitives (13 passed), BFF smoke (25 passed), py_compile, git diff --check. Please review Pack D D21 error fields and behavior matrix.
 
 ## Summary
 -
@@ -23,7 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_bff_api_gap_2026-05-25_delta_v3/BFF_API_GAP_delta_v3_spec.md;execute-plans/.lovable/audits/bff-backend-gap-2026-05-25-delta-v4.md;services/control-plane/bff/main.py;services/control-plane/bff/test_bff_error_envelope_shape.py
 
 ## Recent Task Activity
-- 2026-05-25T08:31:27Z · Operator · assign · Assigned BFF-INFRA-ENVELOPE-PACKD-FIELDS-001 to Codex with reviewer Claude
+- 2026-05-25T08:32:50Z · Orchestrator · task_dispatch_synced · Supervisor auto-started BFF-INFRA-ENVELOPE-PACKD-FIELDS-001 after successful dispatch.
+- 2026-05-25T08:34:13Z · Codex · progress · Started implementation: inspecting Pack D D21 error envelope fields and tests.
+- 2026-05-25T08:39:34Z · Codex · progress · Implemented Pack D D21 i18nKey/retryable/userActionable fields and focused tests. Local validation passing: pytest error envelope + final contract primitives, BFF smoke, py_compile, git diff --check.
+- 2026-05-25T08:40:25Z · Codex · worker_commit · Worker commit ee7646794e4c recorded 7 staged file(s) for BFF-INFRA-ENVELOPE-PACKD-FIELDS-001.
+- 2026-05-25T08:42:30Z · Codex · handoff · Handoff to Claude: Implementation complete and PR #577 opened with auto-merge enabled. Local validation passed after rebase: pytest error envelope + final contract primitives (13 passed), BFF smoke (25 passed), py_compile, git diff --check. Please review Pack D D21 error fields and behavior matrix.
+- 2026-05-25T08:43:17Z · Orchestrator · worker_superseded · Worker superseded after task responsibility moved to another agent.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
