@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Validate confirm/approval/two-man tokens + remove bearer-in-audit + scope idempotency by caller
-- Status: review
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Claude
 - Phase: Sprint BFF-1 / EPIC-BFF-GAP-P0-SEC-FIX
-- Last update: 2026-05-25T13:12:17Z
-- Next: Implementation complete and merged for review. PR #589 merged into dev at 74e6b0cbe1d31d6768ed56fabe5d0e9250dddbd3; task commit ce76b8e0ffb88033b4e977801aaac186c8f25dcb. Verified: pytest services/control-plane/bff/tests/test_bff_b1_007_security_hardening.py services/control-plane/bff/test_governance_command_submission.py services/control-plane/bff/tests/test_command_replay_conflict.py; python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/command_queue.py services/control-plane/bff/test_governance_command_submission.py services/control-plane/bff/tests/test_command_replay_conflict.py services/control-plane/bff/tests/test_bff_b1_007_security_hardening.py.
+- Last update: 2026-05-25T13:30:27Z
+- Next: Review approved: evidence validation, bearer-token redaction, and operator-scoped idempotency all correctly implemented. 33 tests pass. No security vulnerabilities found. Review artifact: support/reviews/BFF-B1-007-SEC-FIX-review-claude.md
 
 ## Summary
 -
@@ -26,12 +26,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md
 
 ## Recent Task Activity
-- 2026-05-25T12:50:10Z · Orchestrator · task_dispatch_synced · Supervisor auto-started BFF-B1-007-SEC-FIX after successful dispatch.
-- 2026-05-25T12:51:11Z · Codex · start · Starting security fix implementation on task branch task/BFF-B1-007-SEC-FIX.
-- 2026-05-25T13:06:22Z · Codex · progress · Implemented command security hardening and focused tests; local pytest target passed (33 tests) plus py_compile.
-- 2026-05-25T13:07:30Z · Codex · worker_commit · Worker commit 7412afcccc95 recorded 6 staged file(s) for BFF-B1-007-SEC-FIX.
-- 2026-05-25T13:12:17Z · Codex · handoff · Handoff to Claude: Implementation complete and merged for review. PR #589 merged into dev at 74e6b0cbe1d31d6768ed56fabe5d0e9250dddbd3; task commit ce76b8e0ffb88033b4e977801aaac186c8f25dcb. Verified: pytest services/control-plane/bff/tests/test_bff_b1_007_security_hardening.py services/control-plane/bff/test_governance_command_submission.py services/control-plane/bff/tests/test_command_replay_conflict.py; python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/command_queue.py services/control-plane/bff/test_governance_command_submission.py services/control-plane/bff/tests/test_command_replay_conflict.py services/control-plane/bff/tests/test_bff_b1_007_security_hardening.py.
-- 2026-05-25T13:16:05Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
+- 2026-05-25T13:16:08Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-05-25T13:16:08Z · Orchestrator · worker_worktree_reused · -
+- 2026-05-25T13:16:08Z · Orchestrator · worker_started · Worker started via claude_cli: review_ready_dispatch
+- 2026-05-25T13:22:17Z · unknown · worker_commit · Worker commit 7e6ec6fb48fe recorded 1 staged file(s) for BFF-B1-007-SEC-FIX.
+- 2026-05-25T13:30:27Z · Claude · review_approved · Review approved: evidence validation, bearer-token redaction, and operator-scoped idempotency all correctly implemented. 33 tests pass. No security vulnerabilities found. Review artifact: support/reviews/BFF-B1-007-SEC-FIX-review-claude.md
+- 2026-05-25T13:31:53Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
