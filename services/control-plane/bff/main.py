@@ -305,14 +305,47 @@ register_fastapi_health_routes(
 )
 
 _ERROR_CODE_BY_STATUS = {
-    400: ErrorCode.INVALID_REQUEST.value,
-    401: ErrorCode.INVALID_TOKEN.value,
-    403: ErrorCode.INSUFFICIENT_ROLE.value,
-    404: ErrorCode.OBJECT_NOT_FOUND.value,
-    409: ErrorCode.INVALID_STATE.value,
-    422: ErrorCode.INVALID_PARAMS.value,
-    428: ErrorCode.PRECONDITION_NOT_MET.value,
-    500: ErrorCode.DOWNSTREAM_UNAVAILABLE.value,
+    400: ErrorCode.VALIDATION_FAILED.value,
+    401: ErrorCode.AUTH_REQUIRED.value,
+    403: ErrorCode.FORBIDDEN.value,
+    404: ErrorCode.RESOURCE_NOT_FOUND.value,
+    409: ErrorCode.RESOURCE_CONFLICT.value,
+    413: ErrorCode.REQUEST_TOO_LARGE.value,
+    422: ErrorCode.VALIDATION_FAILED.value,
+    428: ErrorCode.PRECONDITION_FAILED.value,
+    429: ErrorCode.RATE_LIMITED.value,
+    500: ErrorCode.INTERNAL_ERROR.value,
+    502: ErrorCode.UPSTREAM_ERROR.value,
+    503: ErrorCode.DEPENDENCY_UNAVAILABLE.value,
+    504: ErrorCode.UPSTREAM_TIMEOUT.value,
+}
+
+_LEGACY_ERROR_CODE_ALIASES = {
+    "INVALID_REQUEST": ErrorCode.VALIDATION_FAILED.value,
+    "INVALID_PARAMS": ErrorCode.VALIDATION_FAILED.value,
+    "MFA_VALIDATION_FAILED": ErrorCode.VALIDATION_FAILED.value,
+    "INVALID_TOKEN": ErrorCode.AUTH_REQUIRED.value,
+    "AUTH_TOKEN_FORMAT": ErrorCode.AUTH_REQUIRED.value,
+    "AUTH_JWT_EXPIRED": ErrorCode.AUTH_EXPIRED.value,
+    "INSUFFICIENT_ROLE": ErrorCode.FORBIDDEN.value,
+    "PERMISSION_DENIED": ErrorCode.FORBIDDEN.value,
+    "CAPABILITY_MISSING": ErrorCode.FORBIDDEN.value,
+    "OBJECT_NOT_FOUND": ErrorCode.RESOURCE_NOT_FOUND.value,
+    "NOT_FOUND": ErrorCode.RESOURCE_NOT_FOUND.value,
+    "INVALID_STATE": ErrorCode.OPERATION_NOT_ALLOWED.value,
+    "HIGH_RISK_QUERY_REFUSED": ErrorCode.OPERATION_NOT_ALLOWED.value,
+    "CONCURRENT_MODIFICATION": ErrorCode.RESOURCE_CONFLICT.value,
+    "STATE_CONFLICT": ErrorCode.RESOURCE_CONFLICT.value,
+    "DOWNSTREAM_UNAVAILABLE": ErrorCode.DEPENDENCY_UNAVAILABLE.value,
+    "DOWNSTREAM_TIMEOUT": ErrorCode.UPSTREAM_TIMEOUT.value,
+    "COMMAND_TIMEOUT": ErrorCode.UPSTREAM_TIMEOUT.value,
+    "DOWNSTREAM_ERROR": ErrorCode.UPSTREAM_ERROR.value,
+    "PRECONDITION_NOT_MET": ErrorCode.PRECONDITION_FAILED.value,
+    "CONFIRM_TOKEN_REQUIRED": ErrorCode.CONFIRMATION_REQUIRED.value,
+    "APPROVAL_REQUIRED": ErrorCode.HUMAN_GATE_PENDING.value,
+    "TWO_MAN_REQUIRED": ErrorCode.TWO_MAN_SIGNATURE_REQUIRED.value,
+    "MFA_REQUIRED": ErrorCode.AUTH_REQUIRED.value,
+    "SSE_REPLAY_UNAVAILABLE": ErrorCode.RESOURCE_CONFLICT.value,
 }
 
 
@@ -334,9 +367,20 @@ def _error_response_correlation_id(
 
 
 def _status_error_code(status_code: int) -> str:
-    if status_code >= 500:
-        return ErrorCode.DOWNSTREAM_UNAVAILABLE.value
-    return _ERROR_CODE_BY_STATUS.get(status_code, ErrorCode.INVALID_REQUEST.value)
+    return _ERROR_CODE_BY_STATUS.get(status_code, ErrorCode.VALIDATION_FAILED.value)
+
+
+def _canonical_error_code_value(code: Any, *, status_code: Optional[int] = None) -> str:
+    raw = str(getattr(code, "value", code) or "").strip()
+    if not raw and status_code is not None:
+        return _status_error_code(status_code)
+    candidate = _LEGACY_ERROR_CODE_ALIASES.get(raw, raw)
+    try:
+        return ErrorCode(candidate).value
+    except ValueError:
+        if status_code is not None:
+            return _status_error_code(status_code)
+        return ErrorCode.INTERNAL_ERROR.value
 
 
 def _status_error_message(status_code: int, fallback: Any = None) -> str:
@@ -373,7 +417,7 @@ def _pack_d_error_response(
     extra: Optional[Dict[str, Any]] = None,
 ) -> JSONResponse:
     error_payload: Dict[str, Any] = {
-        "code": str(getattr(code, "value", code)),
+        "code": _canonical_error_code_value(code, status_code=status_code),
         "message": str(message or _status_error_message(status_code)),
     }
     if details is not None:
@@ -475,7 +519,7 @@ async def _bff_request_validation_error_handler(
     correlation_id = _error_response_correlation_id(request)
     return _pack_d_error_response(
         status_code=422,
-        code=ErrorCode.INVALID_PARAMS.value,
+        code=ErrorCode.VALIDATION_FAILED.value,
         message="Request validation failed",
         correlation_id=correlation_id,
         details={
@@ -493,7 +537,7 @@ async def _bff_value_error_handler(
     correlation_id = _error_response_correlation_id(request)
     return _pack_d_error_response(
         status_code=400,
-        code=ErrorCode.INVALID_REQUEST.value,
+        code=ErrorCode.VALIDATION_FAILED.value,
         message=str(exc) or "Invalid request",
         correlation_id=correlation_id,
         details={"reason": "VALUE_ERROR"},
@@ -509,7 +553,7 @@ async def _bff_unhandled_exception_handler(
     correlation_id = _error_response_correlation_id(request)
     return _pack_d_error_response(
         status_code=500,
-        code=ErrorCode.DOWNSTREAM_UNAVAILABLE.value,
+        code=ErrorCode.INTERNAL_ERROR.value,
         message="Internal server error",
         correlation_id=correlation_id,
         details={"reason": "INTERNAL_SERVER_ERROR"},
@@ -615,7 +659,7 @@ def _issue_dev_login_jwt(client_id: str) -> Dict[str, Any]:
     if not secret:
         raise _bff_error(
             500,
-            ErrorCode.PRECONDITION_NOT_MET,
+            ErrorCode.PRECONDITION_FAILED,
             "Dev login JWT signing secret is not configured",
             "PANTHEON_BFF_JWT_SECRET is required to issue dev-login JWTs",
             precondition_failed="jwt_secret",
@@ -680,7 +724,7 @@ async def bff_auth_dev_login(payload: Dict[str, Any] = Body(default_factory=dict
     if not _dev_login_enabled():
         raise _bff_error(
             403,
-            ErrorCode.PRECONDITION_NOT_MET,
+            ErrorCode.PRECONDITION_FAILED,
             "Dev login is disabled for this BFF",
             "dev_login_disabled",
             precondition_failed="dev_login",
@@ -689,7 +733,7 @@ async def bff_auth_dev_login(payload: Dict[str, Any] = Body(default_factory=dict
     if str(payload.get("grant_type") or "client_credentials").strip() != "client_credentials":
         raise _bff_error(
             400,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Unsupported grant_type for dev login",
             "grant_type must be client_credentials",
             precondition_failed="grant_type",
@@ -705,7 +749,7 @@ async def bff_auth_dev_login(payload: Dict[str, Any] = Body(default_factory=dict
     ):
         raise _bff_error(
             401,
-            ErrorCode.INVALID_TOKEN,
+            ErrorCode.AUTH_REQUIRED,
             "Invalid dev login client credentials",
             "AUTH_DEV_LOGIN_CLIENT_CREDENTIALS",
             suggestion="Use the configured PANTHEON_BFF_OIDC_CLIENT_ID and CLIENT_SECRET",
@@ -751,7 +795,7 @@ def _extract_identity_stub(authorization: Optional[str]) -> OperatorIdentity:
     if not authorization or not authorization.startswith("Bearer "):
         raise _bff_error(
             status_code=401,
-            code=ErrorCode.INVALID_TOKEN,
+            code=ErrorCode.AUTH_REQUIRED,
             message="Missing or invalid Authorization header",
             reason="Token is absent or not a Bearer token",
             suggestion="Re-authenticate and include a valid Bearer token",
@@ -824,11 +868,13 @@ def _extract_identity_jwt(
         )
     except AuthError as exc:
         if exc.status_code == 403:
-            code = ErrorCode.INSUFFICIENT_ROLE
+            code = ErrorCode.FORBIDDEN
+        elif exc.code == "AUTH_JWT_EXPIRED":
+            code = ErrorCode.AUTH_EXPIRED
         elif exc.code in ("MFA_REQUIRED", "MFA_VALIDATION_FAILED"):
-            code = ErrorCode.MFA_REQUIRED
+            code = ErrorCode.AUTH_REQUIRED
         else:
-            code = ErrorCode.INVALID_TOKEN
+            code = ErrorCode.AUTH_REQUIRED
         # Sanitize codes that would leak server config details.
         _opaque_codes = {
             "AUTH_JWT_SECRET_MISSING",
@@ -860,7 +906,7 @@ def _extract_identity_jwt(
     if not str(ctx.claims.get("sub") or "").strip():
         raise _bff_error(
             status_code=401,
-            code=ErrorCode.INVALID_TOKEN,
+            code=ErrorCode.AUTH_REQUIRED,
             message="JWT subject claim is required",
             reason="AUTH_JWT_SUBJECT_MISSING",
             suggestion="Re-authenticate with a valid JWT bearer token",
@@ -1124,11 +1170,14 @@ def _extract_error_fields(exc: HTTPException) -> Dict[str, Any]:
         for key, value in details.items()
         if key not in {"reason", "precondition_failed", "suggestion"} and value is not None
     }
-    code_value = error.get("code") or ErrorCode.INVALID_PARAMS.value
+    code_value = _canonical_error_code_value(
+        error.get("code") or ErrorCode.VALIDATION_FAILED.value,
+        status_code=exc.status_code,
+    )
     try:
         code = ErrorCode(code_value)
     except ValueError:
-        code = ErrorCode.INVALID_PARAMS
+        code = ErrorCode.VALIDATION_FAILED
     return {
         "status_code": exc.status_code,
         "code": code,
@@ -1666,7 +1715,7 @@ def _ensure_live_broker_scope_allowed(cmd: OperatorCommand, payload: Dict[str, A
     env_name = os.getenv("PANTHEON_ENV", "dev").strip() or "dev"
     raise _bff_error(
         403,
-        ErrorCode.PRECONDITION_NOT_MET,
+        ErrorCode.PRECONDITION_FAILED,
         "Live broker scope is disabled for this BFF",
         f"PANTHEON_ENV={env_name} has PANTHEON_LIVE_BROKER_ENABLED=false",
         precondition_failed="live_broker_scope",
@@ -1681,7 +1730,7 @@ def _require_admin_mfa(identity: OperatorIdentity, command_name: str) -> None:
     if "admin" not in identity.roles:
         raise _bff_error(
             403,
-            ErrorCode.INSUFFICIENT_ROLE,
+            ErrorCode.FORBIDDEN,
             f"{command_name} requires 'admin' role",
             "Operator does not hold the admin role",
             precondition_failed="role_check",
@@ -1690,7 +1739,7 @@ def _require_admin_mfa(identity: OperatorIdentity, command_name: str) -> None:
     if not identity.mfa_verified:
         raise _bff_error(
             403,
-            ErrorCode.MFA_REQUIRED,
+            ErrorCode.AUTH_REQUIRED,
             f"{command_name} requires MFA verification",
             "Admin action requires MFA validation",
             precondition_failed="mfa_check",
@@ -1756,14 +1805,14 @@ def _validate_drawer_runtime_target(cmd: OperatorCommand) -> None:
     if cmd.target.type != ObjectType.RUNTIME:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             f"{cmd.command.value} requires target.type = Runtime",
             "Drawer commands only accept Runtime targets",
         )
     if not str(cmd.target.id or "").strip():
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             f"{cmd.command.value} requires a runtime target id",
             "target.id must be a non-empty runtime id",
         )
@@ -1774,7 +1823,7 @@ def _validate_audit_context(cmd: OperatorCommand) -> None:
         return
     raise _bff_error(
         400,
-        ErrorCode.INVALID_PARAMS,
+        ErrorCode.VALIDATION_FAILED,
         "audit_context.reason is required",
         "audit_context.reason must be a non-empty string",
     )
@@ -1786,7 +1835,7 @@ def _require_operator_command_idempotency_key(value: Optional[str]) -> str:
         return idempotency_key
     raise _bff_error(
         400,
-        ErrorCode.INVALID_PARAMS,
+        ErrorCode.VALIDATION_FAILED,
         "X-Idempotency-Key is required for operator commands",
         (
             "Runtime, deployment, approval, and incident command admission "
@@ -1810,7 +1859,7 @@ def _resolve_final_idempotency_key(
         return alias
     raise _bff_error(
         400,
-        ErrorCode.INVALID_PARAMS,
+        ErrorCode.VALIDATION_FAILED,
         "Idempotency-Key is required for operator commands",
         (
             "Final contract routes require a non-empty Idempotency-Key header; "
@@ -1827,7 +1876,7 @@ def _reject_body_idempotency_key(payload: Dict[str, Any]) -> None:
     if body_key is not None:
         raise _bff_error(
             400,
-            ErrorCode.INVALID_REQUEST,
+            ErrorCode.VALIDATION_FAILED,
             f"{body_key} must not appear in the request body",
             (
                 "Final contract routes require idempotency via the Idempotency-Key header, "
@@ -1878,7 +1927,7 @@ def _require_journal_write_role(identity: OperatorIdentity) -> None:
         return
     raise _bff_error(
         403,
-        ErrorCode.INSUFFICIENT_ROLE,
+        ErrorCode.FORBIDDEN,
         "Agora journal patch requires operator-level role",
         "Operator does not hold a role allowed to patch journal entries",
         precondition_failed="role_check",
@@ -1892,7 +1941,7 @@ def _require_merge_patch_content_type(content_type: Optional[str]) -> None:
         return
     raise _bff_error(
         415,
-        ErrorCode.INVALID_REQUEST,
+        ErrorCode.VALIDATION_FAILED,
         "Agora journal patch requires application/merge-patch+json",
         "JSON Merge Patch endpoints reject non-merge-patch content types",
         precondition_failed="content_type",
@@ -1915,7 +1964,7 @@ def _journal_validation_error(
 ) -> HTTPException:
     return _bff_error(
         status_code,
-        ErrorCode.INVALID_PARAMS,
+        ErrorCode.VALIDATION_FAILED,
         message,
         reason,
         precondition_failed=f"journal_patch.{field}",
@@ -2029,7 +2078,7 @@ def _validate_journal_merge_patch_payload(
         if not _journal_visibility_allowed(identity, visibility):
             raise _bff_error(
                 403,
-                ErrorCode.INSUFFICIENT_ROLE,
+                ErrorCode.FORBIDDEN,
                 "Operator lacks capability for requested journal visibility",
                 f"visibility={visibility} requires {required_capability}",
                 precondition_failed="journal_patch.visibility",
@@ -2146,7 +2195,7 @@ def _require_final_command_preconditions(
             raise _final_precondition_error(
                 cmd=cmd,
                 status_code=428,
-                code=ErrorCode.CONFIRM_TOKEN_REQUIRED,
+                code=ErrorCode.CONFIRMATION_REQUIRED,
                 message="Confirmation token is required before this action can be accepted",
                 reason="CONFIRM_TOKEN_MISSING",
                 kind="confirm_token",
@@ -2159,7 +2208,7 @@ def _require_final_command_preconditions(
             raise _final_precondition_error(
                 cmd=cmd,
                 status_code=409,
-                code=ErrorCode.APPROVAL_REQUIRED,
+                code=ErrorCode.HUMAN_GATE_PENDING,
                 message="Approval evidence is required before this action can be accepted",
                 reason="APPROVAL_EVIDENCE_MISSING",
                 kind="approval",
@@ -2172,7 +2221,7 @@ def _require_final_command_preconditions(
             raise _final_precondition_error(
                 cmd=cmd,
                 status_code=409,
-                code=ErrorCode.TWO_MAN_REQUIRED,
+                code=ErrorCode.TWO_MAN_SIGNATURE_REQUIRED,
                 message="Two-man authorization is required before this action can be accepted",
                 reason="TWO_MAN_SIGNATURE_MISSING",
                 kind="two_man",
@@ -2197,7 +2246,7 @@ def _validate_final_command_target_type(cmd: OperatorCommand) -> None:
         return
     raise _bff_error(
         422,
-        ErrorCode.INVALID_PARAMS,
+        ErrorCode.VALIDATION_FAILED,
         "Invalid command target type",
         f"{cmd.command.value} must target {expected.value}, not {cmd.target.type.value}",
         precondition_failed="target.type",
@@ -2339,13 +2388,13 @@ def _normalize_operator_command_payload(payload: Dict[str, Any]) -> OperatorComm
         except ValidationError as exc:
             raise _bff_error(
                 422,
-                ErrorCode.INVALID_PARAMS,
+                ErrorCode.VALIDATION_FAILED,
                 f"Invalid {command_type} payload",
                 str(exc),
             ) from exc
         raise _bff_error(
             400,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Unknown command_type",
             f"Unsupported command_type: {command_type}",
         )
@@ -2355,7 +2404,7 @@ def _normalize_operator_command_payload(payload: Dict[str, Any]) -> OperatorComm
     except ValidationError as exc:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid operator command payload",
             str(exc),
         ) from exc
@@ -2366,7 +2415,7 @@ def _validate_pause_execution(params: Dict[str, Any], identity: OperatorIdentity
     if missing:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Missing required params for PauseExecution",
             f"Missing fields: {sorted(missing)}",
         )
@@ -2374,14 +2423,14 @@ def _validate_pause_execution(params: Dict[str, Any], identity: OperatorIdentity
         if not isinstance(params.get(field), bool):
             raise _bff_error(
                 422,
-                ErrorCode.INVALID_PARAMS,
+                ErrorCode.VALIDATION_FAILED,
                 f"Invalid {field} value",
                 f"{field} must be a boolean",
             )
     if not {"operator", "admin"}.intersection(identity.roles):
         raise _bff_error(
             403,
-            ErrorCode.INSUFFICIENT_ROLE,
+            ErrorCode.FORBIDDEN,
             "PauseExecution requires 'operator' or 'admin' role",
             "Operator does not hold the required role",
             precondition_failed="role_check",
@@ -2394,7 +2443,7 @@ def _validate_issue_risk_off(params: Dict[str, Any], identity: OperatorIdentity)
     if missing:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Missing required params for IssueRiskOff",
             f"Missing fields: {sorted(missing)}",
         )
@@ -2402,14 +2451,14 @@ def _validate_issue_risk_off(params: Dict[str, Any], identity: OperatorIdentity)
     if not isinstance(exposure_pct, (int, float)) or exposure_pct <= 0 or exposure_pct > 100:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid reduce_exposure_pct value",
             "reduce_exposure_pct must be a number between 1 and 100",
         )
     if not {"operator", "admin"}.intersection(identity.roles):
         raise _bff_error(
             403,
-            ErrorCode.INSUFFICIENT_ROLE,
+            ErrorCode.FORBIDDEN,
             "IssueRiskOff requires 'operator' or 'admin' role",
             "Operator does not hold the required role",
             precondition_failed="role_check",
@@ -2421,7 +2470,7 @@ def _validate_liquidate_all(params: Dict[str, Any], identity: OperatorIdentity) 
     if params:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "LiquidateAll does not accept params",
             "params must be an empty object for LiquidateAll",
         )
@@ -2433,14 +2482,14 @@ def _validate_hard_rollback(params: Dict[str, Any], identity: OperatorIdentity) 
     if not target_artifact_id:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Missing required params for HardRollback",
             "target_artifact_id must be a non-empty string",
         )
     if not {"admin", "approver"}.intersection(identity.roles):
         raise _bff_error(
             403,
-            ErrorCode.INSUFFICIENT_ROLE,
+            ErrorCode.FORBIDDEN,
             "HardRollback requires 'admin' or 'approver' role",
             "Operator does not hold the required role",
             precondition_failed="role_check",
@@ -2453,7 +2502,7 @@ def _validate_issue_safe_mode(params: Dict[str, Any], identity: OperatorIdentity
     if safe_mode_level not in _SAFE_MODE_LEVELS:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid safe_mode_level",
             f"safe_mode_level must be one of {sorted(_SAFE_MODE_LEVELS)}",
         )
@@ -2582,19 +2631,19 @@ def _validate_approve_deployment(params: Dict[str, Any], identity: OperatorIdent
     missing = _APPROVE_DEPLOYMENT_REQUIRED - params.keys()
     if missing:
         raise _bff_error(
-            422, ErrorCode.INVALID_PARAMS,
+            422, ErrorCode.VALIDATION_FAILED,
             "Missing required params for ApproveDeployment",
             f"Missing fields: {sorted(missing)}",
         )
     if params["approval_decision"] not in _VALID_APPROVAL_DECISIONS:
         raise _bff_error(
-            422, ErrorCode.INVALID_PARAMS,
+            422, ErrorCode.VALIDATION_FAILED,
             "Invalid approval_decision value",
             f"Must be one of {_VALID_APPROVAL_DECISIONS}",
         )
     if not {"approver", "admin"}.intersection(identity.roles):
         raise _bff_error(
-            403, ErrorCode.INSUFFICIENT_ROLE,
+            403, ErrorCode.FORBIDDEN,
             "ApproveDeployment requires 'approver' or 'admin' role",
             "Operator does not hold the required role",
             precondition_failed="role_check",
@@ -2607,14 +2656,14 @@ def _validate_approve_decision(params: Dict[str, Any], identity: OperatorIdentit
     if missing:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Missing required params for ApproveDecision",
             f"Missing fields: {sorted(missing)}",
         )
     if not {"approver", "admin"}.intersection(identity.roles):
         raise _bff_error(
             403,
-            ErrorCode.INSUFFICIENT_ROLE,
+            ErrorCode.FORBIDDEN,
             "ApproveDecision requires 'approver' or 'admin' role",
             "Operator does not hold the required role",
             precondition_failed="role_check",
@@ -2627,21 +2676,21 @@ def _validate_reject_decision(params: Dict[str, Any], identity: OperatorIdentity
     if missing:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Missing required params for RejectDecision",
             f"Missing fields: {sorted(missing)}",
         )
     if not str(params.get("rejection_reason") or "").strip():
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "RejectDecision requires a non-empty rejection_reason",
             "rejection_reason must be a non-empty string",
         )
     if not {"approver", "admin"}.intersection(identity.roles):
         raise _bff_error(
             403,
-            ErrorCode.INSUFFICIENT_ROLE,
+            ErrorCode.FORBIDDEN,
             "RejectDecision requires 'approver' or 'admin' role",
             "Operator does not hold the required role",
             precondition_failed="role_check",
@@ -2654,21 +2703,21 @@ def _validate_request_approval_revision(params: Dict[str, Any], identity: Operat
     if missing:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Missing required params for RequestApprovalRevision",
             f"Missing fields: {sorted(missing)}",
         )
     if not str(params.get("revision_notes") or "").strip():
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "RequestApprovalRevision requires non-empty revision_notes",
             "revision_notes must be a non-empty string",
         )
     if not {"approver", "admin"}.intersection(identity.roles):
         raise _bff_error(
             403,
-            ErrorCode.INSUFFICIENT_ROLE,
+            ErrorCode.FORBIDDEN,
             "RequestApprovalRevision requires 'approver' or 'admin' role",
             "Operator does not hold the required role",
             precondition_failed="role_check",
@@ -2680,19 +2729,19 @@ def _validate_pause_runtime(params: Dict[str, Any], identity: OperatorIdentity) 
     missing = _PAUSE_RUNTIME_REQUIRED - params.keys()
     if missing:
         raise _bff_error(
-            422, ErrorCode.INVALID_PARAMS,
+            422, ErrorCode.VALIDATION_FAILED,
             "Missing required params for PauseRuntime",
             f"Missing fields: {sorted(missing)}",
         )
     if params["pause_action"] not in _VALID_PAUSE_ACTIONS:
         raise _bff_error(
-            422, ErrorCode.INVALID_PARAMS,
+            422, ErrorCode.VALIDATION_FAILED,
             "Invalid pause_action value",
             f"Must be one of {_VALID_PAUSE_ACTIONS}",
         )
     if not {"operator", "admin"}.intersection(identity.roles):
         raise _bff_error(
-            403, ErrorCode.INSUFFICIENT_ROLE,
+            403, ErrorCode.FORBIDDEN,
             "PauseRuntime requires 'operator' or 'admin' role",
             "Operator does not hold the required role",
             precondition_failed="role_check",
@@ -2704,19 +2753,19 @@ def _validate_execute_rollback(params: Dict[str, Any], identity: OperatorIdentit
     missing = _ROLLBACK_REQUIRED - params.keys()
     if missing:
         raise _bff_error(
-            422, ErrorCode.INVALID_PARAMS,
+            422, ErrorCode.VALIDATION_FAILED,
             "Missing required params for ExecuteRollback",
             f"Missing fields: {sorted(missing)}",
         )
     if params["rollback_target_type"] not in _VALID_ROLLBACK_TARGET_TYPES:
         raise _bff_error(
-            422, ErrorCode.INVALID_PARAMS,
+            422, ErrorCode.VALIDATION_FAILED,
             "Invalid rollback_target_type",
             f"Must be one of {_VALID_ROLLBACK_TARGET_TYPES}",
         )
     if not {"admin", "approver"}.intersection(identity.roles):
         raise _bff_error(
-            403, ErrorCode.INSUFFICIENT_ROLE,
+            403, ErrorCode.FORBIDDEN,
             "ExecuteRollback requires 'admin' or 'approver' role",
             "Operator does not hold the required role",
             precondition_failed="role_check",
@@ -2728,13 +2777,13 @@ def _validate_approve_rollback(params: Dict[str, Any], identity: OperatorIdentit
     missing = _APPROVE_ROLLBACK_REQUIRED - params.keys()
     if missing:
         raise _bff_error(
-            422, ErrorCode.INVALID_PARAMS,
+            422, ErrorCode.VALIDATION_FAILED,
             "Missing required params for ApproveRollback",
             f"Missing fields: {sorted(missing)}",
         )
     if not {"approver", "admin"}.intersection(identity.roles):
         raise _bff_error(
-            403, ErrorCode.INSUFFICIENT_ROLE,
+            403, ErrorCode.FORBIDDEN,
             "ApproveRollback requires 'approver' or 'admin' role",
             "Operator does not hold the required role",
             precondition_failed="role_check",
@@ -2746,19 +2795,19 @@ def _validate_reject_rollback(params: Dict[str, Any], identity: OperatorIdentity
     missing = _REJECT_ROLLBACK_REQUIRED - params.keys()
     if missing:
         raise _bff_error(
-            422, ErrorCode.INVALID_PARAMS,
+            422, ErrorCode.VALIDATION_FAILED,
             "Missing required params for RejectRollback",
             f"Missing fields: {sorted(missing)}",
         )
     if not str(params.get("rejection_reason") or "").strip():
         raise _bff_error(
-            422, ErrorCode.INVALID_PARAMS,
+            422, ErrorCode.VALIDATION_FAILED,
             "RejectRollback requires a non-empty rejection_reason",
             "rejection_reason must be a non-empty string",
         )
     if not {"approver", "admin"}.intersection(identity.roles):
         raise _bff_error(
-            403, ErrorCode.INSUFFICIENT_ROLE,
+            403, ErrorCode.FORBIDDEN,
             "RejectRollback requires 'approver' or 'admin' role",
             "Operator does not hold the required role",
             precondition_failed="role_check",
@@ -2770,27 +2819,27 @@ def _validate_activate_kill_switch(params: Dict[str, Any], identity: OperatorIde
     missing = _KILL_SWITCH_REQUIRED - params.keys()
     if missing:
         raise _bff_error(
-            422, ErrorCode.INVALID_PARAMS,
+            422, ErrorCode.VALIDATION_FAILED,
             "Missing required params for ActivateKillSwitch",
             f"Missing fields: {sorted(missing)}",
         )
     if params["scope"] not in _VALID_SCOPES:
         raise _bff_error(
-            422, ErrorCode.INVALID_PARAMS,
+            422, ErrorCode.VALIDATION_FAILED,
             "Invalid scope for ActivateKillSwitch",
             f"Must be one of {_VALID_SCOPES}",
         )
     severity = params.get("severity")
     if severity is not None and severity not in _VALID_SEVERITIES:
         raise _bff_error(
-            422, ErrorCode.INVALID_PARAMS,
+            422, ErrorCode.VALIDATION_FAILED,
             "Invalid severity for ActivateKillSwitch",
             f"Must be one of {_VALID_SEVERITIES}",
         )
     # Admin role required
     if "admin" not in identity.roles:
         raise _bff_error(
-            403, ErrorCode.INSUFFICIENT_ROLE,
+            403, ErrorCode.FORBIDDEN,
             "ActivateKillSwitch requires 'admin' role",
             "Operator does not hold the admin role",
             precondition_failed="role_check",
@@ -2799,7 +2848,7 @@ def _validate_activate_kill_switch(params: Dict[str, Any], identity: OperatorIde
     # MFA required for kill-switch (§3.2.3)
     if not identity.mfa_verified:
         raise _bff_error(
-            403, ErrorCode.MFA_REQUIRED,
+            403, ErrorCode.AUTH_REQUIRED,
             "ActivateKillSwitch requires MFA verification",
             "Admin action requires MFA validation",
             precondition_failed="mfa_check",
@@ -2812,21 +2861,21 @@ def _validate_escalate_diff(params: Dict[str, Any], identity: OperatorIdentity) 
     if missing:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Missing required params for EscalateDiff",
             f"Missing fields: {sorted(missing)}",
         )
     if not str(params.get("escalation_reason") or "").strip():
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "EscalateDiff requires a non-empty escalation_reason",
             "escalation_reason must be a non-empty string",
         )
     if not {"operator", "reviewer", "approver", "admin"}.intersection(identity.roles):
         raise _bff_error(
             403,
-            ErrorCode.INSUFFICIENT_ROLE,
+            ErrorCode.FORBIDDEN,
             "EscalateDiff requires operator-level governance access",
             "Operator does not hold the required role",
             precondition_failed="role_check",
@@ -2838,19 +2887,19 @@ def _validate_approve_evolution_decision(params: Dict[str, Any], identity: Opera
     missing = _APPROVE_EVO_REQUIRED - params.keys()
     if missing:
         raise _bff_error(
-            422, ErrorCode.INVALID_PARAMS,
+            422, ErrorCode.VALIDATION_FAILED,
             "Missing required params for ApproveEvolutionDecision",
             f"Missing fields: {sorted(missing)}",
         )
     if params["approval_action"] not in _VALID_EVO_APPROVAL_ACTIONS:
         raise _bff_error(
-            422, ErrorCode.INVALID_PARAMS,
+            422, ErrorCode.VALIDATION_FAILED,
             "Invalid approval_action",
             f"Must be one of {_VALID_EVO_APPROVAL_ACTIONS}",
         )
     if not {"reviewer", "admin", "approver"}.intersection(identity.roles):
         raise _bff_error(
-            403, ErrorCode.INSUFFICIENT_ROLE,
+            403, ErrorCode.FORBIDDEN,
             "ApproveEvolutionDecision requires 'reviewer', 'approver', or 'admin' role",
             "Operator does not hold the required role",
             precondition_failed="role_check",
@@ -2862,19 +2911,19 @@ def _validate_execute_evolution_action(params: Dict[str, Any], identity: Operato
     missing = _EXECUTE_EVO_REQUIRED - params.keys()
     if missing:
         raise _bff_error(
-            422, ErrorCode.INVALID_PARAMS,
+            422, ErrorCode.VALIDATION_FAILED,
             "Missing required params for ExecuteEvolutionAction",
             f"Missing fields: {sorted(missing)}",
         )
     if params["action_type"] not in _VALID_EVO_ACTION_TYPES:
         raise _bff_error(
-            422, ErrorCode.INVALID_PARAMS,
+            422, ErrorCode.VALIDATION_FAILED,
             "Invalid action_type for ExecuteEvolutionAction",
             f"Must be one of {_VALID_EVO_ACTION_TYPES}",
         )
     if not {"admin", "approver"}.intersection(identity.roles):
         raise _bff_error(
-            403, ErrorCode.INSUFFICIENT_ROLE,
+            403, ErrorCode.FORBIDDEN,
             "ExecuteEvolutionAction requires 'admin' or 'approver' role",
             "Operator does not hold the required role",
             precondition_failed="role_check",
@@ -3411,7 +3460,7 @@ def _cw04_validate_status_filters(status_values: Optional[List[str]]) -> Optiona
     if invalid:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid memo status filter",
             "status must be draft or published",
             precondition_failed="status",
@@ -3424,7 +3473,7 @@ def _validate_record_sponsor_decision(params: Dict[str, Any], identity: Operator
     if missing:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Missing required params for RecordSponsorDecision",
             f"Missing fields: {sorted(missing)}",
         )
@@ -3432,7 +3481,7 @@ def _validate_record_sponsor_decision(params: Dict[str, Any], identity: Operator
     if sponsor_decision not in _VALID_SPONSOR_DECISIONS:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid sponsor_decision value",
             f"sponsor_decision must be one of {sorted(_VALID_SPONSOR_DECISIONS)}",
         )
@@ -3440,7 +3489,7 @@ def _validate_record_sponsor_decision(params: Dict[str, Any], identity: Operator
     if not rationale_ref:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "RecordSponsorDecision requires a non-empty rationale_ref",
             "rationale_ref must be a non-empty string",
         )
@@ -3449,7 +3498,7 @@ def _validate_record_sponsor_decision(params: Dict[str, Any], identity: Operator
     if committee is None:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Committee board not found",
             f"Committee {committee_id} does not exist",
         )
@@ -3461,7 +3510,7 @@ def _validate_record_sponsor_decision(params: Dict[str, Any], identity: Operator
     if projection["meta"]["surfaces"]["committee_board"] == "unavailable":
         raise _bff_error(
             409,
-            ErrorCode.INVALID_STATE,
+            ErrorCode.OPERATION_NOT_ALLOWED,
             "RecordSponsorDecision is blocked while the committee board is unavailable",
             "Committee evidence cannot be composed reliably",
             precondition_failed="committee_board_surface",
@@ -3469,7 +3518,7 @@ def _validate_record_sponsor_decision(params: Dict[str, Any], identity: Operator
     if not projection["allowedActions"]["canRecordSponsorDecision"]:
         raise _bff_error(
             403,
-            ErrorCode.INSUFFICIENT_ROLE,
+            ErrorCode.FORBIDDEN,
             "RecordSponsorDecision is not allowed for this operator and committee state",
             "allowedActions.canRecordSponsorDecision is false for the current read projection",
             precondition_failed="allowedActions.canRecordSponsorDecision",
@@ -3481,7 +3530,7 @@ def _validate_approve_mutation(params: Dict[str, Any], identity: OperatorIdentit
     if missing:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Missing required params for ApproveMutation",
             f"Missing fields: {sorted(missing)}",
         )
@@ -3490,7 +3539,7 @@ def _validate_approve_mutation(params: Dict[str, Any], identity: OperatorIdentit
     if decision is None:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Mutation review decision not found",
             f"Evolution decision {decision_id} does not exist",
         )
@@ -3505,7 +3554,7 @@ def _validate_approve_mutation(params: Dict[str, Any], identity: OperatorIdentit
     if projection["meta"]["surfaces"]["mutation_review"] == "unavailable":
         raise _bff_error(
             409,
-            ErrorCode.INVALID_STATE,
+            ErrorCode.OPERATION_NOT_ALLOWED,
             "ApproveMutation is blocked while the mutation-review surface is unavailable",
             "Mutation-review evidence cannot be composed reliably",
             precondition_failed="mutation_review_surface",
@@ -3513,7 +3562,7 @@ def _validate_approve_mutation(params: Dict[str, Any], identity: OperatorIdentit
     if not projection["allowedActions"]["canApproveMutation"]:
         raise _bff_error(
             403,
-            ErrorCode.INSUFFICIENT_ROLE,
+            ErrorCode.FORBIDDEN,
             "ApproveMutation is not allowed for this operator and decision state",
             "allowedActions.canApproveMutation is false for the current read projection",
             precondition_failed="allowedActions.canApproveMutation",
@@ -3525,7 +3574,7 @@ def _validate_reject_mutation(params: Dict[str, Any], identity: OperatorIdentity
     if missing:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Missing required params for RejectMutation",
             f"Missing fields: {sorted(missing)}",
         )
@@ -3534,7 +3583,7 @@ def _validate_reject_mutation(params: Dict[str, Any], identity: OperatorIdentity
     if decision is None:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Mutation review decision not found",
             f"Evolution decision {decision_id} does not exist",
         )
@@ -3549,7 +3598,7 @@ def _validate_reject_mutation(params: Dict[str, Any], identity: OperatorIdentity
     if projection["meta"]["surfaces"]["mutation_review"] == "unavailable":
         raise _bff_error(
             409,
-            ErrorCode.INVALID_STATE,
+            ErrorCode.OPERATION_NOT_ALLOWED,
             "RejectMutation is blocked while the mutation-review surface is unavailable",
             "Mutation-review evidence cannot be composed reliably",
             precondition_failed="mutation_review_surface",
@@ -3557,7 +3606,7 @@ def _validate_reject_mutation(params: Dict[str, Any], identity: OperatorIdentity
     if not projection["allowedActions"]["canRejectMutation"]:
         raise _bff_error(
             403,
-            ErrorCode.INSUFFICIENT_ROLE,
+            ErrorCode.FORBIDDEN,
             "RejectMutation is not allowed for this operator and decision state",
             "allowedActions.canRejectMutation is false for the current read projection",
             precondition_failed="allowedActions.canRejectMutation",
@@ -3569,7 +3618,7 @@ def _validate_remediate_sentinel_intervention(params: Dict[str, Any], identity: 
     if missing:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Missing required params for RemediateSentinelIntervention",
             f"Missing fields: {sorted(missing)}",
         )
@@ -3577,14 +3626,14 @@ def _validate_remediate_sentinel_intervention(params: Dict[str, Any], identity: 
     if remediation_action not in _VALID_REMEDIATION_ACTIONS:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid remediation_action value",
             f"remediation_action must be one of {sorted(_VALID_REMEDIATION_ACTIONS)}",
         )
     if not {"approver", "admin"}.intersection(identity.roles):
         raise _bff_error(
             403,
-            ErrorCode.INSUFFICIENT_ROLE,
+            ErrorCode.FORBIDDEN,
             "RemediateSentinelIntervention requires 'approver' or 'admin' role",
             "Operator does not hold the required role",
             precondition_failed="role_check",
@@ -3597,7 +3646,7 @@ def _validate_decide_v5_intervention(params: Dict[str, Any], identity: OperatorI
     if missing:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Missing required params for DecideV5Intervention",
             f"Missing fields: {sorted(missing)}",
             precondition_failed="decision",
@@ -3606,7 +3655,7 @@ def _validate_decide_v5_intervention(params: Dict[str, Any], identity: OperatorI
     if decision not in _VALID_V5_INTERVENTION_DECISIONS:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid intervention decision value",
             f"decision must be one of {sorted(_VALID_V5_INTERVENTION_DECISIONS)}",
             precondition_failed="decision",
@@ -3614,7 +3663,7 @@ def _validate_decide_v5_intervention(params: Dict[str, Any], identity: OperatorI
     if not {"operator", "approver", "admin"}.intersection(identity.roles):
         raise _bff_error(
             403,
-            ErrorCode.INSUFFICIENT_ROLE,
+            ErrorCode.FORBIDDEN,
             "DecideV5Intervention requires 'operator', 'approver', or 'admin' role",
             "Operator does not hold the required role",
             precondition_failed="role_check",
@@ -3627,7 +3676,7 @@ def _validate_human_gate_decision(params: Dict[str, Any], identity: OperatorIden
     if missing:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Missing required params for HumanGate command",
             f"Missing fields: {sorted(missing)}",
             precondition_failed="human_gate",
@@ -3637,7 +3686,7 @@ def _validate_human_gate_decision(params: Dict[str, Any], identity: OperatorIden
     if decision not in _VALID_HUMAN_GATE_DECISIONS:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid HumanGate decision value",
             f"decision must be one of {sorted(_VALID_HUMAN_GATE_DECISIONS)}",
             precondition_failed="decision",
@@ -3646,7 +3695,7 @@ def _validate_human_gate_decision(params: Dict[str, Any], identity: OperatorIden
     if decision in _HUMAN_GATE_APPROVER_DECISIONS and not {"approver", "admin"}.intersection(identity.roles):
         raise _bff_error(
             403,
-            ErrorCode.INSUFFICIENT_ROLE,
+            ErrorCode.FORBIDDEN,
             "HumanGate decision requires 'approver' or 'admin' role",
             "Operator does not hold the required role",
             precondition_failed="role_check",
@@ -3655,7 +3704,7 @@ def _validate_human_gate_decision(params: Dict[str, Any], identity: OperatorIden
     if decision == "request_more_evidence" and not {"operator", "approver", "admin", "reviewer"}.intersection(identity.roles):
         raise _bff_error(
             403,
-            ErrorCode.INSUFFICIENT_ROLE,
+            ErrorCode.FORBIDDEN,
             "HumanGate evidence request requires operator-level role",
             "Operator does not hold the required role",
             precondition_failed="role_check",
@@ -3676,7 +3725,7 @@ def _validate_human_gate_decision(params: Dict[str, Any], identity: OperatorIden
         if ttl_seconds <= 0:
             raise _bff_error(
                 422,
-                ErrorCode.INVALID_PARAMS,
+                ErrorCode.VALIDATION_FAILED,
                 "HumanGateExtendTtl requires a positive ttl_seconds value",
                 "ttl_seconds must be a positive integer number of seconds",
                 precondition_failed="ttl_seconds",
@@ -3692,7 +3741,7 @@ def _validate_quarterly_ranking_recommendation_submit(
     if not {"operator", "approver", "admin"}.intersection(identity.roles):
         raise _bff_error(
             403,
-            ErrorCode.INSUFFICIENT_ROLE,
+            ErrorCode.FORBIDDEN,
             "Quarterly ranking recommendation submission requires operator-level role",
             "Operator does not hold the required role",
             precondition_failed="role_check",
@@ -3704,7 +3753,7 @@ def _validate_quarterly_ranking_recommendation_submit(
     if missing:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Missing required params for QuarterlyRankingRecommendationSubmit",
             f"Missing fields: {sorted(missing)}",
             precondition_failed="quarterly_ranking_recommendation",
@@ -3718,7 +3767,7 @@ def _validate_quarterly_ranking_recommendation_submit(
     if action_id and action_id not in _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid quarterly ranking recommendation action",
             f"recommendation_action_id must be one of {list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER)}",
             precondition_failed="recommendation_action_id",
@@ -3768,7 +3817,7 @@ def _require_read_role(identity: OperatorIdentity) -> None:
     if not _READ_ROLES.intersection(identity.roles):
         raise _bff_error(
             403,
-            ErrorCode.INSUFFICIENT_ROLE,
+            ErrorCode.FORBIDDEN,
             "Read access requires operator-level role",
             "Operator does not hold the required role",
             precondition_failed="role_check",
@@ -3780,7 +3829,7 @@ def _require_operator_role(identity: OperatorIdentity) -> None:
     if not _WRITE_ROLES.intersection(identity.roles):
         raise _bff_error(
             403,
-            ErrorCode.INSUFFICIENT_ROLE,
+            ErrorCode.FORBIDDEN,
             "Operator command access requires operator-level role",
             "Operator does not hold the required command role",
             precondition_failed="role_check",
@@ -4184,7 +4233,7 @@ def _bff_me_tenant_payload(
     if "*" not in allowed_tenants and effective_tenant not in allowed_tenants:
         raise _bff_error(
             403,
-            ErrorCode.INSUFFICIENT_ROLE,
+            ErrorCode.FORBIDDEN,
             "Tenant access denied",
             "Requested tenant is outside the caller tenant scope",
             precondition_failed="tenant_scope",
@@ -4224,7 +4273,7 @@ def _raise_if_session_logged_out(identity: OperatorIdentity) -> None:
         return
     raise _bff_error(
         401,
-        ErrorCode.INVALID_TOKEN,
+        ErrorCode.AUTH_REQUIRED,
         "Session has been logged out",
         "SESSION_LOGGED_OUT",
         precondition_failed="session_state",
@@ -4274,7 +4323,7 @@ def _sem_refresh_credential(
             return {"source": source, "token": clean}
     raise _bff_error(
         401,
-        ErrorCode.INVALID_TOKEN,
+        ErrorCode.AUTH_REQUIRED,
         "Refresh credential is required",
         "AUTH_REFRESH_CREDENTIAL_REQUIRED",
         precondition_failed="refresh_credential",
@@ -4614,7 +4663,7 @@ async def bff_update_locale(
     if not locale_value:
         raise _bff_error(
             400,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "locale is required",
             "locale must be a non-empty BCP-47-ish language tag",
             precondition_failed="locale",
@@ -4747,7 +4796,7 @@ def _raise_if_read_surface_unavailable(
         return
     raise _bff_error(
         503,
-        ErrorCode.DOWNSTREAM_UNAVAILABLE,
+        ErrorCode.DEPENDENCY_UNAVAILABLE,
         f"{label} read surface unavailable",
         str(surface.get("message") or surface.get("note") or f"{label} downstream read source is unavailable."),
         precondition_failed="read_surface_unavailable",
@@ -4931,14 +4980,14 @@ def _decode_page_token(page_token: Optional[str]) -> int:
     except (TypeError, ValueError) as exc:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid page_token",
             "page_token must be a non-negative integer offset",
         ) from exc
     if offset < 0:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid page_token",
             "page_token must be a non-negative integer offset",
         )
@@ -8958,7 +9007,7 @@ def _tw04_required_text(payload: Dict[str, Any], field: str) -> str:
     if value is None or not str(value).strip():
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             f"Missing required field: {field}",
             f"{field} must be a non-empty string",
             precondition_failed=field,
@@ -8971,7 +9020,7 @@ def _tw01_validate_session_status(value: Optional[str]) -> str:
     if normalized not in _TW01_SESSION_STATUSES:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid trainer session status",
             f"status must be one of {sorted(_TW01_SESSION_STATUSES)}",
             precondition_failed="status",
@@ -8984,7 +9033,7 @@ def _tw01_required_text(payload: Dict[str, Any], field: str) -> str:
     if value is None or not str(value).strip():
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             f"Missing required field: {field}",
             f"{field} must be a non-empty string",
             precondition_failed=field,
@@ -8998,7 +9047,7 @@ def _tw01_validate_context_refs(value: Any) -> List[Dict[str, str]]:
     if not isinstance(value, list):
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid context_refs",
             "context_refs must be an array of { type, id } objects",
             precondition_failed="context_refs",
@@ -9008,7 +9057,7 @@ def _tw01_validate_context_refs(value: Any) -> List[Dict[str, str]]:
         if not isinstance(item, dict):
             raise _bff_error(
                 422,
-                ErrorCode.INVALID_PARAMS,
+                ErrorCode.VALIDATION_FAILED,
                 "Invalid context_refs entry",
                 "Each context_refs entry must be an object",
                 precondition_failed="context_refs",
@@ -9047,7 +9096,7 @@ def _tw03_validate_refresh_mode(payload: Dict[str, Any]) -> str:
     if refresh_mode and refresh_mode != "manual":
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid trainer preview refresh mode",
             "refresh_mode must equal 'manual' or mode must equal 'refresh'",
             precondition_failed="refresh_mode",
@@ -9055,7 +9104,7 @@ def _tw03_validate_refresh_mode(payload: Dict[str, Any]) -> str:
     if mode and mode != "refresh":
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid trainer preview refresh mode",
             "refresh_mode must equal 'manual' or mode must equal 'refresh'",
             precondition_failed="mode",
@@ -9066,7 +9115,7 @@ def _tw03_validate_refresh_mode(payload: Dict[str, Any]) -> str:
         return mode
     raise _bff_error(
         422,
-        ErrorCode.INVALID_PARAMS,
+        ErrorCode.VALIDATION_FAILED,
         "Invalid trainer preview refresh mode",
         "refresh_mode must equal 'manual' or mode must equal 'refresh'",
         precondition_failed="refresh_mode",
@@ -9079,7 +9128,7 @@ def _tw02_validate_patch_payload(payload: Dict[str, Any]) -> List[Dict[str, Any]
     if unknown_fields:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid trainer control patch payload",
             f"Unsupported top-level fields: {unknown_fields}",
             precondition_failed="payload_shape",
@@ -9089,7 +9138,7 @@ def _tw02_validate_patch_payload(payload: Dict[str, Any]) -> List[Dict[str, Any]
     if not isinstance(patches, list) or not patches:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid trainer control patch payload",
             "patches must be a non-empty array of { parameter_key, proposed_value } objects",
             precondition_failed="patches",
@@ -9101,7 +9150,7 @@ def _tw02_validate_patch_payload(payload: Dict[str, Any]) -> List[Dict[str, Any]
         if not isinstance(patch, dict):
             raise _bff_error(
                 422,
-                ErrorCode.INVALID_PARAMS,
+                ErrorCode.VALIDATION_FAILED,
                 "Invalid trainer control patch entry",
                 "Each patches[] entry must be an object",
                 precondition_failed=f"patches[{index}]",
@@ -9111,7 +9160,7 @@ def _tw02_validate_patch_payload(payload: Dict[str, Any]) -> List[Dict[str, Any]
         if unknown_patch_fields:
             raise _bff_error(
                 422,
-                ErrorCode.INVALID_PARAMS,
+                ErrorCode.VALIDATION_FAILED,
                 "Invalid trainer control patch entry",
                 f"Unsupported patch fields: {unknown_patch_fields}",
                 precondition_failed=f"patches[{index}]",
@@ -9121,7 +9170,7 @@ def _tw02_validate_patch_payload(payload: Dict[str, Any]) -> List[Dict[str, Any]
         if not parameter_key:
             raise _bff_error(
                 422,
-                ErrorCode.INVALID_PARAMS,
+                ErrorCode.VALIDATION_FAILED,
                 "Invalid trainer control patch entry",
                 "parameter_key must be a non-empty string",
                 precondition_failed=f"patches[{index}].parameter_key",
@@ -9129,7 +9178,7 @@ def _tw02_validate_patch_payload(payload: Dict[str, Any]) -> List[Dict[str, Any]
         if parameter_key in seen_keys:
             raise _bff_error(
                 422,
-                ErrorCode.INVALID_PARAMS,
+                ErrorCode.VALIDATION_FAILED,
                 "Invalid trainer control patch payload",
                 f"Duplicate parameter_key is not allowed: {parameter_key}",
                 precondition_failed=f"patches[{index}].parameter_key",
@@ -9171,7 +9220,7 @@ def _cw01_required_text(payload: Dict[str, Any], field: str) -> str:
     if value is None or not str(value).strip():
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             f"Missing required field: {field}",
             f"{field} must be a non-empty string",
             precondition_failed=field,
@@ -9184,7 +9233,7 @@ def _cw01_validate_target_type(value: Any) -> str:
     if normalized not in _CW01_TARGET_TYPES:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid target_type",
             f"target_type must be one of {sorted(_CW01_TARGET_TYPES)}",
             precondition_failed="target_type",
@@ -9197,7 +9246,7 @@ def _cw01_validate_priority(value: Any) -> str:
     if normalized not in _CW01_PRIORITIES:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid priority",
             f"priority must be one of {sorted(_CW01_PRIORITIES)}",
             precondition_failed="priority",
@@ -9210,7 +9259,7 @@ def _cw01_validate_consultation_type(value: Any) -> str:
     if normalized not in _CW01_CONSULTATION_TYPES:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid consultation_type",
             f"consultation_type must be one of {sorted(_CW01_CONSULTATION_TYPES)}",
             precondition_failed="consultation_type",
@@ -9224,7 +9273,7 @@ def _cw01_validate_context_refs(value: Any) -> List[Dict[str, str]]:
     if not isinstance(value, list):
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid context_refs",
             "context_refs must be an array of { type, id } objects",
             precondition_failed="context_refs",
@@ -9234,7 +9283,7 @@ def _cw01_validate_context_refs(value: Any) -> List[Dict[str, str]]:
         if not isinstance(item, dict):
             raise _bff_error(
                 422,
-                ErrorCode.INVALID_PARAMS,
+                ErrorCode.VALIDATION_FAILED,
                 "Invalid context_refs entry",
                 "Each context_refs entry must be an object with type and id",
                 precondition_failed="context_refs",
@@ -9243,7 +9292,7 @@ def _cw01_validate_context_refs(value: Any) -> List[Dict[str, str]]:
         if ref_type not in _CW01_CONTEXT_REF_TYPES:
             raise _bff_error(
                 422,
-                ErrorCode.INVALID_PARAMS,
+                ErrorCode.VALIDATION_FAILED,
                 "Invalid context_refs entry type",
                 f"context_refs[].type must be one of {sorted(_CW01_CONTEXT_REF_TYPES)}",
                 precondition_failed="context_refs",
@@ -9252,7 +9301,7 @@ def _cw01_validate_context_refs(value: Any) -> List[Dict[str, str]]:
         if not ref_id:
             raise _bff_error(
                 422,
-                ErrorCode.INVALID_PARAMS,
+                ErrorCode.VALIDATION_FAILED,
                 "Missing context_refs entry id",
                 "context_refs[].id must be a non-empty string",
                 precondition_failed="context_refs",
@@ -9286,7 +9335,7 @@ def _rw01_validate_priority(priority: Any) -> str:
     if normalized not in _RW01_ALLOWED_PRIORITIES:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid research ticket priority",
             f"priority must be one of {sorted(_RW01_ALLOWED_PRIORITIES)}",
             precondition_failed="priority",
@@ -9299,7 +9348,7 @@ def _rw01_validate_status(status: Any) -> str:
     if normalized not in _RW01_ALLOWED_STATUSES:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid research ticket status",
             f"status must be one of {sorted(_RW01_ALLOWED_STATUSES)}",
             precondition_failed="status",
@@ -9310,7 +9359,7 @@ def _rw01_validate_status(status: Any) -> str:
 def _kw02_bad_request(message: str, reason: str, field: str) -> HTTPException:
     return _bff_error(
         400,
-        ErrorCode.INVALID_PARAMS,
+        ErrorCode.VALIDATION_FAILED,
         message,
         reason,
         precondition_failed=field,
@@ -9595,7 +9644,7 @@ def _kw02_resolve_memory_anchors(
 def _kw03_bad_request(message: str, reason: str, field: str) -> HTTPException:
     return _bff_error(
         400,
-        ErrorCode.INVALID_PARAMS,
+        ErrorCode.VALIDATION_FAILED,
         message,
         reason,
         precondition_failed=field,
@@ -9656,7 +9705,7 @@ def _kw03_validate_credibility_tier(value: Any) -> str:
 def _kw04_bad_request(message: str, reason: str, field: str) -> HTTPException:
     return _bff_error(
         400,
-        ErrorCode.INVALID_PARAMS,
+        ErrorCode.VALIDATION_FAILED,
         message,
         reason,
         precondition_failed=field,
@@ -9815,7 +9864,7 @@ def _kw04_filter_metadata(cards: List[Dict[str, Any]]) -> Dict[str, Any]:
 def _kw05_bad_request(message: str, reason: str, field: str) -> HTTPException:
     return _bff_error(
         400,
-        ErrorCode.INVALID_PARAMS,
+        ErrorCode.VALIDATION_FAILED,
         message,
         reason,
         precondition_failed=field,
@@ -9934,7 +9983,7 @@ def _rw03_validate_status(status: Any) -> str:
     if normalized not in _RW03_ALLOWED_STATUSES:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid research analysis status",
             f"status must be one of {sorted(_RW03_ALLOWED_STATUSES)}",
             precondition_failed="status",
@@ -9947,7 +9996,7 @@ def _rw03_validate_date_range(date_range: Any) -> str:
     if normalized not in _RW03_ALLOWED_DATE_RANGES:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid research analysis date_range",
             f"date_range must be one of {sorted(_RW03_ALLOWED_DATE_RANGES)}",
             precondition_failed="date_range",
@@ -10039,7 +10088,7 @@ def _rw01_required_text(payload: Dict[str, Any], field: str) -> str:
     if not value:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             f"Missing required field: {field}",
             f"{field} is required and must be a non-empty string.",
             precondition_failed=field,
@@ -10056,7 +10105,7 @@ def _rw01_validate_patch(
     if unknown_fields:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid research ticket patch payload",
             f"Unsupported patch fields: {unknown_fields}",
             precondition_failed="payload_shape",
@@ -10071,7 +10120,7 @@ def _rw01_validate_patch(
             if not value:
                 raise _bff_error(
                     422,
-                    ErrorCode.INVALID_PARAMS,
+                    ErrorCode.VALIDATION_FAILED,
                     f"Invalid research ticket field: {field}",
                     f"{field} must be a non-empty string when provided.",
                     precondition_failed=field,
@@ -10079,7 +10128,7 @@ def _rw01_validate_patch(
             if not editable:
                 raise _bff_error(
                     409,
-                    ErrorCode.INVALID_STATE,
+                    ErrorCode.OPERATION_NOT_ALLOWED,
                     "Research ticket is not editable in its current lifecycle state",
                     f"{field} cannot be modified while allowedActions.canEdit is false.",
                     precondition_failed="allowedActions.canEdit",
@@ -10090,7 +10139,7 @@ def _rw01_validate_patch(
         if not editable:
             raise _bff_error(
                 409,
-                ErrorCode.INVALID_STATE,
+                ErrorCode.OPERATION_NOT_ALLOWED,
                 "Research ticket is not editable in its current lifecycle state",
                 "priority cannot be modified while allowedActions.canEdit is false.",
                 precondition_failed="allowedActions.canEdit",
@@ -10104,7 +10153,7 @@ def _rw01_validate_patch(
             if next_status == "closed" and not (ticket.get("allowedActions") or {}).get("canClose"):
                 raise _bff_error(
                     409,
-                    ErrorCode.INVALID_STATE,
+                    ErrorCode.OPERATION_NOT_ALLOWED,
                     "Research ticket cannot be closed in its current state",
                     "allowedActions.canClose is false for this ticket.",
                     precondition_failed="allowedActions.canClose",
@@ -10112,7 +10161,7 @@ def _rw01_validate_patch(
             if next_status == "archived" and not (ticket.get("allowedActions") or {}).get("canArchive"):
                 raise _bff_error(
                     409,
-                    ErrorCode.INVALID_STATE,
+                    ErrorCode.OPERATION_NOT_ALLOWED,
                     "Research ticket cannot be archived in its current state",
                     "allowedActions.canArchive is false for this ticket.",
                     precondition_failed="allowedActions.canArchive",
@@ -10121,7 +10170,7 @@ def _rw01_validate_patch(
             if next_status not in allowed_targets:
                 raise _bff_error(
                     409,
-                    ErrorCode.INVALID_STATE,
+                    ErrorCode.OPERATION_NOT_ALLOWED,
                     "Invalid research ticket lifecycle transition",
                     f"Cannot transition research ticket from {current_status} to {next_status}.",
                     precondition_failed="status_transition",
@@ -10131,7 +10180,7 @@ def _rw01_validate_patch(
     if not patch:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Empty research ticket patch payload",
             "At least one accepted patch field is required.",
             precondition_failed="payload_shape",
@@ -10840,7 +10889,7 @@ async def update_settings(
     except ValueError as exc:
         raise _bff_error(
             400,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Settings update payload is invalid",
             str(exc),
             precondition_failed="settings_payload",
@@ -10869,7 +10918,7 @@ async def import_settings(
     if not isinstance(json_data, str):
         raise _bff_error(
             400,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Settings import payload is invalid",
             "jsonData must be a string containing a settings JSON document",
             precondition_failed="settings_import_payload",
@@ -10880,7 +10929,7 @@ async def import_settings(
     except ValueError as exc:
         raise _bff_error(
             400,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Settings import payload is invalid",
             str(exc),
             precondition_failed="settings_import_payload",
@@ -10935,7 +10984,7 @@ async def get_persona_detail(persona_id: str, authorization: Optional[str] = Hea
         _raise_if_read_surface_unavailable(persona_surface, label="Persona")
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Persona not found",
             f"Persona {persona_id} does not exist",
         )
@@ -10972,7 +11021,7 @@ async def list_persona_sessions(
         _raise_if_read_surface_unavailable(persona_surface, label="Persona")
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Persona not found",
             f"Persona {persona_id} does not exist",
         )
@@ -11002,7 +11051,7 @@ async def get_session_detail(session_id: str, authorization: Optional[str] = Hea
         _raise_if_read_surface_unavailable(session_surface, label="Session")
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Session not found",
             f"Session {session_id} does not exist",
         )
@@ -11043,7 +11092,7 @@ async def list_persona_teaching_sessions(
         _raise_if_read_surface_unavailable(persona_surface, label="Persona")
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Persona not found",
             f"Persona {persona_id} does not exist",
         )
@@ -11075,7 +11124,7 @@ async def get_persona_capabilities(
         _raise_if_read_surface_unavailable(persona_surface, label="Persona")
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Persona not found",
             f"Persona {persona_id} does not exist",
         )
@@ -11086,7 +11135,7 @@ async def get_persona_capabilities(
         _raise_if_read_surface_unavailable(capability_surface, label="Capability snapshot")
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Capability snapshot not found",
             f"Capability snapshot for persona {persona_id} does not exist",
         )
@@ -11118,7 +11167,7 @@ async def create_trainer_session(
     if session_type != "trainer":
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid trainer session type",
             "session_type must equal 'trainer' for TW-01",
             precondition_failed="session_type",
@@ -11128,7 +11177,7 @@ async def create_trainer_session(
     if not persona:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Persona not found",
             f"Persona {persona_id} does not exist",
         )
@@ -11143,7 +11192,7 @@ async def create_trainer_session(
     if session is None:
         raise _bff_error(
             503,
-            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
             "Trainer session store unavailable",
             "Trainer session creation store is unavailable.",
         )
@@ -11175,7 +11224,7 @@ async def list_trainer_sessions(
     if not persona:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Persona not found",
             f"Persona {persona_id} does not exist",
         )
@@ -11220,7 +11269,7 @@ async def get_trainer_session_detail(
     if not session:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Trainer session not found",
             f"Trainer session {session_id} does not exist",
         )
@@ -11248,7 +11297,7 @@ async def get_trainer_controls(
     if not controls:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Trainer session not found",
             f"Trainer session {session_id} does not exist",
         )
@@ -11269,14 +11318,14 @@ async def patch_trainer_controls(
     if not controls:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Trainer session not found",
             f"Trainer session {session_id} does not exist",
         )
     if str(controls.get("status") or "").strip().lower() != "active":
         raise _bff_error(
             409,
-            ErrorCode.INVALID_STATE,
+            ErrorCode.OPERATION_NOT_ALLOWED,
             "Trainer session cannot patch controls",
             "POST /patch is only allowed while the trainer session status is active",
             precondition_failed="status",
@@ -11284,7 +11333,7 @@ async def patch_trainer_controls(
     if not (controls.get("allowedActions") or {}).get("canPatchControls"):
         raise _bff_error(
             409,
-            ErrorCode.PRECONDITION_NOT_MET,
+            ErrorCode.PRECONDITION_FAILED,
             "Trainer control patch unavailable",
             "allowedActions.canPatchControls is false for this trainer session",
             precondition_failed="allowedActions.canPatchControls",
@@ -11298,7 +11347,7 @@ async def patch_trainer_controls(
     if result is None:
         raise _bff_error(
             503,
-            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
             "Trainer control store unavailable",
             "Trainer control patch store is unavailable.",
         )
@@ -11318,14 +11367,14 @@ async def append_trainer_message(
     if not session:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Trainer session not found",
             f"Trainer session {session_id} does not exist",
         )
     if session["status"] != "active":
         raise _bff_error(
             409,
-            ErrorCode.INVALID_STATE,
+            ErrorCode.OPERATION_NOT_ALLOWED,
             "Trainer session is not active",
             "POST /message is only allowed while the trainer session status is active",
             precondition_failed="status",
@@ -11333,7 +11382,7 @@ async def append_trainer_message(
     if not session["allowedActions"].get("canSendMessage"):
         raise _bff_error(
             409,
-            ErrorCode.PRECONDITION_NOT_MET,
+            ErrorCode.PRECONDITION_FAILED,
             "Trainer message submission unavailable",
             "allowedActions.canSendMessage is false for this trainer session",
             precondition_failed="allowedActions.canSendMessage",
@@ -11349,7 +11398,7 @@ async def append_trainer_message(
     if result is None:
         raise _bff_error(
             503,
-            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
             "Trainer session store unavailable",
             "Trainer message append store is unavailable.",
         )
@@ -11378,7 +11427,7 @@ async def get_trainer_preview(
     if not session:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Trainer session not found",
             f"Trainer session {session_id} does not exist",
         )
@@ -11393,7 +11442,7 @@ async def get_trainer_preview(
     if preview is None and eval_id:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Trainer preview evaluation not found",
             f"Trainer preview evaluation {eval_id} does not exist for session {session_id}",
         )
@@ -11420,7 +11469,7 @@ async def refresh_trainer_preview(
     if not session:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Trainer session not found",
             f"Trainer session {session_id} does not exist",
         )
@@ -11437,7 +11486,7 @@ async def refresh_trainer_preview(
     if session.get("status") not in {"active", "paused"}:
         raise _bff_error(
             409,
-            ErrorCode.INVALID_STATE,
+            ErrorCode.OPERATION_NOT_ALLOWED,
             "Trainer session cannot refresh preview",
             "POST /preview is only allowed while the trainer session status is active or paused",
             precondition_failed="status",
@@ -11447,7 +11496,7 @@ async def refresh_trainer_preview(
     if not preview.get("allowedActions", {}).get("canRefreshPreview"):
         raise _bff_error(
             409,
-            ErrorCode.PRECONDITION_NOT_MET,
+            ErrorCode.PRECONDITION_FAILED,
             "Trainer preview refresh unavailable",
             "allowedActions.canRefreshPreview is false for this trainer preview",
             precondition_failed="allowedActions.canRefreshPreview",
@@ -11461,7 +11510,7 @@ async def refresh_trainer_preview(
     if refreshed is None:
         raise _bff_error(
             503,
-            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
             "Trainer preview store unavailable",
             "Trainer preview refresh store is unavailable.",
         )
@@ -11483,7 +11532,7 @@ async def list_trainer_replays(
     if not persona:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Persona not found",
             f"Persona {persona_id} does not exist",
         )
@@ -11493,7 +11542,7 @@ async def list_trainer_replays(
         if normalized_status not in _TW04_REPLAY_TERMINAL_STATUSES:
             raise _bff_error(
                 422,
-                ErrorCode.INVALID_PARAMS,
+                ErrorCode.VALIDATION_FAILED,
                 "Invalid replay status filter",
                 f"status must be one of {sorted(_TW04_REPLAY_TERMINAL_STATUSES)}",
                 precondition_failed="status",
@@ -11537,7 +11586,7 @@ async def get_trainer_replay_detail(
     if not replay:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Trainer replay session not found",
             f"Trainer replay session {session_id} does not exist",
         )
@@ -11560,7 +11609,7 @@ async def commit_trainer_replay(
     if not replay:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Trainer replay session not found",
             f"Trainer replay session {session_id} does not exist",
         )
@@ -11568,7 +11617,7 @@ async def commit_trainer_replay(
     if str(replay.get("status") or "").strip().lower() != "completed":
         raise _bff_error(
             409,
-            ErrorCode.INVALID_STATE,
+            ErrorCode.OPERATION_NOT_ALLOWED,
             "Trainer session cannot be committed",
             "commit is only allowed when session status is completed",
             precondition_failed="status",
@@ -11577,7 +11626,7 @@ async def commit_trainer_replay(
     if not replay.get("allowedActions", {}).get("canCommit"):
         raise _bff_error(
             409,
-            ErrorCode.PRECONDITION_NOT_MET,
+            ErrorCode.PRECONDITION_FAILED,
             "Commit not allowed",
             "allowedActions.canCommit is false for this trainer replay session",
             precondition_failed="allowedActions.canCommit",
@@ -11587,7 +11636,7 @@ async def commit_trainer_replay(
     if candidate_snapshot_at != expected_candidate_snapshot_at:
         raise _bff_error(
             409,
-            ErrorCode.PRECONDITION_NOT_MET,
+            ErrorCode.PRECONDITION_FAILED,
             "Candidate snapshot mismatch",
             "expected_candidate_snapshot_at does not match the current replayable candidate snapshot",
             precondition_failed="expected_candidate_snapshot_at",
@@ -11603,7 +11652,7 @@ async def commit_trainer_replay(
     if result is None:
         raise _bff_error(
             503,
-            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
             "Trainer replay store unavailable",
             "Trainer replay commit store is unavailable.",
         )
@@ -11626,7 +11675,7 @@ async def discard_trainer_replay(
     if not replay:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Trainer replay session not found",
             f"Trainer replay session {session_id} does not exist",
         )
@@ -11634,7 +11683,7 @@ async def discard_trainer_replay(
     if str(replay.get("status") or "").strip().lower() != "completed":
         raise _bff_error(
             409,
-            ErrorCode.INVALID_STATE,
+            ErrorCode.OPERATION_NOT_ALLOWED,
             "Trainer session cannot be discarded",
             "discard is only allowed when session status is completed",
             precondition_failed="status",
@@ -11643,7 +11692,7 @@ async def discard_trainer_replay(
     if not replay.get("allowedActions", {}).get("canDiscard"):
         raise _bff_error(
             409,
-            ErrorCode.PRECONDITION_NOT_MET,
+            ErrorCode.PRECONDITION_FAILED,
             "Discard not allowed",
             "allowedActions.canDiscard is false for this trainer replay session",
             precondition_failed="allowedActions.canDiscard",
@@ -11653,7 +11702,7 @@ async def discard_trainer_replay(
     if candidate_snapshot_at != expected_candidate_snapshot_at:
         raise _bff_error(
             409,
-            ErrorCode.PRECONDITION_NOT_MET,
+            ErrorCode.PRECONDITION_FAILED,
             "Candidate snapshot mismatch",
             "expected_candidate_snapshot_at does not match the current replayable candidate snapshot",
             precondition_failed="expected_candidate_snapshot_at",
@@ -11669,7 +11718,7 @@ async def discard_trainer_replay(
     if result is None:
         raise _bff_error(
             503,
-            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
             "Trainer replay store unavailable",
             "Trainer replay discard store is unavailable.",
         )
@@ -11689,7 +11738,7 @@ async def create_rapid_eval(
     if not eval_scope or eval_scope not in _TRN003_RAPID_EVAL_SCOPES:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid eval_scope",
             f"eval_scope must be one of {sorted(_TRN003_RAPID_EVAL_SCOPES)}",
             precondition_failed="eval_scope",
@@ -11699,7 +11748,7 @@ async def create_rapid_eval(
     if not dataset_version_id_raw or not str(dataset_version_id_raw).strip():
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Missing required field: dataset_version_id",
             "dataset_version_id must be a non-empty string",
             precondition_failed="dataset_version_id",
@@ -11714,7 +11763,7 @@ async def create_rapid_eval(
     except (TypeError, ValueError):
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid max_runtime_seconds",
             "max_runtime_seconds must be a positive integer",
             precondition_failed="max_runtime_seconds",
@@ -11728,7 +11777,7 @@ async def create_rapid_eval(
     if not session:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Trainer session not found",
             f"Trainer session {session_id} does not exist",
         )
@@ -11736,7 +11785,7 @@ async def create_rapid_eval(
     if str(session.get("status") or "").strip().lower() not in _TRN003_RAPID_EVAL_ACTIVE_STATUSES:
         raise _bff_error(
             409,
-            ErrorCode.INVALID_STATE,
+            ErrorCode.OPERATION_NOT_ALLOWED,
             "Trainer session cannot submit rapid eval",
             "rapid-eval is only allowed while the trainer session status is active or paused",
             precondition_failed="status",
@@ -11756,7 +11805,7 @@ async def create_rapid_eval(
     if result is None:
         raise _bff_error(
             503,
-            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
             "Rapid eval store unavailable",
             "Rapid eval creation store is unavailable.",
         )
@@ -11776,7 +11825,7 @@ async def get_rapid_eval(
     if not session:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Trainer session not found",
             f"Trainer session {session_id} does not exist",
         )
@@ -11785,7 +11834,7 @@ async def get_rapid_eval(
     if not record or record.get("session_id") != session_id:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Rapid eval not found",
             f"Rapid eval {eval_id} does not exist for trainer session {session_id}",
         )
@@ -11912,7 +11961,7 @@ async def get_approval_decision_detail(
         _raise_if_read_surface_unavailable(decision_surface, label="Approval decision")
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Approval decision not found",
             f"Approval decision {decision_id} does not exist",
         )
@@ -11969,7 +12018,7 @@ async def get_runtime_status(
         _raise_if_read_surface_unavailable(runtime_surface, label="Runtime")
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Runtime not found",
             f"Runtime {runtime_id} does not exist",
         )
@@ -12002,7 +12051,7 @@ async def get_deployment_plan(plan_id: str, authorization: Optional[str] = Heade
         _raise_if_read_surface_unavailable(plan_surface, label="Deployment plan")
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Deployment plan not found",
             f"Deployment plan {plan_id} does not exist",
         )
@@ -12035,7 +12084,7 @@ async def get_capital_pool(pool_id: str, authorization: Optional[str] = Header(d
         _raise_if_read_surface_unavailable(pool_surface, label="Capital pool")
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Capital pool not found",
             f"Capital pool {pool_id} does not exist",
         )
@@ -12067,7 +12116,7 @@ async def get_binding(binding_id: str, authorization: Optional[str] = Header(def
         _raise_if_read_surface_unavailable(binding_surface, label="Binding")
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Binding not found",
             f"Binding {binding_id} does not exist",
         )
@@ -12100,7 +12149,7 @@ async def get_runtime_binding(binding_id: str, authorization: Optional[str] = He
         _raise_if_read_surface_unavailable(runtime_binding_surface, label="Runtime binding")
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Runtime binding not found",
             f"Runtime binding {binding_id} does not exist",
         )
@@ -12147,7 +12196,7 @@ def _pkt001_requested_plan_statuses(status: Optional[str]) -> Optional[set[str]]
     if invalid:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid deployment plan status filter",
             f"status must be one of {sorted(_PKT001_DEPLOYMENT_PLAN_FILTER_STATUSES)}",
             precondition_failed="status",
@@ -12350,7 +12399,7 @@ async def get_deployment_review(plan_id: str, authorization: Optional[str] = Hea
     if not plan:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Deployment plan not found",
             f"Deployment plan {plan_id} does not exist",
         )
@@ -12473,14 +12522,14 @@ async def list_operator_runtime_state(
     if sort_by not in _RUNTIME_STATE_SORT_FIELDS:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid sort_by",
             f"sort_by must be one of {sorted(_RUNTIME_STATE_SORT_FIELDS)}",
         )
     if sort_order not in _RUNTIME_STATE_SORT_ORDERS:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid sort_order",
             f"sort_order must be one of {sorted(_RUNTIME_STATE_SORT_ORDERS)}",
         )
@@ -12692,7 +12741,7 @@ async def get_operator_paper_live_drift(
     if runtime_binding is None and report is None:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Runtime drift view not found",
             f"Runtime {runtime_id} does not exist",
         )
@@ -12813,7 +12862,7 @@ async def get_consult_request(
     if not req:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Consult request not found",
             f"Consult request {request_id} does not exist",
         )
@@ -12850,7 +12899,7 @@ async def cancel_consult_request(
     if not req:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Consult request not found",
             f"Consult request {request_id} does not exist",
         )
@@ -12858,7 +12907,7 @@ async def cancel_consult_request(
     if not req.get("allowedActions", {}).get("canCancel"):
         raise _bff_error(
             409,
-            ErrorCode.PRECONDITION_NOT_MET,
+            ErrorCode.PRECONDITION_FAILED,
             "Consult request cannot be canceled",
             f"allowedActions.canCancel is false for request {request_id}",
             precondition_failed="allowedActions.canCancel",
@@ -12874,14 +12923,14 @@ async def cancel_consult_request(
         if refreshed and not refreshed.get("allowedActions", {}).get("canCancel"):
             raise _bff_error(
                 409,
-                ErrorCode.PRECONDITION_NOT_MET,
+                ErrorCode.PRECONDITION_FAILED,
                 "Consult request cannot be canceled",
                 f"allowedActions.canCancel is false for request {request_id}",
                 precondition_failed="allowedActions.canCancel",
             )
         raise _bff_error(
             503,
-            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
             "Consult request store unavailable",
             "Cancel operation could not be persisted.",
         )
@@ -12956,7 +13005,7 @@ async def get_committee(
     if committee is None:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Committee board not found",
             f"Committee {committee_id} does not exist",
         )
@@ -13022,7 +13071,7 @@ async def get_consult_memo(
     if memo is None:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Consult memo not found",
             f"Consult memo {memo_id} does not exist",
         )
@@ -13096,7 +13145,7 @@ def _require_openclaw_command_role(identity: OperatorIdentity) -> None:
         return
     raise _bff_error(
         403,
-        ErrorCode.INSUFFICIENT_ROLE,
+        ErrorCode.FORBIDDEN,
         "OpenClaw operator commands require operator or admin role",
         "Operator does not hold the required OpenClaw command role",
         precondition_failed="role_check",
@@ -13110,7 +13159,7 @@ def _require_openclaw_idempotency_key(value: Optional[str]) -> str:
         return key
     raise _bff_error(
         400,
-        ErrorCode.INVALID_PARAMS,
+        ErrorCode.VALIDATION_FAILED,
         "X-Idempotency-Key is required for OpenClaw operator commands",
         "OpenClaw session lifecycle commands must be idempotent at the BFF boundary",
         precondition_failed="idempotency_key",
@@ -13126,7 +13175,7 @@ def _authorized_openclaw_operator_filter(
     if clean and clean != identity.operator_id and "admin" not in identity.roles:
         raise _bff_error(
             403,
-            ErrorCode.INSUFFICIENT_ROLE,
+            ErrorCode.FORBIDDEN,
             "OpenClaw operator filter is not authorized",
             "Non-admin operators may only filter OpenClaw sessions by their own operator id",
             precondition_failed="operator_filter",
@@ -13190,15 +13239,15 @@ def _build_openclaw_ops_response(
 def _openclaw_client_error(exc: OpenClawOpsClientError) -> HTTPException:
     status_code = exc.status_code or 502
     if status_code == 404:
-        code = ErrorCode.OBJECT_NOT_FOUND
+        code = ErrorCode.RESOURCE_NOT_FOUND
     elif status_code == 409:
-        code = ErrorCode.CONCURRENT_MODIFICATION
+        code = ErrorCode.RESOURCE_CONFLICT
     elif status_code == 403:
-        code = ErrorCode.PRECONDITION_NOT_MET
+        code = ErrorCode.PRECONDITION_FAILED
     elif status_code >= 500:
-        code = ErrorCode.DOWNSTREAM_UNAVAILABLE
+        code = ErrorCode.DEPENDENCY_UNAVAILABLE
     else:
-        code = ErrorCode.INVALID_PARAMS
+        code = ErrorCode.VALIDATION_FAILED
     return _bff_error(
         status_code,
         code,
@@ -13323,7 +13372,7 @@ async def create_openclaw_session(
     if not agent_id or not session_type:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "agent_id and session_type are required",
             "OpenClaw session create requires non-empty agent_id and session_type",
         )
@@ -13331,7 +13380,7 @@ async def create_openclaw_session(
     if context_bundle is not None and not isinstance(context_bundle, dict):
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "context_bundle must be an object when provided",
             "OpenClaw session context_bundle must be a JSON object",
         )
@@ -13496,7 +13545,7 @@ def _require_source_search_command_role(identity: OperatorIdentity) -> None:
         return
     raise _bff_error(
         403,
-        ErrorCode.INSUFFICIENT_ROLE,
+        ErrorCode.FORBIDDEN,
         "Source/search operator commands require operator or admin role",
         "Operator does not hold the required source/search command role",
         precondition_failed="role_check",
@@ -13510,7 +13559,7 @@ def _require_source_search_idempotency_key(value: Optional[str]) -> str:
         return key
     raise _bff_error(
         400,
-        ErrorCode.INVALID_PARAMS,
+        ErrorCode.VALIDATION_FAILED,
         "X-Idempotency-Key is required for source/search operator commands",
         "Source/search commands must be idempotent at the BFF boundary",
         precondition_failed="idempotency_key",
@@ -13521,15 +13570,15 @@ def _require_source_search_idempotency_key(value: Optional[str]) -> str:
 def _source_search_client_error(exc: SourceSearchOpsClientError) -> HTTPException:
     status_code = exc.status_code or 502
     if status_code == 404:
-        code = ErrorCode.OBJECT_NOT_FOUND
+        code = ErrorCode.RESOURCE_NOT_FOUND
     elif status_code == 409:
-        code = ErrorCode.CONCURRENT_MODIFICATION
+        code = ErrorCode.RESOURCE_CONFLICT
     elif status_code == 403:
-        code = ErrorCode.PRECONDITION_NOT_MET
+        code = ErrorCode.PRECONDITION_FAILED
     elif status_code >= 500:
-        code = ErrorCode.DOWNSTREAM_UNAVAILABLE
+        code = ErrorCode.DEPENDENCY_UNAVAILABLE
     else:
-        code = ErrorCode.INVALID_PARAMS
+        code = ErrorCode.VALIDATION_FAILED
     return _bff_error(
         status_code,
         code,
@@ -13682,7 +13731,7 @@ async def replay_source_frontier(
     if not frontier_id.strip():
         raise _bff_error(
             400,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "frontier_id is required",
             "frontier_id must be a non-empty string",
         )
@@ -13855,7 +13904,7 @@ async def get_research_ticket(
     if not ticket:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Research ticket not found",
             f"Research ticket {ticket_id} does not exist",
         )
@@ -13892,7 +13941,7 @@ async def patch_research_ticket(
     if not ticket:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Research ticket not found",
             f"Research ticket {ticket_id} does not exist",
         )
@@ -13907,7 +13956,7 @@ async def patch_research_ticket(
     if updated is None:
         raise _bff_error(
             503,
-            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
             "Research ticket store unavailable",
             "Research ticket update store is unavailable.",
         )
@@ -14118,7 +14167,7 @@ async def get_research_analysis(
     if not analysis:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Research analysis not found",
             f"Research analysis {analysis_id} does not exist",
         )
@@ -14163,7 +14212,7 @@ def _rw04_validate_status(value: Any) -> str:
     if normalized not in _RW04_ALLOWED_STATUSES:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid experiment status",
             f"status must be one of {sorted(_RW04_ALLOWED_STATUSES)}",
             precondition_failed="status",
@@ -14205,7 +14254,7 @@ def _rw04_required_text(payload: Dict[str, Any], field: str) -> str:
     if value is None or not str(value).strip():
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             f"Missing required field: {field}",
             f"{field} must be a non-empty string",
             precondition_failed=field,
@@ -14220,7 +14269,7 @@ def _rw05_validate_status(value: Any) -> Optional[str]:
     if normalized not in _RW05_ALLOWED_STATUSES:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid artifact status",
             f"status must be one of {sorted(_RW05_ALLOWED_STATUSES)}",
             precondition_failed="status",
@@ -14233,7 +14282,7 @@ def _rw04_required_dict(payload: Dict[str, Any], field: str) -> Dict[str, Any]:
     if not isinstance(value, dict):
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             f"Missing or invalid field: {field}",
             f"{field} must be an object",
             precondition_failed=field,
@@ -14250,7 +14299,7 @@ def _rw04_validate_run_config(run_config: Dict[str, Any]) -> Dict[str, Any]:
     if execution_mode not in _RW04_ALLOWED_EXECUTION_MODES:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid execution_mode",
             f"execution_mode must be one of {sorted(_RW04_ALLOWED_EXECUTION_MODES)}",
             precondition_failed="execution_mode",
@@ -14259,7 +14308,7 @@ def _rw04_validate_run_config(run_config: Dict[str, Any]) -> Dict[str, Any]:
     if priority not in _RW04_ALLOWED_PRIORITIES:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid priority",
             f"priority must be one of {sorted(_RW04_ALLOWED_PRIORITIES)}",
             precondition_failed="priority",
@@ -14293,7 +14342,7 @@ async def launch_experiment(
     if analysis_refs is not None and not isinstance(analysis_refs, list):
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Invalid launch_context.analysis_refs",
             "analysis_refs must be null or an array of strings",
             precondition_failed="launch_context.analysis_refs",
@@ -14390,7 +14439,7 @@ async def get_experiment(
     if not experiment:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Experiment not found",
             f"Experiment {experiment_id} does not exist",
         )
@@ -14425,7 +14474,7 @@ async def cancel_experiment(
     if not reason:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Missing required field: reason",
             "reason must be a non-empty string",
             precondition_failed="reason",
@@ -14435,7 +14484,7 @@ async def cancel_experiment(
     if not experiment:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Experiment not found",
             f"Experiment {experiment_id} does not exist",
         )
@@ -14444,7 +14493,7 @@ async def cancel_experiment(
     if status not in {"queued", "running"}:
         raise _bff_error(
             409,
-            ErrorCode.INVALID_STATE,
+            ErrorCode.OPERATION_NOT_ALLOWED,
             "Experiment cannot be canceled",
             f"Experiment {experiment_id} is in terminal state '{status}' and cannot be canceled",
         )
@@ -14453,7 +14502,7 @@ async def cancel_experiment(
     if not canceled:
         raise _bff_error(
             409,
-            ErrorCode.INVALID_STATE,
+            ErrorCode.OPERATION_NOT_ALLOWED,
             "Experiment cancel rejected",
             f"Experiment {experiment_id} could not be canceled; it may have already reached a terminal state",
         )
@@ -14523,7 +14572,7 @@ async def compare_artifacts(
     if len(requested_ids) < 2:
         raise _bff_error(
             400,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "At least two artifact_ids are required",
             "artifact_ids must include between 2 and 4 artifact ids",
             precondition_failed="artifact_ids",
@@ -14531,7 +14580,7 @@ async def compare_artifacts(
     if len(requested_ids) > 4:
         raise _bff_error(
             400,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Too many artifact_ids provided",
             "artifact_ids must include between 2 and 4 artifact ids",
             precondition_failed="artifact_ids",
@@ -14543,7 +14592,7 @@ async def compare_artifacts(
         if not artifact:
             raise _bff_error(
                 404,
-                ErrorCode.OBJECT_NOT_FOUND,
+                ErrorCode.RESOURCE_NOT_FOUND,
                 "Artifact not found",
                 f"Artifact {artifact_id} does not exist",
             )
@@ -14561,7 +14610,7 @@ async def compare_artifacts(
     if non_comparable:
         return _pack_d_direct_error_response(
             status_code=422,
-            code=ErrorCode.INVALID_STATE.value,
+            code=ErrorCode.OPERATION_NOT_ALLOWED.value,
             message="One or more artifacts cannot be compared",
             details={
                 "reason": "Compare accepts only sealed or superseded artifacts.",
@@ -14592,7 +14641,7 @@ async def get_artifact(
     if not artifact:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Artifact not found",
             f"Artifact {artifact_id} does not exist",
         )
@@ -14644,7 +14693,7 @@ async def create_research_note(
     if not attachment_exists:
         raise _bff_error(
             422,
-            ErrorCode.PRECONDITION_NOT_MET,
+            ErrorCode.PRECONDITION_FAILED,
             "Attachment target does not exist",
             f"{validated_attachment_type} target {validated_attachment_ref} could not be resolved",
             precondition_failed="attachment_ref",
@@ -14674,7 +14723,7 @@ async def create_research_note(
     if created is None:
         raise _bff_error(
             503,
-            ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
             "Research note store unavailable",
             "Research note creation store is unavailable.",
         )
@@ -14783,7 +14832,7 @@ async def get_research_note_detail(
     if not note:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Research note not found",
             f"Research note {note_id} does not exist",
         )
@@ -14954,7 +15003,7 @@ async def get_evidence_ref_detail(
     if not evidence_ref:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Evidence reference not found",
             f"Evidence reference {ref_id} does not exist",
         )
@@ -15193,7 +15242,7 @@ async def get_insight_card_detail(
     if not insight_card:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Insight card not found",
             f"Insight card {insight_id} does not exist",
         )
@@ -15306,7 +15355,7 @@ async def get_strategy_spec_detail(
     if not strategy_exists:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Strategy spec not found",
             f"Strategy spec family {strategy_id} does not exist",
         )
@@ -15315,7 +15364,7 @@ async def get_strategy_spec_detail(
     if not detail:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Strategy spec version not found",
             f"Version {version} does not exist for strategy {strategy_id}",
         )
@@ -15374,7 +15423,7 @@ async def list_strategy_spec_versions(
     if not versions and not read_store.get_strategy_spec(strategy_id):
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Strategy spec not found",
             f"Strategy spec family {strategy_id} does not exist",
         )
@@ -15417,7 +15466,7 @@ async def compare_strategy_spec_versions(
     if left_selector == right_selector:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Compare requires two distinct versions",
             "left_version and right_version must identify different versions",
             precondition_failed="left_version",
@@ -15428,7 +15477,7 @@ async def compare_strategy_spec_versions(
     if not left_detail or not right_detail:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Strategy spec version not found",
             f"Cannot compare missing versions for strategy {strategy_id}",
         )
@@ -15437,7 +15486,7 @@ async def compare_strategy_spec_versions(
     ).get("canCompare"):
         raise _bff_error(
             422,
-            ErrorCode.INVALID_STATE,
+            ErrorCode.OPERATION_NOT_ALLOWED,
             "One or more versions cannot be compared",
             "Compare accepts only candidate, approved, or retired strategy spec versions",
             precondition_failed="lifecycle_state",
@@ -15451,7 +15500,7 @@ async def compare_strategy_spec_versions(
     if not payload:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Strategy spec version not found",
             f"Cannot compare missing versions for strategy {strategy_id}",
         )
@@ -15833,7 +15882,7 @@ async def get_deployment_diff(plan_id: str, authorization: Optional[str] = Heade
             return _unavailable_deployment_diff_payload(plan_id, utc_now())
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Deployment diff not found",
             f"Deployment diff for plan {plan_id} does not exist",
         )
@@ -15893,7 +15942,7 @@ async def get_rollback_review(rollback_id: str, authorization: Optional[str] = H
     if not review:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Rollback review not found",
             f"Rollback review {rollback_id} does not exist",
         )
@@ -16047,7 +16096,7 @@ async def get_incident(incident_id: str, authorization: Optional[str] = Header(d
     if not incident:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Incident not found",
             f"Incident {incident_id} does not exist",
         )
@@ -16089,7 +16138,7 @@ async def get_postmortem(report_id: str, authorization: Optional[str] = Header(d
     if not postmortem:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Postmortem report not found",
             f"Postmortem {report_id} does not exist",
         )
@@ -16117,7 +16166,7 @@ async def get_kill_switch_status(authorization: Optional[str] = Header(default=N
     if "admin" not in identity.roles:
         raise _bff_error(
             403,
-            ErrorCode.INSUFFICIENT_ROLE,
+            ErrorCode.FORBIDDEN,
             "Kill-switch status requires 'admin' role",
             "Operator does not hold the admin role",
             precondition_failed="role_check",
@@ -16191,7 +16240,7 @@ async def get_incident_response(
     if not incident:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Incident not found",
             f"Incident {incident_id} does not exist",
         )
@@ -16315,7 +16364,7 @@ async def get_persona_management(
     if not persona:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Persona not found",
             f"Persona {persona_id} does not exist",
         )
@@ -16430,7 +16479,7 @@ async def get_post_incident_review(
     if not incident:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Incident not found",
             f"Incident {incident_id} does not exist",
         )
@@ -16541,7 +16590,7 @@ async def get_evolution_decision(
     if not decision:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Evolution decision not found",
             f"Evolution decision {decision_id} does not exist",
         )
@@ -16707,7 +16756,7 @@ async def get_lineage_edge(
     if not edge:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Lineage edge not found",
             f"Lineage edge {edge_id} does not exist",
         )
@@ -16767,7 +16816,7 @@ async def get_inspiration_graph(
     if projection is None and not artifact_exists:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Artifact not found",
             f"Artifact {artifact_id} does not exist",
         )
@@ -16823,7 +16872,7 @@ async def get_telemetry_summary(
     if not summary:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Telemetry summary not found",
             f"No telemetry summary for runtime {runtime_id}",
         )
@@ -16850,7 +16899,7 @@ async def get_telemetry_performance(
     if not performance:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Telemetry performance data not found",
             f"No performance data for artifact {artifact_id}",
         )
@@ -16888,7 +16937,7 @@ def list_consultations(
     if persona is None:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Persona not found",
             f"No persona with id {persona_id}",
         )
@@ -16950,7 +16999,7 @@ def get_consultation(
     if session is None:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Consultation session not found",
             f"No consultation session with id {session_id}",
         )
@@ -16984,7 +17033,7 @@ def get_consultation_participants(
     if participants is None:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Consultation session not found",
             f"No consultation session with id {session_id}",
         )
@@ -17020,7 +17069,7 @@ def get_consultation_outcome(
     if outcome is None:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Consultation session not found",
             f"No consultation session with id {session_id}",
         )
@@ -17046,7 +17095,7 @@ def get_consultation_evidence(
     if evidence is None:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Consultation session not found",
             f"No consultation session with id {session_id}",
         )
@@ -17088,7 +17137,7 @@ def get_consultation_transcript(
     if transcript is None:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Consultation session not found",
             f"No consultation session with id {session_id}",
         )
@@ -17109,7 +17158,7 @@ def get_consult_policy(
     if persona is None:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Persona not found",
             f"No persona with id {persona_id}",
         )
@@ -17214,7 +17263,7 @@ async def submit_command(
     active = command_store.get_active_commands_for_target(cmd.target.type.value, cmd.target.id)
     if active:
         error = _bff_error(
-            409, ErrorCode.CONCURRENT_MODIFICATION,
+            409, ErrorCode.RESOURCE_CONFLICT,
             "A command is already in flight for this target",
             f"Command {active[0]['command_id']} is currently {active[0]['status']}",
             precondition_failed="concurrent_safety",
@@ -17387,7 +17436,7 @@ def _submit_final_command_admission(
     active = command_store.get_active_commands_for_target(cmd.target.type.value, cmd.target.id)
     if active:
         error = _bff_error(
-            409, ErrorCode.CONCURRENT_MODIFICATION,
+            409, ErrorCode.RESOURCE_CONFLICT,
             "A command is already in flight for this target",
             f"Command {active[0]['command_id']} is currently {active[0]['status']}",
             precondition_failed="concurrent_safety",
@@ -17545,7 +17594,7 @@ async def patch_agora_journal_entry(
     if result is None:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Agora journal entry not found",
             f"DecisionJournalEntry {entry_id} is not available in the journal store",
             precondition_failed="journal_entry",
@@ -17691,7 +17740,7 @@ def _agora_required_text(payload: Dict[str, Any], *fields: str) -> str:
     label = fields[0] if fields else "value"
     raise _bff_error(
         422,
-        ErrorCode.INVALID_PARAMS,
+        ErrorCode.VALIDATION_FAILED,
         f"{label} is required",
         f"Agora request requires a non-empty {label}",
         precondition_failed=label,
@@ -17703,7 +17752,7 @@ def _agora_signal_feedback_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     if decision not in _AGORA_SIGNAL_DECISIONS:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Signal feedback decision is invalid",
             "decision must be one of agree, disagree, or flag_suspicious",
             precondition_failed="signal_feedback.decision",
@@ -17713,7 +17762,7 @@ def _agora_signal_feedback_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     except (TypeError, ValueError) as exc:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Signal feedback confidence is invalid",
             "confidence must be an integer from 1 to 5",
             precondition_failed="signal_feedback.confidence",
@@ -17721,7 +17770,7 @@ def _agora_signal_feedback_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     if confidence < 1 or confidence > 5:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Signal feedback confidence is invalid",
             "confidence must be an integer from 1 to 5",
             precondition_failed="signal_feedback.confidence",
@@ -17732,7 +17781,7 @@ def _agora_signal_feedback_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     ):
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Signal feedback reason is required",
             "reason is required for high-confidence disagree and flag_suspicious feedback",
             precondition_failed="signal_feedback.reason",
@@ -17742,7 +17791,7 @@ def _agora_signal_feedback_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     except (TypeError, ValueError) as exc:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Signal feedback edit window is invalid",
             "editWindowSeconds must be a positive integer",
             precondition_failed="signal_feedback.editWindowSeconds",
@@ -17762,7 +17811,7 @@ def _agora_evidence_files_from_payload(payload: Dict[str, Any]) -> List[Dict[str
     if not isinstance(raw_files, list):
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Evidence files are required",
             "Committee evidence upload requires a files array.",
             precondition_failed="committee_evidence.files",
@@ -17822,7 +17871,7 @@ def _agora_validate_evidence_files(
     if violations:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Committee evidence upload rejected",
             "One or more committee evidence files failed server-side validation.",
             precondition_failed="committee_evidence.files",
@@ -17836,7 +17885,7 @@ def _agora_persona_lab_commit_payload(draft_id: str, payload: Dict[str, Any]) ->
     if payload_draft and payload_draft != draft_id:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Persona draft id mismatch",
             "personaDraftId in the request body must match the draftId route parameter.",
             precondition_failed="personaDraftId",
@@ -17848,7 +17897,7 @@ def _agora_persona_lab_commit_payload(draft_id: str, payload: Dict[str, Any]) ->
     if not evaluation_run_ids:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "evaluationRunIds are required",
             "Persona lab commit requires at least one evaluation run id before handoff.",
             precondition_failed="evaluationRunIds",
@@ -17857,7 +17906,7 @@ def _agora_persona_lab_commit_payload(draft_id: str, payload: Dict[str, Any]) ->
     if not change_summary:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "changeSummary is required",
             "Persona lab commit requires a concise change summary for management review.",
             precondition_failed="changeSummary",
@@ -18071,7 +18120,7 @@ async def bff_agora_signal_detail(
         surface = _dataset_surface_status("agora_signals", snapshot_at=snapshot_at)
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Agora signal not found",
             f"Agora signal {signalId} does not exist",
             precondition_failed="signal_id",
@@ -18116,7 +18165,7 @@ async def bff_agora_signal_feedback(
     if feedback is None:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Agora signal not found",
             f"Agora signal {signalId} does not exist",
             precondition_failed="signal_id",
@@ -18241,7 +18290,7 @@ async def bff_agora_session_detail(
     if not session:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Agora session not found",
             f"Agora session {sessionId} does not exist",
             precondition_failed="session_id",
@@ -18265,7 +18314,7 @@ async def bff_agora_session_messages(
     if messages is None:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Agora session not found",
             f"Agora session {sessionId} does not exist",
             precondition_failed="session_id",
@@ -18313,7 +18362,7 @@ async def bff_create_agora_session_message(
     if message is None:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Agora session not found",
             f"Agora session {sessionId} does not exist",
             precondition_failed="session_id",
@@ -18353,7 +18402,7 @@ async def bff_create_agora_committee_evidence_pack(
     if not read_store.get_agora_session(sessionId):
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Agora committee session not found",
             f"Agora committee session {sessionId} does not exist",
             precondition_failed="session_id",
@@ -18421,7 +18470,7 @@ async def bff_upload_agora_committee_evidence_files(
     if pack is None:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Agora committee session not found",
             f"Agora committee session {sessionId} does not exist",
             precondition_failed="session_id",
@@ -18467,7 +18516,7 @@ async def bff_agora_message_action(
     if not read_store.get_agora_message(messageId):
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Agora message not found",
             f"Agora message {messageId} does not exist",
             precondition_failed="message_id",
@@ -18593,7 +18642,7 @@ async def bff_create_agora_journal_entry(
     if not _journal_visibility_allowed(identity, visibility):
         raise _bff_error(
             403,
-            ErrorCode.INSUFFICIENT_ROLE,
+            ErrorCode.FORBIDDEN,
             "Journal visibility is not allowed",
             f"Role set cannot create a {visibility} journal entry",
             precondition_failed="journal.visibility",
@@ -18692,7 +18741,7 @@ async def bff_agora_insight_action(
     if not _agora_get_insight(insightId):
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Agora insight not found",
             f"Agora insight {insightId} does not exist",
             precondition_failed="insight_id",
@@ -18746,7 +18795,7 @@ async def bff_agora_memory_action(
     if not read_store.get_agora_memory_entry(memoryId):
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Agora memory entry not found",
             f"Agora memory entry {memoryId} does not exist",
             precondition_failed="memory_id",
@@ -18855,7 +18904,7 @@ async def bff_memory_quarantine_action(
     if not read_store.get_agora_memory_entry(memoryId):
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Memory entry not found",
             f"Memory entry {memoryId} does not exist",
             precondition_failed="memory_id",
@@ -18888,7 +18937,7 @@ async def bff_insight_attach_strategy_action(
     if not _agora_get_insight(insightId):
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Insight not found",
             f"Insight {insightId} does not exist",
             precondition_failed="insight_id",
@@ -19034,7 +19083,7 @@ def _require_mcp_tool_write_role(identity: OperatorIdentity) -> None:
         return
     raise _bff_error(
         403,
-        ErrorCode.INSUFFICIENT_ROLE,
+        ErrorCode.FORBIDDEN,
         "MCP tool import requires operator-level role",
         "Operator does not hold a role allowed to import or administer MCP tools",
         precondition_failed="role_check",
@@ -19048,7 +19097,7 @@ def _validate_mcp_server_id(server_id: str) -> str:
         return clean
     raise _bff_error(
         422,
-        ErrorCode.INVALID_PARAMS,
+        ErrorCode.VALIDATION_FAILED,
         "MCP server id is required",
         "server_id path parameter must be a non-empty string",
         precondition_failed="server_id",
@@ -19061,7 +19110,7 @@ def _parse_mcp_import_payload(payload: Dict[str, Any]) -> McpToolImportRequest:
     except ValidationError as exc:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "MCP tool import payload is invalid",
             str(exc),
             precondition_failed="payload_shape",
@@ -19070,7 +19119,7 @@ def _parse_mcp_import_payload(payload: Dict[str, Any]) -> McpToolImportRequest:
     if not request.tools:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "MCP tool import requires at least one tool descriptor",
             "tools must contain one or more MCP tool descriptors",
             precondition_failed="tools",
@@ -19084,7 +19133,7 @@ def _parse_mcp_tool_action_payload(payload: Dict[str, Any]) -> McpToolActionRequ
     except ValidationError as exc:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "MCP tool action payload is invalid",
             str(exc),
             precondition_failed="payload_shape",
@@ -19093,7 +19142,7 @@ def _parse_mcp_tool_action_payload(payload: Dict[str, Any]) -> McpToolActionRequ
     if not str(request.reason or "").strip():
         raise _bff_error(
             400,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "MCP tool action reason is required",
             "reason must be a non-empty string for audit",
             precondition_failed="reason",
@@ -19187,7 +19236,7 @@ def _mcp_tool_action_status(action: McpToolActionVerb) -> McpToolLifecycleStatus
         return McpToolLifecycleStatus.TESTED
     raise _bff_error(
         422,
-        ErrorCode.INVALID_PARAMS,
+        ErrorCode.VALIDATION_FAILED,
         "Unsupported MCP tool action",
         f"action={action!r} is not a supported MCP tool lifecycle action",
         precondition_failed="action",
@@ -19209,7 +19258,7 @@ def _require_mcp_action_admitted(
     if tool_class == "lean_direct" and action == McpToolActionVerb.GRANT and execution_context == "live":
         raise _bff_error(
             409,
-            ErrorCode.PRECONDITION_NOT_MET,
+            ErrorCode.PRECONDITION_FAILED,
             "lean_direct MCP tools cannot be granted for live execution",
             "OpenClaw tool permission contract denies direct LEAN tool access in live context",
             precondition_failed="lean_direct_live",
@@ -19380,7 +19429,7 @@ def _resolve_mcp_server_id_for_tool(
     if not matches:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "MCP tool is not imported",
             f"tool_id={clean_tool_id} has not been imported under any MCP server",
             precondition_failed="tool_import",
@@ -19389,7 +19438,7 @@ def _resolve_mcp_server_id_for_tool(
     if len(matches) > 1:
         raise _bff_error(
             409,
-            ErrorCode.PRECONDITION_NOT_MET,
+            ErrorCode.PRECONDITION_FAILED,
             "MCP tool id is ambiguous across servers",
             f"tool_id={clean_tool_id} is imported under multiple MCP servers",
             precondition_failed="server_id",
@@ -19421,7 +19470,7 @@ async def admit_mcp_tool_action_alias(
     if not clean_tool_id:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "MCP tool id is required",
             "tool_id path parameter must be a non-empty string",
             precondition_failed="tool_id",
@@ -19461,7 +19510,7 @@ async def admit_mcp_tool_action(
     if not clean_tool_id:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "MCP tool id is required",
             "tool_id path parameter must be a non-empty string",
             precondition_failed="tool_id",
@@ -19494,7 +19543,7 @@ async def admit_mcp_tool_action(
     if tool_record is None:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "MCP tool is not imported for this server",
             f"tool_id={clean_tool_id} has not been imported under server_id={clean_server_id}",
             precondition_failed="tool_import",
@@ -19725,7 +19774,7 @@ async def bff_create_capital_pool(
     name = str(payload.get("name") or "").strip()
     if not name:
         raise _bff_error(
-            422, ErrorCode.INVALID_PARAMS, "name is required",
+            422, ErrorCode.VALIDATION_FAILED, "name is required",
             "Capital pool name must be a non-empty string",
             precondition_failed="name",
         )
@@ -19757,7 +19806,7 @@ async def bff_get_capital_pool(
     if not pool:
         _raise_if_read_surface_unavailable(pool_surface, label="Capital pool")
         raise _bff_error(
-            404, ErrorCode.OBJECT_NOT_FOUND,
+            404, ErrorCode.RESOURCE_NOT_FOUND,
             "Capital pool not found",
             f"Capital pool {pool_id} does not exist",
         )
@@ -19807,7 +19856,7 @@ async def bff_patch_capital_pool(
     pool = read_store.get_capital_pool(pool_id)
     if not pool:
         raise _bff_error(
-            404, ErrorCode.OBJECT_NOT_FOUND,
+            404, ErrorCode.RESOURCE_NOT_FOUND,
             "Capital pool not found",
             f"Capital pool {pool_id} does not exist",
         )
@@ -19840,7 +19889,7 @@ async def bff_capital_pool_action(
     pool = read_store.get_capital_pool(pool_id)
     if not pool:
         raise _bff_error(
-            404, ErrorCode.OBJECT_NOT_FOUND,
+            404, ErrorCode.RESOURCE_NOT_FOUND,
             "Capital pool not found",
             f"Capital pool {pool_id} does not exist",
         )
@@ -19900,7 +19949,7 @@ async def bff_create_ranking_formula(
     name = str(payload.get("name") or "").strip()
     if not name:
         raise _bff_error(
-            422, ErrorCode.INVALID_PARAMS, "name is required",
+            422, ErrorCode.VALIDATION_FAILED, "name is required",
             "Ranking formula name must be a non-empty string",
             precondition_failed="name",
         )
@@ -19927,7 +19976,7 @@ async def bff_get_ranking_formula(
     formula = read_store.get_ranking_formula(formula_id)
     if not formula:
         raise _bff_error(
-            404, ErrorCode.OBJECT_NOT_FOUND,
+            404, ErrorCode.RESOURCE_NOT_FOUND,
             "Ranking formula not found",
             f"Ranking formula {formula_id} does not exist",
         )
@@ -19962,7 +20011,7 @@ async def bff_patch_ranking_formula(
     formula = read_store.get_ranking_formula(formula_id)
     if not formula:
         raise _bff_error(
-            404, ErrorCode.OBJECT_NOT_FOUND,
+            404, ErrorCode.RESOURCE_NOT_FOUND,
             "Ranking formula not found",
             f"Ranking formula {formula_id} does not exist",
         )
@@ -19971,7 +20020,7 @@ async def bff_patch_ranking_formula(
     )
     if not updated:
         raise _bff_error(
-            503, ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            503, ErrorCode.DEPENDENCY_UNAVAILABLE,
             "Ranking formula store unavailable",
             "Unable to patch ranking formula at this time",
         )
@@ -19998,7 +20047,7 @@ async def bff_ranking_formula_action(
     formula = read_store.get_ranking_formula(formula_id)
     if not formula:
         raise _bff_error(
-            404, ErrorCode.OBJECT_NOT_FOUND,
+            404, ErrorCode.RESOURCE_NOT_FOUND,
             "Ranking formula not found",
             f"Ranking formula {formula_id} does not exist",
         )
@@ -20059,7 +20108,7 @@ async def bff_create_rebalance(
     capital_pool_id = str(payload.get("capital_pool_id") or "").strip()
     if not capital_pool_id:
         raise _bff_error(
-            422, ErrorCode.INVALID_PARAMS, "capital_pool_id is required",
+            422, ErrorCode.VALIDATION_FAILED, "capital_pool_id is required",
             "Rebalance must specify a capital_pool_id",
             precondition_failed="capital_pool_id",
         )
@@ -20121,7 +20170,7 @@ async def bff_get_rebalance(
     rebalance = read_store.get_rebalance(rebalance_id)
     if not rebalance:
         raise _bff_error(
-            404, ErrorCode.OBJECT_NOT_FOUND,
+            404, ErrorCode.RESOURCE_NOT_FOUND,
             "Rebalance not found",
             f"Rebalance {rebalance_id} does not exist",
         )
@@ -20151,7 +20200,7 @@ async def bff_rebalance_action(
     rebalance = read_store.get_rebalance(rebalance_id)
     if not rebalance:
         raise _bff_error(
-            404, ErrorCode.OBJECT_NOT_FOUND,
+            404, ErrorCode.RESOURCE_NOT_FOUND,
             "Rebalance not found",
             f"Rebalance {rebalance_id} does not exist",
         )
@@ -20204,7 +20253,7 @@ async def bff_get_ranking(
     ranking = read_store.get_ranking(ranking_id)
     if not ranking:
         raise _bff_error(
-            404, ErrorCode.OBJECT_NOT_FOUND,
+            404, ErrorCode.RESOURCE_NOT_FOUND,
             "Ranking not found",
             f"Ranking {ranking_id} does not exist",
         )
@@ -20234,7 +20283,7 @@ async def bff_ranking_action(
     ranking = read_store.get_ranking(ranking_id)
     if not ranking:
         raise _bff_error(
-            404, ErrorCode.OBJECT_NOT_FOUND,
+            404, ErrorCode.RESOURCE_NOT_FOUND,
             "Ranking not found",
             f"Ranking {ranking_id} does not exist",
         )
@@ -27348,7 +27397,7 @@ async def bff_management_human_inbox_detail(
             return {"data": detail, "meta": meta}
     raise _bff_error(
         404,
-        ErrorCode.OBJECT_NOT_FOUND,
+        ErrorCode.RESOURCE_NOT_FOUND,
         "Human inbox item not found",
         f"Human inbox item {item_id} does not exist",
     )
@@ -27796,7 +27845,7 @@ async def bff_management_nl_ask(
         )
         raise _bff_error(
             403,
-            ErrorCode.HIGH_RISK_QUERY_REFUSED,
+            ErrorCode.OPERATION_NOT_ALLOWED,
             "NL query matches high-risk action pattern and was refused by policy",
             (
                 f"The question contains the pattern {risk['matched_pattern']!r} "
@@ -28109,7 +28158,7 @@ async def bff_create_strategy(
     name = str(payload.get("name") or "").strip()
     if not name:
         raise _bff_error(
-            422, ErrorCode.INVALID_PARAMS, "name is required",
+            422, ErrorCode.VALIDATION_FAILED, "name is required",
             "Strategy name must be a non-empty string",
             precondition_failed="name",
         )
@@ -28153,7 +28202,7 @@ async def bff_get_strategy(
     summary = read_store.get_strategy_spec(strategy_id)
     if not summary and not overlay:
         raise _bff_error(
-            404, ErrorCode.OBJECT_NOT_FOUND,
+            404, ErrorCode.RESOURCE_NOT_FOUND,
             "Strategy not found",
             f"Strategy {strategy_id} does not exist",
         )
@@ -28192,7 +28241,7 @@ async def bff_patch_strategy(
     overlay = _STRATEGY_BFF_OVERLAY.get(strategy_id)
     if not summary and not overlay:
         raise _bff_error(
-            404, ErrorCode.OBJECT_NOT_FOUND,
+            404, ErrorCode.RESOURCE_NOT_FOUND,
             "Strategy not found",
             f"Strategy {strategy_id} does not exist",
         )
@@ -28224,7 +28273,7 @@ def _ensure_strategy_exists(strategy_id: str) -> None:
     if read_store.get_strategy_spec(strategy_id) or strategy_id in _STRATEGY_BFF_OVERLAY:
         return
     raise _bff_error(
-        404, ErrorCode.OBJECT_NOT_FOUND,
+        404, ErrorCode.RESOURCE_NOT_FOUND,
         "Strategy not found",
         f"Strategy {strategy_id} does not exist",
     )
@@ -28416,7 +28465,7 @@ def _require_ooda_packet_routes_enabled() -> None:
         return
     raise _bff_error(
         503,
-        ErrorCode.DOWNSTREAM_UNAVAILABLE,
+        ErrorCode.DEPENDENCY_UNAVAILABLE,
         "OODA packet read routes disabled",
         "PANTHEON_OODA_PACKET_ENABLED is disabled for this BFF instance.",
         precondition_failed="ooda_packet_feature_flag",
@@ -28463,7 +28512,7 @@ def _require_synthesis_conflict_log_routes_enabled() -> None:
         return
     raise _bff_error(
         503,
-        ErrorCode.DOWNSTREAM_UNAVAILABLE,
+        ErrorCode.DEPENDENCY_UNAVAILABLE,
         "Synthesis conflict log view disabled",
         "PANTHEON_SYNTHESIS_CONFLICT_LOG_VIEW_ENABLED is disabled for this BFF instance.",
         precondition_failed="synthesis_conflict_log_feature_flag",
@@ -28661,7 +28710,7 @@ async def bff_get_synthesis_conflict_log(
             )
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Synthesis conflict log not found",
             f"Synthesis conflict log {log_id} does not exist",
         )
@@ -28729,7 +28778,7 @@ async def bff_get_ooda_packet(
             )
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "OODA packet not found",
             f"OODA packet {packet_id} does not exist",
         )
@@ -28931,7 +28980,7 @@ async def bff_create_persona(
     name = str(payload.get("name") or "").strip()
     if not name:
         raise _bff_error(
-            422, ErrorCode.INVALID_PARAMS, "name is required",
+            422, ErrorCode.VALIDATION_FAILED, "name is required",
             "Persona name must be a non-empty string",
             precondition_failed="name",
         )
@@ -28989,7 +29038,7 @@ async def bff_get_persona(
     raw = read_store.get_persona(persona_id)
     if not raw and not overlay:
         raise _bff_error(
-            404, ErrorCode.OBJECT_NOT_FOUND,
+            404, ErrorCode.RESOURCE_NOT_FOUND,
             "Persona not found",
             f"Persona {persona_id} does not exist",
         )
@@ -29028,7 +29077,7 @@ async def bff_patch_persona(
     overlay = _PERSONA_BFF_OVERLAY.get(persona_id)
     if not raw and not overlay:
         raise _bff_error(
-            404, ErrorCode.OBJECT_NOT_FOUND,
+            404, ErrorCode.RESOURCE_NOT_FOUND,
             "Persona not found",
             f"Persona {persona_id} does not exist",
         )
@@ -29082,7 +29131,7 @@ def _ensure_persona_exists(persona_id: str) -> None:
     if read_store.get_persona(persona_id) or persona_id in _PERSONA_BFF_OVERLAY:
         return
     raise _bff_error(
-        404, ErrorCode.OBJECT_NOT_FOUND,
+        404, ErrorCode.RESOURCE_NOT_FOUND,
         "Persona not found",
         f"Persona {persona_id} does not exist",
     )
@@ -31466,7 +31515,7 @@ async def bff_management_quarterly_ranking_drilldown(
     if not resolved_persona_id:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "personaId is required",
             "Quarterly ranking drilldown requires personaId or persona_id.",
             precondition_failed="personaId",
@@ -31481,7 +31530,7 @@ async def bff_management_quarterly_ranking_drilldown(
     if ranking_item is None:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Quarterly ranking persona not found",
             f"Persona {resolved_persona_id} is not present in the requested quarterly ranking.",
             precondition_failed="personaId",
@@ -33051,7 +33100,7 @@ async def bff_persona_test_prompt(
     prompt = str(payload.get("prompt") or "").strip()
     if not prompt:
         raise _bff_error(
-            422, ErrorCode.INVALID_PARAMS, "prompt is required",
+            422, ErrorCode.VALIDATION_FAILED, "prompt is required",
             "Persona test-prompt requires a non-empty prompt",
             precondition_failed="prompt",
         )
@@ -33290,7 +33339,7 @@ async def remediate_v5_intervention(
 
     This is a two-man guarded surface: the request must carry a second-operator
     signature (twoManSignatureId / secondOperatorId) or the command is rejected
-    with TWO_MAN_REQUIRED (HTTP 409).  Approval evidence and a confirm token are
+    with TWO_MAN_SIGNATURE_REQUIRED (HTTP 409).  Approval evidence and a confirm token are
     also required because the risk level is CRITICAL.
 
     Internally this builds a RemediateSentinelIntervention OperatorCommand and
@@ -33363,7 +33412,7 @@ async def remediate_v5_intervention(
     active = command_store.get_active_commands_for_target(cmd.target.type.value, cmd.target.id)
     if active:
         error = _bff_error(
-            409, ErrorCode.CONCURRENT_MODIFICATION,
+            409, ErrorCode.RESOURCE_CONFLICT,
             "A remediation command is already in flight for this intervention",
             f"Command {active[0]['command_id']} is currently {active[0]['status']}",
             precondition_failed="concurrent_safety",
@@ -33939,7 +33988,7 @@ def _handle_sse_stream(
     except SseReplayUnavailableError as exc:
         error = _bff_error(
             status_code=409,
-            code=ErrorCode.SSE_REPLAY_UNAVAILABLE,
+            code=ErrorCode.RESOURCE_CONFLICT,
             message=str(exc),
             reason="SSE_REPLAY_HISTORY_MISSING",
             suggestion="Resync canonical state via GET routes before reconnecting to the stream",
@@ -34062,7 +34111,7 @@ async def stream_bff_events(
         if selected_channel not in SSE_CHANNELS:
             raise _bff_error(
                 400,
-                ErrorCode.INVALID_REQUEST,
+                ErrorCode.VALIDATION_FAILED,
                 f"Unknown SSE channel: {selected_channel}",
                 f"Channel must be one of {sorted(list(SSE_CHANNELS))}",
             )
@@ -34192,7 +34241,7 @@ async def stream_generic_events(
     if channel not in SSE_CHANNELS:
         raise _bff_error(
             400,
-            ErrorCode.INVALID_REQUEST,
+            ErrorCode.VALIDATION_FAILED,
             f"Unknown SSE channel: {channel}",
             f"Channel must be one of {sorted(list(SSE_CHANNELS))}",
         )
@@ -34353,7 +34402,7 @@ async def bff_create_evolution_program(
     name = str(payload.get("name") or "").strip()
     if not name:
         raise _bff_error(
-            422, ErrorCode.INVALID_PARAMS, "name is required",
+            422, ErrorCode.VALIDATION_FAILED, "name is required",
             "Evolution program name must be a non-empty string",
             precondition_failed="name",
         )
@@ -34384,7 +34433,7 @@ async def bff_get_evolution_program(
         surface = _dataset_surface_status("evolution_programs", snapshot_at=snapshot_at)
         _raise_if_read_surface_unavailable(surface, label="Evolution program")
         raise _bff_error(
-            404, ErrorCode.OBJECT_NOT_FOUND,
+            404, ErrorCode.RESOURCE_NOT_FOUND,
             "Evolution program not found",
             f"Evolution program {program_id} does not exist",
         )
@@ -34416,7 +34465,7 @@ async def bff_patch_evolution_program(
     program = read_store.get_evolution_program(program_id)
     if not program:
         raise _bff_error(
-            404, ErrorCode.OBJECT_NOT_FOUND,
+            404, ErrorCode.RESOURCE_NOT_FOUND,
             "Evolution program not found",
             f"Evolution program {program_id} does not exist",
         )
@@ -34444,7 +34493,7 @@ async def bff_list_evolution_program_runs(
     program = read_store.get_evolution_program(program_id)
     if not program:
         raise _bff_error(
-            404, ErrorCode.OBJECT_NOT_FOUND,
+            404, ErrorCode.RESOURCE_NOT_FOUND,
             "Evolution program not found",
             f"Evolution program {program_id} does not exist",
         )
@@ -34468,7 +34517,7 @@ async def bff_list_evolution_program_candidates(
     program = read_store.get_evolution_program(program_id)
     if not program:
         raise _bff_error(
-            404, ErrorCode.OBJECT_NOT_FOUND,
+            404, ErrorCode.RESOURCE_NOT_FOUND,
             "Evolution program not found",
             f"Evolution program {program_id} does not exist",
         )
@@ -34497,7 +34546,7 @@ async def bff_evolution_program_action(
     program = read_store.get_evolution_program(program_id)
     if not program:
         raise _bff_error(
-            404, ErrorCode.OBJECT_NOT_FOUND,
+            404, ErrorCode.RESOURCE_NOT_FOUND,
             "Evolution program not found",
             f"Evolution program {program_id} does not exist",
         )
@@ -34554,7 +34603,7 @@ async def bff_create_experiment(
     name = str(payload.get("name") or payload.get("experiment_name") or "").strip()
     if not name:
         raise _bff_error(
-            422, ErrorCode.INVALID_PARAMS, "name is required",
+            422, ErrorCode.VALIDATION_FAILED, "name is required",
             "Experiment name must be a non-empty string",
             precondition_failed="name",
         )
@@ -34582,7 +34631,7 @@ async def bff_get_experiment(
         surface = _dataset_surface_status("experiments", snapshot_at=snapshot_at)
         _raise_if_read_surface_unavailable(surface, label="Experiment")
         raise _bff_error(
-            404, ErrorCode.OBJECT_NOT_FOUND,
+            404, ErrorCode.RESOURCE_NOT_FOUND,
             "Experiment not found",
             f"Experiment {experiment_id} does not exist",
         )
@@ -34609,7 +34658,7 @@ async def bff_experiment_action(
     item = read_store.get_experiment_bff(experiment_id)
     if not item:
         raise _bff_error(
-            404, ErrorCode.OBJECT_NOT_FOUND,
+            404, ErrorCode.RESOURCE_NOT_FOUND,
             "Experiment not found",
             f"Experiment {experiment_id} does not exist",
         )
@@ -34636,7 +34685,7 @@ async def bff_get_experiment_logs(
     item = read_store.get_experiment_bff(experiment_id)
     if not item:
         raise _bff_error(
-            404, ErrorCode.OBJECT_NOT_FOUND,
+            404, ErrorCode.RESOURCE_NOT_FOUND,
             "Experiment not found",
             f"Experiment {experiment_id} does not exist",
         )
@@ -34659,7 +34708,7 @@ async def bff_get_experiment_metrics(
     item = read_store.get_experiment_bff(experiment_id)
     if not item:
         raise _bff_error(
-            404, ErrorCode.OBJECT_NOT_FOUND,
+            404, ErrorCode.RESOURCE_NOT_FOUND,
             "Experiment not found",
             f"Experiment {experiment_id} does not exist",
         )
@@ -34682,7 +34731,7 @@ async def bff_get_experiment_artifacts(
     item = read_store.get_experiment_bff(experiment_id)
     if not item:
         raise _bff_error(
-            404, ErrorCode.OBJECT_NOT_FOUND,
+            404, ErrorCode.RESOURCE_NOT_FOUND,
             "Experiment not found",
             f"Experiment {experiment_id} does not exist",
         )
@@ -34731,7 +34780,7 @@ async def bff_get_job(
         surface = _dataset_surface_status("jobs", snapshot_at=snapshot_at)
         _raise_if_read_surface_unavailable(surface, label="Job")
         raise _bff_error(
-            404, ErrorCode.OBJECT_NOT_FOUND,
+            404, ErrorCode.RESOURCE_NOT_FOUND,
             "Job not found",
             f"Job {job_id} does not exist",
         )
@@ -34753,7 +34802,7 @@ async def bff_get_job_logs(
     job = read_store.get_job_bff(job_id)
     if not job:
         raise _bff_error(
-            404, ErrorCode.OBJECT_NOT_FOUND,
+            404, ErrorCode.RESOURCE_NOT_FOUND,
             "Job not found",
             f"Job {job_id} does not exist",
         )
@@ -34781,7 +34830,7 @@ async def bff_job_action(
     job = read_store.get_job_bff(job_id)
     if not job:
         raise _bff_error(
-            404, ErrorCode.OBJECT_NOT_FOUND,
+            404, ErrorCode.RESOURCE_NOT_FOUND,
             "Job not found",
             f"Job {job_id} does not exist",
         )
@@ -34979,7 +35028,7 @@ async def publish_sse_event(
     if channel not in _sse_buffers:
         raise _bff_error(
             400,
-            ErrorCode.INVALID_REQUEST,
+            ErrorCode.VALIDATION_FAILED,
             f"Unknown SSE channel: {channel}",
             f"Channel must be one of {list(SSE_CHANNEL_CATALOG)}",
         )
@@ -35291,7 +35340,7 @@ async def bff_create_tool(
     name = str(payload.get("name") or "").strip()
     if not name:
         raise _bff_error(
-            422, ErrorCode.INVALID_PARAMS, "name is required",
+            422, ErrorCode.VALIDATION_FAILED, "name is required",
             "Tool name must be a non-empty string",
             precondition_failed="name",
         )
@@ -35326,7 +35375,7 @@ async def bff_get_tool(
     _require_read_role(identity)
     clean_id = str(tool_id or "").strip()
     if not clean_id:
-        raise _bff_error(422, ErrorCode.INVALID_PARAMS, "tool_id is required", "tool_id path parameter must be a non-empty string", precondition_failed="tool_id")
+        raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "tool_id is required", "tool_id path parameter must be a non-empty string", precondition_failed="tool_id")
     record = _find_record_by_id(_merged_tool_records(), clean_id, ("tool_id", "id"))
     if record is None:
         # Also search MCP tool registry for MCP-imported tools.
@@ -35344,7 +35393,7 @@ async def bff_get_tool(
                 }
                 break
     if record is None:
-        raise _bff_error(404, ErrorCode.OBJECT_NOT_FOUND, "Tool not found", f"tool_id={clean_id!r} is not registered", precondition_failed="tool_id")
+        raise _bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Tool not found", f"tool_id={clean_id!r} is not registered", precondition_failed="tool_id")
     return record
 
 
@@ -35361,7 +35410,7 @@ async def bff_patch_tool(
     _require_read_role(identity)
     clean_id = str(tool_id or "").strip()
     if not clean_id:
-        raise _bff_error(422, ErrorCode.INVALID_PARAMS, "tool_id is required", "tool_id path parameter must be a non-empty string", precondition_failed="tool_id")
+        raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "tool_id is required", "tool_id path parameter must be a non-empty string", precondition_failed="tool_id")
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash({"route": "PATCH /bff/tools/{tool_id}", "id": clean_id, "payload": payload})
@@ -35370,7 +35419,7 @@ async def bff_patch_tool(
         return cached
     record = _TOOL_REGISTRY.get(clean_id)
     if record is None:
-        raise _bff_error(404, ErrorCode.OBJECT_NOT_FOUND, "Tool not found", f"tool_id={clean_id!r} is not registered", precondition_failed="tool_id")
+        raise _bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Tool not found", f"tool_id={clean_id!r} is not registered", precondition_failed="tool_id")
     allowed_patches = {"name", "description", "status", "input_schema", "output_schema", "tool_class"}
     for field in allowed_patches:
         if field in payload:
@@ -35396,7 +35445,7 @@ async def bff_tool_action(
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     clean_id = str(tool_id or "").strip()
     if not clean_id:
-        raise _bff_error(422, ErrorCode.INVALID_PARAMS, "tool_id is required", "tool_id path parameter must be a non-empty string", precondition_failed="tool_id")
+        raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "tool_id is required", "tool_id path parameter must be a non-empty string", precondition_failed="tool_id")
     return _tools_mcp_skills_action_command(
         entity_type=ObjectType.TOOL,
         entity_id=clean_id,
@@ -35456,7 +35505,7 @@ async def bff_create_mcp_server(
     name = str(payload.get("name") or "").strip()
     if not name:
         raise _bff_error(
-            422, ErrorCode.INVALID_PARAMS, "name is required",
+            422, ErrorCode.VALIDATION_FAILED, "name is required",
             "MCP server name must be a non-empty string",
             precondition_failed="name",
         )
@@ -35490,7 +35539,7 @@ async def bff_get_mcp_server(
     clean_id = _validate_mcp_server_id(server_id)
     record = _find_record_by_id(_merged_mcp_server_records(), clean_id, ("server_id", "id"))
     if record is None:
-        raise _bff_error(404, ErrorCode.OBJECT_NOT_FOUND, "MCP server not found", f"server_id={clean_id!r} is not registered", precondition_failed="server_id")
+        raise _bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "MCP server not found", f"server_id={clean_id!r} is not registered", precondition_failed="server_id")
     return record
 
 
@@ -35576,7 +35625,7 @@ async def bff_mcp_tool_action_compat(
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     clean_tool_id = str(tool_id or "").strip()
     if not clean_tool_id:
-        raise _bff_error(422, ErrorCode.INVALID_PARAMS, "tool_id is required", "tool_id path parameter must be a non-empty string", precondition_failed="tool_id")
+        raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "tool_id is required", "tool_id path parameter must be a non-empty string", precondition_failed="tool_id")
     # If action_id is a final MCP lifecycle verb, delegate to the final route handler.
     lifecycle_verbs = {v.value for v in McpToolActionVerb}
     if action_id in lifecycle_verbs:
@@ -35645,7 +35694,7 @@ async def bff_create_skill(
     name = str(payload.get("name") or "").strip()
     if not name:
         raise _bff_error(
-            422, ErrorCode.INVALID_PARAMS, "name is required",
+            422, ErrorCode.VALIDATION_FAILED, "name is required",
             "Skill name must be a non-empty string",
             precondition_failed="name",
         )
@@ -35679,10 +35728,10 @@ async def bff_get_skill(
     _require_read_role(identity)
     clean_id = str(skill_id or "").strip()
     if not clean_id:
-        raise _bff_error(422, ErrorCode.INVALID_PARAMS, "skill_id is required", "skill_id path parameter must be a non-empty string", precondition_failed="skill_id")
+        raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "skill_id is required", "skill_id path parameter must be a non-empty string", precondition_failed="skill_id")
     record = _find_record_by_id(_merged_skill_records(), clean_id, ("skill_id", "id"))
     if record is None:
-        raise _bff_error(404, ErrorCode.OBJECT_NOT_FOUND, "Skill not found", f"skill_id={clean_id!r} is not registered", precondition_failed="skill_id")
+        raise _bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Skill not found", f"skill_id={clean_id!r} is not registered", precondition_failed="skill_id")
     return record
 
 
@@ -35699,7 +35748,7 @@ async def bff_patch_skill(
     _require_read_role(identity)
     clean_id = str(skill_id or "").strip()
     if not clean_id:
-        raise _bff_error(422, ErrorCode.INVALID_PARAMS, "skill_id is required", "skill_id path parameter must be a non-empty string", precondition_failed="skill_id")
+        raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "skill_id is required", "skill_id path parameter must be a non-empty string", precondition_failed="skill_id")
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash({"route": "PATCH /bff/skills/{skill_id}", "id": clean_id, "payload": payload})
@@ -35708,7 +35757,7 @@ async def bff_patch_skill(
         return cached
     record = _SKILL_REGISTRY.get(clean_id)
     if record is None:
-        raise _bff_error(404, ErrorCode.OBJECT_NOT_FOUND, "Skill not found", f"skill_id={clean_id!r} is not registered", precondition_failed="skill_id")
+        raise _bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Skill not found", f"skill_id={clean_id!r} is not registered", precondition_failed="skill_id")
     allowed_patches = {"name", "description", "status", "sandbox_enabled", "input_schema", "output_schema"}
     for field in allowed_patches:
         if field in payload:
@@ -35734,7 +35783,7 @@ async def bff_skill_action(
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     clean_id = str(skill_id or "").strip()
     if not clean_id:
-        raise _bff_error(422, ErrorCode.INVALID_PARAMS, "skill_id is required", "skill_id path parameter must be a non-empty string", precondition_failed="skill_id")
+        raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "skill_id is required", "skill_id path parameter must be a non-empty string", precondition_failed="skill_id")
     return _tools_mcp_skills_action_command(
         entity_type=ObjectType.SKILL,
         entity_id=clean_id,
@@ -35767,7 +35816,7 @@ async def bff_skill_sandbox_eval(
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     clean_id = str(skill_id or "").strip()
     if not clean_id:
-        raise _bff_error(422, ErrorCode.INVALID_PARAMS, "skill_id is required", "skill_id path parameter must be a non-empty string", precondition_failed="skill_id")
+        raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "skill_id is required", "skill_id path parameter must be a non-empty string", precondition_failed="skill_id")
     request_hash = _stable_json_hash({"route": "POST /bff/skills/{id}/sandbox-eval", "id": clean_id, "payload": payload})
     cached = _skills_bff_idempotency_check(resolved_key, request_hash)
     if cached is not None:
@@ -36080,7 +36129,7 @@ async def bff_get_review(
     if not match:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Review item not found",
             f"Review {review_id} does not exist in the governance review queue",
         )
@@ -36191,7 +36240,7 @@ async def bff_approval_evidence(
     if not decision:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Approval decision not found",
             f"Approval {approval_id} does not exist",
         )
@@ -36276,7 +36325,7 @@ async def bff_get_deployment(
     if not plan:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Deployment not found",
             f"Deployment plan {deployment_id} does not exist",
         )
@@ -36318,7 +36367,7 @@ async def bff_deployment_action(
     if not plan:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Deployment not found",
             f"Deployment plan {deployment_id} does not exist",
         )
@@ -36395,7 +36444,7 @@ async def bff_get_runtime(
         _raise_if_read_surface_unavailable(surface, label="Runtime")
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Runtime not found",
             f"Runtime {runtime_id} does not exist",
         )
@@ -36433,7 +36482,7 @@ async def bff_runtime_action(
     if not binding:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Runtime not found",
             f"Runtime {runtime_id} does not exist",
         )
@@ -36473,7 +36522,7 @@ async def bff_get_risk_alert(
     if not match:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Risk alert not found",
             f"Alert {alert_id} does not exist",
         )
@@ -36633,7 +36682,7 @@ async def bff_get_incident(
         _raise_if_read_surface_unavailable(surface, label="Incident")
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Incident not found",
             f"Incident {incident_id} does not exist",
         )
@@ -36670,7 +36719,7 @@ async def bff_incident_action(
         _raise_if_read_surface_unavailable(surface, label="Incident")
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Incident not found",
             f"Incident {incident_id} does not exist",
         )
@@ -36710,7 +36759,7 @@ async def bff_get_alert(
     if not match:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Alert not found",
             f"Alert {alert_id!r} does not exist",
             precondition_failed="alert_id",
@@ -36772,7 +36821,7 @@ async def bff_alert_acknowledge(
         if alert_surface.get("status") not in {"degraded", "unavailable", "missing"}:
             raise _bff_error(
                 404,
-                ErrorCode.OBJECT_NOT_FOUND,
+                ErrorCode.RESOURCE_NOT_FOUND,
                 "Alert not found",
                 f"Alert {alert_id!r} does not exist or is no longer active",
                 precondition_failed="alert_id",
@@ -37008,7 +37057,7 @@ async def bff_command_confirmation(
     """
     BFF: submit a command confirmation token.
 
-    Clients that received a CONFIRM_TOKEN_REQUIRED precondition error must
+    Clients that received a CONFIRMATION_REQUIRED precondition error must
     resubmit with a valid confirm_token in the body alongside this route to
     proceed past the confirmation gate.
     """
@@ -37033,7 +37082,7 @@ async def bff_command_confirmation(
     if not confirm_token:
         raise _bff_error(
             400,
-            ErrorCode.CONFIRM_TOKEN_REQUIRED,
+            ErrorCode.CONFIRMATION_REQUIRED,
             "confirm_token is required",
             "Command confirmation requires a non-empty confirm_token in the request body",
             precondition_failed="confirm_token_missing",
@@ -37044,7 +37093,7 @@ async def bff_command_confirmation(
     if not original_command_id:
         raise _bff_error(
             400,
-            ErrorCode.INVALID_REQUEST,
+            ErrorCode.VALIDATION_FAILED,
             "command_id is required",
             "Command confirmation requires the original command_id being confirmed",
             precondition_failed="command_id_missing",
@@ -37329,7 +37378,7 @@ async def bff_get_evolution_program(
     if not program:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Evolution program not found",
             f"Evolution program {programId} does not exist",
         )
@@ -37356,7 +37405,7 @@ async def bff_patch_evolution_program(
     if not program:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Evolution program not found",
             f"Evolution program {programId} does not exist",
         )
@@ -37399,7 +37448,7 @@ async def bff_list_evolution_program_runs(
     if not program:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Evolution program not found",
             f"Evolution program {programId} does not exist",
         )
@@ -37452,7 +37501,7 @@ async def bff_list_evolution_program_candidates(
     if not program:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Evolution program not found",
             f"Evolution program {programId} does not exist",
         )
@@ -37494,7 +37543,7 @@ async def bff_evolution_program_action(
     if not program:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Evolution program not found",
             f"Evolution program {programId} does not exist",
         )
@@ -37605,7 +37654,7 @@ async def bff_get_experiment_compat(
     if not experiment:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Experiment not found",
             f"Experiment {experimentId} does not exist",
         )
@@ -37640,7 +37689,7 @@ async def bff_experiment_action(
     if not experiment:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Experiment not found",
             f"Experiment {experimentId} does not exist",
         )
@@ -37664,7 +37713,7 @@ async def bff_get_experiment_logs(
     if not experiment:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Experiment not found",
             f"Experiment {experimentId} does not exist",
         )
@@ -37692,7 +37741,7 @@ async def bff_get_experiment_metrics(
     if not experiment:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Experiment not found",
             f"Experiment {experimentId} does not exist",
         )
@@ -37720,7 +37769,7 @@ async def bff_get_experiment_artifacts(
     if not experiment:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Experiment not found",
             f"Experiment {experimentId} does not exist",
         )
@@ -37837,7 +37886,7 @@ async def bff_get_job(
     if not job:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Job not found",
             f"Job {jobId} does not exist",
         )
@@ -37863,7 +37912,7 @@ async def bff_get_job_logs(
     if not job:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Job not found",
             f"Job {jobId} does not exist",
         )
@@ -37902,7 +37951,7 @@ async def bff_job_action(
     if not job:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Job not found",
             f"Job {jobId} does not exist",
         )
@@ -38144,7 +38193,7 @@ def _action_adapter_spec(entity_type: str) -> Dict[str, Any]:
     if spec is None:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Unsupported action entity type",
             f"/bff/actions does not admit entityType={entity_type!r}",
             precondition_failed="entity_type",
@@ -38172,7 +38221,7 @@ def _action_adapter_command_payload(
     if not clean_entity_id:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Action target id is required",
             "entityId must be a non-empty string",
             precondition_failed="entity_id",
@@ -38180,7 +38229,7 @@ def _action_adapter_command_payload(
     if not clean_action_id:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Action id is required",
             "actionId must be a non-empty string",
             precondition_failed="action_id",
@@ -38672,7 +38721,7 @@ def _raise_if_confirm_token_expired(token_id: str) -> None:
         return
     raise _bff_error(
         410,
-        ErrorCode.INVALID_STATE,
+        ErrorCode.OPERATION_NOT_ALLOWED,
         "Confirm token expired",
         f"Confirm token {token_id} expired before it could be used",
         precondition_failed="confirm_token_expired",
@@ -38908,7 +38957,7 @@ async def sem_v5_intervention_decide_command(
     if not clean_id:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "Intervention id is required",
             "id must be a non-empty string",
             precondition_failed="intervention_id",
@@ -39082,21 +39131,21 @@ async def bff_v5_sentinel_findings_list(
     if kind is not None and kind.lower() not in _SENTINEL_FINDING_KINDS:
         raise _bff_error(
             400,
-            ErrorCode.INVALID_REQUEST,
+            ErrorCode.VALIDATION_FAILED,
             f"Invalid kind '{kind}'. Must be one of: {', '.join(sorted(_SENTINEL_FINDING_KINDS))}",
             "Unknown sentinel finding kind filter value",
         )
     if status is not None and status.lower() not in _SENTINEL_FINDING_STATUSES:
         raise _bff_error(
             400,
-            ErrorCode.INVALID_REQUEST,
+            ErrorCode.VALIDATION_FAILED,
             f"Invalid status '{status}'. Must be one of: {', '.join(sorted(_SENTINEL_FINDING_STATUSES))}",
             "Unknown sentinel finding status filter value",
         )
     if severity is not None and severity.lower() not in _SENTINEL_FINDING_SEVERITIES:
         raise _bff_error(
             400,
-            ErrorCode.INVALID_REQUEST,
+            ErrorCode.VALIDATION_FAILED,
             f"Invalid severity '{severity}'. Must be one of: {', '.join(sorted(_SENTINEL_FINDING_SEVERITIES))}",
             "Unknown sentinel finding severity filter value",
         )
@@ -39377,7 +39426,7 @@ async def sem_agora_ask_session_detail(
     if session is None or str(session.get("mode") or "").strip() != "quick_ask":
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Ask session not found",
             f"Ask session {sessionId} does not exist",
             precondition_failed="session_id",
@@ -39418,7 +39467,7 @@ async def sem_agora_ask_close_session(
     if existing is None or str(existing.get("mode") or "").strip() != "quick_ask":
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Ask session not found",
             f"Ask session {sessionId} does not exist",
             precondition_failed="session_id",
@@ -39427,7 +39476,7 @@ async def sem_agora_ask_close_session(
     if session is None:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Ask session not found",
             f"Ask session {sessionId} does not exist",
             precondition_failed="session_id",
@@ -39520,7 +39569,7 @@ async def sem_agora_committee_session_detail(
     if session is None or str(session.get("mode") or "").strip() != "committee":
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Committee session not found",
             f"Committee session {sessionId} does not exist",
             precondition_failed="session_id",
@@ -39560,7 +39609,7 @@ async def sem_agora_committee_open_session(
     if session is None:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Committee session not found",
             f"Committee session {sessionId} does not exist",
             precondition_failed="session_id",
@@ -39615,7 +39664,7 @@ async def sem_agora_committee_close_session(
     if session is None:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Committee session not found",
             f"Committee session {sessionId} does not exist",
             precondition_failed="session_id",
@@ -39652,7 +39701,7 @@ async def sem_agora_committee_session_memos(
     if session is None or str(session.get("mode") or "").strip() != "committee":
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Committee session not found",
             f"Committee session {sessionId} does not exist",
             precondition_failed="session_id",
@@ -39695,7 +39744,7 @@ async def sem_agora_committee_submit_memo(
     if session is None or str(session.get("mode") or "").strip() != "committee":
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Committee session not found",
             f"Committee session {sessionId} does not exist",
             precondition_failed="session_id",
@@ -39704,7 +39753,7 @@ async def sem_agora_committee_submit_memo(
     if read_store.get_consult_memo(memo_id) is not None:
         raise _bff_error(
             409,
-            ErrorCode.CONCURRENT_MODIFICATION,
+            ErrorCode.RESOURCE_CONFLICT,
             "Committee memo id already exists",
             f"Memo {memo_id} already exists in the consult memo registry",
             precondition_failed="memo_id",
@@ -39742,7 +39791,7 @@ async def sem_agora_committee_memo_detail(
     if session is None or str(session.get("mode") or "").strip() != "committee":
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Committee session not found",
             f"Committee session {sessionId} does not exist",
             precondition_failed="session_id",
@@ -39751,7 +39800,7 @@ async def sem_agora_committee_memo_detail(
     if memo is None:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Committee memo not found",
             f"Memo {memoId} for session {sessionId} does not exist",
             precondition_failed="memo_id",
@@ -39793,7 +39842,7 @@ async def sem_agora_committee_publish_memo(
     if session is None or str(session.get("mode") or "").strip() != "committee":
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Committee session not found",
             f"Committee session {sessionId} does not exist",
             precondition_failed="session_id",
@@ -39809,7 +39858,7 @@ async def sem_agora_committee_publish_memo(
     if memo is None:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Committee memo not found",
             f"Memo {memoId} for session {sessionId} does not exist",
             precondition_failed="memo_id",
@@ -40109,7 +40158,7 @@ def _sem_final_read_model_detail(
         )
     raise _bff_error(
         404,
-        ErrorCode.OBJECT_NOT_FOUND,
+        ErrorCode.RESOURCE_NOT_FOUND,
         f"{label} not found",
         f"{label} {entity_id} does not exist",
     )
@@ -40125,7 +40174,7 @@ def _sem_final_registry_detail(
     if not record:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             f"{label} not found",
             f"{label} {entity_id} does not exist",
         )
@@ -40220,7 +40269,7 @@ def _sem_final_alert_detail(alert_id: str) -> Dict[str, Any]:
         )
     raise _bff_error(
         404,
-        ErrorCode.OBJECT_NOT_FOUND,
+        ErrorCode.RESOURCE_NOT_FOUND,
         "Alert not found",
         f"Alert {alert_id} does not exist",
     )
@@ -40966,7 +41015,7 @@ async def bff_approvals_decide(
     if not {"approver", "admin"}.intersection(identity.roles):
         raise _bff_error(
             403,
-            ErrorCode.INSUFFICIENT_ROLE,
+            ErrorCode.FORBIDDEN,
             "Approval decide requires 'approver' or 'admin' role",
             "Operator does not hold the required role",
             precondition_failed="role_check",
@@ -40992,7 +41041,7 @@ async def bff_approvals_decide(
         else:
             raise _bff_error(
                 422,
-                ErrorCode.INVALID_PARAMS,
+                ErrorCode.VALIDATION_FAILED,
                 "Invalid decision value",
                 f"decision={raw_decision!r} is not one of {_BFF_APPROVAL_DECIDE_VALUES}",
                 precondition_failed="decision",
@@ -41002,7 +41051,7 @@ async def bff_approvals_decide(
         if not str(payload.get("rejection_reason") or "").strip():
             raise _bff_error(
                 422,
-                ErrorCode.INVALID_PARAMS,
+                ErrorCode.VALIDATION_FAILED,
                 "reject decision requires a non-empty rejection_reason",
                 "rejection_reason must be a non-empty string",
                 precondition_failed="rejection_reason",
@@ -41011,7 +41060,7 @@ async def bff_approvals_decide(
         if not str(payload.get("revision_notes") or "").strip():
             raise _bff_error(
                 422,
-                ErrorCode.INVALID_PARAMS,
+                ErrorCode.VALIDATION_FAILED,
                 "request_revision decision requires a non-empty revision_notes",
                 "revision_notes must be a non-empty string",
                 precondition_failed="revision_notes",
@@ -41021,7 +41070,7 @@ async def bff_approvals_decide(
     if decision_record is None and read_store.dataset_source("approval_decisions") != "missing":
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Approval decision not found",
             f"approval_id={clean_id!r} does not exist",
             precondition_failed="approval_id",
@@ -41105,7 +41154,7 @@ async def bff_approvals_batch_decide(
     if not {"approver", "admin"}.intersection(identity.roles):
         raise _bff_error(
             403,
-            ErrorCode.INSUFFICIENT_ROLE,
+            ErrorCode.FORBIDDEN,
             "Approval batch-decide requires 'approver' or 'admin' role",
             "Operator does not hold the required role",
             precondition_failed="role_check",
@@ -41116,7 +41165,7 @@ async def bff_approvals_batch_decide(
     if not decisions:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             "decisions must be a non-empty list",
             "The 'decisions' field must be a non-empty array of decision items",
             precondition_failed="decisions",
@@ -41125,7 +41174,7 @@ async def bff_approvals_batch_decide(
     if len(decisions) > _BFF_BATCH_DECIDE_MAX:
         raise _bff_error(
             422,
-            ErrorCode.INVALID_PARAMS,
+            ErrorCode.VALIDATION_FAILED,
             f"batch-decide accepts at most {_BFF_BATCH_DECIDE_MAX} items per request",
             f"Received {len(decisions)} items; split into smaller batches",
             precondition_failed="decisions",
@@ -41146,7 +41195,7 @@ async def bff_approvals_batch_decide(
                 "index": idx,
                 "id": None,
                 "status": "failed",
-                "error": {"code": "INVALID_PARAMS", "message": "each decision item must be an object"},
+                "error": {"code": ErrorCode.VALIDATION_FAILED.value, "message": "each decision item must be an object"},
             })
             has_failures = True
             continue
@@ -41157,7 +41206,7 @@ async def bff_approvals_batch_decide(
                 "index": idx,
                 "id": None,
                 "status": "failed",
-                "error": {"code": "INVALID_PARAMS", "message": "id is required for each decision item"},
+                "error": {"code": ErrorCode.VALIDATION_FAILED.value, "message": "id is required for each decision item"},
             })
             has_failures = True
             continue
@@ -41181,7 +41230,7 @@ async def bff_approvals_batch_decide(
                     "id": item_id,
                     "status": "failed",
                     "error": {
-                        "code": "INVALID_PARAMS",
+                        "code": ErrorCode.VALIDATION_FAILED.value,
                         "message": f"decision={raw_decision!r} is not one of {_BFF_APPROVAL_DECIDE_VALUES}",
                     },
                 })
@@ -41194,7 +41243,7 @@ async def bff_approvals_batch_decide(
                     "index": idx,
                     "id": item_id,
                     "status": "failed",
-                    "error": {"code": "INVALID_PARAMS", "message": "rejection_reason is required for reject decision"},
+                    "error": {"code": ErrorCode.VALIDATION_FAILED.value, "message": "rejection_reason is required for reject decision"},
                 })
                 has_failures = True
                 continue
@@ -41204,7 +41253,7 @@ async def bff_approvals_batch_decide(
                     "index": idx,
                     "id": item_id,
                     "status": "failed",
-                    "error": {"code": "INVALID_PARAMS", "message": "revision_notes is required for request_revision decision"},
+                    "error": {"code": ErrorCode.VALIDATION_FAILED.value, "message": "revision_notes is required for request_revision decision"},
                 })
                 has_failures = True
                 continue
@@ -41215,7 +41264,7 @@ async def bff_approvals_batch_decide(
                 "index": idx,
                 "id": item_id,
                 "status": "failed",
-                "error": {"code": "OBJECT_NOT_FOUND", "message": f"approval_id={item_id!r} does not exist"},
+                "error": {"code": ErrorCode.RESOURCE_NOT_FOUND.value, "message": f"approval_id={item_id!r} does not exist"},
             })
             has_failures = True
             continue
