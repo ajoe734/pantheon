@@ -69,13 +69,19 @@ def test_final_error_envelope_and_codes_are_importable() -> None:
     envelope = BffErrorEnvelope(
         error=BffErrorPayload(
             code=ErrorCode.HUMAN_GATE_PENDING,
+            i18nKey="errors.HUMAN_GATE_PENDING",
             message="Approval is required before this action can be accepted",
+            retryable=False,
+            userActionable=True,
         )
     )
     assert envelope.model_dump(mode="json") == {
         "error": {
             "code": "HUMAN_GATE_PENDING",
+            "i18nKey": "errors.HUMAN_GATE_PENDING",
             "message": "Approval is required before this action can be accepted",
+            "retryable": False,
+            "userActionable": True,
             "details": None,
         }
     }

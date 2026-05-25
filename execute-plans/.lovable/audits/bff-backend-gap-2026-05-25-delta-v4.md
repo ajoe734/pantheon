@@ -102,3 +102,72 @@ Live `OPTIONS /bff/me` results on
 | `https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com` | 204 | exact origin |
 | `https://pantheon-dev.lovable.app` | 204 | exact origin |
 | `https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com` | 204 | exact origin |
+
+## ERROR-ENVELOPE-D21-FIELDS-001: Pack D Error Metadata Fields
+
+Route:
+
+```text
+all BFF error responses emitted through the Pack D envelope helpers
+```
+
+Purpose:
+
+Keep execute-plans strict-mode error rendering from inferring frontend behavior
+from `error.code` alone.
+
+Backend fix:
+
+- `error.i18nKey` is now emitted as `errors.<canonical Pack D §D21 code>`.
+- `error.retryable` is now emitted as a boolean from the BFF §D21 behavior
+  matrix.
+- `error.userActionable` is now emitted as a boolean from the same matrix.
+- Existing `error.code`, `error.message`, `error.details`, `meta.correlationId`,
+  and `X-Correlation-Id` behavior is unchanged.
+
+Backend acceptance:
+
+- 401 `/bff/me` returns `AUTH_REQUIRED`, `errors.AUTH_REQUIRED`, `retryable=false`,
+  and `userActionable=true`.
+- 404 unknown BFF route returns `RESOURCE_NOT_FOUND`,
+  `errors.RESOURCE_NOT_FOUND`, `retryable=false`, and `userActionable=true`.
+- 422 validation failures return `VALIDATION_FAILED`,
+  `errors.VALIDATION_FAILED`, `retryable=false`, and `userActionable=true`.
+- 500 unhandled BFF failures return `INTERNAL_ERROR`, `errors.INTERNAL_ERROR`,
+  `retryable=false`, and `userActionable=false`.
+- The BFF behavior matrix covers exactly the 26 canonical Pack D §D21 error codes.
+
+Validation:
+
+```bash
+python3 -m pytest services/control-plane/bff/test_bff_error_envelope_shape.py \
+  services/control-plane/bff/test_final_contract_primitives.py -q
+```
+
+Post-merge release action:
+
+```bash
+gh workflow run nonprod-deploy.yml -f environment=dev -f component=auto
+```
+
+Live verification requirement:
+
+Do not close BFF-INFRA-ENVELOPE-PACKD-FIELDS-001 until the deployed dev BFF
+returns all three fields for:
+
+```text
+GET /bff/strategies/__nonexistent__
+```
+
+Expected Pack D fields:
+
+```json
+{
+  "error": {
+    "code": "RESOURCE_NOT_FOUND",
+    "i18nKey": "errors.RESOURCE_NOT_FOUND",
+    "retryable": false,
+    "userActionable": true
+  }
+}
+```

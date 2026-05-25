@@ -351,6 +351,38 @@ _LEGACY_ERROR_CODE_ALIASES = {
     "SSE_REPLAY_UNAVAILABLE": ErrorCode.RESOURCE_CONFLICT.value,
 }
 
+# Pack D §D21 client behavior matrix. `retryable` means the same request may
+# succeed later without changing payload; `userActionable` means the UI can
+# offer a retry/auth/input/confirmation action instead of operator-only repair.
+_PACK_D_D21_ERROR_BEHAVIOR: Dict[str, Dict[str, bool]] = {
+    ErrorCode.RESOURCE_NOT_FOUND.value: {"retryable": False, "userActionable": True},
+    ErrorCode.AUTH_REQUIRED.value: {"retryable": False, "userActionable": True},
+    ErrorCode.AUTH_EXPIRED.value: {"retryable": False, "userActionable": True},
+    ErrorCode.FORBIDDEN.value: {"retryable": False, "userActionable": False},
+    ErrorCode.RATE_LIMITED.value: {"retryable": True, "userActionable": True},
+    ErrorCode.VALIDATION_FAILED.value: {"retryable": False, "userActionable": True},
+    ErrorCode.BUSINESS_RULE_VIOLATION.value: {"retryable": False, "userActionable": True},
+    ErrorCode.IDEMPOTENCY_CONFLICT.value: {"retryable": False, "userActionable": True},
+    ErrorCode.PRECONDITION_FAILED.value: {"retryable": False, "userActionable": True},
+    ErrorCode.CONFIRMATION_REQUIRED.value: {"retryable": False, "userActionable": True},
+    ErrorCode.TWO_MAN_SIGNATURE_REQUIRED.value: {"retryable": False, "userActionable": True},
+    ErrorCode.HUMAN_GATE_PENDING.value: {"retryable": False, "userActionable": True},
+    ErrorCode.HUMAN_GATE_REJECTED.value: {"retryable": False, "userActionable": True},
+    ErrorCode.HUMAN_GATE_EXPIRED.value: {"retryable": False, "userActionable": True},
+    ErrorCode.RESOURCE_CONFLICT.value: {"retryable": False, "userActionable": True},
+    ErrorCode.OPERATION_NOT_ALLOWED.value: {"retryable": False, "userActionable": True},
+    ErrorCode.DEPENDENCY_UNAVAILABLE.value: {"retryable": True, "userActionable": True},
+    ErrorCode.UPSTREAM_TIMEOUT.value: {"retryable": True, "userActionable": True},
+    ErrorCode.UPSTREAM_ERROR.value: {"retryable": True, "userActionable": True},
+    ErrorCode.INTERNAL_ERROR.value: {"retryable": False, "userActionable": False},
+    ErrorCode.NOT_IMPLEMENTED.value: {"retryable": False, "userActionable": False},
+    ErrorCode.MAINTENANCE_MODE.value: {"retryable": True, "userActionable": True},
+    ErrorCode.KILL_SWITCH_ACTIVE.value: {"retryable": False, "userActionable": False},
+    ErrorCode.SAFE_MODE_ACTIVE.value: {"retryable": False, "userActionable": False},
+    ErrorCode.DEGRADED_READ_ONLY.value: {"retryable": False, "userActionable": False},
+    ErrorCode.REQUEST_TOO_LARGE.value: {"retryable": False, "userActionable": True},
+}
+
 
 def _clean_correlation_id(value: Any) -> Optional[str]:
     clean = str(value or "").strip()
@@ -386,6 +418,20 @@ def _canonical_error_code_value(code: Any, *, status_code: Optional[int] = None)
         return ErrorCode.INTERNAL_ERROR.value
 
 
+def _pack_d_error_metadata(code: Any, *, status_code: Optional[int] = None) -> Dict[str, Any]:
+    code_value = _canonical_error_code_value(code, status_code=status_code)
+    behavior = _PACK_D_D21_ERROR_BEHAVIOR.get(
+        code_value,
+        _PACK_D_D21_ERROR_BEHAVIOR[ErrorCode.INTERNAL_ERROR.value],
+    )
+    return {
+        "code": code_value,
+        "i18nKey": f"errors.{code_value}",
+        "retryable": behavior["retryable"],
+        "userActionable": behavior["userActionable"],
+    }
+
+
 def _status_error_message(status_code: int, fallback: Any = None) -> str:
     clean = str(fallback or "").strip()
     if clean and clean != "{}":
@@ -419,9 +465,13 @@ def _pack_d_error_response(
     headers: Optional[Dict[str, Any]] = None,
     extra: Optional[Dict[str, Any]] = None,
 ) -> JSONResponse:
+    metadata = _pack_d_error_metadata(code, status_code=status_code)
     error_payload: Dict[str, Any] = {
-        "code": _canonical_error_code_value(code, status_code=status_code),
+        "code": metadata["code"],
+        "i18nKey": metadata["i18nKey"],
         "message": str(message or _status_error_message(status_code)),
+        "retryable": metadata["retryable"],
+        "userActionable": metadata["userActionable"],
     }
     if details is not None:
         error_payload["details"] = details
@@ -936,10 +986,14 @@ def _bff_error(
     policy_decision: Optional[PolicyDecision] = None,
     audit_action: Optional[AuditAction] = None,
 ) -> HTTPException:
+    metadata = _pack_d_error_metadata(code, status_code=status_code)
     body = BffErrorEnvelope(
         error=BffErrorPayload(
-            code=code,
+            code=ErrorCode(metadata["code"]),
+            i18nKey=metadata["i18nKey"],
             message=message,
+            retryable=metadata["retryable"],
+            userActionable=metadata["userActionable"],
             details=ErrorDetail(
                 reason=reason,
                 precondition_failed=precondition_failed,
