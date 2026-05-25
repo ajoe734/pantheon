@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "task_id": "BFF-B5-001-SEC-FIX",
+  "archived_at": "2026-05-25T14:16:01Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-B5-001-SEC-FIX",
+    "title": "Anti-self-approval + two-man for high-risk HumanGate + extend_ttl cap + revoke fail-closed",
+    "summary_zh": null,
+    "phase": "Sprint BFF-5 / EPIC-BFF-GAP-HUMANGATE-SEC-FIX",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BFF-B1-007-SEC-FIX"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/action_catalog.py",
+      "services/control-plane/bff/command_executor.py",
+      "services/control-plane/bff/tests/test_bff_b5_humangate_commands.py",
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md"
+    ],
+    "acceptance": [
+      "HumanGate approve/reject/revoke return 403 when identity.operator_id equals the underlying approval requester_id",
+      "HumanGate items linked to high-risk downstream actions require twoManSignatureId at admission (catalog flag + executor honors)",
+      "HumanGateExtendTtl caps ttl_seconds at PANTHEON_HUMAN_GATE_MAX_TTL_SECONDS (default 604800 = 7 days) and returns 422 above cap",
+      "HumanGateRevoke returns 409 with compensating-action suggestion when downstream effect already executed",
+      "_normalize_human_gate_command treats cmd.target.id as authoritative — params.human_gate_item_id must equal target.id or admission returns 422",
+      "new test_bff_b5_001_security_hardening covers each rule",
+      "existing test_bff_b5_humangate_commands still passes"
+    ],
+    "next": "Completed after PR #600 implementation merge and PR #603 closeout artifact merge; verified B1+B5 HumanGate security regression suite passed 15/15.",
+    "last_update": "2026-05-25T14:16:01Z",
+    "review_notes_zh": [
+      "審查通過：四項安全控制（反自我審批、高風險雙人簽核、extend_ttl 上限、revoke fail-closed）均正確實作並有對應測試覆蓋。15 項 B1+B5 回歸測試全部通過。"
+    ],
+    "review_file": "support/reviews/BFF-B5-001-SEC-FIX-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-25T14:16:01Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-b5-001-sec-fix",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-B5-001-SEC-FIX",
+      "git_clean_required": false,
+      "commit": "57cfacfb3c1446be17b2c11e54bb7e4ad0e91d45",
+      "commit_subject": "BFF-B5-001-SEC-FIX: record review closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "BFF-B5 security review artifact for approved HumanGate hardening.",
+        "Not changing": "BFF runtime behavior, action catalog semantics, command executor behavior, or canonical architecture docs.",
+        "Composes with": "PR #600 merged into dev and Claude review-approved handoff for owner finalization.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-B5-001-SEC-FIX",
+        "Reviewer": "Claude",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=services/control-plane/bff python3 -m pytest services/control-plane/bff/tests/test_bff_b1_007_security_hardening.py services/control-plane/bff/tests/test_bff_b5_001_security_hardening.py services/control-plane/bff/tests/test_bff_b5_humangate_commands.py -q (15 passed in 7.65s)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-B5-001-SEC-FIX",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "500d9da568999964f13cc3e0e3fe740df1afb137",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-B5-001-SEC-FIX",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review handoff: PR #600 merged into dev at 2026-05-25T14:01:53Z (merge 308c04f1f7d9b69d9ae5cae5d7efc5846133f96a). Task commit e17e84a8ea84e60aacb820dd6ebfcdc25176836f. Local verification: focused B1+B5 regression 15 passed; GitHub Branch CI Gate checks passed.",
+      "status": "done",
+      "created_at": "2026-05-25T14:02:43Z",
+      "resolved_at": "2026-05-25T14:07:30Z"
+    },
+    {
+      "task_id": "BFF-B5-001-SEC-FIX",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all four HumanGate security controls verified (anti-self-approval, two-man for high-risk, extend_ttl cap, revoke fail-closed). 15/15 B1+B5 regression tests pass. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-25T14:07:30Z",
+      "resolved_at": "2026-05-25T14:16:01Z"
+    }
+  ],
+  "blockers": []
+}
