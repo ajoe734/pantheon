@@ -8366,12 +8366,16 @@ class ReadSurfaceStore:
 
     @staticmethod
     def _project_canonical_capital_pool(raw: Dict[str, Any]) -> Dict[str, Any]:
+        metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+        tenant_id = raw.get("tenant_id") or raw.get("tenantId") or metadata.get("tenant_id") or metadata.get("tenantId")
         return {
             "id": raw.get("pool_id") or raw.get("id"),
             "name": raw.get("name"),
             "status": raw.get("status"),
             "owner_id": raw.get("owner_id"),
             "owner_type": raw.get("owner_type"),
+            "tenant_id": tenant_id,
+            "tenantId": tenant_id,
             "single_runtime_enforced": raw.get("single_runtime_enforced", True),
             "risk_policy_ref": raw.get("risk_policy_ref"),
         }
@@ -8395,6 +8399,7 @@ class ReadSurfaceStore:
         deployment_stage = raw.get("deployment_stage") or raw.get("deployment_mode")
         deployment_mode = raw.get("deployment_mode") or deployment_stage
         metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+        tenant_id = raw.get("tenant_id") or raw.get("tenantId") or metadata.get("tenant_id") or metadata.get("tenantId")
         return {
             "id": binding_id,
             "binding_id": binding_id,
@@ -8408,6 +8413,8 @@ class ReadSurfaceStore:
             "artifact_id": raw.get("artifact_id"),
             "artifact_version": raw.get("artifact_version"),
             "persona_capital_binding_id": raw.get("persona_capital_binding_id"),
+            "tenant_id": tenant_id,
+            "tenantId": tenant_id,
             "effective_at": raw.get("effective_at"),
             "retired_at": raw.get("retired_at"),
             "rollback_parent": raw.get("rollback_parent"),
@@ -8418,6 +8425,8 @@ class ReadSurfaceStore:
     @staticmethod
     def _project_service_persona(raw: Dict[str, Any]) -> Dict[str, Any]:
         persona_id = raw.get("persona_id") or raw.get("id")
+        metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+        tenant_id = raw.get("tenant_id") or raw.get("tenantId") or metadata.get("tenant_id") or metadata.get("tenantId")
         return {
             "id": persona_id,
             "persona_id": persona_id,
@@ -8428,6 +8437,8 @@ class ReadSurfaceStore:
             "strategy_family": raw.get("strategy_family"),
             "status": raw.get("status"),
             "updated_at": raw.get("updated_at"),
+            "tenant_id": tenant_id,
+            "tenantId": tenant_id,
             "metadata": raw.get("metadata", {}),
         }
 
@@ -10167,7 +10178,146 @@ class ReadSurfaceStore:
             "open_in_new_tab": open_in_new_tab,
         }
 
-    def _project_evidence_ref_list_item(self, evidence_ref: Dict[str, Any]) -> Dict[str, Any]:
+    @staticmethod
+    def _tenant_scope_values(value: Any) -> List[str]:
+        if value in (None, ""):
+            return []
+        if isinstance(value, str):
+            return [part.strip() for part in re.split(r"[\s,]+", value) if part.strip()]
+        if isinstance(value, dict):
+            values: List[str] = []
+            for key in ("id", "tenant_id", "tenantId", "value", "name"):
+                if value.get(key) not in (None, ""):
+                    values.extend(ReadSurfaceStore._tenant_scope_values(value.get(key)))
+            return values
+        if isinstance(value, (list, tuple, set)):
+            values: List[str] = []
+            for item in value:
+                values.extend(ReadSurfaceStore._tenant_scope_values(item))
+            return values
+        return [str(value).strip()]
+
+    @classmethod
+    def _record_tenant_ids(cls, record: Dict[str, Any]) -> List[str]:
+        values: List[str] = []
+        direct_keys = (
+            "tenant_id",
+            "tenantId",
+            "tenant",
+            "tenant_ref",
+            "tenantRef",
+            "org_id",
+            "orgId",
+            "organization_id",
+            "organizationId",
+            "workspace_id",
+            "workspaceId",
+        )
+        for key in direct_keys:
+            if key in record:
+                values.extend(cls._tenant_scope_values(record.get(key)))
+        for key in ("metadata", "scope", "source_document", "linked_object_summary"):
+            nested = record.get(key)
+            if isinstance(nested, dict):
+                values.extend(cls._record_tenant_ids(nested))
+        seen = set()
+        result: List[str] = []
+        for value in values:
+            clean = str(value or "").strip()
+            if clean and clean not in seen:
+                seen.add(clean)
+                result.append(clean)
+        return result
+
+    @classmethod
+    def _record_matches_tenant(
+        cls,
+        record: Dict[str, Any],
+        tenant_id: Optional[str],
+        *,
+        include_tenant_agnostic: bool,
+    ) -> bool:
+        clean_tenant = str(tenant_id or "").strip()
+        if not clean_tenant:
+            return True
+        record_tenants = cls._record_tenant_ids(record)
+        if not record_tenants:
+            return include_tenant_agnostic
+        return "*" in record_tenants or clean_tenant in record_tenants
+
+    @staticmethod
+    def _evidence_linked_entity_pairs(evidence_ref: Dict[str, Any]) -> set[tuple[str, str]]:
+        pairs: set[tuple[str, str]] = set()
+
+        def add_pair(entity_type: Any, entity_ref: Any) -> None:
+            clean_type = str(entity_type or "").strip().lower()
+            clean_ref = str(entity_ref or "").strip()
+            if clean_type and clean_ref:
+                pairs.add((clean_type, clean_ref))
+
+        linked_summary = evidence_ref.get("linked_object_summary")
+        if isinstance(linked_summary, dict):
+            add_pair(linked_summary.get("entity_type"), linked_summary.get("entity_ref"))
+        add_pair(evidence_ref.get("linked_entity_type"), evidence_ref.get("linked_entity_ref"))
+        add_pair(evidence_ref.get("target_type"), evidence_ref.get("target_id"))
+        for key in ("linked_decisions", "linked_entities", "related_entities"):
+            for item in evidence_ref.get(key) or []:
+                if isinstance(item, dict):
+                    add_pair(
+                        item.get("entity_type") or item.get("type"),
+                        item.get("entity_ref") or item.get("ref") or item.get("id"),
+                    )
+        return pairs
+
+    @staticmethod
+    def _evidence_source_type(evidence_ref: Dict[str, Any]) -> str:
+        source_document = (
+            evidence_ref.get("source_document")
+            if isinstance(evidence_ref.get("source_document"), dict)
+            else {}
+        )
+        return str(
+            evidence_ref.get("source_type")
+            or source_document.get("source_type")
+            or evidence_ref.get("evidence_type")
+            or evidence_ref.get("type")
+            or ""
+        ).strip().lower()
+
+    @classmethod
+    def _evidence_matches_scope(
+        cls,
+        evidence_ref: Dict[str, Any],
+        *,
+        linked_entities: Optional[set[tuple[str, str]]],
+        source_types: Optional[set[str]],
+    ) -> bool:
+        normalized_entities = {
+            (str(entity_type or "").strip().lower(), str(entity_ref or "").strip())
+            for entity_type, entity_ref in (linked_entities or set())
+            if str(entity_type or "").strip() and str(entity_ref or "").strip()
+        }
+        normalized_source_types = {
+            str(source_type or "").strip().lower()
+            for source_type in (source_types or set())
+            if str(source_type or "").strip()
+        }
+        if not normalized_entities and not normalized_source_types:
+            return True
+        ref_entities = cls._evidence_linked_entity_pairs(evidence_ref)
+        if ref_entities:
+            return bool(normalized_entities and ref_entities.intersection(normalized_entities))
+        ref_source_type = cls._evidence_source_type(evidence_ref)
+        if ref_source_type and ref_source_type in normalized_source_types:
+            return True
+        return False
+
+    def _project_evidence_ref_list_item(
+        self,
+        evidence_ref: Dict[str, Any],
+        *,
+        include_scope_metadata: bool = False,
+    ) -> Dict[str, Any]:
         ref_id = evidence_ref.get("ref_id")
         source_document = evidence_ref.get("source_document") if isinstance(evidence_ref.get("source_document"), dict) else {}
         linked_summary = (
@@ -10216,6 +10366,21 @@ class ReadSurfaceStore:
             },
             "resolved_link": self._kw03_normalize_resolved_link(evidence_ref.get("resolved_link")),
         }
+        if include_scope_metadata:
+            tenant_ids = self._record_tenant_ids(evidence_ref)
+            if tenant_ids:
+                payload["tenant_id"] = tenant_ids[0]
+                payload["tenantId"] = tenant_ids[0]
+            linked_decisions = [
+                {
+                    "entity_type": item.get("entity_type") or item.get("type"),
+                    "entity_ref": item.get("entity_ref") or item.get("ref") or item.get("id"),
+                }
+                for item in evidence_ref.get("linked_decisions") or []
+                if isinstance(item, dict)
+            ]
+            if linked_decisions:
+                payload["linked_decisions"] = linked_decisions
         return payload
 
     def _project_evidence_ref_detail(self, evidence_ref: Dict[str, Any]) -> Dict[str, Any]:
@@ -10288,8 +10453,30 @@ class ReadSurfaceStore:
             "created_at": evidence_ref.get("created_at") or projected["source_document"].get("captured_at"),
         }
 
-    def list_evidence_refs(self) -> List[Dict[str, Any]]:
+    def list_evidence_refs(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        include_tenant_agnostic: bool = True,
+        linked_entities: Optional[set[tuple[str, str]]] = None,
+        source_types: Optional[set[str]] = None,
+        include_scope_metadata: bool = False,
+    ) -> List[Dict[str, Any]]:
         evidence_refs = self._read_dataset_records("evidence_refs")
+        evidence_refs = [
+            evidence_ref
+            for evidence_ref in evidence_refs
+            if self._record_matches_tenant(
+                evidence_ref,
+                tenant_id,
+                include_tenant_agnostic=include_tenant_agnostic,
+            )
+            and self._evidence_matches_scope(
+                evidence_ref,
+                linked_entities=linked_entities,
+                source_types=source_types,
+            )
+        ]
         evidence_refs.sort(
             key=lambda evidence_ref: (
                 _parse_rfc3339(
@@ -10301,7 +10488,13 @@ class ReadSurfaceStore:
             ),
             reverse=True,
         )
-        return [self._project_evidence_ref_list_item(evidence_ref) for evidence_ref in evidence_refs]
+        return [
+            self._project_evidence_ref_list_item(
+                evidence_ref,
+                include_scope_metadata=include_scope_metadata,
+            )
+            for evidence_ref in evidence_refs
+        ]
 
     def get_evidence_ref(self, ref_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not ref_id:
