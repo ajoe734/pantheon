@@ -151,6 +151,17 @@ Post-merge live verification required before `done`:
 | `https://pantheon-dev.lovable.app` | OPTIONS `/bff/me` returns 204 and echoed ACAO |
 | `https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com` | OPTIONS `/bff/me` returns 204 and echoed ACAO |
 
+Post-merge deploy observation:
+
+- PR #568 merged into dev at `05a3a8febe84e4e7c4b95397400457ca0115c188`.
+- `nonprod-deploy.yml` run `26383600196` deployed that merge commit successfully.
+- The live container had `PANTHEON_BFF_CORS_ORIGINS` narrowed to
+  `https://pantheon-dev.lovable.app,https://pantheon-ai-system-front-dev.lovable.app`.
+- That env override caused live OPTIONS `/bff/me` to return 400/missing ACAO for both
+  `lovableproject.com` origins despite the BFF code defaults.
+- Follow-up: `scripts/deploy_nonprod_vm.sh` now appends the mandatory Lovable dev origins to the
+  deploy-time override before exporting `PANTHEON_BFF_CORS_ORIGINS`.
+
 ## Audit Path Curl Results
 
 Base command shape:

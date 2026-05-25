@@ -69,5 +69,19 @@ Post-merge release action:
 gh workflow run nonprod-deploy.yml -f environment=dev -f component=auto
 ```
 
+Deployment env follow-up:
+
+The first post-merge live probe showed that the dev VM was running with a
+GitHub Actions `DEV_BFF_CORS_ORIGINS` override containing only:
+
+```text
+https://pantheon-dev.lovable.app,https://pantheon-ai-system-front-dev.lovable.app
+```
+
+That override replaced the BFF code defaults and excluded both required
+`lovableproject.com` origins. The deploy script now appends the mandatory
+Lovable dev origins to the provided override before exporting
+`PANTHEON_BFF_CORS_ORIGINS` into the compose deployment.
+
 Do not close BFF-B1-001-DELTA-2 until the live dev BFF returns HTTP 204 and an
 exact echoed `Access-Control-Allow-Origin` for the four required Lovable origins.
