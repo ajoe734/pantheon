@@ -162,6 +162,28 @@ Post-merge deploy observation:
 - Follow-up: `scripts/deploy_nonprod_vm.sh` now appends the mandatory Lovable dev origins to the
   deploy-time override before exporting `PANTHEON_BFF_CORS_ORIGINS`.
 
+Final deploy and live verification:
+
+- PR #569 merge commit:
+  `88323642913aaf908051b963e43051d1b86cc55e`
+- `nonprod-deploy.yml` run `26383877729` deployed the merge commit and passed public BFF smoke.
+- Running `pantheon-operator-bff-1` env after deploy:
+
+```text
+PANTHEON_ENV=dev
+PANTHEON_BFF_AUTH_MODE=permissive
+PANTHEON_BFF_CORS_ORIGINS=https://pantheon-dev.lovable.app,https://pantheon-ai-system-front-dev.lovable.app,https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com
+```
+
+Final OPTIONS `/bff/me` results:
+
+| Origin | Status | ACAO |
+|---|---:|---|
+| `https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app` | 204 | exact origin |
+| `https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com` | 204 | exact origin |
+| `https://pantheon-dev.lovable.app` | 204 | exact origin |
+| `https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com` | 204 | exact origin |
+
 ## Audit Path Curl Results
 
 Base command shape:
