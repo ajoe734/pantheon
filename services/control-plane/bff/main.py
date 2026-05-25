@@ -148,21 +148,24 @@ _DEV_LOVABLE_CORS_ORIGINS = {
     "https://pantheon-ai-system-front-dev.lovable.app",
     # Pantheon Frontend Lovable project preview URLs (dev tier).
     "https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com",
-    "https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app",
+    # Static id-preview URLs are Lovable-hosted strict-preview origins; keep them
+    # out of the dev-only set so production-strict preflight can still succeed.
     # BFF-B1-001-DELTA: 140c41d5 published URL intentionally NOT in dev-only set —
     # it must survive the production-strict filter so live OPTIONS succeeds.
 }
 
-# BFF-B1-001: Lovable dynamic preview URLs include a commit hash that changes per
-# deployment: id-preview-<commit>--<project-uuid>.lovable.app.  Exact-match allowlists
-# cannot enumerate them, so we use a regex covering the two known project UUIDs.
+# BFF-B1-001: Lovable preview URLs may include a commit hash that changes per
+# deployment: id-preview-<commit>--<project-uuid>.lovable.app. Lovable also
+# emits id-preview--<project-uuid>.lovable.app with no commit segment. Exact-match
+# allowlists cannot enumerate the hashed form, so we use a regex covering the two
+# known project UUIDs while keeping the optional commit segment hex-only.
 # Only applied in non-production-strict mode (preview URLs are dev-tier only).
 _LOVABLE_PREVIEW_UUIDS = (
     "b75d3452-f667-4cf4-893a-1061de45b347"
     "|140c41d5-9cd8-4d6b-ba02-66d5941d0dbe"
 )
 _LOVABLE_PREVIEW_ORIGIN_REGEX = (
-    r"https://id-preview-[a-f0-9]+--({})"
+    r"https://id-preview(?:-[a-f0-9]+)?--({})"
     r"\.lovable\.app"
 ).format(_LOVABLE_PREVIEW_UUIDS)
 _LOVABLE_PREVIEW_ORIGIN_PATTERN = re.compile(

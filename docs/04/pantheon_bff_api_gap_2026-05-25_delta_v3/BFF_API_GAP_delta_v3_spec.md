@@ -10,6 +10,61 @@ an execution record, not a new L1 product authority. Canonical naming decisions 
 
 ---
 
+## CORS-DELTA-001 — Lovable `id-preview` Strict-Mode Preflight
+
+Route family: BFF CORS preflight for Lovable-hosted frontend origins
+
+### Gap
+
+Lovable emits both static and deploy-hash preview origins:
+
+- `https://id-preview--<project-uuid>.lovable.app`
+- `https://id-preview-<hex-commit>--<project-uuid>.lovable.app`
+
+The BFF default allowlist already included the static Pantheon Frontend `id-preview` origin, but
+the production-strict filter also classified that exact origin as dev-only and removed it before
+Starlette CORS could answer preflight. Separately, the dynamic preview regex required at least one
+hex character after `id-preview-`, so the no-hash `id-preview--<uuid>` shape could not match the
+regex path.
+
+### Fix
+
+- Keep the static `id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app` origin in the
+  default allowlist, but remove it from `_DEV_LOVABLE_CORS_ORIGINS` so it survives the
+  production-strict exact-match filter.
+- Change the dynamic preview regex to make the whole `-<hex>` segment optional:
+  `id-preview(?:-[a-f0-9]+)?--<project-uuid>`.
+- Preserve the hex-only requirement when the deploy hash is present; non-hex prefixes such as
+  `id-preview-main--<uuid>` remain rejected.
+- Keep the regex disabled in production-strict mode; production-strict allows only exact default
+  origins that survive the filter.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Static `id-preview--b75d...lovable.app` survives production-strict filtering | Implemented |
+| 2 | OPTIONS preflight from the static `id-preview--b75d...` origin returns 204 with echoed ACAO | Implemented |
+| 3 | Dynamic regex accepts `id-preview-<hex>--140c41d5...lovable.app` in non-production strict mode | Implemented |
+| 4 | Dynamic regex accepts `id-preview--140c41d5...lovable.app` in non-production strict mode | Implemented |
+| 5 | Dynamic regex rejects non-hex deploy prefixes | Implemented |
+
+### Verification
+
+```bash
+python3 -m pytest services/control-plane/bff/tests/test_auth_jwks_strict.py -q
+```
+
+Result: 20 passed.
+
+### Affected files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_auth_jwks_strict.py`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-25-delta-v4.md`
+
+---
+
 ## NAMING-ALIGN-001 — URL Path Segments: kebab-case Canonical
 
 Route family: all BFF management routes
