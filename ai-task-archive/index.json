@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-05-25T13:38:53Z",
+  "updated_at": "2026-05-25T14:16:01Z",
   "counts": {
-    "total": 1324,
-    "completed": 1301,
+    "total": 1325,
+    "completed": 1302,
     "superseded": 23
   },
   "recent_terminal_ids": [
+    "BFF-B5-001-SEC-FIX",
     "BFF-B1-007-SEC-FIX",
     "BFF-INFRA-PATH-DEDUPE-001",
     "BFF-INFRA-ENVELOPE-PACKD-FIELDS-001",
@@ -25,7 +26,6 @@
     "BFF-PM12-009",
     "BFF-PM12-008",
     "BFF-B2-003",
-    "BFF-PM12-007",
-    "BFF-B3-005"
+    "BFF-PM12-007"
   ]
 }
