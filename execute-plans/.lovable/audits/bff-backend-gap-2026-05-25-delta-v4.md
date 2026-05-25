@@ -85,3 +85,20 @@ Lovable dev origins to the provided override before exporting
 
 Do not close BFF-B1-001-DELTA-2 until the live dev BFF returns HTTP 204 and an
 exact echoed `Access-Control-Allow-Origin` for the four required Lovable origins.
+
+Final live verification:
+
+- PR #568 merged BFF CORS code at `05a3a8febe84e4e7c4b95397400457ca0115c188`.
+- PR #569 merged deploy-origin expansion at `88323642913aaf908051b963e43051d1b86cc55e`.
+- `nonprod-deploy.yml` run `26383877729` deployed
+  `88323642913aaf908051b963e43051d1b86cc55e` to dev and passed public BFF smoke.
+
+Live `OPTIONS /bff/me` results on
+`https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io`:
+
+| Origin | Status | ACAO |
+|---|---:|---|
+| `https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app` | 204 | exact origin |
+| `https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com` | 204 | exact origin |
+| `https://pantheon-dev.lovable.app` | 204 | exact origin |
+| `https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com` | 204 | exact origin |
