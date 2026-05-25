@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "task_id": "OPS-DOC-BFF-NAMING-CANONICAL-001",
+  "archived_at": "2026-05-25T03:57:28Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OPS-DOC-BFF-NAMING-CANONICAL-001",
+    "title": "Decision doc for 5 FE/BE naming alignments plus 12 snake_case duplicates",
+    "summary_zh": null,
+    "phase": "Sprint BFF-DELTA-V3 / EPIC-BFF-DELTA-V3-INFRA",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-25_delta_v3/BFF_API_GAP_delta_v3_spec.md;execute-plans/.lovable/audits/bff-backend-gap-2026-05-25-delta-v3.md;docs/04/pantheon_bff_api_gap_2026-05-25_delta_v3/CANONICAL_PATH_NAMING.md"
+    ],
+    "acceptance": [
+      "Decision doc at docs/04/pantheon_bff_api_gap_2026-05-25_delta_v3/CANONICAL_PATH_NAMING.md;For each of 5 FE/BE naming pairs from v3 audit decide canonical name and document migration path (persona-fleet vs persona-league; human-inbox; trading-pulse; evolution-journal; evidence; portfolio-book/holdings vs /positions; portfolio-book/pools vs /exposure);For 12 snake_case duplicate families (P3 advisory) recommend keep/deprecate/both;Cross-reference each decision to Pack D §D2 path naming convention;FE migration ticket noted as separate follow-up not in scope here"
+    ],
+    "next": "Owner finalized: 5 FE/BE naming alignments + 12 snake_case duplicate resolutions durable in CANONICAL_PATH_NAMING.md. Codex review approved at d586fd42. CI all PASS. PR #558 (content) and PR #565 (closeout note) both merged into dev.",
+    "last_update": "2026-05-25T03:57:28Z",
+    "review_notes_zh": [
+      "審查通過：CANONICAL_PATH_NAMING.md 已補齊 Section 4 D1-D6 acceptance-scoped route naming decisions與 Section 5 keep/deprecate/both reference表。",
+      "審查核對：PR #558 head d586fd42，GitHub review 已 APPROVED；Branch CI Gate checks 全綠，但 PR mergeStateStatus 仍為 BEHIND，需要 owner closeout 時更新/merge。",
+      "驗證：python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py -q -k 'trading_pulse or baseline or human_inbox or intervention_stream'；python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py -q -k 'portfolio_book or persona_league or evolution_journal or evidence'。"
+    ],
+    "review_file": "docs/04/pantheon_bff_api_gap_2026-05-25_delta_v3/CANONICAL_PATH_NAMING.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-25T03:57:28Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-doc-bff-naming-canonical-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-DOC-BFF-NAMING-CANONICAL-001",
+      "git_clean_required": false,
+      "commit": "f6ff68954abb7ec6600fa279833ab6b9788e6b3a",
+      "commit_subject": "OPS-DOC-BFF-NAMING-CANONICAL-001: record owner closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Deliverables verified": "CANONICAL_PATH_NAMING.md with 5 FE/BE alignment",
+        "LLM-Agent": "Claude",
+        "Task-ID": "OPS-DOC-BFF-NAMING-CANONICAL-001",
+        "Reviewer": "Codex",
+        "Verified": "gh pr checks 558 — all pass; state MERGED"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OPS-DOC-BFF-NAMING-CANONICAL-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "213749c5b696e1f6eaea90813ca9604a2df93aea",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OPS-DOC-BFF-NAMING-CANONICAL-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation complete. PR #558 open with auto-merge. Deliverables: CANONICAL_PATH_NAMING.md (5 FE/BE alignment decisions + 12 snake_case duplicate policy), BFF_API_GAP_delta_v3_spec.md (per-gap entries NAMING-ALIGN-001 through 005 and SNAKE-DUP-001 through 012), execute-plans audit bff-backend-gap-2026-05-25-delta-v3.md. No code change required; doc-only task canonicalizing existing naming patterns.",
+      "status": "done",
+      "created_at": "2026-05-25T03:12:21Z",
+      "resolved_at": "2026-05-25T03:18:56Z"
+    },
+    {
+      "task_id": "OPS-DOC-BFF-NAMING-CANONICAL-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review changes requested: current docs cover generic kebab/snake/camel conventions but do not close the acceptance-scoped v3 naming decisions (persona-fleet vs persona-league; human-inbox; trading-pulse; evolution-journal; evidence; portfolio-book holdings/positions and pools/exposure), Pack D §D2 cross-references, or explicit keep/deprecate/both guidance. PR #558 has a REQUEST_CHANGES review from Codex.",
+      "status": "done",
+      "created_at": "2026-05-25T03:18:56Z",
+      "resolved_at": "2026-05-25T03:18:56Z"
+    },
+    {
+      "task_id": "OPS-DOC-BFF-NAMING-CANONICAL-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Section 4 (v3 acceptance-scoped route naming D1-D6) and Section 5 (keep/deprecate reference table) added per your prior review feedback. Commit d586fd42 on task/OPS-DOC-BFF-NAMING-CANONICAL-001. Please review docs/04/pantheon_bff_api_gap_2026-05-25_delta_v3/CANONICAL_PATH_NAMING.md.",
+      "status": "done",
+      "created_at": "2026-05-25T03:41:26Z",
+      "resolved_at": "2026-05-25T03:48:52Z"
+    },
+    {
+      "task_id": "OPS-DOC-BFF-NAMING-CANONICAL-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved. PR #558 has Codex approval at d586fd42; targeted BFF management tests passed. Owner must finalize: PR remains BEHIND dev, so update branch/merge before marking done.",
+      "status": "done",
+      "created_at": "2026-05-25T03:48:52Z",
+      "resolved_at": "2026-05-25T03:57:29Z"
+    }
+  ],
+  "blockers": []
+}
