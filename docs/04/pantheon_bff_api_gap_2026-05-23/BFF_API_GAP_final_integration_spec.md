@@ -152,6 +152,10 @@ execution is not explicitly enabled.
   `meta.idempotency`.
 - Replay duplicate idempotency keys with the same request hash and return HTTP 409
   `IDEMPOTENCY_CONFLICT` when the same key is reused with a different body.
+- Security hardening: validate confirm tokens, approval decisions, and two-man
+  signatures against their backing stores before command-store writes; require
+  command/target/caller binding where applicable; scope idempotency replay by
+  operator id; and keep raw bearer tokens out of persisted command audit records.
 - Preserve the live broker fail-closed gate: payloads or runtime targets that signal
   live broker scope return HTTP 403 unless `PANTHEON_LIVE_BROKER_ENABLED=true`.
 - Keep the deprecated action compatibility facade
@@ -177,6 +181,7 @@ continues to return `CommandSubmissionResponse`; it is not changed to the final
 | 5 | Duplicate idempotency key with a different payload returns HTTP 409 `IDEMPOTENCY_CONFLICT` | Implemented in BFF-B1-007 |
 | 6 | Live broker scope remains fail-closed when `PANTHEON_LIVE_BROKER_ENABLED` is false | Implemented in BFF-B1-007 |
 | 7 | Legacy `/api/v1/operator/commands` remains unaffected and keeps `CommandSubmissionResponse` | Implemented in BFF-B1-007 |
+| 7a | Confirm/approval/two-man evidence is validated against backing stores, raw bearer tokens are not persisted in audit, and idempotency replay is scoped by operator id | Implemented in BFF-B1-007-SEC-FIX |
 | 8 | `POST /bff/actions/{entityType}/{entityId}/{actionId}` remains route-discoverable and adapts accepted calls through the final command admission facade with deprecation metadata | Implemented in BFF-B1-008 |
 | 9 | Action facade requests honor `Idempotency-Key` / `X-Idempotency-Key`, persist the resolved key in foundation context, and reject body-level idempotency keys before command-store writes | Implemented in BFF-B1-008 |
 | 10 | Action facade policy denials preserve final-command foundation error/audit metadata with `source_route=POST /bff/actions/{entityType}/{entityId}/{actionId}` | Implemented in BFF-B1-008 |
@@ -186,6 +191,7 @@ continues to return `CommandSubmissionResponse`; it is not changed to the final
 - `services/control-plane/bff/main.py`
 - `services/control-plane/bff/tests/test_actions_to_commands_adapter.py`
 - `services/control-plane/bff/test_governance_command_submission.py`
+- `services/control-plane/bff/tests/test_bff_b1_007_security_hardening.py`
 - `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md`
 
 ### Task
