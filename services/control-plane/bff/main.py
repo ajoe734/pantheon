@@ -622,6 +622,7 @@ read_store = ReadSurfaceStore(
     ),
 )
 settings_store = SettingsStore(os.path.join(BFF_DATA_DIR, "settings.json"))
+_COMMAND_AUTH_CONTEXT: Dict[str, Dict[str, Optional[str]]] = {}
 
 _BFF_FOUNDATION_POLICY_VERSION = "2026-04-27"
 
@@ -1062,6 +1063,29 @@ def _foundation_actor_ref(identity: OperatorIdentity) -> ActorRef:
         actor_id=identity.operator_id,
         roles=identity.roles,
     )
+
+
+def _command_runtime_auth_context(
+    *,
+    command_id: str,
+    authorization: Optional[str],
+    mfa_token: Optional[str],
+    identity: OperatorIdentity,
+) -> Dict[str, Any]:
+    raw_token = None
+    if authorization and authorization.startswith("Bearer "):
+        raw_token = authorization[len("Bearer "):]
+    effective_mfa_token = mfa_token or ("000000" if identity.mfa_verified else None)
+    if raw_token or effective_mfa_token:
+        _COMMAND_AUTH_CONTEXT[command_id] = {
+            "auth_token": raw_token,
+            "mfa_token": effective_mfa_token,
+        }
+    return {
+        "token_kind": identity.token_kind,
+        "bearer_token_present": bool(raw_token),
+        "mfa_token_present": bool(effective_mfa_token),
+    }
 
 
 def _foundation_request_payload(
@@ -2198,6 +2222,285 @@ def _precondition_field_present(
     return False
 
 
+def _precondition_value(
+    payload: Dict[str, Any],
+    params: Dict[str, Any],
+    aliases: tuple[str, ...],
+    *extra_values: Any,
+) -> Optional[str]:
+    for value in extra_values:
+        if _precondition_value_present(value):
+            return str(value).strip()
+    for source in (payload, params):
+        for alias in aliases:
+            if alias in source and _precondition_value_present(source.get(alias)):
+                return str(source.get(alias)).strip()
+    return None
+
+
+def _binding_token(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+
+
+def _dict_first_present(mapping: Dict[str, Any], aliases: tuple[str, ...]) -> Optional[Any]:
+    for alias in aliases:
+        if alias in mapping and _precondition_value_present(mapping.get(alias)):
+            return mapping.get(alias)
+    return None
+
+
+def _record_audit(record: Dict[str, Any]) -> Dict[str, Any]:
+    audit = record.get("audit") if isinstance(record.get("audit"), dict) else {}
+    return audit
+
+
+def _record_params(record: Dict[str, Any]) -> Dict[str, Any]:
+    params = record.get("params") if isinstance(record.get("params"), dict) else {}
+    return params
+
+
+def _record_actor_id(record: Dict[str, Any]) -> Optional[str]:
+    audit = _record_audit(record)
+    for key in ("operator_id", "actor", "actor_id", "confirmed_by"):
+        value = str(audit.get(key) or "").strip()
+        if value:
+            return value
+    foundation = record.get("foundation") if isinstance(record.get("foundation"), dict) else {}
+    trace = foundation.get("trace_context") if isinstance(foundation.get("trace_context"), dict) else {}
+    actor_ref = trace.get("actor_ref") if isinstance(trace.get("actor_ref"), dict) else {}
+    value = str(actor_ref.get("actor_id") or "").strip()
+    return value or None
+
+
+_COMMAND_BINDING_FIELDS = (
+    "command",
+    "command_type",
+    "commandType",
+    "action_id",
+    "actionId",
+)
+_TARGET_TYPE_BINDING_FIELDS = (
+    "target_type",
+    "targetType",
+    "entity_type",
+    "entityType",
+    "object_type",
+    "objectType",
+)
+_TARGET_ID_BINDING_FIELDS = (
+    "target_id",
+    "targetId",
+    "entity_id",
+    "entityId",
+    "object_id",
+    "objectId",
+    "runtime_id",
+    "runtimeId",
+    "intervention_id",
+    "interventionId",
+)
+_CALLER_BINDING_FIELDS = (
+    "operator_id",
+    "operatorId",
+    "caller_operator_id",
+    "callerOperatorId",
+    "issued_for_operator_id",
+    "issuedForOperatorId",
+    "issued_for",
+    "issuedFor",
+    "actor_id",
+    "actorId",
+)
+
+
+def _binding_sources(record: Dict[str, Any]) -> List[Dict[str, Any]]:
+    params = _record_params(record)
+    audit = _record_audit(record)
+    sources: List[Dict[str, Any]] = [params, audit]
+    for source in (params, audit):
+        target = source.get("target")
+        if isinstance(target, dict):
+            sources.append(target)
+        preconditions = source.get("preconditions") or source.get("precondition_evidence")
+        if isinstance(preconditions, dict):
+            sources.append(preconditions)
+    foundation = record.get("foundation") if isinstance(record.get("foundation"), dict) else {}
+    command_envelope = foundation.get("command_envelope") if isinstance(foundation.get("command_envelope"), dict) else {}
+    payload = command_envelope.get("payload") if isinstance(command_envelope.get("payload"), dict) else {}
+    if payload:
+        sources.append(payload)
+        target = payload.get("target")
+        if isinstance(target, dict):
+            sources.append(target)
+    return sources
+
+
+def _binding_has_command(record: Dict[str, Any]) -> bool:
+    return any(_dict_first_present(source, _COMMAND_BINDING_FIELDS) is not None for source in _binding_sources(record))
+
+
+def _binding_command_matches(record: Dict[str, Any], cmd: OperatorCommand) -> bool:
+    values = [
+        str(_dict_first_present(source, _COMMAND_BINDING_FIELDS) or "").strip()
+        for source in _binding_sources(record)
+    ]
+    values = [value for value in values if value]
+    if not values:
+        return False
+    expected = _binding_token(cmd.command.value)
+    return any(_binding_token(value) == expected for value in values)
+
+
+def _binding_target_values(record: Dict[str, Any]) -> tuple[List[str], List[str]]:
+    target_types: List[str] = []
+    target_ids: List[str] = []
+    for source in _binding_sources(record):
+        target = source.get("target") if isinstance(source.get("target"), dict) else None
+        if target is not None:
+            target_type = str(target.get("type") or "").strip()
+            target_id = str(target.get("id") or "").strip()
+            if target_type:
+                target_types.append(target_type)
+            if target_id:
+                target_ids.append(target_id)
+        target_type = _dict_first_present(source, _TARGET_TYPE_BINDING_FIELDS)
+        target_id = _dict_first_present(source, _TARGET_ID_BINDING_FIELDS)
+        if target_type is not None:
+            target_types.append(str(target_type).strip())
+        if target_id is not None:
+            target_ids.append(str(target_id).strip())
+    return [value for value in target_types if value], [value for value in target_ids if value]
+
+
+def _binding_has_target(record: Dict[str, Any]) -> bool:
+    target_types, target_ids = _binding_target_values(record)
+    return bool(target_types or target_ids)
+
+
+def _binding_target_matches(record: Dict[str, Any], cmd: OperatorCommand) -> bool:
+    target_types, target_ids = _binding_target_values(record)
+    if not target_types and not target_ids:
+        return False
+    type_ok = not target_types or any(
+        _binding_token(value) == _binding_token(cmd.target.type.value)
+        for value in target_types
+    )
+    id_ok = not target_ids or any(str(value) == cmd.target.id for value in target_ids)
+    return type_ok and id_ok
+
+
+def _record_bound_to_command_and_target(record: Dict[str, Any], cmd: OperatorCommand) -> bool:
+    return (
+        _binding_has_command(record)
+        and _binding_has_target(record)
+        and _binding_command_matches(record, cmd)
+        and _binding_target_matches(record, cmd)
+    )
+
+
+def _record_bound_to_caller(record: Dict[str, Any], identity: OperatorIdentity) -> bool:
+    bound_values: List[str] = []
+    for source in _binding_sources(record):
+        value = _dict_first_present(source, _CALLER_BINDING_FIELDS)
+        if value is not None:
+            bound_values.append(str(value).strip())
+    if bound_values:
+        return any(value == identity.operator_id for value in bound_values)
+    return _record_actor_id(record) == identity.operator_id
+
+
+def _approval_decision_consumed(decision: Dict[str, Any]) -> bool:
+    state = _binding_token(
+        decision.get("consumed_state")
+        or decision.get("state")
+        or decision.get("decision_state")
+        or ""
+    )
+    return bool(
+        decision.get("consumed")
+        or decision.get("consumed_at")
+        or state in {"consumed", "used", "redeemed", "superseded", "revoked"}
+    )
+
+
+def _approval_decision_applies_to_command(decision: Dict[str, Any], decision_id: str, cmd: OperatorCommand) -> bool:
+    synthetic_record = {"params": decision}
+    has_command = _binding_has_command(synthetic_record)
+    has_target = _binding_has_target(synthetic_record)
+    if has_command and not _binding_command_matches(synthetic_record, cmd):
+        return False
+    if has_target:
+        return _binding_target_matches(synthetic_record, cmd)
+    if cmd.target.type == ObjectType.APPROVAL_DECISION:
+        return decision_id == cmd.target.id
+    return False
+
+
+_TWO_MAN_SIGNATURE_ID_FIELDS = (
+    "twoManSignatureId",
+    "two_man_signature_id",
+    "twoManApprovalId",
+    "two_man_approval_id",
+    "signature_id",
+    "signatureId",
+    "id",
+)
+_TWO_MAN_SIGNER_LIST_FIELDS = (
+    "signer_operator_ids",
+    "signerOperatorIds",
+    "operator_ids",
+    "operatorIds",
+)
+_TWO_MAN_SIGNER_FIELDS = (
+    "first_operator_id",
+    "firstOperatorId",
+    "primary_operator_id",
+    "primaryOperatorId",
+    "second_operator_id",
+    "secondOperatorId",
+    "secondOperatorSignature",
+    "second_operator_signature",
+    "signed_by",
+    "signedBy",
+    "confirmed_by",
+    "confirmedBy",
+)
+
+
+def _two_man_signature_record(signature_id: str) -> Optional[Dict[str, Any]]:
+    for record in reversed(command_store._get_all_commands()):
+        params = _record_params(record)
+        audit = _record_audit(record)
+        target = record.get("target") if isinstance(record.get("target"), dict) else {}
+        candidate_values = [
+            _dict_first_present(params, _TWO_MAN_SIGNATURE_ID_FIELDS),
+            _dict_first_present(audit, _TWO_MAN_SIGNATURE_ID_FIELDS),
+            target.get("id"),
+        ]
+        if any(str(value or "").strip() == signature_id for value in candidate_values):
+            return record
+    return None
+
+
+def _two_man_signers(record: Dict[str, Any]) -> set[str]:
+    params = _record_params(record)
+    audit = _record_audit(record)
+    signers: set[str] = set()
+    for source in (params, audit):
+        for field in _TWO_MAN_SIGNER_LIST_FIELDS:
+            raw = source.get(field)
+            if isinstance(raw, list):
+                signers.update(str(value).strip() for value in raw if str(value or "").strip())
+        for field in _TWO_MAN_SIGNER_FIELDS:
+            value = str(source.get(field) or "").strip()
+            if value:
+                signers.add(value)
+    actor = _record_actor_id(record)
+    if actor:
+        signers.add(actor)
+    return signers
+
+
 def _final_precondition_details(
     *,
     cmd: OperatorCommand,
@@ -2221,6 +2524,7 @@ def _final_precondition_error(
     kind: str,
     correlation_id: Optional[str],
     suggestion: str,
+    details_extra: Optional[Dict[str, Any]] = None,
 ) -> HTTPException:
     return _bff_error(
         status_code=status_code,
@@ -2229,7 +2533,10 @@ def _final_precondition_error(
         reason=reason,
         precondition_failed=kind,
         suggestion=suggestion,
-        details_extra=_final_precondition_details(cmd=cmd, kind=kind),
+        details_extra={
+            **_final_precondition_details(cmd=cmd, kind=kind),
+            **(details_extra or {}),
+        },
         correlation_id=correlation_id,
     )
 
@@ -2239,18 +2546,18 @@ def _require_final_command_preconditions(
     cmd: OperatorCommand,
     payload: Dict[str, Any],
     confirm_token: Optional[str],
+    identity: OperatorIdentity,
     correlation_id: Optional[str],
-) -> None:
+) -> Dict[str, str]:
     entry = get_catalog_entry(cmd.command.value)
     if entry is None:
-        return
+        return {}
 
     params = dict(cmd.params)
+    evidence: Dict[str, str] = {}
     if getattr(entry, "requires_confirm_token", False):
-        if not (
-            _precondition_value_present(confirm_token)
-            or _precondition_field_present(payload, params, _CONFIRM_TOKEN_FIELDS)
-        ):
+        token_id = _precondition_value(payload, params, _CONFIRM_TOKEN_FIELDS, confirm_token)
+        if not token_id:
             raise _final_precondition_error(
                 cmd=cmd,
                 status_code=428,
@@ -2261,9 +2568,57 @@ def _require_final_command_preconditions(
                 correlation_id=correlation_id,
                 suggestion="Retry with X-Confirm-Token or confirmToken after the operator confirmation step",
             )
+        token_records = _confirm_token_records(token_id)
+        create_record = next(
+            (
+                record
+                for record in reversed(token_records)
+                if record.get("type") == CommandType.CONFIRM_TOKEN_CREATE.value
+            ),
+            None,
+        )
+        token_state = _confirm_token_lifecycle_payload(token_id)
+        if create_record is None or token_state.get("status") != "created":
+            raise _final_precondition_error(
+                cmd=cmd,
+                status_code=428,
+                code=ErrorCode.CONFIRMATION_REQUIRED,
+                message="Confirmation token is not valid for this command",
+                reason="CONFIRM_TOKEN_INVALID",
+                kind="confirm_token",
+                correlation_id=correlation_id,
+                suggestion="Issue a fresh confirm token bound to this command, target, and operator",
+                details_extra={"confirmToken": token_id, "tokenStatus": token_state.get("status")},
+            )
+        if not _record_bound_to_command_and_target(create_record, cmd):
+            raise _final_precondition_error(
+                cmd=cmd,
+                status_code=428,
+                code=ErrorCode.CONFIRMATION_REQUIRED,
+                message="Confirmation token is not bound to this command target",
+                reason="CONFIRM_TOKEN_BINDING_MISMATCH",
+                kind="confirm_token",
+                correlation_id=correlation_id,
+                suggestion="Issue a confirm token for the exact command and target being submitted",
+                details_extra={"confirmToken": token_id},
+            )
+        if not _record_bound_to_caller(create_record, identity):
+            raise _final_precondition_error(
+                cmd=cmd,
+                status_code=428,
+                code=ErrorCode.CONFIRMATION_REQUIRED,
+                message="Confirmation token is not bound to this operator",
+                reason="CONFIRM_TOKEN_CALLER_MISMATCH",
+                kind="confirm_token",
+                correlation_id=correlation_id,
+                suggestion="Use a confirm token issued for the same authenticated operator",
+                details_extra={"confirmToken": token_id},
+            )
+        evidence["confirm_token_id"] = token_id
 
     if getattr(entry, "requires_approval", False):
-        if not _precondition_field_present(payload, params, _APPROVAL_EVIDENCE_FIELDS):
+        approval_decision_id = _precondition_value(payload, params, _APPROVAL_EVIDENCE_FIELDS)
+        if not approval_decision_id:
             raise _final_precondition_error(
                 cmd=cmd,
                 status_code=409,
@@ -2274,9 +2629,48 @@ def _require_final_command_preconditions(
                 correlation_id=correlation_id,
                 suggestion="Attach approvalId from the governance approval flow before retrying",
             )
+        approval_decision = read_store.get_approval_decision(approval_decision_id)
+        if approval_decision is None:
+            raise _final_precondition_error(
+                cmd=cmd,
+                status_code=409,
+                code=ErrorCode.HUMAN_GATE_PENDING,
+                message="Approval decision does not exist",
+                reason="APPROVAL_DECISION_NOT_FOUND",
+                kind="approval",
+                correlation_id=correlation_id,
+                suggestion="Attach an approvalDecisionId that exists in the governance approval store",
+                details_extra={"approvalDecisionId": approval_decision_id},
+            )
+        if _approval_decision_consumed(approval_decision):
+            raise _final_precondition_error(
+                cmd=cmd,
+                status_code=409,
+                code=ErrorCode.HUMAN_GATE_PENDING,
+                message="Approval decision has already been consumed",
+                reason="APPROVAL_DECISION_CONSUMED",
+                kind="approval",
+                correlation_id=correlation_id,
+                suggestion="Request a fresh approval decision before retrying this command",
+                details_extra={"approvalDecisionId": approval_decision_id},
+            )
+        if not _approval_decision_applies_to_command(approval_decision, approval_decision_id, cmd):
+            raise _final_precondition_error(
+                cmd=cmd,
+                status_code=409,
+                code=ErrorCode.HUMAN_GATE_PENDING,
+                message="Approval decision is not bound to this command target",
+                reason="APPROVAL_DECISION_BINDING_MISMATCH",
+                kind="approval",
+                correlation_id=correlation_id,
+                suggestion="Attach approval evidence for the exact command and target being submitted",
+                details_extra={"approvalDecisionId": approval_decision_id},
+            )
+        evidence["approval_decision_id"] = approval_decision_id
 
     if getattr(entry, "requires_two_man", False):
-        if not _precondition_field_present(payload, params, _TWO_MAN_EVIDENCE_FIELDS):
+        signature_id = _precondition_value(payload, params, _TWO_MAN_EVIDENCE_FIELDS)
+        if not signature_id:
             raise _final_precondition_error(
                 cmd=cmd,
                 status_code=409,
@@ -2287,6 +2681,47 @@ def _require_final_command_preconditions(
                 correlation_id=correlation_id,
                 suggestion="Attach a second authorized operator signature before retrying",
             )
+        signature_record = _two_man_signature_record(signature_id)
+        if signature_record is None:
+            raise _final_precondition_error(
+                cmd=cmd,
+                status_code=409,
+                code=ErrorCode.TWO_MAN_SIGNATURE_REQUIRED,
+                message="Two-man signature does not exist",
+                reason="TWO_MAN_SIGNATURE_NOT_FOUND",
+                kind="two_man",
+                correlation_id=correlation_id,
+                suggestion="Attach a two-man signature record created for this command and target",
+                details_extra={"twoManSignatureId": signature_id},
+            )
+        signers = _two_man_signers(signature_record)
+        if len(signers) < 2:
+            raise _final_precondition_error(
+                cmd=cmd,
+                status_code=409,
+                code=ErrorCode.TWO_MAN_SIGNATURE_REQUIRED,
+                message="Two-man signature must contain two distinct operators",
+                reason="TWO_MAN_SIGNATURE_SIGNER_MISMATCH",
+                kind="two_man",
+                correlation_id=correlation_id,
+                suggestion="Collect a signature record with two distinct operator ids",
+                details_extra={"twoManSignatureId": signature_id},
+            )
+        if not _record_bound_to_command_and_target(signature_record, cmd):
+            raise _final_precondition_error(
+                cmd=cmd,
+                status_code=409,
+                code=ErrorCode.TWO_MAN_SIGNATURE_REQUIRED,
+                message="Two-man signature is not bound to this command target",
+                reason="TWO_MAN_SIGNATURE_BINDING_MISMATCH",
+                kind="two_man",
+                correlation_id=correlation_id,
+                suggestion="Attach a two-man signature for the exact command and target being submitted",
+                details_extra={"twoManSignatureId": signature_id},
+            )
+        evidence["two_man_signature_id"] = signature_id
+
+    return evidence
 
 
 _FINAL_COMMAND_TARGET_TYPES: Dict[CommandType, ObjectType] = {
@@ -17340,7 +17775,8 @@ async def submit_command(
     stored_params = _stored_command_params(cmd, identity, raw_payload=payload)
 
     duplicate = command_store.get_command_by_idempotency_key(
-        foundation_context["idempotency_record"].idempotency_key
+        foundation_context["idempotency_record"].idempotency_key,
+        operator_id=identity.operator_id,
     )
     if duplicate:
         duplicate_record = (duplicate.get("foundation") or {}).get("idempotency_record") or {}
@@ -17384,14 +17820,12 @@ async def submit_command(
     command_id = command_envelope.command_id
     submitted_at = utc_now()
 
-    # Extract raw token from Authorization header for downstream propagation
-    raw_token = None
-    if authorization and authorization.startswith("Bearer "):
-        raw_token = authorization[len("Bearer "):]
-
-    # Use provided MFA token if present; otherwise stub a 6-digit token when MFA was verified.
-    # This keeps the internal API scaffold happy while preserving the "mfa" flag semantics.
-    mfa_token = x_mfa_token or ("000000" if identity.mfa_verified else None)
+    auth_context = _command_runtime_auth_context(
+        command_id=command_id,
+        authorization=authorization,
+        mfa_token=x_mfa_token,
+        identity=identity,
+    )
 
     audit_record = {
         "operator_id": identity.operator_id,
@@ -17404,8 +17838,7 @@ async def submit_command(
         ],
         "timestamp": submitted_at,
         "staleness_warning": staleness_warning.model_dump() if staleness_warning else None,
-        "auth_token": raw_token,
-        "mfa_token": mfa_token,
+        "auth": auth_context,
         "foundation": _serialize_foundation_context(foundation_context),
     }
 
@@ -17488,6 +17921,7 @@ def _submit_final_command_admission(
         source_route=source_route,
     )
 
+    precondition_evidence: Dict[str, str] = {}
     try:
         _reject_body_idempotency_key(payload)
         if extra_precondition is not None:
@@ -17499,10 +17933,11 @@ def _submit_final_command_admission(
         validator = _VALIDATORS.get(cmd.command)
         if validator:
             validator(cmd.params, identity)
-        _require_final_command_preconditions(
+        precondition_evidence = _require_final_command_preconditions(
             cmd=cmd,
             payload=payload,
             confirm_token=x_confirm_token,
+            identity=identity,
             correlation_id=foundation_context["trace_context"].correlation_id,
         )
     except HTTPException as exc:
@@ -17511,7 +17946,8 @@ def _submit_final_command_admission(
     stored_params = _stored_command_params(cmd, identity, raw_payload=payload)
 
     duplicate = command_store.get_command_by_idempotency_key(
-        foundation_context["idempotency_record"].idempotency_key
+        foundation_context["idempotency_record"].idempotency_key,
+        operator_id=identity.operator_id,
     )
     if duplicate:
         duplicate_record = (duplicate.get("foundation") or {}).get("idempotency_record") or {}
@@ -17561,10 +17997,12 @@ def _submit_final_command_admission(
         accepted_at=submitted_at,
     )
 
-    raw_token = None
-    if authorization and authorization.startswith("Bearer "):
-        raw_token = authorization[len("Bearer "):]
-    mfa_token = x_mfa_token or ("000000" if identity.mfa_verified else None)
+    auth_context = _command_runtime_auth_context(
+        command_id=command_id,
+        authorization=authorization,
+        mfa_token=x_mfa_token,
+        identity=identity,
+    )
 
     audit_record = {
         "operator_id": identity.operator_id,
@@ -17577,11 +18015,12 @@ def _submit_final_command_admission(
         ],
         "timestamp": submitted_at,
         "staleness_warning": staleness_warning.model_dump() if staleness_warning else None,
-        "auth_token": raw_token,
-        "mfa_token": mfa_token,
+        "auth": auth_context,
         "foundation": _serialize_foundation_context(foundation_context),
         "receipt_dual_write": receipt_dual_write,
     }
+    if precondition_evidence:
+        audit_record["precondition_evidence"] = precondition_evidence
     if audit_extra:
         audit_record.update({key: value for key, value in audit_extra.items() if value is not None})
 
@@ -33511,14 +33950,16 @@ async def remediate_v5_intervention(
         idempotency_key=resolved_key,
     )
 
+    precondition_evidence: Dict[str, str] = {}
     try:
         _reject_body_idempotency_key(payload)
         _validate_audit_context(cmd)
         _validate_remediate_sentinel_intervention(merged_params, identity)
-        _require_final_command_preconditions(
+        precondition_evidence = _require_final_command_preconditions(
             cmd=cmd,
             payload={**payload, "intervention_id": intervention_id},
             confirm_token=x_confirm_token,
+            identity=identity,
             correlation_id=foundation_context["trace_context"].correlation_id,
         )
     except HTTPException as exc:
@@ -33527,7 +33968,8 @@ async def remediate_v5_intervention(
     stored_params = _stored_command_params(cmd, identity)
 
     duplicate = command_store.get_command_by_idempotency_key(
-        foundation_context["idempotency_record"].idempotency_key
+        foundation_context["idempotency_record"].idempotency_key,
+        operator_id=identity.operator_id,
     )
     if duplicate:
         duplicate_record = (duplicate.get("foundation") or {}).get("idempotency_record") or {}
@@ -33567,10 +34009,12 @@ async def remediate_v5_intervention(
     command_id = command_envelope.command_id
     submitted_at = utc_now()
 
-    raw_token = None
-    if authorization and authorization.startswith("Bearer "):
-        raw_token = authorization[len("Bearer "):]
-    mfa_token_val = x_mfa_token or ("000000" if identity.mfa_verified else None)
+    auth_context = _command_runtime_auth_context(
+        command_id=command_id,
+        authorization=authorization,
+        mfa_token=x_mfa_token,
+        identity=identity,
+    )
 
     audit_record = {
         "operator_id": identity.operator_id,
@@ -33583,10 +34027,11 @@ async def remediate_v5_intervention(
         ],
         "timestamp": submitted_at,
         "staleness_warning": staleness_warning.model_dump() if staleness_warning else None,
-        "auth_token": raw_token,
-        "mfa_token": mfa_token_val,
+        "auth": auth_context,
         "foundation": _serialize_foundation_context(foundation_context),
     }
+    if precondition_evidence:
+        audit_record["precondition_evidence"] = precondition_evidence
 
     command_store.submit_command(
         command_id=command_id,
@@ -33652,9 +34097,10 @@ async def _process_command(command_id: str):
     params = record.get("params", {})
     audit = record.get("audit", {})
 
-    # Extract auth tokens from submission audit context for downstream calls
-    auth_token = audit.get("auth_token")
-    mfa_token = audit.get("mfa_token")
+    # Runtime-only auth context avoids persisting bearer tokens in command audit records.
+    runtime_auth = _COMMAND_AUTH_CONTEXT.pop(command_id, {})
+    auth_token = runtime_auth.get("auth_token") or audit.get("auth_token")
+    mfa_token = runtime_auth.get("mfa_token") or audit.get("mfa_token")
 
     # Mark processing
     await asyncio.sleep(0.05)  # brief yield to event loop
@@ -38491,6 +38937,10 @@ def _sem_command_payload_from_record(
     }
 
 
+def _scoped_idempotency_cache_key(idempotency_key: str, operator_id: str) -> str:
+    return f"{operator_id}\x00{idempotency_key}"
+
+
 def _sem_command_response(
     *,
     command_type: CommandType,
@@ -38517,7 +38967,8 @@ def _sem_command_response(
     if not server_generated_target:
         hash_body["target_id"] = target_id
     request_hash = _stable_json_hash(hash_body)
-    existing = _FINAL_CONTRACT_IDEMPOTENCY.get(clean_key)
+    cache_key = _scoped_idempotency_cache_key(clean_key, identity.operator_id)
+    existing = _FINAL_CONTRACT_IDEMPOTENCY.get(cache_key)
     if existing:
         if existing.get("request_hash") != request_hash:
             raise _bff_error(
@@ -38530,7 +38981,10 @@ def _sem_command_response(
         replay = dict(existing["result"])
         replay.setdefault("meta", {}).setdefault("idempotency", {})["replayed"] = True
         return JSONResponse(status_code=status_code, content=replay)
-    existing_record = command_store.get_command_by_idempotency_key(clean_key)
+    existing_record = command_store.get_command_by_idempotency_key(
+        clean_key,
+        operator_id=identity.operator_id,
+    )
     if existing_record:
         stored_hash = (existing_record.get("foundation") or {}).get("idempotency_record", {}).get("request_hash")
         if stored_hash and stored_hash != request_hash:
@@ -38589,7 +39043,7 @@ def _sem_command_response(
         foundation_ctx,
     )
     result = _sem_command_payload_from_record(record, idempotency_key=clean_key, replayed=False)
-    _FINAL_CONTRACT_IDEMPOTENCY[clean_key] = {"request_hash": request_hash, "result": result}
+    _FINAL_CONTRACT_IDEMPOTENCY[cache_key] = {"request_hash": request_hash, "result": result}
     return JSONResponse(status_code=status_code, content=result)
 
 
@@ -38940,7 +39394,10 @@ def _record_command_confirmation_redeem(
     idempotency_key: str,
     request_hash: str,
 ) -> None:
-    existing_record = command_store.get_command_by_idempotency_key(idempotency_key)
+    existing_record = command_store.get_command_by_idempotency_key(
+        idempotency_key,
+        operator_id=identity.operator_id,
+    )
     if existing_record:
         stored_hash = (
             (existing_record.get("foundation") or {})
@@ -39028,7 +39485,10 @@ async def sem_create_confirm_token_command(
     final_token_id = token_id
     if server_generated and content.get("meta", {}).get("idempotency", {}).get("replayed"):
         clean_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        stored = command_store.get_command_by_idempotency_key(clean_key)
+        stored = command_store.get_command_by_idempotency_key(
+            clean_key,
+            operator_id=identity.operator_id,
+        )
         if stored:
             final_token_id = str(stored.get("target", {}).get("id") or token_id)
     content["data"]["tokenId"] = final_token_id
@@ -41255,7 +41715,8 @@ async def bff_approvals_decide(
         "target_id": clean_id,
         "payload": {**payload, "decision_id": clean_id},
     })
-    _existing_idem = _FINAL_CONTRACT_IDEMPOTENCY.get(_idem_key)
+    _idem_cache_key = _scoped_idempotency_cache_key(_idem_key, identity.operator_id)
+    _existing_idem = _FINAL_CONTRACT_IDEMPOTENCY.get(_idem_cache_key)
     _is_approval_replay = _existing_idem is not None and _existing_idem.get("request_hash") == _idem_hash
     # Mirror _sem_command_response: a reused key with a different hash is an idempotency conflict
     # that will result in a 409 — skip SSE publish to prevent double-publish on the conflict path.
@@ -41264,7 +41725,10 @@ async def bff_approvals_decide(
         # Extend pre-check to durable command_store to match _sem_command_response replay semantics:
         # if _FINAL_CONTRACT_IDEMPOTENCY was evicted but command_store still holds the record,
         # _sem_command_response will replay — skip SSE publish here too to prevent double-publish.
-        _durable_record = command_store.get_command_by_idempotency_key(_idem_key)
+        _durable_record = command_store.get_command_by_idempotency_key(
+            _idem_key,
+            operator_id=identity.operator_id,
+        )
         if _durable_record:
             _stored_hash = (_durable_record.get("foundation") or {}).get("idempotency_record", {}).get("request_hash")
             if _stored_hash == _idem_hash:
