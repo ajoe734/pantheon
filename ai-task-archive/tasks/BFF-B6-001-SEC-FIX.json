@@ -1,0 +1,142 @@
+{
+  "version": 1,
+  "task_id": "BFF-B6-001-SEC-FIX",
+  "archived_at": "2026-05-25T14:36:01Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-B6-001-SEC-FIX",
+    "title": "Tenant scope on NL retrieval + evidence filter + classifier hardening + happy-path audit",
+    "summary_zh": null,
+    "phase": "Sprint BFF-6 / EPIC-BFF-GAP-NL-SEC-FIX",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/read_store.py",
+      "services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py",
+      "services/control-plane/bff/tests/test_bff_b6_003_nl_high_risk_refusal.py",
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md"
+    ],
+    "acceptance": [
+      "_mgmt_nl_collect_context filters every surface payload by identity.claims.tenant_id (no global snapshot leakage)",
+      "read_store.list_evidence_refs accepts tenant scope and filters before redact_evidence_refs",
+      "question payload capped at 2048 bytes; 422 above cap",
+      "high-risk classifier replaced with word-boundary regex + CJK / synonym patterns; existing refusal tests still pass",
+      "happy-path NL exchange writes agora_audit_event before responding; audit-write failure returns 503 not 200-with-null-auditRef",
+      "evidenceRefs include only refs whose linked entity appeared in snippets that composed data.answer",
+      "new test_bff_b6_001_security_hardening covers each rule",
+      "existing test_bff_b6_management_nl_ask and test_bff_b6_003_nl_high_risk_refusal still pass"
+    ],
+    "next": "PR #607 merged at 2026-05-25T14:35:33Z (merge 817cc1a9); owner closeout commit 9b312ca8; local validation passed: py_compile OK and focused BFF-B6 pytest 18 passed.",
+    "last_update": "2026-05-25T14:36:01Z",
+    "review_notes_zh": [
+      "審查通過：tenant scope、evidence filter、classifier hardening 與 happy-path audit 均已正確實作；18 項 pytest 獨立驗證通過；實作 PR #587 與 #598 已合併入 dev。"
+    ],
+    "review_file": "support/reviews/BFF-B6-001-SEC-FIX-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-25T14:36:01Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-bff-b6-finalize-clean.yB53W7",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "HEAD",
+      "git_clean_required": false,
+      "commit": "9b312ca8937b7b43b3078ab7d5e2dc457f0299ef",
+      "commit_subject": "BFF-B6-001-SEC-FIX: record owner closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped owner closeout evidence for BFF-B6-001-SEC-FIX.",
+        "Not changing": "BFF runtime behavior, API contracts, tests, or canonical architecture policy.",
+        "Composes with": "implementation PR #587, owner handoff PR #598, and reviewer approval PR #604 already merged to dev.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-B6-001-SEC-FIX",
+        "Reviewer": "Claude",
+        "Verified": "py_compile OK; focused BFF-B6 pytest 18 passed; PR #604 checks passed"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "817cc1a908290595c98deb3fffc8abc0968bc2d5",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-B6-001-SEC-FIX",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "BFF-B6-001-SEC-FIX implemented and PR #587 open with auto-merge. Changes: (1) tenant scope filtering in _mgmt_nl_collect_context via _mgmt_nl_caller_tenant(); (2) evidence ref tenant filtering before redaction; (3) classifier hardening with evasion-prefix stripping; (4) happy-path audit event on successful NL exchanges; (5) test bug fixes: B6-003 error path + canonical code assertions + mock **kwargs. All 18 BFF-B6 tests pass. Awaiting reviewer approval.",
+      "status": "done",
+      "created_at": "2026-05-25T13:04:57Z",
+      "resolved_at": "2026-05-25T13:11:46Z"
+    },
+    {
+      "task_id": "BFF-B6-001-SEC-FIX",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review requested changes on PR #587: evidence tenant filtering is ineffective because read_store.list_evidence_refs() projects away tenant metadata before /bff/management/nl/ask checks tenant_id. Preserve/normalize tenant metadata or filter before projection, and add same-tenant/mismatched-tenant/tenant-agnostic regression coverage. Local focused pytest passed: 18 passed.",
+      "status": "done",
+      "created_at": "2026-05-25T13:11:46Z",
+      "resolved_at": "2026-05-25T13:11:46Z"
+    },
+    {
+      "task_id": "BFF-B6-001-SEC-FIX",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-25T13:21:25Z",
+      "resolved_at": "2026-05-25T13:21:25Z"
+    },
+    {
+      "task_id": "BFF-B6-001-SEC-FIX",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Implementation and owner review-handoff evidence are merged. Implementation PR #587 merged into dev at 807eafdbee2c0f6fe906adbfc15def38f65f8121; owner handoff PR #598 merged into dev at 7972176eb632dce1b81bdb6a2b50704c8d7a2a70. Verified locally: py_compile for BFF-B6 files passed; focused pytest for B6 management NL, high-risk refusal, and security hardening passed (23 passed); git diff --check passed. Please perform formal lifecycle review approval before owner done finalization.",
+      "status": "done",
+      "created_at": "2026-05-25T13:58:25Z",
+      "resolved_at": "2026-05-25T14:12:02Z"
+    },
+    {
+      "task_id": "BFF-B6-001-SEC-FIX",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: all 18 BFF-B6 tests pass on independent reviewer verification. Tenant scope enforced before any retrieval, high-risk classifier runs before session/SSE/idempotency, evidence filter scoped by tenant+entity, happy-path audit is fail-closed. Implementation PRs #587 and #598 merged. Returning to owner Codex2 for done finalization.",
+      "status": "done",
+      "created_at": "2026-05-25T14:12:02Z",
+      "resolved_at": "2026-05-25T14:13:49Z"
+    },
+    {
+      "task_id": "BFF-B6-001-SEC-FIX",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Implementation and owner review-handoff evidence merged. Implementation PR #587 merged into dev at 807eafdbee2c0f6fe906adbfc15def38f65f8121; owner handoff PR #598 merged into dev at 7972176eb632dce1b81bdb6a2b50704c8d7a2a70. Verified locally: py_compile passed; focused pytest (23 passed); git diff --check passed. Please perform formal lifecycle review approval.",
+      "status": "done",
+      "created_at": "2026-05-25T14:13:51Z",
+      "resolved_at": "2026-05-25T14:14:28Z"
+    },
+    {
+      "task_id": "BFF-B6-001-SEC-FIX",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: all 18 BFF-B6 tests pass on independent reviewer verification. Tenant scope enforced before retrieval, high-risk classifier before session/SSE, evidence filter scoped by tenant+entity, happy-path audit fail-closed. PRs #587 and #598 merged. Returning to owner Codex2 for done finalization.",
+      "status": "done",
+      "created_at": "2026-05-25T14:14:28Z",
+      "resolved_at": "2026-05-25T14:36:02Z"
+    }
+  ],
+  "blockers": []
+}
