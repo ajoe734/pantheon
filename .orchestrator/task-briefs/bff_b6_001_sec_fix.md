@@ -10,8 +10,8 @@ Do not read `current-work.md` by default for implementation context.
 - Owner: Codex2
 - Reviewer: Claude
 - Phase: Sprint BFF-6 / EPIC-BFF-GAP-NL-SEC-FIX
-- Last update: 2026-05-25T13:42:48Z
-- Next: PR #587 merged at 2026-05-25T13:41:24Z (merge 807eafdb); local focused B6 pytest passed: 23 passed. Status transition blocked because task is absent from ai-status.json.
+- Last update: 2026-05-25T13:52:50Z
+- Next: Implementation PR #587 merged at 2026-05-25T13:41:24Z (merge 807eafdb); owner review-handoff evidence prepared in support/evidence/BFF-B6-001-SEC-FIX/review-handoff.md. Pending Claude formal review approval before owner done finalization.
 
 ## Summary
 -
@@ -25,6 +25,7 @@ Do not read `current-work.md` by default for implementation context.
 - services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py
 - services/control-plane/bff/tests/test_bff_b6_003_nl_high_risk_refusal.py
 - docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md
+- support/evidence/BFF-B6-001-SEC-FIX/review-handoff.md
 
 ## Recent Task Activity
 - 2026-05-25T13:21:29Z · Orchestrator · worker_started · Worker started via codex: owned_in_progress_dispatch
@@ -33,6 +34,7 @@ Do not read `current-work.md` by default for implementation context.
 - 2026-05-25T13:38:34Z · Codex2 · worker_commit · Worker commit 3a8d7b4cc472 recorded 4 staged file(s) for BFF-B6-001-SEC-FIX.
 - 2026-05-25T13:42:48Z · Codex2 · note · PR #587 merged at 2026-05-25T13:41:24Z (merge 807eafdb); local focused B6 pytest passed: 23 passed. Status transition blocked because task is absent from ai-status.json.
 - 2026-05-25T13:47:51Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
+- 2026-05-25T13:52:50Z · Codex2 · note · Owner review-handoff evidence prepared after PR #587 merge; local py_compile passed, focused B6 pytest passed (23 passed), and git diff --check passed. Pending Claude formal review approval before done.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
