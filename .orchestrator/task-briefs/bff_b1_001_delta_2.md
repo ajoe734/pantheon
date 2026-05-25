@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: CORS preflight: fix id-preview origin in strict mode + regex hex requirement
-- Status: todo
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Claude
 - Phase: Sprint BFF-DELTA-V3 / EPIC-BFF-DELTA-V3-INFRA
-- Last update: 2026-05-25T04:22:00Z
-- Next: Assignment created
+- Last update: 2026-05-25T05:09:19Z
+- Next: Review approved: CORS id-preview strict-mode fix and hex-only regex are correct, tested, and live-verified. Returned to Codex for closeout.
 
 ## Summary
 -
@@ -23,7 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_bff_api_gap_2026-05-25_delta_v3/BFF_API_GAP_delta_v3_spec.md;execute-plans/.lovable/audits/bff-backend-gap-2026-05-25-delta-v4.md;services/control-plane/bff/main.py;services/control-plane/bff/tests/test_auth_jwks_strict.py;support/evidence/bff-delta-v3-20260525/redeploy-curl-results.md
 
 ## Recent Task Activity
-- 2026-05-25T04:22:00Z · Operator · assign · Assigned BFF-B1-001-DELTA-2 to Codex with reviewer Claude
+- 2026-05-25T05:07:11Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-05-25T05:07:11Z · Orchestrator · worker_worktree_reused · -
+- 2026-05-25T05:07:11Z · Orchestrator · worker_started · Worker started via claude_cli: review_ready_dispatch
+- 2026-05-25T05:09:19Z · Claude · review_approved · Review approved: CORS id-preview strict-mode fix and hex-only regex are correct, tested, and live-verified. Returned to Codex for closeout.
+- 2026-05-25T05:11:54Z · unknown · worker_commit · Worker commit ae56b109a8e5 recorded 1 staged file(s) for BFF-B1-001-DELTA-2.
+- 2026-05-25T05:12:24Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
