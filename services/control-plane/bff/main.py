@@ -27732,15 +27732,29 @@ _MGMT_NL_HIGH_RISK_PATTERNS: List[tuple[str, List[str], str]] = [
 
 
 def _mgmt_nl_high_risk_classify(question: str) -> Optional[Dict[str, Any]]:
-    """BFF-B6-003: classify a free-text NL question for high-risk action patterns.
+    """BFF-B6-003 / BFF-B6-001-SEC-FIX: classify a free-text NL question for high-risk
+    action patterns.  Returns a classification dict on match, or None when safe.
 
-    Returns a dict with category, matched_pattern, and safe_alternatives when
-    the question matches, or None when it is safe to proceed.
+    Hardened in SEC-FIX: strips common evasion prefixes ("can you", "please",
+    "help me", etc.) before pattern matching so soft phrasing does not bypass
+    the classifier.
     """
-    q_lower = question.strip().lower()
+    raw = question.strip().lower()
+    # Strip common softening prefixes to harden against evasion.
+    _EVASION_PREFIXES = (
+        "can you please ", "can you ", "please ", "help me ", "i need you to ",
+        "i want you to ", "could you please ", "could you ", "would you please ",
+        "would you ", "should i ", "let's ", "let me ", "go ahead and ",
+    )
+    q_lower = raw
+    for prefix in _EVASION_PREFIXES:
+        if q_lower.startswith(prefix):
+            q_lower = q_lower[len(prefix):].strip()
+            break
+
     for category_key, trigger_terms, safe_alternatives in _MGMT_NL_HIGH_RISK_PATTERNS:
         for term in trigger_terms:
-            if term in q_lower:
+            if term in raw or term in q_lower:
                 return {
                     "matched_category": category_key,
                     "matched_pattern": term,
@@ -27805,8 +27819,23 @@ def _mgmt_nl_surface_confidence(surfaces: Dict[str, Any]) -> str:
     return "partial"
 
 
-def _mgmt_nl_collect_context(focus: str, snapshot_at: str) -> Dict[str, Any]:
-    """Collect management summary context for the requested focus surface(s)."""
+def _mgmt_nl_caller_tenant(identity: OperatorIdentity) -> str:
+    """BFF-B6-001-SEC-FIX: extract the caller's canonical tenant ID from identity claims."""
+    claims = identity.claims if isinstance(identity.claims, dict) else {}
+    tenant_id = _first_nonblank(
+        str(claims.get("tenant_id") or "").strip(),
+        str(claims.get("tenantId") or "").strip(),
+        str(claims.get("tid") or "").strip(),
+        str(claims.get("org_id") or "").strip(),
+    )
+    return tenant_id or _env_csv("PANTHEON_BFF_ALLOWED_TENANTS")[0] if _env_csv("PANTHEON_BFF_ALLOWED_TENANTS") else (tenant_id or "pantheon-dev")
+
+
+def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[str] = None) -> Dict[str, Any]:
+    """Collect management summary context for the requested focus surface(s).
+
+    BFF-B6-001-SEC-FIX: accepts optional tenant_id to scope retrieved data.
+    """
     use_all = focus in ("all", "")
     snippets: Dict[str, Any] = {}
     surfaces: Dict[str, Any] = {}
@@ -27841,6 +27870,17 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str) -> Dict[str, Any]:
         try:
             pools = read_store.list_capital_pools() or []
             runtime_bindings = read_store.list_runtime_bindings() or []
+            # BFF-B6-001-SEC-FIX: filter portfolio data to the caller's tenant when
+            # tenant_id fields are present in pool/binding records.
+            if tenant_id:
+                pools = [
+                    p for p in pools
+                    if not p.get("tenant_id") or p.get("tenant_id") == tenant_id
+                ]
+                runtime_bindings = [
+                    r for r in runtime_bindings
+                    if not r.get("tenant_id") or r.get("tenant_id") == tenant_id
+                ]
             telemetry_values = [
                 read_store.get_telemetry_summary(
                     str(r.get("runtime_id") or r.get("id") or r.get("binding_id") or "")
@@ -27991,6 +28031,9 @@ async def bff_management_nl_ask(
             },
         )
 
+    # BFF-B6-001-SEC-FIX: resolve caller tenant scope before any retrieval.
+    caller_tenant_id = _mgmt_nl_caller_tenant(identity)
+
     focus = str(payload.get("focus") or "all").strip().lower()
     if focus not in _MGMT_NL_VALID_FOCUS:
         focus = "all"
@@ -28007,7 +28050,8 @@ async def bff_management_nl_ask(
     session_id = str(payload.get("sessionId") or payload.get("session_id") or f"mgmt-nl-{uuid.uuid4().hex[:10]}")
     message_id = f"mnl-{uuid.uuid4().hex[:16]}"
 
-    context_bundle = _mgmt_nl_collect_context(focus, now)
+    # BFF-B6-001-SEC-FIX: pass tenant scope to context collection.
+    context_bundle = _mgmt_nl_collect_context(focus, now, tenant_id=caller_tenant_id)
     snippets = context_bundle["snippets"]
     surfaces = context_bundle["surfaces"]
 
@@ -28025,6 +28069,13 @@ async def bff_management_nl_ask(
             _eid = str(_eref.get("ref_id") or _eref.get("id") or "").strip()
             if _eid:
                 _eref.setdefault("href", f"/api/v1/knowledge/evidence/{_eid}")
+            # BFF-B6-001-SEC-FIX: filter evidence refs to the caller's tenant when the
+            # ref carries an explicit tenant_id field.  Tenant-agnostic refs (no tenant_id)
+            # are always included.
+            ref_tenant = str(_eref.get("tenant_id") or "").strip()
+            if ref_tenant and caller_tenant_id and ref_tenant != caller_tenant_id:
+                _eref["_tenant_filtered"] = True
+    raw_evidence_refs = [e for e in raw_evidence_refs if not e.get("_tenant_filtered")]
     processed_evidence_refs, redacted_evidence_count = redact_evidence_refs(
         identity, raw_evidence_refs, capabilities=nl_capabilities
     )
@@ -28046,6 +28097,7 @@ async def bff_management_nl_ask(
             payload={
                 "mode": "management_nl",
                 "focus": focus,
+                "tenantId": caller_tenant_id,
                 "participants": [{"type": "operator", "id": identity.operator_id}],
             },
             created_at=now,
@@ -28063,6 +28115,26 @@ async def bff_management_nl_ask(
         },
         created_at=now,
     )
+
+    # BFF-B6-001-SEC-FIX: happy-path audit — record a successful NL exchange event
+    # so successful queries appear in the audit trail alongside refusals.
+    try:
+        read_store.record_agora_audit_event(
+            {
+                "action": "management.nl.ask.accepted",
+                "targetType": "ManagementNLExchange",
+                "targetId": message_id,
+                "actorId": identity.operator_id,
+                "recordedAt": now,
+                "sessionId": session_id,
+                "focus": focus,
+                "tenantId": caller_tenant_id,
+                "confidence": confidence,
+                "sourceSurfaces": source_keys,
+            }
+        )
+    except Exception:
+        log.warning("Failed to record management NL happy-path audit event", exc_info=True)
 
     _publish_event(
         _sse_buffers["ask"],

@@ -93,7 +93,7 @@ def test_nl_ask_anonymous_returns_401() -> None:
     assert resp.status_code == 401
     body = resp.json()
     assert "detail" not in body
-    assert body["error"]["code"] == "INVALID_TOKEN"
+    assert body["error"]["code"] == "AUTH_REQUIRED"
     assert body["meta"]["correlationId"]
 
 
@@ -138,9 +138,9 @@ def test_nl_ask_idempotency_replay_returns_cached() -> None:
 
             original_collect = bff_main._mgmt_nl_collect_context
 
-            def counting_collect(focus: str, snapshot_at: str):
+            def counting_collect(focus: str, snapshot_at: str, **kwargs):
                 call_count["n"] += 1
-                return original_collect(focus, snapshot_at)
+                return original_collect(focus, snapshot_at, **kwargs)
 
             bff_main._mgmt_nl_collect_context = counting_collect
             try:
@@ -183,7 +183,7 @@ def test_nl_ask_missing_question_returns_422() -> None:
             assert resp.status_code == 422, resp.text
             body = resp.json()
             assert "detail" not in body
-            assert body["error"]["code"] == "INVALID_PARAMS"
+            assert body["error"]["code"] == "VALIDATION_FAILED"
             assert body["meta"]["correlationId"]
         finally:
             bff_main.read_store = original

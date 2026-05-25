@@ -42,7 +42,7 @@ def _fresh_client(td: str) -> TestClient:
 
 def _error_payload(response) -> dict:
     body = response.json()
-    return body["detail"]["error"]
+    return body["error"]
 
 
 @pytest.mark.parametrize(
@@ -93,7 +93,7 @@ def test_high_risk_questions_return_typed_403(
             assert resp.status_code == 403, resp.text
             error = _error_payload(resp)
             details = error["details"]
-            assert error["code"] == "HIGH_RISK_QUERY_REFUSED"
+            assert error["code"] == "OPERATION_NOT_ALLOWED"
             assert error["message"] == (
                 "NL query matches high-risk action pattern and was refused by policy"
             )
@@ -142,7 +142,7 @@ def test_refusal_does_not_create_session_idempotency_record_or_sse(monkeypatch) 
             store = bff_main.read_store
             session_id = "bff-b6-003-refused-session"
 
-            def fail_if_collected(focus: str, snapshot_at: str):
+            def fail_if_collected(focus: str, snapshot_at: str, **kwargs):
                 raise AssertionError("high-risk refusal must run before surface collection")
 
             monkeypatch.setattr(bff_main, "_mgmt_nl_collect_context", fail_if_collected)
