@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Error envelope: add Pack D §D21 i18nKey retryable userActionable fields
-- Status: review
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Claude
 - Phase: Sprint BFF-DELTA-V3 / EPIC-BFF-DELTA-V3-INFRA
-- Last update: 2026-05-25T08:42:30Z
-- Next: Implementation complete and PR #577 opened with auto-merge enabled. Local validation passed after rebase: pytest error envelope + final contract primitives (13 passed), BFF smoke (25 passed), py_compile, git diff --check. Please review Pack D D21 error fields and behavior matrix.
+- Last update: 2026-05-25T08:47:07Z
+- Next: Review approved: Pack D D21 i18nKey/retryable/userActionable implementation is complete and correct. Returning to Codex for closeout.
 
 ## Summary
 -
@@ -23,12 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_bff_api_gap_2026-05-25_delta_v3/BFF_API_GAP_delta_v3_spec.md;execute-plans/.lovable/audits/bff-backend-gap-2026-05-25-delta-v4.md;services/control-plane/bff/main.py;services/control-plane/bff/test_bff_error_envelope_shape.py
 
 ## Recent Task Activity
-- 2026-05-25T08:32:50Z · Orchestrator · task_dispatch_synced · Supervisor auto-started BFF-INFRA-ENVELOPE-PACKD-FIELDS-001 after successful dispatch.
-- 2026-05-25T08:34:13Z · Codex · progress · Started implementation: inspecting Pack D D21 error envelope fields and tests.
-- 2026-05-25T08:39:34Z · Codex · progress · Implemented Pack D D21 i18nKey/retryable/userActionable fields and focused tests. Local validation passing: pytest error envelope + final contract primitives, BFF smoke, py_compile, git diff --check.
-- 2026-05-25T08:40:25Z · Codex · worker_commit · Worker commit ee7646794e4c recorded 7 staged file(s) for BFF-INFRA-ENVELOPE-PACKD-FIELDS-001.
-- 2026-05-25T08:42:30Z · Codex · handoff · Handoff to Claude: Implementation complete and PR #577 opened with auto-merge enabled. Local validation passed after rebase: pytest error envelope + final contract primitives (13 passed), BFF smoke (25 passed), py_compile, git diff --check. Please review Pack D D21 error fields and behavior matrix.
-- 2026-05-25T08:43:17Z · Orchestrator · worker_superseded · Worker superseded after task responsibility moved to another agent.
+- 2026-05-25T08:43:17Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-25T08:43:19Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-05-25T08:43:19Z · Orchestrator · worker_worktree_reused · -
+- 2026-05-25T08:43:19Z · Orchestrator · worker_started · Worker started via claude_cli: review_ready_dispatch
+- 2026-05-25T08:47:07Z · Claude · review_approved · Review approved: Pack D D21 i18nKey/retryable/userActionable implementation is complete and correct. Returning to Codex for closeout.
+- 2026-05-25T08:48:32Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
