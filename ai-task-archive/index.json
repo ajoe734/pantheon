@@ -1,12 +1,14 @@
 {
   "version": 1,
-  "updated_at": "2026-05-25T05:20:41Z",
+  "updated_at": "2026-05-25T09:13:37Z",
   "counts": {
-    "total": 1321,
-    "completed": 1298,
+    "total": 1323,
+    "completed": 1300,
     "superseded": 23
   },
   "recent_terminal_ids": [
+    "BFF-INFRA-PATH-DEDUPE-001",
+    "BFF-INFRA-ENVELOPE-PACKD-FIELDS-001",
     "BFF-B1-001-DELTA-2",
     "OPS-DOC-BFF-NAMING-CANONICAL-001",
     "OPS-BFF-LUPIN-DEV-REDEPLOY-20260525",
@@ -24,8 +26,6 @@
     "BFF-B2-003",
     "BFF-PM12-007",
     "BFF-B3-005",
-    "BFF-PM12-005",
-    "BFF-B1-012",
-    "BFF-PM12-006"
+    "BFF-PM12-005"
   ]
 }
