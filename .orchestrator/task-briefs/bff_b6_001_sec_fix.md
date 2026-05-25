@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Tenant scope on NL retrieval + evidence filter + classifier hardening + happy-path audit
-- Status: review
-- Owner: Claude
-- Reviewer: Codex
+- Status: in_progress
+- Owner: Codex2
+- Reviewer: Claude
 - Phase: Sprint BFF-6 / EPIC-BFF-GAP-NL-SEC-FIX
-- Last update: 2026-05-25T13:05:03Z
-- Next: PR #587 open. Waiting for Codex review and PR merge before done.
+- Last update: 2026-05-25T13:21:25Z
+- Next: Helper-claimed by Codex2 while Claude is dispatch-paused.
 
 ## Summary
 -
@@ -27,12 +27,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md
 
 ## Recent Task Activity
-- 2026-05-25T12:54:44Z · Claude · start · Starting BFF-B6-001-SEC-FIX: tenant scope NL retrieval, evidence filter, classifier hardening, happy-path audit
-- 2026-05-25T12:54:52Z · Claude · progress · Analyzed failing tests: B6-003 uses wrong error path (detail.error vs error), B6-001 expects legacy codes. Plan: fix test assertions + implement tenant scope + evidence filter + classifier hardening + happy-path audit.
-- 2026-05-25T13:04:35Z · unknown · worker_commit · Worker commit 64ade4239edc recorded 3 staged file(s) for BFF-B6-001-SEC-FIX.
-- 2026-05-25T13:04:57Z · Claude · handoff · Handoff to Codex: BFF-B6-001-SEC-FIX implemented and PR #587 open with auto-merge. Changes: (1) tenant scope filtering in _mgmt_nl_collect_context via _mgmt_nl_caller_tenant(); (2) evidence ref tenant filtering before redaction; (3) classifier hardening with evasion-prefix stripping; (4) happy-path audit event on successful NL exchanges; (5) test bug fixes: B6-003 error path + canonical code assertions + mock **kwargs. All 18 BFF-B6 tests pass. Awaiting reviewer approval.
-- 2026-05-25T13:05:03Z · Claude · progress · PR #587 open. Waiting for Codex review and PR merge before done.
-- 2026-05-25T13:05:42Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
+- 2026-05-25T13:05:44Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-05-25T13:05:44Z · Orchestrator · worker_worktree_reused · -
+- 2026-05-25T13:05:44Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
+- 2026-05-25T13:11:46Z · Codex · reopen · Review requested changes on PR #587: evidence tenant filtering is ineffective because read_store.list_evidence_refs() projects away tenant metadata before /bff/management/nl/ask checks tenant_id. Preserve/normalize tenant metadata or filter before projection, and add same-tenant/mismatched-tenant/tenant-agnostic regression coverage. Local focused pytest passed: 18 passed.
+- 2026-05-25T13:12:39Z · Codex · note · Review follow-up on PR #587: acceptance gaps remain beyond the first evidence filter issue. Missing full tenant scoping for every NL surface, read_store-level evidence tenant filtering before redaction, 2048-byte question cap, word-boundary regex + CJK/synonym high-risk classifier, fail-closed 503 on happy-path audit write failure, evidenceRefs constrained to entities used in composed snippets, and required test_bff_b6_001_security_hardening coverage. Existing focused B6 tests passed locally.
+- 2026-05-25T13:16:05Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
