@@ -15,6 +15,7 @@ DEV_VM="${DEV_VM:-pantheon-dev-vm1}"
 DEV_ZONE="${DEV_ZONE:-asia-east1-b}"
 DEV_REMOTE_DIR="${DEV_REMOTE_DIR:-/home/edna/code/pantheon}"
 DEV_BFF_CORS_ORIGINS="${DEV_BFF_CORS_ORIGINS:-https://pantheon-ai-system-front-dev.lovable.app,https://pantheon-dev.lovable.app}"
+DEV_BFF_REQUIRED_CORS_ORIGINS="${DEV_BFF_REQUIRED_CORS_ORIGINS:-https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com}"
 DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-true}"
 
 STAGING_CONTROL_VM="${STAGING_CONTROL_VM:-pantheon-taiwan}"
@@ -78,6 +79,29 @@ require_cmd() {
 shell_quote() {
   printf "%q" "$1"
 }
+
+append_csv_unique() {
+  local merged="$1"
+  local extras="$2"
+  local item
+
+  IFS=',' read -r -a extra_items <<< "$extras"
+  for item in "${extra_items[@]}"; do
+    item="${item//[[:space:]]/}"
+    [[ -z "$item" ]] && continue
+    if [[ ",${merged}," != *",${item},"* ]]; then
+      if [[ -n "$merged" ]]; then
+        merged+=",${item}"
+      else
+        merged="$item"
+      fi
+    fi
+  done
+
+  printf "%s" "$merged"
+}
+
+DEV_BFF_CORS_ORIGINS="$(append_csv_unique "$DEV_BFF_CORS_ORIGINS" "$DEV_BFF_REQUIRED_CORS_ORIGINS")"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
