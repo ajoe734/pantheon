@@ -117,6 +117,40 @@ Actual authenticated `GET /bff/me` response results:
 Note: Starlette's preflight response does not emit
 `Access-Control-Expose-Headers`; the BFF emits it on actual CORS responses.
 
+## BFF-B1-001-DELTA-2 Pre-Merge Regression
+
+Recorded: 2026-05-25T04:36Z
+
+This follow-up covers the Lovable `id-preview` CORS regression found after the
+redeploy above.
+
+Code-level CORS changes:
+
+- `https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app`
+  remains in the default exact allowlist and is no longer removed by the
+  production-strict dev-origin filter.
+- The dynamic Lovable preview regex accepts both
+  `id-preview-<hex>--<uuid>.lovable.app` and
+  `id-preview--<uuid>.lovable.app`.
+- Non-hex deploy prefixes remain rejected.
+
+Local validation:
+
+```bash
+python3 -m pytest services/control-plane/bff/tests/test_auth_jwks_strict.py -q
+```
+
+Result: 20 passed.
+
+Post-merge live verification required before `done`:
+
+| Origin | Required result |
+|---|---|
+| `https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app` | OPTIONS `/bff/me` returns 204 and echoed ACAO |
+| `https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com` | OPTIONS `/bff/me` returns 204 and echoed ACAO |
+| `https://pantheon-dev.lovable.app` | OPTIONS `/bff/me` returns 204 and echoed ACAO |
+| `https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com` | OPTIONS `/bff/me` returns 204 and echoed ACAO |
+
 ## Audit Path Curl Results
 
 Base command shape:
