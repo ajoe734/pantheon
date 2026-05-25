@@ -1716,6 +1716,72 @@ _HUMAN_GATE_DECISIONS_BY_COMMAND: Dict[CommandType, str] = {
 _HUMAN_GATE_REQUIRED = {"human_gate_item_id", "decision"}
 _VALID_HUMAN_GATE_DECISIONS = set(_HUMAN_GATE_DECISIONS_BY_COMMAND.values())
 _HUMAN_GATE_APPROVER_DECISIONS = {"approve", "reject", "revoke", "extend_ttl"}
+_HUMAN_GATE_SELF_APPROVAL_DECISIONS = {"approve", "reject", "revoke"}
+_HUMAN_GATE_HIGH_RISK_LEVELS = {"high", "critical"}
+_HUMAN_GATE_DEFAULT_MAX_TTL_SECONDS = 604800
+_HUMAN_GATE_REQUESTER_FIELDS = (
+    "requester_id",
+    "requesterId",
+    "requested_by",
+    "requestedBy",
+    "submitted_by",
+    "submittedBy",
+    "created_by",
+    "createdBy",
+    "created_by_id",
+    "createdById",
+    "actor_id",
+    "actorId",
+)
+_HUMAN_GATE_SOURCE_ID_FIELDS = (
+    "source_record_id",
+    "sourceRecordId",
+    "approval_decision_id",
+    "approvalDecisionId",
+    "intervention_id",
+    "interventionId",
+)
+_HUMAN_GATE_RISK_FIELDS = (
+    "risk_level",
+    "riskLevel",
+    "downstream_risk_level",
+    "downstreamRiskLevel",
+    "downstream_action_risk_level",
+    "downstreamActionRiskLevel",
+    "priority",
+    "severity",
+)
+_HUMAN_GATE_DOWNSTREAM_EXECUTED_STATES = {
+    "applied",
+    "complete",
+    "completed",
+    "committed",
+    "executed",
+    "succeeded",
+    "success",
+}
+_HUMAN_GATE_DOWNSTREAM_EXECUTED_FIELDS = (
+    "downstream_effect_status",
+    "downstreamEffectStatus",
+    "downstream_status",
+    "downstreamStatus",
+    "execution_status",
+    "executionStatus",
+    "effect_status",
+    "effectStatus",
+    "result_status",
+    "resultStatus",
+)
+_HUMAN_GATE_DOWNSTREAM_EXECUTED_AT_FIELDS = (
+    "downstream_executed_at",
+    "downstreamExecutedAt",
+    "executed_at",
+    "executedAt",
+    "applied_at",
+    "appliedAt",
+    "committed_at",
+    "committedAt",
+)
 
 _EXECUTE_EVO_REQUIRED = {"evolution_decision_id", "action_type"}
 _VALID_EVO_ACTION_TYPES = {"freeze", "retrain", "revalidate", "mutate", "retire"}
@@ -2541,6 +2607,65 @@ def _final_precondition_error(
     )
 
 
+def _require_two_man_signature_evidence(
+    *,
+    cmd: OperatorCommand,
+    signature_id: Optional[str],
+    correlation_id: Optional[str],
+    missing_suggestion: str = "Attach a second authorized operator signature before retrying",
+) -> str:
+    if not signature_id:
+        raise _final_precondition_error(
+            cmd=cmd,
+            status_code=409,
+            code=ErrorCode.TWO_MAN_SIGNATURE_REQUIRED,
+            message="Two-man authorization is required before this action can be accepted",
+            reason="TWO_MAN_SIGNATURE_MISSING",
+            kind="two_man",
+            correlation_id=correlation_id,
+            suggestion=missing_suggestion,
+        )
+    signature_record = _two_man_signature_record(signature_id)
+    if signature_record is None:
+        raise _final_precondition_error(
+            cmd=cmd,
+            status_code=409,
+            code=ErrorCode.TWO_MAN_SIGNATURE_REQUIRED,
+            message="Two-man signature does not exist",
+            reason="TWO_MAN_SIGNATURE_NOT_FOUND",
+            kind="two_man",
+            correlation_id=correlation_id,
+            suggestion="Attach a two-man signature record created for this command and target",
+            details_extra={"twoManSignatureId": signature_id},
+        )
+    signers = _two_man_signers(signature_record)
+    if len(signers) < 2:
+        raise _final_precondition_error(
+            cmd=cmd,
+            status_code=409,
+            code=ErrorCode.TWO_MAN_SIGNATURE_REQUIRED,
+            message="Two-man signature must contain two distinct operators",
+            reason="TWO_MAN_SIGNATURE_SIGNER_MISMATCH",
+            kind="two_man",
+            correlation_id=correlation_id,
+            suggestion="Collect a signature record with two distinct operator ids",
+            details_extra={"twoManSignatureId": signature_id},
+        )
+    if not _record_bound_to_command_and_target(signature_record, cmd):
+        raise _final_precondition_error(
+            cmd=cmd,
+            status_code=409,
+            code=ErrorCode.TWO_MAN_SIGNATURE_REQUIRED,
+            message="Two-man signature is not bound to this command target",
+            reason="TWO_MAN_SIGNATURE_BINDING_MISMATCH",
+            kind="two_man",
+            correlation_id=correlation_id,
+            suggestion="Attach a two-man signature for the exact command and target being submitted",
+            details_extra={"twoManSignatureId": signature_id},
+        )
+    return signature_id
+
+
 def _require_final_command_preconditions(
     *,
     cmd: OperatorCommand,
@@ -2668,58 +2793,24 @@ def _require_final_command_preconditions(
             )
         evidence["approval_decision_id"] = approval_decision_id
 
+    if cmd.command in _HUMAN_GATE_DECISIONS_BY_COMMAND:
+        evidence.update(
+            _require_human_gate_security_preconditions(
+                cmd=cmd,
+                payload=payload,
+                identity=identity,
+                correlation_id=correlation_id,
+            )
+        )
+        return evidence
+
     if getattr(entry, "requires_two_man", False):
         signature_id = _precondition_value(payload, params, _TWO_MAN_EVIDENCE_FIELDS)
-        if not signature_id:
-            raise _final_precondition_error(
-                cmd=cmd,
-                status_code=409,
-                code=ErrorCode.TWO_MAN_SIGNATURE_REQUIRED,
-                message="Two-man authorization is required before this action can be accepted",
-                reason="TWO_MAN_SIGNATURE_MISSING",
-                kind="two_man",
-                correlation_id=correlation_id,
-                suggestion="Attach a second authorized operator signature before retrying",
-            )
-        signature_record = _two_man_signature_record(signature_id)
-        if signature_record is None:
-            raise _final_precondition_error(
-                cmd=cmd,
-                status_code=409,
-                code=ErrorCode.TWO_MAN_SIGNATURE_REQUIRED,
-                message="Two-man signature does not exist",
-                reason="TWO_MAN_SIGNATURE_NOT_FOUND",
-                kind="two_man",
-                correlation_id=correlation_id,
-                suggestion="Attach a two-man signature record created for this command and target",
-                details_extra={"twoManSignatureId": signature_id},
-            )
-        signers = _two_man_signers(signature_record)
-        if len(signers) < 2:
-            raise _final_precondition_error(
-                cmd=cmd,
-                status_code=409,
-                code=ErrorCode.TWO_MAN_SIGNATURE_REQUIRED,
-                message="Two-man signature must contain two distinct operators",
-                reason="TWO_MAN_SIGNATURE_SIGNER_MISMATCH",
-                kind="two_man",
-                correlation_id=correlation_id,
-                suggestion="Collect a signature record with two distinct operator ids",
-                details_extra={"twoManSignatureId": signature_id},
-            )
-        if not _record_bound_to_command_and_target(signature_record, cmd):
-            raise _final_precondition_error(
-                cmd=cmd,
-                status_code=409,
-                code=ErrorCode.TWO_MAN_SIGNATURE_REQUIRED,
-                message="Two-man signature is not bound to this command target",
-                reason="TWO_MAN_SIGNATURE_BINDING_MISMATCH",
-                kind="two_man",
-                correlation_id=correlation_id,
-                suggestion="Attach a two-man signature for the exact command and target being submitted",
-                details_extra={"twoManSignatureId": signature_id},
-            )
-        evidence["two_man_signature_id"] = signature_id
+        evidence["two_man_signature_id"] = _require_two_man_signature_evidence(
+            cmd=cmd,
+            signature_id=signature_id,
+            correlation_id=correlation_id,
+        )
 
     return evidence
 
@@ -2755,20 +2846,257 @@ def _human_gate_source_type(item_id: str) -> Optional[str]:
     return None
 
 
+def _human_gate_max_ttl_seconds() -> int:
+    raw = os.getenv("PANTHEON_HUMAN_GATE_MAX_TTL_SECONDS", str(_HUMAN_GATE_DEFAULT_MAX_TTL_SECONDS)).strip()
+    try:
+        configured = int(raw)
+    except (TypeError, ValueError):
+        configured = _HUMAN_GATE_DEFAULT_MAX_TTL_SECONDS
+    return max(1, configured)
+
+
+def _human_gate_clean_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _human_gate_source_id_from_params(params: Dict[str, Any], item_id: str, source_type: Optional[str]) -> Optional[str]:
+    explicit_source_id = _dict_first_present(params, _HUMAN_GATE_SOURCE_ID_FIELDS)
+    if explicit_source_id is not None:
+        return _human_gate_clean_text(explicit_source_id) or None
+    if ":" in item_id:
+        prefix, suffix = item_id.split(":", 1)
+        if not source_type or prefix.strip().lower() == source_type:
+            return suffix.strip() or None
+    return None
+
+
+def _human_gate_find_approval_record(source_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not source_id:
+        return None
+    record = read_store.get_approval_decision(source_id)
+    if record is not None:
+        return dict(record)
+    local_data = getattr(read_store, "_data", {})
+    if isinstance(local_data, dict):
+        local_approvals = local_data.get("approval_decisions")
+        if isinstance(local_approvals, dict) and isinstance(local_approvals.get(source_id), dict):
+            return dict(local_approvals[source_id])
+    for item in read_store.list_approval_queue_items() or []:
+        candidate = _human_gate_clean_text(
+            item.get("decision_id")
+            or item.get("id")
+            or item.get("approval_decision_id")
+        )
+        if candidate == source_id:
+            return dict(item)
+    return None
+
+
+def _human_gate_find_intervention_record(source_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not source_id:
+        return None
+    getter = getattr(read_store, "get_v5_intervention", None)
+    if callable(getter):
+        record = getter(source_id)
+        if record is not None:
+            return dict(record)
+    for item in _v5_intervention_records():
+        candidate = _human_gate_clean_text(item.get("intervention_id") or item.get("id"))
+        if candidate == source_id:
+            return dict(item)
+    return None
+
+
+def _human_gate_source_record(params: Dict[str, Any]) -> tuple[Optional[str], Optional[str], Optional[Dict[str, Any]]]:
+    item_id = _human_gate_clean_text(params.get("human_gate_item_id") or params.get("itemId") or params.get("item_id"))
+    source_type = _human_gate_clean_text(params.get("source_type") or params.get("sourceType")).lower() or None
+    if source_type not in {"approval", "intervention", None}:
+        source_type = None
+    if not source_type:
+        source_type = _human_gate_source_type(item_id)
+    source_id = _human_gate_source_id_from_params(params, item_id, source_type)
+    if source_type == "approval":
+        return source_type, source_id, _human_gate_find_approval_record(source_id)
+    if source_type == "intervention":
+        return source_type, source_id, _human_gate_find_intervention_record(source_id)
+    return source_type, source_id, None
+
+
+def _human_gate_actor_id(value: Any) -> Optional[str]:
+    if isinstance(value, dict):
+        for key in ("operator_id", "operatorId", "actor_id", "actorId", "id", "user_id", "userId"):
+            clean = _human_gate_clean_text(value.get(key))
+            if clean:
+                return clean
+        return None
+    clean = _human_gate_clean_text(value)
+    return clean or None
+
+
+def _human_gate_requester_ids(record: Optional[Dict[str, Any]]) -> set[str]:
+    if not isinstance(record, dict):
+        return set()
+    requester_ids: set[str] = set()
+    for field in _HUMAN_GATE_REQUESTER_FIELDS:
+        actor_id = _human_gate_actor_id(record.get(field))
+        if actor_id:
+            requester_ids.add(actor_id)
+    context = record.get("decision_context") if isinstance(record.get("decision_context"), dict) else {}
+    for field in _HUMAN_GATE_REQUESTER_FIELDS:
+        actor_id = _human_gate_actor_id(context.get(field))
+        if actor_id:
+            requester_ids.add(actor_id)
+    return requester_ids
+
+
+def _human_gate_record_risk_level(params: Dict[str, Any], record: Optional[Dict[str, Any]]) -> Optional[str]:
+    sources: List[Dict[str, Any]] = [params]
+    if isinstance(record, dict):
+        sources.append(record)
+        for nested_key in ("governance", "decision_context", "remediation_context", "metadata"):
+            nested = record.get(nested_key)
+            if isinstance(nested, dict):
+                sources.append(nested)
+    for source in sources:
+        for field in _HUMAN_GATE_RISK_FIELDS:
+            risk = _human_gate_clean_text(source.get(field)).lower()
+            if risk:
+                return _human_inbox_priority(risk, fallback=risk)
+    return None
+
+
+def _human_gate_requires_two_man(params: Dict[str, Any], record: Optional[Dict[str, Any]]) -> bool:
+    for field in ("requires_two_man", "requiresTwoMan", "requires_second_operator", "requiresSecondOperator"):
+        value = params.get(field)
+        if isinstance(value, bool) and value:
+            return True
+        if _human_gate_clean_text(value).lower() in {"1", "true", "yes"}:
+            return True
+    risk_level = _human_gate_record_risk_level(params, record)
+    if risk_level in _HUMAN_GATE_HIGH_RISK_LEVELS:
+        return True
+    live_capital = params.get("liveCapitalMutation", params.get("live_capital_mutation"))
+    return isinstance(live_capital, bool) and live_capital
+
+
+def _human_gate_downstream_effect_executed(record: Optional[Dict[str, Any]]) -> bool:
+    if not isinstance(record, dict):
+        return False
+    for field in _HUMAN_GATE_DOWNSTREAM_EXECUTED_FIELDS:
+        status = _human_gate_clean_text(record.get(field)).lower()
+        if status in _HUMAN_GATE_DOWNSTREAM_EXECUTED_STATES:
+            return True
+    for field in _HUMAN_GATE_DOWNSTREAM_EXECUTED_AT_FIELDS:
+        if _human_gate_clean_text(record.get(field)):
+            return True
+    downstream = record.get("downstream") if isinstance(record.get("downstream"), dict) else {}
+    for field in _HUMAN_GATE_DOWNSTREAM_EXECUTED_FIELDS:
+        status = _human_gate_clean_text(downstream.get(field)).lower()
+        if status in _HUMAN_GATE_DOWNSTREAM_EXECUTED_STATES:
+            return True
+    for field in _HUMAN_GATE_DOWNSTREAM_EXECUTED_AT_FIELDS:
+        if _human_gate_clean_text(downstream.get(field)):
+            return True
+    return False
+
+
+def _require_human_gate_security_preconditions(
+    *,
+    cmd: OperatorCommand,
+    payload: Dict[str, Any],
+    identity: OperatorIdentity,
+    correlation_id: Optional[str],
+) -> Dict[str, str]:
+    params = cmd.params
+    decision = _human_gate_clean_text(params.get("decision")).lower()
+    source_type, source_id, source_record = _human_gate_source_record(params)
+
+    if decision in _HUMAN_GATE_SELF_APPROVAL_DECISIONS:
+        requester_ids = _human_gate_requester_ids(source_record)
+        if identity.operator_id in requester_ids:
+            raise _final_precondition_error(
+                cmd=cmd,
+                status_code=403,
+                code=ErrorCode.FORBIDDEN,
+                message="HumanGate decisions cannot be approved by their requester",
+                reason="HUMAN_GATE_SELF_APPROVAL_FORBIDDEN",
+                kind="anti_self_approval",
+                correlation_id=correlation_id,
+                suggestion="Route this HumanGate decision to a different approver",
+                details_extra={
+                    "sourceType": source_type,
+                    "sourceRecordId": source_id,
+                    "requesterId": identity.operator_id,
+                },
+            )
+
+    if decision == "revoke":
+        if source_record is None:
+            raise _final_precondition_error(
+                cmd=cmd,
+                status_code=409,
+                code=ErrorCode.HUMAN_GATE_PENDING,
+                message="HumanGateRevoke requires a readable source record",
+                reason="HUMAN_GATE_SOURCE_NOT_FOUND",
+                kind="human_gate_revoke",
+                correlation_id=correlation_id,
+                suggestion="Refresh the Human Inbox source record before retrying revoke",
+                details_extra={"sourceType": source_type, "sourceRecordId": source_id},
+            )
+        if _human_gate_downstream_effect_executed(source_record):
+            raise _final_precondition_error(
+                cmd=cmd,
+                status_code=409,
+                code=ErrorCode.RESOURCE_CONFLICT,
+                message="HumanGateRevoke cannot revoke an already executed downstream effect",
+                reason="HUMAN_GATE_REVOKE_DOWNSTREAM_EXECUTED",
+                kind="human_gate_revoke",
+                correlation_id=correlation_id,
+                suggestion="Submit a compensating action through the downstream authority instead of revoking this HumanGate item",
+                details_extra={"sourceType": source_type, "sourceRecordId": source_id},
+            )
+
+    evidence: Dict[str, str] = {}
+    if decision in _HUMAN_GATE_APPROVER_DECISIONS and _human_gate_requires_two_man(params, source_record):
+        signature_id = _precondition_value(payload, params, _TWO_MAN_EVIDENCE_FIELDS)
+        evidence["two_man_signature_id"] = _require_two_man_signature_evidence(
+            cmd=cmd,
+            signature_id=signature_id,
+            correlation_id=correlation_id,
+            missing_suggestion="Attach a two-man signature for this high-risk HumanGate item before retrying",
+        )
+        params["two_man_signature_id"] = evidence["two_man_signature_id"]
+        params["twoManSignatureId"] = evidence["two_man_signature_id"]
+
+    return evidence
+
+
 def _normalize_human_gate_command(cmd: OperatorCommand) -> OperatorCommand:
     decision = _HUMAN_GATE_DECISIONS_BY_COMMAND.get(cmd.command)
     if decision is None:
         return cmd
 
     params = dict(cmd.params or {})
-    item_id = str(
-        params.get("human_gate_item_id")
-        or params.get("humanGateItemId")
-        or params.get("item_id")
-        or params.get("itemId")
-        or cmd.target.id
-        or ""
-    ).strip()
+    item_id = str(cmd.target.id or "").strip()
+    provided_item_ids = [
+        _human_gate_clean_text(params.get(alias))
+        for alias in ("human_gate_item_id", "humanGateItemId", "item_id", "itemId")
+        if _human_gate_clean_text(params.get(alias))
+    ]
+    for provided_item_id in provided_item_ids:
+        if provided_item_id != item_id:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "HumanGate params target id does not match the command target",
+                "HUMAN_GATE_TARGET_MISMATCH",
+                precondition_failed="human_gate_item_id",
+                suggestion="Use target.id as the authoritative HumanGate item id",
+                details_extra={
+                    "targetId": item_id,
+                    "providedHumanGateItemId": provided_item_id,
+                },
+            )
     params["human_gate_item_id"] = item_id
     params["humanGateItemId"] = item_id
     params["item_id"] = item_id
@@ -4223,6 +4551,21 @@ def _validate_human_gate_decision(params: Dict[str, Any], identity: OperatorIden
                 "HumanGateExtendTtl requires a positive ttl_seconds value",
                 "ttl_seconds must be a positive integer number of seconds",
                 precondition_failed="ttl_seconds",
+            )
+        max_ttl_seconds = _human_gate_max_ttl_seconds()
+        if ttl_seconds > max_ttl_seconds:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "HumanGateExtendTtl exceeds the maximum ttl_seconds cap",
+                "HUMAN_GATE_TTL_EXCEEDS_CAP",
+                precondition_failed="ttl_seconds",
+                suggestion="Retry with a shorter HumanGate TTL extension",
+                details_extra={
+                    "maxTtlSeconds": max_ttl_seconds,
+                    "ttlSeconds": ttl_seconds,
+                    "constraint": f"ttl_seconds must be less than or equal to {max_ttl_seconds}",
+                },
             )
         params["ttl_seconds"] = ttl_seconds
         params["ttlSeconds"] = ttl_seconds
