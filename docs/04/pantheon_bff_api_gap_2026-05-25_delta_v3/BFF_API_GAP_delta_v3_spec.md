@@ -423,3 +423,32 @@ python3 -m pytest services/control-plane/bff/test_bff_error_envelope_shape.py \
 - `services/control-plane/bff/models.py`
 - `services/control-plane/bff/test_bff_error_envelope_shape.py`
 - `services/control-plane/bff/test_final_contract_primitives.py`
+
+---
+
+## PATH-DEDUPE-001 — Duplicate BFF Route Family Cleanup
+
+Route families: personas, capital-pools, deployments, rebalances, incidents, runtimes, skills,
+tools, mcp-servers, mcp-tools, ranking-formulas, strategy actions
+
+### Fix
+
+- Removed duplicate route registrations where a legacy short `{id}` declaration shadowed the
+  snake_case FastAPI declaration.
+- Kept FE-used kebab-case forms: `/bff/mcp-servers`, `/bff/mcp-tools`, and
+  `/bff/ranking-formulas`.
+- Deprecated alternate URL shapes with HTTP `410 Gone` plus `X-Deprecated: true`,
+  `X-Deprecated-At: 2026-05-25T08:40:02Z`, and `X-Pantheon-Replacement-Route`.
+- Deprecated nested per-entity action paths in favor of the generic action route family.
+
+### Verification
+
+```bash
+python3 -m pytest services/control-plane/bff/tests/test_bff_path_dedupe.py -q
+```
+
+### Affected files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_path_dedupe.py`
+- `docs/04/pantheon_bff_api_gap_2026-05-25_delta_v3/CANONICAL_PATH_NAMING.md`

@@ -163,6 +163,30 @@ The trading pulse drift metric counters follow the same dual-emit pattern:
 These six additional fields follow the same duplication policy above and are documented here for
 completeness; they were not in scope for the v3 delta spec acceptance criteria.
 
+### BFF-INFRA-PATH-DEDUPE-001 action log
+
+Timestamp: `2026-05-25T08:40:02Z`
+
+This task applied the same naming boundary to duplicate route registrations. Path parameter
+duplicates keep the snake_case FastAPI declaration only. Alternate URL shapes that FE no longer
+uses now return HTTP `410 Gone` with `X-Deprecated: true`, `X-Deprecated-At`, and
+`X-Pantheon-Replacement-Route`.
+
+| Family | Canonical kept | Removed or deprecated alternate |
+|---|---|---|
+| `personas` | `/bff/personas/{persona_id}` | Removed legacy `/bff/personas/{id}` declaration; `/bff/personas/{persona_id}/actions/{action_id}` returns 410 in favor of `/bff/actions/persona/{persona_id}/{action_id}`. |
+| `pools` | `/bff/capital-pools/{pool_id}` | Removed legacy `/bff/capital-pools/{id}` declaration; `/bff/capital-pools/{pool_id}/actions/{action_id}` returns 410 in favor of `/bff/actions/capitalPool/{pool_id}/{action_id}`. |
+| `deployments` | `/bff/deployments/{deployment_id}` | Removed legacy `/bff/deployments/{id}` declaration; `/bff/deployments/{deployment_id}/actions/{action_id}` returns 410 in favor of `/bff/actions/deployment/{deployment_id}/{action_id}`. |
+| `rebalances` | `/bff/rebalances/{rebalance_id}` | Removed legacy `/bff/rebalances/{id}` declaration; `/bff/rebalances/{rebalance_id}/actions/{action_id}` returns 410 in favor of `/bff/actions/rebalance/{rebalance_id}/{action_id}`. |
+| `incidents` | `/bff/incidents/{incident_id}` | Removed legacy `/bff/incidents/{id}` declaration; `/bff/incidents/{incident_id}/actions/{action_id}` returns 410 in favor of `/bff/actions/incident/{incident_id}/{action_id}`. |
+| `runtimes` | `/bff/runtimes/{runtime_id}` | Removed legacy `/bff/runtimes/{id}` declaration; `/bff/runtimes/{runtime_id}/actions/{action_id}` returns 410 in favor of `/bff/actions/runtime/{runtime_id}/{action_id}`. |
+| `skills` | `/bff/skills/{skill_id}` | Removed legacy `/bff/skills/{id}` declaration; `/bff/skills/{skill_id}/actions/{action_id}` returns 410 in favor of `/bff/actions/skill/{skill_id}/{action_id}`. |
+| `tools` | `/bff/tools/{tool_id}` | Removed legacy `/bff/tools/{id}` declaration; `/bff/tools/{tool_id}/actions/{action_id}` returns 410 in favor of `/bff/actions/tool/{tool_id}/{action_id}`. |
+| `mcp-servers` | `/bff/mcp-servers`, `/bff/mcp-servers/{server_id}`, `/bff/mcp-servers/{server_id}/import-tools` | `/bff/mcp/servers` and `/bff/mcp/servers/{server_id}` return 410; duplicate `/bff/mcp-servers/{id}/import-tools` declaration was removed. |
+| `mcp-tools` | `/bff/mcp-tools`, `/bff/mcp-tools/{tool_id}`, `/bff/mcp-tools/{tool_id}/{action}` | `/bff/mcp/tools/{tool_id}/actions/{action_id}` returns 410. |
+| `ranking-formulas` | `/bff/ranking-formulas`, `/bff/ranking-formulas/{formula_id}` | `/bff/ranking/formulas`, `/bff/ranking/formulas/{formula_id}`, and their write/action sub-routes return 410. |
+| `strategy actions` | `/bff/actions/strategy/{strategy_id}/{action_id}` through the generic action route | `/bff/strategies/{strategy_id}/actions/{action_id}` returns 410. |
+
 ---
 
 ## Section 3 — Migration Guidance
