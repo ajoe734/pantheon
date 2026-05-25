@@ -183,7 +183,10 @@ class ErrorDetail(BaseModel):
 
 class BffErrorPayload(BaseModel):
     code: ErrorCode
+    i18nKey: str
     message: str
+    retryable: bool
+    userActionable: bool
     details: Optional[ErrorDetail] = None
 
 

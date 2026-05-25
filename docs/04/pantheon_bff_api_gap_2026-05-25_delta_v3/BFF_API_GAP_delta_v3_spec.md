@@ -371,3 +371,55 @@ python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py
 - Reviewer: Codex
 - No code change required: all dual fields are already implemented. This is a documentation-only
   decision record that canonicalizes the existing practice.
+
+---
+
+## ERROR-ENVELOPE-D21-FIELDS-001 — Pack D Error Metadata Fields
+
+Route family: all BFF error responses emitted through the Pack D envelope helpers
+
+### Gap
+
+The BFF Pack D error envelope already used the top-level `error` object and `meta.correlationId`,
+and `error.code` had been aligned to the §D21 26-code allowlist. The envelope still omitted three
+frontend-facing §D21 fields expected by execute-plans:
+
+- `error.i18nKey`
+- `error.retryable`
+- `error.userActionable`
+
+Without these fields, strict frontend callers had to infer localization keys and retry/action
+semantics from `error.code`.
+
+### Fix
+
+- Add `error.i18nKey` to every Pack D BFF error envelope using the deterministic form
+  `errors.<CODE>`, after legacy codes are normalized to the canonical §D21 code.
+- Add a 26-entry §D21 behavior matrix in `services/control-plane/bff/main.py` that maps each
+  canonical `ErrorCode` to `retryable` and `userActionable` booleans.
+- Keep existing `error.code`, `error.message`, `error.details`, `meta.correlationId`, and
+  `X-Correlation-Id` behavior unchanged.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `error.i18nKey` is present as `errors.<CODE>` for canonical §D21 codes | Implemented |
+| 2 | `error.retryable` is present as a boolean sourced from the §D21 behavior matrix | Implemented |
+| 3 | `error.userActionable` is present as a boolean sourced from the §D21 behavior matrix | Implemented |
+| 4 | 401, 404, 422, 500, and direct JSON error paths preserve existing envelope fields | Implemented |
+| 5 | Behavior matrix covers exactly the 26 canonical §D21 `ErrorCode` values | Implemented |
+
+### Verification
+
+```bash
+python3 -m pytest services/control-plane/bff/test_bff_error_envelope_shape.py \
+  services/control-plane/bff/test_final_contract_primitives.py -q
+```
+
+### Affected files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/models.py`
+- `services/control-plane/bff/test_bff_error_envelope_shape.py`
+- `services/control-plane/bff/test_final_contract_primitives.py`

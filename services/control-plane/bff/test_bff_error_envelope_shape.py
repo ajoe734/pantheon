@@ -83,12 +83,17 @@ def _assert_error_envelope(
     status_code: int,
     code: str,
     correlation_id: str | None,
+    retryable: bool,
+    user_actionable: bool,
 ) -> dict:
     assert response.status_code == status_code, response.text
     body = response.json()
     assert "detail" not in body
     assert body["error"]["code"] == code
+    assert body["error"]["i18nKey"] == f"errors.{code}"
     assert body["error"]["message"]
+    assert body["error"]["retryable"] is retryable
+    assert body["error"]["userActionable"] is user_actionable
     observed_correlation_id = body["meta"]["correlationId"]
     if correlation_id is None:
         UUID(observed_correlation_id)
@@ -104,6 +109,22 @@ def test_error_code_enum_matches_pack_d_d21_allowlist() -> None:
     assert len(observed) == 26
 
 
+def test_error_behavior_matrix_covers_pack_d_d21_allowlist() -> None:
+    behavior = bff_main._PACK_D_D21_ERROR_BEHAVIOR
+
+    assert list(behavior.keys()) == PACK_D_D21_ERROR_CODES
+    for flags in behavior.values():
+        assert isinstance(flags["retryable"], bool)
+        assert isinstance(flags["userActionable"], bool)
+
+    assert behavior["RESOURCE_NOT_FOUND"] == {"retryable": False, "userActionable": True}
+    assert behavior["VALIDATION_FAILED"] == {"retryable": False, "userActionable": True}
+    assert behavior["FORBIDDEN"] == {"retryable": False, "userActionable": False}
+    assert behavior["RATE_LIMITED"] == {"retryable": True, "userActionable": True}
+    assert behavior["DEPENDENCY_UNAVAILABLE"] == {"retryable": True, "userActionable": True}
+    assert behavior["UPSTREAM_TIMEOUT"] == {"retryable": True, "userActionable": True}
+
+
 def test_401_error_envelope_uses_top_level_error_and_meta_correlation() -> None:
     response = _client().get(
         "/bff/me",
@@ -115,6 +136,8 @@ def test_401_error_envelope_uses_top_level_error_and_meta_correlation() -> None:
         status_code=401,
         code="AUTH_REQUIRED",
         correlation_id="corr-envelope-401",
+        retryable=False,
+        user_actionable=True,
     )
     assert body["error"]["details"]["reason"] == "Token is absent or not a Bearer token"
     assert "correlationId" not in body["error"]["details"]
@@ -131,6 +154,8 @@ def test_404_error_envelope_uses_top_level_error_and_meta_correlation() -> None:
         status_code=404,
         code="RESOURCE_NOT_FOUND",
         correlation_id="corr-envelope-404",
+        retryable=False,
+        user_actionable=True,
     )
 
 
@@ -145,6 +170,8 @@ def test_422_request_validation_error_envelope_uses_pack_d_shape() -> None:
         status_code=422,
         code="VALIDATION_FAILED",
         correlation_id="corr-envelope-422",
+        retryable=False,
+        user_actionable=True,
     )
     assert body["error"]["details"]["reason"] == "REQUEST_VALIDATION_ERROR"
 
@@ -160,6 +187,8 @@ def test_value_error_envelope_uses_pack_d_shape() -> None:
         status_code=400,
         code="VALIDATION_FAILED",
         correlation_id="corr-envelope-value",
+        retryable=False,
+        user_actionable=True,
     )
     assert body["error"]["details"]["reason"] == "VALUE_ERROR"
 
@@ -172,6 +201,8 @@ def test_500_error_envelope_generates_uuid_correlation_when_missing() -> None:
         status_code=500,
         code="INTERNAL_ERROR",
         correlation_id=None,
+        retryable=False,
+        user_actionable=False,
     )
     assert body["error"]["message"] == "Internal server error"
     assert body["error"]["details"]["reason"] == "INTERNAL_SERVER_ERROR"
@@ -185,5 +216,7 @@ def test_direct_json_error_response_uses_pack_d_shape() -> None:
         status_code=503,
         code="DEPENDENCY_UNAVAILABLE",
         correlation_id=None,
+        retryable=True,
+        user_actionable=True,
     )
     assert body["error"]["details"]["reason"] == "SYNTHETIC_DIRECT_RESPONSE"
