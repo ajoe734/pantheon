@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-05-25T03:48:35Z",
+  "updated_at": "2026-05-25T03:57:28Z",
   "counts": {
-    "total": 1319,
-    "completed": 1296,
+    "total": 1320,
+    "completed": 1297,
     "superseded": 23
   },
   "recent_terminal_ids": [
+    "OPS-DOC-BFF-NAMING-CANONICAL-001",
     "OPS-BFF-LUPIN-DEV-REDEPLOY-20260525",
     "BFF-INFRA-ERRORCODE-PACKD-001",
     "BFF-B6-002",
@@ -25,7 +26,6 @@
     "BFF-PM12-005",
     "BFF-B1-012",
     "BFF-PM12-006",
-    "BFF-B3-008",
-    "BFF-PM12-003"
+    "BFF-B3-008"
   ]
 }
