@@ -196,3 +196,199 @@ New routes submitted under EPIC-BFF-DELTA-V3-INFRA or any successor EPIC must:
    is identified.
 4. Include dual response fields only for fields listed in Section 2 or for fields that gain
    explicit review approval citing this document.
+
+---
+
+## Section 4 — V3 Acceptance-Scoped Route Naming Decisions
+
+This section closes the naming decisions for the specific v3 delta route segments that were raised
+in the Codex review of PR #558. It supplements Sections 1–3, which govern the generic FE/BE naming
+convention layer. The decisions here operate at the route-segment identity level: each row names
+the canonical URL segment, states its scope, and gives explicit keep/deprecate/both guidance.
+
+### Pack D Cross-Reference
+
+The routes in this section belong to the **Pack D — B3 P1 Management Aggregate APIs** task family,
+defined in:
+
+- `docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md` §B3 (B3-002
+  through B3-017): persona-fleet, human-inbox, trading-pulse, evolution-journal, evidence, and the
+  portfolio-book composition suite.
+- `docs/04/pantheon_bff_api_gap_2026-05-24_delta/BFF_API_GAP_delta_audit_spec.md` DELTA-5 and
+  DELTA-6 (§D2 delta additions): portfolio-book/positions and portfolio-book/exposure.
+
+These cross-references are the authoritative source for route contracts and composition sources.
+This section adds only the naming-decision layer on top of those specs.
+
+### D1 — `persona-fleet` vs `persona-league`: Two Distinct Routes
+
+**Decision:** `persona-fleet` and `persona-league` are **not competing names** for the same
+resource. They are two separate management surfaces with separate URL paths, separate composition
+sources, and separate task origins. No deprecation applies to either.
+
+| Route segment | URL | Task origin | Scope |
+|---|---|---|---|
+| `persona-fleet` | `/bff/management/persona-fleet` | BFF-B3-002 | Persona binding + runtime state + telemetry + trainer/evolution info aggregate |
+| `persona-league` | `/bff/management/persona-league` | BFF-PM12-004 / BFF-B3.4 | Persona rankings + scoring + tiers + movers |
+
+Sub-routes for `persona-league`:
+- `/bff/management/persona-league/movers` (BFF-MGMT-DELTA-001)
+- `/bff/management/persona-league/rankings`
+- `/bff/management/persona-league/tiers`
+- `/bff/management/persona-league/heatmap`
+
+**Guidance:**
+
+| Form | Status | Rule |
+|---|---|---|
+| `persona-fleet` | **KEEP** | Canonical. Use for fleet binding/runtime/telemetry aggregate. |
+| `persona-league` | **KEEP** | Canonical. Use for ranking/scoring surface. |
+
+Both routes are canonical, active, and must coexist. A caller requesting fleet state uses
+`/bff/management/persona-fleet`; a caller requesting ranking state uses
+`/bff/management/persona-league`. Do not conflate, alias, or merge these surfaces.
+
+### D2 — `human-inbox`: Canonical Route Segment
+
+**Decision:** `human-inbox` is the canonical URL segment for the Management Human Inbox aggregate
+and detail routes. There is no competing form.
+
+Routes:
+- `GET /bff/management/human-inbox` (BFF-B3-003 aggregate)
+- `GET /bff/management/human-inbox/{id}` (BFF-B3-004 detail)
+
+**Guidance:**
+
+| Form | Status | Rule |
+|---|---|---|
+| `human-inbox` | **KEEP** | Canonical kebab-case segment. |
+| `humanInbox` | N/A | Not a URL segment; TypeScript builder name only. |
+| `human_inbox` | **DEPRECATE in URLs** | Must not appear in new URL path segments. |
+
+The `human_inbox` snake_case form appears in Python response field names (e.g., `inbox_type`,
+`source_record`) and is governed by the dual-emit policy in Section 2, not this section.
+
+### D3 — `trading-pulse`: Canonical Route Segment
+
+**Decision:** `trading-pulse` is the canonical URL segment for the Management Trading Pulse
+telemetry routes. There is no competing form.
+
+Routes:
+- `GET /bff/management/trading-pulse` (BFF-B3-004 cards)
+- `GET /bff/management/trading-pulse/rankings` (BFF-B3-005 ranking blocks)
+
+**Guidance:**
+
+| Form | Status | Rule |
+|---|---|---|
+| `trading-pulse` | **KEEP** | Canonical kebab-case segment. |
+| `tradingPulse` | N/A | TypeScript builder name only; not a URL segment. |
+| `trading_pulse` | **DEPRECATE in URLs** | Must not appear in new URL path segments. |
+
+### D4 — `evolution-journal`: Canonical Route Segment
+
+**Decision:** `evolution-journal` is the canonical URL segment for the Management Evolution
+Journal aggregate route. There is no competing form.
+
+Route:
+- `GET /bff/management/evolution-journal` (BFF-B3-006)
+
+Query filter parameters: `decision`, `mutation_review`, `postmortem`, `freeze_order`, `rollback`
+(all snake_case, per Section 1 rule A3/A4).
+
+**Guidance:**
+
+| Form | Status | Rule |
+|---|---|---|
+| `evolution-journal` | **KEEP** | Canonical kebab-case segment. |
+| `evolutionJournal` | N/A | TypeScript builder name only; not a URL segment. |
+| `evolution_journal` | **DEPRECATE in URLs** | Must not appear in new URL path segments. |
+
+### D5 — `evidence`: Canonical Route Segment
+
+**Decision:** `evidence` is the canonical URL segment for the Management Evidence Explorer
+aggregate route. It is a top-level management route, not a sub-path under another aggregate.
+
+Route:
+- `GET /bff/management/evidence` (BFF-B3-007)
+
+**Guidance:**
+
+| Form | Status | Rule |
+|---|---|---|
+| `evidence` | **KEEP** | Canonical single-word segment. Correct. |
+| `management-evidence` | **DEPRECATE** | Not used; do not introduce. |
+| `evidence-explorer` | **DEPRECATE** | Descriptive label only; not a URL segment. |
+
+The response field `management_href` / `managementHref` (SNAKE-DUP-012 in Section 2) is governed
+by the dual-emit policy, not by this route-segment decision.
+
+### D6 — `portfolio-book` Sub-Routes: Naming and Status
+
+**Decision:** The four `portfolio-book` sub-routes below are all canonical, active, and must
+coexist. They are not aliases of each other.
+
+| Sub-route | Full URL | Task origin | Scope | Status |
+|---|---|---|---|---|
+| `holdings` | `/bff/management/portfolio-book/holdings` | BFF-PM12-002 | Global holdings table (positions/fills/mark prices) | **KEEP** |
+| `pools` | `/bff/management/portfolio-book/pools` | BFF-PM12-003 | Capital pool list + exposure + risk budget + PnL | **KEEP** |
+| `positions` | `/bff/management/portfolio-book/positions` | DELTA-5 (PM12-DELTA-005) | Position rows projected from holdings; added in v3 delta | **KEEP** |
+| `exposure` | `/bff/management/portfolio-book/exposure` | DELTA-6 (PM12-DELTA-006) | Risk-budget/exposure view projected from pools; added in v3 delta | **KEEP** |
+
+**Key disambiguation:**
+
+- `positions` is not an alias for `holdings`. `positions` projects the holdings data as
+  position-oriented rows. The underlying composition source is the same, but the route and response
+  shape are distinct. Callers requesting position-level rows use `/portfolio-book/positions`;
+  callers requesting raw holdings use `/portfolio-book/holdings`.
+- `exposure` is not an alias for `pools`. `exposure` projects the pool data as a risk-budget /
+  current-exposure view. The underlying source is the same, but the response shape is distinct.
+  Callers requesting exposure rows use `/portfolio-book/exposure`; callers requesting pool
+  summaries use `/portfolio-book/pools`.
+
+**Guidance for all four sub-routes:**
+
+All four sub-routes use kebab-case (per Section 1 rule A1). The base path `/portfolio-book` and
+all sub-route segments (`holdings`, `pools`, `positions`, `exposure`) are canonical and must not
+be introduced in snake_case or camelCase form in URL paths.
+
+---
+
+## Section 5 — Keep / Deprecate / Both Reference Table
+
+This table is the single-page quick reference for keep/deprecate/both decisions across all naming
+dimensions in this document. Implementors should check this table before introducing a new route
+segment, query parameter form, or response field form.
+
+### URL Path Segments
+
+| Segment | Status | Notes |
+|---|---|---|
+| `persona-fleet` | **KEEP** | Canonical. Distinct from persona-league. |
+| `persona-league` | **KEEP** | Canonical. Distinct from persona-fleet. |
+| `human-inbox` | **KEEP** | Canonical. |
+| `trading-pulse` | **KEEP** | Canonical. |
+| `evolution-journal` | **KEEP** | Canonical. |
+| `evidence` | **KEEP** | Canonical. Top-level management aggregate. |
+| `portfolio-book` | **KEEP** | Canonical base. |
+| `portfolio-book/holdings` | **KEEP** | Canonical. Holdings table. |
+| `portfolio-book/pools` | **KEEP** | Canonical. Capital pool summaries. |
+| `portfolio-book/positions` | **KEEP** | Canonical. v3 delta addition. |
+| `portfolio-book/exposure` | **KEEP** | Canonical. v3 delta addition. |
+| `*_*` in path segments | **DEPRECATE** | snake_case must not appear in URL path segments. |
+| `*[A-Z]*` in path segments | **DEPRECATE** | camelCase must not appear in URL path segments. |
+
+### Query Parameters
+
+| Form | Status | Notes |
+|---|---|---|
+| snake_case (`persona_id`, `window_hours`) | **KEEP — canonical** | Use as the primary key. |
+| camelCase alias (`personaId`, `windowHours`) | **BOTH — alias only** | Accept only when a confirmed FE caller sends it; add explicit `or`-coalesce in handler. |
+
+### Response Fields (body)
+
+| Form | Status | Notes |
+|---|---|---|
+| snake_case field (canonical) | **KEEP** | Primary authoritative form. |
+| camelCase alias (dual-emit) | **BOTH — alias only** | Emit alongside snake_case when the field is in Section 2's dual-field table. |
+| camelCase on a field not in Section 2 | **DEPRECATE** | Do not add new dual-emit fields without explicit review approval citing this document. |
