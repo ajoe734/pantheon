@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "BFF-MGMT-DELTA-011",
+  "archived_at": "2026-05-24T15:13:46Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-MGMT-DELTA-011",
+    "title": "GET /bff/management/hiq-backlog",
+    "summary_zh": null,
+    "phase": "Sprint BFF-DELTA / EPIC-BFF-DELTA-MGMT-LIVE",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-24_delta/BFF_API_GAP_delta_audit_spec.md;execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md;services/control-plane/bff/main.py;execute-plans/src/lib/bff-v1/management.ts"
+    ],
+    "acceptance": [
+      "Path registered; HiQ queue state pending count and SLA breach summary;Anonymous 401 authenticated 200; envelope canonical; CORS preflight 204;pytest case hiq_backlog"
+    ],
+    "next": "Owner closeout evidence commit 71551e05 merged via PR #550 at 9c2c83be617061a96c65500abbdc063b55e46699; validation passed: git diff --check, focused BFF route/live-wiring suite 28 passed with 3 existing warnings, broader BFF delta suite 90 passed with 3 existing warnings.",
+    "last_update": "2026-05-24T15:13:46Z",
+    "review_notes_zh": [
+      "審查通過：GET /bff/management/hiq-backlog 已註冊並受 auth gate 保護；回應保持 canonical aggregate envelope；預設 backlog filter、source/status/kind/priority/q/page query、CORS/OpenAPI、execute-plans path/fetch helper都已覆蓋。Reviewer replay: git diff --check；22-test focused route/live-wiring suite passed；84-test BFF delta suite passed，僅既有 datetime.utcnow deprecation warnings。PR #547 已 merge 到 dev，merge commit a38ec34bed215502382a7827c1cf84e77b3eb2e9。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-24T15:13:46Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-mgmt-delta-011",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-MGMT-DELTA-011",
+      "git_clean_required": false,
+      "commit": "71551e05edc16aa8e2926d149ce9d68a4ca05fbb",
+      "commit_subject": "BFF-MGMT-DELTA-011: record owner closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-MGMT-DELTA-011",
+        "Reviewer": "Codex",
+        "Verified": "git diff --check; pytest focused BFF management delta suite (28 passed, 3 warnings); broader BFF delta suite (90 passed, 3 warnings)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-MGMT-DELTA-011",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "9c2c83be617061a96c65500abbdc063b55e46699",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-MGMT-DELTA-011",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-24T14:35:15Z",
+      "resolved_at": "2026-05-24T14:35:33Z"
+    },
+    {
+      "task_id": "BFF-MGMT-DELTA-011",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implementation merged via PR #547 (merge commit a38ec34b). Validation: git diff --check; 22-test focused route/live-wiring suite; 84-test BFF delta suite all passed with 3 existing datetime.utcnow warnings. Ready for reviewer approval/final closeout.",
+      "status": "done",
+      "created_at": "2026-05-24T14:50:12Z",
+      "resolved_at": "2026-05-24T14:55:37Z"
+    },
+    {
+      "task_id": "BFF-MGMT-DELTA-011",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: HIQ backlog route, strict-live envelope, auth/CORS/OpenAPI, execute-plans helper, and focused validation all pass. PR #547 merged at a38ec34bed215502382a7827c1cf84e77b3eb2e9; owner Codex2 should finalize review_approved -> done.",
+      "status": "done",
+      "created_at": "2026-05-24T14:55:37Z",
+      "resolved_at": "2026-05-24T15:13:46Z"
+    }
+  ],
+  "blockers": []
+}

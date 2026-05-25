@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "task_id": "BFF-B1-001-DELTA",
+  "archived_at": "2026-05-24T14:29:58Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-B1-001-DELTA",
+    "title": "CORS preflight regression — live OPTIONS still 400 despite B1-001 done",
+    "summary_zh": null,
+    "phase": "Sprint BFF-DELTA / EPIC-BFF-DELTA-INFRA",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-24_delta/BFF_API_GAP_delta_audit_spec.md;execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md;services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "OPTIONS preflight from 4 Lovable origins to /bff/me /bff/openapi.json /health and any /bff/management/* returns 204;ACAO echoes origin from allowed list (preview UUID lovableproject pantheon-dev);ACAH includes Authorization X-Correlation-Id X-Request-Id X-Idempotency-Key X-Confirm-Token X-MFA-Token Accept Accept-Language Content-Type;ACAM includes GET POST PATCH PUT DELETE OPTIONS; ACEH includes X-Correlation-Id X-Request-Id X-BFF-Api-Version;Root cause documented in commit message (middleware order vs ingress intercept vs 404-before-CORS);Co-verified with OPS-BFF-LUPIN-DEV-REDEPLOY-20260524 after redeploy"
+    ],
+    "next": "Closeout merged via PR #539 (merge ecb6baa40785f37a63b4876f8b7213baa5b7ab37); CORS strict preflight regression evidence finalized and verified.",
+    "last_update": "2026-05-24T14:29:58Z",
+    "review_notes_zh": [
+      "審查通過：CORS strict production regression fixed; execute-plans published Lovable origin remains allowlisted; focused pytest passed locally."
+    ],
+    "review_file": "support/evidence/BFF-B1-001-DELTA/owner-closeout.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-24T14:29:58Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-b1-001-delta",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-B1-001-DELTA",
+      "git_clean_required": false,
+      "commit": "8b71d5dd47e34ab3438a15fec510bce43101a795",
+      "commit_subject": "BFF-B1-001-DELTA: record Codex2 final closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "support/evidence/BFF-B1-001-DELTA/owner-closeout.md Codex2 finalization note.",
+        "Not changing": "CORS behavior, execute-plans SDK code, or reviewer approval artifact.",
+        "Composes with": "merged PR #526 closeout evidence before ai-status done transition.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-B1-001-DELTA",
+        "Reviewer": "Codex",
+        "Verified": "pytest -q services/control-plane/bff/tests/test_auth_jwks_strict.py -> 18 passed; pytest -q services/control-plane/bff/tests/test_auth_jwks_strict.py -k cors -> 6 passed"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-B1-001-DELTA",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "ecb6baa40785f37a63b4876f8b7213baa5b7ab37",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-B1-001-DELTA",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Fix complete. Root cause: execute-plans published URL (140c41d5) was in _DEV_LOVABLE_CORS_ORIGINS causing it to be filtered in production strict mode. Fix: removed from dev-only set. Tests: 18 passed (test_auth_jwks_strict.py). Anchor commit: 73a365fb. Artifacts: docs/04/pantheon_bff_api_gap_2026-05-24_delta/BFF_API_GAP_delta_audit_spec.md, execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md.",
+      "status": "done",
+      "created_at": "2026-05-24T12:43:55Z",
+      "resolved_at": "2026-05-24T12:56:35Z"
+    },
+    {
+      "task_id": "BFF-B1-001-DELTA",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: 73a365fb fixes the production-strict CORS regression for the published execute-plans origin. Verified pytest -q services/control-plane/bff/tests/test_auth_jwks_strict.py and pytest -q services/control-plane/bff/tests/test_auth_jwks_strict.py -k cors. Owner must finalize PR and merge before done.",
+      "status": "done",
+      "created_at": "2026-05-24T12:56:35Z",
+      "resolved_at": "2026-05-24T13:52:24Z"
+    },
+    {
+      "task_id": "BFF-B1-001-DELTA",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "CORS fix implemented, merged via PR #511. pytest 18 passed. Ready for review.",
+      "status": "done",
+      "created_at": "2026-05-24T13:52:32Z",
+      "resolved_at": "2026-05-24T13:55:59Z"
+    },
+    {
+      "task_id": "BFF-B1-001-DELTA",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: CORS strict production preflight regression fixed and verified with pytest -q services/control-plane/bff/tests/test_auth_jwks_strict.py plus -k cors. Owner should finalize done closeout.",
+      "status": "done",
+      "created_at": "2026-05-24T13:55:59Z",
+      "resolved_at": "2026-05-24T14:14:25Z"
+    },
+    {
+      "task_id": "BFF-B1-001-DELTA",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Auto-reassigned ownership from Claude to Codex2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-05-24T14:14:25Z",
+      "resolved_at": "2026-05-24T14:29:59Z"
+    }
+  ],
+  "blockers": []
+}
