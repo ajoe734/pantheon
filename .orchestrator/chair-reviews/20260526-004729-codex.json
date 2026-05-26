@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Idle capacity exists and no approval, provider, review, or queue blocker prevents safe sidecar dispatch.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "Repair PR #556 by rebasing task/OPS-BFF-DELTA-V3-DISPATCH-20260525 onto origin/dev, resolving the added-both BFF_API_GAP_delta_v3_spec.md conflict, rerunning checks, and merging or explicitly closing it as superseded before the 24h window.",
+    "Clear stale blocker records for LOVABLE-STRICT-PUBLISH and OSS-QUANTLIB-V2-001 during the next supervisor ai-status write cycle.",
+    "Schedule an OPS branch-pruning task for merged/reachable origin task/* branches; current remote count is 256."
+  ]
+}
