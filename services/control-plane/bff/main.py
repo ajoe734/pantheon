@@ -17317,12 +17317,51 @@ async def get_persona_management(
         missing_message="Allowed actions unavailable for this persona.",
     )
 
+    # PERSONA-ONBOARD-2026-05-28 / F4: include readiness health surface so the
+    # detail page can render the same gap reasons as /bff/management/persona-fleet.
+    # Reuse _project_persona_fleet_item() so health computation stays consistent.
+    health_payload = None
+    runtime_bindings_for_persona: List[Dict[str, Any]] = []
+    capital_pools_for_persona: List[Dict[str, Any]] = []
+    active_incidents_for_persona: List[Dict[str, Any]] = []
+    latest_telemetry_summary: Optional[Dict[str, Any]] = None
+    try:
+        fleet_item = _project_persona_fleet_item(
+            persona,
+            all_runtime_bindings=list(read_store.list_runtime_bindings() or []),
+            all_incidents=list(read_store.list_incidents() or []),
+            all_evolution_decisions=list(read_store.list_evolution_decisions() or []),
+        )
+    except Exception:  # pragma: no cover - defensive: never break detail page
+        fleet_item = None
+        surfaces["persona_health"] = _composed_surface_status(
+            snapshot_at=snapshot_at,
+            available=False,
+            missing_message="Persona health surface failed to compose.",
+        )
+    else:
+        health_payload = fleet_item.get("health")
+        runtime_bindings_for_persona = fleet_item.get("runtimeBindings") or []
+        capital_pools_for_persona = fleet_item.get("capitalPools") or []
+        active_incidents_for_persona = fleet_item.get("activeIncidents") or []
+        latest_telemetry_summary = (fleet_item.get("telemetrySummary") or {}).get("latest")
+        surfaces["persona_health"] = _composed_surface_status(
+            snapshot_at=snapshot_at,
+            available=bool(health_payload),
+            missing_message="Persona health surface unavailable.",
+        )
+
     data = {
         "persona": persona,
         "bindings": enriched_bindings,
         "sessions": sessions,
         "teaching_sessions": teaching_sessions,
         "allowedActions": allowed_actions,
+        "health": health_payload,
+        "runtimeBindings": runtime_bindings_for_persona,
+        "capitalPools": capital_pools_for_persona,
+        "activeIncidents": active_incidents_for_persona,
+        "latestTelemetry": latest_telemetry_summary,
     }
 
     return {
