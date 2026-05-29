@@ -8493,6 +8493,11 @@ class ReadSurfaceStore:
             "binding_id": binding_id,
             "runtime_binding_id": raw.get("runtime_binding_id") or binding_id,
             "runtime_id": raw.get("runtime_id") or binding_id,
+            "name": raw.get("name"),
+            "state": raw.get("state") or raw.get("status"),
+            "persona_id": raw.get("persona_id"),
+            "deployment_plan_id": raw.get("deployment_plan_id") or raw.get("plan_id"),
+            "runtime_kind": raw.get("runtime_kind") or deployment_mode,
             "deployment_stage": deployment_stage,
             "deployment_mode": deployment_mode,
             "status": raw.get("status"),
@@ -8507,6 +8512,10 @@ class ReadSurfaceStore:
             "retired_at": raw.get("retired_at"),
             "rollback_parent": raw.get("rollback_parent"),
             "rollback_action_type": raw.get("rollback_action_type"),
+            "created_at": raw.get("created_at"),
+            "updated_at": raw.get("updated_at"),
+            "created_by": raw.get("created_by"),
+            "params": json.loads(json.dumps(raw.get("params") or {})),
             "metadata": json.loads(json.dumps(metadata)),
         }
 
@@ -8884,11 +8893,25 @@ class ReadSurfaceStore:
         deployment_mode: Optional[str] = None,
         version: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        local_bindings = self._local_overlay_records("runtime_bindings")
         available, raw_bindings = self._canonical.list_records("runtime_bindings")
         if available:
-            bindings = [self._project_canonical_runtime_binding(binding) for binding in raw_bindings]
+            bindings_by_id = {
+                str(binding.get("binding_id") or binding.get("runtime_binding_id") or binding.get("id") or ""): binding
+                for binding in (self._project_canonical_runtime_binding(binding) for binding in raw_bindings)
+            }
+            for binding_id, binding in local_bindings.items():
+                key = str(
+                    binding.get("binding_id")
+                    or binding.get("runtime_binding_id")
+                    or binding.get("id")
+                    or binding_id
+                )
+                if key:
+                    bindings_by_id[key] = binding
+            bindings = [binding for key, binding in bindings_by_id.items() if key]
         else:
-            bindings = list((self._local_fallback("runtime_bindings") or {}).values())
+            bindings = list(local_bindings.values()) or list((self._local_fallback("runtime_bindings") or {}).values())
         if deployment_mode:
             bindings = [
                 b for b in bindings
@@ -8963,6 +8986,52 @@ class ReadSurfaceStore:
             "created_by": actor_id,
         }
         pools[pool_id] = record
+        self._save()
+        return record
+
+    def create_runtime_binding(
+        self,
+        *,
+        runtime_id: str,
+        name: str,
+        persona_id: str,
+        binding_id: str,
+        deployment_plan_id: str,
+        runtime_kind: str,
+        actor_id: str,
+        created_at: Optional[str] = None,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        runtimes = self._ensure_local_overlay_records("runtime_bindings")
+        timestamp = created_at or _utc_now_rfc3339()
+        clean_params = json.loads(json.dumps(params or {}))
+        record = {
+            "id": runtime_id,
+            "runtime_id": runtime_id,
+            "name": name,
+            "state": "stopped",
+            "status": "stopped",
+            "persona_id": persona_id,
+            "binding_id": binding_id,
+            "runtime_binding_id": binding_id,
+            "persona_capital_binding_id": binding_id,
+            "deployment_plan_id": deployment_plan_id,
+            "plan_id": deployment_plan_id,
+            "runtime_kind": runtime_kind,
+            "deployment_stage": runtime_kind,
+            "deployment_mode": runtime_kind,
+            "params": clean_params,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "created_by": actor_id,
+            "metadata": {
+                "created_via": "POST /bff/runtimes",
+                "persistenceMode": "bff_local_dev_store",
+            },
+            "canonicalWriteAuthority": "runtime_manager_service",
+            "persistenceMode": "bff_local_dev_store",
+        }
+        runtimes[runtime_id] = record
         self._save()
         return record
 
@@ -9775,6 +9844,9 @@ class ReadSurfaceStore:
     def get_runtime_binding(self, binding_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not binding_id:
             return None
+        for binding in self._local_overlay_records("runtime_bindings").values():
+            if str(binding.get("binding_id") or binding.get("runtime_binding_id") or binding.get("id") or "") == binding_id:
+                return binding
         available, raw = self._canonical.runtime_binding(binding_id)
         if available:
             return self._project_canonical_runtime_binding(raw) if raw else None
@@ -9783,6 +9855,9 @@ class ReadSurfaceStore:
     def get_runtime_binding_by_runtime_id(self, runtime_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not runtime_id:
             return None
+        for binding in self._local_overlay_records("runtime_bindings").values():
+            if str(binding.get("runtime_id") or binding.get("id") or binding.get("binding_id") or "") == runtime_id:
+                return binding
         available, raw_bindings = self._canonical.list_records("runtime_bindings")
         if available:
             for raw in raw_bindings:

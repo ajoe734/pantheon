@@ -37505,6 +37505,8 @@ async def bff_skill_sandbox_eval(
 _GOV_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 _GOV_BFF_INCIDENT_OVERLAY: Dict[str, Dict[str, Any]] = {}
 _ACKNOWLEDGED_ALERTS: Dict[str, Dict[str, Any]] = {}
+_RUNTIME_CREATE_REQUIRED_FIELDS = ("name", "persona_id", "binding_id", "deployment_plan_id")
+_VALID_RUNTIME_KINDS = {"paper", "live"}
 
 _INCIDENT_CASE_ALIAS_FIELDS = {
     "binding_id": ("binding_id", "runtime_binding_id"),
@@ -37602,6 +37604,59 @@ def _get_bff_incident(incident_id: str) -> Optional[Dict[str, Any]]:
         return _project_bff_incident_case(incident)
     overlay = _GOV_BFF_INCIDENT_OVERLAY.get(incident_id)
     return _project_bff_incident_case(overlay) if overlay else None
+
+
+def _runtime_create_required_string(payload: Dict[str, Any], field: str) -> str:
+    value = str(payload.get(field) or "").strip()
+    if value:
+        return value
+    raise _bff_error(
+        422,
+        ErrorCode.VALIDATION_FAILED,
+        f"{field} is required",
+        f"Runtime create requires a non-empty {field}.",
+        precondition_failed=field,
+    )
+
+
+def _runtime_binding_matches_create(binding: Dict[str, Any], binding_id: str) -> bool:
+    candidate_ids = {
+        str(binding.get("binding_id") or "").strip(),
+        str(binding.get("runtime_binding_id") or "").strip(),
+        str(binding.get("persona_capital_binding_id") or "").strip(),
+    }
+    return binding_id in candidate_ids
+
+
+def _raise_if_runtime_binding_conflict(binding_id: str) -> None:
+    existing = next(
+        (binding for binding in read_store.list_runtime_bindings() if _runtime_binding_matches_create(binding, binding_id)),
+        None,
+    )
+    if existing is None:
+        return
+    runtime_id = existing.get("runtime_id") or existing.get("id") or binding_id
+    raise _bff_error(
+        409,
+        ErrorCode.RESOURCE_CONFLICT,
+        "Binding already has a runtime",
+        f"Binding {binding_id} is already attached to runtime {runtime_id}.",
+        precondition_failed="binding_id",
+        suggestion="Use the existing runtime or choose an unbound binding.",
+    )
+
+
+def _project_runtime_create_response(record: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": record.get("runtime_id") or record.get("id"),
+        "name": record.get("name"),
+        "state": record.get("state") or "stopped",
+        "persona_id": record.get("persona_id"),
+        "binding_id": record.get("binding_id"),
+        "deployment_plan_id": record.get("deployment_plan_id") or record.get("plan_id"),
+        "runtime_kind": record.get("runtime_kind") or record.get("deployment_mode"),
+        "created_at": record.get("created_at"),
+    }
 
 
 def _gov_bff_action_command(
@@ -38029,6 +38084,95 @@ async def bff_deployment_action(
 
 
 # -- Runtimes ----------------------------------------------------------------
+
+@app.post("/bff/runtimes", status_code=201)
+async def bff_create_runtime(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: create a runtime binding in stopped state."""
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({"route": "POST /bff/runtimes", "payload": payload})
+    existing = _GOV_BFF_IDEMPOTENCY.get(resolved_key)
+    if existing is not None:
+        if existing.get("request_hash") != request_hash:
+            raise _bff_error(
+                409,
+                ErrorCode.IDEMPOTENCY_CONFLICT,
+                "Idempotency key already used with a different payload",
+                f"Key {resolved_key!r} is bound to a different request hash",
+                precondition_failed="idempotency_conflict",
+                suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+            )
+        return existing["result"]
+
+    fields = {
+        field: _runtime_create_required_string(payload, field)
+        for field in _RUNTIME_CREATE_REQUIRED_FIELDS
+    }
+    runtime_kind = str(payload.get("runtime_kind") or "").strip().lower()
+    if runtime_kind not in _VALID_RUNTIME_KINDS:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "runtime_kind is invalid",
+            "runtime_kind must be one of: paper, live.",
+            precondition_failed="runtime_kind",
+        )
+
+    _raise_if_runtime_binding_conflict(fields["binding_id"])
+
+    snapshot_at = utc_now()
+    client_runtime_id = str(payload.get("runtime_id") or payload.get("id") or "").strip()
+    runtime_id = client_runtime_id or f"runtime-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
+    record = read_store.create_runtime_binding(
+        runtime_id=runtime_id,
+        name=fields["name"],
+        persona_id=fields["persona_id"],
+        binding_id=fields["binding_id"],
+        deployment_plan_id=fields["deployment_plan_id"],
+        runtime_kind=runtime_kind,
+        actor_id=identity.operator_id,
+        created_at=snapshot_at,
+        params=payload.get("params") if isinstance(payload.get("params"), dict) else {},
+    )
+    data = _project_runtime_create_response(record)
+    surface = _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at)
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {"runtimes": surface}
+    meta["evidenceKind"] = "runtime.create"
+    meta["evidence_kind"] = "runtime.create"
+    event_payload = {
+        "runtime_id": data["id"],
+        "binding_id": data["binding_id"],
+        "persona_id": data["persona_id"],
+        "deployment_plan_id": data["deployment_plan_id"],
+        "runtime_kind": data["runtime_kind"],
+        "state": data["state"],
+        "created_at": data["created_at"],
+    }
+    _publish_event(
+        _sse_buffers["runtime"],
+        _sse_subscribers["runtime"],
+        "runtime.created",
+        event_payload,
+    )
+    _publish_event(
+        _sse_buffers["runtime"],
+        _sse_subscribers["runtime"],
+        "management.runtime-status",
+        event_payload,
+    )
+
+    result = {"data": data, "meta": meta}
+    _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
 
 @app.get("/bff/runtimes")
 async def bff_list_runtimes(
