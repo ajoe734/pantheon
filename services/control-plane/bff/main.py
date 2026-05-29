@@ -17352,9 +17352,54 @@ async def get_persona_management(
             missing_message="Persona health surface unavailable.",
         )
 
+    # BFF-WRITE-P0-WIZARD-008 / P0-8: deploymentPlans and approvals filtered for
+    # this persona via binding_ids so wizard F4 can render plan + approval status.
+    persona_binding_ids = {
+        str(b.get("id") or b.get("binding_id") or "").strip()
+        for b in persona_bindings
+        if str(b.get("id") or b.get("binding_id") or "").strip()
+    }
+    deployment_plans_for_persona: List[Dict[str, Any]] = []
+    approvals_for_persona: List[Dict[str, Any]] = []
+    try:
+        all_plans = read_store.list_deployment_plans() or []
+        deployment_plans_for_persona = [
+            plan for plan in all_plans
+            if persona_binding_ids & {
+                str(bid) for bid in (plan.get("binding_ids") or [])
+            }
+            or str(plan.get("binding_id") or "") in persona_binding_ids
+        ]
+        plan_ids = {
+            str(plan.get("id") or plan.get("plan_id") or "").strip()
+            for plan in deployment_plans_for_persona
+            if str(plan.get("id") or plan.get("plan_id") or "").strip()
+        }
+        all_approvals = read_store.list_approval_decisions() or []
+        approvals_for_persona = [
+            decision for decision in all_approvals
+            if str(decision.get("target_id") or decision.get("plan_id") or "") in plan_ids
+        ]
+    except Exception:  # pragma: no cover - defensive: never break detail page
+        pass
+    surfaces["deployment_plans"] = _dataset_surface_status(
+        "deployment_plans",
+        snapshot_at=snapshot_at,
+        has_data=bool(deployment_plans_for_persona),
+        missing_message="No deployment plans found for this persona.",
+    )
+    surfaces["approvals"] = _dataset_surface_status(
+        "approval_decisions",
+        snapshot_at=snapshot_at,
+        has_data=bool(approvals_for_persona),
+        missing_message="No approval decisions found for this persona's plans.",
+    )
+
     data = {
         "persona": persona,
         "bindings": enriched_bindings,
+        "deploymentPlans": deployment_plans_for_persona,
+        "approvals": approvals_for_persona,
         "sessions": sessions,
         "teaching_sessions": teaching_sessions,
         "allowedActions": allowed_actions,
