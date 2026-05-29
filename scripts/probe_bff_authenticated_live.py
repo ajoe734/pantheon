@@ -27,7 +27,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 
-DEFAULT_BASE_URL = "https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io"
+DEFAULT_BASE_URL = "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
 
 
 @dataclass(frozen=True)
