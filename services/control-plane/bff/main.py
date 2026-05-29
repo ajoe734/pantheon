@@ -268,6 +268,7 @@ _CORS_ALLOW_HEADERS = [
     "Idempotency-Key",
     "Last-Event-ID",
     "X-Correlation-Id",
+    "X-Dry-Run",
     "X-Idempotency-Key",
     "X-MFA-Token",
     "X-Request-Id",
@@ -18575,6 +18576,8 @@ async def patch_agora_journal_entry(
 
 _AGORA_CORE_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 _AGORA_SIGNAL_DECISIONS = {"agree", "disagree", "flag_suspicious"}
+_AGORA_SIGNAL_SEVERITIES = {"info", "warn", "alert"}
+_AGORA_SIGNAL_WRITE_ROLES = {"analyst", "operator", "approver", "admin", "reviewer"}
 _AGORA_EVIDENCE_ALLOWED_MIMES = {
     "application/pdf",
     "text/markdown",
@@ -18586,6 +18589,22 @@ _AGORA_EVIDENCE_ALLOWED_MIMES = {
 _AGORA_EVIDENCE_MAX_FILES = 12
 _AGORA_EVIDENCE_MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024
 _AGORA_EVIDENCE_MAX_TOTAL_SIZE_BYTES = 100 * 1024 * 1024
+
+
+def _truthy_header(value: Optional[str]) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _require_agora_signal_write_role(identity: OperatorIdentity) -> None:
+    if not _AGORA_SIGNAL_WRITE_ROLES.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Agora signal creation requires analyst-level role",
+            "Operator does not hold the required analyst, operator, reviewer, approver, or admin role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with analyst-level Agora write access",
+        )
 
 
 def _agora_core_idempotency_check(
@@ -18665,6 +18684,26 @@ def _agora_required_text(payload: Dict[str, Any], *fields: str) -> str:
         f"Agora request requires a non-empty {label}",
         precondition_failed=label,
     )
+
+
+def _agora_signal_create_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    title = _agora_required_text(payload, "title")
+    body = _agora_required_text(payload, "body")
+    severity = str(payload.get("severity") or "info").strip().lower()
+    if severity not in _AGORA_SIGNAL_SEVERITIES:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Agora signal severity is invalid",
+            "severity must be one of info, warn, or alert",
+            precondition_failed="signal.severity",
+        )
+    return {
+        **dict(payload),
+        "title": title,
+        "body": body,
+        "severity": severity,
+    }
 
 
 def _agora_signal_feedback_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -19024,6 +19063,134 @@ async def bff_agora_signals(
         page_size=page_size,
         snapshot_at=snapshot_at,
     )
+
+
+@app.post("/bff/agora/signals", status_code=201)
+async def bff_create_agora_signal(
+    response: Response,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
+    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+    x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
+):
+    """BFF write-gap P1-10: create an Agora signal review item."""
+    identity = _extract_identity(authorization)
+    _require_agora_signal_write_role(identity)
+    _reject_body_idempotency_key(payload)
+    signal_payload = _agora_signal_create_payload(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    correlation_id = str(x_correlation_id or "").strip() or str(uuid.uuid4())
+    response.headers["X-Correlation-Id"] = correlation_id
+    dry_run = _truthy_header(x_dry_run)
+    request_hash = _stable_json_hash({"route": "POST /bff/agora/signals", "payload": signal_payload})
+    if not dry_run:
+        cached = _agora_core_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            cached_meta = cached.get("meta") if isinstance(cached, dict) else {}
+            response.headers["X-Correlation-Id"] = str(cached_meta.get("correlationId") or correlation_id)
+            return cached
+
+    snapshot_at = utc_now()
+    signal_id = str(
+        signal_payload.get("id")
+        or signal_payload.get("signalId")
+        or signal_payload.get("signal_id")
+        or f"sig-agora-{uuid.uuid4().hex[:10]}"
+    ).strip()
+    if read_store.get_agora_signal(signal_id) is not None:
+        raise _bff_error(
+            409,
+            ErrorCode.RESOURCE_CONFLICT,
+            "Agora signal id already exists",
+            f"Agora signal {signal_id} already exists",
+            precondition_failed="signal_id",
+            suggestion="Replay with the original Idempotency-Key or choose a new signal id",
+            correlation_id=correlation_id,
+        )
+
+    if dry_run:
+        preview = {
+            "id": signal_id,
+            "signal_id": signal_id,
+            "title": signal_payload["title"],
+            "body": signal_payload["body"],
+            "market": str(signal_payload.get("market") or "").strip() or None,
+            "tags": _agora_string_list(signal_payload.get("tags")),
+            "linkedPersonaIds": _agora_string_list(
+                signal_payload.get("linkedPersonaIds") or signal_payload.get("linked_persona_ids")
+            ),
+            "linkedStrategyIds": _agora_string_list(
+                signal_payload.get("linkedStrategyIds") or signal_payload.get("linked_strategy_ids")
+            ),
+            "severity": signal_payload["severity"],
+            "status": "open",
+            "reviewStatus": "pending_trader_review",
+            "createdAt": snapshot_at,
+            "updatedAt": snapshot_at,
+            "createdBy": identity.operator_id,
+            "authorId": identity.operator_id,
+        }
+        return JSONResponse(
+            status_code=200,
+            content=jsonable_encoder(
+                {
+                    "data": preview,
+                    "meta": {
+                        "snapshot_at": snapshot_at,
+                        "dryRun": True,
+                        "correlationId": correlation_id,
+                        "requestId": str(x_request_id or "").strip() or None,
+                    },
+                }
+            ),
+            headers={"X-Correlation-Id": correlation_id},
+        )
+
+    signal = read_store.create_agora_signal(
+        signal_id=signal_id,
+        title=signal_payload["title"],
+        body=signal_payload["body"],
+        actor_id=identity.operator_id,
+        payload=signal_payload,
+        created_at=snapshot_at,
+    )
+    audit = read_store.record_agora_audit_event({
+        "action": "agora.signal.create",
+        "evidenceKind": "agora.signal.create",
+        "targetType": ObjectType.AGORA_SIGNAL.value,
+        "targetId": signal_id,
+        "actorId": identity.operator_id,
+        "recordedAt": snapshot_at,
+        "idempotencyKey": resolved_key,
+        "correlationId": correlation_id,
+    })
+    _publish_event(
+        _sse_buffers["signal"],
+        _sse_subscribers["signal"],
+        "agora.signal.created",
+        {"signalId": signal_id, "id": signal_id, "status": signal.get("status")},
+    )
+    _publish_event(
+        _sse_buffers["inbox"],
+        _sse_subscribers["inbox"],
+        "agora.inbox.updated",
+        {"source": "agora.signals", "signalId": signal_id, "id": signal_id},
+    )
+    result = {
+        "data": signal,
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "dryRun": False,
+            "correlationId": correlation_id,
+            "requestId": str(x_request_id or "").strip() or None,
+            "audit": audit,
+        },
+    }
+    _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
 
 
 @app.get("/bff/agora/signals/{signalId}")
