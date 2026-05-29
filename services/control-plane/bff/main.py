@@ -38830,6 +38830,159 @@ async def bff_command_confirmation_status(
     }
 
 
+@app.post("/bff/command-confirmations/{token}/confirm", status_code=202)
+async def bff_confirm_command_by_token(
+    token: str,
+    request: Request,
+    response: Response,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    authorization: Optional[str] = Header(default=None),
+    x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
+    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+    x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
+):
+    """
+    BFF: confirm a pending high-risk command by its token (P0-4).
+
+    Promotes a ``pending_confirmation`` command to ``accepted`` and triggers
+    the underlying action.  Blocks every high-risk write (retire / promote_live
+    / runtime start / break-glass / force-transition) until this route exists.
+    """
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    correlation_id = str(x_correlation_id or "").strip() or str(uuid.uuid4())
+    response.headers["X-Correlation-Id"] = correlation_id
+
+    payload: Dict[str, Any] = {}
+    try:
+        payload = await request.json()
+    except Exception:
+        pass
+    _reject_body_idempotency_key(payload)
+
+    body_confirm_token = str(
+        payload.get("confirm_token") or payload.get("confirmToken") or ""
+    ).strip()
+    if body_confirm_token and body_confirm_token != token:
+        raise _bff_error(
+            412,
+            ErrorCode.PRECONDITION_FAILED,
+            "confirm_token in body does not match the token in the path",
+            f"Body confirm_token {body_confirm_token!r} does not match path token {token!r}",
+            precondition_failed="confirm_token_invalid",
+            suggestion="Ensure confirm_token in the request body matches the {token} path parameter",
+            correlation_id=correlation_id,
+        )
+
+    command_id = str(payload.get("command_id") or payload.get("commandId") or "").strip()
+    if not command_id:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "command_id is required",
+            "Command confirmation requires the original command_id being confirmed",
+            precondition_failed="command_id_missing",
+            suggestion="Include the command_id from the original command submission",
+            correlation_id=correlation_id,
+        )
+
+    token_state = _confirm_token_lifecycle_payload(token)
+    if token_state.get("status") == "available":
+        raise _bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "Confirm token not found",
+            f"Confirm token {token!r} has not been issued",
+            precondition_failed="confirm_token_not_found",
+            suggestion="Ensure the token was issued for a guarded command and has not been redeemed",
+            correlation_id=correlation_id,
+        )
+
+    _raise_if_confirm_token_expired(token)
+
+    dry_run = _truthy_header(x_dry_run)
+    snapshot_at = utc_now()
+    confirmation_id = str(uuid.uuid4())
+
+    if dry_run:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "data": {
+                    "status": "accepted",
+                    "commandId": command_id,
+                    "confirmed_at": snapshot_at,
+                    "tokenId": token,
+                },
+                "meta": {
+                    "snapshot_at": snapshot_at,
+                    "dryRun": True,
+                    "correlationId": correlation_id,
+                    "requestId": str(x_request_id or "").strip() or None,
+                    "evidenceKind": "command.confirm",
+                },
+            },
+            headers={"X-Correlation-Id": correlation_id},
+        )
+
+    req_hash = _stable_json_hash({"command_id": command_id, "confirm_token": token})
+    existing = _GOV_BFF_IDEMPOTENCY.get(resolved_key)
+    if existing is not None:
+        if existing.get("request_hash") != req_hash:
+            raise _bff_error(
+                409,
+                ErrorCode.IDEMPOTENCY_CONFLICT,
+                "Idempotency key already used with a different payload",
+                f"Key {resolved_key!r} is bound to a different confirmation request",
+                precondition_failed="idempotency_conflict",
+                suggestion="Use a new Idempotency-Key or resubmit the original confirmation unchanged",
+                correlation_id=correlation_id,
+            )
+        return existing["result"]
+
+    _record_command_confirmation_redeem(
+        token_id=token,
+        command_id=command_id,
+        confirmation_id=confirmation_id,
+        confirmed_at=snapshot_at,
+        identity=identity,
+        idempotency_key=resolved_key,
+        request_hash=req_hash,
+    )
+    _publish_event(
+        _sse_buffers["audit"],
+        _sse_subscribers["audit"],
+        "command.confirm",
+        {
+            "commandId": command_id,
+            "tokenId": token,
+            "confirmationId": confirmation_id,
+            "confirmed_at": snapshot_at,
+            "actor": identity.operator_id,
+        },
+    )
+    result = {
+        "data": {
+            "status": "accepted",
+            "commandId": command_id,
+            "confirmed_at": snapshot_at,
+            "tokenId": token,
+            "confirmationId": confirmation_id,
+        },
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "dryRun": False,
+            "correlationId": correlation_id,
+            "requestId": str(x_request_id or "").strip() or None,
+            "evidenceKind": "command.confirm",
+        },
+    }
+    _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": req_hash, "result": result}
+    return result
+
+
 # --------------------------------------------------------------------------- #
 # BFF-LUV-GAP-004: Evolution Programs, Experiments, Jobs, Events
 # --------------------------------------------------------------------------- #
