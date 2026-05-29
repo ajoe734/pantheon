@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: POST /bff/runtimes/{id}/actions/StartRuntime (register in action_catalog)
-- Status: review
+- Status: review_approved
 - Owner: Claude2
 - Reviewer: Claude
 - Phase: Sprint BFF-WRITE-GAP / EPIC-WRITE-GAP-P0-LIFECYCLE
-- Last update: 2026-05-29T10:47:54Z
-- Next: P0-3 StartRuntime implementation ready for review. Anchor commit e6bdd5c2 on task/BFF-WRITE-P0-LIFECYCLE-003. Changes: CommandType.START_RUNTIME in models.py, StartRuntime catalog entry (Runtime/HIGH/requires_confirm_token+requires_two_man/60s cooldown/runtime_operator+live_owner_approver), _execute_start_runtime executor dispatching to /api/internal/v1/runtimes/{id}/start, test_bff_write_gap_2026_05_28.py (23 tests, all pass). No regressions in test_command_executor.py (29 pass). Pre-existing AlertAcknowledge catalog gap unchanged.
+- Last update: 2026-05-29T10:58:29Z
+- Next: Review approved: CommandType.START_RUNTIME enum correct, StartRuntime catalog (Runtime/HIGH/confirm+2man/60s/runtime_operator+live_owner_approver) matches spec, _execute_start_runtime dispatches to /api/internal/v1/runtimes/{id}/start with confirm_token+two_man_token handling, 23 tests pass, 29 existing tests no regressions. Reviewed commit e6bdd5c2.
 
 ## Summary
 -
@@ -23,12 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_bff_write_gap_2026-05-28/BFF_WRITE_GAP_SPEC.md;execute-plans/.lovable/specs/be-requirements/BE_WRITE_GAP_SPEC_2026-05-28.md;services/control-plane/bff/main.py;services/control-plane/bff/action_catalog.py;services/control-plane/bff/command_executor.py;services/control-plane/bff/test_bff_write_gap_2026_05_28.py
 
 ## Recent Task Activity
-- 2026-05-29T10:43:06Z · Claude2 · start · Claude2 starting P0-3: StartRuntime catalog+executor+tests
-- 2026-05-29T10:43:21Z · Claude2 · start · Claude2 starting P0-3: StartRuntime catalog+executor+tests
-- 2026-05-29T10:47:31Z · unknown · worker_commit · Worker commit e6bdd5c2bfaf recorded 4 staged file(s) for BFF-WRITE-P0-LIFECYCLE-003.
-- 2026-05-29T10:47:43Z · Claude2 · progress · Implementation complete: CommandType.START_RUNTIME, StartRuntime catalog entry (Runtime/HIGH/confirm+2man), _execute_start_runtime executor, 23-test file. Anchor commit e6bdd5c2. pytest 23+29 passed.
-- 2026-05-29T10:47:54Z · Claude2 · handoff · Handoff to Claude: P0-3 StartRuntime implementation ready for review. Anchor commit e6bdd5c2 on task/BFF-WRITE-P0-LIFECYCLE-003. Changes: CommandType.START_RUNTIME in models.py, StartRuntime catalog entry (Runtime/HIGH/requires_confirm_token+requires_two_man/60s cooldown/runtime_operator+live_owner_approver), _execute_start_runtime executor dispatching to /api/internal/v1/runtimes/{id}/start, test_bff_write_gap_2026_05_28.py (23 tests, all pass). No regressions in test_command_executor.py (29 pass). Pre-existing AlertAcknowledge catalog gap unchanged.
-- 2026-05-29T10:52:08Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
+- 2026-05-29T10:52:11Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-05-29T10:52:11Z · Orchestrator · worker_worktree_reused · -
+- 2026-05-29T10:52:11Z · Orchestrator · worker_started · Worker started via claude_cli: review_ready_dispatch
+- 2026-05-29T10:58:29Z · Claude · review_approved · Review approved: CommandType.START_RUNTIME enum correct, StartRuntime catalog (Runtime/HIGH/confirm+2man/60s/runtime_operator+live_owner_approver) matches spec, _execute_start_runtime dispatches to /api/internal/v1/runtimes/{id}/start with confirm_token+two_man_token handling, 23 tests pass, 29 existing tests no regressions. Reviewed commit e6bdd5c2.
+- 2026-05-29T10:58:57Z · unknown · worker_commit · Worker commit 0bae6f2f2b07 recorded 1 staged file(s) for BFF-WRITE-P0-LIFECYCLE-003.
+- 2026-05-29T11:02:38Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
