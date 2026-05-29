@@ -140,6 +140,24 @@ def _fixture_list_record_key(record: Any) -> str:
     return json.dumps(record, sort_keys=True, ensure_ascii=True)
 
 
+def _compact_string_list(value: Any) -> List[str]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, str):
+        values = [part.strip() for part in re.split(r"[\s,]+", value) if part.strip()]
+    elif isinstance(value, (list, tuple, set)):
+        values = [str(item).strip() for item in value if str(item).strip()]
+    else:
+        values = [str(value).strip()]
+    deduped: List[str] = []
+    seen = set()
+    for item in values:
+        if item not in seen:
+            deduped.append(item)
+            seen.add(item)
+    return deduped
+
+
 def _merge_default_fixture_pack(target: Dict[str, Any], fixture: Dict[str, Any]) -> bool:
     changed = False
     for raw_key, incoming in fixture.items():
@@ -7600,6 +7618,38 @@ class ReadSurfaceStore:
         if not signal_id:
             return None
         return self._agora_record_map("agora_signals", ["signal_id", "id"]).get(str(signal_id))
+
+    def create_agora_signal(
+        self,
+        *,
+        signal_id: str,
+        title: str,
+        body: str,
+        actor_id: str,
+        payload: Dict[str, Any],
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        timestamp = created_at or _utc_now_rfc3339()
+        signal = {
+            "id": signal_id,
+            "signal_id": signal_id,
+            "title": title,
+            "body": body,
+            "market": str(payload.get("market") or "").strip() or None,
+            "tags": _compact_string_list(payload.get("tags")),
+            "linkedPersonaIds": _compact_string_list(payload.get("linkedPersonaIds") or payload.get("linked_persona_ids")),
+            "linkedStrategyIds": _compact_string_list(payload.get("linkedStrategyIds") or payload.get("linked_strategy_ids")),
+            "severity": str(payload.get("severity") or "info").strip().lower(),
+            "status": "open",
+            "reviewStatus": "pending_trader_review",
+            "createdAt": timestamp,
+            "updatedAt": timestamp,
+            "createdBy": actor_id,
+            "authorId": actor_id,
+        }
+        self._ensure_local_overlay_records("agora_signals")[signal_id] = json.loads(json.dumps(signal))
+        self._save()
+        return json.loads(json.dumps(signal))
 
     def record_agora_signal_feedback(
         self,
