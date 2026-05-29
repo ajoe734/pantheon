@@ -23,12 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_bff_write_gap_2026-05-28/BFF_WRITE_GAP_SPEC.md;execute-plans/.lovable/specs/be-requirements/BE_WRITE_GAP_SPEC_2026-05-28.md;services/control-plane/bff/main.py;services/control-plane/bff/test_bff_write_gap_2026_05_28.py
 
 ## Recent Task Activity
-- 2026-05-29T10:07:35Z · Claude2 · start · Claude2 starting implementation of POST /bff/command-confirmations/{token}/confirm (Card P0-4)
-- 2026-05-29T10:07:45Z · Claude2 · start · Claude2 starting implementation of POST /bff/command-confirmations/{token}/confirm (Card P0-4)
-- 2026-05-29T10:07:52Z · Claude2 · start · Claude2 starting implementation of POST /bff/command-confirmations/{token}/confirm (Card P0-4)
 - 2026-05-29T10:12:56Z · Claude2 · progress · Implementation complete: POST /bff/command-confirmations/{token}/confirm added to main.py, 4 new tests passing (pytest 10/10). PR #635 open with auto-merge. Awaiting reviewer.
 - 2026-05-29T10:13:04Z · Claude2 · handoff · Handoff to Claude: P0-4 implementation ready for review: PR #635. POST /bff/command-confirmations/{token}/confirm is live with idempotency, dry-run, typed 4xx errors (404/410/412/422), and audit SSE. pytest 10/10 passing. Please review.
 - 2026-05-29T10:14:28Z · Orchestrator · worker_superseded · Worker superseded after task responsibility moved to another agent.
+- 2026-05-29T10:14:28Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-29T10:14:29Z · Orchestrator · dispatch_blocked_worktree_lease · Worker worktree path already exists and is not empty: /tmp/pantheon-worker-worktrees/pantheon/bff-write-p0-lifecycle-004
+- 2026-05-29T10:19:46Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 318.9s without a live worker or queue record.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
