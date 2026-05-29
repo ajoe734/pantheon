@@ -34347,6 +34347,12 @@ async def bff_management_board_pack(
     )
 
 
+_ADVANCE_LIFECYCLE_VALID_TARGETS = frozenset({"paper_owner", "live_owner", "retired"})
+
+# Roles required for live_owner target (more privileged)
+_ADVANCE_LIFECYCLE_LIVE_ROLES = frozenset({"approver", "admin"})
+
+
 @app.post("/bff/personas/{persona_id}/actions/{action_id}", status_code=202)
 async def bff_persona_action(
     persona_id: str,
@@ -34356,12 +34362,65 @@ async def bff_persona_action(
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
-    """BFF: persona action — routes through command/precondition machinery."""
+    """BFF: persona action — routes through command/precondition machinery.
+
+    AdvanceLifecycle is registered (P0-1) and returns 202. All other action_ids
+    still return 410 until individually registered.
+    """
+    # P0-1: AdvanceLifecycle registered and active
+    if action_id == "AdvanceLifecycle":
+        identity = _extract_identity(authorization)
+        _require_operator_role(identity)
+        _reject_body_idempotency_key(payload)
+        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+
+        target_state = str(payload.get("target_state") or "").strip()
+        if target_state not in _ADVANCE_LIFECYCLE_VALID_TARGETS:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "target_state is required and must be paper_owner, live_owner, or retired",
+                f"Got {target_state!r}; allowed: {sorted(_ADVANCE_LIFECYCLE_VALID_TARGETS)}",
+                precondition_failed="target_state",
+            )
+
+        if target_state == "live_owner" and not _ADVANCE_LIFECYCLE_LIVE_ROLES.intersection(identity.roles):
+            raise _bff_error(
+                403,
+                ErrorCode.FORBIDDEN,
+                "Advancing to live_owner requires approver or admin role",
+                "Operator does not hold live_owner_approver role",
+                precondition_failed="role_check",
+            )
+
+        confirm_token = str(payload.get("confirm_token") or "").strip()
+        if not confirm_token:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "confirm_token is required for AdvanceLifecycle",
+                "Provide a valid confirm_token in the request body",
+                precondition_failed="confirm_token",
+            )
+
+        _ensure_persona_exists(persona_id)
+
+        enriched_payload = {**payload, "persona_id": persona_id}
+        return _strategy_persona_action_command(
+            entity_type=ObjectType.PERSONA,
+            entity_id=persona_id,
+            action_id=action_id,
+            resolved_key=resolved_key,
+            identity=identity,
+            payload=enriched_payload,
+            command_type=CommandType.ADVANCE_LIFECYCLE,
+        )
+
     return _deprecated_bff_path_response(
         route="/bff/personas/{persona_id}/actions/{action_id}",
         replacement="/bff/actions/persona/{persona_id}/{action_id}",
     )
-    identity = _extract_identity(authorization)
+    identity = _extract_identity(authorization)  # noqa: F841 — unreachable; preserved for future de-deprecation
     _require_read_role(identity)
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
