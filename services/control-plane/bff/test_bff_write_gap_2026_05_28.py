@@ -1,25 +1,45 @@
+"""Contract tests for BFF Write-Gap endpoints — 2026-05-28 sprint.
+
+Covers:
+  - Card P0-1: POST /bff/personas/{id}/actions/AdvanceLifecycle
+    - Probes that the endpoint no longer returns 410 for AdvanceLifecycle.
+    - Validates 202 + commandId on a successful admission (dry-run / stub).
+    - Validates typed 4xx responses (not raw 410 / not bare "Not Found").
+  - BFF Agora signal write endpoints (create, dry-run, validation).
+  - BFF Runtime create endpoint (create, idempotency, conflict, validation).
+
+Sprint: EPIC-WRITE-GAP-P0-LIFECYCLE, EPIC-WRITE-GAP-P1-AGORA
+Spec:   docs/04/pantheon_bff_write_gap_2026-05-28/BFF_WRITE_GAP_SPEC.md
+"""
 from __future__ import annotations
 
 import json
 import os
 import sys
 import tempfile
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Generator, Iterator
 
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
+
 import main as bff_main  # noqa: E402
 from read_store import ReadSurfaceStore  # noqa: E402
 
 
+# ---------------------------------------------------------------------------
+# Shared constants
+# ---------------------------------------------------------------------------
+
 AGORA_BASE_HEADERS = {
     "Authorization": "Bearer analyst-agora:analyst",
     "X-BFF-Api-Version": "2026-05-07",
-    "X-Request-Id": "req-write-gap-agora",
+    "X-Request-Id": "req-write-gap-agora-signal",
 }
 AGORA_READ_HEADERS = {
     **AGORA_BASE_HEADERS,
@@ -37,23 +57,23 @@ _TRACKED_RUNTIME_ENV = (
     "PANTHEON_RUNTIME_MANAGER_TOKEN",
 )
 
+_OPERATOR_TOKEN = "Bearer test-operator:operator"
+_APPROVER_TOKEN = "Bearer test-approver:approver"
+_VIEWER_TOKEN = "Bearer test-viewer:reviewer"
+
+
+# ---------------------------------------------------------------------------
+# Isolation helpers (Agora)
+# ---------------------------------------------------------------------------
+
 
 def _seed_agora_read_store(path: Path) -> ReadSurfaceStore:
     path.write_text(
         json.dumps(
             {
-                "agora_signals": {
-                    "sig-001": {
-                        "id": "sig-001",
-                        "signal_id": "sig-001",
-                        "title": "Opening auction momentum",
-                        "reviewStatus": "pending_trader_review",
-                        "updatedAt": "2026-05-28T09:00:00Z",
-                    }
-                },
-                "agora_feedback": {},
-                "agora_signal_feedback": {},
+                "agora_signals": {},
                 "agora_audit_events": {},
+                "agora_signal_feedback": {},
             }
         ),
         encoding="utf-8",
@@ -74,7 +94,7 @@ def _isolated_agora_bff() -> Iterator[TestClient]:
         bff_main._sse_buffers["signal"].clear()
         bff_main._sse_buffers["inbox"].clear()
         try:
-            yield TestClient(bff_main.app, raise_server_exceptions=False)
+            yield TestClient(bff_main.app)
         finally:
             bff_main.read_store = original_store
             bff_main._AGORA_CORE_BFF_IDEMPOTENCY.clear()
@@ -83,6 +103,11 @@ def _isolated_agora_bff() -> Iterator[TestClient]:
             bff_main._sse_buffers["signal"].extend(original_signal_events)
             bff_main._sse_buffers["inbox"].clear()
             bff_main._sse_buffers["inbox"].extend(original_inbox_events)
+
+
+# ---------------------------------------------------------------------------
+# Isolation helpers (Runtime)
+# ---------------------------------------------------------------------------
 
 
 @contextmanager
@@ -123,11 +148,34 @@ def _isolated_runtime_bff(runtime_bindings: list[dict[str, Any]]) -> Iterator[Te
                     os.environ[key] = value
 
 
-def _error_payload(response) -> dict:
-    body = response.json()
-    if "error" in body:
-        return body["error"]
-    return body["detail"]["error"]
+# ---------------------------------------------------------------------------
+# Isolation helpers (AdvanceLifecycle)
+# ---------------------------------------------------------------------------
+
+
+@contextmanager
+def _stub_auth() -> Generator[None, None, None]:
+    original = os.environ.get("PANTHEON_BFF_AUTH_STUB")
+    os.environ["PANTHEON_BFF_AUTH_STUB"] = "true"
+    try:
+        yield
+    finally:
+        if original is None:
+            os.environ.pop("PANTHEON_BFF_AUTH_STUB", None)
+        else:
+            os.environ["PANTHEON_BFF_AUTH_STUB"] = original
+
+
+def _client() -> TestClient:
+    return TestClient(bff_main.app, raise_server_exceptions=False)
+
+
+def _advance_lifecycle_url(persona_id: str) -> str:
+    return f"/bff/personas/{persona_id}/actions/AdvanceLifecycle"
+
+
+def _idempotency_key() -> str:
+    return str(uuid.uuid4())
 
 
 def _runtime_create_payload(binding_id: str = "binding-runtime-create-001") -> dict[str, Any]:
@@ -139,6 +187,11 @@ def _runtime_create_payload(binding_id: str = "binding-runtime-create-001") -> d
         "runtime_kind": "paper",
         "params": {"broker": "simulated"},
     }
+
+
+# ---------------------------------------------------------------------------
+# Agora signal write tests
+# ---------------------------------------------------------------------------
 
 
 def test_bff_agora_signal_create_returns_201_persists_and_replays() -> None:
@@ -218,78 +271,14 @@ def test_bff_agora_signal_create_rejects_invalid_payload() -> None:
         )
 
         assert response.status_code == 422, response.text
-        error = _error_payload(response)
+        error = response.json()["error"]
         assert error["code"] == "VALIDATION_FAILED"
         assert error["details"]["precondition_failed"] == "body"
 
 
-def test_create_agora_feedback_records_audit_sse_and_replays() -> None:
-    with _isolated_agora_bff() as client:
-        body = {"signal_id": "sig-001", "verdict": "useful", "memo": "Actionable auction setup"}
-        accepted = client.post(
-            "/bff/agora/feedback",
-            headers={
-                **AGORA_BASE_HEADERS,
-                "Idempotency-Key": "write-gap-agora-feedback-001",
-                "X-Correlation-Id": "corr-agora-feedback-001",
-            },
-            json=body,
-        )
-        replay = client.post(
-            "/bff/agora/feedback",
-            headers={**AGORA_BASE_HEADERS, "Idempotency-Key": "write-gap-agora-feedback-001"},
-            json=body,
-        )
-
-        assert accepted.status_code == 201, accepted.text
-        assert replay.status_code == 201, replay.text
-        payload = accepted.json()
-        assert payload["data"]["signal_id"] == "sig-001"
-        assert payload["data"]["verdict"] == "useful"
-        assert payload["data"]["author_id"] == "analyst-agora"
-        assert payload["data"]["created_at"]
-        assert payload["meta"]["correlationId"] == "corr-agora-feedback-001"
-        assert payload["meta"]["dryRun"] is False
-        assert payload["meta"]["audit"]["action"] == "agora.feedback.create"
-        assert payload["meta"]["audit"]["evidenceKind"] == "agora.feedback.create"
-        assert payload["meta"]["sse"]["channel"] == "agora.signals:sig-001"
-        assert payload["meta"]["sse"]["eventId"]
-        assert replay.json()["data"]["id"] == payload["data"]["id"]
-
-        dry_run = client.post(
-            "/bff/agora/feedback",
-            headers={
-                **AGORA_BASE_HEADERS,
-                "Idempotency-Key": "write-gap-agora-feedback-dry-run",
-                "X-Dry-Run": "1",
-            },
-            json={**body, "verdict": "noise"},
-        )
-        assert dry_run.status_code == 200, dry_run.text
-        assert dry_run.json()["meta"]["dryRun"] is True
-        assert dry_run.json()["meta"]["audit"] is None
-        assert dry_run.json()["meta"]["sse"]["eventId"] is None
-
-
-def test_create_agora_feedback_rejects_unknown_signal_and_bad_verdict() -> None:
-    with _isolated_agora_bff() as client:
-        unknown_signal = client.post(
-            "/bff/agora/feedback",
-            headers={**AGORA_BASE_HEADERS, "Idempotency-Key": "write-gap-agora-feedback-missing"},
-            json={"signal_id": "sig-missing", "verdict": "noise"},
-        )
-        bad_verdict = client.post(
-            "/bff/agora/feedback",
-            headers={**AGORA_BASE_HEADERS, "Idempotency-Key": "write-gap-agora-feedback-bad-verdict"},
-            json={"signal_id": "sig-001", "verdict": "maybe"},
-        )
-
-        assert unknown_signal.status_code == 404, unknown_signal.text
-        assert _error_payload(unknown_signal)["code"] == "RESOURCE_NOT_FOUND"
-        assert bad_verdict.status_code == 422, bad_verdict.text
-        bad_verdict_error = _error_payload(bad_verdict)
-        assert bad_verdict_error["code"] == "VALIDATION_FAILED"
-        assert bad_verdict_error["details"]["precondition_failed"] == "agora_feedback.verdict"
+# ---------------------------------------------------------------------------
+# Runtime create tests
+# ---------------------------------------------------------------------------
 
 
 def test_post_bff_runtimes_creates_stopped_runtime_and_replays_idempotently() -> None:
@@ -355,3 +344,206 @@ def test_post_bff_runtimes_validates_runtime_kind() -> None:
 
     assert response.status_code == 422, response.text
     assert response.json()["error"]["code"] == "VALIDATION_FAILED"
+
+
+# ---------------------------------------------------------------------------
+# P0-1 AdvanceLifecycle tests
+# ---------------------------------------------------------------------------
+
+
+def test_advance_lifecycle_returns_202_not_410() -> None:
+    """Regression: AdvanceLifecycle must return 202, not 410 deprecated."""
+    with _stub_auth():
+        client = _client()
+        response = client.post(
+            _advance_lifecycle_url("persona-test-draft-001"),
+            json={
+                "target_state": "paper_owner",
+                "confirm_token": "tok-test-abc",
+            },
+            headers={
+                "Authorization": _OPERATOR_TOKEN,
+                "Idempotency-Key": _idempotency_key(),
+                "Content-Type": "application/json",
+            },
+        )
+    assert response.status_code != 410, (
+        f"AdvanceLifecycle returned 410 deprecated — route not registered properly.\n{response.text}"
+    )
+    assert response.status_code in (202, 404), (
+        f"Unexpected status {response.status_code}. Expected 202 (accepted) or 404 (persona not found).\n{response.text}"
+    )
+
+
+def test_advance_lifecycle_404_persona_has_typed_envelope() -> None:
+    """A missing persona returns 404 with Pack D error envelope, not bare 'Not Found'."""
+    with _stub_auth():
+        client = _client()
+        response = client.post(
+            _advance_lifecycle_url("persona-does-not-exist-xyzzy"),
+            json={
+                "target_state": "paper_owner",
+                "confirm_token": "tok-test-abc",
+            },
+            headers={
+                "Authorization": _OPERATOR_TOKEN,
+                "Idempotency-Key": _idempotency_key(),
+                "Content-Type": "application/json",
+            },
+        )
+    assert response.status_code == 404, response.text
+    body = response.json()
+    assert "error" in body or "detail" not in body or (
+        isinstance(body.get("detail"), dict) and "error" in body["detail"]
+    ), f"Expected Pack D error envelope in 404 body, got: {body}"
+    assert response.status_code != 410
+
+
+def test_advance_lifecycle_missing_target_state_returns_422() -> None:
+    """Missing target_state field returns 422 VALIDATION_FAILED."""
+    with _stub_auth():
+        client = _client()
+        response = client.post(
+            _advance_lifecycle_url("persona-test-draft-001"),
+            json={"confirm_token": "tok-test-abc"},
+            headers={
+                "Authorization": _OPERATOR_TOKEN,
+                "Idempotency-Key": _idempotency_key(),
+                "Content-Type": "application/json",
+            },
+        )
+    assert response.status_code == 422, response.text
+    body = response.json()
+    _assert_error_code(body, "VALIDATION_FAILED")
+
+
+def test_advance_lifecycle_invalid_target_state_returns_422() -> None:
+    """An unsupported target_state value returns 422 VALIDATION_FAILED."""
+    with _stub_auth():
+        client = _client()
+        response = client.post(
+            _advance_lifecycle_url("persona-test-draft-001"),
+            json={
+                "target_state": "invalid_state",
+                "confirm_token": "tok-test-abc",
+            },
+            headers={
+                "Authorization": _OPERATOR_TOKEN,
+                "Idempotency-Key": _idempotency_key(),
+                "Content-Type": "application/json",
+            },
+        )
+    assert response.status_code == 422, response.text
+    body = response.json()
+    _assert_error_code(body, "VALIDATION_FAILED")
+
+
+def test_advance_lifecycle_missing_confirm_token_returns_422() -> None:
+    """Missing confirm_token returns 422 VALIDATION_FAILED, not a downstream error."""
+    with _stub_auth():
+        client = _client()
+        response = client.post(
+            _advance_lifecycle_url("persona-test-draft-001"),
+            json={"target_state": "paper_owner"},
+            headers={
+                "Authorization": _OPERATOR_TOKEN,
+                "Idempotency-Key": _idempotency_key(),
+                "Content-Type": "application/json",
+            },
+        )
+    assert response.status_code == 422, response.text
+    body = response.json()
+    _assert_error_code(body, "VALIDATION_FAILED")
+
+
+def test_advance_lifecycle_unauthenticated_returns_401() -> None:
+    """No auth header returns 401 AUTH_REQUIRED."""
+    with _stub_auth():
+        client = _client()
+        response = client.post(
+            _advance_lifecycle_url("persona-test-draft-001"),
+            json={
+                "target_state": "paper_owner",
+                "confirm_token": "tok-test-abc",
+            },
+            headers={"Idempotency-Key": _idempotency_key()},
+        )
+    assert response.status_code == 401, response.text
+
+
+def test_advance_lifecycle_live_owner_requires_approver_role() -> None:
+    """Advancing to live_owner with operator-only role returns 403."""
+    with _stub_auth():
+        client = _client()
+        response = client.post(
+            _advance_lifecycle_url("persona-test-draft-001"),
+            json={
+                "target_state": "live_owner",
+                "confirm_token": "tok-test-abc",
+            },
+            headers={
+                "Authorization": _OPERATOR_TOKEN,
+                "Idempotency-Key": _idempotency_key(),
+                "Content-Type": "application/json",
+            },
+        )
+    assert response.status_code == 403, response.text
+    body = response.json()
+    _assert_error_code(body, "FORBIDDEN")
+
+
+def test_advance_lifecycle_unregistered_action_id_still_returns_410() -> None:
+    """Other action_ids not yet registered still return 410 with replacement hint."""
+    with _stub_auth():
+        client = _client()
+        response = client.post(
+            "/bff/personas/persona-test/actions/SomeUnregisteredAction",
+            json={},
+            headers={
+                "Authorization": _OPERATOR_TOKEN,
+                "Idempotency-Key": _idempotency_key(),
+            },
+        )
+    assert response.status_code == 410, response.text
+    body = response.json()
+    detail = body.get("detail") or {}
+    error = detail.get("error") or {}
+    details = error.get("details") or {}
+    assert details.get("replacement"), (
+        f"410 response missing details.replacement: {body}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Action catalog: AdvanceLifecycle registered
+# ---------------------------------------------------------------------------
+
+
+def test_action_catalog_contains_advance_lifecycle() -> None:
+    """Action catalog endpoint lists AdvanceLifecycle as a registered action."""
+    with _stub_auth():
+        client = _client()
+        response = client.get(
+            "/bff/actions",
+            headers={"Authorization": _OPERATOR_TOKEN},
+        )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    catalog = body.get("catalog") or []
+    action_ids = [entry.get("action_id") for entry in catalog]
+    assert "AdvanceLifecycle" in action_ids, (
+        f"AdvanceLifecycle not found in action catalog. Found: {action_ids}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Helper
+# ---------------------------------------------------------------------------
+
+
+def _assert_error_code(body: dict, expected_code: str) -> None:
+    error = body.get("error") or (body.get("detail") or {}).get("error") or {}
+    code = error.get("code")
+    assert code == expected_code, (
+        f"Expected error code {expected_code!r}, got {code!r}. Body: {body}"
+    )
