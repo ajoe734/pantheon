@@ -41264,9 +41264,135 @@ async def sem_v5_sentinel_remediation_execute_command(
     )
 
 
-_SENTINEL_FINDING_KINDS = {"hiq_sentinel", "risk_breach", "strategy_drift", "loop_anomaly"}
+_SENTINEL_HEALTH_FINDING_KIND = "persona_health"
+_SENTINEL_FINDING_KINDS = {
+    "hiq_sentinel",
+    "risk_breach",
+    "strategy_drift",
+    "loop_anomaly",
+    _SENTINEL_HEALTH_FINDING_KIND,
+}
 _SENTINEL_FINDING_STATUSES = {"open", "resolved", "dismissed", "escalated"}
 _SENTINEL_FINDING_SEVERITIES = {"critical", "high", "medium", "low"}
+
+
+# ---------------------------------------------------------------------------
+# Sentinel rule engine — HealthReasonCode coverage
+# (Card P2-16 / Pack D §D-SentinelRules; see BFF_WRITE_GAP_SPEC §4.)
+#
+# Every persona HealthReasonCode below ``healthy`` maps to a Sentinel rule that
+# emits one open finding per (persona, reason).  This closes the gap where
+# degraded personas (e.g. ``persona_lifecycle_not_active`` +
+# ``no_runtime_binding``) produced zero Sentinel findings.  This is rule-engine
+# coverage layered onto the existing incident-derived findings; it is not a new
+# endpoint.  Severity uses the canonical sentinel severity vocabulary
+# (critical/high/medium/low); ``severity_bucket`` carries the Pack D
+# info/warn/alert tier the FE timeline groups on.
+# ---------------------------------------------------------------------------
+_SENTINEL_HEALTH_REASON_RULES: Dict[str, Dict[str, str]] = {
+    "persona_lifecycle_not_active": {
+        "severity": "medium",
+        "bucket": "info",
+        "label": "Persona lifecycle not active",
+    },
+    "no_runtime_binding": {
+        "severity": "medium",
+        "bucket": "info",
+        "label": "Persona has no runtime binding",
+    },
+    "runtime_status_attention": {
+        "severity": "medium",
+        "bucket": "warn",
+        "label": "Runtime binding status needs attention",
+    },
+    "negative_pnl": {
+        "severity": "high",
+        "bucket": "warn",
+        "label": "Persona telemetry shows negative PnL",
+    },
+    "active_incident": {
+        "severity": "critical",
+        "bucket": "alert",
+        "label": "Persona has an active incident",
+    },
+    "drawdown_threshold": {
+        "severity": "critical",
+        "bucket": "alert",
+        "label": "Persona breached drawdown threshold",
+    },
+}
+
+
+def _health_reason_sentinel_findings(
+    *,
+    kind: Optional[str] = None,
+    status: Optional[str] = None,
+    severity: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Run the HealthReasonCode rule engine over the persona fleet.
+
+    Applies one rule per HealthReasonCode (Card P2-16): every persona reason
+    below ``healthy`` emits an open ``persona_health`` finding so degraded
+    personas surface in the Sentinel timeline.  Health is read from the same
+    projection that powers the persona-fleet surface
+    (``_project_persona_fleet_item``) so the rule engine never drifts from the
+    health computation clients already see.
+
+    The optional ``kind``/``status``/``severity`` arguments mirror the
+    findings-list filters and are applied in-line so callers do not double
+    filter.  All findings are kind ``persona_health`` and status ``open``, so a
+    filter that excludes that class short-circuits the (relatively expensive)
+    fleet projection.
+    """
+    if kind is not None and kind.lower() != _SENTINEL_HEALTH_FINDING_KIND:
+        return []
+    if status is not None and status.lower() != "open":
+        return []
+    severity_filter = severity.lower() if severity is not None else None
+
+    personas = _list_persona_records()
+    if not personas:
+        return []
+    runtime_bindings = list(read_store.list_runtime_bindings() or [])
+    incidents = list(read_store.list_incidents() or [])
+    evolution_decisions = list(read_store.list_evolution_decisions() or [])
+
+    findings: List[Dict[str, Any]] = []
+    for persona in personas:
+        item = _project_persona_fleet_item(
+            persona,
+            all_runtime_bindings=runtime_bindings,
+            all_incidents=incidents,
+            all_evolution_decisions=evolution_decisions,
+        )
+        persona_id = str(item.get("id") or "").strip()
+        if not persona_id:
+            continue
+        health = item.get("health") or {}
+        persona_name = str((item.get("persona") or {}).get("name") or persona_id)
+        for reason in health.get("reasons") or []:
+            rule = _SENTINEL_HEALTH_REASON_RULES.get(reason)
+            if rule is None:
+                continue
+            if severity_filter is not None and rule["severity"] != severity_filter:
+                continue
+            findings.append(
+                {
+                    "id": f"sentinel-health-{persona_id}-{reason}",
+                    "kind": _SENTINEL_HEALTH_FINDING_KIND,
+                    "status": "open",
+                    "severity": rule["severity"],
+                    "severity_bucket": rule["bucket"],
+                    "title": f"{rule['label']}: {persona_name}",
+                    "health_reason": reason,
+                    "rule_id": f"health-reason:{reason}",
+                    "persona_id": persona_id,
+                    "derived_from_persona_id": persona_id,
+                    "health_status": health.get("status"),
+                    "health_score": health.get("score"),
+                }
+            )
+    return findings
 
 
 @app.get("/bff/v5/sentinel/findings")
@@ -41317,6 +41443,20 @@ async def bff_v5_sentinel_findings_list(
         status=status,
         severity=severity,
     )
+    records = list(records)
+
+    # Sentinel rule engine: layer HealthReasonCode coverage on top of the
+    # incident-derived findings so degraded personas surface (Card P2-16).
+    health_findings = _health_reason_sentinel_findings(
+        kind=kind,
+        status=status,
+        severity=severity,
+    )
+    if health_findings:
+        existing_ids = {str(r.get("id")) for r in records}
+        records.extend(f for f in health_findings if str(f.get("id")) not in existing_ids)
+        available = True
+
     src_dataset = "sentinel_findings" if available and read_store.dataset_source("incidents") == "missing" else "incidents"
     source = None if available else "missing"
     return _sem_final_list_response(records, dataset=src_dataset, surface_key="sentinel_findings", source=source)
