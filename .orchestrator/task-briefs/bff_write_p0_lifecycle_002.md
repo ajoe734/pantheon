@@ -7,11 +7,11 @@ Do not read `current-work.md` by default for implementation context.
 ## Task
 - Title: POST /bff/capital-pools/{id}/actions/ApprovePool (register in action_catalog)
 - Status: todo
-- Owner: Codex
+- Owner: Codex2
 - Reviewer: Claude
 - Phase: Sprint BFF-WRITE-GAP / EPIC-WRITE-GAP-P0-LIFECYCLE
-- Last update: 2026-05-29T07:41:38Z
-- Next: Assignment created
+- Last update: 2026-05-29T08:37:28Z
+- Next: Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Codex2 starts a fresh run.
 
 ## Summary
 -
@@ -23,7 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_bff_write_gap_2026-05-28/BFF_WRITE_GAP_SPEC.md;execute-plans/.lovable/specs/be-requirements/BE_WRITE_GAP_SPEC_2026-05-28.md;services/control-plane/bff/main.py;services/control-plane/bff/action_catalog.py;services/control-plane/bff/command_executor.py;services/control-plane/bff/test_bff_write_gap_2026_05_28.py
 
 ## Recent Task Activity
-- 2026-05-29T07:41:38Z · Operator · assign · Assigned BFF-WRITE-P0-LIFECYCLE-002 to Codex with reviewer Claude
+- 2026-05-29T08:37:02Z · Orchestrator · worker_worktree_allocated · -
+- 2026-05-29T08:37:03Z · Orchestrator · worker_started · Worker started via codex: owned_ready_dispatch
+- 2026-05-29T08:37:03Z · Codex · start · Supervisor auto-started BFF-WRITE-P0-LIFECYCLE-002 after successful dispatch.
+- 2026-05-29T08:37:06Z · Orchestrator · task_dispatch_synced · Supervisor auto-started BFF-WRITE-P0-LIFECYCLE-002 after successful dispatch.
+- 2026-05-29T08:37:28Z · Orchestrator · provider_dispatch_paused · Paused new dispatches for codex1 until 2026-05-29T09:37:28Z after terminal quota failure: Codex usage limit reached
+- 2026-05-29T08:37:33Z · Orchestrator · task_reassigned · Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Codex2 starts a fresh run.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
