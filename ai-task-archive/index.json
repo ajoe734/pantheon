@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-05-29T09:46:00Z",
+  "updated_at": "2026-05-29T10:00:48Z",
   "counts": {
-    "total": 1328,
-    "completed": 1305,
+    "total": 1329,
+    "completed": 1306,
     "superseded": 23
   },
   "recent_terminal_ids": [
+    "BFF-WRITE-P0-LIFECYCLE-001",
     "BFF-WRITE-P1-AGORA-011",
     "BFF-WRITE-P1-AGORA-010",
     "BFF-B6-001-SEC-FIX",
@@ -25,7 +26,6 @@
     "BFF-B2-006",
     "BFF-B3-004",
     "BFF-B3-007",
-    "BFF-B5-001",
-    "BFF-PM12-009"
+    "BFF-B5-001"
   ]
 }
