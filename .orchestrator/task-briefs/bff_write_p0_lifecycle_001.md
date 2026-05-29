@@ -10,8 +10,8 @@ Do not read `current-work.md` by default for implementation context.
 - Owner: Claude2
 - Reviewer: Claude
 - Phase: Sprint BFF-WRITE-GAP / EPIC-WRITE-GAP-P0-LIFECYCLE
-- Last update: 2026-05-29T09:40:00Z
-- Next: Owner finalized: 9/9 AdvanceLifecycle tests pass; closeout commit and PR submitted.
+- Last update: 2026-05-29T09:25:50Z
+- Next: Supervisor resumed BFF-WRITE-P0-LIFECYCLE-001 for finalize after successful dispatch.
 
 ## Summary
 -
