@@ -77,6 +77,7 @@ class CommandType(str, Enum):
     HUMAN_GATE_REVOKE = "HumanGateRevoke"
     HUMAN_GATE_EXTEND_TTL = "HumanGateExtendTtl"
     QUARTERLY_RANKING_RECOMMENDATION_SUBMIT = "QuarterlyRankingRecommendationSubmit"
+    START_RUNTIME = "StartRuntime"
 
 
 class ObjectType(str, Enum):

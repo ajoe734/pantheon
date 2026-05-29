@@ -82,6 +82,19 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
     # Runtime control
     # ------------------------------------------------------------------ #
     BffActionCatalogEntry(
+        action_id="StartRuntime",
+        entity_type="Runtime",
+        endpoint="/bff/runtimes/{runtime_id}/actions/StartRuntime",
+        risk_level=RiskLevel.HIGH,
+        requires_approval=False,
+        requires_confirm_token=True,
+        requires_two_man=True,
+        cooldown_seconds=60,
+        idempotency_required=True,
+        required_roles=["runtime_operator", "live_owner_approver"],
+        description="Start a stopped runtime binding; two-man authorization required for live runtimes.",
+    ),
+    BffActionCatalogEntry(
         action_id="PauseRuntime",
         entity_type="Runtime",
         endpoint=_FINAL_COMMAND_ENDPOINT,
