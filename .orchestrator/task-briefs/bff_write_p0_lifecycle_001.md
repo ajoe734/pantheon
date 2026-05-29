@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: POST /bff/personas/{id}/actions/AdvanceLifecycle (register in action_catalog)
-- Status: review
+- Status: review_approved
 - Owner: Claude2
 - Reviewer: Claude
 - Phase: Sprint BFF-WRITE-GAP / EPIC-WRITE-GAP-P0-LIFECYCLE
-- Last update: 2026-05-29T09:19:16Z
-- Next: AdvanceLifecycle implementation complete. Changes: (1) ADVANCE_LIFECYCLE added to CommandType; (2) AdvanceLifecycle/ApprovePool/StartRuntime entries registered in action_catalog.py with correct roles; (3) _execute_advance_lifecycle handler in command_executor.py validates target_state + confirm_token + dispatches to internal API; (4) bff_persona_action in main.py now returns 202 for AdvanceLifecycle (not 410) with live_owner role gate; (5) test_bff_write_gap_2026_05_28.py: 9 tests, 9 passed. PR #625 open with auto-merge enabled. Please review and approve.
+- Last update: 2026-05-29T09:25:18Z
+- Next: Review approved: all 3 P0 lifecycle actions correctly registered; 9/9 tests pass; returning to owner for finalization.
 
 ## Summary
 -
@@ -23,12 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_bff_write_gap_2026-05-28/BFF_WRITE_GAP_SPEC.md;execute-plans/.lovable/specs/be-requirements/BE_WRITE_GAP_SPEC_2026-05-28.md;services/control-plane/bff/main.py;services/control-plane/bff/action_catalog.py;services/control-plane/bff/command_executor.py;services/control-plane/bff/test_bff_write_gap_2026_05_28.py
 
 ## Recent Task Activity
-- 2026-05-29T09:10:03Z · Orchestrator · task_dispatch_synced · Supervisor auto-started BFF-WRITE-P0-LIFECYCLE-001 after successful dispatch.
-- 2026-05-29T09:13:02Z · Claude2 · start · Claude2 picked up task after Codex2 quota failure; implementing AdvanceLifecycle action catalog registration + executor + endpoint fix
-- 2026-05-29T09:18:37Z · unknown · worker_commit · Worker commit add9bf70a336 recorded 5 staged file(s) for BFF-WRITE-P0-LIFECYCLE-001.
-- 2026-05-29T09:19:06Z · Claude2 · progress · Implementation complete: AdvanceLifecycle registered in action_catalog, executor added, bff_persona_action fixed to return 202 not 410, 9 contract tests passing. PR #625 opened with auto-merge.
-- 2026-05-29T09:19:16Z · Claude2 · handoff · Handoff to Claude: AdvanceLifecycle implementation complete. Changes: (1) ADVANCE_LIFECYCLE added to CommandType; (2) AdvanceLifecycle/ApprovePool/StartRuntime entries registered in action_catalog.py with correct roles; (3) _execute_advance_lifecycle handler in command_executor.py validates target_state + confirm_token + dispatches to internal API; (4) bff_persona_action in main.py now returns 202 for AdvanceLifecycle (not 410) with live_owner role gate; (5) test_bff_write_gap_2026_05_28.py: 9 tests, 9 passed. PR #625 open with auto-merge enabled. Please review and approve.
-- 2026-05-29T09:20:30Z · Orchestrator · worker_superseded · Worker superseded after task responsibility moved to another agent.
+- 2026-05-29T09:20:30Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-29T09:20:31Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-05-29T09:20:31Z · Orchestrator · worker_worktree_reused · -
+- 2026-05-29T09:20:31Z · Orchestrator · worker_started · Worker started via claude_cli: review_ready_dispatch
+- 2026-05-29T09:25:18Z · Claude · review_approved · Review approved: all 3 P0 lifecycle actions correctly registered; 9/9 tests pass; returning to owner for finalization.
+- 2026-05-29T09:25:48Z · Orchestrator · worker_superseded · Worker superseded after task responsibility moved to another agent.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
