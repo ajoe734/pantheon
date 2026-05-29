@@ -12798,6 +12798,242 @@ async def list_deployment_plans(
     }
 
 
+# --------------------------------------------------------------------------- #
+# Write-gap P0-6 (2026-05-28): POST /api/v1/deployment-plans (wizard step 3)
+# --------------------------------------------------------------------------- #
+
+_DEPLOYMENT_PLAN_CREATE_REQUIRED_FIELDS = ("binding_id", "artifact_id", "capital_pool_id")
+_VALID_DEPLOYMENT_MODES = {"paper", "live"}
+_DEPLOYMENT_PLAN_APPROVED_ARTIFACT_STATES = {
+    "approved",
+    "promoted",
+    "published",
+    "active",
+    "registered",
+}
+
+
+def _deployment_plan_create_required_string(payload: Dict[str, Any], field: str) -> str:
+    value = str(payload.get(field) or "").strip()
+    if value:
+        return value
+    raise _bff_error(
+        422,
+        ErrorCode.VALIDATION_FAILED,
+        f"{field} is required",
+        f"Deployment plan create requires a non-empty {field}.",
+        precondition_failed=field,
+    )
+
+
+def _deployment_plan_registry_entry(artifact_id: str) -> Optional[Dict[str, Any]]:
+    for entry in read_store.list_registry_entries():
+        if not isinstance(entry, dict):
+            continue
+        candidates = {
+            str(entry.get("artifact_id") or "").strip(),
+            str(entry.get("id") or "").strip(),
+            str(entry.get("artifact_ref") or "").strip(),
+        }
+        if artifact_id in candidates:
+            return entry
+    return None
+
+
+def _raise_if_deployment_artifact_not_approved(artifact_id: str) -> None:
+    """Block plan creation when a known artifact is not in an approved state.
+
+    The canonical registry can be unavailable in the BFF local dev store, so an
+    unknown artifact is treated as permissive rather than a hard failure.
+    """
+    entry = _deployment_plan_registry_entry(artifact_id)
+    if entry is None:
+        return
+    state = str(
+        entry.get("status")
+        or entry.get("approval_status")
+        or entry.get("admission_status")
+        or ""
+    ).strip().lower()
+    if state and state not in _DEPLOYMENT_PLAN_APPROVED_ARTIFACT_STATES:
+        raise _bff_error(
+            409,
+            ErrorCode.RESOURCE_CONFLICT,
+            "Artifact is not approved for deployment",
+            f"Artifact {artifact_id} is in state {state!r}; an approved artifact is required.",
+            precondition_failed="artifact_id",
+            suggestion="Promote the artifact to an approved state before creating a deployment plan.",
+        )
+
+
+def _deployment_plan_persona_id(binding_id: str) -> Optional[str]:
+    binding = read_store.get_binding(binding_id)
+    if isinstance(binding, dict):
+        persona_id = str(binding.get("persona_id") or "").strip()
+        return persona_id or None
+    return None
+
+
+def _project_deployment_plan_create_response(record: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": record.get("plan_id") or record.get("id"),
+        "binding_id": record.get("binding_id"),
+        "artifact_id": record.get("artifact_id"),
+        "deployment_mode": record.get("deployment_mode") or record.get("deployment_stage"),
+        "status": record.get("status") or "pending_approval",
+        "capital_pool_id": record.get("capital_pool_id") or record.get("target_pool_id"),
+        "locked": bool(record.get("locked", False)),
+        "created_at": record.get("created_at"),
+    }
+
+
+@app.post("/api/v1/deployment-plans", status_code=201)
+async def create_deployment_plan_v1(
+    response: Response,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
+    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+    x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
+):
+    """BFF write-gap P0-6: create a deployment plan (persona onboarding wizard step 3)."""
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+    _reject_body_idempotency_key(payload)
+
+    fields = {
+        field: _deployment_plan_create_required_string(payload, field)
+        for field in _DEPLOYMENT_PLAN_CREATE_REQUIRED_FIELDS
+    }
+    deployment_mode = str(payload.get("deployment_mode") or "").strip().lower()
+    if deployment_mode not in _VALID_DEPLOYMENT_MODES:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "deployment_mode is invalid",
+            "deployment_mode must be one of: paper, live.",
+            precondition_failed="deployment_mode",
+        )
+    locked = bool(payload.get("locked", False))
+    _raise_if_deployment_artifact_not_approved(fields["artifact_id"])
+
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    correlation_id = str(x_correlation_id or "").strip() or str(uuid.uuid4())
+    response.headers["X-Correlation-Id"] = correlation_id
+    request_id = str(x_request_id or "").strip() or None
+    dry_run = _truthy_header(x_dry_run)
+    request_hash = _stable_json_hash(
+        {"route": "POST /api/v1/deployment-plans", "payload": payload}
+    )
+
+    if not dry_run:
+        existing = _GOV_BFF_IDEMPOTENCY.get(resolved_key)
+        if existing is not None:
+            if existing.get("request_hash") != request_hash:
+                raise _bff_error(
+                    409,
+                    ErrorCode.IDEMPOTENCY_CONFLICT,
+                    "Idempotency key already used with a different payload",
+                    f"Key {resolved_key!r} is bound to a different request hash",
+                    precondition_failed="idempotency_conflict",
+                    suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+                )
+            cached = existing["result"]
+            cached_meta = cached.get("meta") if isinstance(cached, dict) else {}
+            response.headers["X-Correlation-Id"] = str(
+                cached_meta.get("correlationId") or correlation_id
+            )
+            return cached
+
+    snapshot_at = utc_now()
+    client_plan_id = str(payload.get("plan_id") or payload.get("id") or "").strip()
+    plan_id = client_plan_id or f"plan-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
+
+    if dry_run:
+        preview = {
+            "id": plan_id,
+            "binding_id": fields["binding_id"],
+            "artifact_id": fields["artifact_id"],
+            "deployment_mode": deployment_mode,
+            "status": "pending_approval",
+            "capital_pool_id": fields["capital_pool_id"],
+            "locked": locked,
+            "created_at": snapshot_at,
+        }
+        return JSONResponse(
+            status_code=200,
+            content=jsonable_encoder(
+                {
+                    "data": preview,
+                    "meta": {
+                        "snapshot_at": snapshot_at,
+                        "dryRun": True,
+                        "correlationId": correlation_id,
+                        "requestId": request_id,
+                        "evidenceKind": "deployment_plan.create",
+                    },
+                }
+            ),
+            headers={"X-Correlation-Id": correlation_id},
+        )
+
+    if read_store.get_deployment_plan(plan_id) is not None:
+        raise _bff_error(
+            409,
+            ErrorCode.RESOURCE_CONFLICT,
+            "Deployment plan id already exists",
+            f"Deployment plan {plan_id} already exists",
+            precondition_failed="plan_id",
+            suggestion="Replay with the original Idempotency-Key or choose a new plan id",
+            correlation_id=correlation_id,
+        )
+
+    record = read_store.create_deployment_plan(
+        plan_id=plan_id,
+        binding_id=fields["binding_id"],
+        artifact_id=fields["artifact_id"],
+        deployment_mode=deployment_mode,
+        capital_pool_id=fields["capital_pool_id"],
+        actor_id=identity.operator_id,
+        created_at=snapshot_at,
+        params=payload.get("params") if isinstance(payload.get("params"), dict) else {},
+        locked=locked,
+    )
+    data = _project_deployment_plan_create_response(record)
+    persona_id = _deployment_plan_persona_id(fields["binding_id"])
+    surface = _dataset_surface_status("deployment_plans", snapshot_at=snapshot_at)
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {"deployment_plans": surface}
+    meta["dryRun"] = False
+    meta["correlationId"] = correlation_id
+    meta["requestId"] = request_id
+    meta["evidenceKind"] = "deployment_plan.create"
+    meta["evidence_kind"] = "deployment_plan.create"
+
+    event_payload = {
+        "deployment_plan_id": data["id"],
+        "id": data["id"],
+        "binding_id": data["binding_id"],
+        "persona_id": persona_id,
+        "artifact_id": data["artifact_id"],
+        "deployment_mode": data["deployment_mode"],
+        "status": data["status"],
+        "created_at": data["created_at"],
+    }
+    _publish_event(
+        _sse_buffers["audit"],
+        _sse_subscribers["audit"],
+        "deployment-plan.created",
+        event_payload,
+    )
+
+    result = {"data": data, "meta": meta}
+    _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
 @app.get("/api/v1/approval-decisions")
 async def list_approval_decisions(
     outcome: Optional[str] = None,
