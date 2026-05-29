@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "task_id": "BFF-WRITE-P1-AGORA-011",
+  "archived_at": "2026-05-29T09:46:00Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-WRITE-P1-AGORA-011",
+    "title": "POST /bff/agora/feedback (new route - distinct from per-signal feedback at main.py:19054)",
+    "summary_zh": null,
+    "phase": "Sprint BFF-WRITE-GAP / EPIC-WRITE-GAP-P1-AGORA",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_bff_write_gap_2026-05-28/BFF_WRITE_GAP_SPEC.md;execute-plans/.lovable/specs/be-requirements/BE_WRITE_GAP_SPEC_2026-05-28.md;services/control-plane/bff/main.py;services/control-plane/bff/test_bff_write_gap_2026_05_28.py"
+    ],
+    "acceptance": [
+      "Register new POST /bff/agora/feedback at main.py (note: existing /bff/agora/signals/{signalId}/feedback at line 19054 is per-signal; this is the canonical bulk write; worker decides between alias and standalone handler but acceptance only requires the path responds 201);Body schema signal_id plus verdict (useful|noise|false_positive) plus optional memo;Returns 201 with id plus signal_id plus verdict plus author_id plus created_at;Error 404 RESOURCE_NOT_FOUND when signal_id unknown; 422 on bad verdict; 403;SSE publishes on agora.signals:{signal_id};Audit chain appends agora.feedback.create;Permission analyst;pytest case create_agora_feedback covers happy path plus unknown signal;Live verification after OPS task: probe row returns 201"
+    ],
+    "next": "POST /bff/agora/feedback route implemented and merged via PR #620. All 8 write-gap tests pass (5 Agora feedback + 3 runtime). Verified: pytest -q 8 passed; py_compile OK; PR #620 merged to dev.",
+    "last_update": "2026-05-29T09:46:00Z",
+    "review_notes_zh": [
+      "審查通過：POST /bff/agora/feedback 路由實作正確，5 項 write-gap 測試全過；idempotency、dry-run、audit、SSE 皆符合規範；pre-existing core contract test failures 已記錄於 commit，不屬本任務範疇。"
+    ],
+    "review_file": "support/reviews/BFF-WRITE-P1-AGORA-011-review-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-29T09:46:00Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-write-p1-agora-011",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-WRITE-P1-AGORA-011",
+      "git_clean_required": false,
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-WRITE-P1-AGORA-011",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "a353254b810925a7f91df8e6e4e935be8b1b7519",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-WRITE-P1-AGORA-011",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Implementation PR #620 opened for POST /bff/agora/feedback. Focused write-gap tests pass; existing Agora core contract still has pre-existing fixture/envelope assertion failures documented in commit.",
+      "status": "done",
+      "created_at": "2026-05-29T08:55:08Z",
+      "resolved_at": "2026-05-29T08:59:59Z"
+    },
+    {
+      "task_id": "BFF-WRITE-P1-AGORA-011",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Review approved and returned to Codex2 for finalization",
+      "status": "done",
+      "created_at": "2026-05-29T08:59:59Z",
+      "resolved_at": "2026-05-29T09:04:21Z"
+    },
+    {
+      "task_id": "BFF-WRITE-P1-AGORA-011",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-05-29T09:04:21Z",
+      "resolved_at": "2026-05-29T09:46:01Z"
+    }
+  ],
+  "blockers": []
+}
