@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: POST /bff/agora/signals (method add - GET at main.py:19006)
-- Status: review
+- Status: review_approved
 - Owner: Codex2
 - Reviewer: Claude2
 - Phase: Sprint BFF-WRITE-GAP / EPIC-WRITE-GAP-P1-AGORA
-- Last update: 2026-05-29T08:49:53Z
-- Next: Implementation merged via PR #617 (merge ea28fd21f2fd6d9264dee4d4e158ff887b8ed001; task commit a54d5eb7). Verified: python3 -m pytest services/control-plane/bff/test_bff_write_gap_2026_05_28.py -q; python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/read_store.py. Existing test_bff_agora_core_contract.py still has unrelated legacy failures around top-level error envelopes and fixture ordering. Please review POST /bff/agora/signals and approve or reopen.
+- Last update: 2026-05-29T08:57:13Z
+- Next: Review approved. POST /bff/agora/signals satisfies Card P1-10: 201 create, 200 dry-run, 422 validation, 403 RBAC, idempotency replay, SSE publishes to agora.signals+agora.inbox, evidenceKind agora.signal.create. All 3 focused tests pass (pytest -q); py_compile clean. No regressions.
 
 ## Summary
 -
@@ -23,12 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_bff_write_gap_2026-05-28/BFF_WRITE_GAP_SPEC.md;execute-plans/.lovable/specs/be-requirements/BE_WRITE_GAP_SPEC_2026-05-28.md;services/control-plane/bff/main.py;services/control-plane/bff/test_bff_write_gap_2026_05_28.py
 
 ## Recent Task Activity
-- 2026-05-29T08:37:12Z · Orchestrator · task_dispatch_synced · Supervisor auto-started BFF-WRITE-P1-AGORA-010 after successful dispatch.
-- 2026-05-29T08:37:54Z · Codex2 · start · Started implementation for POST /bff/agora/signals write-gap route.
-- 2026-05-29T08:45:12Z · Codex2 · progress · Implemented POST /bff/agora/signals route and focused tests; validating before commit.
-- 2026-05-29T08:47:03Z · Codex2 · worker_commit · Worker commit 5f68e2744074 recorded 4 staged file(s) for BFF-WRITE-P1-AGORA-010.
-- 2026-05-29T08:49:53Z · Codex2 · handoff · Handoff to Claude2: Implementation merged via PR #617 (merge ea28fd21f2fd6d9264dee4d4e158ff887b8ed001; task commit a54d5eb7). Verified: python3 -m pytest services/control-plane/bff/test_bff_write_gap_2026_05_28.py -q; python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/read_store.py. Existing test_bff_agora_core_contract.py still has unrelated legacy failures around top-level error envelopes and fixture ordering. Please review POST /bff/agora/signals and approve or reopen.
-- 2026-05-29T08:53:09Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
+- 2026-05-29T08:53:10Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-29T08:53:11Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-05-29T08:53:11Z · Orchestrator · worker_worktree_reused · -
+- 2026-05-29T08:53:11Z · Orchestrator · worker_started · Worker started via claude_cli: review_ready_dispatch
+- 2026-05-29T08:57:13Z · Claude2 · review_approved · Review approved. POST /bff/agora/signals satisfies Card P1-10: 201 create, 200 dry-run, 422 validation, 403 RBAC, idempotency replay, SSE publishes to agora.signals+agora.inbox, evidenceKind agora.signal.create. All 3 focused tests pass (pytest -q); py_compile clean. No regressions.
+- 2026-05-29T08:58:26Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
