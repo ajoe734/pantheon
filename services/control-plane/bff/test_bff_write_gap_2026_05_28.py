@@ -537,6 +537,136 @@ def test_action_catalog_contains_advance_lifecycle() -> None:
 
 
 # ---------------------------------------------------------------------------
+# P0-8: GET /api/v1/operator/persona-management/{id} + data.health
+# ---------------------------------------------------------------------------
+
+_MGMT_HEADERS = {
+    "Authorization": "Bearer test-operator:operator",
+    "X-BFF-Api-Version": "2026-05-07",
+    "X-Request-Id": "req-p08-persona-mgmt",
+}
+
+_P08_REQUIRED_DATA_KEYS = {"persona", "bindings", "deploymentPlans", "approvals", "runtimeBindings", "health"}
+
+
+@contextmanager
+def _isolated_persona_mgmt_bff() -> Iterator[TestClient]:
+    """Swap in a local-fallback store so default seed personas are available."""
+    original_store = bff_main.read_store
+    with tempfile.TemporaryDirectory(prefix="bff_write_gap_p08_") as td:
+        from read_store import ReadSurfaceStore  # noqa: F811
+        store_path = Path(td) / "read_surfaces.json"
+        bff_main.read_store = ReadSurfaceStore(str(store_path), allow_local_snapshot_fallback=True)
+        try:
+            yield TestClient(bff_main.app, raise_server_exceptions=False)
+        finally:
+            bff_main.read_store = original_store
+
+
+def test_get_persona_management_returns_200_with_six_top_level_data_keys() -> None:
+    """Probe F4: 200 for valid persona id with all six top-level keys in data."""
+    with _isolated_persona_mgmt_bff() as client:
+        response = client.get(
+            "/api/v1/operator/persona-management/persona-alpha",
+            headers=_MGMT_HEADERS,
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    data = body.get("data", {})
+    missing = _P08_REQUIRED_DATA_KEYS - set(data.keys())
+    assert not missing, (
+        f"data missing required keys: {missing}. Got keys: {set(data.keys())}"
+    )
+
+
+def test_get_persona_management_health_field_has_required_structure() -> None:
+    """`data.health` must have status, score, and reasons when present."""
+    with _isolated_persona_mgmt_bff() as client:
+        response = client.get(
+            "/api/v1/operator/persona-management/persona-alpha",
+            headers=_MGMT_HEADERS,
+        )
+
+    assert response.status_code == 200, response.text
+    health = response.json().get("data", {}).get("health")
+    assert health is not None, "data.health must be present for a valid persona"
+    assert "status" in health, f"health.status missing: {health}"
+    assert health["status"] in ("healthy", "degraded", "critical"), (
+        f"health.status must be one of healthy/degraded/critical, got: {health['status']!r}"
+    )
+    assert "score" in health, f"health.score missing: {health}"
+    assert isinstance(health["score"], (int, float)), f"health.score must be numeric: {health}"
+    assert "reasons" in health, f"health.reasons missing: {health}"
+    assert isinstance(health["reasons"], list), f"health.reasons must be a list: {health}"
+
+
+def test_get_persona_management_health_parity_with_fleet() -> None:
+    """`data.health.status` matches the same persona's health in persona-fleet listing."""
+    with _isolated_persona_mgmt_bff() as client:
+        mgmt_response = client.get(
+            "/api/v1/operator/persona-management/persona-alpha",
+            headers=_MGMT_HEADERS,
+        )
+        fleet_response = client.get(
+            "/bff/management/persona-fleet",
+            headers=_MGMT_HEADERS,
+        )
+
+    assert mgmt_response.status_code == 200, mgmt_response.text
+    mgmt_health = mgmt_response.json().get("data", {}).get("health") or {}
+
+    assert fleet_response.status_code == 200, fleet_response.text
+    fleet_data = fleet_response.json().get("data") or []
+    fleet_items = fleet_data if isinstance(fleet_data, list) else []
+    fleet_persona = next(
+        (p for p in fleet_items if p.get("persona_id") == "persona-alpha" or p.get("id") == "persona-alpha"),
+        None,
+    )
+    if fleet_persona is None:
+        return  # persona not in fleet view — skip parity check
+    fleet_health = fleet_persona.get("health") or {}
+
+    assert mgmt_health.get("status") == fleet_health.get("status"), (
+        f"Health status mismatch: mgmt={mgmt_health.get('status')!r} vs fleet={fleet_health.get('status')!r}"
+    )
+
+
+def test_get_persona_management_404_for_missing_persona_has_typed_envelope() -> None:
+    """Missing persona id returns 404 with a Pack D error envelope, not bare 'Not Found'."""
+    with _isolated_persona_mgmt_bff() as client:
+        response = client.get(
+            "/api/v1/operator/persona-management/persona-does-not-exist-xyzzy-p08",
+            headers=_MGMT_HEADERS,
+        )
+
+    assert response.status_code == 404, response.text
+    body = response.json()
+    error = body.get("error") or (body.get("detail") or {}).get("error") or {}
+    assert error.get("code") == "RESOURCE_NOT_FOUND", (
+        f"Expected RESOURCE_NOT_FOUND error code in 404 body, got: {body}"
+    )
+
+
+def test_get_persona_management_deploymentplans_and_approvals_are_lists() -> None:
+    """`data.deploymentPlans` and `data.approvals` are always lists (possibly empty)."""
+    with _isolated_persona_mgmt_bff() as client:
+        response = client.get(
+            "/api/v1/operator/persona-management/persona-alpha",
+            headers=_MGMT_HEADERS,
+        )
+
+    assert response.status_code == 200, response.text
+    data = response.json().get("data", {})
+    assert isinstance(data.get("deploymentPlans"), list), (
+        f"data.deploymentPlans must be a list, got: {type(data.get('deploymentPlans'))}"
+    )
+    assert isinstance(data.get("approvals"), list), (
+        f"data.approvals must be a list, got: {type(data.get('approvals'))}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
 
