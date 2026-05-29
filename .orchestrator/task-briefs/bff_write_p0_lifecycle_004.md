@@ -23,12 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_bff_write_gap_2026-05-28/BFF_WRITE_GAP_SPEC.md;execute-plans/.lovable/specs/be-requirements/BE_WRITE_GAP_SPEC_2026-05-28.md;services/control-plane/bff/main.py;services/control-plane/bff/test_bff_write_gap_2026_05_28.py
 
 ## Recent Task Activity
-- 2026-05-29T10:19:47Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
-- 2026-05-29T10:19:48Z · Orchestrator · dispatch_blocked_worktree_lease · Worker worktree path already exists and is not empty: /tmp/pantheon-worker-worktrees/pantheon/bff-write-p0-lifecycle-004
-- 2026-05-29T10:25:10Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 323.5s without a live worker or queue record.
 - 2026-05-29T10:25:10Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
 - 2026-05-29T10:25:11Z · Orchestrator · dispatch_blocked_worktree_lease · Worker worktree path already exists and is not empty: /tmp/pantheon-worker-worktrees/pantheon/bff-write-p0-lifecycle-004
 - 2026-05-29T10:30:26Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 316.6s without a live worker or queue record.
+- 2026-05-29T10:30:26Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-29T10:30:27Z · Orchestrator · dispatch_blocked_worktree_lease · Worker worktree path already exists and is not empty: /tmp/pantheon-worker-worktrees/pantheon/bff-write-p0-lifecycle-004
+- 2026-05-29T10:35:42Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 316.7s without a live worker or queue record.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
