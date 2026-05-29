@@ -140,6 +140,24 @@ def _fixture_list_record_key(record: Any) -> str:
     return json.dumps(record, sort_keys=True, ensure_ascii=True)
 
 
+def _compact_string_list(value: Any) -> List[str]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, str):
+        values = [part.strip() for part in re.split(r"[\s,]+", value) if part.strip()]
+    elif isinstance(value, (list, tuple, set)):
+        values = [str(item).strip() for item in value if str(item).strip()]
+    else:
+        values = [str(value).strip()]
+    deduped: List[str] = []
+    seen = set()
+    for item in values:
+        if item not in seen:
+            deduped.append(item)
+            seen.add(item)
+    return deduped
+
+
 def _merge_default_fixture_pack(target: Dict[str, Any], fixture: Dict[str, Any]) -> bool:
     changed = False
     for raw_key, incoming in fixture.items():
@@ -5444,6 +5462,7 @@ class ReadSurfaceStore:
         "decision_journal_idempotency": "decision_journal_idempotency",
         "agora_journal_audit_events": "agora_journal_audit_events",
         "agora_signals": "agora_signals",
+        "agora_feedback": "agora_feedback",
         "agora_signal_feedback": "agora_signal_feedback",
         "agora_watchlist": "agora_watchlist",
         "agora_sessions": "agora_sessions",
@@ -7601,6 +7620,38 @@ class ReadSurfaceStore:
             return None
         return self._agora_record_map("agora_signals", ["signal_id", "id"]).get(str(signal_id))
 
+    def create_agora_signal(
+        self,
+        *,
+        signal_id: str,
+        title: str,
+        body: str,
+        actor_id: str,
+        payload: Dict[str, Any],
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        timestamp = created_at or _utc_now_rfc3339()
+        signal = {
+            "id": signal_id,
+            "signal_id": signal_id,
+            "title": title,
+            "body": body,
+            "market": str(payload.get("market") or "").strip() or None,
+            "tags": _compact_string_list(payload.get("tags")),
+            "linkedPersonaIds": _compact_string_list(payload.get("linkedPersonaIds") or payload.get("linked_persona_ids")),
+            "linkedStrategyIds": _compact_string_list(payload.get("linkedStrategyIds") or payload.get("linked_strategy_ids")),
+            "severity": str(payload.get("severity") or "info").strip().lower(),
+            "status": "open",
+            "reviewStatus": "pending_trader_review",
+            "createdAt": timestamp,
+            "updatedAt": timestamp,
+            "createdBy": actor_id,
+            "authorId": actor_id,
+        }
+        self._ensure_local_overlay_records("agora_signals")[signal_id] = json.loads(json.dumps(signal))
+        self._save()
+        return json.loads(json.dumps(signal))
+
     def record_agora_signal_feedback(
         self,
         signal_id: str,
@@ -7654,6 +7705,43 @@ class ReadSurfaceStore:
         signal_records = self._ensure_local_overlay_records("agora_signals")
         signal_copy = json.loads(json.dumps(signal))
         signal_copy["reviewStatus"] = decision
+        signal_copy["latestFeedbackId"] = feedback_id
+        signal_copy["updatedAt"] = timestamp
+        signal_records[signal_id] = signal_copy
+        self._save()
+        return json.loads(json.dumps(feedback))
+
+    def create_agora_feedback(
+        self,
+        signal_id: str,
+        *,
+        verdict: str,
+        memo: Optional[str],
+        actor_id: str,
+        created_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        signal = self.get_agora_signal(signal_id)
+        if signal is None:
+            return None
+
+        timestamp = created_at or _utc_now_rfc3339()
+        feedback_id = f"agfb-{uuid.uuid4().hex[:12]}"
+        feedback = {
+            "id": feedback_id,
+            "feedbackId": feedback_id,
+            "signal_id": signal_id,
+            "signalId": signal_id,
+            "verdict": verdict,
+            "memo": memo,
+            "author_id": actor_id,
+            "authorId": actor_id,
+            "created_at": timestamp,
+            "createdAt": timestamp,
+        }
+        self._ensure_local_overlay_records("agora_feedback")[feedback_id] = json.loads(json.dumps(feedback))
+
+        signal_records = self._ensure_local_overlay_records("agora_signals")
+        signal_copy = json.loads(json.dumps(signal))
         signal_copy["latestFeedbackId"] = feedback_id
         signal_copy["updatedAt"] = timestamp
         signal_records[signal_id] = signal_copy
@@ -8405,6 +8493,11 @@ class ReadSurfaceStore:
             "binding_id": binding_id,
             "runtime_binding_id": raw.get("runtime_binding_id") or binding_id,
             "runtime_id": raw.get("runtime_id") or binding_id,
+            "name": raw.get("name"),
+            "state": raw.get("state") or raw.get("status"),
+            "persona_id": raw.get("persona_id"),
+            "deployment_plan_id": raw.get("deployment_plan_id") or raw.get("plan_id"),
+            "runtime_kind": raw.get("runtime_kind") or deployment_mode,
             "deployment_stage": deployment_stage,
             "deployment_mode": deployment_mode,
             "status": raw.get("status"),
@@ -8419,6 +8512,10 @@ class ReadSurfaceStore:
             "retired_at": raw.get("retired_at"),
             "rollback_parent": raw.get("rollback_parent"),
             "rollback_action_type": raw.get("rollback_action_type"),
+            "created_at": raw.get("created_at"),
+            "updated_at": raw.get("updated_at"),
+            "created_by": raw.get("created_by"),
+            "params": json.loads(json.dumps(raw.get("params") or {})),
             "metadata": json.loads(json.dumps(metadata)),
         }
 
@@ -8796,11 +8893,25 @@ class ReadSurfaceStore:
         deployment_mode: Optional[str] = None,
         version: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        local_bindings = self._local_overlay_records("runtime_bindings")
         available, raw_bindings = self._canonical.list_records("runtime_bindings")
         if available:
-            bindings = [self._project_canonical_runtime_binding(binding) for binding in raw_bindings]
+            bindings_by_id = {
+                str(binding.get("binding_id") or binding.get("runtime_binding_id") or binding.get("id") or ""): binding
+                for binding in (self._project_canonical_runtime_binding(binding) for binding in raw_bindings)
+            }
+            for binding_id, binding in local_bindings.items():
+                key = str(
+                    binding.get("binding_id")
+                    or binding.get("runtime_binding_id")
+                    or binding.get("id")
+                    or binding_id
+                )
+                if key:
+                    bindings_by_id[key] = binding
+            bindings = [binding for key, binding in bindings_by_id.items() if key]
         else:
-            bindings = list((self._local_fallback("runtime_bindings") or {}).values())
+            bindings = list(local_bindings.values()) or list((self._local_fallback("runtime_bindings") or {}).values())
         if deployment_mode:
             bindings = [
                 b for b in bindings
@@ -8875,6 +8986,52 @@ class ReadSurfaceStore:
             "created_by": actor_id,
         }
         pools[pool_id] = record
+        self._save()
+        return record
+
+    def create_runtime_binding(
+        self,
+        *,
+        runtime_id: str,
+        name: str,
+        persona_id: str,
+        binding_id: str,
+        deployment_plan_id: str,
+        runtime_kind: str,
+        actor_id: str,
+        created_at: Optional[str] = None,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        runtimes = self._ensure_local_overlay_records("runtime_bindings")
+        timestamp = created_at or _utc_now_rfc3339()
+        clean_params = json.loads(json.dumps(params or {}))
+        record = {
+            "id": runtime_id,
+            "runtime_id": runtime_id,
+            "name": name,
+            "state": "stopped",
+            "status": "stopped",
+            "persona_id": persona_id,
+            "binding_id": binding_id,
+            "runtime_binding_id": binding_id,
+            "persona_capital_binding_id": binding_id,
+            "deployment_plan_id": deployment_plan_id,
+            "plan_id": deployment_plan_id,
+            "runtime_kind": runtime_kind,
+            "deployment_stage": runtime_kind,
+            "deployment_mode": runtime_kind,
+            "params": clean_params,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "created_by": actor_id,
+            "metadata": {
+                "created_via": "POST /bff/runtimes",
+                "persistenceMode": "bff_local_dev_store",
+            },
+            "canonicalWriteAuthority": "runtime_manager_service",
+            "persistenceMode": "bff_local_dev_store",
+        }
+        runtimes[runtime_id] = record
         self._save()
         return record
 
@@ -9687,6 +9844,9 @@ class ReadSurfaceStore:
     def get_runtime_binding(self, binding_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not binding_id:
             return None
+        for binding in self._local_overlay_records("runtime_bindings").values():
+            if str(binding.get("binding_id") or binding.get("runtime_binding_id") or binding.get("id") or "") == binding_id:
+                return binding
         available, raw = self._canonical.runtime_binding(binding_id)
         if available:
             return self._project_canonical_runtime_binding(raw) if raw else None
@@ -9695,6 +9855,9 @@ class ReadSurfaceStore:
     def get_runtime_binding_by_runtime_id(self, runtime_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not runtime_id:
             return None
+        for binding in self._local_overlay_records("runtime_bindings").values():
+            if str(binding.get("runtime_id") or binding.get("id") or binding.get("binding_id") or "") == runtime_id:
+                return binding
         available, raw_bindings = self._canonical.list_records("runtime_bindings")
         if available:
             for raw in raw_bindings:

@@ -77,8 +77,9 @@ class CommandType(str, Enum):
     HUMAN_GATE_REVOKE = "HumanGateRevoke"
     HUMAN_GATE_EXTEND_TTL = "HumanGateExtendTtl"
     QUARTERLY_RANKING_RECOMMENDATION_SUBMIT = "QuarterlyRankingRecommendationSubmit"
-    APPROVE_POOL = "ApprovePool"
+    # BFF-WRITE-P0-LIFECYCLE: P0-1/2/3 lifecycle action types
     ADVANCE_LIFECYCLE = "AdvanceLifecycle"
+    APPROVE_POOL = "ApprovePool"
     START_RUNTIME = "StartRuntime"
 
 
