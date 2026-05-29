@@ -5462,6 +5462,7 @@ class ReadSurfaceStore:
         "decision_journal_idempotency": "decision_journal_idempotency",
         "agora_journal_audit_events": "agora_journal_audit_events",
         "agora_signals": "agora_signals",
+        "agora_feedback": "agora_feedback",
         "agora_signal_feedback": "agora_signal_feedback",
         "agora_watchlist": "agora_watchlist",
         "agora_sessions": "agora_sessions",
@@ -7704,6 +7705,43 @@ class ReadSurfaceStore:
         signal_records = self._ensure_local_overlay_records("agora_signals")
         signal_copy = json.loads(json.dumps(signal))
         signal_copy["reviewStatus"] = decision
+        signal_copy["latestFeedbackId"] = feedback_id
+        signal_copy["updatedAt"] = timestamp
+        signal_records[signal_id] = signal_copy
+        self._save()
+        return json.loads(json.dumps(feedback))
+
+    def create_agora_feedback(
+        self,
+        signal_id: str,
+        *,
+        verdict: str,
+        memo: Optional[str],
+        actor_id: str,
+        created_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        signal = self.get_agora_signal(signal_id)
+        if signal is None:
+            return None
+
+        timestamp = created_at or _utc_now_rfc3339()
+        feedback_id = f"agfb-{uuid.uuid4().hex[:12]}"
+        feedback = {
+            "id": feedback_id,
+            "feedbackId": feedback_id,
+            "signal_id": signal_id,
+            "signalId": signal_id,
+            "verdict": verdict,
+            "memo": memo,
+            "author_id": actor_id,
+            "authorId": actor_id,
+            "created_at": timestamp,
+            "createdAt": timestamp,
+        }
+        self._ensure_local_overlay_records("agora_feedback")[feedback_id] = json.loads(json.dumps(feedback))
+
+        signal_records = self._ensure_local_overlay_records("agora_signals")
+        signal_copy = json.loads(json.dumps(signal))
         signal_copy["latestFeedbackId"] = feedback_id
         signal_copy["updatedAt"] = timestamp
         signal_records[signal_id] = signal_copy
