@@ -1,33 +1,156 @@
 """Contract tests for BFF Write-Gap endpoints — 2026-05-28 sprint.
 
-Covers Card P0-1: POST /bff/personas/{id}/actions/AdvanceLifecycle
-  - Probes that the endpoint no longer returns 410 for AdvanceLifecycle.
-  - Validates 202 + commandId on a successful admission (dry-run / stub).
-  - Validates typed 4xx responses (not raw 410 / not bare "Not Found").
+Covers:
+  - Card P0-1: POST /bff/personas/{id}/actions/AdvanceLifecycle
+    - Probes that the endpoint no longer returns 410 for AdvanceLifecycle.
+    - Validates 202 + commandId on a successful admission (dry-run / stub).
+    - Validates typed 4xx responses (not raw 410 / not bare "Not Found").
+  - BFF Agora signal write endpoints (create, dry-run, validation).
+  - BFF Runtime create endpoint (create, idempotency, conflict, validation).
 
-Sprint: EPIC-WRITE-GAP-P0-LIFECYCLE
+Sprint: EPIC-WRITE-GAP-P0-LIFECYCLE, EPIC-WRITE-GAP-P1-AGORA
 Spec:   docs/04/pantheon_bff_write_gap_2026-05-28/BFF_WRITE_GAP_SPEC.md
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
+import tempfile
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Generator
+from typing import Any, Generator, Iterator
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, os.path.dirname(__file__))
 
 os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 
 import main as bff_main  # noqa: E402
+from read_store import ReadSurfaceStore  # noqa: E402
+
+
+# ---------------------------------------------------------------------------
+# Shared constants
+# ---------------------------------------------------------------------------
+
+AGORA_BASE_HEADERS = {
+    "Authorization": "Bearer analyst-agora:analyst",
+    "X-BFF-Api-Version": "2026-05-07",
+    "X-Request-Id": "req-write-gap-agora-signal",
+}
+AGORA_READ_HEADERS = {
+    **AGORA_BASE_HEADERS,
+    "Authorization": "Bearer op-agora:operator",
+}
+RUNTIME_HEADERS = {
+    "Authorization": "Bearer bff-write-gap-runtime:operator",
+    "Idempotency-Key": "bff-write-gap-runtime-create-001",
+}
+_TRACKED_RUNTIME_ENV = (
+    "PANTHEON_BFF_RUNTIME_BINDING_STORE",
+    "PANTHEON_RUNTIME_DATA_DIR",
+    "PANTHEON_RUNTIME_MANAGER_URL",
+    "PANTHEON_INTERNAL_API_URL",
+    "PANTHEON_RUNTIME_MANAGER_TOKEN",
+)
 
 _OPERATOR_TOKEN = "Bearer test-operator:operator"
 _APPROVER_TOKEN = "Bearer test-approver:approver"
 _VIEWER_TOKEN = "Bearer test-viewer:reviewer"
+
+
+# ---------------------------------------------------------------------------
+# Isolation helpers (Agora)
+# ---------------------------------------------------------------------------
+
+
+def _seed_agora_read_store(path: Path) -> ReadSurfaceStore:
+    path.write_text(
+        json.dumps(
+            {
+                "agora_signals": {},
+                "agora_audit_events": {},
+                "agora_signal_feedback": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    return ReadSurfaceStore(str(path), allow_local_snapshot_fallback=True)
+
+
+@contextmanager
+def _isolated_agora_bff() -> Iterator[TestClient]:
+    original_store = bff_main.read_store
+    original_idempotency = dict(bff_main._AGORA_CORE_BFF_IDEMPOTENCY)
+    original_signal_events = list(bff_main._sse_buffers["signal"])
+    original_inbox_events = list(bff_main._sse_buffers["inbox"])
+    with tempfile.TemporaryDirectory(prefix="bff_write_gap_agora_") as td:
+        store_path = Path(td) / "read_surfaces.json"
+        bff_main.read_store = _seed_agora_read_store(store_path)
+        bff_main._AGORA_CORE_BFF_IDEMPOTENCY.clear()
+        bff_main._sse_buffers["signal"].clear()
+        bff_main._sse_buffers["inbox"].clear()
+        try:
+            yield TestClient(bff_main.app)
+        finally:
+            bff_main.read_store = original_store
+            bff_main._AGORA_CORE_BFF_IDEMPOTENCY.clear()
+            bff_main._AGORA_CORE_BFF_IDEMPOTENCY.update(original_idempotency)
+            bff_main._sse_buffers["signal"].clear()
+            bff_main._sse_buffers["signal"].extend(original_signal_events)
+            bff_main._sse_buffers["inbox"].clear()
+            bff_main._sse_buffers["inbox"].extend(original_inbox_events)
+
+
+# ---------------------------------------------------------------------------
+# Isolation helpers (Runtime)
+# ---------------------------------------------------------------------------
+
+
+@contextmanager
+def _isolated_runtime_bff(runtime_bindings: list[dict[str, Any]]) -> Iterator[TestClient]:
+    original_store = bff_main.read_store
+    original_env = {key: os.environ.get(key) for key in _TRACKED_RUNTIME_ENV}
+    original_idempotency = dict(bff_main._GOV_BFF_IDEMPOTENCY)
+    original_runtime_events = list(bff_main._sse_buffers["runtime"])
+    with tempfile.TemporaryDirectory(prefix="bff_write_gap_runtime_") as td:
+        root = Path(td)
+        runtime_dir = root / "runtime"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        for key in _TRACKED_RUNTIME_ENV:
+            os.environ.pop(key, None)
+        (runtime_dir / "runtime_bindings.json").write_text(
+            json.dumps(runtime_bindings, indent=2),
+            encoding="utf-8",
+        )
+        os.environ["PANTHEON_RUNTIME_DATA_DIR"] = str(runtime_dir)
+        bff_main._GOV_BFF_IDEMPOTENCY.clear()
+        bff_main._sse_buffers["runtime"].clear()
+        bff_main.read_store = ReadSurfaceStore(
+            str(root / "read_surfaces.json"),
+            allow_local_snapshot_fallback=False,
+        )
+        try:
+            yield TestClient(bff_main.app)
+        finally:
+            bff_main.read_store = original_store
+            bff_main._GOV_BFF_IDEMPOTENCY.clear()
+            bff_main._GOV_BFF_IDEMPOTENCY.update(original_idempotency)
+            bff_main._sse_buffers["runtime"].clear()
+            bff_main._sse_buffers["runtime"].extend(original_runtime_events)
+            for key, value in original_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+
+# ---------------------------------------------------------------------------
+# Isolation helpers (AdvanceLifecycle)
+# ---------------------------------------------------------------------------
 
 
 @contextmanager
@@ -55,8 +178,176 @@ def _idempotency_key() -> str:
     return str(uuid.uuid4())
 
 
+def _runtime_create_payload(binding_id: str = "binding-runtime-create-001") -> dict[str, Any]:
+    return {
+        "name": "Paper Runtime 001",
+        "persona_id": "persona-runtime-create-001",
+        "binding_id": binding_id,
+        "deployment_plan_id": "plan-runtime-create-001",
+        "runtime_kind": "paper",
+        "params": {"broker": "simulated"},
+    }
+
+
 # ---------------------------------------------------------------------------
-# P0-1 positive path: AdvanceLifecycle no longer returns 410
+# Agora signal write tests
+# ---------------------------------------------------------------------------
+
+
+def test_bff_agora_signal_create_returns_201_persists_and_replays() -> None:
+    with _isolated_agora_bff() as client:
+        body = {
+            "id": "sig-write-gap-001",
+            "title": "Opening auction momentum",
+            "body": "Review a new opening auction momentum signal.",
+            "market": "US",
+            "tags": ["auction", "momentum"],
+            "linkedPersonaIds": ["persona-paper-owner"],
+            "linkedStrategyIds": ["strategy-alpha"],
+            "severity": "warn",
+        }
+        headers = {
+            **AGORA_BASE_HEADERS,
+            "Idempotency-Key": "agora-signal-create-001",
+            "X-Correlation-Id": "corr-agora-signal-create-001",
+        }
+
+        response = client.post("/bff/agora/signals", headers=headers, json=body)
+        replay = client.post("/bff/agora/signals", headers=headers, json=body)
+
+        assert response.status_code == 201, response.text
+        assert replay.status_code == 201, replay.text
+        assert response.headers["X-Correlation-Id"] == "corr-agora-signal-create-001"
+        payload = response.json()
+        assert payload["data"]["id"] == "sig-write-gap-001"
+        assert payload["data"]["status"] == "open"
+        assert payload["data"]["reviewStatus"] == "pending_trader_review"
+        assert payload["data"]["severity"] == "warn"
+        assert payload["meta"]["dryRun"] is False
+        assert payload["meta"]["audit"]["evidenceKind"] == "agora.signal.create"
+        assert replay.json()["data"]["id"] == payload["data"]["id"]
+
+        detail = client.get("/bff/agora/signals/sig-write-gap-001", headers=AGORA_READ_HEADERS)
+        assert detail.status_code == 200, detail.text
+        assert detail.json()["data"]["title"] == "Opening auction momentum"
+        assert len(bff_main._sse_buffers["signal"]) == 1
+        assert len(bff_main._sse_buffers["inbox"]) == 1
+
+
+def test_bff_agora_signal_create_dry_run_returns_200_without_persistence() -> None:
+    with _isolated_agora_bff() as client:
+        body = {
+            "id": "sig-write-gap-dry-run",
+            "title": "Dry-run signal",
+            "body": "Validate the signal create shape without persisting.",
+        }
+        response = client.post(
+            "/bff/agora/signals",
+            headers={
+                **AGORA_BASE_HEADERS,
+                "Idempotency-Key": "agora-signal-dry-run-001",
+                "X-Correlation-Id": "corr-agora-signal-dry-run-001",
+                "X-Dry-Run": "1",
+            },
+            json=body,
+        )
+
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["data"]["id"] == "sig-write-gap-dry-run"
+        assert payload["meta"]["dryRun"] is True
+        detail = client.get("/bff/agora/signals/sig-write-gap-dry-run", headers=AGORA_READ_HEADERS)
+        assert detail.status_code == 404, detail.text
+        assert len(bff_main._sse_buffers["signal"]) == 0
+        assert len(bff_main._sse_buffers["inbox"]) == 0
+
+
+def test_bff_agora_signal_create_rejects_invalid_payload() -> None:
+    with _isolated_agora_bff() as client:
+        response = client.post(
+            "/bff/agora/signals",
+            headers={**AGORA_BASE_HEADERS, "Idempotency-Key": "agora-signal-invalid-001"},
+            json={"title": "Missing body", "severity": "critical"},
+        )
+
+        assert response.status_code == 422, response.text
+        error = response.json()["error"]
+        assert error["code"] == "VALIDATION_FAILED"
+        assert error["details"]["precondition_failed"] == "body"
+
+
+# ---------------------------------------------------------------------------
+# Runtime create tests
+# ---------------------------------------------------------------------------
+
+
+def test_post_bff_runtimes_creates_stopped_runtime_and_replays_idempotently() -> None:
+    with _isolated_runtime_bff([]) as client:
+        response = client.post("/bff/runtimes", json=_runtime_create_payload(), headers=RUNTIME_HEADERS)
+        replay = client.post("/bff/runtimes", json=_runtime_create_payload(), headers=RUNTIME_HEADERS)
+        runtime_id = response.json()["data"]["id"]
+        detail = client.get(
+            f"/bff/runtimes/{runtime_id}",
+            headers={"Authorization": RUNTIME_HEADERS["Authorization"]},
+        )
+        event_types = [event["type"] for _event_id, event in bff_main._sse_buffers["runtime"]]
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["data"]["name"] == "Paper Runtime 001"
+    assert payload["data"]["state"] == "stopped"
+    assert payload["data"]["persona_id"] == "persona-runtime-create-001"
+    assert payload["data"]["binding_id"] == "binding-runtime-create-001"
+    assert payload["data"]["deployment_plan_id"] == "plan-runtime-create-001"
+    assert payload["data"]["runtime_kind"] == "paper"
+    assert payload["data"]["created_at"]
+    assert payload["meta"]["evidenceKind"] == "runtime.create"
+
+    assert replay.status_code == 201, replay.text
+    assert replay.json()["data"] == payload["data"]
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["data"]["runtime_id"] == runtime_id
+    assert detail.json()["data"]["status"] == "stopped"
+
+    assert event_types == ["runtime.created", "management.runtime-status"]
+
+
+def test_post_bff_runtimes_rejects_binding_that_already_has_runtime() -> None:
+    existing = {
+        "binding_id": "binding-runtime-create-occupied",
+        "runtime_id": "runtime-existing-001",
+        "status": "active",
+        "deployment_mode": "paper",
+        "plan_id": "plan-existing-001",
+        "persona_capital_binding_id": "binding-runtime-create-occupied",
+    }
+    with _isolated_runtime_bff([existing]) as client:
+        response = client.post(
+            "/bff/runtimes",
+            json=_runtime_create_payload(binding_id="binding-runtime-create-occupied"),
+            headers={**RUNTIME_HEADERS, "Idempotency-Key": "bff-write-gap-runtime-conflict-001"},
+        )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "RESOURCE_CONFLICT"
+
+
+def test_post_bff_runtimes_validates_runtime_kind() -> None:
+    payload = _runtime_create_payload()
+    payload["runtime_kind"] = "sandbox"
+    with _isolated_runtime_bff([]) as client:
+        response = client.post(
+            "/bff/runtimes",
+            json=payload,
+            headers={**RUNTIME_HEADERS, "Idempotency-Key": "bff-write-gap-runtime-validation-001"},
+        )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["code"] == "VALIDATION_FAILED"
+
+
+# ---------------------------------------------------------------------------
+# P0-1 AdvanceLifecycle tests
 # ---------------------------------------------------------------------------
 
 
@@ -76,7 +367,6 @@ def test_advance_lifecycle_returns_202_not_410() -> None:
                 "Content-Type": "application/json",
             },
         )
-    # Must not be 410 (deprecated) — 202 or a typed 4xx (persona not found) are acceptable
     assert response.status_code != 410, (
         f"AdvanceLifecycle returned 410 deprecated — route not registered properly.\n{response.text}"
     )
@@ -103,11 +393,9 @@ def test_advance_lifecycle_404_persona_has_typed_envelope() -> None:
         )
     assert response.status_code == 404, response.text
     body = response.json()
-    # Must be typed Pack D envelope, not bare FastAPI "Not Found"
     assert "error" in body or "detail" not in body or (
         isinstance(body.get("detail"), dict) and "error" in body["detail"]
     ), f"Expected Pack D error envelope in 404 body, got: {body}"
-    # Must NOT be the raw deprecated-route 410 payload
     assert response.status_code != 410
 
 
@@ -199,7 +487,6 @@ def test_advance_lifecycle_live_owner_requires_approver_role() -> None:
                 "Content-Type": "application/json",
             },
         )
-    # Operator (not approver) attempting live_owner should be 403
     assert response.status_code == 403, response.text
     body = response.json()
     _assert_error_code(body, "FORBIDDEN")
@@ -219,7 +506,6 @@ def test_advance_lifecycle_unregistered_action_id_still_returns_410() -> None:
         )
     assert response.status_code == 410, response.text
     body = response.json()
-    # Replacement must be present in the 410 details
     detail = body.get("detail") or {}
     error = detail.get("error") or {}
     details = error.get("details") or {}
