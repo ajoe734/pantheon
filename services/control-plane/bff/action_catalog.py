@@ -208,6 +208,19 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
     # Capital pool operations
     # ------------------------------------------------------------------ #
     BffActionCatalogEntry(
+        action_id="ApprovePool",
+        entity_type="CapitalPool",
+        endpoint="/bff/capital-pools/{pool_id}/actions/ApprovePool",
+        risk_level=RiskLevel.HIGH,
+        requires_approval=True,
+        requires_confirm_token=False,
+        requires_two_man=False,
+        cooldown_seconds=0,
+        idempotency_required=True,
+        required_roles=["treasury_approver"],
+        description="Approve a capital pool draft; transitions state from draft to approved (one-way).",
+    ),
+    BffActionCatalogEntry(
         action_id="LiquidateAll",
         entity_type="CapitalPool",
         endpoint=_FINAL_COMMAND_ENDPOINT,

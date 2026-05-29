@@ -611,6 +611,33 @@ def _execute_remediate_sentinel_intervention(
     }
 
 
+def _execute_approve_pool(
+    command_id: str, params: Dict[str, Any],
+    auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Dispatch ApprovePool to internal API /capital-pools/<pool_id>/approve."""
+    pool_id = str(params.get("pool_id") or params.get("entity_id") or "").strip()
+    if not pool_id:
+        raise ValueError("ApprovePool requires pool_id.")
+    memo = str(params.get("memo") or "").strip()
+    if len(memo) < 8:
+        raise ValueError("ApprovePool requires memo with at least 8 characters.")
+    payload: Dict[str, Any] = {"memo": memo}
+    confirm_token = params.get("confirm_token")
+    if confirm_token:
+        payload["confirm_token"] = confirm_token
+    url = _internal_url(f"/api/internal/v1/capital-pools/{pool_id}/approve")
+    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+    return {
+        "command_id": command_id,
+        "pool_id": body.get("pool_id", pool_id),
+        "state": body.get("state", "approved"),
+        "status": body.get("status", "accepted"),
+        "approved_at": body.get("approved_at"),
+        "audit_id": body.get("audit_id"),
+    }
+
+
 def _execute_bff_action_adapter(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
@@ -671,6 +698,7 @@ _EXECUTORS = {
     CommandType.APPROVE_MUTATION: _execute_approve_mutation,
     CommandType.REJECT_MUTATION: _execute_reject_mutation,
     CommandType.REMEDIATE_SENTINEL_INTERVENTION: _execute_remediate_sentinel_intervention,
+    CommandType.APPROVE_POOL: _execute_approve_pool,
     CommandType.CAPITAL_POOL_ACTION: _execute_bff_action_adapter,
     CommandType.RANKING_FORMULA_ACTION: _execute_bff_action_adapter,
     CommandType.REBALANCE_ACTION: _execute_bff_action_adapter,

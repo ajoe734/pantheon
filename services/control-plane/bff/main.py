@@ -20802,10 +20802,13 @@ async def bff_capital_pool_action(
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
     """BFF: capital pool action — routes through command/precondition machinery."""
-    return _deprecated_bff_path_response(
-        route="/bff/capital-pools/{pool_id}/actions/{action_id}",
-        replacement="/bff/actions/capitalPool/{pool_id}/{action_id}",
-    )
+    # Registered lifecycle actions bypass the legacy deprecation gate.
+    _CAPITAL_POOL_REGISTERED_ACTIONS = {"ApprovePool"}
+    if action_id not in _CAPITAL_POOL_REGISTERED_ACTIONS:
+        return _deprecated_bff_path_response(
+            route="/bff/capital-pools/{pool_id}/actions/{action_id}",
+            replacement="/bff/actions/capitalPool/{pool_id}/{action_id}",
+        )
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     _reject_body_idempotency_key(payload)
@@ -20817,6 +20820,7 @@ async def bff_capital_pool_action(
             "Capital pool not found",
             f"Capital pool {pool_id} does not exist",
         )
+    command_type = CommandType.APPROVE_POOL if action_id == "ApprovePool" else CommandType.CAPITAL_POOL_ACTION
     return _capital_bff_action_command(
         entity_type=ObjectType.CAPITAL_POOL,
         entity_id=pool_id,
@@ -20824,7 +20828,7 @@ async def bff_capital_pool_action(
         resolved_key=resolved_key,
         identity=identity,
         payload=payload,
-        command_type=CommandType.CAPITAL_POOL_ACTION,
+        command_type=command_type,
     )
 
 
