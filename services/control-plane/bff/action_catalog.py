@@ -82,6 +82,19 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
     # Runtime control
     # ------------------------------------------------------------------ #
     BffActionCatalogEntry(
+        action_id="StartRuntime",
+        entity_type="Runtime",
+        endpoint="/bff/runtimes/{runtime_id}/actions/StartRuntime",
+        risk_level=RiskLevel.HIGH,
+        requires_approval=False,
+        requires_confirm_token=True,
+        requires_two_man=True,
+        cooldown_seconds=60,
+        idempotency_required=True,
+        required_roles=["runtime_operator", "live_owner_approver"],
+        description="Start a stopped runtime binding; two-man authorization required for live runtimes.",
+    ),
+    BffActionCatalogEntry(
         action_id="PauseRuntime",
         entity_type="Runtime",
         endpoint=_FINAL_COMMAND_ENDPOINT,
@@ -207,6 +220,19 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
     # ------------------------------------------------------------------ #
     # Capital pool operations
     # ------------------------------------------------------------------ #
+    BffActionCatalogEntry(
+        action_id="ApprovePool",
+        entity_type="CapitalPool",
+        endpoint="/bff/capital-pools/{pool_id}/actions/ApprovePool",
+        risk_level=RiskLevel.HIGH,
+        requires_approval=True,
+        requires_confirm_token=False,
+        requires_two_man=False,
+        cooldown_seconds=0,
+        idempotency_required=True,
+        required_roles=["treasury_approver"],
+        description="Approve a capital pool draft; transitions state from draft to approved (one-way).",
+    ),
     BffActionCatalogEntry(
         action_id="LiquidateAll",
         entity_type="CapitalPool",
@@ -850,6 +876,35 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
         idempotency_required=True,
         required_roles=["operator", "approver"],
         description="Submit a sentinel remediation execution command receipt without enabling live capital side effects.",
+    ),
+    # ------------------------------------------------------------------ #
+    # P0 lifecycle actions (BFF-WRITE-P0-LIFECYCLE)
+    # ------------------------------------------------------------------ #
+    BffActionCatalogEntry(
+        action_id="AdvanceLifecycle",
+        entity_type="Persona",
+        endpoint="/bff/personas/{persona_id}/actions/AdvanceLifecycle",
+        risk_level=RiskLevel.HIGH,
+        requires_approval=True,
+        requires_confirm_token=True,
+        requires_two_man=False,
+        cooldown_seconds=0,
+        idempotency_required=True,
+        required_roles=["persona_operator", "live_owner_approver"],
+        description="Advance persona lifecycle state: draft → paper_owner → live_owner → retired. Confirm token required; live_owner_approver role required when target=live_owner.",
+    ),
+    BffActionCatalogEntry(
+        action_id="ApprovePool",
+        entity_type="CapitalPool",
+        endpoint="/bff/capital-pools/{pool_id}/actions/ApprovePool",
+        risk_level=RiskLevel.HIGH,
+        requires_approval=True,
+        requires_confirm_token=False,
+        requires_two_man=False,
+        cooldown_seconds=0,
+        idempotency_required=True,
+        required_roles=["treasury_approver"],
+        description="Approve a capital pool draft → approved (one-way). Memo ≥8 chars required.",
     ),
 ]
 
