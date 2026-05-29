@@ -18578,6 +18578,8 @@ _AGORA_CORE_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 _AGORA_SIGNAL_DECISIONS = {"agree", "disagree", "flag_suspicious"}
 _AGORA_SIGNAL_SEVERITIES = {"info", "warn", "alert"}
 _AGORA_SIGNAL_WRITE_ROLES = {"analyst", "operator", "approver", "admin", "reviewer"}
+_AGORA_BULK_FEEDBACK_VERDICTS = {"useful", "noise", "false_positive"}
+_AGORA_BULK_FEEDBACK_ROLES = {"analyst", "operator", "reviewer", "approver", "admin"}
 _AGORA_EVIDENCE_ALLOWED_MIMES = {
     "application/pdf",
     "text/markdown",
@@ -18704,6 +18706,41 @@ def _agora_signal_create_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         "body": body,
         "severity": severity,
     }
+
+
+def _require_agora_bulk_feedback_role(identity: OperatorIdentity) -> None:
+    if not _AGORA_BULK_FEEDBACK_ROLES.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Agora feedback access requires analyst role",
+            "Operator does not hold the required Agora feedback role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with analyst, operator, reviewer, approver, or admin role",
+        )
+
+
+def _agora_bulk_feedback_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    signal_id = str(payload.get("signal_id") or payload.get("signalId") or "").strip()
+    if not signal_id:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Agora feedback signal_id is required",
+            "POST /bff/agora/feedback requires a non-empty signal_id",
+            precondition_failed="agora_feedback.signal_id",
+        )
+    verdict = str(payload.get("verdict") or "").strip()
+    if verdict not in _AGORA_BULK_FEEDBACK_VERDICTS:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Agora feedback verdict is invalid",
+            "verdict must be one of useful, noise, or false_positive",
+            precondition_failed="agora_feedback.verdict",
+    )
+    memo = str(payload.get("memo") or "").strip() or None
+    return {"signal_id": signal_id, "verdict": verdict, "memo": memo}
 
 
 def _agora_signal_feedback_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -19216,6 +19253,123 @@ async def bff_agora_signal_detail(
         "data": signal,
         "meta": _read_surface_meta("agora_signals", "agora_signal_detail", snapshot_at=snapshot_at),
     }
+
+
+@app.post("/bff/agora/feedback", status_code=201)
+async def bff_create_agora_feedback(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
+    x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
+):
+    """BFF: canonical bulk feedback write for Agora signals."""
+    identity = _extract_identity(authorization)
+    _require_agora_bulk_feedback_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    feedback_payload = _agora_bulk_feedback_payload(payload)
+    dry_run = str(x_dry_run or "").strip().lower() in {"1", "true", "yes"}
+    request_hash = _stable_json_hash({
+        "route": "POST /bff/agora/feedback",
+        "payload": feedback_payload,
+        "dry_run": dry_run,
+    })
+    cached = _agora_core_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        cached_status = 200 if (cached.get("meta") or {}).get("dryRun") else 201
+        return JSONResponse(status_code=cached_status, content=jsonable_encoder(cached))
+
+    signal_id = feedback_payload["signal_id"]
+    snapshot_at = utc_now()
+    if not read_store.get_agora_signal(signal_id):
+        raise _bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "Agora signal not found",
+            f"Agora signal {signal_id} does not exist",
+            precondition_failed="agora_feedback.signal_id",
+        )
+
+    feedback_id = f"agfb-{uuid.uuid4().hex[:12]}"
+    if dry_run:
+        feedback = {
+            "id": feedback_id,
+            "feedbackId": feedback_id,
+            "signalId": signal_id,
+            "decision": feedback_payload["verdict"],
+            "reason": feedback_payload["memo"],
+            "actorId": identity.operator_id,
+            "createdAt": snapshot_at,
+        }
+        audit = None
+        event_id = None
+    else:
+        feedback = read_store.create_agora_feedback(
+            signal_id,
+            verdict=feedback_payload["verdict"],
+            memo=feedback_payload["memo"],
+            actor_id=identity.operator_id,
+            created_at=snapshot_at,
+        )
+        if feedback is None:
+            raise _bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "Agora signal not found",
+                f"Agora signal {signal_id} does not exist",
+                precondition_failed="agora_feedback.signal_id",
+            )
+        feedback_id = str(feedback.get("feedbackId") or feedback.get("id") or feedback_id)
+        audit = read_store.record_agora_audit_event({
+            "action": "agora.feedback.create",
+            "evidenceKind": "agora.feedback.create",
+            "targetType": ObjectType.AGORA_SIGNAL.value,
+            "targetId": signal_id,
+            "feedbackId": feedback_id,
+            "actorId": identity.operator_id,
+            "recordedAt": snapshot_at,
+            "idempotencyKey": resolved_key,
+        })
+        event_id = _publish_event(
+            _sse_buffers["signal"],
+            _sse_subscribers["signal"],
+            "agora.feedback.created",
+            {
+                "channel": f"agora.signals:{signal_id}",
+                "signalId": signal_id,
+                "feedbackId": feedback_id,
+                "verdict": feedback_payload["verdict"],
+            },
+        )
+
+    result = {
+        "data": {
+            "id": feedback_id,
+            "signal_id": signal_id,
+            "signalId": signal_id,
+            "verdict": feedback_payload["verdict"],
+            "memo": feedback_payload["memo"],
+            "author_id": identity.operator_id,
+            "authorId": identity.operator_id,
+            "created_at": str(feedback.get("created_at") or feedback.get("createdAt") or snapshot_at),
+            "createdAt": str(feedback.get("createdAt") or feedback.get("created_at") or snapshot_at),
+        },
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "dryRun": dry_run,
+            "idempotency": {"idempotencyKey": resolved_key, "replayed": False},
+            "audit": audit,
+            "sse": {
+                "channel": f"agora.signals:{signal_id}",
+                "eventId": event_id,
+            },
+        },
+    }
+    result["meta"]["correlationId"] = str(x_correlation_id or "").strip() or str(uuid.uuid4())
+    _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return JSONResponse(status_code=200 if dry_run else 201, content=jsonable_encoder(result))
 
 
 @app.post("/bff/agora/signals/{signalId}/feedback")
