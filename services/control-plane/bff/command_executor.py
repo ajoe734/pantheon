@@ -696,28 +696,43 @@ def _execute_start_runtime(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Dispatch StartRuntime to internal API /runtimes/{id}/start."""
-    runtime_id = str(params.get("runtime_id") or params.get("entity_id") or "").strip()
+    """Dispatch StartRuntime to internal API /runtimes/<runtime_id>/start.
+
+    Card P0-3 (BFF-WRITE-P0-LIFECYCLE-003): stopped → starting → running.
+    Two-man authorization must have been validated by the BFF precondition
+    layer before this executor is called for live runtimes.
+    EvidenceKind: runtime.start  SSE: runtimes:{id}, management.runtime-status
+    """
+    runtime_id = str(params.get("runtime_id") or "").strip()
     if not runtime_id:
         raise ValueError("StartRuntime requires runtime_id.")
-
     confirm_token = str(params.get("confirm_token") or "").strip()
     if not confirm_token:
         raise ValueError("StartRuntime requires confirm_token.")
 
-    payload: Dict[str, Any] = {"confirm_token": confirm_token}
-    if params.get("two_man_token"):
-        payload["two_man_token"] = str(params["two_man_token"])
+    two_man_token = (
+        params.get("two_man_token")
+        or params.get("twoManToken")
+        or params.get("two_man_signature_id")
+        or ""
+    )
+    payload: Dict[str, Any] = {
+        "confirm_token": confirm_token,
+        "command_id": command_id,
+    }
+    if two_man_token:
+        payload["two_man_token"] = two_man_token
 
     url = _internal_url(f"/api/internal/v1/runtimes/{runtime_id}/start")
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
     return {
         "command_id": command_id,
-        "status": "accepted",
         "runtime_id": body.get("runtime_id", runtime_id),
+        "status": body.get("status", "accepted"),
         "state": body.get("state", "starting"),
         "audit_id": body.get("audit_id"),
         "started_at": body.get("started_at"),
+        "two_man_token": two_man_token or None,
     }
 
 
