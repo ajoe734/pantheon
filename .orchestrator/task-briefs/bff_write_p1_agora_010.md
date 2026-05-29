@@ -10,8 +10,8 @@ Do not read `current-work.md` by default for implementation context.
 - Owner: Codex2
 - Reviewer: Claude2
 - Phase: Sprint BFF-WRITE-GAP / EPIC-WRITE-GAP-P1-AGORA
-- Last update: 2026-05-29T08:57:13Z
-- Next: Review approved. POST /bff/agora/signals satisfies Card P1-10: 201 create, 200 dry-run, 422 validation, 403 RBAC, idempotency replay, SSE publishes to agora.signals+agora.inbox, evidenceKind agora.signal.create. All 3 focused tests pass (pytest -q); py_compile clean. No regressions.
+- Last update: 2026-05-29T08:58:29Z
+- Next: Supervisor resumed BFF-WRITE-P1-AGORA-010 for finalize after successful dispatch.
 
 ## Summary
 -
@@ -23,12 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_bff_write_gap_2026-05-28/BFF_WRITE_GAP_SPEC.md;execute-plans/.lovable/specs/be-requirements/BE_WRITE_GAP_SPEC_2026-05-28.md;services/control-plane/bff/main.py;services/control-plane/bff/test_bff_write_gap_2026_05_28.py
 
 ## Recent Task Activity
-- 2026-05-29T08:53:10Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
-- 2026-05-29T08:53:11Z · Orchestrator · worker_worktree_refreshed · -
-- 2026-05-29T08:53:11Z · Orchestrator · worker_worktree_reused · -
-- 2026-05-29T08:53:11Z · Orchestrator · worker_started · Worker started via claude_cli: review_ready_dispatch
-- 2026-05-29T08:57:13Z · Claude2 · review_approved · Review approved. POST /bff/agora/signals satisfies Card P1-10: 201 create, 200 dry-run, 422 validation, 403 RBAC, idempotency replay, SSE publishes to agora.signals+agora.inbox, evidenceKind agora.signal.create. All 3 focused tests pass (pytest -q); py_compile clean. No regressions.
-- 2026-05-29T08:58:26Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
+- 2026-05-29T08:58:29Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-05-29T08:58:29Z · Orchestrator · worker_worktree_reused · -
+- 2026-05-29T08:58:29Z · Orchestrator · worker_started · Worker started via codex: owned_finalize_dispatch
+- 2026-05-29T08:58:29Z · Codex2 · note · Supervisor resumed BFF-WRITE-P1-AGORA-010 for finalize after successful dispatch.
+- 2026-05-29T08:58:32Z · Orchestrator · task_dispatch_synced · Supervisor resumed BFF-WRITE-P1-AGORA-010 for finalize after successful dispatch.
+- 2026-05-29T09:03:50Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md

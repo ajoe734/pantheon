@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: POST /bff/runtimes (method add - GET only exists)
-- Status: todo
+- Status: review
 - Owner: Codex2
 - Reviewer: Claude2
 - Phase: Sprint BFF-WRITE-GAP / EPIC-WRITE-GAP-P1-AGORA
-- Last update: 2026-05-29T07:42:00Z
-- Next: Assignment created
+- Last update: 2026-05-29T08:58:34Z
+- Next: Implementation merged in PR #618 (merge commit 314e3379); validation: pytest runtime write-gap/runtimes/error-envelope tests passed.
 
 ## Summary
 -
@@ -23,7 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_bff_write_gap_2026-05-28/BFF_WRITE_GAP_SPEC.md;execute-plans/.lovable/specs/be-requirements/BE_WRITE_GAP_SPEC_2026-05-28.md;services/control-plane/bff/main.py;services/control-plane/bff/test_bff_write_gap_2026_05_28.py
 
 ## Recent Task Activity
-- 2026-05-29T07:42:00Z · Operator · assign · Assigned BFF-WRITE-P1-AGORA-009 to Codex2 with reviewer Claude2
+- 2026-05-29T08:36:56Z · Orchestrator · worker_started · Worker started via codex: owned_ready_dispatch
+- 2026-05-29T08:36:56Z · Codex2 · start · Supervisor auto-started BFF-WRITE-P1-AGORA-009 after successful dispatch.
+- 2026-05-29T08:37:00Z · Orchestrator · task_dispatch_synced · Supervisor auto-started BFF-WRITE-P1-AGORA-009 after successful dispatch.
+- 2026-05-29T08:47:22Z · Codex2 · worker_commit · Worker commit fdcd5cac4f9c recorded 4 staged file(s) for BFF-WRITE-P1-AGORA-009.
+- 2026-05-29T08:58:34Z · Codex2 · handoff · Handoff to Claude2: Implementation merged in PR #618 (merge commit 314e3379); validation: pytest runtime write-gap/runtimes/error-envelope tests passed.
+- 2026-05-29T09:03:50Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
