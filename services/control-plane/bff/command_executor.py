@@ -611,6 +611,131 @@ def _execute_remediate_sentinel_intervention(
     }
 
 
+_PERSONA_LIFECYCLE_TRANSITIONS: dict[str, list[str]] = {
+    "draft": ["paper_owner", "retired"],
+    "paper_owner": ["live_owner", "retired"],
+    "live_owner": ["retired"],
+    "retired": [],
+}
+
+
+def _execute_advance_lifecycle(
+    command_id: str, params: Dict[str, Any],
+    auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Dispatch AdvanceLifecycle to internal API /personas/{id}/advance-lifecycle.
+
+    State machine: draft → paper_owner → live_owner → retired.
+    No skip transitions; retire allowed from any non-retired state.
+    """
+    persona_id = str(params.get("persona_id") or params.get("entity_id") or "").strip()
+    if not persona_id:
+        raise ValueError("AdvanceLifecycle requires persona_id.")
+
+    target_state = str(params.get("target_state") or "").strip()
+    allowed_targets = {"paper_owner", "live_owner", "retired"}
+    if target_state not in allowed_targets:
+        raise ValueError(
+            f"AdvanceLifecycle: target_state must be one of {sorted(allowed_targets)}, got {target_state!r}."
+        )
+
+    confirm_token = str(params.get("confirm_token") or "").strip()
+    if not confirm_token:
+        raise ValueError("AdvanceLifecycle requires confirm_token.")
+
+    payload: Dict[str, Any] = {
+        "target_state": target_state,
+        "confirm_token": confirm_token,
+    }
+    if params.get("memo"):
+        payload["memo"] = str(params["memo"])
+
+    url = _internal_url(f"/api/internal/v1/personas/{persona_id}/advance-lifecycle")
+    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+    return {
+        "command_id": command_id,
+        "status": "accepted",
+        "persona_id": body.get("persona_id", persona_id),
+        "from_state": body.get("from_state"),
+        "to_state": body.get("to_state", target_state),
+        "audit_id": body.get("audit_id"),
+        "advanced_at": body.get("advanced_at"),
+    }
+
+
+def _execute_approve_pool(
+    command_id: str, params: Dict[str, Any],
+    auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Dispatch ApprovePool to internal API /capital-pools/{id}/approve."""
+    pool_id = str(params.get("pool_id") or params.get("entity_id") or "").strip()
+    if not pool_id:
+        raise ValueError("ApprovePool requires pool_id.")
+
+    memo = str(params.get("memo") or "").strip()
+    if len(memo) < 8:
+        raise ValueError("ApprovePool requires memo of at least 8 characters.")
+
+    payload: Dict[str, Any] = {"memo": memo}
+    if params.get("confirm_token"):
+        payload["confirm_token"] = str(params["confirm_token"])
+
+    url = _internal_url(f"/api/internal/v1/capital-pools/{pool_id}/approve")
+    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+    return {
+        "command_id": command_id,
+        "status": "accepted",
+        "pool_id": body.get("pool_id", pool_id),
+        "state": body.get("state", "approved"),
+        "audit_id": body.get("audit_id"),
+        "approved_at": body.get("approved_at"),
+    }
+
+
+def _execute_start_runtime(
+    command_id: str, params: Dict[str, Any],
+    auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Dispatch StartRuntime to internal API /runtimes/<runtime_id>/start.
+
+    Card P0-3 (BFF-WRITE-P0-LIFECYCLE-003): stopped → starting → running.
+    Two-man authorization must have been validated by the BFF precondition
+    layer before this executor is called for live runtimes.
+    EvidenceKind: runtime.start  SSE: runtimes:{id}, management.runtime-status
+    """
+    runtime_id = str(params.get("runtime_id") or "").strip()
+    if not runtime_id:
+        raise ValueError("StartRuntime requires runtime_id.")
+    confirm_token = str(params.get("confirm_token") or "").strip()
+    if not confirm_token:
+        raise ValueError("StartRuntime requires confirm_token.")
+
+    two_man_token = (
+        params.get("two_man_token")
+        or params.get("twoManToken")
+        or params.get("two_man_signature_id")
+        or ""
+    )
+    payload: Dict[str, Any] = {
+        "confirm_token": confirm_token,
+        "command_id": command_id,
+    }
+    if two_man_token:
+        payload["two_man_token"] = two_man_token
+
+    url = _internal_url(f"/api/internal/v1/runtimes/{runtime_id}/start")
+    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+    return {
+        "command_id": command_id,
+        "runtime_id": body.get("runtime_id", runtime_id),
+        "status": body.get("status", "accepted"),
+        "state": body.get("state", "starting"),
+        "audit_id": body.get("audit_id"),
+        "started_at": body.get("started_at"),
+        "two_man_token": two_man_token or None,
+    }
+
+
 def _execute_bff_action_adapter(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
@@ -651,6 +776,9 @@ def _execute_bff_action_adapter(
 
 # Dispatch table: CommandType -> execution function
 _EXECUTORS = {
+    CommandType.ADVANCE_LIFECYCLE: _execute_advance_lifecycle,
+    CommandType.APPROVE_POOL: _execute_approve_pool,
+    CommandType.START_RUNTIME: _execute_start_runtime,
     CommandType.APPROVE_DEPLOYMENT: _execute_approve_deployment,
     CommandType.APPROVE_DECISION: _execute_approve_decision,
     CommandType.REJECT_DECISION: _execute_reject_decision,
