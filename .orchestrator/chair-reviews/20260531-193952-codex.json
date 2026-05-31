@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Execution backlog is parallelizable and there is no global blocker, but ASST-OCGW-001 needs owner-run recovery.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "ASST-OCGW-001"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "ASST-OCGW-001",
+    "ASST-OCGW-002",
+    "ASST-OCGW-003",
+    "ASST-KERNEL-006",
+    "ASST-SEC-001"
+  ]
+}
