@@ -13060,6 +13060,173 @@ async def list_approval_decisions(
     }
 
 
+@app.post("/api/v1/approval-decisions", status_code=202)
+async def create_approval_decision(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
+    x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
+):
+    """P0-7: wizard step 4 — decide on a deployment plan approval (approve/reject)."""
+    identity = _extract_identity(authorization)
+    if not {"approver", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Approval decision requires 'approver' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with approver or admin role",
+        )
+    _reject_body_idempotency_key(payload)
+
+    plan_id = str(payload.get("plan_id") or "").strip()
+    if not plan_id:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "plan_id is required",
+            "plan_id must be a non-empty string",
+            precondition_failed="plan_id",
+        )
+
+    decision = str(payload.get("decision") or "").strip().lower()
+    if decision not in {"approve", "reject"}:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "decision must be 'approve' or 'reject'",
+            f"decision={decision!r} is not one of: approve, reject",
+            precondition_failed="decision",
+        )
+
+    memo = str(payload.get("memo") or "").strip()
+    if len(memo) < 8:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "memo is required and must be at least 8 characters",
+            "memo must be a string of at least 8 characters",
+            precondition_failed="memo",
+        )
+
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    correlation_id = str(x_correlation_id or "").strip() or str(uuid.uuid4())
+    dry_run = _truthy_header(x_dry_run)
+    request_hash = _stable_json_hash({
+        "route": "POST /api/v1/approval-decisions",
+        "plan_id": plan_id,
+        "decision": decision,
+        "memo": memo,
+    })
+
+    if not dry_run:
+        existing = _GOV_BFF_IDEMPOTENCY.get(resolved_key)
+        if existing is not None:
+            if existing.get("request_hash") != request_hash:
+                raise _bff_error(
+                    409,
+                    ErrorCode.IDEMPOTENCY_CONFLICT,
+                    "Idempotency key already used with a different payload",
+                    f"Key {resolved_key!r} is bound to a different request hash",
+                    precondition_failed="idempotency_conflict",
+                    suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+                )
+            return JSONResponse(status_code=202, content=jsonable_encoder(existing["result"]))
+
+    snapshot_at = utc_now()
+
+    if not dry_run and plan_id in _WIZARD_APPROVAL_DECISIONS:
+        raise _bff_error(
+            409,
+            ErrorCode.RESOURCE_CONFLICT,
+            "Approval decision already exists for this plan",
+            f"plan_id={plan_id!r} has already been decided",
+            precondition_failed="plan_id",
+        )
+
+    command_id = str(uuid.uuid4())
+    decided_at = snapshot_at
+    data = {
+        "status": "accepted",
+        "commandId": command_id,
+        "command_id": command_id,
+        "plan_id": plan_id,
+        "decision": decision,
+        "approver_id": identity.operator_id,
+        "approverId": identity.operator_id,
+        "decided_at": decided_at,
+        "decidedAt": decided_at,
+    }
+
+    if dry_run:
+        result = {
+            "data": data,
+            "meta": {
+                "snapshot_at": snapshot_at,
+                "dryRun": True,
+                "correlationId": correlation_id,
+                "evidenceKind": "approval.decide",
+            },
+        }
+        return JSONResponse(status_code=200, content=jsonable_encoder(result))
+
+    _WIZARD_APPROVAL_DECISIONS[plan_id] = {
+        "decision_id": command_id,
+        "plan_id": plan_id,
+        "decision": decision,
+        "memo": memo,
+        "approver_id": identity.operator_id,
+        "decided_at": decided_at,
+        "idempotency_key": resolved_key,
+    }
+    _publish_event(
+        _sse_buffers["approval"],
+        _sse_subscribers["approval"],
+        "approval.decided",
+        {
+            "channel": f"approvals:{plan_id}",
+            "plan_id": plan_id,
+            "decision": decision,
+            "decided_by": identity.operator_id,
+            "decided_at": decided_at,
+            "command_id": command_id,
+        },
+    )
+    _publish_event(
+        _sse_buffers["approval"],
+        _sse_subscribers["approval"],
+        "deployment-plan.updated",
+        {
+            "channel": f"deployment-plans:{plan_id}",
+            "plan_id": plan_id,
+            "status": "approved" if decision == "approve" else "rejected",
+        },
+    )
+
+    result = {
+        "data": data,
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "dryRun": False,
+            "correlationId": correlation_id,
+            "evidenceKind": "approval.decide",
+            "audit": {
+                "evidenceKind": "approval.decide",
+                "actorId": identity.operator_id,
+                "planId": plan_id,
+                "decision": decision,
+                "recordedAt": decided_at,
+                "idempotencyKey": resolved_key,
+            },
+        },
+    }
+    _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
 @app.get("/api/v1/approval-decisions/{decision_id}")
 async def get_approval_decision_detail(
     decision_id: str, authorization: Optional[str] = Header(default=None),
@@ -37851,6 +38018,8 @@ _GOV_BFF_INCIDENT_OVERLAY: Dict[str, Dict[str, Any]] = {}
 _ACKNOWLEDGED_ALERTS: Dict[str, Dict[str, Any]] = {}
 _RUNTIME_CREATE_REQUIRED_FIELDS = ("name", "persona_id", "binding_id", "deployment_plan_id")
 _VALID_RUNTIME_KINDS = {"paper", "live"}
+# In-process store for wizard approval decisions (POST /api/v1/approval-decisions, P0-7).
+_WIZARD_APPROVAL_DECISIONS: Dict[str, Dict[str, Any]] = {}
 
 _INCIDENT_CASE_ALIAS_FIELDS = {
     "binding_id": ("binding_id", "runtime_binding_id"),

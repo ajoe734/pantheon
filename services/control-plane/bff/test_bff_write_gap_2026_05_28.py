@@ -1025,6 +1025,196 @@ def test_get_persona_management_deploymentplans_and_approvals_are_lists() -> Non
     assert isinstance(data.get("approvals"), list), (
         f"data.approvals must be a list, got: {type(data.get('approvals'))}"
     )
+# Isolation helpers (ApprovalDecisions)
+# ---------------------------------------------------------------------------
+
+
+@contextmanager
+def _isolated_approval_decisions_bff() -> Iterator[TestClient]:
+    original_decisions = dict(bff_main._WIZARD_APPROVAL_DECISIONS)
+    original_idempotency = dict(bff_main._GOV_BFF_IDEMPOTENCY)
+    original_approval_events = list(bff_main._sse_buffers["approval"])
+    bff_main._WIZARD_APPROVAL_DECISIONS.clear()
+    bff_main._GOV_BFF_IDEMPOTENCY.clear()
+    bff_main._sse_buffers["approval"].clear()
+    try:
+        yield TestClient(bff_main.app, raise_server_exceptions=False)
+    finally:
+        bff_main._WIZARD_APPROVAL_DECISIONS.clear()
+        bff_main._WIZARD_APPROVAL_DECISIONS.update(original_decisions)
+        bff_main._GOV_BFF_IDEMPOTENCY.clear()
+        bff_main._GOV_BFF_IDEMPOTENCY.update(original_idempotency)
+        bff_main._sse_buffers["approval"].clear()
+        bff_main._sse_buffers["approval"].extend(original_approval_events)
+
+
+# ---------------------------------------------------------------------------
+# P0-7 POST /api/v1/approval-decisions tests
+# ---------------------------------------------------------------------------
+
+_APPROVAL_URL = "/api/v1/approval-decisions"
+
+
+def _approval_headers(idem_key: str = "approval-decision-test-001") -> dict:
+    return {
+        "Authorization": _APPROVER_TOKEN,
+        "Idempotency-Key": idem_key,
+        "Content-Type": "application/json",
+        "X-BFF-Api-Version": "2026-05-07",
+        "X-Correlation-Id": "corr-approval-decision-001",
+    }
+
+
+def _approval_payload(
+    plan_id: str = "plan-wizard-001",
+    decision: str = "approve",
+    memo: str = "Approved after review",
+) -> dict:
+    return {"plan_id": plan_id, "decision": decision, "memo": memo}
+
+
+def test_post_approval_decisions_returns_202_with_command_id() -> None:
+    with _isolated_approval_decisions_bff() as client:
+        response = client.post(
+            _APPROVAL_URL,
+            headers=_approval_headers(),
+            json=_approval_payload(),
+        )
+    assert response.status_code == 202, response.text
+    body = response.json()
+    assert body["data"]["status"] == "accepted"
+    assert body["data"]["commandId"]
+    assert body["data"]["plan_id"] == "plan-wizard-001"
+    assert body["data"]["decision"] == "approve"
+    assert body["data"]["approver_id"]
+    assert body["data"]["decided_at"]
+    assert body["meta"]["dryRun"] is False
+    assert body["meta"]["evidenceKind"] == "approval.decide"
+
+
+def test_post_approval_decisions_reject_returns_202() -> None:
+    with _isolated_approval_decisions_bff() as client:
+        response = client.post(
+            _APPROVAL_URL,
+            headers=_approval_headers("approval-reject-001"),
+            json=_approval_payload(plan_id="plan-wizard-reject-001", decision="reject"),
+        )
+    assert response.status_code == 202, response.text
+    assert response.json()["data"]["decision"] == "reject"
+
+
+def test_post_approval_decisions_dry_run_returns_200_no_persist() -> None:
+    with _isolated_approval_decisions_bff() as client:
+        response = client.post(
+            _APPROVAL_URL,
+            headers={**_approval_headers("approval-dry-001"), "X-Dry-Run": "1"},
+            json=_approval_payload(plan_id="plan-dry-001"),
+        )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["meta"]["dryRun"] is True
+    assert "plan-dry-001" not in bff_main._WIZARD_APPROVAL_DECISIONS
+
+
+def test_post_approval_decisions_idempotent_replay() -> None:
+    with _isolated_approval_decisions_bff() as client:
+        first = client.post(
+            _APPROVAL_URL,
+            headers=_approval_headers("approval-idem-001"),
+            json=_approval_payload(plan_id="plan-idem-001"),
+        )
+        replay = client.post(
+            _APPROVAL_URL,
+            headers=_approval_headers("approval-idem-001"),
+            json=_approval_payload(plan_id="plan-idem-001"),
+        )
+    assert first.status_code == 202, first.text
+    assert replay.status_code == 202, replay.text
+    assert first.json()["data"]["commandId"] == replay.json()["data"]["commandId"]
+
+
+def test_post_approval_decisions_conflict_same_plan_second_write() -> None:
+    with _isolated_approval_decisions_bff() as client:
+        client.post(
+            _APPROVAL_URL,
+            headers=_approval_headers("approval-conflict-001"),
+            json=_approval_payload(plan_id="plan-conflict-001"),
+        )
+        second = client.post(
+            _APPROVAL_URL,
+            headers=_approval_headers("approval-conflict-002"),
+            json=_approval_payload(plan_id="plan-conflict-001"),
+        )
+    assert second.status_code == 409, second.text
+    _assert_error_code(second.json(), "RESOURCE_CONFLICT")
+
+
+def test_post_approval_decisions_missing_plan_id_returns_422() -> None:
+    with _isolated_approval_decisions_bff() as client:
+        response = client.post(
+            _APPROVAL_URL,
+            headers=_approval_headers("approval-val-001"),
+            json={"decision": "approve", "memo": "Approved after review"},
+        )
+    assert response.status_code == 422, response.text
+    _assert_error_code(response.json(), "VALIDATION_FAILED")
+
+
+def test_post_approval_decisions_invalid_decision_returns_422() -> None:
+    with _isolated_approval_decisions_bff() as client:
+        response = client.post(
+            _APPROVAL_URL,
+            headers=_approval_headers("approval-val-002"),
+            json={"plan_id": "plan-val-001", "decision": "maybe", "memo": "Approved after review"},
+        )
+    assert response.status_code == 422, response.text
+    _assert_error_code(response.json(), "VALIDATION_FAILED")
+
+
+def test_post_approval_decisions_short_memo_returns_422() -> None:
+    with _isolated_approval_decisions_bff() as client:
+        response = client.post(
+            _APPROVAL_URL,
+            headers=_approval_headers("approval-val-003"),
+            json={"plan_id": "plan-val-002", "decision": "approve", "memo": "short"},
+        )
+    assert response.status_code == 422, response.text
+    _assert_error_code(response.json(), "VALIDATION_FAILED")
+
+
+def test_post_approval_decisions_operator_role_returns_403() -> None:
+    with _isolated_approval_decisions_bff() as client:
+        response = client.post(
+            _APPROVAL_URL,
+            headers={
+                "Authorization": _OPERATOR_TOKEN,
+                "Idempotency-Key": "approval-403-001",
+            },
+            json=_approval_payload(),
+        )
+    assert response.status_code == 403, response.text
+    _assert_error_code(response.json(), "FORBIDDEN")
+
+
+def test_post_approval_decisions_unauthenticated_returns_401() -> None:
+    with _isolated_approval_decisions_bff() as client:
+        response = client.post(
+            _APPROVAL_URL,
+            headers={"Idempotency-Key": "approval-401-001"},
+            json=_approval_payload(),
+        )
+    assert response.status_code == 401, response.text
+
+
+def test_post_approval_decisions_publishes_sse_events() -> None:
+    with _isolated_approval_decisions_bff() as client:
+        client.post(
+            _APPROVAL_URL,
+            headers=_approval_headers("approval-sse-001"),
+            json=_approval_payload(plan_id="plan-sse-001"),
+        )
+        event_types = [event["type"] for _eid, event in bff_main._sse_buffers["approval"]]
+    assert "approval.decided" in event_types
 
 
 # ---------------------------------------------------------------------------
