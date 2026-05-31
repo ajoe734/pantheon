@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "No global blocker, no provider auth failure, no sidecar saturation; board has runnable ASST-wave work and idle capacity. Master CI failure does not block execution-lane task branches.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SUP-MASTER-CI-TRIAGE",
+    "OPS-ARCHIVE-AUTO-COMMIT-20260531T165903Z"
+  ]
+}
