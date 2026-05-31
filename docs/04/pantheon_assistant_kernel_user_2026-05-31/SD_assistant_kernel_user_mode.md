@@ -4,13 +4,13 @@ Date: 2026-05-31
 Audience: Pantheon / execute-plans implementation team.
 Scope: Technical design for an assistant that starts as internal kernel-mode debug collaborator and later contracts into product-safe user mode.
 Frontend scope: `execute-plans` assistant surfaces, especially Ask Personas and management helper entry points.
-Backend scope: Pantheon BFF, assistant context pack, debug gateway, command broker, Codex/Claude CLI bridge, audit, and SSE.
+Backend scope: Pantheon BFF, assistant context pack, OpenClaw gateway adapter, credential-mounted Codex/Claude CLI runtime, command broker, audit, and SSE.
 
 ---
 
 ## 0. Implementation Summary
 
-Implement the assistant as a BFF-mediated session service:
+Implement the assistant as a BFF-mediated session service, but keep the existing OpenClaw gateway architecture as the provider execution boundary:
 
 ```text
 execute-plans
@@ -18,12 +18,15 @@ execute-plans
   -> /bff/assistant/sessions/{id}/messages
   -> /bff/assistant/sessions/{id}/context
   -> /bff/events/stream?channel=ask
-  -> assistant-debug-gateway
-  -> llm-bridge(codex_cli | claude_cli)
+  -> openclaw-gateway-adapter
+  -> upstream openclaw-gateway container
+  -> mounted account-login CLI home (.codex | .claude)
   -> command-broker
 ```
 
-The first provider should be `codex_cli` because local Codex CLI account login is already proven. `claude_cli` should be added behind the same bridge after dedicated service-user authentication is confirmed.
+The first provider should be `codex_cli` because local Codex CLI account login is already proven. `claude_cli` should be added behind the same OpenClaw gateway provider contract after dedicated service-user authentication is confirmed.
+
+Planning adjustment on 2026-05-31: do not introduce a separate `assistant-debug-gateway` as the first implementation path. The smaller-change path is to preserve `openclaw-gateway-adapter` and run the provider CLIs inside the OpenClaw gateway container with bind-mounted service-user OAuth directories. This is intentionally hackier than an API-key service integration, so CLI version/path parity and credential refresh must be explicit health gates.
 
 The existing `/bff/agora/ask` and `/bff/management/nl/ask` routes can be adapted to call this assistant service instead of creating a separate product path.
 
@@ -37,8 +40,8 @@ flowchart LR
   BFF[Pantheon BFF]
   CTX[Assistant Context Composer]
   SSE[BFF SSE Broker]
-  GW[Assistant Debug Gateway]
-  BRIDGE[LLM Bridge]
+  OCA[OpenClaw Gateway Adapter]
+  OCG[OpenClaw Gateway Container]
   CODEX[Codex CLI]
   CLAUDE[Claude Code CLI]
   BROKER[Command Broker]
@@ -51,17 +54,18 @@ flowchart LR
   UI -->|question + UI context| BFF
   BFF --> CTX
   CTX --> READ
-  BFF --> GW
-  GW --> BRIDGE
-  BRIDGE --> CODEX
-  BRIDGE --> CLAUDE
-  GW --> BROKER
+  BFF --> OCA
+  OCA --> OCG
+  OCG --> CODEX
+  OCG --> CLAUDE
+  OCG --> BROKER
   BROKER --> HEALTH
   BROKER --> LOGS
   BROKER --> REPO
-  GW --> AUDIT
+  OCA --> AUDIT
+  OCG --> AUDIT
   BFF --> AUDIT
-  GW -->|delta/completed| SSE
+  OCA -->|delta/completed| SSE
   SSE --> UI
 ```
 
@@ -105,17 +109,21 @@ PANTHEON_ASSISTANT_ENABLED=false
 PANTHEON_ASSISTANT_DEFAULT_MODE=user
 PANTHEON_ASSISTANT_KERNEL_ENABLED=false
 PANTHEON_ASSISTANT_PROVIDER=codex_cli
+PANTHEON_ASSISTANT_PROVIDER_RUNTIME=openclaw_gateway_cli_mount
 PANTHEON_ASSISTANT_CONTEXT_MAX_BYTES=120000
 PANTHEON_ASSISTANT_COMMAND_TIMEOUT_SECONDS=60
 PANTHEON_ASSISTANT_SESSION_TTL_SECONDS=3600
 PANTHEON_ASSISTANT_REDACTION_ENABLED=true
 
 PANTHEON_ASSISTANT_CODEX_BIN=/usr/local/bin/codex
-PANTHEON_ASSISTANT_CODEX_HOME=/srv/pantheon-assistant/codex-home
+PANTHEON_ASSISTANT_CODEX_HOST_HOME=/srv/pantheon-assistant/.codex
+PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME=/home/pantheon-assistant/.codex
 PANTHEON_ASSISTANT_CODEX_WORKSPACE=/srv/pantheon-assistant/workspaces/read-only
 
 PANTHEON_ASSISTANT_CLAUDE_BIN=/usr/local/bin/claude
-PANTHEON_ASSISTANT_CLAUDE_CONFIG_DIR=/srv/pantheon-assistant/claude-home
+PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR=/srv/pantheon-assistant/.claude
+PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR=/home/pantheon-assistant/.claude
+PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE=rw
 
 PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT=/srv/pantheon-assistant/worktrees
 ```
@@ -130,8 +138,8 @@ Create a dedicated OS account:
 
 ```bash
 sudo useradd --system --create-home --home-dir /srv/pantheon-assistant pantheon-assistant
-sudo install -d -o pantheon-assistant -g pantheon-assistant -m 0700 /srv/pantheon-assistant/codex-home
-sudo install -d -o pantheon-assistant -g pantheon-assistant -m 0700 /srv/pantheon-assistant/claude-home
+sudo install -d -o pantheon-assistant -g pantheon-assistant -m 0700 /srv/pantheon-assistant/.codex
+sudo install -d -o pantheon-assistant -g pantheon-assistant -m 0700 /srv/pantheon-assistant/.claude
 sudo install -d -o pantheon-assistant -g pantheon-assistant -m 0750 /srv/pantheon-assistant/workspaces
 sudo install -d -o pantheon-assistant -g pantheon-assistant -m 0750 /srv/pantheon-assistant/worktrees
 ```
@@ -140,17 +148,27 @@ Login is performed manually on the host:
 
 ```bash
 sudo -u pantheon-assistant \
-  CODEX_HOME=/srv/pantheon-assistant/codex-home \
+  CODEX_HOME=/srv/pantheon-assistant/.codex \
   codex login
 ```
 
 ```bash
 sudo -u pantheon-assistant \
-  CLAUDE_CONFIG_DIR=/srv/pantheon-assistant/claude-home \
+  CLAUDE_CONFIG_DIR=/srv/pantheon-assistant/.claude \
   claude
 ```
 
-The service user home must not be backed up to broad logs or artifact bundles unless encrypted and explicitly approved.
+Mount these directories into the OpenClaw gateway container, not into the browser, BFF, or general worker containers:
+
+```yaml
+services:
+  openclaw-gateway:
+    volumes:
+      - ${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}:${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}:rw
+      - ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}:rw
+```
+
+The service user home must not be backed up to broad logs or artifact bundles unless encrypted and explicitly approved. Do not bind-mount a human operator's personal `~/.codex` or `~/.claude` directly; copy/login a dedicated service account profile. Use read-write mounts only after proving the CLI needs token refresh writes. If read-only works for a provider/version, prefer read-only.
 
 ---
 
@@ -504,14 +522,39 @@ If repair mode changes repository files, it must follow Pantheon workflow:
 
 ---
 
-## 10. Provider Bridge
+## 10. OpenClaw Gateway Provider Runtime
+
+### 10.0 Runtime Choice
+
+The first implementation should not create a new standalone assistant provider service. It should extend the existing OpenClaw gateway path:
+
+```text
+BFF assistant route
+-> openclaw-gateway-adapter
+-> openclaw-gateway provider tool
+-> codex or claude CLI inside the gateway container
+-> mounted service-user OAuth credential directory
+```
+
+This preserves the current gateway boundary and lets Pantheon keep using OpenClaw session, tool/workflow policy, audit, degraded readiness, and fail-closed broker rules. The tradeoff is that the container must now own CLI runtime hygiene: binary installation, exact path discovery, version reporting, auth readiness checks, and token refresh behavior.
+
+Required gateway readiness fields:
+
+- provider name;
+- CLI binary path;
+- CLI version;
+- credential mount path;
+- mount mode `ro` or `rw`;
+- auth/session status;
+- last refresh check time;
+- degraded reason, if any.
 
 ### 10.1 Codex CLI Provider
 
 Invocation pattern:
 
 ```bash
-CODEX_HOME=/srv/pantheon-assistant/codex-home \
+CODEX_HOME=/home/pantheon-assistant/.codex \
 codex exec \
   -C /srv/pantheon-assistant/workspaces/read-only \
   -s read-only \
@@ -523,7 +566,7 @@ codex exec \
 For repair mode, use a task worktree:
 
 ```bash
-CODEX_HOME=/srv/pantheon-assistant/codex-home \
+CODEX_HOME=/home/pantheon-assistant/.codex \
 codex exec \
   -C /srv/pantheon-assistant/worktrees/task-ASST-... \
   -s workspace-write \
@@ -532,22 +575,34 @@ codex exec \
   "<prompt>"
 ```
 
-Do not use broad orchestrator bypass flags for product assistant sessions.
+Do not use broad orchestrator bypass flags for product assistant sessions. The gateway image must report degraded if the `codex` binary is missing, if the configured `CODEX_HOME` is not mounted, or if a non-interactive smoke cannot authenticate.
 
 ### 10.2 Claude CLI Provider
 
 Invocation pattern:
 
 ```bash
-CLAUDE_CONFIG_DIR=/srv/pantheon-assistant/claude-home \
+CLAUDE_CONFIG_DIR=/home/pantheon-assistant/.claude \
 claude -p "<prompt>" \
   --output-format stream-json \
   --permission-mode plan
 ```
 
-For kernel debug, prefer a mode that requires brokered tool permission rather than free shell. If Claude CLI auth is unavailable, provider status should become degraded and BFF should use deterministic fallback.
+For kernel debug, prefer a mode that requires brokered tool permission rather than free shell. If Claude CLI auth is unavailable, provider status should become degraded and BFF should use deterministic fallback. The gateway image must make the selected `claude` binary path explicit; do not assume a host path exists inside the container.
 
-### 10.3 Provider Health
+### 10.3 Credential Refresh Policy
+
+OAuth-backed CLI sessions may refresh tokens by rewriting files under `.codex` or `.claude`. The gateway must support one of these policies per provider/version:
+
+| Policy | Mount | Use when | Requirement |
+|---|---|---|---|
+| host-refresh | `ro` | CLI works with read-only session files | Human/operator refreshes on host; container only reads |
+| container-refresh | `rw` | CLI writes refreshed session files | Dedicated service-user directory only; audit mount path and file ownership |
+| degraded | none | auth missing/expired | Provider status degraded; BFF fallback remains available |
+
+The first smoke should test both a no-op provider health check and one tiny non-interactive invocation. If either fails because the token must refresh, the task owner must document whether `rw` mount is required for that CLI version.
+
+### 10.4 Provider Health
 
 Expose:
 
@@ -564,6 +619,11 @@ Response:
       "provider": "codex_cli",
       "status": "ready",
       "auth": "account_session",
+      "runtime": "openclaw_gateway_cli_mount",
+      "binary": "/usr/local/bin/codex",
+      "version": "detected",
+      "credential_mount": "/home/pantheon-assistant/.codex",
+      "mount_mode": "rw",
       "checked_at": "2026-05-31T15:00:00Z"
     },
     {
@@ -679,21 +739,19 @@ services/control-plane/bff/assistant/
     test_redaction.py
     test_routes.py
 
-services/assistant-debug-gateway/
-  main.py
-  llm_bridge.py
-  codex_provider.py
-  claude_provider.py
-  command_broker.py
-  audit.py
-  settings.py
+services/openclaw-gateway-adapter/
+  assistant_provider_runtime.py
+  assistant_codex_provider.py
+  assistant_claude_provider.py
+  assistant_credential_mounts.py
+  assistant_command_policy.py
   tests/
-    test_command_broker.py
-    test_llm_bridge.py
-    test_provider_status.py
+    test_assistant_provider_runtime.py
+    test_assistant_credential_mounts.py
+    test_assistant_command_policy.py
 ```
 
-The gateway may initially live inside the BFF process for POC speed, but the target design should isolate it as a separate service so kernel-mode capability does not become part of the ordinary BFF runtime by accident.
+The provider runtime should live behind the existing OpenClaw gateway adapter boundary. If a separate assistant-debug-gateway is introduced later, it should be a hardening refactor after the gateway credential-mount path proves stable, not the first implementation path.
 
 ---
 
@@ -773,9 +831,13 @@ Land this SA/SD bundle.
 
 Build context pack route and tests. No provider calls yet.
 
-### Phase 2: Codex CLI bridge
+### Phase 2: OpenClaw gateway CLI mount runtime
 
-Add `codex_cli` provider with service-user account session, timeout, audit, and deterministic fallback.
+Add Codex CLI to the OpenClaw gateway image, mount the dedicated service-user `.codex` directory, and expose provider health/readiness through `openclaw-gateway-adapter`.
+
+### Phase 2b: Claude CLI expansion
+
+Add Claude Code CLI to the same provider runtime only after service-user auth, binary path, stream-json normalization, and credential refresh behavior are proven.
 
 ### Phase 3: Kernel debug command broker
 
@@ -793,9 +855,9 @@ Allow repo repair only through task branch/worktree and normal PR workflow.
 
 Disable kernel tools for product users. Keep BFF-curated context and provider Q&A.
 
-### Phase 7: Provider expansion
+### Phase 7: Provider hardening
 
-Add Claude CLI after service-user login and provider health are reliable.
+Decide whether to keep the OpenClaw gateway credential-mount design, move refresh into a dedicated credential broker, or replace this hacky account-login path with official provider service auth.
 
 ---
 
@@ -822,9 +884,12 @@ If provider CLI auth breaks, the gateway must report provider degraded and BFF m
 | ASST-KERNEL-001 | Context-pack model and BFF route | Models, route, tests, source refs |
 | ASST-KERNEL-002 | Redaction library | Secret patterns, tests, failure policy |
 | ASST-KERNEL-003 | Assistant session/transcript store | Session lifecycle, TTL, audit refs |
-| ASST-KERNEL-004 | Codex CLI provider | Non-interactive invocation, timeout, provider health |
-| ASST-KERNEL-005 | Claude CLI provider | Same bridge contract, service-user auth check |
-| ASST-KERNEL-006 | Command broker observe/debug | Allowlist/denylist, audit, tests |
+| ASST-OCGW-001 | OpenClaw gateway credential mounts | Compose/env contract for `.codex` and `.claude` service-user mounts |
+| ASST-OCGW-002 | Gateway CLI image and path probes | Codex/Claude binary install, version, and readiness smoke |
+| ASST-OCGW-003 | Codex provider inside OpenClaw gateway | Non-interactive invocation, timeout, provider health |
+| ASST-OCGW-004 | Claude provider inside OpenClaw gateway | Same provider contract, stream-json normalization, service-user auth check |
+| ASST-OCGW-005 | Credential refresh and degraded runbook | `ro`/`rw` decision, auth expiry handling, relogin procedure |
+| ASST-KERNEL-006 | OpenClaw command broker observe/debug | Allowlist/denylist, audit, tests |
 | ASST-KERNEL-007 | Repair-mode worktree workflow | Branch/worktree guardrails and repo workflow integration |
 | ASST-BFF-001 | `/bff/agora/ask` provider-backed flow | Assistant run plus transcript and SSE |
 | ASST-BFF-002 | `/bff/management/nl/ask` provider option | Feature flag plus deterministic fallback |
@@ -841,7 +906,7 @@ The assistant kernel/user capability is done when:
 
 1. Frontend helper can send a real BFF-backed assistant question.
 2. BFF creates a source-backed context pack with backend state.
-3. Provider invocation is server-side only and uses a dedicated account-login CLI home.
+3. Provider invocation is server-side only and uses a dedicated account-login CLI home mounted into the OpenClaw gateway container.
 4. Kernel mode can run bounded diagnostics through a broker and records audit.
 5. Repair mode, if enabled, follows Pantheon repo workflow end to end.
 6. User mode cannot access shell, repo, raw logs, or provider sessions.

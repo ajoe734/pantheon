@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-25 22:40:02
+Last updated: 2026-05-31 23:51:27
 
 ## Objective
 
@@ -15,7 +15,6 @@ Pantheon BFF P0 Delta-v3 — close the v2 deploy-lag bottleneck plus 1 real Pack
 - Sprint: `2026-05-25-pantheon-bff-p0-delta-v3`
 - Canonical files: `AI_COLLABORATION_GUIDE.md`, `ai-status.json`, `ai-activity-log.jsonl`, `current-work.md`, `TARGET_ARCHITECTURE.md`, `OPENCLAW_RUNTIME_CONTRACT.md`, `PERSONA_RUNTIME_MODEL.md`, `BINDING_AND_DEPLOYMENT_SEMANTICS.md`, `PAPER_CANARY_LIVE_POLICY.md`, `ROLLBACK_AND_POSITION_SEMANTICS.md`, `LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md`, `EVOLUTION_REVIEW_AND_THRESHOLDS.md`, `CROSS_SERVICE_CONSISTENCY_AND_SAGA_POLICY.md`, `KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md`, `MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md`, `TELEMETRY_INGEST_AND_STORAGE_ARCHITECTURE.md`, `DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md`, `EVENT_ORDERING_AND_DELIVERY_GUARANTEES.md`, `EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md`, `BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md`, `LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md`, `CANONICAL_DOCUMENT_MAP.md`, `DOCUMENT_AUTHORITY_AND_RECORD_BOUNDARY.md`, `ROADMAP.md`, `DEVELOPMENT_WORKBREAKDOWN.md`, `OSS_INTEGRATION_CHECKLIST.md`, `WORKBENCH_DELIVERY_BACKLOG.md`, `DELIVERY_CLOSURE_AND_LOOP_STATES.md`, `EXECUTION_PROOF_AND_MATURITY_LEVELS.md`, `CANONICAL_CONTRACT_MIGRATION_DECISION.md`, `WORK_REBASELINE.md`, `Pantheon_總索引版系統分析文件.md`, `Pantheon_資料表_Schema_設計版.md`, `Pantheon_API_Service_Contract_設計版.md`
 - Canonical tiers: `L0 Collaboration & State`, `L0.5 Derived Narrative`, `L1 Platform Architecture & Policy`, `L2 Planning & Execution`, `L3 Supporting Design & Migration`
-- Planning mode: `docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/README.md`
 - Canonical map: `CANONICAL_DOCUMENT_MAP.md`
 - Document boundary: `DOCUMENT_AUTHORITY_AND_RECORD_BOUNDARY.md`
 - Full backlog: `DEVELOPMENT_WORKBREAKDOWN.md`
@@ -24,26 +23,15 @@ Pantheon BFF P0 Delta-v3 — close the v2 deploy-lag bottleneck plus 1 real Pack
 - Execution proof: `EXECUTION_PROOF_AND_MATURITY_LEVELS.md`
 - Dashboard: `docs-site/index.html`
 
-## Discussion Planning
-
-- Session: `phase6-2026-05-01-pantheon-p0-paper-loop`
-- Status: `accepted`
-- Baton owner: `Codex`
-- Current round: `0`
-- Consensus: `accepted`
-- Human gate: `approved`
-- Ready for human: `True`
-- Ready to materialize execution: `True`
-
 ## Active Slices
 
 - `Claude`: execution, control-plane, governance-review; next: Awaiting: LSP-006-V2, HA-PROD-001-V2, risk_owner_signoff, operator_signoff
-- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: No active assignment
-- `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
-- `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
+- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: Assignment created
+- `Codex`: integration, status-system, schema, acceptance; next: Assignment created
+- `Codex2`: integration, status-system, schema, acceptance; next: Assignment created
+- `Copilot`: research-ingest, external-search, spec-review, critique; next: Assignment created
 - `Claude2`: execution, control-plane, governance-review; next: Awaiting: CBL-LIVE-001-V2, BLA-007-V2, first_week_observation_report, risk_owner_signoff, operator_signoff
-- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
+- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Assignment created
 
 ## Delivery Layers
 
@@ -53,6 +41,22 @@ Pantheon BFF P0 Delta-v3 — close the v2 deploy-lag bottleneck plus 1 real Pack
 |---|---|---|---|---|---|---|
 | `PROD-WRITES-001-V2` | Phase 8 / EPIC-LIVE-GATE | Enable production real writes (human gate) | Claude | blocked | - | Human-only activation. Flips VITE_BFF_REAL_WRITES=true and equivalent BFF flags after dual signoff. Cannot be dispatched to AI worker. |
 | `LIVE-SCALE-001-V2` | Phase 8 / EPIC-LIVE-GATE | Live capital scale-up (human gate) | Claude2 | blocked | - | Human-only activation. Raises live capital budget ceiling above first-window cap after first-week observation report + dual signoff. Cannot be dispatched to AI worker. |
+| `ASST-KERNEL-001` | Assistant OpenClaw Gateway Kernel/User Mode | Implement assistant context-pack schema and BFF route | Codex | todo | - | 建立 assistant context pack model 與 BFF route，讓前端 route/entity/context refs 可被 BFF 組成帶來源、時間戳、staleness 與安全 allowlist 的後端觀測資料包。 |
+| `ASST-KERNEL-002` | Assistant OpenClaw Gateway Kernel/User Mode | Implement assistant redaction library | Codex2 | todo | - | 建立 assistant redaction library，provider invocation 與 transcript persistence 前先遮蔽 tokens cookies API keys .env DB URLs provider session paths broker credentials。 |
+| `ASST-KERNEL-003` | Assistant OpenClaw Gateway Kernel/User Mode | Implement assistant session and transcript store | Claude | todo | `ASST-KERNEL-001` | 建立 assistant session/transcript store，保存 mode actor TTL reason context_pack_id provider_run_id source refs 與 SSE transcript。 |
+| `ASST-OCGW-001` | Assistant OpenClaw Gateway Kernel/User Mode | Add OpenClaw gateway credential mount contract | Gemini | todo | - | 保留 OpenClaw gateway 架構，新增 dedicated service-user .codex/.claude OAuth credential mount compose/env contract，禁止掛人類個人 home。 |
+| `ASST-OCGW-002` | Assistant OpenClaw Gateway Kernel/User Mode | Add gateway CLI image and readiness probes | Gemini2 | todo | `ASST-OCGW-001` | 在 OpenClaw gateway container 內安裝或探測 Codex/Claude CLI，回報 binary path version auth readiness mount mode 與 degraded reason。 |
+| `ASST-OCGW-003` | Assistant OpenClaw Gateway Kernel/User Mode | Implement Codex provider through OpenClaw gateway | Codex | todo | `ASST-KERNEL-002`, `ASST-KERNEL-003`, `ASST-OCGW-002` | 實作 OpenClaw gateway 內的 Codex CLI provider，以 mounted service-user .codex 執行 non-interactive codex exec，支援 timeout redaction audit fallback。 |
+| `ASST-OCGW-004` | Assistant OpenClaw Gateway Kernel/User Mode | Implement Claude provider through OpenClaw gateway | Claude | todo | `ASST-KERNEL-002`, `ASST-KERNEL-003`, `ASST-OCGW-002` | 實作 OpenClaw gateway 內的 Claude Code CLI provider，以 mounted service-user .claude 執行 claude -p，支援 stream-json normalization timeout degraded fallback。 |
+| `ASST-OCGW-005` | Assistant OpenClaw Gateway Kernel/User Mode | Add credential refresh smoke and runbook | Gemini | todo | `ASST-OCGW-003`, `ASST-OCGW-004` | 補 OpenClaw gateway account-login credential refresh smoke/runbook，判斷 .codex/.claude mount 需 ro 或 rw 並定義過期重登 degraded 行為。 |
+| `ASST-KERNEL-006` | Assistant OpenClaw Gateway Kernel/User Mode | Implement OpenClaw command broker observe/debug allowlists | Codex2 | todo | `ASST-KERNEL-002`, `ASST-OCGW-001` | 建立 OpenClaw tool/workflow policy 下的 kernel observe/debug command broker，allowlist 診斷命令並 deny destructive git DB mutation secret reads sudo broker/live capital and exfiltration。 |
+| `ASST-KERNEL-007` | Assistant OpenClaw Gateway Kernel/User Mode | Implement repair-mode worktree workflow | Gemini | todo | `ASST-KERNEL-006`, `ASST-OCGW-003` | 建立 kernel repair 的 clean task branch/worktree guardrail，限制 staging scope 並記錄 validation commit PR merge target。 |
+| `ASST-BFF-001` | Assistant OpenClaw Gateway Kernel/User Mode | Wire provider-backed /bff/agora/ask flow | Claude | todo | `ASST-KERNEL-001`, `ASST-KERNEL-003`, `ASST-OCGW-003` | 將 /bff/agora/ask 串到 assistant session/context/OpenClaw provider lifecycle，保留 command receipt idempotency transcript 與 ask SSE。 |
+| `ASST-BFF-002` | Assistant OpenClaw Gateway Kernel/User Mode | Add provider option for management NL ask | Claude2 | todo | `ASST-KERNEL-001`, `ASST-KERNEL-003`, `ASST-OCGW-003` | 讓 /bff/management/nl/ask 可在 feature flag 下使用 OpenClaw assistant provider，並保留 high-risk refusal 和 deterministic fallback。 |
+| `ASST-FE-001` | Assistant OpenClaw Gateway Kernel/User Mode | Wire Ask Personas to BFF assistant flow | Copilot | todo | `ASST-BFF-001` | 把 execute-plans Ask Personas 從 local mock response 改成 POST /bff/agora/ask 並接 ask SSE delta/completed 和 transcript resync。 |
+| `ASST-FE-002` | Assistant OpenClaw Gateway Kernel/User Mode | Add assistant mode and provider UI signals | Copilot | todo | `ASST-FE-001`, `ASST-OCGW-003` | 在 execute-plans 顯示 kernel/user mode TTL provider status command-enabled state context snapshot and audit/session refs；user mode 僅顯示一般 helper 與 source citations。 |
+| `ASST-SEC-001` | Assistant OpenClaw Gateway Kernel/User Mode | Add assistant security regression suite | Codex2 | todo | `ASST-KERNEL-002`, `ASST-OCGW-003`, `ASST-OCGW-004`, `ASST-KERNEL-006` | 補 prompt injection redaction command broker credential mount security regressions，確保 logs 內惡意文字不能越權，secret 不進 context pack，deny command 有 audit。 |
+| `ASST-USER-001` | Assistant OpenClaw Gateway Kernel/User Mode | Contract assistant into product-safe user mode | Claude | todo | `ASST-BFF-001`, `ASST-BFF-002`, `ASST-FE-001`, `ASST-SEC-001` | 把正式產品預設收斂為 user mode，禁用 shell repo raw logs repair command broker，只保留 BFF-curated context 與 source-backed answer。 |
 
 ### External / Upstream Integration Work
 
@@ -62,11 +66,15 @@ Pantheon BFF P0 Delta-v3 — close the v2 deploy-lag bottleneck plus 1 real Pack
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-25 22:36:01
-- Terminal tasks archived: `1326` total, `1303` completed, `23` superseded
+- Archive updated: 2026-05-29 19:02:44
+- Terminal tasks archived: `1330` total, `1307` completed, `23` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `BFF-WRITE-P0-LIFECYCLE-002` | Sprint BFF-WRITE-GAP / EPIC-WRITE-GAP-P0-LIFECYCLE | POST /bff/capital-pools/{id}/actions/ApprovePool (register in action_catalog) | Claude2 | completed | 2026-05-29 19:02:44 | `ai-task-archive/tasks/BFF-WRITE-P0-LIFECYCLE-002.json` |
+| `BFF-WRITE-P0-LIFECYCLE-001` | Sprint BFF-WRITE-GAP / EPIC-WRITE-GAP-P0-LIFECYCLE | POST /bff/personas/{id}/actions/AdvanceLifecycle (register in action_catalog) | Claude2 | completed | 2026-05-29 18:00:48 | `ai-task-archive/tasks/BFF-WRITE-P0-LIFECYCLE-001.json` |
+| `BFF-WRITE-P1-AGORA-011` | Sprint BFF-WRITE-GAP / EPIC-WRITE-GAP-P1-AGORA | POST /bff/agora/feedback (new route - distinct from per-signal feedback at main.py:19054) | Claude | completed | 2026-05-29 17:46:00 | `ai-task-archive/tasks/BFF-WRITE-P1-AGORA-011.json` |
+| `BFF-WRITE-P1-AGORA-010` | Sprint BFF-WRITE-GAP / EPIC-WRITE-GAP-P1-AGORA | POST /bff/agora/signals (method add - GET at main.py:19006) | Claude | completed | 2026-05-29 17:17:29 | `ai-task-archive/tasks/BFF-WRITE-P1-AGORA-010.json` |
 | `BFF-B6-001-SEC-FIX` | Sprint BFF-6 / EPIC-BFF-GAP-NL-SEC-FIX | Tenant scope on NL retrieval + evidence filter + classifier hardening + happy-path audit | Codex2 | completed | 2026-05-25 22:36:01 | `ai-task-archive/tasks/BFF-B6-001-SEC-FIX.json` |
 | `BFF-B5-001-SEC-FIX` | Sprint BFF-5 / EPIC-BFF-GAP-HUMANGATE-SEC-FIX | Anti-self-approval + two-man for high-risk HumanGate + extend_ttl cap + revoke fail-closed | Codex | completed | 2026-05-25 22:16:01 | `ai-task-archive/tasks/BFF-B5-001-SEC-FIX.json` |
 | `BFF-B1-007-SEC-FIX` | Sprint BFF-1 / EPIC-BFF-GAP-P0-SEC-FIX | Validate confirm/approval/two-man tokens + remove bearer-in-audit + scope idempotency by caller | Codex | completed | 2026-05-25 21:38:53 | `ai-task-archive/tasks/BFF-B1-007-SEC-FIX.json` |
@@ -83,10 +91,6 @@ Pantheon BFF P0 Delta-v3 — close the v2 deploy-lag bottleneck plus 1 real Pack
 | `BFF-B2-006` | Sprint BFF-2 / EPIC-BFF-GAP-CORE | v5 closed-loop read routes (B4 4 read endpoints) | Codex | completed | 2026-05-23 19:53:14 | `ai-task-archive/tasks/BFF-B2-006.json` |
 | `BFF-B3-004` | Sprint BFF-3 / EPIC-BFF-GAP-MGMT | GET /bff/management/trading-pulse and rankings | Codex | completed | 2026-05-23 19:34:22 | `ai-task-archive/tasks/BFF-B3-004.json` |
 | `BFF-B3-007` | Sprint BFF-3 / EPIC-BFF-GAP-MGMT | GET /bff/management/persona-intent redacted aggregate | Codex | completed | 2026-05-23 19:31:22 | `ai-task-archive/tasks/BFF-B3-007.json` |
-| `BFF-B5-001` | Sprint BFF-5 / EPIC-BFF-GAP-HUMANGATE | HumanGate command operations via /bff/v1/commands | Codex2 | completed | 2026-05-23 19:29:14 | `ai-task-archive/tasks/BFF-B5-001.json` |
-| `BFF-PM12-009` | Sprint BFF-4 / EPIC-BFF-GAP-PM12 | GET /bff/management/performance-attribution | Codex2 | completed | 2026-05-23 19:23:52 | `ai-task-archive/tasks/BFF-PM12-009.json` |
-| `BFF-PM12-008` | Sprint BFF-4 / EPIC-BFF-GAP-PM12 | GET /bff/management/quarterly-ranking/recommendations | Codex2 | completed | 2026-05-23 19:20:18 | `ai-task-archive/tasks/BFF-PM12-008.json` |
-| `BFF-B2-003` | Sprint BFF-2 / EPIC-BFF-GAP-CORE | Capabilities facade: mcp-servers mcp-tools skills channels tools ranking-formulas | Codex | completed | 2026-05-23 19:16:30 | `ai-task-archive/tasks/BFF-B2-003.json` |
 
 ## Task Board
 
@@ -97,6 +101,22 @@ Pantheon BFF P0 Delta-v3 — close the v2 deploy-lag bottleneck plus 1 real Pack
 | `OSS-QUANTLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | Reassigning for finalization | 把 OSS-QUANTLIB-001 option pricer 升級為 production：對台指選擇權(TXO)鏈跨多檔履約價與多個到期日定價，輸出含 greeks 的 pricing_snapshot artifact，提交 registry admission packet。獨立檔案。 | Gemini2 | Codex2 | done | `OSS-QUANTLIB-001` | 2026-05-20 19:29:47 | Closeout PR #194 merged 2026-05-19 15:18:36; ai-status manual sync 2026-05-20 19:29:47 after Gemini2 push-auth failure stalled lifecycle write. |
 | `PROD-WRITES-001-V2` | Phase 8 / EPIC-LIVE-GATE | Enable production real writes (human gate) | Human-only activation. Flips VITE_BFF_REAL_WRITES=true and equivalent BFF flags after dual signoff. Cannot be dispatched to AI worker. | Claude | Codex2 | blocked | - | 2026-05-21 11:01:52 | Awaiting: LSP-006-V2, HA-PROD-001-V2, risk_owner_signoff, operator_signoff |
 | `LIVE-SCALE-001-V2` | Phase 8 / EPIC-LIVE-GATE | Live capital scale-up (human gate) | Human-only activation. Raises live capital budget ceiling above first-window cap after first-week observation report + dual signoff. Cannot be dispatched to AI worker. | Claude2 | Codex | blocked | - | 2026-05-21 11:01:56 | Awaiting: CBL-LIVE-001-V2, BLA-007-V2, first_week_observation_report, risk_owner_signoff, operator_signoff |
+| `ASST-KERNEL-001` | Assistant OpenClaw Gateway Kernel/User Mode | Implement assistant context-pack schema and BFF route | 建立 assistant context pack model 與 BFF route，讓前端 route/entity/context refs 可被 BFF 組成帶來源、時間戳、staleness 與安全 allowlist 的後端觀測資料包。 | Codex | Claude | todo | - | 2026-05-31 23:51:13 | Assignment created |
+| `ASST-KERNEL-002` | Assistant OpenClaw Gateway Kernel/User Mode | Implement assistant redaction library | 建立 assistant redaction library，provider invocation 與 transcript persistence 前先遮蔽 tokens cookies API keys .env DB URLs provider session paths broker credentials。 | Codex2 | Claude | todo | - | 2026-05-31 23:51:15 | Assignment created |
+| `ASST-KERNEL-003` | Assistant OpenClaw Gateway Kernel/User Mode | Implement assistant session and transcript store | 建立 assistant session/transcript store，保存 mode actor TTL reason context_pack_id provider_run_id source refs 與 SSE transcript。 | Claude | Codex | todo | `ASST-KERNEL-001` | 2026-05-31 23:51:16 | Assignment created |
+| `ASST-OCGW-001` | Assistant OpenClaw Gateway Kernel/User Mode | Add OpenClaw gateway credential mount contract | 保留 OpenClaw gateway 架構，新增 dedicated service-user .codex/.claude OAuth credential mount compose/env contract，禁止掛人類個人 home。 | Gemini | Codex | todo | - | 2026-05-31 23:51:18 | Assignment created |
+| `ASST-OCGW-002` | Assistant OpenClaw Gateway Kernel/User Mode | Add gateway CLI image and readiness probes | 在 OpenClaw gateway container 內安裝或探測 Codex/Claude CLI，回報 binary path version auth readiness mount mode 與 degraded reason。 | Gemini2 | Codex2 | todo | `ASST-OCGW-001` | 2026-05-31 23:51:18 | Assignment created |
+| `ASST-OCGW-003` | Assistant OpenClaw Gateway Kernel/User Mode | Implement Codex provider through OpenClaw gateway | 實作 OpenClaw gateway 內的 Codex CLI provider，以 mounted service-user .codex 執行 non-interactive codex exec，支援 timeout redaction audit fallback。 | Codex | Claude | todo | `ASST-KERNEL-002`, `ASST-KERNEL-003`, `ASST-OCGW-002` | 2026-05-31 23:51:19 | Assignment created |
+| `ASST-OCGW-004` | Assistant OpenClaw Gateway Kernel/User Mode | Implement Claude provider through OpenClaw gateway | 實作 OpenClaw gateway 內的 Claude Code CLI provider，以 mounted service-user .claude 執行 claude -p，支援 stream-json normalization timeout degraded fallback。 | Claude | Codex | todo | `ASST-KERNEL-002`, `ASST-KERNEL-003`, `ASST-OCGW-002` | 2026-05-31 23:51:20 | Assignment created |
+| `ASST-OCGW-005` | Assistant OpenClaw Gateway Kernel/User Mode | Add credential refresh smoke and runbook | 補 OpenClaw gateway account-login credential refresh smoke/runbook，判斷 .codex/.claude mount 需 ro 或 rw 並定義過期重登 degraded 行為。 | Gemini | Claude2 | todo | `ASST-OCGW-003`, `ASST-OCGW-004` | 2026-05-31 23:51:21 | Assignment created |
+| `ASST-KERNEL-006` | Assistant OpenClaw Gateway Kernel/User Mode | Implement OpenClaw command broker observe/debug allowlists | 建立 OpenClaw tool/workflow policy 下的 kernel observe/debug command broker，allowlist 診斷命令並 deny destructive git DB mutation secret reads sudo broker/live capital and exfiltration。 | Codex2 | Claude | todo | `ASST-KERNEL-002`, `ASST-OCGW-001` | 2026-05-31 23:51:22 | Assignment created |
+| `ASST-KERNEL-007` | Assistant OpenClaw Gateway Kernel/User Mode | Implement repair-mode worktree workflow | 建立 kernel repair 的 clean task branch/worktree guardrail，限制 staging scope 並記錄 validation commit PR merge target。 | Gemini | Codex | todo | `ASST-KERNEL-006`, `ASST-OCGW-003` | 2026-05-31 23:51:22 | Assignment created |
+| `ASST-BFF-001` | Assistant OpenClaw Gateway Kernel/User Mode | Wire provider-backed /bff/agora/ask flow | 將 /bff/agora/ask 串到 assistant session/context/OpenClaw provider lifecycle，保留 command receipt idempotency transcript 與 ask SSE。 | Claude | Codex2 | todo | `ASST-KERNEL-001`, `ASST-KERNEL-003`, `ASST-OCGW-003` | 2026-05-31 23:51:23 | Assignment created |
+| `ASST-BFF-002` | Assistant OpenClaw Gateway Kernel/User Mode | Add provider option for management NL ask | 讓 /bff/management/nl/ask 可在 feature flag 下使用 OpenClaw assistant provider，並保留 high-risk refusal 和 deterministic fallback。 | Claude2 | Codex | todo | `ASST-KERNEL-001`, `ASST-KERNEL-003`, `ASST-OCGW-003` | 2026-05-31 23:51:24 | Assignment created |
+| `ASST-FE-001` | Assistant OpenClaw Gateway Kernel/User Mode | Wire Ask Personas to BFF assistant flow | 把 execute-plans Ask Personas 從 local mock response 改成 POST /bff/agora/ask 並接 ask SSE delta/completed 和 transcript resync。 | Copilot | Codex2 | todo | `ASST-BFF-001` | 2026-05-31 23:51:24 | Assignment created |
+| `ASST-FE-002` | Assistant OpenClaw Gateway Kernel/User Mode | Add assistant mode and provider UI signals | 在 execute-plans 顯示 kernel/user mode TTL provider status command-enabled state context snapshot and audit/session refs；user mode 僅顯示一般 helper 與 source citations。 | Copilot | Claude2 | todo | `ASST-FE-001`, `ASST-OCGW-003` | 2026-05-31 23:51:25 | Assignment created |
+| `ASST-SEC-001` | Assistant OpenClaw Gateway Kernel/User Mode | Add assistant security regression suite | 補 prompt injection redaction command broker credential mount security regressions，確保 logs 內惡意文字不能越權，secret 不進 context pack，deny command 有 audit。 | Codex2 | Claude | todo | `ASST-KERNEL-002`, `ASST-OCGW-003`, `ASST-OCGW-004`, `ASST-KERNEL-006` | 2026-05-31 23:51:26 | Assignment created |
+| `ASST-USER-001` | Assistant OpenClaw Gateway Kernel/User Mode | Contract assistant into product-safe user mode | 把正式產品預設收斂為 user mode，禁用 shell repo raw logs repair command broker，只保留 BFF-curated context 與 source-backed answer。 | Claude | Codex2 | todo | `ASST-BFF-001`, `ASST-BFF-002`, `ASST-FE-001`, `ASST-SEC-001` | 2026-05-31 23:51:27 | Assignment created |
 
 ## Handoff Queue
 
@@ -122,90 +142,49 @@ Pantheon BFF P0 Delta-v3 — close the v2 deploy-lag bottleneck plus 1 real Pack
 
 ## Lovable Coordination
 
-- Last coordination scan: 2026-05-03 18:57:30
-- Tracked features: `46`
-- Lovable-ready packets: `45`
+- Last coordination scan: -
+- Tracked features: `0`
+- Lovable-ready packets: `0`
 - Waiting for Lovable/front-end: `0`
-- UI-done returned: `46`
-- Frontend feedback returned: `46`
+- UI-done returned: `0`
+- Frontend feedback returned: `0`
 - Open BFF gaps: `0`
-- Backend route live: `45`
-- Pantheon handoff published: `45`
-- Mirrored to front default branch: `45`
-- Dispatch recorded in coordinator state: `46`
-- Receiver-visible payload on front default branch: `45`
-- Lovable consumed packet: `46`
-- UI activated: `46`
-- Runtime verified: `46`
+- Backend route live: `0`
+- Pantheon handoff published: `0`
+- Mirrored to front default branch: `0`
+- Dispatch recorded in coordinator state: `0`
+- Receiver-visible payload on front default branch: `0`
+- Lovable consumed packet: `0`
+- UI activated: `0`
+- Runtime verified: `0`
 
 | Feature | Screen | Stage | Lovable Ready | Mirrored | UI Done | Feedback | Next Action |
 |---|---|---|---|---|---|---|---|
-| `CW-01-consult-request` | consult-request | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `CW-02-debate-transcript` | consultation-debate-transcript | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `CW-03-committee-board` | consultation-committee-board | `loop_complete` | no | no | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `CW-04-redteam-memo` | redteam-memo | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `EW-05-mutation-review` | mutation-review | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `F-042` | promotion-review | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `KW-01-institutional-memory` | institutional-memory | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `KW-02-research-notes` | knowledge-research-notes | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `KW-03-evidence-refs` | knowledge-evidence-refs | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `KW-04-insight-cards` | knowledge-insight-cards | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `KW-05-strategy-spec` | knowledge-strategy-spec | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-001-deployment-review` | deployment-review-console | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-001-governance-review-queue` | governance-review-queue | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-002-incident-action-drawer` | incident-action-drawer | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-002-incident-detail` | incident-detail | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-002-incident-home` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-003-evolution-center` | evolution-center | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-003-inspiration-graph` | inspiration-graph | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-003-lineage-view` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-003-post-incident-review` | post-incident-review-console | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-004-capital-binding-drilldowns` | capital-binding-drilldowns | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-004-deployment-approval-drilldowns` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-004-persona-drilldowns` | persona-drilldowns | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-004-persona-management` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-005-degradation-banner` | global-degradation-banner | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-005-sse-substrate` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-006-approval-queue` | governance-approval-queue | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-007-deployment-diff` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-008-rollback-review` | governance-rollback-review | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-009-governance-audit-rail` | governance-audit-rail | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-010-runtime-state-board` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-011-health-status-board` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-012-alerts-rail` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-013-operator-home` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-014-paper-live-drift` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-consultation-workbench` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-knowledge-workbench` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `RW-01-research-ticket` | research-ticket | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `RW-02-search` | research-search | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `RW-03-analyze` | research-analyze | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `RW-04-experiment-launch` | experiment-launch | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `RW-05-artifact-compare` | artifact-compare | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `TW-01-teaching-dialog` | teaching-dialog | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `TW-02-parameter-controls` | parameter-controls | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `TW-03-before-after-compare` | before-after-compare | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `TW-04-teaching-replay` | teaching-replay | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
+| _(none)_ | - | - | - | - | - | - | - |
+
+Tracked-feature note: the table above only lists modules that currently have coordination feature records.
+Archive-done route-live activation publication lanes that remain outside explicit feature rows: `CW-02`, `KW-04`, `KW-05`, `RW-02`, `RW-04`, `RW-05`, `KW-02`, `KW-03`, `TW-01`, `TW-02`, `TW-04`.
+Do not read those omitted modules as open Pantheon backlog purely because they are absent from the coordination feature table.
 
 ## Latest Checkpoints
 
-- 2026-05-25 22:24:39 Orchestrator: `BFF-B6-001-SEC-FIX` worker_worktree_reused
-- 2026-05-25 22:24:39 Orchestrator: `BFF-B6-001-SEC-FIX` Worker started via codex: owned_finalize_dispatch
-- 2026-05-25 22:24:40 Codex2: `BFF-B6-001-SEC-FIX` Supervisor resumed BFF-B6-001-SEC-FIX for finalize after successful dispatch.
-- 2026-05-25 22:24:42 Orchestrator: `BFF-B6-001-SEC-FIX` Supervisor resumed BFF-B6-001-SEC-FIX for finalize after successful dispatch.
-- 2026-05-25 22:33:56 Codex2: `BFF-B6-001-SEC-FIX` Worker commit 9b312ca8937b recorded 1 staged file(s) for BFF-B6-001-SEC-FIX.
-- 2026-05-25 22:35:05 Orchestrator: `OPS-CHAIR-REVIEW` Chair review queued for Codex: chair_review:operational_review
-- 2026-05-25 22:35:05 Orchestrator: Worker started via codex: chair_review:operational_review
-- 2026-05-25 22:36:01 Codex2: `BFF-B6-001-SEC-FIX` PR #607 merged at 2026-05-25 22:35:33 (merge 817cc1a9); owner closeout commit 9b312ca8; local validation passed: py_compile OK and focused BFF-B6 pytest 18 passed.
-- 2026-05-25 22:36:22 Orchestrator: PreToolUse: Read
-- 2026-05-25 22:36:22 Orchestrator: PostToolUse: Read
-- 2026-05-25 22:36:32 Orchestrator: PreToolUse: Bash
-- 2026-05-25 22:36:34 Orchestrator: PostToolUse: Bash
-- 2026-05-25 22:36:40 Orchestrator: PreToolUse: TodoWrite
-- 2026-05-25 22:36:40 Orchestrator: PostToolUse: TodoWrite
-- 2026-05-25 22:36:49 Orchestrator: Stop: Stop
-- 2026-05-25 22:39:32 Orchestrator: PreToolUse: Bash
-- 2026-05-25 22:39:32 Orchestrator: PostToolUse: Bash
-- 2026-05-25 22:39:37 Orchestrator: PreToolUse: Bash
-- 2026-05-25 22:39:37 Orchestrator: PostToolUse: Bash
-- 2026-05-25 22:39:50 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:53:02 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:53:08 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:53:08 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:53:13 Orchestrator: PreToolUse: Bash
+- 2026-05-31 23:51:13 Codex: `ASST-KERNEL-001` Assigned ASST-KERNEL-001 to Codex with reviewer Claude
+- 2026-05-31 23:51:15 Codex: `ASST-KERNEL-002` Assigned ASST-KERNEL-002 to Codex2 with reviewer Claude
+- 2026-05-31 23:51:16 Codex: `ASST-KERNEL-003` Assigned ASST-KERNEL-003 to Claude with reviewer Codex
+- 2026-05-31 23:51:18 Codex: `ASST-OCGW-001` Assigned ASST-OCGW-001 to Gemini with reviewer Codex
+- 2026-05-31 23:51:18 Codex: `ASST-OCGW-002` Assigned ASST-OCGW-002 to Gemini2 with reviewer Codex2
+- 2026-05-31 23:51:19 Codex: `ASST-OCGW-003` Assigned ASST-OCGW-003 to Codex with reviewer Claude
+- 2026-05-31 23:51:20 Codex: `ASST-OCGW-004` Assigned ASST-OCGW-004 to Claude with reviewer Codex
+- 2026-05-31 23:51:21 Codex: `ASST-OCGW-005` Assigned ASST-OCGW-005 to Gemini with reviewer Claude2
+- 2026-05-31 23:51:22 Codex: `ASST-KERNEL-006` Assigned ASST-KERNEL-006 to Codex2 with reviewer Claude
+- 2026-05-31 23:51:22 Codex: `ASST-KERNEL-007` Assigned ASST-KERNEL-007 to Gemini with reviewer Codex
+- 2026-05-31 23:51:23 Codex: `ASST-BFF-001` Assigned ASST-BFF-001 to Claude with reviewer Codex2
+- 2026-05-31 23:51:24 Codex: `ASST-BFF-002` Assigned ASST-BFF-002 to Claude2 with reviewer Codex
+- 2026-05-31 23:51:24 Codex: `ASST-FE-001` Assigned ASST-FE-001 to Copilot with reviewer Codex2
+- 2026-05-31 23:51:25 Codex: `ASST-FE-002` Assigned ASST-FE-002 to Copilot with reviewer Claude2
+- 2026-05-31 23:51:26 Codex: `ASST-SEC-001` Assigned ASST-SEC-001 to Codex2 with reviewer Claude
+- 2026-05-31 23:51:27 Codex: `ASST-USER-001` Assigned ASST-USER-001 to Claude with reviewer Codex2
