@@ -8,10 +8,10 @@ Do not read `current-work.md` by default for implementation context.
 - Title: POST /api/v1/bindings (method add - GET already exists at main.py:12744)
 - Status: todo
 - Owner: Codex
-- Reviewer: Claude
+- Reviewer: Claude2
 - Phase: Sprint BFF-WRITE-GAP / EPIC-WRITE-GAP-P0-WIZARD
-- Last update: 2026-05-29T07:41:48Z
-- Next: Assignment created
+- Last update: 2026-05-29T11:50:56Z
+- Next: Helper-claimed by Codex while Claude2 is dispatch-paused.
 
 ## Summary
 -
@@ -23,7 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_bff_write_gap_2026-05-28/BFF_WRITE_GAP_SPEC.md;execute-plans/.lovable/specs/be-requirements/BE_WRITE_GAP_SPEC_2026-05-28.md;services/control-plane/bff/main.py;execute-plans/src/management/pages/PersonaOnboarding.tsx;services/control-plane/bff/test_bff_write_gap_2026_05_28.py
 
 ## Recent Task Activity
-- 2026-05-29T07:41:48Z · Operator · assign · Assigned BFF-WRITE-P0-WIZARD-005 to Codex with reviewer Claude
+- 2026-05-29T09:41:59Z · Orchestrator · worker_worktree_allocated · -
+- 2026-05-29T09:41:59Z · Orchestrator · worker_started · Worker started via codex: owned_ready_dispatch
+- 2026-05-29T09:41:59Z · Codex · start · Supervisor auto-started BFF-WRITE-P0-WIZARD-005 after successful dispatch.
+- 2026-05-29T09:42:03Z · Orchestrator · task_dispatch_synced · Supervisor auto-started BFF-WRITE-P0-WIZARD-005 after successful dispatch.
+- 2026-05-29T09:42:12Z · Orchestrator · provider_dispatch_paused · Paused new dispatches for codex1 until 2026-05-29T10:42:12Z after terminal quota failure: Codex usage limit reached
+- 2026-05-29T09:42:15Z · Orchestrator · task_reassigned · Auto-reassigned ownership from Codex to Claude2 after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude2 starts a fresh run.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
