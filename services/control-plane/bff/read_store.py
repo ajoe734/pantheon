@@ -8857,6 +8857,13 @@ class ReadSurfaceStore:
                 plans.append(self._project_canonical_deployment_plan(raw, runtime_binding_id))
         else:
             plans = list((self._local_fallback("deployment_plans") or {}).values())
+        local_plans = self._local_overlay_records("deployment_plans")
+        if local_plans:
+            plans_by_id = {str(p.get("id") or p.get("plan_id") or ""): p for p in plans}
+            for overlay_key, plan in local_plans.items():
+                key = str(plan.get("id") or plan.get("plan_id") or overlay_key)
+                plans_by_id[key] = plan
+            plans = [plan for key, plan in plans_by_id.items() if key]
         if status:
             plans = [
                 p for p in plans
@@ -8931,6 +8938,9 @@ class ReadSurfaceStore:
         return list((self._local_fallback("registry_entries") or {}).values())
 
     def get_deployment_plan(self, plan_id: str) -> Optional[Dict[str, Any]]:
+        overlay = self._local_overlay_records("deployment_plans").get(plan_id)
+        if overlay is not None:
+            return overlay
         available, raw = self._canonical.deployment_plan(plan_id)
         if available:
             if raw is None:
@@ -9032,6 +9042,51 @@ class ReadSurfaceStore:
             "persistenceMode": "bff_local_dev_store",
         }
         runtimes[runtime_id] = record
+        self._save()
+        return record
+
+    def create_deployment_plan(
+        self,
+        *,
+        plan_id: str,
+        binding_id: str,
+        artifact_id: str,
+        deployment_mode: str,
+        capital_pool_id: str,
+        actor_id: str,
+        created_at: Optional[str] = None,
+        params: Optional[Dict[str, Any]] = None,
+        locked: bool = False,
+        status: str = "pending_approval",
+    ) -> Dict[str, Any]:
+        plans = self._ensure_local_overlay_records("deployment_plans")
+        timestamp = created_at or _utc_now_rfc3339()
+        clean_params = json.loads(json.dumps(params or {}))
+        record = {
+            "id": plan_id,
+            "plan_id": plan_id,
+            "binding_id": binding_id,
+            "persona_capital_binding_id": binding_id,
+            "artifact_id": artifact_id,
+            "deployment_mode": deployment_mode,
+            "deployment_stage": deployment_mode,
+            "target_stage": deployment_mode,
+            "capital_pool_id": capital_pool_id,
+            "target_pool_id": capital_pool_id,
+            "status": status,
+            "locked": bool(locked),
+            "params": clean_params,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "created_by": actor_id,
+            "metadata": {
+                "created_via": "POST /api/v1/deployment-plans",
+                "persistenceMode": "bff_local_dev_store",
+            },
+            "canonicalWriteAuthority": "deployment_service",
+            "persistenceMode": "bff_local_dev_store",
+        }
+        plans[plan_id] = record
         self._save()
         return record
 

@@ -347,6 +347,243 @@ def test_post_bff_runtimes_validates_runtime_kind() -> None:
     assert response.json()["error"]["code"] == "VALIDATION_FAILED"
 
 
+# --------------------------------------------------------------------------- #
+# P0-6 — POST /api/v1/deployment-plans (persona onboarding wizard step 3)
+# --------------------------------------------------------------------------- #
+
+DEPLOYMENT_PLAN_HEADERS = {
+    "Authorization": "Bearer bff-write-gap-dp:operator",
+    "Idempotency-Key": "bff-write-gap-dp-create-001",
+    "X-Correlation-Id": "corr-dp-create-001",
+    "X-Request-Id": "req-dp-create-001",
+}
+
+
+def _deployment_plan_seed(registry_entries: dict[str, Any] | None = None) -> dict[str, Any]:
+    return {
+        "deployment_plans": {},
+        "bindings": {
+            "binding-dp-001": {
+                "id": "binding-dp-001",
+                "binding_id": "binding-dp-001",
+                "persona_id": "persona-dp-001",
+                "capital_pool_id": "pool-dp-001",
+                "role": "paper_owner",
+            }
+        },
+        "registry_entries": registry_entries or {},
+    }
+
+
+@contextmanager
+def _isolated_deployment_plan_bff(
+    registry_entries: dict[str, Any] | None = None,
+) -> Iterator[TestClient]:
+    original_store = bff_main.read_store
+    original_idempotency = dict(bff_main._GOV_BFF_IDEMPOTENCY)
+    original_audit_events = list(bff_main._sse_buffers["audit"])
+    with tempfile.TemporaryDirectory(prefix="bff_write_gap_deployment_plan_") as td:
+        store_path = Path(td) / "read_surfaces.json"
+        store_path.write_text(
+            json.dumps(_deployment_plan_seed(registry_entries)), encoding="utf-8"
+        )
+        bff_main.read_store = ReadSurfaceStore(
+            str(store_path), allow_local_snapshot_fallback=True
+        )
+        bff_main._GOV_BFF_IDEMPOTENCY.clear()
+        bff_main._sse_buffers["audit"].clear()
+        try:
+            yield TestClient(bff_main.app)
+        finally:
+            bff_main.read_store = original_store
+            bff_main._GOV_BFF_IDEMPOTENCY.clear()
+            bff_main._GOV_BFF_IDEMPOTENCY.update(original_idempotency)
+            bff_main._sse_buffers["audit"].clear()
+            bff_main._sse_buffers["audit"].extend(original_audit_events)
+
+
+def _deployment_plan_create_payload(plan_id: str | None = None) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "binding_id": "binding-dp-001",
+        "artifact_id": "artifact-dp-001",
+        "deployment_mode": "paper",
+        "capital_pool_id": "pool-dp-001",
+        "params": {"max_notional": 100000},
+        "locked": False,
+    }
+    if plan_id:
+        body["plan_id"] = plan_id
+    return body
+
+
+def test_post_deployment_plan_creates_pending_approval_and_replays() -> None:
+    with _isolated_deployment_plan_bff() as client:
+        body = _deployment_plan_create_payload(plan_id="plan-dp-write-gap-001")
+        response = client.post(
+            "/api/v1/deployment-plans", headers=DEPLOYMENT_PLAN_HEADERS, json=body
+        )
+        replay = client.post(
+            "/api/v1/deployment-plans", headers=DEPLOYMENT_PLAN_HEADERS, json=body
+        )
+        detail = client.get(
+            "/api/v1/deployment-plans/plan-dp-write-gap-001",
+            headers={"Authorization": DEPLOYMENT_PLAN_HEADERS["Authorization"]},
+        )
+        listing = client.get(
+            "/api/v1/deployment-plans",
+            headers={"Authorization": DEPLOYMENT_PLAN_HEADERS["Authorization"]},
+        )
+        event_types = [event["type"] for _event_id, event in bff_main._sse_buffers["audit"]]
+        events = [event for _event_id, event in bff_main._sse_buffers["audit"]]
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    data = payload["data"]
+    assert data["id"] == "plan-dp-write-gap-001"
+    assert data["binding_id"] == "binding-dp-001"
+    assert data["artifact_id"] == "artifact-dp-001"
+    assert data["deployment_mode"] == "paper"
+    assert data["status"] == "pending_approval"
+    assert data["capital_pool_id"] == "pool-dp-001"
+    assert data["locked"] is False
+    assert data["created_at"]
+    assert payload["meta"]["dryRun"] is False
+    assert payload["meta"]["evidenceKind"] == "deployment_plan.create"
+    assert payload["meta"]["correlationId"] == "corr-dp-create-001"
+    assert response.headers["X-Correlation-Id"] == "corr-dp-create-001"
+
+    assert replay.status_code == 201, replay.text
+    assert replay.json()["data"] == data
+
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["data"]["id"] == "plan-dp-write-gap-001"
+    assert listing.status_code == 200, listing.text
+    assert any(p["id"] == "plan-dp-write-gap-001" for p in listing.json()["data"])
+
+    assert event_types == ["deployment-plan.created"]
+    assert events[0]["data"]["persona_id"] == "persona-dp-001"
+    assert events[0]["data"]["status"] == "pending_approval"
+
+
+def test_post_deployment_plan_honors_locked_flag() -> None:
+    payload = _deployment_plan_create_payload(plan_id="plan-dp-locked-001")
+    payload["locked"] = True
+    payload["deployment_mode"] = "live"
+    with _isolated_deployment_plan_bff() as client:
+        response = client.post(
+            "/api/v1/deployment-plans",
+            headers={**DEPLOYMENT_PLAN_HEADERS, "Idempotency-Key": "bff-write-gap-dp-locked-001"},
+            json=payload,
+        )
+        detail = client.get(
+            "/api/v1/deployment-plans/plan-dp-locked-001",
+            headers={"Authorization": DEPLOYMENT_PLAN_HEADERS["Authorization"]},
+        )
+
+    assert response.status_code == 201, response.text
+    data = response.json()["data"]
+    assert data["locked"] is True
+    assert data["deployment_mode"] == "live"
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["data"]["locked"] is True
+
+
+def test_post_deployment_plan_dry_run_returns_200_without_persistence() -> None:
+    with _isolated_deployment_plan_bff() as client:
+        response = client.post(
+            "/api/v1/deployment-plans",
+            headers={
+                **DEPLOYMENT_PLAN_HEADERS,
+                "X-Dry-Run": "1",
+                "Idempotency-Key": "bff-write-gap-dp-dry-run-001",
+            },
+            json=_deployment_plan_create_payload(plan_id="plan-dp-dry-run-001"),
+        )
+        detail = client.get(
+            "/api/v1/deployment-plans/plan-dp-dry-run-001",
+            headers={"Authorization": DEPLOYMENT_PLAN_HEADERS["Authorization"]},
+        )
+        audit_events = list(bff_main._sse_buffers["audit"])
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["data"]["id"] == "plan-dp-dry-run-001"
+    assert payload["data"]["status"] == "pending_approval"
+    assert payload["meta"]["dryRun"] is True
+    assert detail.status_code == 404, detail.text
+    assert len(audit_events) == 0
+
+
+def test_post_deployment_plan_validates_deployment_mode() -> None:
+    payload = _deployment_plan_create_payload()
+    payload["deployment_mode"] = "shadow"
+    with _isolated_deployment_plan_bff() as client:
+        response = client.post(
+            "/api/v1/deployment-plans",
+            headers={**DEPLOYMENT_PLAN_HEADERS, "Idempotency-Key": "bff-write-gap-dp-mode-001"},
+            json=payload,
+        )
+
+    assert response.status_code == 422, response.text
+    error = response.json()["error"]
+    assert error["code"] == "VALIDATION_FAILED"
+    assert error["details"]["precondition_failed"] == "deployment_mode"
+
+
+def test_post_deployment_plan_requires_binding_id() -> None:
+    payload = _deployment_plan_create_payload()
+    payload.pop("binding_id")
+    with _isolated_deployment_plan_bff() as client:
+        response = client.post(
+            "/api/v1/deployment-plans",
+            headers={**DEPLOYMENT_PLAN_HEADERS, "Idempotency-Key": "bff-write-gap-dp-missing-001"},
+            json=payload,
+        )
+
+    assert response.status_code == 422, response.text
+    error = response.json()["error"]
+    assert error["code"] == "VALIDATION_FAILED"
+    assert error["details"]["precondition_failed"] == "binding_id"
+
+
+def test_post_deployment_plan_rejects_unapproved_artifact() -> None:
+    registry = {
+        "artifact-dp-001": {
+            "id": "artifact-dp-001",
+            "artifact_id": "artifact-dp-001",
+            "status": "draft",
+        }
+    }
+    with _isolated_deployment_plan_bff(registry_entries=registry) as client:
+        response = client.post(
+            "/api/v1/deployment-plans",
+            headers={**DEPLOYMENT_PLAN_HEADERS, "Idempotency-Key": "bff-write-gap-dp-unapproved-001"},
+            json=_deployment_plan_create_payload(),
+        )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "RESOURCE_CONFLICT"
+
+
+def test_post_deployment_plan_idempotency_conflict_on_changed_payload() -> None:
+    with _isolated_deployment_plan_bff() as client:
+        first = client.post(
+            "/api/v1/deployment-plans",
+            headers=DEPLOYMENT_PLAN_HEADERS,
+            json=_deployment_plan_create_payload(plan_id="plan-dp-conflict-001"),
+        )
+        changed = _deployment_plan_create_payload(plan_id="plan-dp-conflict-002")
+        conflict = client.post(
+            "/api/v1/deployment-plans",
+            headers=DEPLOYMENT_PLAN_HEADERS,
+            json=changed,
+        )
+
+    assert first.status_code == 201, first.text
+    assert conflict.status_code == 409, conflict.text
+    assert conflict.json()["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+
+
 # ---------------------------------------------------------------------------
 # P0-4: POST /bff/command-confirmations/{token}/confirm
 # ---------------------------------------------------------------------------
@@ -999,10 +1236,6 @@ class TestExecuteCommandDispatchesStartRuntime(unittest.TestCase):
     def test_no_executor_error_for_start_runtime(self) -> None:
         from command_executor import _EXECUTORS
         self.assertIn(CommandType.START_RUNTIME, _EXECUTORS)
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 if __name__ == "__main__":
