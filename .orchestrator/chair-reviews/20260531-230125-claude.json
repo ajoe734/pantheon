@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Codex and Codex2 are idle with immediately runnable primary tasks (ASST-KERNEL-001, ASST-KERNEL-002); underutilization is 0.1429, no global blocker, no pending approvals, and no sidecar saturation on any parent task.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": ["ASST-OCGW-001"],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "ASST-KERNEL-001",
+    "ASST-KERNEL-002",
+    "ASST-OCGW-001"
+  ]
+}
