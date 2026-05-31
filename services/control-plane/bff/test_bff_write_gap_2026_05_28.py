@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 
 import main as bff_main  # noqa: E402
+from command_queue import CommandStore  # noqa: E402
 from read_store import ReadSurfaceStore  # noqa: E402
 
 
@@ -347,6 +348,129 @@ def test_post_bff_runtimes_validates_runtime_kind() -> None:
 
 
 # ---------------------------------------------------------------------------
+# P0-4: POST /bff/command-confirmations/{token}/confirm
+# ---------------------------------------------------------------------------
+
+_CONFIRM_HEADERS = {
+    "Authorization": "Bearer test-confirm:operator",
+    "X-BFF-Api-Version": "2026-05-07",
+    "X-Request-Id": "req-confirm-by-token-test",
+    "X-Correlation-Id": "corr-confirm-by-token-test",
+}
+
+
+@contextmanager
+def _isolated_confirm_bff() -> Iterator[TestClient]:
+    original_command_store = bff_main.command_store
+    original_idempotency = dict(bff_main._GOV_BFF_IDEMPOTENCY)
+    original_audit_events = list(bff_main._sse_buffers["audit"])
+    with tempfile.TemporaryDirectory(prefix="bff_confirm_token_") as td:
+        store_path = Path(td) / "commands.jsonl"
+        store_path.touch()
+        bff_main.command_store = CommandStore(str(store_path))
+        bff_main._GOV_BFF_IDEMPOTENCY.clear()
+        bff_main._sse_buffers["audit"].clear()
+        try:
+            yield TestClient(bff_main.app)
+        finally:
+            bff_main.command_store = original_command_store
+            bff_main._GOV_BFF_IDEMPOTENCY.clear()
+            bff_main._GOV_BFF_IDEMPOTENCY.update(original_idempotency)
+            bff_main._sse_buffers["audit"].clear()
+            bff_main._sse_buffers["audit"].extend(original_audit_events)
+
+
+def _create_confirm_token(client: TestClient, token_id: str) -> None:
+    resp = client.post(
+        "/bff/confirm-tokens",
+        headers={**_CONFIRM_HEADERS, "Idempotency-Key": f"create-token-{token_id}"},
+        json={"tokenId": token_id},
+    )
+    assert resp.status_code == 201, f"Failed to seed token {token_id}: {resp.text}"
+
+
+def test_post_bff_confirm_by_token_unknown_returns_typed_404() -> None:
+    """Acceptance gate: unknown token returns typed 404, NOT generic 'Not Found'."""
+    with _isolated_confirm_bff() as client:
+        response = client.post(
+            "/bff/command-confirmations/token-dev/confirm",
+            headers={**_CONFIRM_HEADERS, "Idempotency-Key": "confirm-by-token-unknown-001"},
+            json={"command_id": "cmd-test-unknown"},
+        )
+
+    assert response.status_code == 404, response.text
+    error = response.json()["error"]
+    assert error["code"] == "RESOURCE_NOT_FOUND"
+    assert error["message"] != "Not Found"
+    assert error["details"]["precondition_failed"] == "confirm_token_not_found"
+
+
+def test_post_bff_confirm_by_token_mismatched_body_token_returns_412() -> None:
+    with _isolated_confirm_bff() as client:
+        response = client.post(
+            "/bff/command-confirmations/path-token-abc/confirm",
+            headers={**_CONFIRM_HEADERS, "Idempotency-Key": "confirm-by-token-mismatch-001"},
+            json={"confirm_token": "different-token-xyz", "command_id": "cmd-test-mismatch"},
+        )
+
+    assert response.status_code == 412, response.text
+    error = response.json()["error"]
+    assert error["code"] == "PRECONDITION_FAILED"
+    assert error["details"]["precondition_failed"] == "confirm_token_invalid"
+
+
+def test_post_bff_confirm_by_token_dry_run_returns_200_no_side_effects() -> None:
+    with _isolated_confirm_bff() as client:
+        _create_confirm_token(client, "token-dry-run-p04")
+        response = client.post(
+            "/bff/command-confirmations/token-dry-run-p04/confirm",
+            headers={
+                **_CONFIRM_HEADERS,
+                "Idempotency-Key": "confirm-by-token-dry-run-001",
+                "X-Dry-Run": "1",
+            },
+            json={"command_id": "cmd-test-dry-run"},
+        )
+        audit_events = list(bff_main._sse_buffers["audit"])
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["data"]["status"] == "accepted"
+    assert payload["data"]["commandId"] == "cmd-test-dry-run"
+    assert payload["meta"]["dryRun"] is True
+    assert payload["meta"]["evidenceKind"] == "command.confirm"
+    assert len(audit_events) == 0
+
+
+def test_post_bff_confirm_by_token_valid_returns_202_and_publishes_audit() -> None:
+    with _isolated_confirm_bff() as client:
+        _create_confirm_token(client, "token-valid-p04")
+        response = client.post(
+            "/bff/command-confirmations/token-valid-p04/confirm",
+            headers={**_CONFIRM_HEADERS, "Idempotency-Key": "confirm-by-token-valid-001"},
+            json={"command_id": "cmd-test-valid-001"},
+        )
+        replay = client.post(
+            "/bff/command-confirmations/token-valid-p04/confirm",
+            headers={**_CONFIRM_HEADERS, "Idempotency-Key": "confirm-by-token-valid-001"},
+            json={"command_id": "cmd-test-valid-001"},
+        )
+        audit_events = list(bff_main._sse_buffers["audit"])
+
+    assert response.status_code == 202, response.text
+    payload = response.json()
+    assert payload["data"]["status"] == "accepted"
+    assert payload["data"]["commandId"] == "cmd-test-valid-001"
+    assert payload["data"]["confirmed_at"]
+    assert payload["meta"]["dryRun"] is False
+    assert payload["meta"]["evidenceKind"] == "command.confirm"
+    assert payload["meta"]["correlationId"] == "corr-confirm-by-token-test"
+
+    assert replay.status_code == 202, replay.text
+    assert replay.json()["data"] == payload["data"]
+
+    event_types = [event["type"] for _event_id, event in audit_events]
+    assert "command.confirm" in event_types
 # P0-1 AdvanceLifecycle tests
 # ---------------------------------------------------------------------------
 
