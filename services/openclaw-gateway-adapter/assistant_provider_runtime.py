@@ -1,0 +1,145 @@
+"""Assistant provider runtime redaction boundary for OpenClaw gateway adapter."""
+from __future__ import annotations
+
+import sys
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+
+try:
+    from assistant.redaction import RedactionError, RedactionResult, redact_assistant_payload
+except ModuleNotFoundError:  # pragma: no cover - exercised in service import contexts
+    _BFF_DIR = Path(__file__).resolve().parents[1] / "control-plane" / "bff"
+    if str(_BFF_DIR) not in sys.path:
+        sys.path.insert(0, str(_BFF_DIR))
+    from assistant.redaction import RedactionError, RedactionResult, redact_assistant_payload
+
+
+ProviderRunner = Callable[[Mapping[str, Any]], Any]
+TranscriptSink = Callable[[Mapping[str, Any]], None]
+Redactor = Callable[..., RedactionResult]
+
+
+class AssistantProviderRuntimeError(RuntimeError):
+    """Raised when provider runtime cannot safely continue."""
+
+    def __init__(self, code: str, message: str, *, stage: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.stage = stage
+
+
+@dataclass(frozen=True)
+class ProviderInvocationRequest:
+    provider: str
+    mode: str
+    prompt: str
+    context_pack: Mapping[str, Any] | None = None
+    metadata: Mapping[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class ProviderInvocationResult:
+    provider: str
+    mode: str
+    status: str
+    output: Any
+    invocation_payload: Mapping[str, Any]
+    transcript_payload: Mapping[str, Any]
+    redaction: Mapping[str, Any]
+
+
+class AssistantProviderRuntime:
+    """Runs assistant providers behind the redaction boundary.
+
+    The runner receives only the redacted provider invocation payload.  The
+    transcript sink receives only the redacted transcript payload.  User mode
+    fails closed when either redaction pass fails.
+    """
+
+    def __init__(
+        self,
+        runner: ProviderRunner,
+        *,
+        transcript_sink: TranscriptSink | None = None,
+        redactor: Redactor = redact_assistant_payload,
+        redaction_enabled: bool = True,
+        kernel_redaction_override: bool = False,
+    ) -> None:
+        self._runner = runner
+        self._transcript_sink = transcript_sink
+        self._redactor = redactor
+        self._redaction_enabled = redaction_enabled
+        self._kernel_redaction_override = kernel_redaction_override
+
+    def invoke(self, request: ProviderInvocationRequest) -> ProviderInvocationResult:
+        invocation_payload = {
+            "provider": request.provider,
+            "mode": request.mode,
+            "prompt": request.prompt,
+            "context_pack": request.context_pack if request.context_pack is not None else {},
+            "metadata": request.metadata if request.metadata is not None else {},
+        }
+        invocation_redaction = self._redact(
+            invocation_payload,
+            mode=request.mode,
+            stage="provider_invocation",
+        )
+
+        raw_output = self._runner(invocation_redaction.value)
+
+        transcript_payload = {
+            "provider": request.provider,
+            "mode": request.mode,
+            "request": invocation_redaction.value,
+            "response": raw_output,
+        }
+        transcript_redaction = self._redact(
+            transcript_payload,
+            mode=request.mode,
+            stage="transcript_persistence",
+        )
+        safe_transcript = _ensure_mapping(transcript_redaction.value, stage="transcript_persistence")
+        if self._transcript_sink:
+            self._transcript_sink(safe_transcript)
+
+        return ProviderInvocationResult(
+            provider=request.provider,
+            mode=request.mode,
+            status="completed",
+            output=safe_transcript.get("response"),
+            invocation_payload=_ensure_mapping(invocation_redaction.value, stage="provider_invocation"),
+            transcript_payload=safe_transcript,
+            redaction={
+                "provider_invocation": invocation_redaction.summary.to_dict(),
+                "transcript_persistence": transcript_redaction.summary.to_dict(),
+            },
+        )
+
+    def _redact(self, payload: Any, *, mode: str, stage: str) -> RedactionResult:
+        try:
+            return self._redactor(
+                payload,
+                mode=mode,
+                stage=stage,
+                enabled=self._redaction_enabled,
+                allow_kernel_override=self._kernel_redaction_override,
+            )
+        except RedactionError as exc:
+            raise AssistantProviderRuntimeError(
+                "REDACTION_FAILED",
+                f"Assistant provider runtime failed closed during {stage}: {exc}",
+                stage=stage,
+            ) from exc
+
+
+def _ensure_mapping(value: Any, *, stage: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise AssistantProviderRuntimeError(
+            "REDACTION_SCHEMA_ERROR",
+            f"Assistant provider runtime expected mapping payload after {stage} redaction.",
+            stage=stage,
+        )
+    return value
