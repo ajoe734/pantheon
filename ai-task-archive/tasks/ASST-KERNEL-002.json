@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "task_id": "ASST-KERNEL-002",
+  "archived_at": "2026-05-31T16:23:21Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASST-KERNEL-002",
+    "title": "Implement assistant redaction library",
+    "summary_zh": "建立 assistant redaction library，provider invocation 與 transcript persistence 前先遮蔽 tokens cookies API keys .env DB URLs provider session paths broker credentials。",
+    "phase": "Assistant OpenClaw Gateway Kernel/User Mode",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/control-plane/bff/assistant/redaction.py",
+      "services/control-plane/bff/assistant/tests/test_redaction.py",
+      "services/openclaw-gateway-adapter/assistant_provider_runtime.py",
+      "services/openclaw-gateway-adapter/tests/test_assistant_provider_runtime.py",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/"
+    ],
+    "acceptance": [
+      "redacts bearer tokens cookies API keys and private keys",
+      "redacts env values database credentials provider sessions and broker credentials",
+      "preserves diagnostic shape with redacted markers",
+      "user mode fails closed on redaction failure",
+      "tests cover representative secret patterns"
+    ],
+    "next": "Closed ASST-KERNEL-002 after PR #669 implementation merge and PR #671 closeout merge; focused redaction/provider tests passed.",
+    "last_update": "2026-05-31T16:23:21Z",
+    "source_documents": [
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/SA_assistant_kernel_user_mode.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/SD_assistant_kernel_user_mode.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md"
+    ],
+    "implementation_track": "assistant-openclaw-gateway-cli-mount",
+    "provider_runtime": "openclaw_gateway_cli_mount",
+    "credential_policy": "dedicated_service_user_oauth_mount",
+    "delivery_layer": "primary",
+    "review_notes_zh": [
+      "審查通過：全部5項 acceptance criteria 驗證完成，8 tests passed。redaction library 正確實作 bearer token、cookie、API key、private key、env value、DB URL、provider session path、broker credential 的遮蔽；雙重 redaction boundary（provider invocation + transcript persistence）符合規格；user mode fail-closed 行為已驗證"
+    ],
+    "review_file": "support/reviews/ASST-KERNEL-002-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-31T16:23:21Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/asst-kernel-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/ASST-KERNEL-002",
+      "git_clean_required": false,
+      "commit": "e5f5bf913020fb874cec4486849afbf3ab37e7e1",
+      "commit_subject": "ASST-KERNEL-002: record closeout review",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped closeout and review evidence for assistant redaction.",
+        "Not changing": "redaction runtime code, provider runtime integration, assistant routes, transcript persistence, credential mounts, or command broker allowlists.",
+        "Composes with": "merged ASST-KERNEL-002 implementation PR #669 and ASST-KERNEL-001 context-pack work on dev.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "ASST-KERNEL-002",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m pytest services/openclaw-gateway-adapter/tests/test_assistant_provider_runtime.py services/control-plane/bff/assistant/tests/test_redaction.py -q"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/ASST-KERNEL-002",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "cb7be5d1583daa8dac0c02bdba9dd3dcc93ec179",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASST-KERNEL-002",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Implementation merged in PR #669 (merge cbf9ace840650dab7aa836c45b0a714e2a77d2ad); focused local tests and GitHub required checks passed. Awaiting Claude review approval before owner closeout/done.",
+      "status": "done",
+      "created_at": "2026-05-31T16:07:27Z",
+      "resolved_at": "2026-05-31T16:13:35Z"
+    },
+    {
+      "task_id": "ASST-KERNEL-002",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved — all 5 acceptance criteria satisfied, 8 tests pass. Returning to Codex2 for owner closeout.",
+      "status": "done",
+      "created_at": "2026-05-31T16:13:35Z",
+      "resolved_at": "2026-05-31T16:23:22Z"
+    }
+  ],
+  "blockers": []
+}
