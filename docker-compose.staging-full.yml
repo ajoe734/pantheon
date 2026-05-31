@@ -102,7 +102,7 @@ services:
       service: openclaw-gateway-adapter
     environment:
       OPENCLAW_BROKER_SIDECAR_URL: ${OPENCLAW_BROKER_SIDECAR_URL:-}
-      OPENCLAW_RUNTIME_MANAGER_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-http://10.140.0.5:28081}
+      OPENCLAW_RUNTIME_MANAGER_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-http://10.50.0.21:28081}
       PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
     ports: !override
       - "${OPENCLAW_GATEWAY_ADAPTER_PORT:-38104}:8104"
@@ -126,7 +126,7 @@ services:
       file: docker-compose.yml
       service: reconciliation-drift-svc
     environment:
-      PANTHEON_RUNTIME_MANAGER_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-http://10.140.0.5:28081}
+      PANTHEON_RUNTIME_MANAGER_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-http://10.50.0.21:28081}
       # Hard-enforce Postgres in staging/prod; override to dev only for local dev rollback.
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-production}
       RECONCILIATION_DRIFT_STORE_BACKEND: ${RECONCILIATION_DRIFT_STORE_BACKEND:-postgres}
@@ -142,10 +142,18 @@ services:
     ports: !override
       - "${RECONCILIATION_DRIFT_PORT:-38106}:8102"
 
+  # telemetry's /readyz reports runtime_manager "degraded" (→ 503 → blocks the
+  # whole stack via depends_on) whenever PANTHEON_RUNTIME_MANAGER_URL is empty.
+  # control.yml defaults it to "", so give telemetry the staging-exec default
+  # here too — otherwise a fresh VM (no .env) never reaches a healthy stack.
+  telemetry:
+    environment:
+      PANTHEON_RUNTIME_MANAGER_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-http://10.50.0.21:28081}
+
   operator-bff:
     environment:
-      PANTHEON_INTERNAL_API_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-http://10.140.0.5:28081}
-      PANTHEON_RUNTIME_MANAGER_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-http://10.140.0.5:28081}
+      PANTHEON_INTERNAL_API_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-http://10.50.0.21:28081}
+      PANTHEON_RUNTIME_MANAGER_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-http://10.50.0.21:28081}
       PANTHEON_CONSULTATION_API_URL: http://consultation-svc:8096
       PANTHEON_SOURCE_INGEST_API_URL: http://source-ingest:8097
       PANTHEON_SEARCH_API_URL: http://search-svc:8098
