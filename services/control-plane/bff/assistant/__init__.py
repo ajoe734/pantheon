@@ -1,2 +1,1 @@
 """Assistant BFF support modules."""
-

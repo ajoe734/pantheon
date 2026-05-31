@@ -43993,6 +43993,275 @@ async def sem_agora_journal_id_patch_alias(id: str, payload: Dict[str, Any] = Bo
     return {"data": {"id": id, **payload}, "meta": {"snapshot_at": utc_now()}}
 
 
+def _assistant_focus_entity(
+    request: Any,
+) -> tuple[Optional[str], Optional[str]]:
+    focus = getattr(request, "focus", None)
+    if focus is not None:
+        entity_type = str(getattr(focus, "entity_type", "") or "").strip()
+        entity_id = str(getattr(focus, "entity_id", "") or "").strip()
+        if entity_type and entity_id:
+            return entity_type, entity_id
+
+    selected = getattr(request, "selected_entity", None)
+    if selected is None:
+        frontend = getattr(request, "frontend", None)
+        selected = getattr(frontend, "selected_entity", None) if frontend is not None else None
+    if isinstance(selected, dict):
+        entity_type = str(
+            selected.get("entity_type")
+            or selected.get("entityType")
+            or selected.get("type")
+            or ""
+        ).strip()
+        entity_id = str(
+            selected.get("entity_id")
+            or selected.get("entityId")
+            or selected.get("id")
+            or ""
+        ).strip()
+        if entity_type and entity_id:
+            return entity_type, entity_id
+    return None, None
+
+
+def _assistant_unavailable_source(
+    source_id: str,
+    *,
+    href: str,
+    snapshot_at: str,
+    dataset: str,
+) -> Any:
+    from assistant.context_composer import AssistantCollectedSource
+
+    surface = _dataset_surface_status(dataset, snapshot_at=snapshot_at, source="missing")
+    return AssistantCollectedSource(
+        source_id=source_id,
+        href=href,
+        payload={
+            "data": None,
+            "meta": {
+                "snapshot_at": snapshot_at,
+                "surfaces": {source_id: surface},
+            },
+        },
+        status=str(surface.get("status") or "unavailable"),
+    )
+
+
+def _assistant_collect_jobs_source(request: Any, snapshot_at: str) -> Any:
+    from assistant.context_composer import AssistantCollectedSource
+
+    entity_type, entity_id = _assistant_focus_entity(request)
+    selected_job = None
+    href = "/bff/jobs"
+    if entity_type and entity_type.lower() in {"job", "jobs"} and entity_id:
+        selected_job = _get_bff_job(entity_id)
+        href = f"/bff/jobs/{entity_id}"
+
+    jobs = _list_bff_jobs()
+    surface = _dataset_surface_status(
+        "jobs",
+        snapshot_at=snapshot_at,
+        has_data=bool(jobs) or bool(selected_job) or None,
+    )
+    payload: Dict[str, Any] = {
+        "items": jobs[:20],
+        "selected": selected_job,
+        "page_info": {"next_page_token": None, "total": len(jobs)},
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": {"jobs": surface},
+        },
+    }
+    if entity_id and selected_job is None:
+        payload["selected_missing"] = {
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "reason": "job_not_found",
+        }
+    return AssistantCollectedSource(
+        source_id="jobs",
+        href=href,
+        payload=payload,
+        status=str(surface.get("status") or "ok"),
+    )
+
+
+def _assistant_collect_job_logs_source(request: Any, snapshot_at: str) -> Any:
+    from assistant.context_composer import AssistantCollectedSource
+
+    entity_type, entity_id = _assistant_focus_entity(request)
+    if not entity_id or (entity_type and entity_type.lower() not in {"job", "jobs"}):
+        return None
+    job = _get_bff_job(entity_id)
+    if job is None:
+        return _assistant_unavailable_source(
+            "job_logs",
+            href=f"/bff/jobs/{entity_id}/logs",
+            snapshot_at=snapshot_at,
+            dataset="jobs",
+        )
+    logs = list(job.get("logs") or [])
+    surface = _dataset_surface_status("jobs", snapshot_at=snapshot_at, has_data=True)
+    return AssistantCollectedSource(
+        source_id="job_logs",
+        href=f"/bff/jobs/{entity_id}/logs",
+        payload={
+            "job_id": entity_id,
+            "logs": logs[:50],
+            "meta": {
+                "snapshot_at": snapshot_at,
+                "surfaces": {"job_logs": surface},
+            },
+        },
+        status=str(surface.get("status") or "ok"),
+    )
+
+
+def _assistant_collect_audit_source(request: Any, snapshot_at: str) -> Any:
+    from assistant.context_composer import AssistantCollectedSource
+
+    entity_type, entity_id = _assistant_focus_entity(request)
+    href = "/bff/audit"
+    if entity_type and entity_id:
+        events = [
+            event
+            for event in _list_governance_audit_events(target_type=entity_type)
+            if str(event.get("target_id") or event.get("entity_id") or "") == entity_id
+        ]
+        href = f"/bff/audit/entities/{entity_type}/{entity_id}"
+    else:
+        events = _list_governance_audit_events()
+    surface = _dataset_surface_status(
+        "governance_audit_events",
+        snapshot_at=snapshot_at,
+        has_data=bool(events) or None,
+    )
+    return AssistantCollectedSource(
+        source_id="audit",
+        href=href,
+        payload={
+            "items": events[:50],
+            "page_info": {"next_page_token": None, "total": len(events)},
+            "meta": {
+                "snapshot_at": snapshot_at,
+                "surfaces": {"audit": surface},
+            },
+        },
+        status=str(surface.get("status") or "ok"),
+    )
+
+
+def _assistant_collect_recent_sse_source(_request: Any, snapshot_at: str) -> Any:
+    from assistant.context_composer import AssistantCollectedSource
+
+    events = read_store.list_events_bff(page_size=25)
+    surface = _dataset_surface_status(
+        "governance_audit_events",
+        snapshot_at=snapshot_at,
+        has_data=bool(events) or None,
+    )
+    return AssistantCollectedSource(
+        source_id="recent_sse",
+        href="/bff/events",
+        payload={
+            "items": events[:25],
+            "page_info": {"next_page_token": None},
+            "meta": {
+                "snapshot_at": snapshot_at,
+                "surfaces": {"recent_sse": surface},
+            },
+        },
+        status=str(surface.get("status") or "ok"),
+    )
+
+
+def _assistant_collect_source(source_id: str, request: Any, snapshot_at: str) -> Any:
+    from assistant.context_composer import AssistantCollectedSource
+
+    if source_id == "control_room":
+        payload = _sem_final_generic_list_for_path("/bff/v5/control-room")
+        if payload is None:
+            return _assistant_unavailable_source(
+                source_id,
+                href="/bff/v5/control-room",
+                snapshot_at=snapshot_at,
+                dataset="incidents",
+            )
+        return AssistantCollectedSource(source_id=source_id, href="/bff/v5/control-room", payload=payload)
+    if source_id == "jobs":
+        return _assistant_collect_jobs_source(request, snapshot_at)
+    if source_id == "alerts":
+        return AssistantCollectedSource(
+            source_id=source_id,
+            href="/bff/alerts",
+            payload=_build_operator_alerts_payload(snapshot_at),
+        )
+    if source_id == "audit":
+        return _assistant_collect_audit_source(request, snapshot_at)
+    if source_id == "recent_sse":
+        return _assistant_collect_recent_sse_source(request, snapshot_at)
+    if source_id == "persona_health":
+        payload = _sem_final_generic_list_for_path("/bff/v5/execution/persona-health")
+        if payload is None:
+            return _assistant_unavailable_source(
+                source_id,
+                href="/bff/v5/execution/persona-health",
+                snapshot_at=snapshot_at,
+                dataset="personas",
+            )
+        return AssistantCollectedSource(
+            source_id=source_id,
+            href="/bff/v5/execution/persona-health",
+            payload=payload,
+        )
+    if source_id == "strategy_health":
+        payload = _sem_final_generic_list_for_path("/bff/v5/execution/strategy-health")
+        if payload is None:
+            return _assistant_unavailable_source(
+                source_id,
+                href="/bff/v5/execution/strategy-health",
+                snapshot_at=snapshot_at,
+                dataset="strategy_specs",
+            )
+        return AssistantCollectedSource(
+            source_id=source_id,
+            href="/bff/v5/execution/strategy-health",
+            payload=payload,
+        )
+    if source_id == "job_logs":
+        return _assistant_collect_job_logs_source(request, snapshot_at)
+    return None
+
+
+def _assistant_build_context_pack(session_id: str, request: Any, identity: OperatorIdentity) -> Any:
+    from assistant.context_composer import compose_context_pack
+
+    return compose_context_pack(
+        session_id=session_id,
+        request=request,
+        actor=identity,
+        collect_source=_assistant_collect_source,
+    )
+
+
+def _include_assistant_routes() -> None:
+    from assistant.routes import create_assistant_router
+
+    app.include_router(
+        create_assistant_router(
+            build_context_pack=_assistant_build_context_pack,
+            extract_identity=_extract_identity,
+            require_read_role=_require_read_role,
+            bff_error=_bff_error,
+        )
+    )
+
+
+_include_assistant_routes()
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8001)
