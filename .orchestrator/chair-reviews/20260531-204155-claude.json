@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Three agents (Codex, Codex2, Gemini) are ready with 16 todo tasks, mode occupancy is zero, and underutilization is 0.1429; no global blocker present.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "ASST-OCGW-001",
+    "PR-688-CI-FAILURES",
+    "OPS-COPILOT-STALE-DISPATCH",
+    "OPS-GEMINI2-STALE-DISPATCH",
+    "PR-682-AUTO-MERGE"
+  ]
+}
