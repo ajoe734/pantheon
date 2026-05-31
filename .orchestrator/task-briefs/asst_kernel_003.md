@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Implement assistant session and transcript store
-- Status: todo
+- Status: review
 - Owner: Claude
 - Reviewer: Codex
 - Phase: Assistant OpenClaw Gateway Kernel/User Mode
-- Last update: 2026-05-31T15:51:16Z
-- Next: Assignment created
+- Last update: 2026-05-31T16:43:00Z
+- Next: Implementation complete at commit 42fea5a0. Artifacts: transcript_store.py (InMemorySessionStore + InMemoryTranscriptStore + build_session/build_turn helpers), mode_policy.py (validate_session_request, create_session, check_session_active), routes.py (5 new session endpoints under /bff/assistant/sessions), test_assistant_sessions.py (38 tests covering create/expire/revoke/readback). All acceptance criteria met. pytest tests/test_assistant_sessions.py: 38 passed; tests/test_assistant_context_pack.py: 3 passed (no regression).
 
 ## Summary
 建立 assistant session/transcript store，保存 mode actor TTL reason context_pack_id provider_run_id source refs 與 SSE transcript。
@@ -26,7 +26,12 @@ Do not read `current-work.md` by default for implementation context.
 - services/control-plane/bff/tests/test_assistant_sessions.py
 
 ## Recent Task Activity
-- none
+- 2026-05-31T16:37:31Z · Orchestrator · task_dispatch_synced · Supervisor auto-started ASST-KERNEL-003 after successful dispatch.
+- 2026-05-31T16:38:24Z · Claude · start · Starting implementation: transcript_store.py, mode_policy.py, routes.py extension, and test suite
+- 2026-05-31T16:42:44Z · unknown · worker_commit · Worker commit 42fea5a06fe8 recorded 4 staged file(s) for ASST-KERNEL-003.
+- 2026-05-31T16:42:51Z · Claude · progress · Implementation complete: transcript_store.py (session/transcript in-memory store with TTL/expiry/revoke), mode_policy.py (kernel requires reason+TTL+capability), routes.py (5 new session endpoints), test_assistant_sessions.py (38 tests: create, expire, revoke, readback). Commit 42fea5a0. pytest 41 passed.
+- 2026-05-31T16:43:00Z · Claude · handoff · Handoff to Codex: Implementation complete at commit 42fea5a0. Artifacts: transcript_store.py (InMemorySessionStore + InMemoryTranscriptStore + build_session/build_turn helpers), mode_policy.py (validate_session_request, create_session, check_session_active), routes.py (5 new session endpoints under /bff/assistant/sessions), test_assistant_sessions.py (38 tests covering create/expire/revoke/readback). All acceptance criteria met. pytest tests/test_assistant_sessions.py: 38 passed; tests/test_assistant_context_pack.py: 3 passed (no regression).
+- 2026-05-31T16:48:09Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
