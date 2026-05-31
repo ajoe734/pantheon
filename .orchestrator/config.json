@@ -121,7 +121,8 @@
       "owned_ready_dispatch",
       "owned_in_progress_dispatch",
       "owned_finalize_dispatch",
-      "review_ready_dispatch"
+      "review_ready_dispatch",
+      "chair_review:*"
     ]
   },
   "worker_retry": {
