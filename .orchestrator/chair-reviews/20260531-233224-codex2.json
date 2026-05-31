@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "ASST-OCGW-001 is quota-failed with dirty partial work and the remaining ASST backlog is dependency-gated behind it.",
+  "blocked_by": [
+    "ASST-OCGW-001 Gemini 429 TerminalQuotaError with no dispatch pause and dirty task worktree"
+  ],
+  "blocked_sidecar_parents": [
+    "ASST-OCGW-001"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "ASST-OCGW-001",
+    "OPS-GEMINI-QUOTA-GUARD-20260531",
+    "OPS-ASST-OCGW-001-SALVAGE",
+    "OPS-CLOSEOUT-METADATA-ASST-KERNEL-003",
+    "OPS-CHAIR-PR-BASE-CLEANUP"
+  ]
+}
