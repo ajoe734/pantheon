@@ -1034,6 +1034,7 @@ WORKER_WORKTREE_EXECUTION_REASONS = [
     REASON_OWNED_IN_PROGRESS,
     REASON_OWNED_FINALIZE,
     REASON_REVIEW_READY,
+    "chair_review:*",
 ]
 
 
@@ -1075,6 +1076,20 @@ def worker_task_worktree_path(config: dict[str, Any], task_id: str | None, setti
     repo_root = config_path(config, "status_file").parents[0]
     repo_slug = re.sub(r"[^a-z0-9]+", "-", repo_root.name.lower()).strip("-") or "repo"
     return _worker_worktree_base_root(config, active_settings) / repo_slug / _task_id_slug(task_id)
+
+
+def worker_worktree_reason_enabled(reason: str | None, settings: dict[str, Any]) -> bool:
+    normalized_reason = str(reason or "")
+    for pattern in settings.get("execution_reasons", []):
+        if fnmatch.fnmatchcase(normalized_reason, str(pattern)):
+            return True
+    return False
+
+
+def worker_workspace_task_id(request: DeliveryRequest) -> str | None:
+    metadata_task_id = str(request.metadata.get("workspace_task_id") or "").strip()
+    task_id = metadata_task_id or str(request.task_id or "").strip()
+    return task_id or None
 
 
 def _git_worktree_records(repo_root: Path) -> list[dict[str, str]]:
@@ -1322,16 +1337,17 @@ def prepare_worker_workspace(
     settings = worker_worktree_settings(config)
     if not settings.get("enabled"):
         return True, None
-    if str(request.reason or "") not in {str(reason) for reason in settings.get("execution_reasons", [])}:
+    if not worker_worktree_reason_enabled(request.reason, settings):
         return True, None
-    if not request.task_id:
+    workspace_task_id = worker_workspace_task_id(request)
+    if not workspace_task_id:
         return True, None
     if request.metadata.get("workspace_path"):
         return True, None
 
     repo_root = config_path(config, "status_file").parents[0].resolve()
-    branch = worker_task_branch(config, request.task_id)
-    worktree_path = worker_task_worktree_path(config, request.task_id, settings)
+    branch = worker_task_branch(config, workspace_task_id)
+    worktree_path = worker_task_worktree_path(config, workspace_task_id, settings)
     reused = False
 
     if settings.get("reuse_existing", True):
@@ -1359,7 +1375,7 @@ def prepare_worker_workspace(
     if not reused:
         if _branch_checked_out_in_root(repo_root, branch):
             message = (
-                f"Cannot lease isolated worker worktree for {request.task_id}: "
+                f"Cannot lease isolated worker worktree for {workspace_task_id}: "
                 f"branch {branch} is currently checked out in supervisor root {repo_root}. "
                 "Move the supervisor root back to dev or finish that root task branch first."
             )
@@ -1368,6 +1384,7 @@ def prepare_worker_workspace(
                 {
                     "type": "dispatch_blocked_worktree_lease",
                     "task_id": request.task_id,
+                    "workspace_task_id": workspace_task_id,
                     "target_agent": target_agent,
                     "queue_event_id": queue_event_id,
                     "message": message,
@@ -1378,12 +1395,13 @@ def prepare_worker_workspace(
             return False, message
         created, error = _create_worker_worktree(repo_root, worktree_path, branch, str(settings.get("base_ref") or "origin/dev"))
         if not created:
-            message = error or f"Failed to create worker worktree for {request.task_id}."
+            message = error or f"Failed to create worker worktree for {workspace_task_id}."
             write_activity_log(
                 config,
                 {
                     "type": "dispatch_blocked_worktree_lease",
                     "task_id": request.task_id,
+                    "workspace_task_id": workspace_task_id,
                     "target_agent": target_agent,
                     "queue_event_id": queue_event_id,
                     "message": message,
@@ -1403,8 +1421,9 @@ def prepare_worker_workspace(
     )
     materialized_context_files = materialize_worker_context_files(config, request, worktree_path)
     leases = state.setdefault("worker_worktrees", {}).setdefault("leases", {})
-    leases[str(request.task_id)] = {
+    leases[workspace_task_id] = {
         "task_id": request.task_id,
+        "workspace_task_id": workspace_task_id,
         "branch": branch,
         "path": str(worktree_path),
         "status_root": str(repo_root),
@@ -1418,6 +1437,7 @@ def prepare_worker_workspace(
         {
             "type": "worker_worktree_reused" if reused else "worker_worktree_allocated",
             "task_id": request.task_id,
+            "workspace_task_id": workspace_task_id,
             "target_agent": target_agent,
             "queue_event_id": queue_event_id,
             "workspace_branch": branch,
@@ -3389,7 +3409,8 @@ def queue_chair_review_event(
                 "agent": agent_name,
                 "review_path": relpath(review_path),
                 "decision_path": relpath(decision_path),
-            }
+            },
+            "workspace_task_id": f"chair-review-{review_path.stem}",
         },
     }
     enqueue_event(config, queue_payload)

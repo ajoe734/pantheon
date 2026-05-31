@@ -815,6 +815,63 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         create_worktree.assert_called_once_with(repo_root.resolve(), expected_path, "task/OPS-WORKTREE-001", "origin/dev")
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_worktree_allocated")
 
+    def test_prepare_worker_workspace_allocates_chair_review_worktree_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            worktree_root = Path(tmpdir) / "workers"
+            config = {
+                **self.config,
+                "paths": {"status_file": str(repo_root / "ai-status.json")},
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(worktree_root),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                    "execution_reasons": ["chair_review:*"],
+                },
+            }
+            state: dict[str, object] = {}
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id=None,
+                reason="chair_review:operational_review",
+                metadata={"workspace_task_id": "chair-review-20260531-153804-codex2"},
+            )
+
+            with (
+                mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=None),
+                mock.patch.object(supervisor, "_branch_checked_out_in_root", return_value=False),
+                mock.patch.object(supervisor, "_create_worker_worktree", return_value=(True, None)) as create_worktree,
+                mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            ):
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    request,
+                    queue_event_id="evt-chair",
+                    target_agent="Codex2",
+                )
+
+        expected_path = worktree_root / "pantheon" / "chair-review-20260531-153804-codex2"
+        self.assertTrue(ok)
+        self.assertIsNone(message)
+        self.assertEqual(request.metadata["workspace_mode"], "isolated_worktree")
+        self.assertEqual(request.metadata["workspace_path"], str(expected_path))
+        self.assertEqual(request.metadata["workspace_branch"], "task/chair-review-20260531-153804-codex2")
+        self.assertIsNone(state["worker_worktrees"]["leases"]["chair-review-20260531-153804-codex2"]["task_id"])
+        create_worktree.assert_called_once_with(
+            repo_root.resolve(),
+            expected_path,
+            "task/chair-review-20260531-153804-codex2",
+            "origin/dev",
+        )
+        self.assertEqual(write_activity_log.call_args.args[1]["workspace_task_id"], "chair-review-20260531-153804-codex2")
+
     def test_prepare_worker_workspace_materializes_task_brief_into_isolated_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "pantheon"
@@ -4498,6 +4555,7 @@ class ChairReviewDispatchTests(unittest.TestCase):
         self.assertTrue(any(path.endswith("-codex.md") for path in events[0]["target_files"]))
         self.assertTrue(any(path.endswith("-codex.json") for path in events[0]["target_files"]))
         self.assertIn("Required Decision JSON Output", events[0]["message"])
+        self.assertEqual(events[0]["metadata"]["workspace_task_id"], "chair-review-20260428-120000-codex")
 
     def test_dispatch_chair_review_skips_when_planning_active(self) -> None:
         state = {"queue": {"events": {}}, "workers": {}, "chair_rotation": {"current_index": 0}}
