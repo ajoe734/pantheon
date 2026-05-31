@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -419,6 +419,50 @@ class TestCreateSessionRoute:
             headers=HEADERS,
         )
         assert resp.status_code == 422
+
+    def test_kernel_policy_violation_uses_bff_details_extra(self):
+        def _bff_error(
+            status_code: int,
+            code: Any,
+            message: str,
+            reason: str,
+            *,
+            details_extra: Optional[dict] = None,
+        ) -> HTTPException:
+            return HTTPException(
+                status_code=status_code,
+                detail={
+                    "error": {
+                        "code": code.value,
+                        "message": message,
+                        "details": {"reason": reason, **(details_extra or {})},
+                    }
+                },
+            )
+
+        identity = _FakeIdentity(capabilities=[])
+
+        router = create_assistant_router(
+            build_context_pack=lambda *a, **kw: (_ for _ in ()).throw(NotImplementedError),
+            extract_identity=lambda _auth: identity,
+            require_read_role=lambda _id: None,
+            bff_error=_bff_error,
+            session_store=InMemorySessionStore(),
+            transcript_store=InMemoryTranscriptStore(),
+        )
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app, raise_server_exceptions=True)
+
+        resp = client.post(
+            "/bff/assistant/sessions",
+            json={"mode": "kernel_debug", "reason": "debugging"},
+            headers=HEADERS,
+        )
+
+        assert resp.status_code == 422
+        details = resp.json()["detail"]["error"]["details"]
+        assert details["field"] == "capabilities"
 
 
 class TestGetSessionRoute:

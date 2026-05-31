@@ -233,7 +233,13 @@ def _raise_error(
     **kwargs: Any,
 ) -> None:
     if bff_error is not None:
-        raise bff_error(status_code, error_code, message, detail or message, **kwargs)
+        raise bff_error(
+            status_code,
+            error_code,
+            message,
+            detail or message,
+            details_extra=kwargs or None,
+        )
     raise HTTPException(
         status_code=status_code,
         detail={
@@ -244,4 +250,3 @@ def _raise_error(
             }
         },
     )
-
