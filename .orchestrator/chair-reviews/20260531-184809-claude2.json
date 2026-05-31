@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Gemini worker on ASST-OCGW-001 crashed (exit_code=1, zombie PID 4046573); 12 todo tasks idle; all providers auth_ready; no pending approvals or guardrail blocks; approve sidecars to advance execution.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "ASST-OCGW-001",
+    "ASST-OCGW-002",
+    "ASST-OCGW-003",
+    "ASST-OCGW-004"
+  ]
+}
