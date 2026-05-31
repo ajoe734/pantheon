@@ -15,6 +15,7 @@
 # What this changes:
 #   1) GitHub repo variables (project ID/number/WIF/SA/bucket/BFF URLs)
 #   2) Hardcoded dev BFF URL in two scripts (probe + sidecar)
+#   3) On-VM Caddyfile for dev + staging (re-points cert SNI to the new IP host)
 #
 # What this does NOT change:
 #   - Archived docs/evidence (immutable history)
@@ -62,6 +63,20 @@ echo
 echo "=== Updating hardcoded refs in active scripts ==="
 sed -i "s|${OLD_DEV_IP}|${NEW_DEV_IP}|g" scripts/probe_bff_authenticated_live.py
 sed -i "s|${OLD_DEV_IP}|${NEW_DEV_IP}|g" support/sidecars/FE-INT-GATE-bootstrap/assign-align-hosted.sh
+
+echo
+echo "=== Re-pointing on-VM Caddy to the new IP hostnames ==="
+# Without this the VM Caddyfile keeps the OLD sslip.io host, Caddy has no cert
+# for the new SNI, and HTTPS dies with 'tlsv1 alert internal error' (alert 80).
+# See deploy/caddy/README.md.
+deploy/caddy/sync-caddy.sh \
+  "lupin@${NEW_DEV_IP}" \
+  "pantheon-lupin-dev-bff.${NEW_DEV_IP}.sslip.io" \
+  deploy/caddy/dev.Caddyfile.tmpl
+deploy/caddy/sync-caddy.sh \
+  "lupin@${NEW_STAGING_IP}" \
+  "pantheon-lupin-staging-bff.${NEW_STAGING_IP}.sslip.io" \
+  deploy/caddy/staging.Caddyfile.tmpl
 
 echo
 echo "=== Done. Verify with: ==="
