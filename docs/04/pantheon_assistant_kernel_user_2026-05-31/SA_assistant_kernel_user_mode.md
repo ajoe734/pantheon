@@ -58,8 +58,8 @@ An assistant that cannot inspect backend state will hallucinate or give generic 
 | Context pack | A structured, sanitized snapshot of frontend context and backend read surfaces assembled by BFF. |
 | Debug gateway | Internal service that mediates kernel-mode sessions, provider calls, command execution, audit, redaction, and timeout policy. |
 | Command broker | Narrow executor that allows only approved diagnostic/repair commands and records every invocation. |
-| LLM bridge | Provider adapter that invokes Codex CLI or Claude Code CLI under a service account. |
-| Provider session | Account-login CLI state such as `CODEX_HOME` or `CLAUDE_CONFIG_DIR`; never exposed to the browser. |
+| OpenClaw provider runtime | Existing OpenClaw gateway path extended to invoke Codex CLI or Claude Code CLI inside the gateway container. |
+| Provider session | Account-login CLI state such as `.codex` or `.claude`; mounted only from a dedicated service-user directory and never exposed to the browser. |
 
 ---
 
@@ -224,16 +224,19 @@ No shell, no repo, no raw logs, no provider session access.
 
 ## 9. Account-Login Provider Position
 
-The requested "not API key, use account login" path is feasible only as a local/server-side CLI bridge:
+The requested "not API key, use account login" path is feasible only as a local/server-side provider runtime. The revised implementation should preserve the OpenClaw gateway architecture and mount dedicated service-user OAuth directories into the gateway container:
 
 ```text
 dedicated OS user
--> pre-authenticated CLI home
--> non-interactive CLI invocation
--> gateway captures output
+-> pre-authenticated .codex / .claude home
+-> bind mount into openclaw-gateway container
+-> non-interactive CLI invocation inside container
+-> openclaw-gateway-adapter captures output and audit
 ```
 
-This is appropriate for internal tools on controlled infrastructure. It is brittle for public product serving because account sessions can expire, quotas can be user-plan dependent, and provider terms or intended use may differ from API usage. The architecture therefore keeps this behind an internal bridge and leaves room to swap to official API/service auth later if needed.
+This is appropriate for internal tools on controlled infrastructure. It is brittle for public product serving because account sessions can expire, quotas can be user-plan dependent, CLI versions can drift between host and container, and token refresh may require write access to mounted files. The architecture therefore keeps this behind OpenClaw gateway policy/audit and leaves room to swap to official API/service auth later if needed.
+
+The mount must use a dedicated service-user credential directory, not a human operator's personal home. First implementation tasks must prove CLI binary path/version, mount ownership, auth readiness, and refresh behavior before enabling kernel debug use.
 
 ---
 
@@ -265,6 +268,9 @@ The assistant must be allowed to say "I cannot see that source" when the pack la
 | Risk | Severity | Mitigation |
 |---|---|---|
 | Provider account session leaks | Critical | Service-user home permissions, no browser exposure, no log echo of env/session files |
+| Mounted OAuth directory becomes broad container secret | Critical | Mount only into OpenClaw gateway, dedicated service-user account, no human home mounts, audit path and mode |
+| Container CLI version/path drift | High | Gateway image pins or probes binaries and reports version/path readiness |
+| Credential refresh fails in container | High | Explicit `ro`/`rw` policy, degraded fallback, host re-login runbook |
 | Prompt injection through logs or UI text | High | Treat logs/user text as untrusted data; delimit context; instruct model not to follow embedded commands |
 | Destructive command execution | Critical | Command broker denylist plus allowlist, no root, no direct shell for user mode |
 | Secret leakage from logs | Critical | Redaction before LLM, block `.env`, token, cookie, key material |
@@ -281,7 +287,7 @@ The assistant must be allowed to say "I cannot see that source" when the pack la
 | Milestone | Scope | Acceptance |
 |---|---|---|
 | M1 Context pack | BFF builds structured assistant context from UI context and backend read surfaces | Context pack has sources, staleness, redaction summary, tests |
-| M2 Kernel bridge | Debug gateway invokes Codex CLI with account session and returns streamed answer | Provider status, timeout, audit, fallback |
+| M2 Kernel provider runtime | OpenClaw gateway invokes Codex CLI with mounted account session and returns streamed answer | Provider status, CLI path/version, timeout, credential refresh posture, audit, fallback |
 | M3 Command broker | Observe/debug command allowlist works | Commands recorded; denylist tested |
 | M4 Frontend wiring | Ask Personas and/or management helper calls BFF and streams response | No mock response in live mode |
 | M5 Repair workflow | Kernel repair can create scoped repo changes through normal workflow | Branch, commit, PR, checks, merge policy |
@@ -292,7 +298,7 @@ The assistant must be allowed to say "I cannot see that source" when the pack la
 ## 13. Open Questions
 
 1. Which environment should host the first dedicated service user: local dev VM, staging VM, or both?
-2. Should Claude Code be enabled in M2 or deferred until Codex POC is stable?
+2. Should Claude Code be enabled in M2b or deferred until Codex POC and credential refresh behavior are stable?
 3. Which roles can start kernel sessions: admin, developer, operator, or a new `assistant.kernel` capability?
 4. What is the default TTL for kernel mode: 30 minutes or 60 minutes?
 5. Which service restarts are safe in repair mode, and which always require manual approval?
@@ -305,7 +311,7 @@ The assistant should be built as a mode-aware operational companion:
 
 1. Kernel mode first, because the immediate need is collaborative debugging.
 2. BFF-curated context always, because backend visibility must be explainable and auditable.
-3. CLI bridge behind a service account, because account-login providers cannot safely live in the browser.
+3. OpenClaw gateway provider runtime behind a service account, because account-login providers cannot safely live in the browser.
 4. User mode later, because the same context-pack architecture can be narrowed without rewriting the assistant.
 
 The important architectural move is to separate **what the assistant can reason about** from **what the assistant can do**. It can reason over rich backend context early; it should only do actions through brokered, audited, mode-gated paths.

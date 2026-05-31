@@ -11,6 +11,7 @@ Conflict rule: This bundle does not override L1 canonical architecture, SD-11 BF
 |---|---|---|
 | [SA_assistant_kernel_user_mode.md](SA_assistant_kernel_user_mode.md) | Supplemental System Analysis | Product/system framing, current-state assessment, kernel-mode rationale, risk register, mode ladder, delivery milestones |
 | [SD_assistant_kernel_user_mode.md](SD_assistant_kernel_user_mode.md) | Supplemental System Design | Concrete backend/frontend architecture, APIs, data contracts, command broker, Codex/Claude CLI bridge, rollout and validation plan |
+| [EXECUTION_TASKS.md](EXECUTION_TASKS.md) | Execution Task Packet | Supervisor/autoworker task wave for the OpenClaw gateway credential-mount implementation path |
 
 ## Executive Decision
 
@@ -56,14 +57,14 @@ The analysis in this bundle is based on the following existing surfaces:
 
 Provider auth must stay server-side.
 
-The browser must never receive ChatGPT, Codex, Claude, Anthropic, OpenAI, or CLI session credentials. The assistant should call a local `llm-bridge` service that runs under a dedicated OS service user with a pre-authenticated CLI home directory.
+The browser must never receive ChatGPT, Codex, Claude, Anthropic, OpenAI, or CLI session credentials. The revised first implementation should preserve the existing OpenClaw gateway architecture and run Codex/Claude CLI providers inside the OpenClaw gateway container with bind-mounted dedicated service-user OAuth directories.
 
 Preferred provider order for first implementation:
 
 1. Codex CLI POC, because the local machine already has a ChatGPT-authenticated Codex CLI path.
 2. Claude Code CLI as an alternate provider once a dedicated service-user login is confirmed.
 
-Both providers are used in non-interactive CLI mode. This avoids API keys for the requested first phase, while preserving an internal boundary between product/BFF code and provider sessions.
+Both providers are used in non-interactive CLI mode. This avoids API keys for the requested first phase, while preserving an internal boundary between product/BFF code and provider sessions. The tradeoff is operational: the gateway image must prove CLI binary path/version and credential refresh behavior, and must degrade cleanly when auth expires.
 
 Reference docs, checked on 2026-05-31:
 
@@ -78,7 +79,8 @@ Reference docs, checked on 2026-05-31:
 |---|---|---|
 | M0 | Planning bundle | This SA/SD bundle lands and becomes the implementation guide |
 | M1 | Kernel context pack | BFF can create a backend/frontend context pack for an assistant session |
-| M2 | Kernel debug gateway | Internal assistant can call Codex/Claude CLI and run bounded diagnostics through a command broker |
+| M2 | OpenClaw credential-mounted provider runtime | Internal assistant can call Codex CLI through OpenClaw gateway with mounted service-user OAuth credentials |
+| M2b | Claude provider expansion | Claude Code CLI works through the same gateway contract after auth/path/refresh proof |
 | M3 | Ask UI live wiring | `execute-plans` Ask Personas / management helper calls BFF and streams assistant responses |
 | M4 | Repair flow | Kernel assistant can propose and optionally apply fixes only through repo workflow and explicit approvals |
 | M5 | User-mode contraction | Product assistant is restricted to curated context packs and read-only guidance |
@@ -96,9 +98,14 @@ Reference docs, checked on 2026-05-31:
 | Task ID | Title | Repo | Notes |
 |---|---|---|---|
 | ASST-KERNEL-001 | Implement assistant context-pack schema and BFF route | `pantheon` | Read-only; compose current UI context plus allowlisted backend surfaces |
-| ASST-KERNEL-002 | Implement `llm-bridge` provider adapter for Codex CLI | `pantheon` | Dedicated `CODEX_HOME`, timeout, redaction, audit |
-| ASST-KERNEL-003 | Implement command broker observe/debug allowlists | `pantheon` | No destructive commands; no secret dump; record every command |
-| ASST-KERNEL-004 | Wire `/bff/agora/ask` to assistant session lifecycle | `pantheon` | Preserve command receipt and transcript |
+| ASST-KERNEL-002 | Implement assistant redaction library | `pantheon` | Secret redaction before provider invocation and persistence |
+| ASST-OCGW-001 | Add OpenClaw gateway credential mount contract | `pantheon` | Dedicated `.codex` / `.claude` mounts; no human home mount |
+| ASST-OCGW-002 | Add gateway CLI image and readiness probes | `pantheon` | Codex/Claude binary path, version, auth, refresh posture |
+| ASST-OCGW-003 | Implement Codex provider through OpenClaw gateway | `pantheon` | Non-interactive Codex CLI, timeout, redaction, audit |
+| ASST-OCGW-004 | Implement Claude provider through OpenClaw gateway | `pantheon` | Claude CLI stream handling and degraded fallback |
+| ASST-OCGW-005 | Add credential refresh runbook and smoke | `pantheon` | `ro`/`rw` decision, expiry handling, host re-login path |
+| ASST-KERNEL-006 | Implement OpenClaw command broker observe/debug allowlists | `pantheon` | No destructive commands; no secret dump; record every command |
+| ASST-BFF-001 | Wire `/bff/agora/ask` to assistant session lifecycle | `pantheon` | Preserve command receipt and transcript |
 | ASST-FE-001 | Replace Ask Personas mock response with BFF call and SSE | `execute-plans` | Add typed POST path and stream handling |
 | ASST-USER-001 | Add user-mode policy that disables shell/log/repo capabilities | both | Product mode must be read-only and BFF-curated |
 
@@ -108,7 +115,7 @@ This bundle is accepted when:
 
 1. Kernel-mode and user-mode boundaries are explicit.
 2. Backend visibility is routed through BFF context packs, not direct LLM access.
-3. Codex/Claude account-login CLI use is isolated behind a server-side bridge.
+3. Codex/Claude account-login CLI use is isolated behind the OpenClaw gateway provider runtime.
 4. High-risk capabilities are brokered, audited, time-boxed, and mode-gated.
 5. There is a concrete implementation sequence from current mock helper to real assistant.
 6. There is a clear path to contract the assistant from kernel mode to user mode without rebuilding the feature.
