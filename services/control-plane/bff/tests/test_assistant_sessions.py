@@ -28,7 +28,9 @@ from assistant.mode_policy import (
     DEFAULT_KERNEL_TTL_SECONDS,
     MAX_KERNEL_TTL_SECONDS,
     ModePolicyViolation,
+    command_classes_for_mode,
     create_session,
+    mode_allows_command_broker,
     validate_session_request,
 )
 from assistant.models import AssistantMode
@@ -328,6 +330,21 @@ class TestValidateSessionRequest:
             ttl_seconds=DEFAULT_KERNEL_TTL_SECONDS,
             capabilities=["assistant.kernel"],
         )
+
+    def test_command_broker_classes_are_mode_scoped(self):
+        assert command_classes_for_mode(AssistantMode.USER) == []
+        assert not mode_allows_command_broker(AssistantMode.USER)
+
+        observe_classes = command_classes_for_mode(AssistantMode.KERNEL_OBSERVE)
+        assert observe_classes == ["health_probe", "repo_status"]
+
+        debug_classes = command_classes_for_mode(AssistantMode.KERNEL_DEBUG)
+        assert "code_search" in debug_classes
+        assert "file_slice" in debug_classes
+        assert "test_run" in debug_classes
+        assert "log_read" in debug_classes
+        assert "repo_edit" not in debug_classes
+        assert mode_allows_command_broker("kernel_debug")
 
 
 class TestCreateSession:
