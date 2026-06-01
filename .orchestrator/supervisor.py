@@ -3426,11 +3426,11 @@ def chair_reassignment_triage_needed_for_task(
         return False
 
 
-def failure_loop_agents_for_task_map(
+def failure_loop_task_agents_for_task_map(
     config: dict[str, Any],
     state: dict[str, Any],
     task_map: dict[str, dict[str, Any]],
-) -> set[str]:
+) -> set[tuple[str, str]]:
     settings = chair_review_settings(config)
     if not settings.get("reassignment_actions_enabled", True):
         return set()
@@ -3439,7 +3439,7 @@ def failure_loop_agents_for_task_map(
     review_statuses = {str(value).lower() for value in dispatch_settings.get("review_statuses", ["review"])}
     finalize_statuses = {str(value).lower() for value in dispatch_settings.get("finalize_statuses", ["review_approved"])}
     owned_statuses = {str(value).lower() for value in dispatch_settings.get("owned_statuses", ["in_progress", "todo"])}
-    agents: set[str] = set()
+    task_agents: set[tuple[str, str]] = set()
     for key, record in ((state.get("provider_guardrails", {}) or {}).get("task_failure_streaks", {}) or {}).items():
         if not isinstance(record, dict):
             continue
@@ -3457,9 +3457,20 @@ def failure_loop_agents_for_task_map(
         agent_name = display_name_for(config, provider)
         task_status = str(task.get("status") or "").lower()
         if task_status in review_statuses and str(task.get("reviewer") or "").strip() == agent_name:
-            agents.add(agent_name)
+            task_agents.add((task_id, agent_name))
         elif task_status in owned_statuses | finalize_statuses and str(task.get("owner") or "").strip() == agent_name:
-            agents.add(agent_name)
+            task_agents.add((task_id, agent_name))
+    return task_agents
+
+
+def failure_loop_agents_for_task_map(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+) -> set[str]:
+    agents: set[str] = set()
+    for _task_id, agent_name in failure_loop_task_agents_for_task_map(config, state, task_map):
+        agents.add(agent_name)
     return agents
 
 
@@ -8129,10 +8140,9 @@ def dispatch_ready_tasks(
     active_quota_counts = active_quota_group_counts(config, state, active_statuses)
     pending_quota_counts = queued_quota_group_counts(config, state)
     seen = state.setdefault("seen_event_keys", {})
-    failure_loop_agents = failure_loop_agents_for_task_map(config, state, task_map)
-    helper_claims_allowed = not (
-        bool(failure_loop_agents) and helper_settings.get("disable_when_failure_loops", True)
-    )
+    failure_loop_task_agents = failure_loop_task_agents_for_task_map(config, state, task_map)
+    failure_loop_task_ids = {task_id for task_id, _agent_name in failure_loop_task_agents}
+    disable_helper_claims_for_failure_loops = bool(helper_settings.get("disable_when_failure_loops", True))
 
     changed = False
     normalized = False
@@ -8147,6 +8157,8 @@ def dispatch_ready_tasks(
         status = load_status(config)
         tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
         task_map = {task.get(task_id_field): task for task in tasks}
+        failure_loop_task_agents = failure_loop_task_agents_for_task_map(config, state, task_map)
+        failure_loop_task_ids = {task_id for task_id, _agent_name in failure_loop_task_agents}
 
     dispatches = 0
     weighted_dispatch_enabled = bool(dispatch_weight_mapping(settings)) and not agent_ids_override
@@ -8176,8 +8188,6 @@ def dispatch_ready_tasks(
             break
         considered_agents += 1
         target_agent = display_name_for(config, agent_id)
-        if target_agent in failure_loop_agents:
-            continue
         if agent_auto_dispatch_block_reason(config, state, agent_id, provider_report):
             continue
         quota_limit = quota_group_concurrency_limit(config, agent_id, settings)
@@ -8237,6 +8247,8 @@ def dispatch_ready_tasks(
 
             if reason is not None and not agent_can_take_task(config, target_agent, task):
                 continue
+            if reason is not None and (task_id, target_agent) in failure_loop_task_agents:
+                continue
             if reason is not None and chair_reassignment_triage_needed_for_task(config, state, task_id, target_agent):
                 continue
 
@@ -8246,7 +8258,7 @@ def dispatch_ready_tasks(
                 or bool(helper_settings.get("claim_sidecars_when_idle", False))
             )
             helper_claim_candidate = (
-                helper_claims_allowed
+                (not disable_helper_claims_for_failure_loops or task_id not in failure_loop_task_ids)
                 and dependencies_satisfied(task, task_map, dependency_done_statuses)
                 and task_id not in active_task_ids
                 and task_id not in pending_task_ids
