@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "10 todo tasks in execution backlog with 0 active workers and underutilization 0.1429; Codex2 dispatch-pause is transient (expires 03:43:59Z); no global blockers.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "ASST-OCGW-002",
+    "ASST-OCGW-003",
+    "ASST-OCGW-004",
+    "ASST-OCGW-005"
+  ]
+}
