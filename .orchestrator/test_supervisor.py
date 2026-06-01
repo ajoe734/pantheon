@@ -2060,6 +2060,82 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(queued_event["target_agent"], "Codex")
         self.assertEqual(queued_event["reason"], "owned_ready_dispatch")
 
+    def test_dispatcher_helper_claims_unrelated_task_during_failure_loop(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "claim_idle_work": True,
+                    "disable_when_failure_loops": True,
+                }
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {
+                    "Copilot": ["Codex"],
+                }
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "copilot": {"id": "copilot", "display_name": "Copilot", "provider": "copilot"},
+            },
+            "providers": {},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    "T-REVIEW:copilot": {
+                        "task_id": "T-REVIEW",
+                        "provider": "copilot",
+                        "count": 3,
+                    }
+                }
+            },
+        }
+        initial_status = {
+            "tasks": [
+                {"id": "T-REVIEW", "status": "review", "owner": "Codex", "reviewer": "Copilot", "depends_on": []},
+                {"id": "FB-003", "status": "todo", "owner": "Copilot", "reviewer": "Claude", "depends_on": []},
+            ]
+        }
+        persisted_status = {
+            "tasks": [
+                {"id": "T-REVIEW", "status": "review", "owner": "Codex", "reviewer": "Copilot", "depends_on": []},
+                {
+                    "id": "FB-003",
+                    "status": "todo",
+                    "owner": "Codex",
+                    "reviewer": "Copilot",
+                    "depends_on": [],
+                    "last_update": "2026-05-13T09:30:00Z",
+                },
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", side_effect=[initial_status, persisted_status]),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.dispatch_ready_tasks(config, state)
+
+        self.assertTrue(changed)
+        persist.assert_called_once()
+        self.assertEqual(persist.call_args.kwargs["task_id"], "FB-003")
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["task_id"], "FB-003")
+        self.assertEqual(queued_event["target_agent"], "Codex")
+
     def test_dispatcher_prefers_owned_work_before_idle_helper_claim(self) -> None:
         config = {
             "schema": {
@@ -4917,7 +4993,7 @@ class ChairReviewDispatchTests(unittest.TestCase):
         self.assertFalse(changed)
         queue_delivery_event.assert_not_called()
 
-    def test_dispatch_ready_skips_all_work_for_agent_in_failure_loop(self) -> None:
+    def test_dispatch_ready_skips_only_task_agent_pair_in_failure_loop(self) -> None:
         state = {
             "queue": {"events": {}},
             "workers": {},
@@ -4946,8 +5022,12 @@ class ChairReviewDispatchTests(unittest.TestCase):
         ):
             changed = supervisor.dispatch_ready_tasks(self.config, state)
 
-        self.assertFalse(changed)
-        queue_delivery_event.assert_not_called()
+        self.assertTrue(changed)
+        queue_delivery_event.assert_called_once()
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["task_id"], "T-FINALIZE")
+        self.assertEqual(queued_event["target_agent"], "Codex2")
+        self.assertEqual(queued_event["reason"], "owned_finalize_dispatch")
 
     def test_chair_worker_matches_current_assignment_without_task(self) -> None:
         worker = {
