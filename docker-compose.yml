@@ -350,6 +350,11 @@ services:
     image: ghcr.io/openclaw/openclaw:2026.4.7
     environment:
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-pantheon-local-token}
+      PANTHEON_ASSISTANT_CODEX_HOST_HOME: ${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}
+      PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME: ${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}
+      PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR: ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}
+      PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR: ${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}
+      PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE: ${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
     depends_on:
       openclaw-data-init:
         condition: service_completed_successfully
@@ -368,6 +373,8 @@ services:
       ]
     volumes:
       - openclaw-data:/home/node/.openclaw
+      - ${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}:${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}:${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
+      - ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
     ports:
       - "${OPENCLAW_GATEWAY_PORT:-18789}:18789"
     healthcheck:
@@ -398,6 +405,11 @@ services:
       OPENCLAW_BROKER_SIDECAR_URL: http://broker:8102
       OPENCLAW_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: runtime-control-internal
+      PANTHEON_ASSISTANT_CODEX_HOST_HOME: ${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}
+      PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME: ${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}
+      PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR: ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}
+      PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR: ${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}
+      PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE: ${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
     ports:
       - "${OPENCLAW_GATEWAY_ADAPTER_PORT:-18104}:8104"
     healthcheck:
