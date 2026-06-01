@@ -7152,6 +7152,90 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
                 1,
             )
 
+    def test_reconcile_runtime_does_not_scan_successful_missing_worker_log_for_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = self._config(root)
+            (root / "ai-status.json").write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "id": "OPS-LEASE-003",
+                                "status": "review",
+                                "owner": "Claude",
+                                "reviewer": "Codex",
+                                "depends_on": [],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (root / "event-queue.jsonl").write_text(
+                json.dumps({"event_id": "evt-worker", "task_id": "OPS-LEASE-003", "target_agent": "codex"})
+                + "\n",
+                encoding="utf-8",
+            )
+            log_path = root / "codex-review.log"
+            log_path.write_text(
+                "\n".join(
+                    [
+                        "**Blocker**",
+                        '+ completed.stderr = b"Error: not authenticated, please login first"',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            status_path = root / "runner-status.json"
+            status_path.write_text(
+                json.dumps(
+                    {
+                        "status": "completed",
+                        "exit_code": 0,
+                        "finished_at": "2026-06-01T13:07:54Z",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            state = {
+                "queue": {"events": {"evt-worker": {"status": "started", "run_id": "codex-run-done"}}},
+                "provider_guardrails": {"dispatch_pauses": {}},
+                "workers": {
+                    "codex-run-done": {
+                        "run_id": "codex-run-done",
+                        "status": "running",
+                        "provider": "codex",
+                        "agent_id": "codex",
+                        "task_id": "OPS-LEASE-003",
+                        "queue_event_id": "evt-worker",
+                        "pid": 987654,
+                        "log_path": str(log_path),
+                        "runner_status_path": str(status_path),
+                    }
+                },
+            }
+
+            with (
+                mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+                mock.patch.object(supervisor, "write_failure_evidence") as write_failure_evidence,
+                mock.patch.object(supervisor, "mark_provider_dispatch_paused") as mark_provider_dispatch_paused,
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                changed = supervisor.reconcile_runtime_on_boot(config, state)
+
+            self.assertTrue(changed)
+            worker = state["workers"]["codex-run-done"]
+            self.assertEqual(worker["status"], "completed")
+            self.assertNotIn("last_error", worker)
+            self.assertEqual(worker["runner_status"], "completed")
+            self.assertEqual(worker["exit_code"], 0)
+            self.assertEqual(state["queue"]["events"]["evt-worker"]["status"], "completed")
+            self.assertEqual(state["provider_guardrails"]["dispatch_pauses"], {})
+            write_failure_evidence.assert_not_called()
+            mark_provider_dispatch_paused.assert_not_called()
+
     def test_reconcile_runtime_uses_log_failure_for_missing_process_quota(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
