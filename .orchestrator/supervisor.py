@@ -2526,6 +2526,7 @@ def sync_chair_review_artifacts_from_worker_workspace(
     decision_path: Path,
 ) -> bool:
     """Copy completed chair-review artifacts out of an isolated worker workspace."""
+    copied = False
     for worker in state.get("workers", {}).values():
         if not worker_is_chair_review(worker):
             continue
@@ -2541,27 +2542,32 @@ def sync_chair_review_artifacts_from_worker_workspace(
             continue
 
         review_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source_review_path, review_path)
+        if not review_path.exists() or source_review_path.stat().st_mtime_ns > review_path.stat().st_mtime_ns:
+            shutil.copy2(source_review_path, review_path)
+            copied = True
 
         if source_decision_path is not None and source_decision_path.exists():
             decision_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source_decision_path, decision_path)
+            if not decision_path.exists() or source_decision_path.stat().st_mtime_ns > decision_path.stat().st_mtime_ns:
+                shutil.copy2(source_decision_path, decision_path)
+                copied = True
 
-        write_activity_log(
-            config,
-            {
-                "type": "chair_review_artifact_synced_from_worktree",
-                "task_id": chair_review_settings(config).get("task_id"),
-                "message": f"Copied chair review artifacts from worker workspace {workspace_path}.",
-                "review_path": relpath(review_path),
-                "decision_path": relpath(decision_path),
-                "workspace_path": str(workspace_path),
-                "source_review_path": str(source_review_path),
-                "source_decision_path": str(source_decision_path) if source_decision_path is not None else None,
-            },
-        )
-        return True
-    return False
+        if copied:
+            write_activity_log(
+                config,
+                {
+                    "type": "chair_review_artifact_synced_from_worktree",
+                    "task_id": chair_review_settings(config).get("task_id"),
+                    "message": f"Copied chair review artifacts from worker workspace {workspace_path}.",
+                    "review_path": relpath(review_path),
+                    "decision_path": relpath(decision_path),
+                    "workspace_path": str(workspace_path),
+                    "source_review_path": str(source_review_path),
+                    "source_decision_path": str(source_decision_path) if source_decision_path is not None else None,
+                },
+            )
+        return copied
+    return copied
 
 
 def normalize_chair_review_decision(
@@ -3141,14 +3147,13 @@ def refresh_chair_review_state(config: dict[str, Any], state: dict[str, Any]) ->
         if pending_review_path is not None:
             pending_decision_path = pending_decision_path or chair_review_decision_path(pending_review_path)
             pending_active = pending_chair_review_active(state, pending_review_relpath)
-            if not pending_active:
-                sync_chair_review_artifacts_from_worker_workspace(
-                    config,
-                    state,
-                    pending_review_relpath=pending_review_relpath,
-                    review_path=pending_review_path,
-                    decision_path=pending_decision_path,
-                )
+            sync_chair_review_artifacts_from_worker_workspace(
+                config,
+                state,
+                pending_review_relpath=pending_review_relpath,
+                review_path=pending_review_path,
+                decision_path=pending_decision_path,
+            )
             if pending_decision_path.exists():
                 return refresh_chair_review_artifact(
                     config,
@@ -4033,6 +4038,17 @@ def update_worker_runtime_markers(worker: dict[str, Any]) -> bool:
             worker["runner_signal"] = status_payload.get("signal")
             changed = True
     return changed
+
+
+def worker_runner_succeeded(worker: dict[str, Any]) -> bool:
+    runner_status = str(worker.get("runner_status") or "").strip().lower()
+    if runner_status not in {"completed", "success", "succeeded"}:
+        return False
+    try:
+        exit_code = int(worker.get("exit_code", 0))
+    except (TypeError, ValueError):
+        return False
+    return exit_code == 0 and not worker.get("runner_signal")
 
 
 def worker_heartbeat_is_stale(config: dict[str, Any], worker: dict[str, Any], now: datetime | None = None) -> bool:
@@ -5906,7 +5922,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                     changed = True
             continue
 
-        failure_reason = detect_worker_failure(worker)
+        failure_reason = None if worker_runner_succeeded(worker) else detect_worker_failure(worker)
         if failure_reason and worker.get("status") != "failed":
             failure = classify_worker_failure(config, worker, failure_reason)
             failure_summary = summarize_failure_reason(failure_reason, str(worker.get("provider") or worker.get("agent_id") or ""))
@@ -6480,6 +6496,28 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             if expired_lease
             else "Worker process missing during supervisor boot reconciliation."
         )
+        if worker_runner_succeeded(worker) and (
+            worker_is_chair_review(worker) or worker_is_discussion_planning(worker) or worker_is_coordination_dispatch(worker)
+        ):
+            worker["status"] = "completed"
+            worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
+            clear_task_failure_streak(state, worker=worker)
+            finalize_queue_event_record(config, state, worker, "completed")
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_completed",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": "Control worker exited successfully during supervisor boot reconciliation.",
+                    "worker_run_id": run_id,
+                    "pr_url": worker.get("pr_url"),
+                    "session_url": worker.get("session_url"),
+                },
+            )
+            changed = True
+            continue
+
         detected_reason = detect_worker_failure(worker)
         if detected_reason:
             failure = classify_worker_failure(config, worker, detected_reason)
