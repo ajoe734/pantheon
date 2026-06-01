@@ -2483,6 +2483,87 @@ def pending_chair_review_active(state: dict[str, Any], pending_review_path: str)
     return False
 
 
+def chair_review_worker_workspace_path(worker: dict[str, Any]) -> Path | None:
+    raw_path = str(worker.get("workspace_path") or "").strip()
+    if not raw_path:
+        snapshot = worker.get("request_snapshot", {}) or {}
+        metadata = snapshot.get("metadata", {}) or {}
+        if isinstance(metadata, dict):
+            raw_path = str(metadata.get("workspace_path") or "").strip()
+    if not raw_path:
+        metadata = worker.get("metadata", {}) or {}
+        if isinstance(metadata, dict):
+            raw_path = str(metadata.get("workspace_path") or "").strip()
+    return Path(raw_path) if raw_path else None
+
+
+def chair_review_workspace_artifact_path(config: dict[str, Any], workspace_path: Path, artifact_path: Path) -> Path | None:
+    if not artifact_path.is_absolute():
+        return workspace_path / artifact_path
+
+    base_candidates: list[Path] = []
+    try:
+        base_candidates.append(config_path(config, "status_file").parent)
+    except KeyError:
+        pass
+    base_candidates.append(chair_review_base_dir(config))
+
+    for base in base_candidates:
+        try:
+            relative_path = artifact_path.resolve().relative_to(base.resolve())
+        except ValueError:
+            continue
+        return workspace_path / relative_path
+    return None
+
+
+def sync_chair_review_artifacts_from_worker_workspace(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    pending_review_relpath: str,
+    review_path: Path,
+    decision_path: Path,
+) -> bool:
+    """Copy completed chair-review artifacts out of an isolated worker workspace."""
+    for worker in state.get("workers", {}).values():
+        if not worker_is_chair_review(worker):
+            continue
+        if chair_review_worker_path(worker) != pending_review_relpath:
+            continue
+
+        workspace_path = chair_review_worker_workspace_path(worker)
+        if workspace_path is None:
+            continue
+        source_review_path = chair_review_workspace_artifact_path(config, workspace_path, review_path)
+        source_decision_path = chair_review_workspace_artifact_path(config, workspace_path, decision_path)
+        if source_review_path is None or not source_review_path.exists():
+            continue
+
+        review_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_review_path, review_path)
+
+        if source_decision_path is not None and source_decision_path.exists():
+            decision_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_decision_path, decision_path)
+
+        write_activity_log(
+            config,
+            {
+                "type": "chair_review_artifact_synced_from_worktree",
+                "task_id": chair_review_settings(config).get("task_id"),
+                "message": f"Copied chair review artifacts from worker workspace {workspace_path}.",
+                "review_path": relpath(review_path),
+                "decision_path": relpath(decision_path),
+                "workspace_path": str(workspace_path),
+                "source_review_path": str(source_review_path),
+                "source_decision_path": str(source_decision_path) if source_decision_path is not None else None,
+            },
+        )
+        return True
+    return False
+
+
 def normalize_chair_review_decision(
     config: dict[str, Any],
     payload: Any,
@@ -3059,6 +3140,15 @@ def refresh_chair_review_state(config: dict[str, Any], state: dict[str, Any]) ->
         pending_decision_path = chair_review_state_path(str(rotation.get("pending_decision_path") or "")) if rotation.get("pending_decision_path") else None
         if pending_review_path is not None:
             pending_decision_path = pending_decision_path or chair_review_decision_path(pending_review_path)
+            pending_active = pending_chair_review_active(state, pending_review_relpath)
+            if not pending_active:
+                sync_chair_review_artifacts_from_worker_workspace(
+                    config,
+                    state,
+                    pending_review_relpath=pending_review_relpath,
+                    review_path=pending_review_path,
+                    decision_path=pending_decision_path,
+                )
             if pending_decision_path.exists():
                 return refresh_chair_review_artifact(
                     config,
@@ -3066,14 +3156,14 @@ def refresh_chair_review_state(config: dict[str, Any], state: dict[str, Any]) ->
                     review_path=pending_review_path,
                     decision_path=pending_decision_path,
                 )
-            if pending_review_path.exists() and not pending_chair_review_active(state, pending_review_relpath):
+            if pending_review_path.exists() and not pending_active:
                 return refresh_chair_review_artifact(
                     config,
                     state,
                     review_path=pending_review_path,
                     decision_path=pending_decision_path,
                 )
-            if not pending_chair_review_active(state, pending_review_relpath):
+            if not pending_active:
                 return mark_chair_review_problem(
                     config,
                     state,

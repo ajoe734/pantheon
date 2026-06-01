@@ -4957,6 +4957,62 @@ class ChairReviewDispatchTests(unittest.TestCase):
         self.assertEqual(rotation["last_review_recommended_focus"], ["SVC-EVIDENCE"])
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "chair_review_approved_sidecars")
 
+    def test_refresh_chair_review_syncs_completed_worktree_artifacts(self) -> None:
+        review_path = self.root / "chair-reviews" / "20260428-codex.md"
+        decision_path = review_path.with_suffix(".json")
+        workspace_path = self.root / "workers" / "pantheon" / "chair-review-20260428-codex"
+        workspace_review_path = workspace_path / "chair-reviews" / "20260428-codex.md"
+        workspace_decision_path = workspace_review_path.with_suffix(".json")
+        workspace_review_path.parent.mkdir(parents=True, exist_ok=True)
+        workspace_review_path.write_text("# Summary\n\nApprove sidecars from worktree.\n", encoding="utf-8")
+        workspace_decision_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "decision": "approve_sidecars",
+                    "sidecar_approved": True,
+                    "approval_ttl_minutes": 45,
+                    "reason": "Chair artifacts were produced in the isolated worker workspace.",
+                    "blocked_by": [],
+                    "recommended_focus": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        state = {
+            "queue": {"events": {"evt-chair": {"status": "completed"}}},
+            "workers": {
+                "chair-run": {
+                    "status": "completed",
+                    "workspace_path": str(workspace_path),
+                    "request_snapshot": {
+                        "reason": "chair_review:operational_review",
+                        "metadata": {"chair": {"review_path": str(review_path)}},
+                    },
+                }
+            },
+            "chair_rotation": {
+                "pending_review_path": str(review_path),
+                "pending_decision_path": str(decision_path),
+                "pending_review_event_id": "evt-chair",
+                "pending_review_agent": "Codex",
+            },
+        }
+
+        with (
+            mock.patch.object(supervisor, "utc_now", return_value="2026-04-28T12:15:00Z"),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.refresh_chair_review_state(self.config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(review_path.read_text(encoding="utf-8"), workspace_review_path.read_text(encoding="utf-8"))
+        self.assertEqual(decision_path.read_text(encoding="utf-8"), workspace_decision_path.read_text(encoding="utf-8"))
+        self.assertTrue(state["chair_rotation"]["last_review_valid"])
+        event_types = [call.args[1]["type"] for call in write_activity_log.call_args_list]
+        self.assertIn("chair_review_artifact_synced_from_worktree", event_types)
+        self.assertIn("chair_review_approved_sidecars", event_types)
+
     def test_refresh_chair_review_denies_sidecars_and_clears_approval(self) -> None:
         review_path = self.root / "chair-reviews" / "20260428-codex.md"
         decision_path = review_path.with_suffix(".json")
