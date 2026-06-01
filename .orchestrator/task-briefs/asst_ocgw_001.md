@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Add OpenClaw gateway credential mount contract
-- Status: in_progress
-- Owner: Gemini
-- Reviewer: Codex
+- Status: review_approved
+- Owner: Codex
+- Reviewer: Claude
 - Phase: Assistant OpenClaw Gateway Kernel/User Mode
-- Last update: 2026-05-31T16:48:15Z
-- Next: Supervisor re-dispatched ASST-OCGW-001; task remains in progress.
+- Last update: 2026-06-01T00:30:04Z
+- Next: Review approved: all 5 acceptance criteria satisfied. compose exposes dedicated service-user mount envs with correct defaults; human home paths rejected before stat; metadata sanitized (no raw paths); 6 tests pass. Returning to Codex for closeout.
 
 ## Summary
 保留 OpenClaw gateway 架構，新增 dedicated service-user .codex/.claude OAuth credential mount compose/env contract，禁止掛人類個人 home。
@@ -29,12 +29,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_assistant_kernel_user_2026-05-31/
 
 ## Recent Task Activity
-- 2026-05-31T16:48:15Z · Orchestrator · worker_worktree_refreshed · -
-- 2026-05-31T16:48:15Z · Orchestrator · worker_worktree_reused · -
-- 2026-05-31T16:48:15Z · Orchestrator · worker_started · Worker started via gemini: owned_in_progress_dispatch
-- 2026-05-31T16:48:15Z · Gemini · progress · Supervisor re-dispatched ASST-OCGW-001; task remains in progress.
-- 2026-05-31T16:48:18Z · Orchestrator · task_dispatch_synced · Supervisor re-dispatched ASST-OCGW-001; task remains in progress.
-- 2026-05-31T16:53:34Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
+- 2026-06-01T00:27:18Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-01T00:27:18Z · Orchestrator · worker_worktree_reused · -
+- 2026-06-01T00:27:18Z · Orchestrator · worker_started · Worker started via claude_cli: review_ready_dispatch
+- 2026-06-01T00:30:04Z · Claude · review_approved · Review approved: all 5 acceptance criteria satisfied. compose exposes dedicated service-user mount envs with correct defaults; human home paths rejected before stat; metadata sanitized (no raw paths); 6 tests pass. Returning to Codex for closeout.
+- 2026-06-01T00:31:45Z · unknown · worker_commit · Worker commit 0f8ffaeeaead recorded 2 staged file(s) for ASST-OCGW-001.
+- 2026-06-01T00:32:23Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
