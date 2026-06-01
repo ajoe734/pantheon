@@ -6297,6 +6297,63 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             if expired_lease
             else "Worker process missing during supervisor boot reconciliation."
         )
+        detected_reason = detect_worker_failure(worker)
+        if detected_reason:
+            failure = classify_worker_failure(config, worker, detected_reason)
+            failure_summary = summarize_failure_reason(
+                detected_reason,
+                str(worker.get("provider") or worker.get("agent_id") or ""),
+            )
+            raw_ref = write_failure_evidence(
+                config,
+                worker=worker,
+                reason=detected_reason,
+                failure_kind=str(failure.get("kind") or ""),
+            )
+            failure_count = record_task_failure_streak(
+                state,
+                worker,
+                detected_reason,
+                failure_kind=str(failure.get("kind") or ""),
+            )
+            failure_kind = str(failure.get("kind") or "")
+            if should_pause_dispatch_for_failure_kind(failure_kind):
+                mark_provider_dispatch_paused(
+                    config,
+                    state,
+                    str(worker.get("provider") or worker.get("agent_id") or ""),
+                    detected_reason,
+                    task_id=str(worker.get("task_id") or ""),
+                    worker_run_id=str(worker.get("run_id") or ""),
+                    failure_kind=failure_kind,
+                    pause_kind=failure_kind,
+                    raw_ref=raw_ref,
+                )
+            if is_terminal_quota_failure_kind(failure_kind):
+                reassigned_to = maybe_reassign_task_after_worker_failure(
+                    config,
+                    state,
+                    worker,
+                    failure_summary.get("summary") or detected_reason,
+                    terminal=True,
+                    force=True,
+                    failure_count=failure_count,
+                )
+                if reassigned_to:
+                    worker["status"] = "reassigned"
+                    worker["reassigned_to"] = reassigned_to
+                    worker["last_event_at"] = utc_now()
+                    worker["last_error"] = failure_summary.get("summary") or detected_reason
+                    worker["last_error_raw_ref"] = raw_ref
+                    finalize_queue_event_record(config, state, worker, "completed")
+                    if expired_lease:
+                        counts["expired_lease_workers_failed"] += 1
+                    else:
+                        counts["missing_process_workers_failed"] += 1
+                    changed = True
+                    continue
+            reason = failure_summary.get("summary") or detected_reason
+            worker["last_error_raw_ref"] = raw_ref
         worker["status"] = "failed"
         worker["last_event_at"] = utc_now()
         worker["last_error"] = reason
