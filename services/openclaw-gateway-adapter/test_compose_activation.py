@@ -43,6 +43,36 @@ def test_compose_wires_openclaw_gateway_adapter_without_broker_activation() -> N
     assert adapter["environment"]["OPENCLAW_BROKER_SIDECAR_URL"] == "http://broker:8102"
     assert adapter["environment"]["OPENCLAW_RUNTIME_MANAGER_URL"] == "http://runtime-manager:8081"
     assert adapter["environment"]["PANTHEON_RUNTIME_MANAGER_TOKEN"] == "runtime-control-internal"
+    assert (
+        adapter["environment"]["PANTHEON_ASSISTANT_CODEX_HOST_HOME"]
+        == "${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}"
+    )
+    assert (
+        adapter["environment"]["PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME"]
+        == "${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}"
+    )
+    assert (
+        adapter["environment"]["PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR"]
+        == "${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}"
+    )
+    assert (
+        adapter["environment"]["PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR"]
+        == "${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}"
+    )
+    assert adapter["environment"]["PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE"] == (
+        "${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}"
+    )
+
+    assert (
+        "${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}:"
+        "${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}:"
+        "${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}"
+    ) in upstream["volumes"]
+    assert (
+        "${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}:"
+        "${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}:"
+        "${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}"
+    ) in upstream["volumes"]
 
     broker = services["broker"]
     assert broker["build"]["dockerfile"] == "services/broker/Dockerfile"

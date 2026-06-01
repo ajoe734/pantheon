@@ -75,6 +75,7 @@ from live_gate_adapter import (
     LiveGateAuditLog,
     LiveGateError,
 )
+from assistant_credential_mounts import AssistantCredentialMounts
 
 from services.foundation.health import (
     health_payload,
@@ -582,6 +583,7 @@ register_fastapi_health_routes(
         "canary_adapter_enabled": _CANARY_ADAPTER_ENABLED,
         "capital_binding_enabled": _CAPITAL_BINDING_ENABLED,
         "runtime_manager_url": _RUNTIME_MANAGER_URL or "not_configured",
+        "assistant_credential_mounts": _ASSISTANT_MOUNTS.get_readiness_metadata(),
     },
 )
 
@@ -624,6 +626,7 @@ def get_capabilities() -> Dict[str, Any]:
     payload["canary_adapter"] = "deferred"
     payload["paper_broker"] = _PAPER_BROKER.capability_snapshot()
     payload["live_gate"] = _LIVE_GATE.capability_snapshot()
+    payload["assistant_credential_mounts"] = _ASSISTANT_MOUNTS.get_readiness_metadata()
     try:
         upstream_capabilities = _client().get_capabilities()
         payload["activation_state"] = "upstream_client_ready"
@@ -635,6 +638,17 @@ def get_capabilities() -> Dict[str, Any]:
         payload["activation_state"] = "upstream_client_degraded"
         payload["upstream"] = {**exc.to_payload(), "status": "degraded"}
     return payload
+
+
+# ---------------------------------------------------------------------------
+# Assistant credentials
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/openclaw-adapter/assistant/credentials")
+def get_assistant_credentials() -> Dict[str, Any]:
+    """Return sanitized readiness metadata for assistant credential mounts."""
+    return _ASSISTANT_MOUNTS.get_readiness_metadata()
 
 
 # ---------------------------------------------------------------------------
@@ -1059,6 +1073,8 @@ _LIVE_GATE = LiveGateAdapter(
     runtime_manager_url=_RUNTIME_MANAGER_URL,
     audit_log=_LIVE_GATE_AUDIT,
 )
+
+_ASSISTANT_MOUNTS = AssistantCredentialMounts()
 
 
 def _paper_broker_error_response(exc: PaperBrokerAdapterError) -> JSONResponse:

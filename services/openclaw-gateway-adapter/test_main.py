@@ -267,6 +267,12 @@ class TestCapabilities(unittest.TestCase):
         self.assertEqual(body["canary_adapter"], "deferred")
         self.assertFalse(body["paper_broker"]["paper_adapter_enabled"])
         self.assertEqual(body["paper_broker"]["runtime_binding_check"], "required_for_submit")
+        self.assertEqual(
+            body["assistant_credential_mounts"]["host_policy"],
+            "dedicated_service_user_only",
+        )
+        self.assertIn("codex", body["assistant_credential_mounts"]["mounts"])
+        self.assertNotIn("/srv/pantheon-assistant", str(body["assistant_credential_mounts"]))
         self.assertIn("supported_session_types", body)
         self.assertEqual(body["upstream"]["status"], "degraded")
 
@@ -293,6 +299,15 @@ class TestCapabilities(unittest.TestCase):
         body = resp.json()
         self.assertEqual(body["governed_search"], "enabled")
         self.assertIn("governed_search", body["activation_gates"])
+
+    def test_assistant_credentials_endpoint_is_sanitized(self):
+        resp = client.get("/api/openclaw-adapter/assistant/credentials")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["host_policy"], "dedicated_service_user_only")
+        self.assertIn("claude", body["mounts"])
+        self.assertNotIn("/srv/pantheon-assistant", str(body))
+        self.assertNotIn("/home/pantheon-assistant", str(body))
 
 
 # ---------------------------------------------------------------------------
