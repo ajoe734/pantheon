@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Idle lanes exist and no active sidecar pressure is visible; keep sidecars away from the auth-blocked ASST-OCGW-002 parent.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "ASST-OCGW-002"
+  ],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260601T022836Z-1c1f7761",
+      "decision": "allow",
+      "reason": "The Agent request is scoped to read-only code inspection for persona/BFF LLM call-site tracing and does not request mutation, push, secrets, or runtime changes.",
+      "remember": false
+    }
+  ],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "ASST-OCGW-002",
+    "OPS-GEMINI2-PUSH-AUTH-REPAIR"
+  ]
+}
