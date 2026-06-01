@@ -6659,6 +6659,80 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
                 1,
             )
 
+    def test_reconcile_runtime_uses_log_failure_for_missing_process_quota(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = self._config(root)
+            config["providers"]["gemini"] = {"delivery_mode": "gemini"}
+            config["agents"]["gemini"] = {"id": "gemini", "display_name": "Gemini", "provider": "gemini"}
+            (root / "ai-status.json").write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "id": "OPS-LEASE-003",
+                                "status": "in_progress",
+                                "owner": "Gemini",
+                                "reviewer": "Claude",
+                                "depends_on": [],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (root / "event-queue.jsonl").write_text(
+                json.dumps({"event_id": "evt-gemini", "task_id": "OPS-LEASE-003", "target_agent": "gemini"})
+                + "\n",
+                encoding="utf-8",
+            )
+            log_path = root / "gemini-quota.log"
+            log_path.write_text(
+                "\n".join(
+                    [
+                        "Error when talking to Gemini API Full report available at: /tmp/gemini-client-error.json TerminalQuotaError: You have exhausted your capacity on this model.",
+                        "reason: 'QUOTA_EXHAUSTED'",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            state = {
+                "queue": {"events": {"evt-gemini": {"status": "started", "run_id": "gemini-run-dead"}}},
+                "provider_guardrails": {"dispatch_pauses": {}},
+                "workers": {
+                    "gemini-run-dead": {
+                        "run_id": "gemini-run-dead",
+                        "status": "running",
+                        "provider": "gemini",
+                        "agent_id": "gemini",
+                        "task_id": "OPS-LEASE-003",
+                        "queue_event_id": "evt-gemini",
+                        "pid": 987654,
+                        "log_path": str(log_path),
+                    }
+                },
+            }
+
+            with (
+                mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+                mock.patch.object(supervisor, "write_failure_evidence", return_value="evidence/gemini.json"),
+                mock.patch.object(supervisor, "maybe_reassign_task_after_worker_failure", return_value="Codex"),
+            ):
+                changed = supervisor.reconcile_runtime_on_boot(config, state)
+
+            self.assertTrue(changed)
+            worker = state["workers"]["gemini-run-dead"]
+            self.assertEqual(worker["status"], "reassigned")
+            self.assertEqual(worker["reassigned_to"], "Codex")
+            self.assertEqual(state["queue"]["events"]["evt-gemini"]["status"], "completed")
+            pause = state["provider_guardrails"]["dispatch_pauses"]["gemini"]
+            self.assertEqual(pause["pause_kind"], "quota_terminal")
+            self.assertEqual(pause["worker_run_id"], "gemini-run-dead")
+            streak = state["provider_guardrails"]["task_failure_streaks"]["OPS-LEASE-003:gemini"]
+            self.assertEqual(streak["last_failure_kind"], "quota_terminal")
+            self.assertIn("capacity", worker["last_error"].lower())
+
     def test_quota_group_cap_blocks_second_slot(self) -> None:
         config = {
             "ready_dispatcher": {"max_concurrent_per_quota_group": {"codex1": 1}},
