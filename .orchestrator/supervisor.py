@@ -6538,7 +6538,8 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             if expired_lease
             else "Worker process missing during supervisor boot reconciliation."
         )
-        if worker_runner_succeeded(worker) and (
+        runner_succeeded = worker_runner_succeeded(worker)
+        if runner_succeeded and (
             worker_is_chair_review(worker) or worker_is_discussion_planning(worker) or worker_is_coordination_dispatch(worker)
         ):
             worker["status"] = "completed"
@@ -6560,7 +6561,35 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             changed = True
             continue
 
-        detected_reason = detect_worker_failure(worker)
+        task_status = str(task_map.get(str(worker.get("task_id") or ""), {}).get("status") or "").lower()
+        terminal_statuses = {
+            str(value).lower()
+            for value in ready_dispatch_settings(config).get("worker_terminal_statuses", ["done", "review_approved"])
+        }
+        if runner_succeeded and task_status in terminal_statuses:
+            worker["status"] = "completed"
+            worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
+            clear_task_failure_streak(state, worker=worker)
+            finalize_queue_event_record(config, state, worker, "completed")
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_completed",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": "Worker exited successfully during supervisor boot reconciliation.",
+                    "worker_run_id": run_id,
+                    "pr_url": worker.get("pr_url"),
+                    "session_url": worker.get("session_url"),
+                },
+            )
+            changed = True
+            continue
+
+        if runner_succeeded:
+            reason = GENERIC_WORKER_EXIT_REASON
+
+        detected_reason = None if runner_succeeded else detect_worker_failure(worker)
         if detected_reason:
             failure = classify_worker_failure(config, worker, detected_reason)
             failure_summary = summarize_failure_reason(
