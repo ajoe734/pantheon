@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-31 23:51:27
+Last updated: 2026-06-02 07:51:31
 
 ## Objective
 
@@ -25,13 +25,14 @@ Pantheon BFF P0 Delta-v3 — close the v2 deploy-lag bottleneck plus 1 real Pack
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Awaiting: LSP-006-V2, HA-PROD-001-V2, risk_owner_signoff, operator_signoff
+- `Claude`: execution, control-plane, governance-review; next: Assignment created
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: Assignment created
 - `Codex`: integration, status-system, schema, acceptance; next: Assignment created
 - `Codex2`: integration, status-system, schema, acceptance; next: Assignment created
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: Assignment created
-- `Claude2`: execution, control-plane, governance-review; next: Awaiting: CBL-LIVE-001-V2, BLA-007-V2, first_week_observation_report, risk_owner_signoff, operator_signoff
+- `Claude2`: execution, control-plane, governance-review; next: Assignment created
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Assignment created
+- `Human/Ops`: human-gate, operations, signoff; next: No active assignment
 
 ## Delivery Layers
 
@@ -39,15 +40,12 @@ Pantheon BFF P0 Delta-v3 — close the v2 deploy-lag bottleneck plus 1 real Pack
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `PROD-WRITES-001-V2` | Phase 8 / EPIC-LIVE-GATE | Enable production real writes (human gate) | Claude | blocked | - | Human-only activation. Flips VITE_BFF_REAL_WRITES=true and equivalent BFF flags after dual signoff. Cannot be dispatched to AI worker. |
-| `LIVE-SCALE-001-V2` | Phase 8 / EPIC-LIVE-GATE | Live capital scale-up (human gate) | Claude2 | blocked | - | Human-only activation. Raises live capital budget ceiling above first-window cap after first-week observation report + dual signoff. Cannot be dispatched to AI worker. |
 | `ASST-KERNEL-001` | Assistant OpenClaw Gateway Kernel/User Mode | Implement assistant context-pack schema and BFF route | Codex | todo | - | 建立 assistant context pack model 與 BFF route，讓前端 route/entity/context refs 可被 BFF 組成帶來源、時間戳、staleness 與安全 allowlist 的後端觀測資料包。 |
 | `ASST-KERNEL-002` | Assistant OpenClaw Gateway Kernel/User Mode | Implement assistant redaction library | Codex2 | todo | - | 建立 assistant redaction library，provider invocation 與 transcript persistence 前先遮蔽 tokens cookies API keys .env DB URLs provider session paths broker credentials。 |
 | `ASST-KERNEL-003` | Assistant OpenClaw Gateway Kernel/User Mode | Implement assistant session and transcript store | Claude | todo | `ASST-KERNEL-001` | 建立 assistant session/transcript store，保存 mode actor TTL reason context_pack_id provider_run_id source refs 與 SSE transcript。 |
 | `ASST-OCGW-001` | Assistant OpenClaw Gateway Kernel/User Mode | Add OpenClaw gateway credential mount contract | Gemini | todo | - | 保留 OpenClaw gateway 架構，新增 dedicated service-user .codex/.claude OAuth credential mount compose/env contract，禁止掛人類個人 home。 |
 | `ASST-OCGW-002` | Assistant OpenClaw Gateway Kernel/User Mode | Add gateway CLI image and readiness probes | Gemini2 | todo | `ASST-OCGW-001` | 在 OpenClaw gateway container 內安裝或探測 Codex/Claude CLI，回報 binary path version auth readiness mount mode 與 degraded reason。 |
 | `ASST-OCGW-003` | Assistant OpenClaw Gateway Kernel/User Mode | Implement Codex provider through OpenClaw gateway | Codex | todo | `ASST-KERNEL-002`, `ASST-KERNEL-003`, `ASST-OCGW-002` | 實作 OpenClaw gateway 內的 Codex CLI provider，以 mounted service-user .codex 執行 non-interactive codex exec，支援 timeout redaction audit fallback。 |
-| `ASST-OCGW-004` | Assistant OpenClaw Gateway Kernel/User Mode | Implement Claude provider through OpenClaw gateway | Claude | todo | `ASST-KERNEL-002`, `ASST-KERNEL-003`, `ASST-OCGW-002` | 實作 OpenClaw gateway 內的 Claude Code CLI provider，以 mounted service-user .claude 執行 claude -p，支援 stream-json normalization timeout degraded fallback。 |
 | `ASST-OCGW-005` | Assistant OpenClaw Gateway Kernel/User Mode | Add credential refresh smoke and runbook | Gemini | todo | `ASST-OCGW-003`, `ASST-OCGW-004` | 補 OpenClaw gateway account-login credential refresh smoke/runbook，判斷 .codex/.claude mount 需 ro 或 rw 並定義過期重登 degraded 行為。 |
 | `ASST-KERNEL-006` | Assistant OpenClaw Gateway Kernel/User Mode | Implement OpenClaw command broker observe/debug allowlists | Codex2 | todo | `ASST-KERNEL-002`, `ASST-OCGW-001` | 建立 OpenClaw tool/workflow policy 下的 kernel observe/debug command broker，allowlist 診斷命令並 deny destructive git DB mutation secret reads sudo broker/live capital and exfiltration。 |
 | `ASST-KERNEL-007` | Assistant OpenClaw Gateway Kernel/User Mode | Implement repair-mode worktree workflow | Gemini | todo | `ASST-KERNEL-006`, `ASST-OCGW-003` | 建立 kernel repair 的 clean task branch/worktree guardrail，限制 staging scope 並記錄 validation commit PR merge target。 |
@@ -66,11 +64,14 @@ Pantheon BFF P0 Delta-v3 — close the v2 deploy-lag bottleneck plus 1 real Pack
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-29 19:02:44
-- Terminal tasks archived: `1330` total, `1307` completed, `23` superseded
+- Archive updated: 2026-06-02 07:51:30
+- Terminal tasks archived: `1333` total, `1310` completed, `23` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `ASST-OCGW-004` | Assistant OpenClaw Gateway Kernel/User Mode | Implement Claude provider through OpenClaw gateway | Codex2 | completed | 2026-06-02 07:51:30 | `ai-task-archive/tasks/ASST-OCGW-004.json` |
+| `ASST-KERNEL-001` | Assistant OpenClaw Gateway Kernel/User Mode | Implement assistant context-pack schema and BFF route | Codex | completed | 2026-06-01 00:32:48 | `ai-task-archive/tasks/ASST-KERNEL-001.json` |
+| `ASST-KERNEL-002` | Assistant OpenClaw Gateway Kernel/User Mode | Implement assistant redaction library | Codex2 | completed | 2026-06-01 00:23:21 | `ai-task-archive/tasks/ASST-KERNEL-002.json` |
 | `BFF-WRITE-P0-LIFECYCLE-002` | Sprint BFF-WRITE-GAP / EPIC-WRITE-GAP-P0-LIFECYCLE | POST /bff/capital-pools/{id}/actions/ApprovePool (register in action_catalog) | Claude2 | completed | 2026-05-29 19:02:44 | `ai-task-archive/tasks/BFF-WRITE-P0-LIFECYCLE-002.json` |
 | `BFF-WRITE-P0-LIFECYCLE-001` | Sprint BFF-WRITE-GAP / EPIC-WRITE-GAP-P0-LIFECYCLE | POST /bff/personas/{id}/actions/AdvanceLifecycle (register in action_catalog) | Claude2 | completed | 2026-05-29 18:00:48 | `ai-task-archive/tasks/BFF-WRITE-P0-LIFECYCLE-001.json` |
 | `BFF-WRITE-P1-AGORA-011` | Sprint BFF-WRITE-GAP / EPIC-WRITE-GAP-P1-AGORA | POST /bff/agora/feedback (new route - distinct from per-signal feedback at main.py:19054) | Claude | completed | 2026-05-29 17:46:00 | `ai-task-archive/tasks/BFF-WRITE-P1-AGORA-011.json` |
@@ -88,9 +89,6 @@ Pantheon BFF P0 Delta-v3 — close the v2 deploy-lag bottleneck plus 1 real Pack
 | `BFF-B6-003` | Sprint BFF-6 / EPIC-BFF-GAP-NL | NL high-risk refusal policy | Codex | completed | 2026-05-23 20:34:24 | `ai-task-archive/tasks/BFF-B6-003.json` |
 | `BFF-B2-004` | Sprint BFF-2 / EPIC-BFF-GAP-CORE | Research and search facade: /bff/research-experiments and /bff/search | Codex2 | completed | 2026-05-23 20:14:36 | `ai-task-archive/tasks/BFF-B2-004.json` |
 | `BFF-B6-001` | Sprint BFF-6 / EPIC-BFF-GAP-NL | POST /bff/management/nl/ask Management NL endpoint | Claude | completed | 2026-05-23 19:57:54 | `ai-task-archive/tasks/BFF-B6-001.json` |
-| `BFF-B2-006` | Sprint BFF-2 / EPIC-BFF-GAP-CORE | v5 closed-loop read routes (B4 4 read endpoints) | Codex | completed | 2026-05-23 19:53:14 | `ai-task-archive/tasks/BFF-B2-006.json` |
-| `BFF-B3-004` | Sprint BFF-3 / EPIC-BFF-GAP-MGMT | GET /bff/management/trading-pulse and rankings | Codex | completed | 2026-05-23 19:34:22 | `ai-task-archive/tasks/BFF-B3-004.json` |
-| `BFF-B3-007` | Sprint BFF-3 / EPIC-BFF-GAP-MGMT | GET /bff/management/persona-intent redacted aggregate | Codex | completed | 2026-05-23 19:31:22 | `ai-task-archive/tasks/BFF-B3-007.json` |
 
 ## Task Board
 
@@ -99,15 +97,14 @@ Pantheon BFF P0 Delta-v3 — close the v2 deploy-lag bottleneck plus 1 real Pack
 | `OSS-STAT-001-SIDECAR-ACCEPTANCE` | Sprint 7 / EPIC-OSS-RESEARCH | [Sidecar] [Auto] [Parent OSS-STAT-001] Prepare OSS-STAT-001 acceptance packet and dependency map | 平行支援 OSS-STAT-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Gemini | Claude | done | - | 2026-05-17 11:45:00 | Owner finalized task and closed it. Sidecar acceptance packet is durable in support/sidecars/OSS-STAT-001/. |
 | `LOVABLE-STRICT-PUBLISH` | Sprint 7 / EPIC-LOVABLE-INFRA | Finalizing recovery closeout. | SA § 2.2 列為 non-blocking follow-up：execute-plans@main build-time 應使用 strict env (VITE_BFF_MODE=live VITE_BFF_FALLBACK=strict VITE_BFF_REAL_WRITES=false) 重新發佈一次，並驗證發佈後的 bundle 不再含 seed fallback assets。本任務不直接動 execute-plans repo，而是寫一個 pantheon 端的 audit script + evidence packet，記錄 publish 條件、build env、bundle hash、verification probe 結果。 | Gemini2 | Gemini | done | - | 2026-05-20 19:29:47 | Closeout PR #83 merged 2026-05-18 02:37:05; ai-status manual sync 2026-05-20 19:29:47 after Gemini2 push-auth failure stalled lifecycle write. |
 | `OSS-QUANTLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | Reassigning for finalization | 把 OSS-QUANTLIB-001 option pricer 升級為 production：對台指選擇權(TXO)鏈跨多檔履約價與多個到期日定價，輸出含 greeks 的 pricing_snapshot artifact，提交 registry admission packet。獨立檔案。 | Gemini2 | Codex2 | done | `OSS-QUANTLIB-001` | 2026-05-20 19:29:47 | Closeout PR #194 merged 2026-05-19 15:18:36; ai-status manual sync 2026-05-20 19:29:47 after Gemini2 push-auth failure stalled lifecycle write. |
-| `PROD-WRITES-001-V2` | Phase 8 / EPIC-LIVE-GATE | Enable production real writes (human gate) | Human-only activation. Flips VITE_BFF_REAL_WRITES=true and equivalent BFF flags after dual signoff. Cannot be dispatched to AI worker. | Claude | Codex2 | blocked | - | 2026-05-21 11:01:52 | Awaiting: LSP-006-V2, HA-PROD-001-V2, risk_owner_signoff, operator_signoff |
-| `LIVE-SCALE-001-V2` | Phase 8 / EPIC-LIVE-GATE | Live capital scale-up (human gate) | Human-only activation. Raises live capital budget ceiling above first-window cap after first-week observation report + dual signoff. Cannot be dispatched to AI worker. | Claude2 | Codex | blocked | - | 2026-05-21 11:01:56 | Awaiting: CBL-LIVE-001-V2, BLA-007-V2, first_week_observation_report, risk_owner_signoff, operator_signoff |
+| `PROD-WRITES-001-V2` | Phase 8 / EPIC-LIVE-GATE | Enable production real writes (human gate) | Human-only activation. Flips VITE_BFF_REAL_WRITES=true and equivalent BFF flags after dual signoff. Cannot be dispatched to AI worker. | Human/Ops | Codex2 | done | - | 2026-06-01 10:34:37 | Human/Ops approved production real-writes gate; HumanGateDecision recorded at support/evidence/PROD-WRITES-001-V2/human-gate/decision.json. Runtime flag flip remains a separate operator action. |
+| `LIVE-SCALE-001-V2` | Phase 8 / EPIC-LIVE-GATE | Live capital scale-up (human gate) | Human-only activation. Raises live capital budget ceiling above first-window cap after first-week observation report + dual signoff. Cannot be dispatched to AI worker. | Human/Ops | Codex | done | - | 2026-06-01 10:34:37 | Human/Ops approved live-scale gate; HumanGateDecision recorded at support/evidence/LIVE-SCALE-001-V2/human-gate/decision.json. Capital budget/config mutation remains a separate operator action. |
 | `ASST-KERNEL-001` | Assistant OpenClaw Gateway Kernel/User Mode | Implement assistant context-pack schema and BFF route | 建立 assistant context pack model 與 BFF route，讓前端 route/entity/context refs 可被 BFF 組成帶來源、時間戳、staleness 與安全 allowlist 的後端觀測資料包。 | Codex | Claude | todo | - | 2026-05-31 23:51:13 | Assignment created |
 | `ASST-KERNEL-002` | Assistant OpenClaw Gateway Kernel/User Mode | Implement assistant redaction library | 建立 assistant redaction library，provider invocation 與 transcript persistence 前先遮蔽 tokens cookies API keys .env DB URLs provider session paths broker credentials。 | Codex2 | Claude | todo | - | 2026-05-31 23:51:15 | Assignment created |
 | `ASST-KERNEL-003` | Assistant OpenClaw Gateway Kernel/User Mode | Implement assistant session and transcript store | 建立 assistant session/transcript store，保存 mode actor TTL reason context_pack_id provider_run_id source refs 與 SSE transcript。 | Claude | Codex | todo | `ASST-KERNEL-001` | 2026-05-31 23:51:16 | Assignment created |
 | `ASST-OCGW-001` | Assistant OpenClaw Gateway Kernel/User Mode | Add OpenClaw gateway credential mount contract | 保留 OpenClaw gateway 架構，新增 dedicated service-user .codex/.claude OAuth credential mount compose/env contract，禁止掛人類個人 home。 | Gemini | Codex | todo | - | 2026-05-31 23:51:18 | Assignment created |
 | `ASST-OCGW-002` | Assistant OpenClaw Gateway Kernel/User Mode | Add gateway CLI image and readiness probes | 在 OpenClaw gateway container 內安裝或探測 Codex/Claude CLI，回報 binary path version auth readiness mount mode 與 degraded reason。 | Gemini2 | Codex2 | todo | `ASST-OCGW-001` | 2026-05-31 23:51:18 | Assignment created |
 | `ASST-OCGW-003` | Assistant OpenClaw Gateway Kernel/User Mode | Implement Codex provider through OpenClaw gateway | 實作 OpenClaw gateway 內的 Codex CLI provider，以 mounted service-user .codex 執行 non-interactive codex exec，支援 timeout redaction audit fallback。 | Codex | Claude | todo | `ASST-KERNEL-002`, `ASST-KERNEL-003`, `ASST-OCGW-002` | 2026-05-31 23:51:19 | Assignment created |
-| `ASST-OCGW-004` | Assistant OpenClaw Gateway Kernel/User Mode | Implement Claude provider through OpenClaw gateway | 實作 OpenClaw gateway 內的 Claude Code CLI provider，以 mounted service-user .claude 執行 claude -p，支援 stream-json normalization timeout degraded fallback。 | Claude | Codex | todo | `ASST-KERNEL-002`, `ASST-KERNEL-003`, `ASST-OCGW-002` | 2026-05-31 23:51:20 | Assignment created |
 | `ASST-OCGW-005` | Assistant OpenClaw Gateway Kernel/User Mode | Add credential refresh smoke and runbook | 補 OpenClaw gateway account-login credential refresh smoke/runbook，判斷 .codex/.claude mount 需 ro 或 rw 並定義過期重登 degraded 行為。 | Gemini | Claude2 | todo | `ASST-OCGW-003`, `ASST-OCGW-004` | 2026-05-31 23:51:21 | Assignment created |
 | `ASST-KERNEL-006` | Assistant OpenClaw Gateway Kernel/User Mode | Implement OpenClaw command broker observe/debug allowlists | 建立 OpenClaw tool/workflow policy 下的 kernel observe/debug command broker，allowlist 診斷命令並 deny destructive git DB mutation secret reads sudo broker/live capital and exfiltration。 | Codex2 | Claude | todo | `ASST-KERNEL-002`, `ASST-OCGW-001` | 2026-05-31 23:51:22 | Assignment created |
 | `ASST-KERNEL-007` | Assistant OpenClaw Gateway Kernel/User Mode | Implement repair-mode worktree workflow | 建立 kernel repair 的 clean task branch/worktree guardrail，限制 staging scope 並記錄 validation commit PR merge target。 | Gemini | Codex | todo | `ASST-KERNEL-006`, `ASST-OCGW-003` | 2026-05-31 23:51:22 | Assignment created |
@@ -130,8 +127,6 @@ Pantheon BFF P0 Delta-v3 — close the v2 deploy-lag bottleneck plus 1 real Pack
 |---|---|---|---|---|
 | `LOVABLE-STRICT-PUBLISH` | Gemini2 | Gemini | PR push failed due to auth; requires manual intervention to push task branch and open PR | open |
 | `OSS-QUANTLIB-V2-001` | Gemini2 | Gemini | Unable to push branch and open PR due to authentication failure in task_finalize.sh | open |
-| `PROD-WRITES-001-V2` | Claude | Claude | Awaiting: LSP-006-V2, HA-PROD-001-V2, risk_owner_signoff, operator_signoff | open |
-| `LIVE-SCALE-001-V2` | Claude2 | Claude | Awaiting: CBL-LIVE-001-V2, BLA-007-V2, first_week_observation_report, risk_owner_signoff, operator_signoff | open |
 
 ## Review Notes
 
@@ -168,23 +163,23 @@ Do not read those omitted modules as open Pantheon backlog purely because they a
 
 ## Latest Checkpoints
 
+- 2026-05-16 01:52:32 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:52:37 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:52:38 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:52:42 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:52:43 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:52:47 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:52:48 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:52:52 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:52:53 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:52:57 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:52:57 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:53:02 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:53:02 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:53:08 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:53:08 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:53:13 Orchestrator: PreToolUse: Bash
-- 2026-05-31 23:51:13 Codex: `ASST-KERNEL-001` Assigned ASST-KERNEL-001 to Codex with reviewer Claude
-- 2026-05-31 23:51:15 Codex: `ASST-KERNEL-002` Assigned ASST-KERNEL-002 to Codex2 with reviewer Claude
-- 2026-05-31 23:51:16 Codex: `ASST-KERNEL-003` Assigned ASST-KERNEL-003 to Claude with reviewer Codex
-- 2026-05-31 23:51:18 Codex: `ASST-OCGW-001` Assigned ASST-OCGW-001 to Gemini with reviewer Codex
-- 2026-05-31 23:51:18 Codex: `ASST-OCGW-002` Assigned ASST-OCGW-002 to Gemini2 with reviewer Codex2
-- 2026-05-31 23:51:19 Codex: `ASST-OCGW-003` Assigned ASST-OCGW-003 to Codex with reviewer Claude
-- 2026-05-31 23:51:20 Codex: `ASST-OCGW-004` Assigned ASST-OCGW-004 to Claude with reviewer Codex
-- 2026-05-31 23:51:21 Codex: `ASST-OCGW-005` Assigned ASST-OCGW-005 to Gemini with reviewer Claude2
-- 2026-05-31 23:51:22 Codex: `ASST-KERNEL-006` Assigned ASST-KERNEL-006 to Codex2 with reviewer Claude
-- 2026-05-31 23:51:22 Codex: `ASST-KERNEL-007` Assigned ASST-KERNEL-007 to Gemini with reviewer Codex
-- 2026-05-31 23:51:23 Codex: `ASST-BFF-001` Assigned ASST-BFF-001 to Claude with reviewer Codex2
-- 2026-05-31 23:51:24 Codex: `ASST-BFF-002` Assigned ASST-BFF-002 to Claude2 with reviewer Codex
-- 2026-05-31 23:51:24 Codex: `ASST-FE-001` Assigned ASST-FE-001 to Copilot with reviewer Codex2
-- 2026-05-31 23:51:25 Codex: `ASST-FE-002` Assigned ASST-FE-002 to Copilot with reviewer Claude2
-- 2026-05-31 23:51:26 Codex: `ASST-SEC-001` Assigned ASST-SEC-001 to Codex2 with reviewer Claude
-- 2026-05-31 23:51:27 Codex: `ASST-USER-001` Assigned ASST-USER-001 to Claude with reviewer Codex2
+- 2026-06-02 07:51:02 Codex2: `ASST-OCGW-004` Assigned ASST-OCGW-004 to Codex2 with reviewer Claude
+- 2026-06-02 07:51:12 Codex2: `ASST-OCGW-004` Owner picked up approved task for final closeout after PR #764 merge.
+- 2026-06-02 07:51:20 Codex2: `ASST-OCGW-004` Review approved by Claude and returned to Codex2 for finalization; PR #764 is merged.
+- 2026-06-02 07:51:30 Codex2: `ASST-OCGW-004` Owner finalized Claude provider closeout. Implementation PR #764 merged; closeout evidence PR #765 merged; focused validation passed: pytest provider/runtime/credential/main suite (76 passed).
