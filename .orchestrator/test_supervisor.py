@@ -24,6 +24,15 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertGreaterEqual(len(config["agents"]["codex"]["worker_slots"]), 3)
         self.assertGreaterEqual(len(config["agents"]["codex2"]["worker_slots"]), 3)
 
+    def test_claude2_new_work_target_and_concurrency_are_capped(self) -> None:
+        config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
+
+        ready_dispatcher = config["ready_dispatcher"]
+
+        self.assertEqual(ready_dispatcher["target_workload"]["Claude2"], 5)
+        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Claude2"], 1)
+        self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["claude2"], 1)
+
 
 class DetectWorkerFailureTests(unittest.TestCase):
     def _worker_for_log(self, content: str) -> dict[str, str]:
@@ -1601,7 +1610,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         config["ready_dispatcher"] = {
             "target_workload": {
                 "Claude": 10,
-                "Claude2": 10,
+                "Claude2": 5,
                 "Gemini": 5,
                 "Gemini2": 5,
                 "Codex": 35,
@@ -1622,12 +1631,12 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         sequence = supervisor.weighted_dispatch_agent_ids(config, supervisor.ready_dispatch_settings(config))
         counts = {agent_id: sequence.count(agent_id) for agent_id in config["agents"]}
 
-        self.assertEqual(len(sequence), 21)
+        self.assertEqual(len(sequence), 20)
         self.assertEqual(
             counts,
             {
                 "claude": 2,
-                "claude2": 2,
+                "claude2": 1,
                 "gemini": 1,
                 "gemini2": 1,
                 "codex": 7,
