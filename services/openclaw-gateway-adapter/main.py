@@ -77,6 +77,7 @@ from live_gate_adapter import (
 )
 from assistant_credential_mounts import AssistantCredentialMounts
 from assistant_codex_provider import AssistantCodexProvider, CodexProviderError
+from assistant_claude_provider import ClaudeProviderResult, invoke_claude
 from assistant_provider_runtime import (
     AssistantProviderRuntime,
     AssistantProviderRuntimeError,
@@ -691,10 +692,12 @@ def get_assistant_readiness(provider: str, auth_probe: bool = False) -> Dict[str
 
 @app.get("/api/openclaw-adapter/assistant/providers")
 def list_assistant_providers(auth_probe: bool = False) -> Dict[str, Any]:
+    claude_readiness = _ASSISTANT_RUNTIME.check_readiness("claude")
     return {
         "status": "ok",
         "data": [
             _CODEX_PROVIDER.readiness(auth_probe=auth_probe),
+            {"provider": "claude", **claude_readiness},
         ],
     }
 
@@ -737,6 +740,44 @@ def invoke_codex_provider(
             },
         },
     )
+
+
+class ClaudeInvokeRequest(BaseModel):
+    prompt: str
+    mode: str = "user"
+    context_pack: Optional[Dict[str, Any]] = None
+
+
+@app.post("/api/openclaw-adapter/assistant/claude/invoke")
+def invoke_claude_provider(
+    req: ClaudeInvokeRequest,
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+) -> JSONResponse:
+    """Invoke Claude Code CLI through the mounted service-user CLAUDE_CONFIG_DIR.
+
+    Returns a structured result.  Degraded outcomes (missing binary, missing
+    auth, timeout, malformed output) produce HTTP 200 with status=degraded so
+    callers can apply deterministic fallback rather than treating them as
+    transport errors.
+
+    Operators must supply X-Operator-Id; unauthenticated callers are rejected.
+    """
+    if not x_operator_id:
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "provider_error",
+                "error_code": "OPERATOR_REQUIRED",
+                "message": "X-Operator-Id header is required for Claude provider invocation.",
+            },
+        )
+    result: ClaudeProviderResult = invoke_claude(
+        req.prompt,
+        mode=req.mode,
+        context_pack=req.context_pack,
+        mounts=_ASSISTANT_MOUNTS,
+    )
+    return JSONResponse(status_code=200, content=result.to_dict())
 
 
 # ---------------------------------------------------------------------------
