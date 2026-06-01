@@ -912,7 +912,7 @@
     },
     "target_workload": {
       "Claude": 10,
-      "Claude2": 10,
+      "Claude2": 5,
       "Gemini": 5,
       "Gemini2": 5,
       "Codex": 35,
@@ -921,6 +921,7 @@
     },
     "max_tasks_per_agent": 1,
     "max_tasks_per_agent_by_agent": {
+      "Claude2": 1,
       "Codex": 3,
       "Codex2": 3
     },
