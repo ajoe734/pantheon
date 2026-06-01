@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "ASST-OCGW-002 blocks the runnable assistant backlog, so no safe sidecar parent is available.",
+  "blocked_by": [
+    "ASST-OCGW-002 is blocked on PR push/auth after review approval; all 10 current todo tasks depend on it directly or indirectly.",
+    "Approval queue has no pending safe normal push approval to resolve the blocked closeout."
+  ],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "ASST-OCGW-002",
+    "OPS-ASST-OCGW-002-CLOSEOUT-PUSH-REPAIR-20260601",
+    "OPS-CHAIR-PR-BASE-HYGIENE-20260601"
+  ]
+}
