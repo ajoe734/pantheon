@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "ASST-OCGW-004 is a fake in_progress with merged delivery and repeated Codex auth failures, while remaining assistant work is dependency-gated.",
+  "blocked_by": [
+    "ASST-OCGW-004 remains in_progress despite PR #752 merged to dev at c21a63b93390232246f340ce2d85395cc91ada34 and worker codex-20260601T102424Z-f4328499 completed.",
+    "Codex1 has two ASST-OCGW-004 auth failures and is paused until 2026-06-01T10:49:38Z.",
+    "Downstream assistant todos depend on ASST-OCGW-003 review completion and/or ASST-OCGW-004 lifecycle reconciliation.",
+    "Claude2 is manually dispatch-paused until 2026-06-04T00:00:00Z, constraining reviewer/owner capacity."
+  ],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "ASST-OCGW-004",
+    "ASST-OCGW-003",
+    "OPS-CHAIR-PR-BASE-HYGIENE-20260601",
+    "OPS-ARCHIVE-PUSH-STATUS-AUDIT-20260601"
+  ]
+}

@@ -2526,6 +2526,7 @@ def sync_chair_review_artifacts_from_worker_workspace(
     decision_path: Path,
 ) -> bool:
     """Copy completed chair-review artifacts out of an isolated worker workspace."""
+    copied = False
     for worker in state.get("workers", {}).values():
         if not worker_is_chair_review(worker):
             continue
@@ -2541,27 +2542,32 @@ def sync_chair_review_artifacts_from_worker_workspace(
             continue
 
         review_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source_review_path, review_path)
+        if not review_path.exists() or source_review_path.stat().st_mtime_ns > review_path.stat().st_mtime_ns:
+            shutil.copy2(source_review_path, review_path)
+            copied = True
 
         if source_decision_path is not None and source_decision_path.exists():
             decision_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source_decision_path, decision_path)
+            if not decision_path.exists() or source_decision_path.stat().st_mtime_ns > decision_path.stat().st_mtime_ns:
+                shutil.copy2(source_decision_path, decision_path)
+                copied = True
 
-        write_activity_log(
-            config,
-            {
-                "type": "chair_review_artifact_synced_from_worktree",
-                "task_id": chair_review_settings(config).get("task_id"),
-                "message": f"Copied chair review artifacts from worker workspace {workspace_path}.",
-                "review_path": relpath(review_path),
-                "decision_path": relpath(decision_path),
-                "workspace_path": str(workspace_path),
-                "source_review_path": str(source_review_path),
-                "source_decision_path": str(source_decision_path) if source_decision_path is not None else None,
-            },
-        )
-        return True
-    return False
+        if copied:
+            write_activity_log(
+                config,
+                {
+                    "type": "chair_review_artifact_synced_from_worktree",
+                    "task_id": chair_review_settings(config).get("task_id"),
+                    "message": f"Copied chair review artifacts from worker workspace {workspace_path}.",
+                    "review_path": relpath(review_path),
+                    "decision_path": relpath(decision_path),
+                    "workspace_path": str(workspace_path),
+                    "source_review_path": str(source_review_path),
+                    "source_decision_path": str(source_decision_path) if source_decision_path is not None else None,
+                },
+            )
+        return copied
+    return copied
 
 
 def normalize_chair_review_decision(
@@ -3141,14 +3147,13 @@ def refresh_chair_review_state(config: dict[str, Any], state: dict[str, Any]) ->
         if pending_review_path is not None:
             pending_decision_path = pending_decision_path or chair_review_decision_path(pending_review_path)
             pending_active = pending_chair_review_active(state, pending_review_relpath)
-            if not pending_active:
-                sync_chair_review_artifacts_from_worker_workspace(
-                    config,
-                    state,
-                    pending_review_relpath=pending_review_relpath,
-                    review_path=pending_review_path,
-                    decision_path=pending_decision_path,
-                )
+            sync_chair_review_artifacts_from_worker_workspace(
+                config,
+                state,
+                pending_review_relpath=pending_review_relpath,
+                review_path=pending_review_path,
+                decision_path=pending_decision_path,
+            )
             if pending_decision_path.exists():
                 return refresh_chair_review_artifact(
                     config,
@@ -3220,6 +3225,24 @@ def chair_review_active(state: dict[str, Any]) -> bool:
         if str(worker.get("status") or "") in {"running", "started", "waiting_approval", "manual_pending", "retry_backoff", "suspended_approval", "stalled", "fallback"} and worker_is_chair_review(worker):
             return True
     return False
+
+
+def chair_review_worker_artifacts_applied(state: dict[str, Any], worker: dict[str, Any]) -> bool:
+    if not worker_is_chair_review(worker):
+        return False
+    review_relpath = chair_review_worker_path(worker)
+    if not review_relpath:
+        return False
+
+    rotation = chair_rotation_state(state)
+    if str(rotation.get("last_review_path") or "") != review_relpath:
+        return False
+    if not rotation.get("last_review_valid"):
+        return False
+
+    review_path = chair_review_state_path(review_relpath)
+    decision_path = chair_review_state_path(str(rotation.get("last_review_decision_path") or ""))
+    return bool(review_path and review_path.exists() and decision_path and decision_path.exists())
 
 
 def chair_review_report_path(config: dict[str, Any], agent_name: str, *, issued_at: str) -> Path:
@@ -3403,11 +3426,11 @@ def chair_reassignment_triage_needed_for_task(
         return False
 
 
-def failure_loop_agents_for_task_map(
+def failure_loop_task_agents_for_task_map(
     config: dict[str, Any],
     state: dict[str, Any],
     task_map: dict[str, dict[str, Any]],
-) -> set[str]:
+) -> set[tuple[str, str]]:
     settings = chair_review_settings(config)
     if not settings.get("reassignment_actions_enabled", True):
         return set()
@@ -3416,7 +3439,7 @@ def failure_loop_agents_for_task_map(
     review_statuses = {str(value).lower() for value in dispatch_settings.get("review_statuses", ["review"])}
     finalize_statuses = {str(value).lower() for value in dispatch_settings.get("finalize_statuses", ["review_approved"])}
     owned_statuses = {str(value).lower() for value in dispatch_settings.get("owned_statuses", ["in_progress", "todo"])}
-    agents: set[str] = set()
+    task_agents: set[tuple[str, str]] = set()
     for key, record in ((state.get("provider_guardrails", {}) or {}).get("task_failure_streaks", {}) or {}).items():
         if not isinstance(record, dict):
             continue
@@ -3434,9 +3457,20 @@ def failure_loop_agents_for_task_map(
         agent_name = display_name_for(config, provider)
         task_status = str(task.get("status") or "").lower()
         if task_status in review_statuses and str(task.get("reviewer") or "").strip() == agent_name:
-            agents.add(agent_name)
+            task_agents.add((task_id, agent_name))
         elif task_status in owned_statuses | finalize_statuses and str(task.get("owner") or "").strip() == agent_name:
-            agents.add(agent_name)
+            task_agents.add((task_id, agent_name))
+    return task_agents
+
+
+def failure_loop_agents_for_task_map(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+) -> set[str]:
+    agents: set[str] = set()
+    for _task_id, agent_name in failure_loop_task_agents_for_task_map(config, state, task_map):
+        agents.add(agent_name)
     return agents
 
 
@@ -4033,6 +4067,17 @@ def update_worker_runtime_markers(worker: dict[str, Any]) -> bool:
             worker["runner_signal"] = status_payload.get("signal")
             changed = True
     return changed
+
+
+def worker_runner_succeeded(worker: dict[str, Any]) -> bool:
+    runner_status = str(worker.get("runner_status") or "").strip().lower()
+    if runner_status not in {"completed", "success", "succeeded"}:
+        return False
+    try:
+        exit_code = int(worker.get("exit_code", 0))
+    except (TypeError, ValueError):
+        return False
+    return exit_code == 0 and not worker.get("runner_signal")
 
 
 def worker_heartbeat_is_stale(config: dict[str, Any], worker: dict[str, Any], now: datetime | None = None) -> bool:
@@ -5598,6 +5643,30 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             poll_counts["expired_lease_workers_failed"] += 1
             changed = True
             continue
+        if (
+            alive
+            and worker.get("status") in active_worker_statuses
+            and chair_review_worker_artifacts_applied(state, worker)
+        ):
+            terminate_worker_pid(worker.get("pid"))
+            worker["status"] = "completed"
+            worker["last_event_at"] = utc_now()
+            clear_task_failure_streak(state, worker=worker)
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_completed",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": "Chair review artifacts were accepted; terminated lingering control runner.",
+                    "worker_run_id": worker["run_id"],
+                    "pr_url": worker.get("pr_url"),
+                    "session_url": worker.get("session_url"),
+                },
+            )
+            finalize_queue_event_record(config, state, worker, "completed")
+            changed = True
+            continue
         last_event_advanced = bool(
             previous_last_event_at
             and worker.get("last_event_at")
@@ -5906,7 +5975,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                     changed = True
             continue
 
-        failure_reason = detect_worker_failure(worker)
+        failure_reason = None if worker_runner_succeeded(worker) else detect_worker_failure(worker)
         if failure_reason and worker.get("status") != "failed":
             failure = classify_worker_failure(config, worker, failure_reason)
             failure_summary = summarize_failure_reason(failure_reason, str(worker.get("provider") or worker.get("agent_id") or ""))
@@ -6480,7 +6549,58 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             if expired_lease
             else "Worker process missing during supervisor boot reconciliation."
         )
-        detected_reason = detect_worker_failure(worker)
+        runner_succeeded = worker_runner_succeeded(worker)
+        if runner_succeeded and (
+            worker_is_chair_review(worker) or worker_is_discussion_planning(worker) or worker_is_coordination_dispatch(worker)
+        ):
+            worker["status"] = "completed"
+            worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
+            clear_task_failure_streak(state, worker=worker)
+            finalize_queue_event_record(config, state, worker, "completed")
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_completed",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": "Control worker exited successfully during supervisor boot reconciliation.",
+                    "worker_run_id": run_id,
+                    "pr_url": worker.get("pr_url"),
+                    "session_url": worker.get("session_url"),
+                },
+            )
+            changed = True
+            continue
+
+        task_status = str(task_map.get(str(worker.get("task_id") or ""), {}).get("status") or "").lower()
+        terminal_statuses = {
+            str(value).lower()
+            for value in ready_dispatch_settings(config).get("worker_terminal_statuses", ["done", "review_approved"])
+        }
+        if runner_succeeded and task_status in terminal_statuses:
+            worker["status"] = "completed"
+            worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
+            clear_task_failure_streak(state, worker=worker)
+            finalize_queue_event_record(config, state, worker, "completed")
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_completed",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": "Worker exited successfully during supervisor boot reconciliation.",
+                    "worker_run_id": run_id,
+                    "pr_url": worker.get("pr_url"),
+                    "session_url": worker.get("session_url"),
+                },
+            )
+            changed = True
+            continue
+
+        if runner_succeeded:
+            reason = GENERIC_WORKER_EXIT_REASON
+
+        detected_reason = None if runner_succeeded else detect_worker_failure(worker)
         if detected_reason:
             failure = classify_worker_failure(config, worker, detected_reason)
             failure_summary = summarize_failure_reason(
@@ -8020,10 +8140,9 @@ def dispatch_ready_tasks(
     active_quota_counts = active_quota_group_counts(config, state, active_statuses)
     pending_quota_counts = queued_quota_group_counts(config, state)
     seen = state.setdefault("seen_event_keys", {})
-    failure_loop_agents = failure_loop_agents_for_task_map(config, state, task_map)
-    helper_claims_allowed = not (
-        bool(failure_loop_agents) and helper_settings.get("disable_when_failure_loops", True)
-    )
+    failure_loop_task_agents = failure_loop_task_agents_for_task_map(config, state, task_map)
+    failure_loop_task_ids = {task_id for task_id, _agent_name in failure_loop_task_agents}
+    disable_helper_claims_for_failure_loops = bool(helper_settings.get("disable_when_failure_loops", True))
 
     changed = False
     normalized = False
@@ -8038,6 +8157,8 @@ def dispatch_ready_tasks(
         status = load_status(config)
         tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
         task_map = {task.get(task_id_field): task for task in tasks}
+        failure_loop_task_agents = failure_loop_task_agents_for_task_map(config, state, task_map)
+        failure_loop_task_ids = {task_id for task_id, _agent_name in failure_loop_task_agents}
 
     dispatches = 0
     weighted_dispatch_enabled = bool(dispatch_weight_mapping(settings)) and not agent_ids_override
@@ -8067,8 +8188,6 @@ def dispatch_ready_tasks(
             break
         considered_agents += 1
         target_agent = display_name_for(config, agent_id)
-        if target_agent in failure_loop_agents:
-            continue
         if agent_auto_dispatch_block_reason(config, state, agent_id, provider_report):
             continue
         quota_limit = quota_group_concurrency_limit(config, agent_id, settings)
@@ -8128,6 +8247,8 @@ def dispatch_ready_tasks(
 
             if reason is not None and not agent_can_take_task(config, target_agent, task):
                 continue
+            if reason is not None and (task_id, target_agent) in failure_loop_task_agents:
+                continue
             if reason is not None and chair_reassignment_triage_needed_for_task(config, state, task_id, target_agent):
                 continue
 
@@ -8137,7 +8258,7 @@ def dispatch_ready_tasks(
                 or bool(helper_settings.get("claim_sidecars_when_idle", False))
             )
             helper_claim_candidate = (
-                helper_claims_allowed
+                (not disable_helper_claims_for_failure_loops or task_id not in failure_loop_task_ids)
                 and dependencies_satisfied(task, task_map, dependency_done_statuses)
                 and task_id not in active_task_ids
                 and task_id not in pending_task_ids
@@ -8714,8 +8835,7 @@ def run_once(
             if chair_review_failure_loop_details(config, state):
                 chair_dispatched = dispatch_chair_review(config, state, planning_state, provider_report=provider_report)
                 changed = chair_dispatched or changed
-                if not chair_dispatched and not chair_review_active(state):
-                    changed = dispatch_ready_tasks(config, state, provider_report=provider_report) or changed
+                changed = dispatch_ready_tasks(config, state, provider_report=provider_report) or changed
             else:
                 changed = dispatch_ready_tasks(config, state, provider_report=provider_report) or changed
                 changed = dispatch_chair_review(config, state, planning_state, provider_report=provider_report) or changed
