@@ -392,13 +392,13 @@ reassign_respec "RES-ACT-006-V2" "Claude" "Claude2" \
 # =====================================================================
 # Phase 10: LIVE-gate metadata additions
 # =====================================================================
-update_live_gate_metadata "BLA-LIVE-001-V2" "Claude2" "Codex" \
+update_live_gate_metadata "BLA-LIVE-001-V2" "Human/Ops" "Codex" \
   "Broker production live enable (human gate)"
 
-update_live_gate_metadata "CBL-LIVE-001-V2" "Codex2" "Claude" \
+update_live_gate_metadata "CBL-LIVE-001-V2" "Human/Ops" "Codex" \
   "Capital binding live enable (human gate)"
 
-update_live_gate_metadata "HA-PROD-001-V2" "Codex2" "Claude" \
+update_live_gate_metadata "HA-PROD-001-V2" "Human/Ops" "Codex" \
   "Production BFF HA cutover (human gate)"
 
 # =====================================================================

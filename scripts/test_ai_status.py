@@ -609,6 +609,65 @@ class SidecarTaskTests(unittest.TestCase):
         self.assertEqual(title, "[Sidecar] [Auto] [Parent APP-001] Prepare APP-001 BFF handoff packet")
 
 
+class HumanOpsAgentTests(unittest.TestCase):
+    def test_human_gate_can_belong_to_human_ops_without_blocking_worker(self) -> None:
+        state = {
+            "agents": [
+                {"name": "Claude", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
+                {"name": "Codex", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
+            ],
+            "tasks": [
+                {
+                    "id": "PROD-WRITES-001-V2",
+                    "title": "Enable production real writes",
+                    "phase": "Phase 8 / EPIC-LIVE-GATE",
+                    "owner": "human/ops",
+                    "reviewer": "Codex",
+                    "status": "blocked",
+                    "waiting_for": "ops",
+                    "depends_on": [],
+                    "artifacts": [],
+                    "acceptance": ["Human risk-owner + operator signoff"],
+                    "next": "Awaiting risk-owner and operator signoff",
+                    "last_update": "2026-06-01T00:00:00Z",
+                    "task_class": "human_gate",
+                    "non_dispatchable": True,
+                    "allowed_workers": [],
+                }
+            ],
+            "handoffs": [],
+            "blockers": [
+                {
+                    "task_id": "PROD-WRITES-001-V2",
+                    "owner": "human/ops",
+                    "waiting_for": "ops",
+                    "message": "Awaiting risk-owner and operator signoff",
+                    "status": "open",
+                    "created_at": "2026-06-01T00:00:00Z",
+                }
+            ],
+            "workload": {},
+            "workload_summary": {},
+        }
+
+        ai_status.validate_state(state)
+        ai_status.recompute_agents(state)
+        ai_status.recompute_workload(state)
+
+        task = ai_status.get_task(state, "PROD-WRITES-001-V2")
+        self.assertEqual(task["owner"], "Human/Ops")
+        self.assertEqual(task["waiting_for"], "Human/Ops")
+        self.assertEqual(state["blockers"][0]["owner"], "Human/Ops")
+        self.assertEqual(state["blockers"][0]["waiting_for"], "Human/Ops")
+
+        human_ops = ai_status.get_agent(state, "Human/Ops")
+        self.assertEqual(human_ops["status"], "blocked")
+        self.assertEqual(human_ops["current_task_ids"], ["PROD-WRITES-001-V2"])
+        self.assertEqual(ai_status.get_agent(state, "Claude")["status"], "idle")
+        self.assertEqual(state["workload"]["Human/Ops"], 0)
+        self.assertEqual(state["workload_summary"]["Human/Ops"]["blocked"], 1)
+
+
 class RuntimeWorkerLivenessTests(unittest.TestCase):
     def test_pid_is_alive_rejects_zombie_processes(self) -> None:
         with mock.patch.object(ai_status, "proc_pid_state", return_value="Z"):

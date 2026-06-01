@@ -263,17 +263,17 @@ assign_primary "HG-006-V2" "Claude" "Claude2" \
   "Phase 8 / EPIC-HG"
 
 # ===== EPIC-LIVE-GATE (3 human_gate placeholders) =====
-assign_human_gate "BLA-LIVE-001-V2" "Claude" "Codex" \
+assign_human_gate "BLA-LIVE-001-V2" "Human/Ops" "Codex" \
   "Broker production live enable (human gate)" \
   "Not engineering. Represents the human risk-owner + operator signoff event that flips BROKER_PRODUCTION_LIVE_ENABLED. Awaits BLA engineering completion + dual approval." \
   "risk_owner_signoff,operator_signoff,BLA-track-engineering-complete"
 
-assign_human_gate "CBL-LIVE-001-V2" "Claude" "Codex" \
+assign_human_gate "CBL-LIVE-001-V2" "Human/Ops" "Codex" \
   "Capital binding live enable (human gate)" \
   "Not engineering. Represents the human signoff event that flips CAPITAL_BINDING_LIVE_ENABLED. Must come after broker live; awaits CBL engineering completion + dual approval + BLA-LIVE-001-V2 done." \
   "risk_owner_signoff,operator_signoff,CBL-track-engineering-complete,BLA-LIVE-001-V2-done"
 
-assign_human_gate "HA-PROD-001-V2" "Claude" "Codex" \
+assign_human_gate "HA-PROD-001-V2" "Human/Ops" "Codex" \
   "Production HA cutover (human gate)" \
   "Not engineering. Represents the production BFF HA cutover authorization. Requires infra-decision-maker signoff in addition to risk-owner + operator." \
   "infra_decision_maker_signoff,HA-track-engineering-complete"
