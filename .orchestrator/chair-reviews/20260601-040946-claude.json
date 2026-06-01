@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Idle capacity exists (Claude, Gemini, Codex lanes available; codex1/codex2 quota pauses expire within 15 min); no global blocker. All ASST task parents are transitively blocked on ASST-OCGW-002 push auth failure — sidecars for those parents are blocked; ops/hygiene sidecars are open.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "ASST-OCGW-002",
+    "ASST-OCGW-003",
+    "ASST-OCGW-004",
+    "ASST-OCGW-005",
+    "ASST-KERNEL-007",
+    "ASST-BFF-001",
+    "ASST-BFF-002",
+    "ASST-FE-001",
+    "ASST-FE-002",
+    "ASST-SEC-001",
+    "ASST-USER-001"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "ASST-OCGW-002"
+  ]
+}
