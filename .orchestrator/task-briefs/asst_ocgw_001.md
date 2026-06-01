@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Add OpenClaw gateway credential mount contract
-- Status: review
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Claude
 - Phase: Assistant OpenClaw Gateway Kernel/User Mode
-- Last update: 2026-06-01T00:18:48Z
-- Next: Implemented credential mount contract; PR #711 merged into dev at ae897f2d729f61fcdc42fb4da5e606f259c7405f. Validation: py_compile assistant_credential_mounts/main; pytest focused adapter suite 53 passed; trailer and diff checks passed. Awaiting Claude review approval before owner closeout/done.
+- Last update: 2026-06-01T00:30:04Z
+- Next: Review approved: all 5 acceptance criteria satisfied. compose exposes dedicated service-user mount envs with correct defaults; human home paths rejected before stat; metadata sanitized (no raw paths); 6 tests pass. Returning to Codex for closeout.
 
 ## Summary
 保留 OpenClaw gateway 架構，新增 dedicated service-user .codex/.claude OAuth credential mount compose/env contract，禁止掛人類個人 home。
@@ -29,12 +29,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_assistant_kernel_user_2026-05-31/
 
 ## Recent Task Activity
-- 2026-06-01T00:12:50Z · Codex · worker_commit · Worker commit 6c451eba4675 recorded 1 staged file(s) for ASST-OCGW-001.
-- 2026-06-01T00:14:15Z · Codex · worker_commit · Worker commit ee1ee8f1b154 recorded 1 staged file(s) for ASST-OCGW-001.
-- 2026-06-01T00:15:31Z · Codex · worker_commit · Worker commit 83e81f5b4815 recorded 1 staged file(s) for ASST-OCGW-001.
-- 2026-06-01T00:15:51Z · Codex · worker_commit · Worker commit 0ee0fbb71f1c recorded 1 staged file(s) for ASST-OCGW-001.
-- 2026-06-01T00:18:48Z · Codex · handoff · Handoff to Claude: Implemented credential mount contract; PR #711 merged into dev at ae897f2d729f61fcdc42fb4da5e606f259c7405f. Validation: py_compile assistant_credential_mounts/main; pytest focused adapter suite 53 passed; trailer and diff checks passed. Awaiting Claude review approval before owner closeout/done.
-- 2026-06-01T00:22:09Z · Orchestrator · worker_failed · error: could not apply 6c451eba... ASST-OCGW-001: record task handoff brief
+- 2026-06-01T00:27:18Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-01T00:27:18Z · Orchestrator · worker_worktree_reused · -
+- 2026-06-01T00:27:18Z · Orchestrator · worker_started · Worker started via claude_cli: review_ready_dispatch
+- 2026-06-01T00:30:04Z · Claude · review_approved · Review approved: all 5 acceptance criteria satisfied. compose exposes dedicated service-user mount envs with correct defaults; human home paths rejected before stat; metadata sanitized (no raw paths); 6 tests pass. Returning to Codex for closeout.
+- 2026-06-01T00:31:45Z · unknown · worker_commit · Worker commit 0f8ffaeeaead recorded 2 staged file(s) for ASST-OCGW-001.
+- 2026-06-01T00:32:23Z · Orchestrator · worker_failed · Worker process missing during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
