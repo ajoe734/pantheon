@@ -1,0 +1,94 @@
+{
+  "approval_scope": "Authorize production real writes gate; runtime flag flip remains a separate operator action.",
+  "can_proceed": true,
+  "can_proceed_input": {
+    "approval_scope": "Authorize production real writes gate; runtime flag flip remains a separate operator action.",
+    "blocking_reasons": [],
+    "condition_note": "Human/Ops explicitly authorized this activation gate.",
+    "gate_results_blocking": [],
+    "missing_evidence": [],
+    "readiness_packet_can_proceed": true,
+    "readiness_packet_ref": "ai-status.json#tasks.PROD-WRITES-001-V2",
+    "required_evidence": [
+      "strict_publish_gate",
+      "ha_prod_gate_placeholder",
+      "human_ops_chat_approval_20260601"
+    ],
+    "unsafe_true_flags": []
+  },
+  "created_at": "2026-06-01T02:34:37Z",
+  "decision_id": "hgd-prod-writes-001-v2-20260601",
+  "decision_type": "production_activation_human_gate",
+  "does_not_mutate_runtime_flags": true,
+  "evidence_hash": "sha256:9443c7625a13dfdccb007b5a07f904b062dd5387a7ea512100e12d75298f5528",
+  "evidence_reviewed": [
+    {
+      "evidence_hash": "sha256:07fa199c01338eab05572b35cab07603962223bb4ced38c49e7d2e2f4eb712e5",
+      "key": "strict_publish_gate",
+      "reviewed_at": "2026-06-01T02:34:37Z",
+      "source_ref": "ai-task-archive/tasks/LSP-006-V2.json",
+      "status": "passed"
+    },
+    {
+      "evidence_hash": "sha256:79fc991cedaf7feee4fe54cf0f0d3a61d73bd4b38855facf0c92f86335c2a811",
+      "key": "ha_prod_gate_placeholder",
+      "reviewed_at": "2026-06-01T02:34:37Z",
+      "source_ref": "ai-task-archive/tasks/HA-PROD-001-V2.json",
+      "status": "passed"
+    },
+    {
+      "evidence_hash": "sha256:92b8d61a3db49cd2aaded53b4fb69087a274d020a3494e80585cac1930a710f6",
+      "key": "human_ops_chat_approval_20260601",
+      "reviewed_at": "2026-06-01T02:34:37Z",
+      "source_ref": "chat://codex-session/2026-06-01-human-ops-approval",
+      "statement": "Human/Ops approved both PROD-WRITES-001-V2 and LIVE-SCALE-001-V2 gates in chat.",
+      "status": "satisfied"
+    }
+  ],
+  "reason": "All required human gate signatures are bound to the reviewed evidence.",
+  "required_roles": [
+    "risk_owner",
+    "operator"
+  ],
+  "schema_version": "HumanGateDecision.v1",
+  "signatures": [
+    {
+      "actor_id": "Human/Ops:user",
+      "conditions": [],
+      "evidence_hash": "sha256:9443c7625a13dfdccb007b5a07f904b062dd5387a7ea512100e12d75298f5528",
+      "evidence_reviewed": [
+        "strict_publish_gate",
+        "ha_prod_gate_placeholder",
+        "human_ops_chat_approval_20260601"
+      ],
+      "meaning": "approved",
+      "operator_statement": "Human/Ops approved both PROD-WRITES-001-V2 and LIVE-SCALE-001-V2 gates in chat.",
+      "role": "risk_owner",
+      "signature_id": "hgs-prod-writes-001-v2-risk-owner-20260601",
+      "signed_at": "2026-06-01T02:34:37Z",
+      "source_ref": "chat://codex-session/2026-06-01-human-ops-approval"
+    },
+    {
+      "actor_id": "Human/Ops:user",
+      "conditions": [],
+      "evidence_hash": "sha256:9443c7625a13dfdccb007b5a07f904b062dd5387a7ea512100e12d75298f5528",
+      "evidence_reviewed": [
+        "strict_publish_gate",
+        "ha_prod_gate_placeholder",
+        "human_ops_chat_approval_20260601"
+      ],
+      "meaning": "approved",
+      "operator_statement": "Human/Ops approved both PROD-WRITES-001-V2 and LIVE-SCALE-001-V2 gates in chat.",
+      "role": "operator",
+      "signature_id": "hgs-prod-writes-001-v2-operator-20260601",
+      "signed_at": "2026-06-01T02:34:37Z",
+      "source_ref": "chat://codex-session/2026-06-01-human-ops-approval"
+    }
+  ],
+  "source_statement": "Human/Ops approved both PROD-WRITES-001-V2 and LIVE-SCALE-001-V2 gates in chat.",
+  "status": "approved",
+  "target_environment": "production",
+  "target_id": "PROD-WRITES-001-V2",
+  "target_type": "production_activation_gate",
+  "updated_at": "2026-06-01T02:34:37Z"
+}

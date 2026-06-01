@@ -1,0 +1,104 @@
+{
+  "approval_scope": "Authorize live capital scale-up gate; budget flag/config mutation remains a separate operator action.",
+  "can_proceed": true,
+  "can_proceed_input": {
+    "approval_scope": "Authorize live capital scale-up gate; budget flag/config mutation remains a separate operator action.",
+    "blocking_reasons": [],
+    "condition_note": "Human/Ops approval accepts the available BLA-007-V2 first-week observation report builder/closeout evidence for this gate.",
+    "gate_results_blocking": [],
+    "missing_evidence": [],
+    "readiness_packet_can_proceed": true,
+    "readiness_packet_ref": "ai-status.json#tasks.LIVE-SCALE-001-V2",
+    "required_evidence": [
+      "capital_binding_live_gate_placeholder",
+      "broker_live_gate_placeholder",
+      "first_week_observation_report_builder",
+      "human_ops_chat_approval_20260601"
+    ],
+    "unsafe_true_flags": []
+  },
+  "created_at": "2026-06-01T02:34:37Z",
+  "decision_id": "hgd-live-scale-001-v2-20260601",
+  "decision_type": "production_activation_human_gate",
+  "does_not_mutate_runtime_flags": true,
+  "evidence_hash": "sha256:fcef80fbf83c0aa5d35bccbdf407d3b71c768d1d7f1f0b7eb876b1a50865d33f",
+  "evidence_reviewed": [
+    {
+      "evidence_hash": "sha256:2b8bbdb67ece2c1c0ed3433461d8096baa600f7a93df4be08faaccf70e7d8ecc",
+      "key": "capital_binding_live_gate_placeholder",
+      "reviewed_at": "2026-06-01T02:34:37Z",
+      "source_ref": "ai-task-archive/tasks/CBL-LIVE-001-V2.json",
+      "status": "passed"
+    },
+    {
+      "evidence_hash": "sha256:e62d9d488e348b36985eb6b52414fb7adfe10b6ab6f1d0a87e88484b0c396090",
+      "key": "broker_live_gate_placeholder",
+      "reviewed_at": "2026-06-01T02:34:37Z",
+      "source_ref": "ai-task-archive/tasks/BLA-LIVE-001-V2.json",
+      "status": "passed"
+    },
+    {
+      "evidence_hash": "sha256:c4ffb673c0f582e437bab227779231604bea22262b8029a0a29af88c92edd240",
+      "key": "first_week_observation_report_builder",
+      "reviewed_at": "2026-06-01T02:34:37Z",
+      "source_ref": "ai-task-archive/tasks/BLA-007-V2.json",
+      "status": "passed"
+    },
+    {
+      "evidence_hash": "sha256:92b8d61a3db49cd2aaded53b4fb69087a274d020a3494e80585cac1930a710f6",
+      "key": "human_ops_chat_approval_20260601",
+      "reviewed_at": "2026-06-01T02:34:37Z",
+      "source_ref": "chat://codex-session/2026-06-01-human-ops-approval",
+      "statement": "Human/Ops approved both PROD-WRITES-001-V2 and LIVE-SCALE-001-V2 gates in chat.",
+      "status": "satisfied"
+    }
+  ],
+  "reason": "All required human gate signatures are bound to the reviewed evidence.",
+  "required_roles": [
+    "risk_owner",
+    "operator"
+  ],
+  "schema_version": "HumanGateDecision.v1",
+  "signatures": [
+    {
+      "actor_id": "Human/Ops:user",
+      "conditions": [],
+      "evidence_hash": "sha256:fcef80fbf83c0aa5d35bccbdf407d3b71c768d1d7f1f0b7eb876b1a50865d33f",
+      "evidence_reviewed": [
+        "capital_binding_live_gate_placeholder",
+        "broker_live_gate_placeholder",
+        "first_week_observation_report_builder",
+        "human_ops_chat_approval_20260601"
+      ],
+      "meaning": "approved",
+      "operator_statement": "Human/Ops approved both PROD-WRITES-001-V2 and LIVE-SCALE-001-V2 gates in chat.",
+      "role": "risk_owner",
+      "signature_id": "hgs-live-scale-001-v2-risk-owner-20260601",
+      "signed_at": "2026-06-01T02:34:37Z",
+      "source_ref": "chat://codex-session/2026-06-01-human-ops-approval"
+    },
+    {
+      "actor_id": "Human/Ops:user",
+      "conditions": [],
+      "evidence_hash": "sha256:fcef80fbf83c0aa5d35bccbdf407d3b71c768d1d7f1f0b7eb876b1a50865d33f",
+      "evidence_reviewed": [
+        "capital_binding_live_gate_placeholder",
+        "broker_live_gate_placeholder",
+        "first_week_observation_report_builder",
+        "human_ops_chat_approval_20260601"
+      ],
+      "meaning": "approved",
+      "operator_statement": "Human/Ops approved both PROD-WRITES-001-V2 and LIVE-SCALE-001-V2 gates in chat.",
+      "role": "operator",
+      "signature_id": "hgs-live-scale-001-v2-operator-20260601",
+      "signed_at": "2026-06-01T02:34:37Z",
+      "source_ref": "chat://codex-session/2026-06-01-human-ops-approval"
+    }
+  ],
+  "source_statement": "Human/Ops approved both PROD-WRITES-001-V2 and LIVE-SCALE-001-V2 gates in chat.",
+  "status": "approved",
+  "target_environment": "live",
+  "target_id": "LIVE-SCALE-001-V2",
+  "target_type": "production_activation_gate",
+  "updated_at": "2026-06-01T02:34:37Z"
+}

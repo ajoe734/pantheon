@@ -1,14 +1,16 @@
 {
   "blueprint_source": "docs/04/pantheon_design_blueprint_supplement_2026-05-19/pantheon_blueprint_supplement.md#12-final-acceptance-matrix",
-  "bpc001_overall_passed": false,
+  "bpc001_overall_passed": true,
   "bpc001_report_ref": "support/evidence/BPC-001-V2/blueprint_completion_report.json",
   "failed_rows": [],
-  "generated_at": "2026-05-21T00:54:29Z",
-  "go": false,
-  "human_gate_record_count": 2,
+  "generated_at": "2026-06-01T02:34:50Z",
+  "go": true,
+  "human_gate_record_count": 4,
   "human_gate_records": [
+    "support/evidence/LIVE-SCALE-001-V2/human-gate/decision.json",
     "support/evidence/MGMT-BROKER-006/human-gate/human-gate-packet.json",
-    "support/evidence/MGMT-BROKER-006/human-gate/summary.json"
+    "support/evidence/MGMT-BROKER-006/human-gate/summary.json",
+    "support/evidence/PROD-WRITES-001-V2/human-gate/decision.json"
   ],
   "matrix": [
     {
@@ -410,31 +412,27 @@
     },
     {
       "bpc001_condition_id": "production_activation_signoff_gates",
-      "bpc001_status": "pending_human_signoff",
+      "bpc001_status": "passed",
       "capability": "Production real-writes and live-scale human signoff",
       "evidence_paths": [],
       "human_gate_type": "production_real_writes_enable",
       "id": "production_activation_gates",
       "missing_evidence_paths": [],
-      "passed": false,
+      "passed": true,
       "required_before_live": true,
       "status_target": "approved",
       "task_refs": [],
       "tasks_not_done": [],
-      "verdict": "pending_human_signoff"
+      "verdict": "passed"
     }
   ],
-  "overall_verdict": "pending_human_signoff",
-  "pending_human_signoff_rows": [
-    "production_activation_gates"
-  ],
+  "overall_verdict": "go",
+  "pending_human_signoff_rows": [],
   "summary": {
     "failed": 0,
-    "passed": 15,
-    "pending_human_signoff": 1,
+    "passed": 16,
+    "pending_human_signoff": 0,
     "total": 16
   },
-  "task_id": "BPC-002-V2",
-  "closeout_at": "2026-05-21T00:00:00Z",
-  "closeout_note": "PR #377 merged. All 8 pytest tests pass. Verdict remains pending_human_signoff until production activation gates receive human signoff per blueprint §16."
+  "task_id": "BPC-002-V2"
 }
