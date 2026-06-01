@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "ASST-OCGW-002 blocks the assistant dependency chain; no independent runnable sidecar parent exists.",
+  "blocked_by": [
+    "ASST-OCGW-002 is blocked after review approval by Gemini2 PR push/auth failure; its worktree is ahead 3/behind 18 and dirty with no open PR, and all 10 todo tasks depend on it directly or indirectly."
+  ],
+  "blocked_sidecar_parents": [
+    "ASST-OCGW-002"
+  ],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260601T022836Z-1c1f7761",
+      "decision": "allow",
+      "reason": "The Agent request is scoped to read-only tracing of the persona LLM call site and does not request writes, shell execution, credentials, or deployment.",
+      "remember": false
+    }
+  ],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "ASST-OCGW-002",
+    "OPS-CHAIR-REVIEW-PIPELINE",
+    "LOVABLE-STRICT-PUBLISH"
+  ]
+}
