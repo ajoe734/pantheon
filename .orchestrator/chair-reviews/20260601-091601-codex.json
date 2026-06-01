@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "ASST-OCGW-002 is blocked on unsafe dirty push/PR closeout and gates the useful assistant backlog.",
+  "blocked_by": [
+    "ASST-OCGW-002 has been blocked since 2026-06-01T00:47:46Z after Gemini2 could not push/open the PR.",
+    "The ASST-OCGW-002 worktree is task/ASST-OCGW-002 tracking origin/dev, ahead 3, behind 68, dirty, and has no origin/task/ASST-OCGW-002 branch.",
+    "All 10 current assistant todo tasks depend on ASST-OCGW-002 directly or transitively through ASST-OCGW-003 or ASST-OCGW-004."
+  ],
+  "blocked_sidecar_parents": [
+    "ASST-OCGW-002"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "ASST-OCGW-002",
+    "OPS-ASST-OCGW-002-CLOSEOUT-PUSH-REPAIR-20260601",
+    "OPS-CHAIR-PR-BASE-HYGIENE-20260601",
+    "OPS-ARCHIVE-PUSH-STATUS-AUDIT-20260601",
+    "OPS-PUBLISH-WORKFLOW-HEALTH-20260601"
+  ]
+}
