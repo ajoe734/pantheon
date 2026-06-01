@@ -152,9 +152,6 @@ class AssistantCredentialMounts:
         return "ok"
 
     def _validate_contract(self, contract: CredentialMountContract) -> CredentialMountValidation:
-        if self._invalid_mount_mode():
-            return self._metadata(contract, False, "invalid_mount_mode", "not_checked")
-
         host_status = self._host_policy_status(contract)
         if host_status != "ok":
             return self._metadata(contract, False, host_status, "not_checked")
@@ -162,6 +159,9 @@ class AssistantCredentialMounts:
         container_status = self._container_policy_status(contract)
         if container_status != "ok":
             return self._metadata(contract, False, container_status, "not_checked")
+
+        if self._invalid_mount_mode():
+            return self._metadata(contract, False, "invalid_mount_mode", "not_checked")
 
         try:
             host_stat = self._stat(os.path.normpath(contract.host_path))
@@ -193,7 +193,17 @@ class AssistantCredentialMounts:
         status: str,
         owner_check: str,
     ) -> CredentialMountValidation:
-        host_source = "dedicated_service_user" if status not in {"forbidden_human_home"} else "rejected"
+        host_source = (
+            "rejected"
+            if status
+            in {
+                "forbidden_human_home",
+                "host_path_not_configured",
+                "host_path_not_service_user",
+                "unexpected_host_directory",
+            }
+            else "dedicated_service_user"
+        )
         return CredentialMountValidation(
             provider=contract.provider,
             ready=ready,
