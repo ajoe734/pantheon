@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import sys
+import shutil
+import subprocess
+import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
-
+from typing import Any, Dict
 
 try:
     from assistant.redaction import RedactionError, RedactionResult, redact_assistant_payload
@@ -16,6 +18,7 @@ except ModuleNotFoundError:  # pragma: no cover - exercised in service import co
         sys.path.insert(0, str(_BFF_DIR))
     from assistant.redaction import RedactionError, RedactionResult, redact_assistant_payload
 
+from assistant_credential_mounts import AssistantCredentialMounts
 
 ProviderRunner = Callable[[Mapping[str, Any]], Any]
 TranscriptSink = Callable[[Mapping[str, Any]], None]
@@ -73,6 +76,35 @@ class AssistantProviderRuntime:
         self._redactor = redactor
         self._redaction_enabled = redaction_enabled
         self._kernel_redaction_override = kernel_redaction_override
+        self._credential_mounts = AssistantCredentialMounts()
+
+    def check_readiness(self, provider: str) -> Dict[str, Any]:
+        """Probes the provider binary and auth mount readiness."""
+        binary_path = shutil.which(provider)
+        if not binary_path:
+            return {"ready": False, "reason": f"Binary {provider} not found"}
+
+        try:
+            version = subprocess.check_output([binary_path, "--version"], stderr=subprocess.STDOUT).decode().strip()
+        except Exception as e:
+            version = "unknown"
+            return {"ready": False, "reason": f"Binary {provider} probe failed: {e}"}
+
+        mounts = self._credential_mounts.validate_mounts()
+        mount_validation = mounts.get(provider)
+        
+        if not mount_validation:
+            return {"ready": False, "reason": f"No mount configuration for {provider}"}
+        
+        if not mount_validation.ready:
+            return {"ready": False, "reason": f"Mount validation failed: {mount_validation.status}", "mount_status": mount_validation.status}
+
+        return {
+            "ready": True,
+            "binary_path": binary_path,
+            "version": version,
+            "mount_mode": mount_validation.mount_mode
+        }
 
     def invoke(self, request: ProviderInvocationRequest) -> ProviderInvocationResult:
         invocation_payload = {

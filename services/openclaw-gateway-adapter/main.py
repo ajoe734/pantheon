@@ -76,6 +76,7 @@ from live_gate_adapter import (
     LiveGateError,
 )
 from assistant_credential_mounts import AssistantCredentialMounts
+from assistant_provider_runtime import AssistantProviderRuntime
 
 from services.foundation.health import (
     health_payload,
@@ -652,6 +653,16 @@ def get_assistant_credentials() -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Assistant readiness
+# ---------------------------------------------------------------------------
+
+@app.get("/api/openclaw-adapter/assistant/readiness/{provider}")
+def get_assistant_readiness(provider: str) -> Dict[str, Any]:
+    """Probes the provider binary and auth mount readiness."""
+    return _ASSISTANT_RUNTIME.check_readiness(provider)
+
+
+# ---------------------------------------------------------------------------
 # Session metadata facade
 # ---------------------------------------------------------------------------
 
@@ -1074,7 +1085,11 @@ _LIVE_GATE = LiveGateAdapter(
     audit_log=_LIVE_GATE_AUDIT,
 )
 
+def _dummy_runner(payload: Dict[str, Any]) -> Any:
+    return {"status": "ok"}
+
 _ASSISTANT_MOUNTS = AssistantCredentialMounts()
+_ASSISTANT_RUNTIME = AssistantProviderRuntime(runner=_dummy_runner)
 
 
 def _paper_broker_error_response(exc: PaperBrokerAdapterError) -> JSONResponse:
