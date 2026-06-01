@@ -3,7 +3,7 @@
 Task: Add OpenClaw gateway credential mount contract
 Owner: Codex
 Reviewer: Claude
-Anchor commit: `4bbd4d192d03eb770bbabb7aeb2333ecc6238ddf`
+Anchor commit: `7c71d2b6c956fdde2cf05f318404d4b2ce2692b9`
 
 ## Delivered Scope
 
