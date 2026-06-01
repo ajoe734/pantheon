@@ -107,6 +107,11 @@ KNOWN_AGENTS = {
         "default_branch": "feat/copilot-research-critique",
         "target_workload": 5,
     },
+    "Human/Ops": {
+        "capability_lane": ["human-gate", "operations", "signoff"],
+        "default_branch": "human/ops",
+        "target_workload": 0,
+    },
 }
 
 AGENT_ALIASES = {
@@ -122,6 +127,11 @@ AGENT_ALIASES = {
     "copilot": "Copilot",
     "copilot host": "Copilot",
     "copilot_host": "Copilot",
+    "human": "Human/Ops",
+    "human ops": "Human/Ops",
+    "human/ops": "Human/Ops",
+    "human-ops": "Human/Ops",
+    "ops": "Human/Ops",
 }
 
 RETIRED_AGENT_REPLACEMENTS = {}
