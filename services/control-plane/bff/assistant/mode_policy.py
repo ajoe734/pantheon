@@ -31,6 +31,39 @@ KERNEL_MODES = frozenset({
     AssistantMode.KERNEL_REPAIR,
 })
 
+COMMAND_CLASS_HEALTH_PROBE = "health_probe"
+COMMAND_CLASS_REPO_STATUS = "repo_status"
+COMMAND_CLASS_CODE_SEARCH = "code_search"
+COMMAND_CLASS_FILE_SLICE = "file_slice"
+COMMAND_CLASS_TEST_RUN = "test_run"
+COMMAND_CLASS_LOG_READ = "log_read"
+
+COMMAND_CLASSES_BY_MODE = {
+    AssistantMode.USER: tuple(),
+    AssistantMode.KERNEL_OBSERVE: (
+        COMMAND_CLASS_HEALTH_PROBE,
+        COMMAND_CLASS_REPO_STATUS,
+    ),
+    AssistantMode.KERNEL_DEBUG: (
+        COMMAND_CLASS_HEALTH_PROBE,
+        COMMAND_CLASS_REPO_STATUS,
+        COMMAND_CLASS_CODE_SEARCH,
+        COMMAND_CLASS_FILE_SLICE,
+        COMMAND_CLASS_TEST_RUN,
+        COMMAND_CLASS_LOG_READ,
+    ),
+    # Repair write/restart commands are intentionally outside ASST-KERNEL-006;
+    # ASST-KERNEL-007 owns task worktree and repo mutation guardrails.
+    AssistantMode.KERNEL_REPAIR: (
+        COMMAND_CLASS_HEALTH_PROBE,
+        COMMAND_CLASS_REPO_STATUS,
+        COMMAND_CLASS_CODE_SEARCH,
+        COMMAND_CLASS_FILE_SLICE,
+        COMMAND_CLASS_TEST_RUN,
+        COMMAND_CLASS_LOG_READ,
+    ),
+}
+
 
 class ModePolicyViolation(ValueError):
     """Raised when a session creation request violates mode policy."""
@@ -42,6 +75,23 @@ class ModePolicyViolation(ValueError):
 
 def _has_kernel_capability(capabilities: List[str]) -> bool:
     return any(cap.startswith(KERNEL_CAPABILITY_PREFIX) for cap in capabilities)
+
+
+def command_classes_for_mode(mode: AssistantMode | str) -> List[str]:
+    """Return command broker classes visible for the assistant mode.
+
+    This is a BFF/UI policy helper only.  OpenClaw adapter policy remains the
+    enforcement boundary for command authorization.
+    """
+    try:
+        resolved = mode if isinstance(mode, AssistantMode) else AssistantMode(str(mode))
+    except ValueError:
+        return []
+    return list(COMMAND_CLASSES_BY_MODE.get(resolved, tuple()))
+
+
+def mode_allows_command_broker(mode: AssistantMode | str) -> bool:
+    return bool(command_classes_for_mode(mode))
 
 
 def validate_session_request(

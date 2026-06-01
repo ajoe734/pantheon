@@ -27,6 +27,13 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from assistant_command_policy import (
+    ASSISTANT_COMMAND_TOOL_NAME,
+    AssistantCommandPolicy,
+    build_command_audit_entry,
+    command_argv_hash,
+)
+
 
 # ---------------------------------------------------------------------------
 # Audit log
@@ -238,6 +245,7 @@ class ToolPolicy:
         return {
             "allowed_tools": self.allowed_tools,
             "allowed_workflows": self.allowed_workflows,
+            "assistant_command_tool": ASSISTANT_COMMAND_TOOL_NAME,
             "always_blocked_tools": sorted(_ALWAYS_BLOCKED_TOOLS),
             "always_blocked_tool_prefixes": list(_ALWAYS_BLOCKED_TOOL_PREFIXES),
             "always_blocked_workflow_prefixes": list(_ALWAYS_BLOCKED_WORKFLOW_PREFIXES),
@@ -300,11 +308,13 @@ class ToolWorkflowBridge:
         self,
         *,
         policy: Optional[ToolPolicy] = None,
+        command_policy: Optional[AssistantCommandPolicy] = None,
         audit_log: Optional[BridgeAuditLog] = None,
         clock: Callable[[], str] = _utc_now_iso,
         trace_id_factory: Callable[[], str] = lambda: uuid.uuid4().hex,
     ) -> None:
         self._policy = policy or ToolPolicy()
+        self._command_policy = command_policy or AssistantCommandPolicy()
         self._audit = audit_log or BridgeAuditLog()
         self._clock = clock
         self._trace_id_factory = trace_id_factory
@@ -478,6 +488,113 @@ class ToolWorkflowBridge:
             "workflow_ref": workflow_ref,
             "job_id": job_id or None,
             "result": result,
+        }
+
+    def request_assistant_command(
+        self,
+        *,
+        session_id: str,
+        operator_id: str,
+        mode: str,
+        argv: List[Any],
+        command_class: Optional[str] = None,
+        cwd: Optional[str] = None,
+        trace_id: Optional[str] = None,
+        command_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Gate an assistant command request through OpenClaw and mode policy.
+
+        This method only authorizes or denies the request and writes audit.  It
+        does not execute the command.
+        """
+        if not operator_id:
+            raise BridgeError("BRIDGE_OPERATOR_REQUIRED", "operator_id is required.", status_code=401)
+        if not session_id:
+            raise BridgeError("BRIDGE_SESSION_REQUIRED", "session_id is required.", status_code=400)
+        if not argv:
+            raise BridgeError("BRIDGE_COMMAND_ARGV_REQUIRED", "command argv is required.", status_code=400)
+
+        trace_id = trace_id or self._trace_id_factory()
+        command_id = command_id or f"asst_cmd_{uuid.uuid4().hex}"
+        normalized_argv = [str(arg) for arg in argv if str(arg) != ""]
+
+        tool_decision = self._policy.evaluate_tool(ASSISTANT_COMMAND_TOOL_NAME)
+        base_entry: Dict[str, Any] = {
+            "event_type": "assistant.command.denied",
+            "request_type": "assistant_command",
+            "outcome": "denied",
+            "command_id": command_id,
+            "trace_id": trace_id,
+            "operator_id": operator_id,
+            "session_id": session_id,
+            "mode": str(getattr(mode, "value", mode) or ""),
+            "command_class": command_class,
+            "argv_hash": command_argv_hash(normalized_argv),
+            "argv_head": normalized_argv[0] if normalized_argv else None,
+            "cwd": cwd,
+            "broker_tool": ASSISTANT_COMMAND_TOOL_NAME,
+            "policy_layer": "openclaw_tool_policy",
+            "policy_decision": "allowed" if tool_decision.allowed else "denied",
+            "policy_class": tool_decision.policy_class,
+            "policy_reason": tool_decision.reason,
+        }
+        if not tool_decision.allowed:
+            self._audit.record(base_entry)
+            raise BridgeError(
+                "BRIDGE_ASSISTANT_COMMAND_DENIED",
+                tool_decision.reason,
+                status_code=403,
+                details={
+                    "broker_tool": ASSISTANT_COMMAND_TOOL_NAME,
+                    "policy_layer": "openclaw_tool_policy",
+                    "policy_class": tool_decision.policy_class,
+                },
+            )
+
+        decision = self._command_policy.evaluate(
+            mode=mode,
+            argv=normalized_argv,
+            command_class=command_class,
+            cwd=cwd,
+        )
+        entry = build_command_audit_entry(
+            command_id=command_id,
+            session_id=session_id,
+            operator_id=operator_id,
+            trace_id=trace_id,
+            decision=decision,
+            extra={
+                "broker_tool": ASSISTANT_COMMAND_TOOL_NAME,
+                "tool_policy_class": tool_decision.policy_class,
+                "policy_layer": "assistant_command_policy",
+            },
+        )
+        self._audit.record(entry)
+        if not decision.allowed:
+            raise BridgeError(
+                "BRIDGE_ASSISTANT_COMMAND_DENIED",
+                decision.reason,
+                status_code=403,
+                details={
+                    "command_id": command_id,
+                    "mode": decision.mode,
+                    "command_class": decision.command_class,
+                    "policy_layer": "assistant_command_policy",
+                    "policy_class": decision.policy_class,
+                },
+            )
+
+        return {
+            "status": "allowed",
+            "trace_id": trace_id,
+            "command_id": command_id,
+            "session_id": session_id,
+            "mode": decision.mode,
+            "command_class": decision.command_class,
+            "argv_hash": command_argv_hash(decision.argv),
+            "policy_class": decision.policy_class,
+            "reason": decision.reason,
+            "note": "Command authorization only; execution is handled by a separate broker runner.",
         }
 
     def list_effective_tools(
