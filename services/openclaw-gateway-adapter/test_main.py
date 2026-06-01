@@ -309,6 +309,73 @@ class TestCapabilities(unittest.TestCase):
         self.assertNotIn("/srv/pantheon-assistant", str(body))
         self.assertNotIn("/home/pantheon-assistant", str(body))
 
+    def test_assistant_codex_readiness_uses_codex_provider(self):
+        with patch.object(
+            adapter_main._CODEX_PROVIDER,
+            "readiness",
+            return_value={"provider": "codex_cli", "ready": False, "status": "degraded"},
+        ) as readiness:
+            resp = client.get("/api/openclaw-adapter/assistant/readiness/codex?auth_probe=true")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["provider"], "codex_cli")
+        readiness.assert_called_once_with(auth_probe=True)
+
+    def test_assistant_provider_list_includes_codex(self):
+        with patch.object(
+            adapter_main._CODEX_PROVIDER,
+            "readiness",
+            return_value={"provider": "codex_cli", "ready": True, "status": "ready"},
+        ):
+            resp = client.get("/api/openclaw-adapter/assistant/providers")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["status"], "ok")
+        self.assertEqual(body["data"][0]["provider"], "codex_cli")
+
+    def test_assistant_codex_invoke_passes_through_runtime(self):
+        fake_result = types.SimpleNamespace(
+            provider="codex_cli",
+            mode="user",
+            status="completed",
+            output={"status": "completed", "stdout": "ok"},
+            redaction={"provider_invocation": {"enabled": True}},
+        )
+        with patch.object(adapter_main._CODEX_RUNTIME, "invoke", return_value=fake_result) as invoke:
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/codex/invoke",
+                json={"mode": "user", "prompt": "hello", "context_pack": {"x": 1}},
+                headers={"X-Operator-Id": "op-1", "X-Trace-Id": "trace-1"},
+            )
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["data"]["provider"], "codex_cli")
+        request = invoke.call_args.args[0]
+        self.assertEqual(request.provider, "codex_cli")
+        self.assertEqual(request.mode, "user")
+        self.assertEqual(request.prompt, "hello")
+        self.assertEqual(request.metadata["operator_id"], "op-1")
+        self.assertEqual(request.metadata["trace_id"], "trace-1")
+
+    def test_assistant_codex_invoke_returns_provider_error(self):
+        with patch.object(
+            adapter_main._CODEX_RUNTIME,
+            "invoke",
+            side_effect=adapter_main.CodexProviderError(
+                "CODEX_TIMEOUT",
+                "Codex provider timed out after 7s.",
+                status_code=504,
+                retryable=True,
+            ),
+        ):
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/codex/invoke",
+                json={"mode": "user", "prompt": "hello"},
+            )
+        self.assertEqual(resp.status_code, 504)
+        body = resp.json()
+        self.assertEqual(body["error_code"], "CODEX_TIMEOUT")
+        self.assertTrue(body["retryable"])
+
 
 # ---------------------------------------------------------------------------
 # Session stubs

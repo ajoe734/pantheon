@@ -76,7 +76,12 @@ from live_gate_adapter import (
     LiveGateError,
 )
 from assistant_credential_mounts import AssistantCredentialMounts
-from assistant_provider_runtime import AssistantProviderRuntime
+from assistant_codex_provider import AssistantCodexProvider, CodexProviderError
+from assistant_provider_runtime import (
+    AssistantProviderRuntime,
+    AssistantProviderRuntimeError,
+    ProviderInvocationRequest,
+)
 
 from services.foundation.health import (
     health_payload,
@@ -656,10 +661,82 @@ def get_assistant_credentials() -> Dict[str, Any]:
 # Assistant readiness
 # ---------------------------------------------------------------------------
 
+class AssistantProviderInvokeRequest(BaseModel):
+    mode: str = "user"
+    prompt: str
+    context_pack: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+def _assistant_provider_runtime_error_response(exc: AssistantProviderRuntimeError) -> JSONResponse:
+    return JSONResponse(
+        status_code=400,
+        content={
+            "status": "provider_error",
+            "error_code": exc.code,
+            "message": str(exc),
+            "stage": exc.stage,
+            "retryable": False,
+        },
+    )
+
+
 @app.get("/api/openclaw-adapter/assistant/readiness/{provider}")
-def get_assistant_readiness(provider: str) -> Dict[str, Any]:
+def get_assistant_readiness(provider: str, auth_probe: bool = False) -> Dict[str, Any]:
     """Probes the provider binary and auth mount readiness."""
+    if provider in {"codex", "codex_cli"}:
+        return _CODEX_PROVIDER.readiness(auth_probe=auth_probe)
     return _ASSISTANT_RUNTIME.check_readiness(provider)
+
+
+@app.get("/api/openclaw-adapter/assistant/providers")
+def list_assistant_providers(auth_probe: bool = False) -> Dict[str, Any]:
+    return {
+        "status": "ok",
+        "data": [
+            _CODEX_PROVIDER.readiness(auth_probe=auth_probe),
+        ],
+    }
+
+
+@app.post("/api/openclaw-adapter/assistant/providers/codex/invoke")
+def invoke_codex_provider(
+    req: AssistantProviderInvokeRequest,
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+) -> JSONResponse:
+    metadata = dict(req.metadata or {})
+    if x_operator_id:
+        metadata.setdefault("operator_id", x_operator_id)
+    if x_trace_id:
+        metadata.setdefault("trace_id", x_trace_id)
+    try:
+        result = _CODEX_RUNTIME.invoke(
+            ProviderInvocationRequest(
+                provider="codex_cli",
+                mode=req.mode,
+                prompt=req.prompt,
+                context_pack=req.context_pack or {},
+                metadata=metadata,
+            )
+        )
+    except CodexProviderError as exc:
+        return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
+    except AssistantProviderRuntimeError as exc:
+        return _assistant_provider_runtime_error_response(exc)
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "ok",
+            "data": {
+                "provider": result.provider,
+                "mode": result.mode,
+                "status": result.status,
+                "output": result.output,
+                "redaction": result.redaction,
+            },
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1089,6 +1166,8 @@ def _dummy_runner(payload: Dict[str, Any]) -> Any:
     return {"status": "ok"}
 
 _ASSISTANT_MOUNTS = AssistantCredentialMounts()
+_CODEX_PROVIDER = AssistantCodexProvider(mounts=_ASSISTANT_MOUNTS)
+_CODEX_RUNTIME = AssistantProviderRuntime(runner=_CODEX_PROVIDER.invoke)
 _ASSISTANT_RUNTIME = AssistantProviderRuntime(runner=_dummy_runner)
 
 
