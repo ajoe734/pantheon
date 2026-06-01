@@ -3227,6 +3227,24 @@ def chair_review_active(state: dict[str, Any]) -> bool:
     return False
 
 
+def chair_review_worker_artifacts_applied(state: dict[str, Any], worker: dict[str, Any]) -> bool:
+    if not worker_is_chair_review(worker):
+        return False
+    review_relpath = chair_review_worker_path(worker)
+    if not review_relpath:
+        return False
+
+    rotation = chair_rotation_state(state)
+    if str(rotation.get("last_review_path") or "") != review_relpath:
+        return False
+    if not rotation.get("last_review_valid"):
+        return False
+
+    review_path = chair_review_state_path(review_relpath)
+    decision_path = chair_review_state_path(str(rotation.get("last_review_decision_path") or ""))
+    return bool(review_path and review_path.exists() and decision_path and decision_path.exists())
+
+
 def chair_review_report_path(config: dict[str, Any], agent_name: str, *, issued_at: str) -> Path:
     stamp = issued_at.replace("-", "").replace(":", "").replace("T", "-").replace("Z", "")
     filename = f"{stamp}-{normalize_agent_id(agent_name) or agent_name.lower()}.md"
@@ -5612,6 +5630,30 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             )
             finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
             poll_counts["expired_lease_workers_failed"] += 1
+            changed = True
+            continue
+        if (
+            alive
+            and worker.get("status") in active_worker_statuses
+            and chair_review_worker_artifacts_applied(state, worker)
+        ):
+            terminate_worker_pid(worker.get("pid"))
+            worker["status"] = "completed"
+            worker["last_event_at"] = utc_now()
+            clear_task_failure_streak(state, worker=worker)
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_completed",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": "Chair review artifacts were accepted; terminated lingering control runner.",
+                    "worker_run_id": worker["run_id"],
+                    "pr_url": worker.get("pr_url"),
+                    "session_url": worker.get("session_url"),
+                },
+            )
+            finalize_queue_event_record(config, state, worker, "completed")
             changed = True
             continue
         last_event_advanced = bool(
@@ -8752,8 +8794,7 @@ def run_once(
             if chair_review_failure_loop_details(config, state):
                 chair_dispatched = dispatch_chair_review(config, state, planning_state, provider_report=provider_report)
                 changed = chair_dispatched or changed
-                if not chair_dispatched and not chair_review_active(state):
-                    changed = dispatch_ready_tasks(config, state, provider_report=provider_report) or changed
+                changed = dispatch_ready_tasks(config, state, provider_report=provider_report) or changed
             else:
                 changed = dispatch_ready_tasks(config, state, provider_report=provider_report) or changed
                 changed = dispatch_chair_review(config, state, planning_state, provider_report=provider_report) or changed
