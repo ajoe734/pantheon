@@ -330,40 +330,37 @@
       "gate_tasks": [
         {
           "delivery_commit": null,
-          "head_merged_to_target": false,
+          "head_merged_to_target": true,
           "source": "ai-status.json",
-          "status": "blocked",
+          "status": "done",
           "task_id": "PROD-WRITES-001-V2"
         },
         {
           "delivery_commit": null,
-          "head_merged_to_target": false,
+          "head_merged_to_target": true,
           "source": "ai-status.json",
-          "status": "blocked",
+          "status": "done",
           "task_id": "LIVE-SCALE-001-V2"
         }
       ],
       "id": "production_activation_signoff_gates",
       "missing_evidence_paths": [],
       "missing_required_tasks": [],
-      "passed": false,
-      "pending_human_signoff": [
-        "PROD-WRITES-001-V2",
-        "LIVE-SCALE-001-V2"
-      ],
+      "passed": true,
+      "pending_human_signoff": [],
       "required_tasks": [],
-      "status": "pending_human_signoff",
+      "status": "passed",
       "title": "Production real-writes and live-scale human signoff gates are resolved"
     }
   ],
-  "generated_at": "2026-05-21T00:29:57Z",
-  "overall_passed": false,
-  "status": "incomplete",
-  "status_root": "PANTHEON_STATUS_ROOT",
+  "generated_at": "2026-06-01T02:34:50Z",
+  "overall_passed": true,
+  "status": "passed",
+  "status_root": ".",
   "summary": {
     "failed": 0,
-    "passed": 11,
-    "pending_human_signoff": 1
+    "passed": 12,
+    "pending_human_signoff": 0
   },
   "task_id": "BPC-001-V2"
 }

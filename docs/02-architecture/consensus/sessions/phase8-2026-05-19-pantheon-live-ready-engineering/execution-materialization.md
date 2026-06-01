@@ -78,9 +78,9 @@ This file is the materialization manifest for Track A — direct dispatch — un
 
 | ID | Title | Owner | Reviewer | Waiting for | Notes |
 |---|---|---|---|---|---|
-| `BLA-LIVE-001-V2` | Broker production live enable (human gate) | Claude | Codex | `risk_owner_signoff,operator_signoff,BLA-track-engineering-complete` | Not engineering; flips `BROKER_PRODUCTION_LIVE_ENABLED=true` after human approval |
-| `CBL-LIVE-001-V2` | Capital binding live enable (human gate) | Claude | Codex | `risk_owner_signoff,operator_signoff,CBL-track-engineering-complete,BLA-LIVE-001-V2` | Capital binding live cannot precede broker live |
-| `HA-PROD-001-V2` | Production HA cutover (human gate) | Claude | Codex | `infra_decision_maker_signoff,HA-track-engineering-complete` | Requires infra-decision-maker approval in addition to risk-owner / operator |
+| `BLA-LIVE-001-V2` | Broker production live enable (human gate) | Human/Ops | Codex | `risk_owner_signoff,operator_signoff,BLA-track-engineering-complete` | Not engineering; flips `BROKER_PRODUCTION_LIVE_ENABLED=true` after human approval |
+| `CBL-LIVE-001-V2` | Capital binding live enable (human gate) | Human/Ops | Codex | `risk_owner_signoff,operator_signoff,CBL-track-engineering-complete,BLA-LIVE-001-V2` | Capital binding live cannot precede broker live |
+| `HA-PROD-001-V2` | Production HA cutover (human gate) | Human/Ops | Codex | `infra_decision_maker_signoff,HA-track-engineering-complete` | Requires infra-decision-maker approval in addition to risk-owner / operator |
 
 ## Track B held — 27 tasks
 

@@ -24,6 +24,15 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertGreaterEqual(len(config["agents"]["codex"]["worker_slots"]), 3)
         self.assertGreaterEqual(len(config["agents"]["codex2"]["worker_slots"]), 3)
 
+    def test_claude2_new_work_target_and_concurrency_are_capped(self) -> None:
+        config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
+
+        ready_dispatcher = config["ready_dispatcher"]
+
+        self.assertEqual(ready_dispatcher["target_workload"]["Claude2"], 5)
+        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Claude2"], 1)
+        self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["claude2"], 1)
+
 
 class DetectWorkerFailureTests(unittest.TestCase):
     def _worker_for_log(self, content: str) -> dict[str, str]:
@@ -1601,7 +1610,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         config["ready_dispatcher"] = {
             "target_workload": {
                 "Claude": 10,
-                "Claude2": 10,
+                "Claude2": 5,
                 "Gemini": 5,
                 "Gemini2": 5,
                 "Codex": 35,
@@ -1622,12 +1631,12 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         sequence = supervisor.weighted_dispatch_agent_ids(config, supervisor.ready_dispatch_settings(config))
         counts = {agent_id: sequence.count(agent_id) for agent_id in config["agents"]}
 
-        self.assertEqual(len(sequence), 21)
+        self.assertEqual(len(sequence), 20)
         self.assertEqual(
             counts,
             {
                 "claude": 2,
-                "claude2": 2,
+                "claude2": 1,
                 "gemini": 1,
                 "gemini2": 1,
                 "codex": 7,
@@ -4948,6 +4957,62 @@ class ChairReviewDispatchTests(unittest.TestCase):
         self.assertEqual(rotation["last_review_recommended_focus"], ["SVC-EVIDENCE"])
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "chair_review_approved_sidecars")
 
+    def test_refresh_chair_review_syncs_completed_worktree_artifacts(self) -> None:
+        review_path = self.root / "chair-reviews" / "20260428-codex.md"
+        decision_path = review_path.with_suffix(".json")
+        workspace_path = self.root / "workers" / "pantheon" / "chair-review-20260428-codex"
+        workspace_review_path = workspace_path / "chair-reviews" / "20260428-codex.md"
+        workspace_decision_path = workspace_review_path.with_suffix(".json")
+        workspace_review_path.parent.mkdir(parents=True, exist_ok=True)
+        workspace_review_path.write_text("# Summary\n\nApprove sidecars from worktree.\n", encoding="utf-8")
+        workspace_decision_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "decision": "approve_sidecars",
+                    "sidecar_approved": True,
+                    "approval_ttl_minutes": 45,
+                    "reason": "Chair artifacts were produced in the isolated worker workspace.",
+                    "blocked_by": [],
+                    "recommended_focus": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        state = {
+            "queue": {"events": {"evt-chair": {"status": "completed"}}},
+            "workers": {
+                "chair-run": {
+                    "status": "completed",
+                    "workspace_path": str(workspace_path),
+                    "request_snapshot": {
+                        "reason": "chair_review:operational_review",
+                        "metadata": {"chair": {"review_path": str(review_path)}},
+                    },
+                }
+            },
+            "chair_rotation": {
+                "pending_review_path": str(review_path),
+                "pending_decision_path": str(decision_path),
+                "pending_review_event_id": "evt-chair",
+                "pending_review_agent": "Codex",
+            },
+        }
+
+        with (
+            mock.patch.object(supervisor, "utc_now", return_value="2026-04-28T12:15:00Z"),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.refresh_chair_review_state(self.config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(review_path.read_text(encoding="utf-8"), workspace_review_path.read_text(encoding="utf-8"))
+        self.assertEqual(decision_path.read_text(encoding="utf-8"), workspace_decision_path.read_text(encoding="utf-8"))
+        self.assertTrue(state["chair_rotation"]["last_review_valid"])
+        event_types = [call.args[1]["type"] for call in write_activity_log.call_args_list]
+        self.assertIn("chair_review_artifact_synced_from_worktree", event_types)
+        self.assertIn("chair_review_approved_sidecars", event_types)
+
     def test_refresh_chair_review_denies_sidecars_and_clears_approval(self) -> None:
         review_path = self.root / "chair-reviews" / "20260428-codex.md"
         decision_path = review_path.with_suffix(".json")
@@ -5118,6 +5183,100 @@ class ChairReviewDispatchTests(unittest.TestCase):
             handoff_from="Codex2",
         )
 
+    def test_refresh_chair_review_applies_blocked_owner_rescue_action(self) -> None:
+        review_path = self.root / "chair-reviews" / "20260428-codex.md"
+        decision_path = review_path.with_suffix(".json")
+        review_path.parent.mkdir(parents=True, exist_ok=True)
+        review_path.write_text("# Summary\n\nRescue blocked owner lane.\n", encoding="utf-8")
+        decision_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "decision": "approve_sidecars",
+                    "sidecar_approved": True,
+                    "approval_ttl_minutes": 45,
+                    "reason": "Execution can proceed after moving the auth-blocked owner lane.",
+                    "blocked_by": [],
+                    "recommended_focus": ["T-PUSH"],
+                    "reassignment_actions": [
+                        {
+                            "task_id": "T-PUSH",
+                            "role": "owner",
+                            "from": "Gemini2",
+                            "to": "Codex",
+                            "reason": "Gemini2 PR push is blocked by authentication failure; Codex is an available fallback.",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        state = {
+            "queue": {"events": {"evt-1": {"status": "completed"}}},
+            "workers": {},
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    "T-PUSH:gemini2": {
+                        "task_id": "T-PUSH",
+                        "provider": "gemini2",
+                        "count": 3,
+                    }
+                }
+            },
+            "chair_rotation": {
+                "pending_review_path": str(review_path),
+                "pending_decision_path": str(decision_path),
+                "pending_review_event_id": "evt-1",
+                "pending_review_agent": "Claude",
+            },
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "T-PUSH",
+                    "status": "blocked",
+                    "owner": "Gemini2",
+                    "reviewer": "Claude",
+                    "waiting_for": "Gemini",
+                    "next": "PR push blocked by auth failure.",
+                }
+            ],
+            "blockers": [
+                {
+                    "task_id": "T-PUSH",
+                    "owner": "Gemini2",
+                    "waiting_for": "Gemini",
+                    "status": "open",
+                }
+            ],
+        }
+
+        with (
+            mock.patch.object(supervisor, "utc_now", return_value="2026-04-28T12:15:00Z"),
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist_task_reassignment,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.refresh_chair_review_state(self.config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(state["chair_rotation"]["last_review_reassignment_actions"][0]["to"], "Codex")
+        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
+        persist_task_reassignment.assert_called_once_with(
+            self.config,
+            task_id="T-PUSH",
+            new_owner="Codex",
+            new_reviewer="Claude",
+            message=(
+                "Chair reassigned owner from Gemini2 to Codex: Gemini2 PR push is blocked by authentication "
+                "failure; Codex is an available fallback. Task returned to todo for a blocked-owner rescue dispatch."
+            ),
+            new_status="todo",
+            handoff_to="Codex",
+            handoff_from="Gemini2",
+            resolve_open_blockers=True,
+        )
+
     def test_chair_review_prompt_includes_pending_approval_details(self) -> None:
         review_path = self.root / "chair-reviews" / "20260428-codex.md"
         with (
@@ -5147,6 +5306,86 @@ class ChairReviewDispatchTests(unittest.TestCase):
         self.assertIn("approval_id=apr-1", message)
         self.assertIn("docker compose config --quiet", message)
         self.assertIn('"approval_actions"', message)
+
+    def test_chair_review_prompt_includes_blocked_owner_rescue_candidates(self) -> None:
+        review_path = self.root / "chair-reviews" / "20260428-codex.md"
+        status = {
+            "tasks": [
+                {
+                    "id": "T-PUSH",
+                    "status": "blocked",
+                    "owner": "Gemini2",
+                    "reviewer": "Claude",
+                    "waiting_for": "Gemini",
+                    "next": "PR push blocked by auth failure.",
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "safe_load_approval_state", return_value={"pending": []}),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "load_status", return_value=status),
+        ):
+            message = supervisor.build_chair_review_message(self.config, {}, agent_name="Codex", review_path=review_path)
+
+        self.assertIn("Blocked Owner Rescue Candidates:", message)
+        self.assertIn("task=T-PUSH", message)
+        self.assertIn('targets=["Codex", "Codex2"]', message)
+
+    def test_persist_task_reassignment_can_clear_blocked_owner_handoff(self) -> None:
+        status_path = self.root / "ai-status.json"
+        status_path.write_text(
+            json.dumps(
+                {
+                    "tasks": [
+                        {
+                            "id": "T-PUSH",
+                            "status": "blocked",
+                            "owner": "Gemini2",
+                            "reviewer": "Claude",
+                            "waiting_for": "Gemini",
+                            "next": "PR push blocked by auth failure.",
+                        }
+                    ],
+                    "blockers": [
+                        {
+                            "task_id": "T-PUSH",
+                            "owner": "Gemini2",
+                            "waiting_for": "Gemini",
+                            "status": "open",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with (
+            mock.patch.object(supervisor, "utc_now", return_value="2026-04-28T12:15:00Z"),
+            mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+        ):
+            applied = supervisor.persist_task_reassignment(
+                self.config,
+                task_id="T-PUSH",
+                new_owner="Codex",
+                new_reviewer="Claude",
+                message="Chair reassigned owner from Gemini2 to Codex.",
+                new_status="todo",
+                handoff_to="Codex",
+                handoff_from="Gemini2",
+                resolve_open_blockers=True,
+            )
+
+        self.assertTrue(applied)
+        saved = json.loads(status_path.read_text(encoding="utf-8"))
+        task = saved["tasks"][0]
+        blocker = saved["blockers"][0]
+        self.assertEqual(task["status"], "todo")
+        self.assertEqual(task["owner"], "Codex")
+        self.assertNotIn("waiting_for", task)
+        self.assertEqual(blocker["status"], "resolved")
+        self.assertEqual(blocker["resolution_ref"], "chair_reassignment:T-PUSH")
 
     def test_refresh_chair_review_invalid_decision_retries_next_chair(self) -> None:
         review_path = self.root / "chair-reviews" / "20260428-codex.md"

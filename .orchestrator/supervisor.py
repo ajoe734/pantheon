@@ -74,6 +74,18 @@ from watch_events import queue_delivery_event, run_scan, trim_seen_events
 
 
 SIDECAR_READY_PRIORITY_OFFSET = 10
+BLOCKED_OWNER_RESCUE_KEYWORDS = (
+    "auth",
+    "authentication",
+    "credential",
+    "credentials",
+    "token",
+    "permission",
+    "quota",
+    "rate limit",
+    "push",
+    "pr push",
+)
 
 
 SESSION_ID_PATTERNS = [
@@ -2471,6 +2483,87 @@ def pending_chair_review_active(state: dict[str, Any], pending_review_path: str)
     return False
 
 
+def chair_review_worker_workspace_path(worker: dict[str, Any]) -> Path | None:
+    raw_path = str(worker.get("workspace_path") or "").strip()
+    if not raw_path:
+        snapshot = worker.get("request_snapshot", {}) or {}
+        metadata = snapshot.get("metadata", {}) or {}
+        if isinstance(metadata, dict):
+            raw_path = str(metadata.get("workspace_path") or "").strip()
+    if not raw_path:
+        metadata = worker.get("metadata", {}) or {}
+        if isinstance(metadata, dict):
+            raw_path = str(metadata.get("workspace_path") or "").strip()
+    return Path(raw_path) if raw_path else None
+
+
+def chair_review_workspace_artifact_path(config: dict[str, Any], workspace_path: Path, artifact_path: Path) -> Path | None:
+    if not artifact_path.is_absolute():
+        return workspace_path / artifact_path
+
+    base_candidates: list[Path] = []
+    try:
+        base_candidates.append(config_path(config, "status_file").parent)
+    except KeyError:
+        pass
+    base_candidates.append(chair_review_base_dir(config))
+
+    for base in base_candidates:
+        try:
+            relative_path = artifact_path.resolve().relative_to(base.resolve())
+        except ValueError:
+            continue
+        return workspace_path / relative_path
+    return None
+
+
+def sync_chair_review_artifacts_from_worker_workspace(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    pending_review_relpath: str,
+    review_path: Path,
+    decision_path: Path,
+) -> bool:
+    """Copy completed chair-review artifacts out of an isolated worker workspace."""
+    for worker in state.get("workers", {}).values():
+        if not worker_is_chair_review(worker):
+            continue
+        if chair_review_worker_path(worker) != pending_review_relpath:
+            continue
+
+        workspace_path = chair_review_worker_workspace_path(worker)
+        if workspace_path is None:
+            continue
+        source_review_path = chair_review_workspace_artifact_path(config, workspace_path, review_path)
+        source_decision_path = chair_review_workspace_artifact_path(config, workspace_path, decision_path)
+        if source_review_path is None or not source_review_path.exists():
+            continue
+
+        review_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_review_path, review_path)
+
+        if source_decision_path is not None and source_decision_path.exists():
+            decision_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_decision_path, decision_path)
+
+        write_activity_log(
+            config,
+            {
+                "type": "chair_review_artifact_synced_from_worktree",
+                "task_id": chair_review_settings(config).get("task_id"),
+                "message": f"Copied chair review artifacts from worker workspace {workspace_path}.",
+                "review_path": relpath(review_path),
+                "decision_path": relpath(decision_path),
+                "workspace_path": str(workspace_path),
+                "source_review_path": str(source_review_path),
+                "source_decision_path": str(source_decision_path) if source_decision_path is not None else None,
+            },
+        )
+        return True
+    return False
+
+
 def normalize_chair_review_decision(
     config: dict[str, Any],
     payload: Any,
@@ -2861,7 +2954,11 @@ def apply_chair_review_reassignment_actions(
                 handoff_from=reviewer,
             )
         elif role == "owner":
-            if task_status not in owned_statuses | finalize_statuses:
+            blocked_owner_rescue = chair_blocked_owner_rescue_allowed(task)
+            allowed_owner_statuses = owned_statuses | finalize_statuses
+            if blocked_owner_rescue:
+                allowed_owner_statuses.add("blocked")
+            if task_status not in allowed_owner_statuses:
                 log_chair_reassignment_skip(
                     config,
                     review_path=review_path,
@@ -2885,10 +2982,14 @@ def apply_chair_review_reassignment_actions(
                     message=f"Chair owner reassignment skipped because target {to_agent} is already reviewer.",
                 )
                 continue
-            requeue_for_fresh_dispatch = task_status in owned_statuses and task_status not in finalize_statuses
+            requeue_for_fresh_dispatch = (
+                (task_status in owned_statuses or blocked_owner_rescue)
+                and task_status not in finalize_statuses
+            )
             message = f"Chair reassigned owner from {owner} to {to_agent}: {reason}"
             if requeue_for_fresh_dispatch:
-                message = f"{message}. Task returned to todo for a fresh run."
+                suffix = "Task returned to todo for a blocked-owner rescue dispatch." if blocked_owner_rescue else "Task returned to todo for a fresh run."
+                message = f"{message.rstrip('.')}. {suffix}"
             applied = persist_task_reassignment(
                 config,
                 task_id=task_id,
@@ -2898,6 +2999,7 @@ def apply_chair_review_reassignment_actions(
                 new_status="todo" if requeue_for_fresh_dispatch else None,
                 handoff_to=to_agent,
                 handoff_from=owner,
+                resolve_open_blockers=blocked_owner_rescue,
             )
 
         if not applied:
@@ -3038,6 +3140,15 @@ def refresh_chair_review_state(config: dict[str, Any], state: dict[str, Any]) ->
         pending_decision_path = chair_review_state_path(str(rotation.get("pending_decision_path") or "")) if rotation.get("pending_decision_path") else None
         if pending_review_path is not None:
             pending_decision_path = pending_decision_path or chair_review_decision_path(pending_review_path)
+            pending_active = pending_chair_review_active(state, pending_review_relpath)
+            if not pending_active:
+                sync_chair_review_artifacts_from_worker_workspace(
+                    config,
+                    state,
+                    pending_review_relpath=pending_review_relpath,
+                    review_path=pending_review_path,
+                    decision_path=pending_decision_path,
+                )
             if pending_decision_path.exists():
                 return refresh_chair_review_artifact(
                     config,
@@ -3045,14 +3156,14 @@ def refresh_chair_review_state(config: dict[str, Any], state: dict[str, Any]) ->
                     review_path=pending_review_path,
                     decision_path=pending_decision_path,
                 )
-            if pending_review_path.exists() and not pending_chair_review_active(state, pending_review_relpath):
+            if pending_review_path.exists() and not pending_active:
                 return refresh_chair_review_artifact(
                     config,
                     state,
                     review_path=pending_review_path,
                     decision_path=pending_decision_path,
                 )
-            if not pending_chair_review_active(state, pending_review_relpath):
+            if not pending_active:
                 return mark_chair_review_problem(
                     config,
                     state,
@@ -3212,6 +3323,62 @@ def chair_review_failure_loop_lines(config: dict[str, Any], state: dict[str, Any
     return lines
 
 
+def chair_review_blocked_owner_rescue_details(config: dict[str, Any], state: dict[str, Any]) -> list[dict[str, Any]]:
+    settings = chair_review_settings(config)
+    if not settings.get("reassignment_actions_enabled", True):
+        return []
+    try:
+        status = load_status(config)
+    except KeyError:
+        return []
+    max_items = max(1, int(settings.get("max_blocked_owner_rescues_in_prompt", 6)))
+    details: list[dict[str, Any]] = []
+    owner_fallbacks = worker_reassignment_settings(config).get("owner_fallbacks", {})
+    for task in status.get("tasks", []) or []:
+        if not isinstance(task, dict) or not chair_blocked_owner_rescue_allowed(task):
+            continue
+        task_id = str(task.get("id") or "").strip()
+        owner = str(task.get("owner") or "").strip()
+        reviewer = str(task.get("reviewer") or "").strip()
+        candidates = normalized_mapping_values(owner_fallbacks, owner)
+        viable_candidates = [
+            candidate
+            for candidate in candidates
+            if first_viable_agent(config, [candidate], exclude={owner, reviewer}, state=state, task=task) == candidate
+        ]
+        details.append(
+            {
+                "task_id": task_id,
+                "status": str(task.get("status") or "").lower(),
+                "owner": owner,
+                "reviewer": reviewer,
+                "waiting_for": str(task.get("waiting_for") or "").strip(),
+                "next": str(task.get("next") or "").replace("\n", " ").strip(),
+                "viable_reassignment_targets": viable_candidates,
+            }
+        )
+    return details[:max_items]
+
+
+def chair_review_blocked_owner_rescue_lines(config: dict[str, Any], state: dict[str, Any]) -> list[str]:
+    lines: list[str] = []
+    for item in chair_review_blocked_owner_rescue_details(config, state):
+        note = str(item.get("next") or "")
+        if len(note) > 220:
+            note = note[:217] + "..."
+        lines.append(
+            "- "
+            f"task={item.get('task_id')} "
+            f"status={item.get('status')} "
+            f"owner={item.get('owner')} "
+            f"reviewer={item.get('reviewer')} "
+            f"waiting_for={json.dumps(item.get('waiting_for') or '', ensure_ascii=False)} "
+            f"targets={json.dumps(item.get('viable_reassignment_targets') or [], ensure_ascii=False)} "
+            f"next={json.dumps(note, ensure_ascii=False)}"
+        )
+    return lines
+
+
 def chair_reassignment_triage_needed_for_task(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -3292,6 +3459,8 @@ def build_chair_review_message(
     pending_approvals_block = "\n".join(pending_approval_lines) if pending_approval_lines else "- none"
     failure_loop_lines = chair_review_failure_loop_lines(config, state)
     failure_loops_block = "\n".join(failure_loop_lines) if failure_loop_lines else "- none"
+    blocked_owner_rescue_lines = chair_review_blocked_owner_rescue_lines(config, state)
+    blocked_owner_rescues_block = "\n".join(blocked_owner_rescue_lines) if blocked_owner_rescue_lines else "- none"
     return (
         "你是本輪輪值主席，請做一次 operational review，不接主線實作。\n\n"
         f"- Chair Agent: {agent_name}\n"
@@ -3307,6 +3476,8 @@ def build_chair_review_message(
         f"{pending_approvals_block}\n\n"
         "Repeated Failure Details:\n"
         f"{failure_loops_block}\n\n"
+        "Blocked Owner Rescue Candidates:\n"
+        f"{blocked_owner_rescues_block}\n\n"
         "請檢查以下事項：\n"
         "1. task board 是否有假的 in_progress（沒有 live worker）。\n"
         "2. worker 是否跑錯 owner/reviewer 或 queue event 對不上。\n"
@@ -3352,6 +3523,7 @@ def build_chair_review_message(
         "如果 deny_sidecars，blocked_by 必須列出具體 blocker；如果只有特定 parent 不應產生 sidecar，請放進 blocked_sidecar_parents。\n"
         "如果 Pending Approval Details 裡有你能判斷的低風險 approval，請在 approval_actions 裡 allow 或 deny；不能判斷就不要列入。\n"
         "如果 Repeated Failure Details 顯示同一 agent 在同一 task 壞循環，請用 reassignment_actions 指定是否改派；不需要就留空。\n"
+        "如果 Blocked Owner Rescue Candidates 有可用 targets，且不是 human gate，請用 role=owner 的 reassignment_actions 改派給健康 target；supervisor 會把該 task 退回 todo 重新 dispatch。\n"
         "你可以提出 repair commands 或建立 OPS-/SUP- follow-up task 建議；不要直接手改 task board，也不要直接把 task 標成 done。\n"
     )
 
@@ -4730,6 +4902,7 @@ def persist_task_reassignment(
     new_status: str | None = None,
     handoff_to: str | None = None,
     handoff_from: str | None = None,
+    resolve_open_blockers: bool = False,
 ) -> bool:
     status_path = config_path(config, "status_file")
     status = load_status(config)
@@ -4745,8 +4918,18 @@ def persist_task_reassignment(
     task["reviewer"] = new_reviewer
     if new_status:
         task["status"] = new_status
+        if str(new_status).lower() == "todo":
+            task.pop("waiting_for", None)
     task["last_update"] = timestamp
     task["next"] = message
+
+    if resolve_open_blockers:
+        for blocker in status.get("blockers", []) or []:
+            if blocker.get("task_id") != task_id or blocker.get("status") == "resolved":
+                continue
+            blocker["status"] = "resolved"
+            blocker["resolved_at"] = timestamp
+            blocker["resolution_ref"] = f"chair_reassignment:{task_id}"
 
     for handoff in status.get("handoffs", []) or []:
         if handoff.get("task_id") != task_id or handoff.get("status") == "done":
@@ -6585,6 +6768,36 @@ def utilization_ratio_for_sidecars(config: dict[str, Any], state: dict[str, Any]
 
 def task_is_sidecar(task: dict[str, Any]) -> bool:
     return str(task.get("task_class") or "").strip().lower() == "sidecar"
+
+
+def task_is_human_gate(task: dict[str, Any]) -> bool:
+    task_class = str(task.get("task_class") or "").strip().lower()
+    gate_status = str(task.get("gate_status") or "").strip().lower()
+    return (
+        task_class == "human_gate"
+        or bool(task.get("human_required_roles"))
+        or gate_status.startswith("pending_human")
+    )
+
+
+def chair_blocked_owner_rescue_allowed(task: dict[str, Any]) -> bool:
+    if str(task.get("status") or "").strip().lower() != "blocked":
+        return False
+    if task_is_human_gate(task) or task_is_sidecar(task) or bool(task.get("non_dispatchable")):
+        return False
+    context = " ".join(
+        str(task.get(key) or "")
+        for key in (
+            "next",
+            "waiting_for",
+            "blocker",
+            "blocked_by",
+            "failure_reason",
+            "last_failure_reason",
+            "push_status",
+        )
+    ).casefold()
+    return any(keyword in context for keyword in BLOCKED_OWNER_RESCUE_KEYWORDS)
 
 
 def sidecar_statuses() -> set[str]:

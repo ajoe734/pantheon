@@ -71,7 +71,7 @@ Documented here rather than blocked. Implementation may proceed with the default
 
 4. **OODA-CANARY-* dependency on EP5.** `OODA-CANARY-004-V2` (rollback drill linkage) functionally depends on `EP5-007-V2` (rollback drill harness). **Default:** declare the dependency explicitly so the supervisor doesn't dispatch OODA-CANARY-004-V2 until EP5-007-V2 is `review_approved`. `OODA-CANARY-001/002/003/005-V2` are independent and dispatch immediately.
 
-5. **LIVE-gate placeholder task class.** `BLA-LIVE-001-V2`, `CBL-LIVE-001-V2`, `HA-PROD-001-V2` are not engineering work — they represent the human go/no-go event itself. **Default:** create them with `task_class: human_gate`, `status: blocked`, with `waiting_for` pointing to the relevant readiness packet. Visible in dashboard for tracking, not dispatchable to AI workers.
+5. **LIVE-gate placeholder task class.** `BLA-LIVE-001-V2`, `CBL-LIVE-001-V2`, `HA-PROD-001-V2` are not engineering work — they represent the human go/no-go event itself. **Default:** create them with `owner: Human/Ops`, `task_class: human_gate`, `status: blocked`, with `waiting_for` pointing to the relevant readiness packet. Visible in dashboard for tracking, not dispatchable to AI workers.
 
 6. **`broker_sandbox_smoke_ref` vs `shioaji_sandbox_evidence_packet_ref`.** Same question as 2026-05-18: the schema has both fields listed in PromotionReadinessPacket evidence. **Default:** treat them as two distinct refs (the former is generic broker smoke; the latter is Shioaji-specific evidence packet). Distinguishes pluralizes broker without conflating.
 
