@@ -23,7 +23,8 @@ primary implementer in this role.
 - Keep the main execution path safe: never mutate task terminal statuses (`done`, `review_approved`, `superseded`). Reviewer reassignment IS allowed when a concrete blocker is identified. Owner reassignment IS allowed under a narrower set of conditions (see "When to emit reassignment_actions" below).
 - Triage pending approvals when the supervisor prompt provides approval details.
 - Unblock stuck review pipelines by emitting `reassignment_actions` for reviewer changes when the current reviewer cannot proceed (provider auth failure, quota exhaustion, repeated dispatch failures).
-- Relieve worker under-utilization by emitting `reassignment_actions` for owner changes ONLY when an idle, healthy agent (target_workload > 0, owned-todos = 0, auth_ready, recently exercised) can take over a `todo`-status task from a saturated owner.
+- Relieve worker under-utilization by emitting `reassignment_actions` for owner changes when an idle, healthy agent (target_workload > 0, owned-todos = 0, auth_ready, recently exercised) can take over a `todo`-status task from a saturated owner.
+- Rescue blocked owner lanes by emitting `reassignment_actions` when the current owner is blocked by auth, credential, quota, or PR push failure and a healthy fallback owner can safely rerun the handoff.
 
 ## Sidecar Decision Rule
 
@@ -113,7 +114,11 @@ Chair has authority to change a task's **reviewer** when a concrete blocker is i
 
 ### Owner reassignment (narrow authority)
 
-Owner changes shift implementation responsibility, so the bar is higher than reviewer changes. Emit `role: "owner"` ONLY when ALL of these hold:
+Owner changes shift implementation responsibility, so the bar is higher than reviewer changes. Emit `role: "owner"` when either the normal under-utilization path or the blocked-owner rescue path applies.
+
+#### Normal under-utilization owner reassignment
+
+Use this path ONLY when ALL of these hold:
 
 1. **Saturated source.** Source agent has owned-todos > `2 × max_tasks_per_agent` for that agent (e.g. Codex cap=3 → trigger at 7+ owned todos) AND source agent's currently-active slot count is at cap.
 2. **Starving target.** Target agent has `owned-todos = 0` but `target_workload > 0` in `ready_dispatcher.target_workload` (i.e. the agent is configured to carry load but has none).
@@ -125,15 +130,25 @@ Cap owner reassignments at **2 per chair cycle** so a single mis-judgement canno
 
 When emitting `role: "owner"`, also check whether the task's current reviewer would equal the new owner; if so, emit a second `role: "reviewer"` entry in the same JSON to fix it (and count both against the per-cycle cap).
 
+#### Blocked-owner rescue reassignment
+
+Use this path when ALL of these hold:
+
+1. **Owner is the blocker.** The task is `status: "blocked"` because the owner lane hit auth, credential, quota, permission, or PR push failure. Cite the concrete `next`, blocker, activity-log, or supervisor prompt evidence.
+2. **Task is not a human gate.** Never rescue `task_class: human_gate`, tasks with `human_required_roles`, `pending_human*` gate status, `non_dispatchable: true`, or sidecar tasks.
+3. **Work is safe to rerun or hand off.** The task can be resumed from committed/worktree artifacts or rerun from its task brief; do not move work that requires private context only the failed owner has.
+4. **Target is healthy and distinct.** Pick a viable fallback from `Blocked Owner Rescue Candidates` or `owner_fallbacks`; the target must not be dispatch-paused, auth-failed, or already the reviewer.
+5. **Keep status semantics to supervisor.** Emit only `role: "owner"` with `from`, `to`, and a concrete reason. The supervisor will clear the blocked handoff and return the task to `todo` for a fresh dispatch.
+
 ### Safety rules — never emit a reassignment that:
 
-- Changes `role: "owner"` outside the five conditions above. The default for owner remains: leave it alone.
-- Targets a task in status `in_progress`, `review`, `review_approved`, `done`, `blocked` (human gate), or `superseded`. (Reviewer change is allowed in `review`; owner change is not — never reassign owner mid-flight.)
+- Changes `role: "owner"` outside the normal under-utilization path or blocked-owner rescue path. The default for owner remains: leave it alone.
+- Targets a task in status `in_progress`, `review`, `review_approved`, `done`, blocked human-gate, or `superseded`. (Reviewer change is allowed in `review`; owner change is not — never reassign owner mid-flight.)
 - Targets `task_class: human_gate`. Those gates are not dispatchable; reviewer or owner churn is noise.
 - Picks a `to:` agent that is itself in `dispatch_pauses`, has a recent `worker_auth_failure`, or (for reviewer) is the task's current owner / (for owner) is the task's current reviewer.
 - Lacks a concrete `reason` citing the blocker (provider error code, task id, timestamp, owned-todo counts, or activity-log evidence).
 
-If a task is stuck and reviewer reassignment cannot fix it (e.g. the **owner** is the one with broken auth, like Gemini2 not being able to push), prefer surfacing it as a Finding with `Suggested Repair` calling for human intervention over reassigning a half-finished task — but if the task is still `status: todo` and the owner-reassignment conditions above are met, a `role: "owner"` reassignment to a healthy target is the cleanest repair.
+If a task is stuck because the **owner** is the one with broken auth, like Gemini2 not being able to push, prefer blocked-owner rescue reassignment when the supervisor lists viable targets. If no healthy target is available or the task needs private owner-only context, surface it as a Finding with a Human/Ops repair instead.
 
 ## Closeout Oversight
 
