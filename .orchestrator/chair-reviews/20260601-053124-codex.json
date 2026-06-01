@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Idle capacity exists with independent assistant backlog and no global queue or approval blocker.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "ASST-KERNEL-002",
+    "ASST-KERNEL-006",
+    "ASST-SEC-001",
+    "ASST-BFF-002"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "ASST-KERNEL-001",
+    "ASST-OCGW-001",
+    "ASST-KERNEL-002",
+    "OPS-GUARDRAIL-PAUSE-AUDIT",
+    "OPS-CHAIR-PR-BASE-HYGIENE",
+    "OSS-STAT-001-SIDECAR-ACCEPTANCE"
+  ]
+}
