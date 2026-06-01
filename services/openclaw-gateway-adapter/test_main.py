@@ -356,6 +356,18 @@ class TestCapabilities(unittest.TestCase):
         self.assertEqual(request.metadata["operator_id"], "op-1")
         self.assertEqual(request.metadata["trace_id"], "trace-1")
 
+    def test_assistant_codex_invoke_requires_operator_id(self):
+        with patch.object(adapter_main._CODEX_RUNTIME, "invoke") as invoke:
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/codex/invoke",
+                json={"mode": "user", "prompt": "hello"},
+            )
+        self.assertEqual(resp.status_code, 401)
+        body = resp.json()
+        self.assertEqual(body["status"], "provider_error")
+        self.assertEqual(body["error_code"], "OPERATOR_REQUIRED")
+        invoke.assert_not_called()
+
     def test_assistant_codex_invoke_returns_provider_error(self):
         with patch.object(
             adapter_main._CODEX_RUNTIME,
@@ -370,6 +382,7 @@ class TestCapabilities(unittest.TestCase):
             resp = client.post(
                 "/api/openclaw-adapter/assistant/providers/codex/invoke",
                 json={"mode": "user", "prompt": "hello"},
+                headers={"X-Operator-Id": "op-1"},
             )
         self.assertEqual(resp.status_code, 504)
         body = resp.json()

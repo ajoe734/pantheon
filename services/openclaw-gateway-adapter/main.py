@@ -708,9 +708,17 @@ def invoke_codex_provider(
     x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
     x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
 ) -> JSONResponse:
+    if not x_operator_id or not x_operator_id.strip():
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "provider_error",
+                "error_code": "OPERATOR_REQUIRED",
+                "message": "X-Operator-Id header is required for Codex provider invocation.",
+            },
+        )
     metadata = dict(req.metadata or {})
-    if x_operator_id:
-        metadata.setdefault("operator_id", x_operator_id)
+    metadata.setdefault("operator_id", x_operator_id.strip())
     if x_trace_id:
         metadata.setdefault("trace_id", x_trace_id)
     try:

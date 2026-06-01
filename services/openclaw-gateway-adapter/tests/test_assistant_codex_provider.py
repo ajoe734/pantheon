@@ -123,7 +123,7 @@ def test_invoke_uses_read_only_workspace_by_default(tmp_path: Path) -> None:
         return subprocess.CompletedProcess(cmd, 0, stdout='{"final":"ok"}\n', stderr="")
 
     provider = _provider(tmp_path, fake_run)
-    result = provider.invoke({"mode": "user", "prompt": "hello"})
+    result = provider.invoke({"mode": "user", "prompt": "hello", "metadata": {"operator_id": "op-1"}})
 
     cmd, kwargs = calls[0]
     assert result["status"] == "completed"
@@ -146,6 +146,23 @@ def test_invoke_uses_read_only_workspace_by_default(tmp_path: Path) -> None:
     assert kwargs["env"]["CODEX_HOME"] == "/home/pantheon-assistant/.codex"
 
 
+def test_invoke_requires_operator_id_metadata_before_exec(tmp_path: Path) -> None:
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return subprocess.CompletedProcess(cmd, 0, stdout='{"final":"ok"}\n', stderr="")
+
+    provider = _provider(tmp_path, fake_run)
+
+    with pytest.raises(CodexProviderError) as exc_info:
+        provider.invoke({"mode": "user", "prompt": "hello"})
+
+    assert exc_info.value.code == "OPERATOR_REQUIRED"
+    assert exc_info.value.status_code == 401
+    assert calls == []
+
+
 def test_repair_mode_requires_task_worktree_metadata(tmp_path: Path) -> None:
     def fake_run(cmd, **kwargs):
         return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
@@ -153,7 +170,13 @@ def test_repair_mode_requires_task_worktree_metadata(tmp_path: Path) -> None:
     provider = _provider(tmp_path, fake_run)
 
     with pytest.raises(CodexProviderError) as exc_info:
-        provider.invoke({"mode": "kernel_repair", "prompt": "fix it", "metadata": {"task_id": "ASST-OCGW-003"}})
+        provider.invoke(
+            {
+                "mode": "kernel_repair",
+                "prompt": "fix it",
+                "metadata": {"operator_id": "op-1", "task_id": "ASST-OCGW-003"},
+            }
+        )
 
     assert exc_info.value.code == "CODEX_REPAIR_METADATA_REQUIRED"
     assert exc_info.value.status_code == 400
@@ -178,7 +201,7 @@ def test_repair_mode_uses_workspace_write_for_task_worktree(tmp_path: Path) -> N
         {
             "mode": "kernel_repair",
             "prompt": "fix it",
-            "metadata": {"task_id": "ASST-OCGW-003", "task_worktree": str(worktree)},
+            "metadata": {"operator_id": "op-1", "task_id": "ASST-OCGW-003", "task_worktree": str(worktree)},
         }
     )
 
@@ -194,7 +217,7 @@ def test_timeout_records_redacted_audit_fallback(tmp_path: Path) -> None:
     provider = _provider(tmp_path, fake_run)
 
     with pytest.raises(CodexProviderError) as exc_info:
-        provider.invoke({"mode": "kernel_observe", "prompt": "hello"})
+        provider.invoke({"mode": "kernel_observe", "prompt": "hello", "metadata": {"operator_id": "op-1"}})
 
     assert exc_info.value.code == "CODEX_TIMEOUT"
     audit_text = (tmp_path / "provider-audit.jsonl").read_text(encoding="utf-8")
@@ -216,7 +239,7 @@ def test_auth_failure_is_classified_for_invoke_and_readiness(tmp_path: Path) -> 
     assert readiness["degraded_reason"] == "codex_auth_unavailable"
 
     with pytest.raises(CodexProviderError) as exc_info:
-        provider.invoke({"mode": "user", "prompt": "hello"})
+        provider.invoke({"mode": "user", "prompt": "hello", "metadata": {"operator_id": "op-1"}})
 
     assert exc_info.value.code == "CODEX_AUTH_UNAVAILABLE"
     assert exc_info.value.status_code == 503

@@ -231,6 +231,14 @@ class AssistantCodexProvider:
                 status_code=400,
             )
         metadata = _ensure_mapping(payload.get("metadata"), field="metadata")
+        operator_id = str(metadata.get("operator_id") or metadata.get("operatorId") or "").strip()
+        if not operator_id:
+            raise CodexProviderError(
+                "OPERATOR_REQUIRED",
+                "Codex provider requires operator_id metadata from X-Operator-Id before invocation.",
+                status_code=401,
+                retryable=False,
+            )
         context = self._command_context(mode, metadata)
         self._ensure_workspace_available(context)
         binary = self._require_binary()
