@@ -4,6 +4,7 @@ Task: Add OpenClaw gateway credential mount contract
 Owner: Codex
 Reviewer: Claude
 Anchor commit: `7c71d2b6c956fdde2cf05f318404d4b2ce2692b9`
+Policy tightening commit: `83e81f5b4815b8886dc5dbc0d0e1efdcabc51d6b`
 
 ## Delivered Scope
 
@@ -27,7 +28,7 @@ python3 -m py_compile services/openclaw-gateway-adapter/assistant_credential_mou
 pytest -q services/openclaw-gateway-adapter/tests/test_assistant_credential_mounts.py services/openclaw-gateway-adapter/test_compose_activation.py services/openclaw-gateway-adapter/test_main.py
 ```
 
-Result: `53 passed in 7.27s`.
+Result: `53 passed in 7.34s`.
 
 ## Acceptance Mapping
 
