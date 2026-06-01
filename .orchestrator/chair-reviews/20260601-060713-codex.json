@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "The assistant backlog is gated by ASST-OCGW-002, which is review-approved but blocked on push/PR auth closeout.",
+  "blocked_by": [
+    "ASST-OCGW-002 is blocked after Codex2 review approval because Gemini2 could not push/open the task PR; it gates ASST-OCGW-003/004 and downstream BFF/FE/SEC/USER work.",
+    "No pending approval exists for a scoped normal push, and the ASST-OCGW-002 worktree is dirty plus behind origin/dev, so chair should not authorize a blind push."
+  ],
+  "blocked_sidecar_parents": [
+    "ASST-OCGW-002"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "ASST-OCGW-002",
+    "OPS-GEMINI2-PUSH-AUTH-20260601",
+    "OPS-CHAIR-PR-HYGIENE-20260601"
+  ]
+}
