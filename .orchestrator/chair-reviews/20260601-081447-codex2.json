@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "ASST-OCGW-002 is blocked on dirty push/PR closeout and gates the assistant backlog.",
+  "blocked_by": [
+    "ASST-OCGW-002 is blocked since 2026-06-01T00:47:46Z after Gemini2 could not push/open the PR; Codex2 review had already approved the implementation.",
+    "The ASST-OCGW-002 worktree is task/ASST-OCGW-002 ahead 3, behind 62, dirty with mixed staged/unstaged edits, has no origin/task/ASST-OCGW-002 branch, and has no open PR, so a chair blind push is unsafe.",
+    "The current assistant todo backlog depends on ASST-OCGW-002 directly or transitively, leaving no clear safe sidecar parent support need."
+  ],
+  "blocked_sidecar_parents": [
+    "ASST-OCGW-002"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "ASST-OCGW-002",
+    "OPS-ASST-OCGW-002-CLOSEOUT-PUSH-REPAIR-20260601",
+    "OPS-CHAIR-PR-BASE-HYGIENE-20260601",
+    "OPS-PUBLISH-PROMOTE-MERGE-REPAIR-20260601",
+    "OPS-ARCHIVE-PUSH-STATUS-AUDIT-20260601"
+  ]
+}
