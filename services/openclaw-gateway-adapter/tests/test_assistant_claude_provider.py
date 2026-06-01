@@ -234,6 +234,31 @@ def test_invoke_claude_ready_stream_json():
     assert len(result.raw_events) == 1
 
 
+def test_invoke_claude_uses_plan_permission_mode():
+    completed = MagicMock()
+    completed.stdout = b"Hello from Claude"
+    completed.stderr = b""
+    completed.returncode = 0
+
+    with (
+        patch("shutil.which", return_value="/usr/bin/claude"),
+        patch("subprocess.run", return_value=completed) as run_mock,
+    ):
+        result = invoke_claude("hello", mounts=_mock_mounts_ready())
+
+    assert result.status == "ok"
+    argv = run_mock.call_args.args[0]
+    assert argv == [
+        "/usr/bin/claude",
+        "-p",
+        "hello",
+        "--output-format",
+        "stream-json",
+        "--permission-mode",
+        "plan",
+    ]
+
+
 # ---------------------------------------------------------------------------
 # ClaudeProviderResult.to_dict
 # ---------------------------------------------------------------------------

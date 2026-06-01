@@ -159,7 +159,8 @@ def invoke_claude(
         prompt,
         "--output-format",
         "stream-json",
-        "--no-interactive",
+        "--permission-mode",
+        "plan",
     ]
 
     try:
