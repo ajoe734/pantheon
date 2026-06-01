@@ -3,7 +3,7 @@
   "sprint": "2026-05-25-pantheon-bff-p0-delta-v3",
   "sprint_started_at": "2026-05-25T00:00:00Z",
   "objective": "Pantheon BFF P0 Delta-v3 — close the v2 deploy-lag bottleneck plus 1 real Pack D ErrorCode alignment plus 1 canonical path naming decision. v2 (2026-05-24) shipped 22 of 23 task to dev (routes + CORS + envelope) but the single deploy task OPS-BFF-LUPIN-DEV-REDEPLOY-20260524 blocked on Gemini2 GCP IAM (compute.instances.get missing on lupin project) and was cleaned up without ever rolling out a new image. Lovable v3 audit on 2026-05-25 therefore shows essentially the same surface as v2 - 24/24 management routes still 404, CORS still 400, envelope still detail-wrapped - all because lupin dev BFF is running stale image. v3 reassigns redeploy to Codex (user explicit), adds Pack D ErrorCode enum alignment (audit caught OBJECT_NOT_FOUND not in canonical 26), and one decision doc for 5 FE/BE naming alignments. Babysit protocol: do not mark sprint done until live BFF curls verify 8 audit paths return 200.",
-  "updated_at": "2026-06-01T01:02:00Z",
+  "updated_at": "2026-06-01T02:34:37Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -209,13 +209,10 @@
         "operations",
         "signoff"
       ],
-      "status": "blocked",
-      "current_task_ids": [
-        "PROD-WRITES-001-V2",
-        "LIVE-SCALE-001-V2"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "human/ops",
-      "next": "State migration: moved human gate ownership to Human/Ops; still awaiting CBL-LIVE-001-V2, BLA-007-V2, first_week_observation_report, risk_owner_signoff, operator_signoff.",
+      "next": "",
       "last_update": "2026-06-01T01:01:26Z"
     }
   ],
@@ -334,7 +331,7 @@
       "phase": "Phase 8 / EPIC-LIVE-GATE",
       "owner": "Human/Ops",
       "reviewer": "Codex2",
-      "status": "blocked",
+      "status": "done",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [
@@ -342,10 +339,10 @@
         "Preconditions satisfied",
         "Activation logged in audit chain"
       ],
-      "next": "State migration: moved human gate ownership to Human/Ops; still awaiting LSP-006-V2, HA-PROD-001-V2, risk_owner_signoff, operator_signoff.",
-      "last_update": "2026-06-01T01:01:24Z",
+      "next": "Human/Ops approved production real-writes gate; HumanGateDecision recorded at support/evidence/PROD-WRITES-001-V2/human-gate/decision.json. Runtime flag flip remains a separate operator action.",
+      "last_update": "2026-06-01T02:34:37Z",
       "non_dispatchable": true,
-      "gate_status": "pending_human_go_no_go",
+      "gate_status": "approved",
       "allowed_workers": [],
       "human_required_roles": [
         "risk_owner",
@@ -358,7 +355,9 @@
       "auto_created_by": "phase8-v3-audit-chain-fixup-20260521",
       "auto_generated": true,
       "mutates_canonical": false,
-      "waiting_for": "Human/Ops"
+      "terminal_outcome": "completed",
+      "human_gate_decision_ref": "support/evidence/PROD-WRITES-001-V2/human-gate/decision.json",
+      "activation_audit_ref": "support/evidence/PROD-WRITES-001-V2/human-gate/decision.json"
     },
     {
       "id": "LIVE-SCALE-001-V2",
@@ -367,7 +366,7 @@
       "phase": "Phase 8 / EPIC-LIVE-GATE",
       "owner": "Human/Ops",
       "reviewer": "Codex",
-      "status": "blocked",
+      "status": "done",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [
@@ -375,10 +374,10 @@
         "Preconditions satisfied",
         "Activation logged in audit chain"
       ],
-      "next": "State migration: moved human gate ownership to Human/Ops; still awaiting CBL-LIVE-001-V2, BLA-007-V2, first_week_observation_report, risk_owner_signoff, operator_signoff.",
-      "last_update": "2026-06-01T01:01:26Z",
+      "next": "Human/Ops approved live-scale gate; HumanGateDecision recorded at support/evidence/LIVE-SCALE-001-V2/human-gate/decision.json. Capital budget/config mutation remains a separate operator action.",
+      "last_update": "2026-06-01T02:34:37Z",
       "non_dispatchable": true,
-      "gate_status": "pending_human_go_no_go",
+      "gate_status": "approved",
       "allowed_workers": [],
       "human_required_roles": [
         "risk_owner",
@@ -391,7 +390,9 @@
       "auto_created_by": "phase8-v3-audit-chain-fixup-20260521",
       "auto_generated": true,
       "mutates_canonical": false,
-      "waiting_for": "Human/Ops"
+      "terminal_outcome": "completed",
+      "human_gate_decision_ref": "support/evidence/LIVE-SCALE-001-V2/human-gate/decision.json",
+      "activation_audit_ref": "support/evidence/LIVE-SCALE-001-V2/human-gate/decision.json"
     },
     {
       "id": "ASST-KERNEL-001",
@@ -1124,16 +1125,20 @@
       "owner": "Human/Ops",
       "waiting_for": "Human/Ops",
       "message": "Awaiting: LSP-006-V2, HA-PROD-001-V2, risk_owner_signoff, operator_signoff",
-      "status": "open",
-      "created_at": "2026-05-21T03:01:52Z"
+      "status": "resolved",
+      "created_at": "2026-05-21T03:01:52Z",
+      "resolved_at": "2026-06-01T02:34:37Z",
+      "resolution_ref": "support/evidence/PROD-WRITES-001-V2/human-gate/decision.json"
     },
     {
       "task_id": "LIVE-SCALE-001-V2",
       "owner": "Human/Ops",
       "waiting_for": "Human/Ops",
       "message": "Awaiting: CBL-LIVE-001-V2, BLA-007-V2, first_week_observation_report, risk_owner_signoff, operator_signoff",
-      "status": "open",
-      "created_at": "2026-05-21T03:01:56Z"
+      "status": "resolved",
+      "created_at": "2026-05-21T03:01:56Z",
+      "resolved_at": "2026-06-01T02:34:37Z",
+      "resolution_ref": "support/evidence/LIVE-SCALE-001-V2/human-gate/decision.json"
     }
   ],
   "workload": {
@@ -1212,9 +1217,9 @@
     },
     "Human/Ops": {
       "total": 2,
-      "active": 2,
-      "blocked": 2,
-      "done": 0,
+      "active": 0,
+      "blocked": 0,
+      "done": 2,
       "review": 0,
       "review_approved": 0,
       "todo": 0
