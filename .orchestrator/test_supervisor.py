@@ -3269,6 +3269,68 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
         dispatch_chair_review.assert_not_called()
         dispatch_underutilization_sidecars.assert_not_called()
 
+    def test_run_once_dispatches_ready_tasks_after_failure_loop_chair_review(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "supervisor": {},
+            "watcher": {},
+            "ready_dispatcher": {},
+            "providers": {},
+            "agents": {},
+        }
+        initial_state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "approvals": {},
+            "supervisor": {
+                "pid": 61209,
+                "started_at": "2026-04-05T12:44:57Z",
+                "last_heartbeat_at": "2026-04-06T04:17:26Z",
+            },
+        }
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(supervisor, "write_supervisor_pid"))
+            stack.enter_context(mock.patch.object(supervisor, "load_runtime_state", return_value=dict(initial_state)))
+            stack.enter_context(mock.patch.object(supervisor, "continue_or_skip_empty"))
+            stack.enter_context(mock.patch.object(supervisor, "expire_provider_dispatch_pauses", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "prune_stale_approvals", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "load_provider_report", return_value={}))
+            stack.enter_context(mock.patch.object(supervisor, "sync_coordination_files", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "poll_workers", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "reconcile_queue_records", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "prune_event_queue", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "refresh_chair_review_state", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "load_discussion_planning_state", return_value=None))
+            stack.enter_context(mock.patch.object(supervisor, "auto_materialize_discussion_planning", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "watchdog_safe_mode_active", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "chair_review_failure_loop_details", return_value=[{"task_id": "ASST-OCGW-004"}]))
+            dispatch_chair_review = stack.enter_context(mock.patch.object(supervisor, "dispatch_chair_review", return_value=True))
+            dispatch_ready_tasks = stack.enter_context(mock.patch.object(supervisor, "dispatch_ready_tasks", return_value=True))
+            dispatch_underutilization_sidecars = stack.enter_context(
+                mock.patch.object(supervisor, "dispatch_underutilization_sidecars", return_value=False)
+            )
+            stack.enter_context(mock.patch.object(supervisor, "process_queue", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "sync_github_bus", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "trim_worker_history"))
+            stack.enter_context(mock.patch.object(supervisor, "trim_seen_events"))
+            stack.enter_context(mock.patch.object(supervisor, "prune_orphan_worktrees", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "maybe_auto_commit_archive", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "refresh_dashboard_runtime_artifacts"))
+            stack.enter_context(mock.patch.object(supervisor, "log_runtime_summary"))
+            stack.enter_context(mock.patch.object(supervisor, "save_runtime_state"))
+            changed = supervisor.run_once(config, watch=False, replay=False)
+
+        self.assertTrue(changed)
+        dispatch_chair_review.assert_called_once()
+        dispatch_ready_tasks.assert_called_once()
+        dispatch_underutilization_sidecars.assert_called_once()
+
     def test_run_once_watchdog_safe_mode_suppresses_new_dispatch(self) -> None:
         config = {
             "schema": {
@@ -6218,6 +6280,74 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "completed")
         terminate_worker_pid.assert_called_once_with(2222)
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_superseded")
+
+    def test_alive_chair_worker_is_completed_after_valid_artifacts_apply(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "supervisor": {"stall_after_seconds": 300},
+            "ready_dispatcher": {
+                "active_worker_statuses": ["running", "waiting_approval", "suspended_approval", "manual_pending", "retry_backoff", "stalled"],
+            },
+            "providers": {},
+            "agents": {"codex2": {"id": "codex2", "display_name": "Codex2"}},
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            review_path = root / "20260601-125122-codex2.md"
+            decision_path = root / "20260601-125122-codex2.json"
+            review_path.write_text("# Review\n", encoding="utf-8")
+            decision_path.write_text('{"version":1}\n', encoding="utf-8")
+            state = {
+                "queue": {"events": {"evt-chair": {"status": "started"}}},
+                "chair_rotation": {
+                    "last_review_path": str(review_path),
+                    "last_review_decision_path": str(decision_path),
+                    "last_review_valid": True,
+                },
+                "workers": {
+                    "run-chair": {
+                        "run_id": "run-chair",
+                        "task_id": None,
+                        "provider": "codex2-1",
+                        "agent_id": "codex2_1",
+                        "status": "running",
+                        "queue_event_id": "evt-chair",
+                        "pid": 4242,
+                        "last_event_at": "2026-06-01T12:58:00Z",
+                        "request_snapshot": {
+                            "reason": "chair_review:reassignment_triage",
+                            "metadata": {"chair": {"review_path": str(review_path)}},
+                        },
+                    }
+                },
+            }
+
+            with (
+                mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+                mock.patch.object(supervisor, "load_status", return_value={"tasks": []}),
+                mock.patch.object(supervisor, "load_provider_report", return_value={}),
+                mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+                mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+                mock.patch.object(supervisor, "terminate_worker_pid", return_value=True) as terminate_worker_pid,
+                mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+                mock.patch.object(supervisor, "utc_now", return_value="2026-06-01T12:59:30Z"),
+            ):
+                changed = supervisor.poll_workers(config, state)
+
+        self.assertTrue(changed)
+        worker = state["workers"]["run-chair"]
+        self.assertEqual(worker["status"], "completed")
+        self.assertEqual(worker["last_event_at"], "2026-06-01T12:59:30Z")
+        self.assertEqual(state["queue"]["events"]["evt-chair"]["status"], "completed")
+        terminate_worker_pid.assert_called_once_with(4242)
+        payload = write_activity_log.call_args.args[1]
+        self.assertEqual(payload["type"], "worker_completed")
+        self.assertIn("artifacts were accepted", payload["message"])
 
 
 class SingleSupervisorGuardTests(unittest.TestCase):
