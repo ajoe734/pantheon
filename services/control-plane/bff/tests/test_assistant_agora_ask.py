@@ -293,6 +293,69 @@ def test_ask_enabled_transcript_has_user_and_assistant_turns() -> None:
             assert user_turn.content == "What is the answer?"
             asst_turn = next(t for t in turns if t.role.value == "assistant")
             assert asst_turn.content == "The answer is 42."
+            # Both turns must carry context_pack_id for source readback
+            assert user_turn.context_pack_id is not None, "user turn missing context_pack_id"
+            assert asst_turn.context_pack_id is not None, "assistant turn missing context_pack_id"
+            assert user_turn.context_pack_id == asst_turn.context_pack_id
+            # Assistant turn must carry provider_run_id
+            assert asst_turn.provider_run_id is not None, "assistant turn missing provider_run_id"
+        finally:
+            bff_main.read_store = original_store
+
+
+# ---------------------------------------------------------------------------
+# AC#6b — session lifecycle: assistant session created and context updated
+# ---------------------------------------------------------------------------
+
+
+def test_ask_enabled_session_lifecycle_created_and_context_updated() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            sid = "sess-lifecycle-001"
+            mock_payload = {
+                "status": "ok",
+                "data": {
+                    "provider": "codex_cli",
+                    "mode": "user",
+                    "status": "completed",
+                    "output": "Lifecycle answer.",
+                    "redaction": {},
+                },
+            }
+            mock_client = MagicMock()
+            mock_client.configured = True
+            mock_client.invoke_assistant.return_value = mock_payload
+
+            with patch.dict(os.environ, {"PANTHEON_ASSISTANT_ENABLED": "true"}):
+                with patch("main.OpenClawOpsClient", return_value=mock_client):
+                    resp = client.post(
+                        "/bff/agora/ask",
+                        json={"prompt": "lifecycle?", "sessionId": sid},
+                        headers={**OPERATOR_HEADERS, "Idempotency-Key": "ask-lifecycle-001"},
+                    )
+
+            assert resp.status_code == 202, resp.text
+
+            # Session store must contain a session for the agora session_id
+            session_store = bff_main._ASSISTANT_SESSION_STORE
+            assert session_store is not None, "Session store not initialised"
+            from assistant.transcript_store import SessionNotFoundError
+            try:
+                session = session_store.get(sid)
+            except SessionNotFoundError:
+                pytest.fail(f"Assistant session not created for session_id={sid!r}")
+            # Session context must be updated with context_pack_id and provider_run_id
+            assert session.context_pack_id is not None, "session context_pack_id not updated"
+            assert session.provider_run_id is not None, "session provider_run_id not updated"
+
+            # invoke_assistant must have been called with a non-empty context_pack
+            call_kwargs = mock_client.invoke_assistant.call_args
+            assert call_kwargs is not None
+            cp = call_kwargs.kwargs.get("context_pack") or {}
+            assert isinstance(cp, dict), f"context_pack not a dict: {cp!r}"
+            assert cp.get("context_pack_id") is not None, "context_pack_id missing from invoke_assistant payload"
         finally:
             bff_main.read_store = original_store
 
