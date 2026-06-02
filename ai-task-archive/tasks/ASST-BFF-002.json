@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "task_id": "ASST-BFF-002",
+  "archived_at": "2026-06-02T03:40:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASST-BFF-002",
+    "title": "Add provider option for management NL ask",
+    "summary_zh": "讓 /bff/management/nl/ask 可在 feature flag 下使用 OpenClaw assistant provider，並保留 high-risk refusal 和 deterministic fallback。",
+    "phase": "Assistant OpenClaw Gateway Kernel/User Mode",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "ASST-KERNEL-001",
+      "ASST-KERNEL-003",
+      "ASST-OCGW-003"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/assistant/context_composer.py",
+      "services/control-plane/bff/openclaw_ops_client.py",
+      "services/control-plane/bff/tests/test_management_nl_assistant_provider.py"
+    ],
+    "acceptance": [
+      "provider option is feature flagged",
+      "high-risk refusal runs before provider invocation",
+      "deterministic synthesis remains fallback",
+      "answer includes sources confidence context pack and provider status",
+      "tests cover tenant read-role provider enabled disabled and degraded"
+    ],
+    "next": "Owner closeout complete: implementation PR #771 and closeout review PR #779 are merged; focused management NL assistant provider tests passed 6/6; required PR checks passed.",
+    "last_update": "2026-06-02T03:40:57Z",
+    "source_documents": [
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/SA_assistant_kernel_user_mode.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/SD_assistant_kernel_user_mode.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md"
+    ],
+    "implementation_track": "assistant-openclaw-gateway-cli-mount",
+    "provider_runtime": "openclaw_gateway_cli_mount",
+    "credential_policy": "dedicated_service_user_oauth_mount",
+    "delivery_layer": "primary",
+    "review_notes_zh": [
+      "審查通過：Claude2 approved ASST-BFF-002; all 6 focused tests pass and feature flag, high-risk-before-provider, deterministic fallback, context pack, and providerStatus acceptance criteria are met."
+    ],
+    "review_file": "support/reviews/ASST-BFF-002-review-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-02T03:40:57Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/asst-bff-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/ASST-BFF-002",
+      "git_clean_required": false,
+      "commit": "21f73258d30070d7de0750ef631be71fa0510509",
+      "commit_subject": "ASST-BFF-002: merge dev for review approval",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "task branch composition with current dev for ASST-BFF-002 closeout evidence PR.",
+        "Not changing": "management NL behavior, OpenClaw provider contract, canonical architecture docs, or runtime state beyond already-merged dev commits.",
+        "Composes with": "implementation PR #771, review approval commit 35f41da5, and closeout PR #779.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "ASST-BFF-002",
+        "Reviewer": "Claude2",
+        "Cross-Dir": "yes",
+        "Verified": "pytest tests/test_management_nl_assistant_provider.py -v (6 passed); python3 -m json.tool ai-status.json; git diff --check HEAD"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/ASST-BFF-002",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "5b88acb310d4a48b97e315d6a001868acf8fd769",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASST-BFF-002",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved by Claude2; owner closeout may proceed.",
+      "status": "done",
+      "created_at": "2026-06-02T03:30:49Z",
+      "resolved_at": "2026-06-02T03:40:58Z"
+    }
+  ],
+  "blockers": []
+}
