@@ -356,6 +356,29 @@ class TestCapabilities(unittest.TestCase):
         self.assertEqual(request.metadata["operator_id"], "op-1")
         self.assertEqual(request.metadata["trace_id"], "trace-1")
 
+    def test_assistant_codex_invoke_header_operator_overrides_body_metadata(self):
+        fake_result = types.SimpleNamespace(
+            provider="codex_cli",
+            mode="user",
+            status="completed",
+            output={"status": "completed", "stdout": "ok"},
+            redaction={"provider_invocation": {"enabled": True}},
+        )
+        with patch.object(adapter_main._CODEX_RUNTIME, "invoke", return_value=fake_result) as invoke:
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/codex/invoke",
+                json={
+                    "mode": "user",
+                    "prompt": "hello",
+                    "metadata": {"operator_id": "body-op", "task_id": "ASST-OCGW-003"},
+                },
+                headers={"X-Operator-Id": "header-op"},
+            )
+        self.assertEqual(resp.status_code, 200)
+        request = invoke.call_args.args[0]
+        self.assertEqual(request.metadata["operator_id"], "header-op")
+        self.assertEqual(request.metadata["task_id"], "ASST-OCGW-003")
+
     def test_assistant_codex_invoke_requires_operator_id(self):
         with patch.object(adapter_main._CODEX_RUNTIME, "invoke") as invoke:
             resp = client.post(

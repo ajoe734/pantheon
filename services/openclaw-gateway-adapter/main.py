@@ -718,7 +718,7 @@ def invoke_codex_provider(
             },
         )
     metadata = dict(req.metadata or {})
-    metadata.setdefault("operator_id", x_operator_id.strip())
+    metadata["operator_id"] = x_operator_id.strip()
     if x_trace_id:
         metadata.setdefault("trace_id", x_trace_id)
     try:
