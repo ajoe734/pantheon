@@ -10,8 +10,8 @@ Do not read `current-work.md` by default for implementation context.
 - Owner: Claude
 - Reviewer: Codex2
 - Phase: Assistant OpenClaw Gateway Kernel/User Mode
-- Last update: 2026-06-02T03:28:50Z
-- Next: Codex2 re-review approved d55345ff. Local ASST-BFF tests 8/8 and assistant/context/session/NL regression 66/66 passed; PR #769 branch checks green. PR remains BEHIND, so owner must refresh base during closeout before merge/done.
+- Last update: 2026-06-02T03:30:08Z
+- Next: Supervisor resumed ASST-BFF-001 for finalize after successful dispatch.
 
 ## Summary
 將 /bff/agora/ask 串到 assistant session/context/OpenClaw provider lifecycle，保留 command receipt idempotency transcript 與 ask SSE。
@@ -28,18 +28,12 @@ Do not read `current-work.md` by default for implementation context.
 - services/control-plane/bff/tests/test_assistant_agora_ask.py
 
 ## Recent Task Activity
-- 2026-06-02T03:22:46Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
-- 2026-06-02T03:22:55Z · Orchestrator · worker_worktree_refreshed · -
-- 2026-06-02T03:22:55Z · Orchestrator · worker_worktree_reused · -
-- 2026-06-02T03:22:55Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
-- 2026-06-02T03:28:50Z · Codex2 · review_approved · Codex2 re-review approved d55345ff. Local ASST-BFF tests 8/8 and assistant/context/session/NL regression 66/66 passed; PR #769 branch checks green. PR remains BEHIND, so owner must refresh base during closeout before merge/done.
-- 2026-06-02T03:30:02Z · Orchestrator · worker_completed · Worker exited successfully during supervisor boot reconciliation.
-- 2026-06-02T03:33:03Z · Claude · done · Owner closeout: merged origin/dev into task branch (clean auto-merge), all 74 tests pass (8 ASST-BFF + 66 regression), PR #769 merged to dev at 2026-06-02T03:33:03Z.
-
-## Closeout Verification
-- Command: python3 -m pytest tests/test_assistant_agora_ask.py tests/test_assistant_context_pack.py tests/test_assistant_sessions.py tests/test_bff_b6_management_nl_ask.py tests/test_bff_b6_001_security_hardening.py tests/test_bff_b6_003_nl_high_risk_refusal.py -q
-- Result: 74 passed
-- PR: #769 merged to dev at 2026-06-02T03:33:03Z (merge commit b3a23a2d995fd3433bcb6f282bd1e9e101549a00)
+- 2026-06-02T03:30:08Z · Orchestrator · worker_started · Worker started via claude_cli: owned_finalize_dispatch
+- 2026-06-02T03:30:08Z · Claude · note · Supervisor resumed ASST-BFF-001 for finalize after successful dispatch.
+- 2026-06-02T03:30:11Z · Orchestrator · task_dispatch_synced · Supervisor resumed ASST-BFF-001 for finalize after successful dispatch.
+- 2026-06-02T03:34:44Z · unknown · worker_commit · Worker commit b54e7e9964fd recorded 1 staged file(s) for ASST-BFF-001.
+- 2026-06-02T03:45:32Z · Orchestrator · worker_stalled · Worker appears stalled after 300 seconds.
+- 2026-06-02T03:50:37Z · Orchestrator · worker_failed · Worker remained stalled for 898 seconds and was terminated for redispatch.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
