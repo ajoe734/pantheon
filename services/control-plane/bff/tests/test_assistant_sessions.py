@@ -405,7 +405,8 @@ class TestCreateSessionRoute:
         assert data["status"] == "active"
         assert data["session_id"].startswith("asst_sess_")
 
-    def test_create_kernel_session_requires_capability(self):
+    def test_create_kernel_session_requires_capability(self, monkeypatch):
+        monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
         client = _make_client(capabilities=[])
         resp = client.post(
             "/bff/assistant/sessions",
@@ -414,7 +415,8 @@ class TestCreateSessionRoute:
         )
         assert resp.status_code == 422
 
-    def test_create_kernel_session_success(self):
+    def test_create_kernel_session_success(self, monkeypatch):
+        monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
         client = _make_kernel_client()
         resp = client.post(
             "/bff/assistant/sessions",
@@ -428,7 +430,8 @@ class TestCreateSessionRoute:
         assert data["ttl_seconds"] == 900
         assert data["expires_at"] is not None
 
-    def test_create_kernel_session_without_reason_fails(self):
+    def test_create_kernel_session_without_reason_fails(self, monkeypatch):
+        monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
         client = _make_kernel_client()
         resp = client.post(
             "/bff/assistant/sessions",
@@ -437,7 +440,9 @@ class TestCreateSessionRoute:
         )
         assert resp.status_code == 422
 
-    def test_kernel_policy_violation_uses_bff_details_extra(self):
+    def test_kernel_policy_violation_uses_bff_details_extra(self, monkeypatch):
+        monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+
         def _bff_error(
             status_code: int,
             code: Any,

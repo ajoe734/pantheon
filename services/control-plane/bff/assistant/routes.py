@@ -57,6 +57,15 @@ def create_assistant_router(
         identity = extract_identity(authorization)
         require_read_role(identity)
         try:
+            assert_kernel_allowed(payload.mode)
+        except ModePolicyViolation as exc:
+            _raise_error(
+                bff_error, 403, ErrorCode.FORBIDDEN,
+                f"Mode policy violation: {exc}",
+                str(exc),
+                field=exc.field,
+            )
+        try:
             pack = build_context_pack(session_id, payload, identity)
         except AssistantContextPolicyError as exc:
             if bff_error is not None:
