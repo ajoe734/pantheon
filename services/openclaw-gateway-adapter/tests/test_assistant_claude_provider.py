@@ -11,6 +11,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from assistant_claude_provider import (
+    AssistantClaudeProvider,
     ClaudeProviderResult,
     _normalize_output,
     invoke_claude,
@@ -20,6 +21,87 @@ from assistant_claude_provider import (
 @pytest.fixture(autouse=True)
 def _clear_claude_binary_env(monkeypatch):
     monkeypatch.delenv("PANTHEON_ASSISTANT_CLAUDE_BIN", raising=False)
+
+
+# ---------------------------------------------------------------------------
+# AssistantClaudeProvider.readiness tests
+# ---------------------------------------------------------------------------
+
+
+def test_readiness_ready_no_probe():
+    mounts = _mock_mounts_ready()
+    provider = AssistantClaudeProvider(mounts=mounts)
+
+    with (
+        patch("assistant_claude_provider._resolve_binary", return_value="/usr/bin/claude"),
+        patch("subprocess.check_output", return_value=b"claude 2.0.0"),
+    ):
+        result = provider.readiness(auth_probe=False)
+
+    assert result["ready"] is True
+    assert result["status"] == "ready"
+    assert result["auth"] == "account_session"
+    assert result["auth_status"] == "not_checked"
+    assert result["version"] == "claude 2.0.0"
+
+
+def test_readiness_ready_with_auth_probe():
+    mounts = _mock_mounts_ready()
+    provider = AssistantClaudeProvider(mounts=mounts)
+    mock_result = ClaudeProviderResult(status="ok", text="ok")
+
+    with (
+        patch("assistant_claude_provider._resolve_binary", return_value="/usr/bin/claude"),
+        patch("subprocess.check_output", return_value=b"claude 2.0.0"),
+        patch.object(AssistantClaudeProvider, "invoke", return_value=mock_result) as invoke_mock,
+    ):
+        result = provider.readiness(auth_probe=True)
+
+    assert result["ready"] is True
+    assert result["status"] == "ready"
+    assert result["auth"] == "account_session"
+    assert result["auth_status"] == "ready"
+    invoke_mock.assert_called_once_with("Reply with: ok", timeout=30)
+
+
+def test_readiness_degraded_binary_missing():
+    provider = AssistantClaudeProvider(mounts=_mock_mounts_ready())
+
+    with patch("assistant_claude_provider._resolve_binary", return_value=None):
+        result = provider.readiness()
+
+    assert result["ready"] is False
+    assert result["status"] == "degraded"
+    assert result["degraded_reason"] == "claude_binary_not_found"
+
+
+def test_readiness_degraded_mount_missing():
+    provider = AssistantClaudeProvider(mounts=_mock_mounts_missing())
+
+    with patch("assistant_claude_provider._resolve_binary", return_value="/usr/bin/claude"):
+        result = provider.readiness()
+
+    assert result["ready"] is False
+    assert result["status"] == "degraded"
+    assert result["degraded_reason"] == "claude_mount_not_configured"
+
+
+def test_readiness_degraded_auth_failed():
+    mounts = _mock_mounts_ready()
+    provider = AssistantClaudeProvider(mounts=mounts)
+    mock_result = ClaudeProviderResult(status="degraded", text="", degraded_reason="auth_failure")
+
+    with (
+        patch("assistant_claude_provider._resolve_binary", return_value="/usr/bin/claude"),
+        patch("subprocess.check_output", return_value=b"claude 2.0.0"),
+        patch.object(AssistantClaudeProvider, "invoke", return_value=mock_result),
+    ):
+        result = provider.readiness(auth_probe=True)
+
+    assert result["ready"] is False
+    assert result["status"] == "degraded"
+    assert result["auth_status"] == "failed"
+    assert result["degraded_reason"] == "claude_auth_auth_failure"
 
 
 # ---------------------------------------------------------------------------
