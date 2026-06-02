@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Queue depth is zero and no runnable parent support need is visible.",
+  "blocked_by": [
+    "queue_depth=0",
+    "ai-status tasks=[]",
+    "no runnable parent support need"
+  ],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": []
+}
