@@ -230,6 +230,16 @@ class AssistantRepairWorkflow:
                 env_value=self._environ.get("PANTHEON_ASSISTANT_REPAIR_REQUIRE_CLEAN"),
                 default=True,
             )
+        if require_pr is not None:
+            resolved_require_pr = require_pr
+        else:
+            resolved_require_pr = _coerce_bool(
+                metadata,
+                "require_pr",
+                "requirePr",
+                env_value=self._environ.get("PANTHEON_ASSISTANT_REPAIR_REQUIRE_PR"),
+                default=False,
+            )
         return RepairWorkflowRequest(
             task_id=task_id,
             worktree=worktree,
@@ -239,13 +249,7 @@ class AssistantRepairWorkflow:
             remote=remote,
             merge_target=merge_target,
             require_clean=resolved_require_clean,
-            require_pr=_coerce_bool(
-                metadata,
-                "require_pr",
-                "requirePr",
-                env_value=self._environ.get("PANTHEON_ASSISTANT_REPAIR_REQUIRE_PR"),
-                default=False if require_pr is None else require_pr,
-            ),
+            require_pr=resolved_require_pr,
             pull_request=_pull_request_from_metadata(metadata),
         )
 

@@ -116,6 +116,13 @@ The kwarg now takes precedence unconditionally when it is not `None`.
 so no provider-side repair call can lower the enforcement threshold.
 New test: `test_metadata_cannot_lower_require_clean_when_explicit_true`.
 
+**3. Explicit `require_pr` parameter is also authoritative over metadata.**
+Codex review found the same downgrade shape on optional closeout validation:
+`validate(..., require_pr=True)` could be lowered by
+`metadata["require_pr"]=false`.  The caller-supplied kwarg now takes
+precedence when it is not `None`, matching `require_clean` semantics.
+New test: `test_metadata_cannot_lower_require_pr_when_explicit_true`.
+
 ## Validation
 
 Post-Codex2-fix validation on 2026-06-02:

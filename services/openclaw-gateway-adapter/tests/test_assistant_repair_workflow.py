@@ -205,6 +205,23 @@ def test_metadata_cannot_lower_require_clean_when_explicit_true(tmp_path: Path) 
     assert exc_info.value.code == "REPAIR_WORKTREE_DIRTY"
 
 
+def test_metadata_cannot_lower_require_pr_when_explicit_true(tmp_path: Path) -> None:
+    worktree_root, worktree = _init_task_worktree(tmp_path)
+
+    with pytest.raises(AssistantRepairWorkflowError) as exc_info:
+        _workflow(worktree_root).validate(
+            {
+                "task_id": TASK_ID,
+                "task_worktree": worktree.as_posix(),
+                "declared_scope": ["services/openclaw-gateway-adapter"],
+                "require_pr": False,
+            },
+            require_pr=True,
+        )
+
+    assert exc_info.value.code == "REPAIR_PR_REQUIRED"
+
+
 def test_repair_mode_still_denies_destructive_git() -> None:
     decision = AssistantCommandPolicy().evaluate(
         mode="kernel_repair",
