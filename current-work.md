@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-06-02 11:34:41
+Last updated: 2026-06-02 11:41:37
 
 ## Objective
 
@@ -27,7 +27,7 @@ Pantheon BFF P0 Delta-v3 — close the v2 deploy-lag bottleneck plus 1 real Pack
 
 - `Claude`: execution, control-plane, governance-review; next: Assignment created
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: Assignment created
-- `Codex`: integration, status-system, schema, acceptance; next: Review approved by Claude2; owner closeout may proceed.
+- `Codex`: integration, status-system, schema, acceptance; next: Assignment created
 - `Codex2`: integration, status-system, schema, acceptance; next: Assignment created
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: Assignment created
 - `Claude2`: execution, control-plane, governance-review; next: No active assignment
@@ -49,7 +49,6 @@ Pantheon BFF P0 Delta-v3 — close the v2 deploy-lag bottleneck plus 1 real Pack
 | `ASST-KERNEL-006` | Assistant OpenClaw Gateway Kernel/User Mode | Implement OpenClaw command broker observe/debug allowlists | Codex2 | todo | `ASST-KERNEL-002`, `ASST-OCGW-001` | 建立 OpenClaw tool/workflow policy 下的 kernel observe/debug command broker，allowlist 診斷命令並 deny destructive git DB mutation secret reads sudo broker/live capital and exfiltration。 |
 | `ASST-KERNEL-007` | Assistant OpenClaw Gateway Kernel/User Mode | Implement repair-mode worktree workflow | Gemini | todo | `ASST-KERNEL-006`, `ASST-OCGW-003` | 建立 kernel repair 的 clean task branch/worktree guardrail，限制 staging scope 並記錄 validation commit PR merge target。 |
 | `ASST-BFF-001` | Assistant OpenClaw Gateway Kernel/User Mode | Wire provider-backed /bff/agora/ask flow | Claude | todo | `ASST-KERNEL-001`, `ASST-KERNEL-003`, `ASST-OCGW-003` | 將 /bff/agora/ask 串到 assistant session/context/OpenClaw provider lifecycle，保留 command receipt idempotency transcript 與 ask SSE。 |
-| `ASST-BFF-002` | Assistant OpenClaw Gateway Kernel/User Mode | Add provider option for management NL ask | Codex | review_approved | `ASST-KERNEL-001`, `ASST-KERNEL-003`, `ASST-OCGW-003` | 讓 /bff/management/nl/ask 可在 feature flag 下使用 OpenClaw assistant provider，並保留 high-risk refusal 和 deterministic fallback。 |
 | `ASST-FE-001` | Assistant OpenClaw Gateway Kernel/User Mode | Wire Ask Personas to BFF assistant flow | Copilot | todo | `ASST-BFF-001` | 把 execute-plans Ask Personas 從 local mock response 改成 POST /bff/agora/ask 並接 ask SSE delta/completed 和 transcript resync。 |
 | `ASST-FE-002` | Assistant OpenClaw Gateway Kernel/User Mode | Add assistant mode and provider UI signals | Copilot | todo | `ASST-FE-001`, `ASST-OCGW-003` | 在 execute-plans 顯示 kernel/user mode TTL provider status command-enabled state context snapshot and audit/session refs；user mode 僅顯示一般 helper 與 source citations。 |
 | `ASST-SEC-001` | Assistant OpenClaw Gateway Kernel/User Mode | Add assistant security regression suite | Codex2 | todo | `ASST-KERNEL-002`, `ASST-OCGW-003`, `ASST-OCGW-004`, `ASST-KERNEL-006` | 補 prompt injection redaction command broker credential mount security regressions，確保 logs 內惡意文字不能越權，secret 不進 context pack，deny command 有 audit。 |
@@ -63,11 +62,12 @@ Pantheon BFF P0 Delta-v3 — close the v2 deploy-lag bottleneck plus 1 real Pack
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-06-02 08:59:24
-- Terminal tasks archived: `1334` total, `1311` completed, `23` superseded
+- Archive updated: 2026-06-02 11:40:57
+- Terminal tasks archived: `1335` total, `1312` completed, `23` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `ASST-BFF-002` | Assistant OpenClaw Gateway Kernel/User Mode | Add provider option for management NL ask | Codex | completed | 2026-06-02 11:40:57 | `ai-task-archive/tasks/ASST-BFF-002.json` |
 | `ASST-OCGW-003` | Assistant OpenClaw Gateway Kernel/User Mode | Implement Codex provider through OpenClaw gateway | Codex | completed | 2026-06-02 08:59:24 | `ai-task-archive/tasks/ASST-OCGW-003.json` |
 | `ASST-OCGW-004` | Assistant OpenClaw Gateway Kernel/User Mode | Implement Claude provider through OpenClaw gateway | Codex2 | completed | 2026-06-02 07:51:30 | `ai-task-archive/tasks/ASST-OCGW-004.json` |
 | `ASST-KERNEL-001` | Assistant OpenClaw Gateway Kernel/User Mode | Implement assistant context-pack schema and BFF route | Codex | completed | 2026-06-01 00:32:48 | `ai-task-archive/tasks/ASST-KERNEL-001.json` |
@@ -87,7 +87,6 @@ Pantheon BFF P0 Delta-v3 — close the v2 deploy-lag bottleneck plus 1 real Pack
 | `BFF-INFRA-ERRORCODE-PACKD-001` | Sprint BFF-DELTA-V3 / EPIC-BFF-DELTA-V3-INFRA | Align ErrorCode enum to Pack D §D21 26 canonical codes | Codex | completed | 2026-05-25 11:32:02 | `ai-task-archive/tasks/BFF-INFRA-ERRORCODE-PACKD-001.json` |
 | `BFF-B6-002` | Sprint BFF-6 / EPIC-BFF-GAP-NL | NL audit and evidence grounding | Claude | completed | 2026-05-23 20:49:33 | `ai-task-archive/tasks/BFF-B6-002.json` |
 | `BFF-B6-003` | Sprint BFF-6 / EPIC-BFF-GAP-NL | NL high-risk refusal policy | Codex | completed | 2026-05-23 20:34:24 | `ai-task-archive/tasks/BFF-B6-003.json` |
-| `BFF-B2-004` | Sprint BFF-2 / EPIC-BFF-GAP-CORE | Research and search facade: /bff/research-experiments and /bff/search | Codex2 | completed | 2026-05-23 20:14:36 | `ai-task-archive/tasks/BFF-B2-004.json` |
 
 ## Task Board
 
@@ -107,7 +106,6 @@ Pantheon BFF P0 Delta-v3 — close the v2 deploy-lag bottleneck plus 1 real Pack
 | `ASST-KERNEL-006` | Assistant OpenClaw Gateway Kernel/User Mode | Implement OpenClaw command broker observe/debug allowlists | 建立 OpenClaw tool/workflow policy 下的 kernel observe/debug command broker，allowlist 診斷命令並 deny destructive git DB mutation secret reads sudo broker/live capital and exfiltration。 | Codex2 | Claude | todo | `ASST-KERNEL-002`, `ASST-OCGW-001` | 2026-05-31 23:51:22 | Assignment created |
 | `ASST-KERNEL-007` | Assistant OpenClaw Gateway Kernel/User Mode | Implement repair-mode worktree workflow | 建立 kernel repair 的 clean task branch/worktree guardrail，限制 staging scope 並記錄 validation commit PR merge target。 | Gemini | Codex | todo | `ASST-KERNEL-006`, `ASST-OCGW-003` | 2026-05-31 23:51:22 | Assignment created |
 | `ASST-BFF-001` | Assistant OpenClaw Gateway Kernel/User Mode | Wire provider-backed /bff/agora/ask flow | 將 /bff/agora/ask 串到 assistant session/context/OpenClaw provider lifecycle，保留 command receipt idempotency transcript 與 ask SSE。 | Claude | Codex2 | todo | `ASST-KERNEL-001`, `ASST-KERNEL-003`, `ASST-OCGW-003` | 2026-05-31 23:51:23 | Assignment created |
-| `ASST-BFF-002` | Assistant OpenClaw Gateway Kernel/User Mode | Add provider option for management NL ask | 讓 /bff/management/nl/ask 可在 feature flag 下使用 OpenClaw assistant provider，並保留 high-risk refusal 和 deterministic fallback。 | Codex | Claude2 | review_approved | `ASST-KERNEL-001`, `ASST-KERNEL-003`, `ASST-OCGW-003` | 2026-06-02 11:30:49 | Review approved by Claude2; owner closeout may proceed. |
 | `ASST-FE-001` | Assistant OpenClaw Gateway Kernel/User Mode | Wire Ask Personas to BFF assistant flow | 把 execute-plans Ask Personas 從 local mock response 改成 POST /bff/agora/ask 並接 ask SSE delta/completed 和 transcript resync。 | Copilot | Codex2 | todo | `ASST-BFF-001` | 2026-05-31 23:51:24 | Assignment created |
 | `ASST-FE-002` | Assistant OpenClaw Gateway Kernel/User Mode | Add assistant mode and provider UI signals | 在 execute-plans 顯示 kernel/user mode TTL provider status command-enabled state context snapshot and audit/session refs；user mode 僅顯示一般 helper 與 source citations。 | Copilot | Claude2 | todo | `ASST-FE-001`, `ASST-OCGW-003` | 2026-05-31 23:51:25 | Assignment created |
 | `ASST-SEC-001` | Assistant OpenClaw Gateway Kernel/User Mode | Add assistant security regression suite | 補 prompt injection redaction command broker credential mount security regressions，確保 logs 內惡意文字不能越權，secret 不進 context pack，deny command 有 audit。 | Codex2 | Claude | todo | `ASST-KERNEL-002`, `ASST-OCGW-003`, `ASST-OCGW-004`, `ASST-KERNEL-006` | 2026-05-31 23:51:26 | Assignment created |
@@ -117,7 +115,7 @@ Pantheon BFF P0 Delta-v3 — close the v2 deploy-lag bottleneck plus 1 real Pack
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| `ASST-BFF-002` | Claude2 | Codex | Review approved by Claude2; owner closeout may proceed. | pending | 2026-06-02 11:30:49 |
+| _(none)_ | - | - | - | - | - |
 
 ## Blockers
 
@@ -132,7 +130,6 @@ Pantheon BFF P0 Delta-v3 — close the v2 deploy-lag bottleneck plus 1 real Pack
 |---|---|---|---|
 | `OSS-STAT-001-SIDECAR-ACCEPTANCE` | Claude | 審查通過：sidecar acceptance packet 文件完整，正確記錄 shadowing 問題解決與最終 artifact 形狀 | support/sidecars/OSS-STAT-001/OSS-STAT-001-SIDECAR-ACCEPTANCE.md |
 | `OSS-QUANTLIB-V2-001` | Codex2 | Codex2 re-review: implementation and evidence still satisfy acceptance; pytest and jq gates passed, PR #194 is merged. Lifecycle write is blocked if durable ai-status remains out of sync. | support/reviews/OSS-QUANTLIB-V2-001-review-codex2.md |
-| `ASST-BFF-002` | Claude2 | 審查通過：Claude2 approved ASST-BFF-002; all 6 focused tests pass and feature flag, high-risk-before-provider, deterministic fallback, context pack, and providerStatus acceptance criteria are met. | support/reviews/ASST-BFF-002-review-claude2.md |
 
 ## Lovable Coordination
 

@@ -3,7 +3,7 @@
   "sprint": "2026-05-25-pantheon-bff-p0-delta-v3",
   "sprint_started_at": "2026-05-25T00:00:00Z",
   "objective": "Pantheon BFF P0 Delta-v3 — close the v2 deploy-lag bottleneck plus 1 real Pack D ErrorCode alignment plus 1 canonical path naming decision. v2 (2026-05-24) shipped 22 of 23 task to dev (routes + CORS + envelope) but the single deploy task OPS-BFF-LUPIN-DEV-REDEPLOY-20260524 blocked on Gemini2 GCP IAM (compute.instances.get missing on lupin project) and was cleaned up without ever rolling out a new image. Lovable v3 audit on 2026-05-25 therefore shows essentially the same surface as v2 - 24/24 management routes still 404, CORS still 400, envelope still detail-wrapped - all because lupin dev BFF is running stale image. v3 reassigns redeploy to Codex (user explicit), adds Pack D ErrorCode enum alignment (audit caught OBJECT_NOT_FOUND not in canonical 26), and one decision doc for 5 FE/BE naming alignments. Babysit protocol: do not mark sprint done until live BFF curls verify 8 audit paths return 200.",
-  "updated_at": "2026-06-02T03:34:41Z",
+  "updated_at": "2026-06-02T03:41:37Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -129,13 +129,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "finalize",
+      "status": "ready",
       "current_task_ids": [
-        "ASST-BFF-002"
+        "ASST-KERNEL-001"
       ],
       "branch": "task/OODA-CANARY-004-V2",
-      "next": "Review approved by Claude2; owner closeout may proceed.",
-      "last_update": "2026-06-02T03:30:49Z"
+      "next": "Assignment created",
+      "last_update": "2026-05-31T15:51:13Z"
     },
     {
       "name": "Codex2",
@@ -725,48 +725,6 @@
       "delivery_layer": "primary"
     },
     {
-      "id": "ASST-BFF-002",
-      "title": "Add provider option for management NL ask",
-      "summary_zh": "讓 /bff/management/nl/ask 可在 feature flag 下使用 OpenClaw assistant provider，並保留 high-risk refusal 和 deterministic fallback。",
-      "phase": "Assistant OpenClaw Gateway Kernel/User Mode",
-      "owner": "Codex",
-      "reviewer": "Claude2",
-      "status": "review_approved",
-      "depends_on": [
-        "ASST-KERNEL-001",
-        "ASST-KERNEL-003",
-        "ASST-OCGW-003"
-      ],
-      "artifacts": [
-        "services/control-plane/bff/main.py",
-        "services/control-plane/bff/assistant/context_composer.py",
-        "services/control-plane/bff/openclaw_ops_client.py",
-        "services/control-plane/bff/tests/test_management_nl_assistant_provider.py"
-      ],
-      "acceptance": [
-        "provider option is feature flagged",
-        "high-risk refusal runs before provider invocation",
-        "deterministic synthesis remains fallback",
-        "answer includes sources confidence context pack and provider status",
-        "tests cover tenant read-role provider enabled disabled and degraded"
-      ],
-      "next": "Review approved by Claude2; owner closeout may proceed.",
-      "last_update": "2026-06-02T03:30:49Z",
-      "source_documents": [
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/SA_assistant_kernel_user_mode.md",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/SD_assistant_kernel_user_mode.md",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md"
-      ],
-      "implementation_track": "assistant-openclaw-gateway-cli-mount",
-      "provider_runtime": "openclaw_gateway_cli_mount",
-      "credential_policy": "dedicated_service_user_oauth_mount",
-      "delivery_layer": "primary",
-      "review_notes_zh": [
-        "審查通過：Claude2 approved ASST-BFF-002; all 6 focused tests pass and feature flag, high-risk-before-provider, deterministic fallback, context pack, and providerStatus acceptance criteria are met."
-      ],
-      "review_file": "support/reviews/ASST-BFF-002-review-claude2.md"
-    },
-    {
       "id": "ASST-FE-001",
       "title": "Wire Ask Personas to BFF assistant flow",
       "summary_zh": "把 execute-plans Ask Personas 從 local mock response 改成 POST /bff/agora/ask 並接 ask SSE delta/completed 和 transcript resync。",
@@ -1026,14 +984,6 @@
       "status": "done",
       "created_at": "2026-05-19T12:37:08Z",
       "resolved_at": "2026-05-19T13:06:09Z"
-    },
-    {
-      "task_id": "ASST-BFF-002",
-      "from": "Claude2",
-      "to": "Codex",
-      "message": "Review approved by Claude2; owner closeout may proceed.",
-      "status": "pending",
-      "created_at": "2026-06-02T03:30:49Z"
     }
   ],
   "blockers": [
@@ -1122,12 +1072,12 @@
       "todo": 1
     },
     "Codex": {
-      "total": 2,
+      "total": 1,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
-      "review_approved": 1,
+      "review_approved": 0,
       "todo": 1
     },
     "Codex2": {
