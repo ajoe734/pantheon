@@ -218,6 +218,40 @@ class OpenClawOpsClient:
             query["capital_pool_id"] = capital_pool_id
         return self._request("GET", "/api/openclaw-adapter/broker/live/gate/audit", query=query)
 
+    # ------------------------------------------------------------------
+    # Assistant provider surfaces
+    # ------------------------------------------------------------------
+
+    def get_assistant_readiness(self, provider: str = "codex") -> Dict[str, Any]:
+        """Return readiness metadata for an assistant provider."""
+        return self._request("GET", f"/api/openclaw-adapter/assistant/readiness/{provider}")
+
+    def invoke_assistant(
+        self,
+        *,
+        provider: str = "codex",
+        mode: str = "user",
+        prompt: str,
+        operator_id: str,
+        context_pack: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Invoke the assistant CLI provider through the OpenClaw gateway adapter."""
+        meta = dict(metadata or {})
+        meta["operator_id"] = operator_id
+        return self._request(
+            "POST",
+            f"/api/openclaw-adapter/assistant/providers/{provider}/invoke",
+            body={
+                "mode": mode,
+                "prompt": prompt,
+                "context_pack": context_pack or {},
+                "metadata": meta,
+            },
+            headers={"X-Operator-Id": operator_id},
+            expected_status={200},
+        )
+
     def _request(
         self,
         method: str,
