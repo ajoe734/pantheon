@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Idle healthy lanes exist, active assistant tasks can accept scoped support, and there is no approval, queue, or provider blocker.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "ASST-KERNEL-007"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "ASST-USER-001",
+    "ASST-FE-002"
+  ]
+}
