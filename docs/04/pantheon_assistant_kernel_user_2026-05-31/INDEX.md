@@ -13,6 +13,7 @@ Conflict rule: This bundle does not override L1 canonical architecture, SD-11 BF
 | [SD_assistant_kernel_user_mode.md](SD_assistant_kernel_user_mode.md) | Supplemental System Design | Concrete backend/frontend architecture, APIs, data contracts, command broker, Codex/Claude CLI bridge, rollout and validation plan |
 | [EXECUTION_TASKS.md](EXECUTION_TASKS.md) | Execution Task Packet | Supervisor/autoworker task wave for the OpenClaw gateway credential-mount implementation path |
 | [ASST_KERNEL_002_REDACTION_IMPLEMENTATION.md](ASST_KERNEL_002_REDACTION_IMPLEMENTATION.md) | Implementation Note | Redaction library behavior, provider runtime boundary, and focused verification for ASST-KERNEL-002 |
+| [ASST_KERNEL_007_REPAIR_WORKFLOW.md](ASST_KERNEL_007_REPAIR_WORKFLOW.md) | Implementation Note | Repair-mode task branch/worktree guardrails, declared scope enforcement, PR metadata, and smoke usage for ASST-KERNEL-007 |
 
 ## Executive Decision
 

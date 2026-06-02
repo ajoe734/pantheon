@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from assistant_credential_mounts import AssistantCredentialMounts, DEFAULT_CODEX_CONTAINER_HOME
+from assistant_repair_workflow import AssistantRepairWorkflow, AssistantRepairWorkflowError
 
 try:
     from assistant.redaction import RedactionError, redact_assistant_payload
@@ -88,6 +89,7 @@ class _CommandContext:
     workspace: str
     sandbox: str
     workspace_class: str
+    repair_workflow: Mapping[str, Any] | None = None
 
 
 class AssistantProviderAuditLog:
@@ -155,6 +157,7 @@ class AssistantCodexProvider:
         run_func: RunFunc | None = None,
         which_func: WhichFunc | None = None,
         audit_log: AssistantProviderAuditLog | None = None,
+        repair_workflow: AssistantRepairWorkflow | None = None,
         clock: ClockFunc | None = None,
     ) -> None:
         self._environ = dict(environ if environ is not None else os.environ)
@@ -164,6 +167,7 @@ class AssistantCodexProvider:
         self._audit = audit_log or AssistantProviderAuditLog(
             redaction_enabled=_truthy(self._environ.get("PANTHEON_ASSISTANT_REDACTION_ENABLED", "true")),
         )
+        self._repair_workflow = repair_workflow or AssistantRepairWorkflow(self._environ)
         self._clock = clock or _utc_now
 
     def readiness(self, *, auth_probe: bool = False) -> dict[str, Any]:
@@ -255,6 +259,7 @@ class AssistantCodexProvider:
                 "mode": mode,
                 "sandbox": context.sandbox,
                 "workspace_class": context.workspace_class,
+                **({"repair_workflow": context.repair_workflow} if context.repair_workflow else {}),
                 "prompt_bytes": len(prompt.encode("utf-8")),
                 "timeout_seconds": timeout,
             }
@@ -279,6 +284,7 @@ class AssistantCodexProvider:
                     "mode": mode,
                     "sandbox": context.sandbox,
                     "workspace_class": context.workspace_class,
+                    **({"repair_workflow": context.repair_workflow} if context.repair_workflow else {}),
                     "duration_ms": duration_ms,
                     "timeout_seconds": timeout,
                     "partial_stdout": _coerce_output(exc.output),
@@ -311,6 +317,7 @@ class AssistantCodexProvider:
                     "mode": mode,
                     "sandbox": context.sandbox,
                     "workspace_class": context.workspace_class,
+                    **({"repair_workflow": context.repair_workflow} if context.repair_workflow else {}),
                     "duration_ms": duration_ms,
                     "returncode": completed.returncode,
                     "stdout": completed.stdout,
@@ -334,6 +341,7 @@ class AssistantCodexProvider:
                 "mode": mode,
                 "sandbox": context.sandbox,
                 "workspace_class": context.workspace_class,
+                **({"repair_workflow": context.repair_workflow} if context.repair_workflow else {}),
                 "duration_ms": duration_ms,
                 "returncode": completed.returncode,
             }
@@ -345,6 +353,7 @@ class AssistantCodexProvider:
             "mode": mode,
             "sandbox": context.sandbox,
             "workspace_class": context.workspace_class,
+            **({"repair_workflow": context.repair_workflow} if context.repair_workflow else {}),
             "returncode": completed.returncode,
             "duration_ms": duration_ms,
             "stdout": completed.stdout,
@@ -397,11 +406,22 @@ class AssistantCodexProvider:
                 status_code=400,
                 retryable=False,
             ) from exc
+        try:
+            workflow = self._repair_workflow.validate(metadata)
+        except AssistantRepairWorkflowError as exc:
+            raise CodexProviderError(
+                exc.code,
+                str(exc),
+                status_code=exc.status_code,
+                retryable=False,
+                details=exc.details,
+            ) from exc
         return _CommandContext(
             mode="kernel_repair",
             workspace=worktree_path.as_posix(),
             sandbox="workspace-write",
             workspace_class="task_worktree",
+            repair_workflow=workflow.to_dict(),
         )
 
     def _build_env(self) -> dict[str, str]:
