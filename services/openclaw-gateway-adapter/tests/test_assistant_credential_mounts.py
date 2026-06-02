@@ -76,6 +76,36 @@ def test_missing_mount_reports_sanitized_degraded_status() -> None:
     assert missing not in repr(metadata)
 
 
+def test_metadata_never_exposes_provider_session_file_paths(tmp_path: Path) -> None:
+    codex_home = tmp_path / ".codex"
+    claude_home = tmp_path / ".claude"
+    codex_home.mkdir(mode=0o700)
+    claude_home.mkdir(mode=0o700)
+
+    mounts = AssistantCredentialMounts(
+        _env(
+            PANTHEON_ASSISTANT_CODEX_HOST_HOME="/srv/pantheon-assistant/.codex",
+            PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME="/home/pantheon-assistant/.codex",
+            PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR="/srv/pantheon-assistant/.claude",
+            PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR="/home/pantheon-assistant/.claude",
+        ),
+        stat_func=lambda path: codex_home.stat() if path.endswith(".codex") else claude_home.stat(),
+        expected_uid=os.getuid(),
+    )
+
+    metadata = mounts.get_readiness_metadata()
+    rendered = repr(metadata)
+
+    assert metadata["ready"] is True
+    assert metadata["mounts"]["codex"]["container_target"] == "codex_home"
+    assert metadata["mounts"]["claude"]["container_target"] == "claude_config"
+    assert "/srv/pantheon-assistant/.codex" not in rendered
+    assert "/home/pantheon-assistant/.codex" not in rendered
+    assert "/srv/pantheon-assistant/.claude" not in rendered
+    assert "/home/pantheon-assistant/.claude" not in rendered
+    assert "auth.json" not in rendered
+
+
 def test_wrong_owner_reports_sanitized_mismatch(tmp_path: Path) -> None:
     codex_home = tmp_path / ".codex"
     claude_home = tmp_path / ".claude"

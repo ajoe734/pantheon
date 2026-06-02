@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import sys
 from pathlib import Path
 
@@ -48,6 +49,54 @@ def test_user_mode_denies_every_command_and_audits(tmp_path: Path) -> None:
     assert entries[0]["outcome"] == "denied"
     assert entries[0]["policy_class"] == "mode_denied"
     assert entries[0]["argv_hash"]
+
+
+def test_denied_command_audit_omits_raw_secret_argv(tmp_path: Path) -> None:
+    audit = _audit(tmp_path)
+    broker = AssistantCommandBroker(audit_log=audit)
+
+    with pytest.raises(AssistantCommandDenied):
+        broker.request_command(
+            session_id="s1",
+            operator_id="op1",
+            mode="kernel_debug",
+            command_class="health_probe",
+            argv=["curl", "http://localhost:8000/healthz?token=secret-token-123456"],
+        )
+
+    raw_audit = (tmp_path / "assistant_command_audit.jsonl").read_text(encoding="utf-8")
+    entry = audit.read(session_id="s1", operator_id="op1")[0]
+    assert entry["event_type"] == "assistant.command.denied"
+    assert entry["policy_decision"] == "denied"
+    assert entry["argv_head"] == "curl"
+    assert entry["argv_hash"]
+    assert "secret-token-123456" not in raw_audit
+    assert "healthz?token=" not in raw_audit
+
+
+def test_expired_kernel_session_denies_command_and_audits(tmp_path: Path) -> None:
+    audit = _audit(tmp_path)
+    broker = AssistantCommandBroker(audit_log=audit)
+    expired_at = (
+        datetime.now(timezone.utc) - timedelta(seconds=5)
+    ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    with pytest.raises(AssistantCommandDenied) as exc_info:
+        broker.request_command(
+            session_id="s-expired",
+            operator_id="op1",
+            mode="kernel_debug",
+            command_class="repo_status",
+            argv=["git", "status", "-sb"],
+            session_expires_at=expired_at,
+        )
+
+    assert exc_info.value.decision.policy_class == "session_expired"
+    entries = audit.read(session_id="s-expired", operator_id="op1")
+    assert len(entries) == 1
+    assert entries[0]["event_type"] == "assistant.command.denied"
+    assert entries[0]["policy_class"] == "session_expired"
+    assert entries[0]["argv_head"] == "git"
 
 
 def test_kernel_observe_allows_read_probe_and_git_status(tmp_path: Path) -> None:
@@ -211,4 +260,3 @@ def test_tool_workflow_bridge_denies_user_mode_even_when_tool_is_allowed(tmp_pat
     entries = audit.read(session_id="s1")
     assert entries[0]["event_type"] == "assistant.command.denied"
     assert entries[0]["policy_class"] == "mode_denied"
-
