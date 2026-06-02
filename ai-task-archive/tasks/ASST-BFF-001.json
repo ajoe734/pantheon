@@ -1,0 +1,123 @@
+{
+  "version": 1,
+  "task_id": "ASST-BFF-001",
+  "archived_at": "2026-06-02T03:59:39Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASST-BFF-001",
+    "title": "Wire provider-backed /bff/agora/ask flow",
+    "summary_zh": "將 /bff/agora/ask 串到 assistant session/context/OpenClaw provider lifecycle，保留 command receipt idempotency transcript 與 ask SSE。",
+    "phase": "Assistant OpenClaw Gateway Kernel/User Mode",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "ASST-KERNEL-001",
+      "ASST-KERNEL-003",
+      "ASST-OCGW-003"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/assistant/routes.py",
+      "services/control-plane/bff/openclaw_ops_client.py",
+      "services/control-plane/bff/tests/test_assistant_agora_ask.py"
+    ],
+    "acceptance": [
+      "feature flag enables assistant-backed ask flow",
+      "existing command receipt and idempotency remain intact",
+      "route emits ask message delta and completed events",
+      "degraded provider returns deterministic fallback",
+      "tests cover enabled disabled replay degraded and transcript readback"
+    ],
+    "next": "ASST-BFF-001 finalized: /bff/agora/ask wired to provider lifecycle. PR #769 (implementation) and PR #778+#782 (closeout records) merged to dev. Verified: pytest 74 passed (8 ASST-BFF + 66 regression). Reviewed and approved by Codex2.",
+    "last_update": "2026-06-02T03:59:39Z",
+    "source_documents": [
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/SA_assistant_kernel_user_mode.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/SD_assistant_kernel_user_mode.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md"
+    ],
+    "implementation_track": "assistant-openclaw-gateway-cli-mount",
+    "provider_runtime": "openclaw_gateway_cli_mount",
+    "credential_policy": "dedicated_service_user_oauth_mount",
+    "delivery_layer": "primary",
+    "review_notes_zh": [
+      "複審通過：d55345ff 已補上 /bff/agora/ask 的 context_pack 建構與 provider 傳遞、assistant session co-key/create/update_context、transcript context_pack_id/provider_run_id wiring。驗證：python3 -m pytest tests/test_assistant_agora_ask.py -v（8 passed）；python3 -m pytest tests/test_assistant_context_pack.py tests/test_assistant_sessions.py tests/test_bff_b6_management_nl_ask.py tests/test_bff_b6_001_security_hardening.py tests/test_bff_b6_003_nl_high_risk_refusal.py -q（66 passed）；GitHub PR #769 branch checks green。注意：PR 仍為 BEHIND，owner closeout 需 refresh base 後才能 merge/done。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-02T03:59:39Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/asst-bff-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/ASST-BFF-001",
+      "git_clean_required": false,
+      "commit": "5af23c5de4a5c57b9ec252cd7db950599f458c68",
+      "commit_subject": "ASST-BFF-001: finalize closeout record",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Verified": "pytest 74 passed (8 ASST-BFF + 66 regression); PR #769 and PR #778 merged",
+        "PR #769 merged to dev 2026-06-02T03": "33:03Z.",
+        "LLM-Agent": "Claude",
+        "Task-ID": "ASST-BFF-001",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/ASST-BFF-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "df819f4674f0f3c1c427ca31bc3a77abef778e65",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASST-BFF-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Implementation complete. Please review PR #769 (task/ASST-BFF-001 → dev). Changes: (1) openclaw_ops_client.py: added invoke_assistant() and get_assistant_readiness() methods; (2) main.py: feature flag PANTHEON_ASSISTANT_ENABLED gates the assistant ask flow, new SSE events ask.message.delta + ask.message.completed, module-level transcript store wiring, deterministic degraded fallback; (3) tests/test_assistant_agora_ask.py: 7 tests cover enabled/disabled/degraded/replay/transcript readback. All 7 new tests pass, 54 existing assistant/nl-ask tests pass. Commit fd4813a6.",
+      "status": "done",
+      "created_at": "2026-06-02T01:09:12Z",
+      "resolved_at": "2026-06-02T01:30:09Z"
+    },
+    {
+      "task_id": "ASST-BFF-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review blocker on PR #769: /bff/agora/ask invokes provider without assistant context_pack and appends transcript turns without creating/updating the assistant session lifecycle, so route-level transcript readback/source refs are not wired. GitHub review comment 4405734294 recorded. Local validation still passes: ASST-BFF-001 7 tests and assistant/nl-ask 54 tests.",
+      "status": "done",
+      "created_at": "2026-06-02T01:30:09Z",
+      "resolved_at": "2026-06-02T01:30:09Z"
+    },
+    {
+      "task_id": "ASST-BFF-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review blocker addressed. Changes in commit d55345ff: (1) _assistant_build_context_pack called before invoke_assistant, context_pack dict passed to provider; (2) AssistantSession created in _ASSISTANT_SESSION_STORE keyed by agora session_id on first ask; (3) context_pack_id propagated to user and assistant transcript turns; (4) session update_context called after invocation. New test AC#6b verifies session lifecycle and context_pack wiring. All 8 ASST-BFF-001 tests pass; 54 regression tests pass. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-06-02T01:46:23Z",
+      "resolved_at": "2026-06-02T03:28:50Z"
+    },
+    {
+      "task_id": "ASST-BFF-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Codex2 re-review approved d55345ff. Local ASST-BFF tests 8/8 and assistant/context/session/NL regression 66/66 passed; PR #769 branch checks green. PR remains BEHIND, so owner must refresh base during closeout before merge/done.",
+      "status": "done",
+      "created_at": "2026-06-02T03:28:50Z",
+      "resolved_at": "2026-06-02T03:59:40Z"
+    }
+  ],
+  "blockers": []
+}
