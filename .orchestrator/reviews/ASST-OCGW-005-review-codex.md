@@ -7,8 +7,8 @@ Status: APPROVED
 ## Scope
 
 Reviewed the credential-refresh smoke/runbook delivery originally merged in
-PR #773 (`be40fd94`) and the follow-up review fix in PR #775
-(`eadb75ad`, pending merge at review time).
+PR #773 (`be40fd94`) and the follow-up review fix merged in PR #775
+(`03e8a029`, including fix commit `eadb75ad`).
 
 Reviewed artifacts:
 
@@ -63,4 +63,4 @@ Results:
 
 ## Conclusion
 
-Approved for Codex2 owner finalization after PR #775 merges into `dev`.
+Approved for Codex2 owner finalization after this review artifact is merged.
