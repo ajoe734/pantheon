@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Idle capacity exists; stale ASST board rows need reconciliation.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "ASST-KERNEL-001",
+    "ASST-KERNEL-002",
+    "ASST-KERNEL-003",
+    "ASST-OCGW-001",
+    "ASST-OCGW-002",
+    "ASST-OCGW-005",
+    "ASST-KERNEL-006",
+    "ASST-KERNEL-007",
+    "ASST-BFF-001",
+    "ASST-FE-001",
+    "ASST-FE-002",
+    "ASST-SEC-001",
+    "ASST-USER-001"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "OPS-STATE-RECON-20260602-ASST",
+    "ASST-USER-001",
+    "OPS-ARCHIVE-AUTO-COMMIT-20260531T165903Z"
+  ]
+}
