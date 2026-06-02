@@ -78,6 +78,34 @@ def _provider(tmp_path: Path, run_func, *, env=None, mount=None) -> AssistantCod
     )
 
 
+def _git(cwd: Path, *args: str) -> str:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return completed.stdout.strip()
+
+
+def _init_task_worktree(tmp_path: Path, task_id: str) -> tuple[Path, Path]:
+    remote = tmp_path / "origin.git"
+    worktree_root = tmp_path / "worktrees"
+    worktree = worktree_root / f"task-{task_id}"
+    _git(tmp_path, "init", "--bare", remote.as_posix())
+    worktree.mkdir(parents=True)
+    _git(worktree, "init")
+    _git(worktree, "config", "user.email", "assistant@example.invalid")
+    _git(worktree, "config", "user.name", "Assistant Test")
+    (worktree / "README.md").write_text("# test\n", encoding="utf-8")
+    _git(worktree, "add", "README.md")
+    _git(worktree, "commit", "-m", "initial")
+    _git(worktree, "branch", "-M", f"task/{task_id}")
+    _git(worktree, "remote", "add", "origin", remote.as_posix())
+    return worktree_root, worktree
+
+
 def test_readiness_ready_with_auth_probe(tmp_path: Path) -> None:
     calls = []
 
@@ -184,9 +212,8 @@ def test_repair_mode_requires_task_worktree_metadata(tmp_path: Path) -> None:
 
 def test_repair_mode_uses_workspace_write_for_task_worktree(tmp_path: Path) -> None:
     calls = []
-    root = tmp_path / "worktrees"
-    worktree = root / "task-ASST-OCGW-003"
-    worktree.mkdir(parents=True)
+    task_id = "ASST-OCGW-003"
+    root, worktree = _init_task_worktree(tmp_path, task_id)
 
     def fake_run(cmd, **kwargs):
         calls.append((cmd, kwargs))
@@ -197,17 +224,23 @@ def test_repair_mode_uses_workspace_write_for_task_worktree(tmp_path: Path) -> N
         fake_run,
         env={"PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT": str(root)},
     )
-    provider.invoke(
+    result = provider.invoke(
         {
             "mode": "kernel_repair",
             "prompt": "fix it",
-            "metadata": {"operator_id": "op-1", "task_id": "ASST-OCGW-003", "task_worktree": str(worktree)},
+            "metadata": {
+                "operator_id": "op-1",
+                "task_id": task_id,
+                "task_worktree": str(worktree),
+                "declared_scope": ["services/openclaw-gateway-adapter"],
+            },
         }
     )
-
     cmd = calls[0][0]
     assert cmd[cmd.index("-C") + 1] == str(worktree)
     assert cmd[cmd.index("-s") + 1] == "workspace-write"
+    assert result["repair_workflow"]["branch"] == f"task/{task_id}"
+    assert result["repair_workflow"]["merge_target"] == "dev"
 
 
 def test_timeout_records_redacted_audit_fallback(tmp_path: Path) -> None:
