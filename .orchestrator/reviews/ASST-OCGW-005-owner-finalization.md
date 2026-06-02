@@ -48,10 +48,14 @@ Results:
 - Claude provider plus adapter main tests: 76 passed in 14.55s
 - `py_compile`: passed
 
+After PR #783 opened, `origin/dev` advanced to `df819f46`. The task branch was
+refreshed by merging `origin/dev`; this finalization artifact was updated only
+to record that refresh. No provider, smoke, runbook, or canonical architecture
+behavior changed in the refresh commit.
+
 ## Boundaries
 
-Owned layer: task-scoped owner finalization evidence and generated task brief
-refresh.
+Owned layer: task-scoped owner finalization evidence.
 
 Not changing: assistant provider runtime behavior, credential mount validation,
 smoke script behavior, credential refresh runbook semantics, canonical
