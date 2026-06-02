@@ -94,3 +94,36 @@ python3 scripts/assistant_repair_smoke.py \
   --scope services/openclaw-gateway-adapter \
   --require-pr
 ```
+
+## Guardrail Hardening (Codex2 review response)
+
+Two blocking findings from the Codex2 review (2026-06-02) were fixed:
+
+**1. Staged rename sources now included in scope enforcement.**
+`_parse_status()` previously discarded the rename source path for porcelain
+`R  old -> new` entries, letting `old` escape the scope guard if `new` was
+inside `declared_scope`.  The parser now emits two `RepairStatusEntry` objects
+(source and destination) for every rename/copy line.  `staged_paths` is now
+derived from `status_entries` (index_status not in `{" ", "?"}`) so both
+endpoints are checked.  New test: `test_staged_rename_source_outside_scope_is_rejected`.
+
+**2. Explicit `require_clean` parameter is now authoritative over metadata.**
+`request_from_metadata()` previously honored `metadata["require_clean"]` before
+the caller-supplied `require_clean` kwarg, allowing a malicious or incorrect
+request payload to pass `require_clean=false` and skip the dirty-worktree guard.
+The kwarg now takes precedence unconditionally when it is not `None`.
+`AssistantCodexProvider._repair_context()` always passes `require_clean=True`
+so no provider-side repair call can lower the enforcement threshold.
+New test: `test_metadata_cannot_lower_require_clean_when_explicit_true`.
+
+## Validation
+
+Post-Codex2-fix validation on 2026-06-02:
+
+```bash
+pytest services/openclaw-gateway-adapter/tests/test_assistant_repair_workflow.py -v
+# 8 passed in 1.57s
+
+pytest services/openclaw-gateway-adapter/tests/ -q
+# 62 passed in 6.92s
+```

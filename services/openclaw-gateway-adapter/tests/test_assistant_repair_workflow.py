@@ -162,6 +162,49 @@ def test_pr_metadata_records_merge_target(tmp_path: Path) -> None:
     }
 
 
+def test_staged_rename_source_outside_scope_is_rejected(tmp_path: Path) -> None:
+    worktree_root, worktree = _init_task_worktree(tmp_path)
+    (worktree / "outside.txt").write_text("original content\n", encoding="utf-8")
+    _git(worktree, "add", "outside.txt")
+    _git(worktree, "commit", "-m", "add outside.txt")
+    inner = worktree / "services" / "openclaw-gateway-adapter"
+    inner.mkdir(parents=True, exist_ok=True)
+    _git(worktree, "mv", "outside.txt", "services/openclaw-gateway-adapter/inside.txt")
+
+    with pytest.raises(AssistantRepairWorkflowError) as exc_info:
+        _workflow(worktree_root).validate(
+            {
+                "task_id": TASK_ID,
+                "task_worktree": worktree.as_posix(),
+                "declared_scope": ["services/openclaw-gateway-adapter"],
+                "require_clean": False,
+            }
+        )
+
+    assert exc_info.value.code == "REPAIR_STAGED_SCOPE_VIOLATION"
+    assert "outside.txt" in exc_info.value.details["staged_outside_scope"]
+
+
+def test_metadata_cannot_lower_require_clean_when_explicit_true(tmp_path: Path) -> None:
+    worktree_root, worktree = _init_task_worktree(tmp_path)
+    inner = worktree / "services" / "openclaw-gateway-adapter"
+    inner.mkdir(parents=True, exist_ok=True)
+    (inner / "dirty.py").write_text("# unstaged change\n", encoding="utf-8")
+
+    with pytest.raises(AssistantRepairWorkflowError) as exc_info:
+        _workflow(worktree_root).validate(
+            {
+                "task_id": TASK_ID,
+                "task_worktree": worktree.as_posix(),
+                "declared_scope": ["services/openclaw-gateway-adapter"],
+                "require_clean": False,
+            },
+            require_clean=True,
+        )
+
+    assert exc_info.value.code == "REPAIR_WORKTREE_DIRTY"
+
+
 def test_repair_mode_still_denies_destructive_git() -> None:
     decision = AssistantCommandPolicy().evaluate(
         mode="kernel_repair",

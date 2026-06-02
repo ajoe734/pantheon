@@ -407,7 +407,7 @@ class AssistantCodexProvider:
                 retryable=False,
             ) from exc
         try:
-            workflow = self._repair_workflow.validate(metadata)
+            workflow = self._repair_workflow.validate(metadata, require_clean=True)
         except AssistantRepairWorkflowError as exc:
             raise CodexProviderError(
                 exc.code,

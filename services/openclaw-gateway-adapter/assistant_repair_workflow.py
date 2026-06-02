@@ -220,6 +220,16 @@ class AssistantRepairWorkflow:
                 },
             )
 
+        if require_clean is not None:
+            resolved_require_clean = require_clean
+        else:
+            resolved_require_clean = _coerce_bool(
+                metadata,
+                "require_clean",
+                "requireClean",
+                env_value=self._environ.get("PANTHEON_ASSISTANT_REPAIR_REQUIRE_CLEAN"),
+                default=True,
+            )
         return RepairWorkflowRequest(
             task_id=task_id,
             worktree=worktree,
@@ -228,13 +238,7 @@ class AssistantRepairWorkflow:
             expected_branch=expected_branch,
             remote=remote,
             merge_target=merge_target,
-            require_clean=_coerce_bool(
-                metadata,
-                "require_clean",
-                "requireClean",
-                env_value=self._environ.get("PANTHEON_ASSISTANT_REPAIR_REQUIRE_CLEAN"),
-                default=True if require_clean is None else require_clean,
-            ),
+            require_clean=resolved_require_clean,
             require_pr=_coerce_bool(
                 metadata,
                 "require_pr",
@@ -287,13 +291,11 @@ class AssistantRepairWorkflow:
         upstream = self._git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], cwd=request.worktree, required=False)
 
         status_entries = _parse_status(self._git(["status", "--porcelain=v1", "--untracked-files=all"], cwd=request.worktree))
-        staged_paths = tuple(
-            sorted(
-                _normalize_status_path(path)
-                for path in self._git(["diff", "--cached", "--name-only"], cwd=request.worktree, required=False).splitlines()
-                if path.strip()
-            )
-        )
+        staged_paths = tuple(sorted({
+            entry.path
+            for entry in status_entries
+            if entry.index_status not in {" ", "?"}
+        }))
 
         staged_outside = [path for path in staged_paths if not _within_scope(path, request.declared_scope)]
         if staged_outside:
@@ -534,14 +536,23 @@ def _parse_status(output: str) -> list[RepairStatusEntry]:
         worktree_status = raw[1]
         path = raw[3:]
         if " -> " in path:
-            path = path.rsplit(" -> ", 1)[1]
-        entries.append(
-            RepairStatusEntry(
-                index_status=index_status,
-                worktree_status=worktree_status,
-                path=_normalize_status_path(path),
+            src, dst = path.split(" -> ", 1)
+            for part in (src, dst):
+                entries.append(
+                    RepairStatusEntry(
+                        index_status=index_status,
+                        worktree_status=worktree_status,
+                        path=_normalize_status_path(part),
+                    )
+                )
+        else:
+            entries.append(
+                RepairStatusEntry(
+                    index_status=index_status,
+                    worktree_status=worktree_status,
+                    path=_normalize_status_path(path),
+                )
             )
-        )
     return entries
 
 
