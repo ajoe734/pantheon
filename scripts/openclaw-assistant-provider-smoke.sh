@@ -36,6 +36,10 @@ echo "=== Listing assistant providers ==="
 curl_json "/api/openclaw-adapter/assistant/providers"
 
 echo ""
+echo "=== Adapter liveness no-op ==="
+curl_json "/livez"
+
+echo ""
 echo "=== Probing Codex readiness ==="
 CODEX_READINESS=$(curl -fsS "${BASE_URL}/api/openclaw-adapter/assistant/readiness/codex?auth_probe=true")
 echo "$CODEX_READINESS" | jq .
@@ -92,22 +96,20 @@ echo ""
 echo "=== Claude provider invoke (tiny non-interactive probe) ==="
 CLAUDE_INVOKE_PAYLOAD='{"prompt": "Say: smoke-ok", "mode": "user"}'
 if [ "$CLAUDE_READY" = "true" ]; then
-  # Use post_json_with_status for Claude as well if we want consistent error handling
   post_json_with_status "/api/openclaw-adapter/assistant/claude/invoke" "$CLAUDE_INVOKE_PAYLOAD"
   CLAUDE_STATUS=$(echo "$POST_JSON_BODY" | jq -r '.status')
   if [ "$POST_JSON_STATUS" != "200" ] || [ "$CLAUDE_STATUS" != "ok" ]; then
     echo "ERROR: Claude readiness was ready but invoke returned HTTP ${POST_JSON_STATUS} status '${CLAUDE_STATUS}'"
-    # Don't exit 1 yet, Claude might be expected to fail in some CI envs, but let's be strict if it says it's ready
     exit 1
   fi
   echo "Claude invoke returned expected status: $CLAUDE_STATUS"
 else
   echo "Claude provider is not ready (expected in CI without auth mount)."
   echo "Performing probe anyway to verify degraded behavior..."
-  
+
   post_json_with_status "/api/openclaw-adapter/assistant/claude/invoke" "$CLAUDE_INVOKE_PAYLOAD"
   CLAUDE_STATUS=$(echo "$POST_JSON_BODY" | jq -r '.status')
-  
+
   if [ "$CLAUDE_STATUS" = "degraded" ]; then
     CLAUDE_REASON=$(echo "$POST_JSON_BODY" | jq -r '.degraded_reason // ""')
     echo "Claude invoke returned expected degraded status: $CLAUDE_STATUS (reason: $CLAUDE_REASON)"

@@ -77,7 +77,7 @@ from live_gate_adapter import (
 )
 from assistant_credential_mounts import AssistantCredentialMounts
 from assistant_codex_provider import AssistantCodexProvider, CodexProviderError
-from assistant_claude_provider import ClaudeProviderResult, invoke_claude
+from assistant_claude_provider import AssistantClaudeProvider, ClaudeProviderResult
 from assistant_provider_runtime import (
     AssistantProviderRuntime,
     AssistantProviderRuntimeError,
@@ -780,11 +780,10 @@ def invoke_claude_provider(
                 "message": "X-Operator-Id header is required for Claude provider invocation.",
             },
         )
-    result: ClaudeProviderResult = invoke_claude(
+    result: ClaudeProviderResult = _CLAUDE_PROVIDER.invoke(
         req.prompt,
         mode=req.mode,
         context_pack=req.context_pack,
-        mounts=_ASSISTANT_MOUNTS,
     )
     return JSONResponse(status_code=200, content=result.to_dict())
 

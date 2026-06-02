@@ -13,10 +13,9 @@ import json
 import os
 import shutil
 import subprocess
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Mapping
+from typing import Any, Dict, List, Mapping, Optional
 
 from assistant_credential_mounts import (
     AssistantCredentialMounts,
@@ -68,15 +67,15 @@ class AssistantClaudeProvider:
 
     def readiness(self, *, auth_probe: bool = False) -> dict[str, Any]:
         checked_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        binary = _resolve_binary()
+        binary = _resolve_binary(self._environ)
         mount_validation = self._mounts.validate_mounts().get(_PROVIDER_NAME)
-        
+
         base = {
             "provider": _PROVIDER_NAME,
             "provider_name": _PROVIDER_NAME,
             "runtime": "openclaw_gateway_cli_mount",
             "checked_at": checked_at,
-            "binary_path": binary or os.getenv(_BINARY_ENV, _BINARY_NAME),
+            "binary_path": binary or self._configured_binary(),
             "version": "unknown",
             "auth": "not_checked",
             "auth_status": "not_checked",
@@ -93,8 +92,8 @@ class AssistantClaudeProvider:
         try:
             version = subprocess.check_output([binary, "--version"], stderr=subprocess.STDOUT).decode().strip()
             base["version"] = version
-        except Exception as e:
-            return {**base, "degraded_reason": f"claude_version_probe_failed: {e}"}
+        except Exception:
+            return {**base, "degraded_reason": "claude_version_probe_failed"}
 
         if not mount_validation:
             return {**base, "degraded_reason": "claude_mount_not_configured"}
@@ -107,8 +106,7 @@ class AssistantClaudeProvider:
             }
 
         if auth_probe:
-            # Claude doesn't have a simple no-op auth probe command like codex, 
-            # so we use a tiny prompt.
+            # Claude has no stable no-op auth probe, so use a tiny prompt.
             result = self.invoke("Reply with: ok", timeout=30)
             base["last_refresh_check_time"] = checked_at
             if result.status == "ok":
@@ -120,7 +118,7 @@ class AssistantClaudeProvider:
             else:
                 base["auth"] = "unavailable"
                 base["auth_status"] = "failed"
-                base["degraded_reason"] = f"claude_auth_{result.degraded_reason}"
+                base["degraded_reason"] = _auth_probe_degraded_reason(result.degraded_reason)
         else:
             base["auth"] = "account_session"
             base["auth_status"] = "not_checked"
@@ -146,6 +144,9 @@ class AssistantClaudeProvider:
             mounts=self._mounts,
         )
 
+    def _configured_binary(self) -> str:
+        return self._environ.get(_BINARY_ENV, _BINARY_NAME).strip() or _BINARY_NAME
+
 
 def _mount_metadata(validation: Any) -> dict[str, Any]:
     if validation is None:
@@ -168,9 +169,20 @@ def _resolve_config_dir(mounts: AssistantCredentialMounts) -> str:
     return DEFAULT_CLAUDE_CONTAINER_CONFIG_DIR
 
 
-def _resolve_binary() -> Optional[str]:
+def _auth_probe_degraded_reason(reason: Optional[str]) -> str:
+    if not reason:
+        return "claude_auth_unavailable"
+    if reason == "auth_failure":
+        return "claude_auth_failure"
+    if reason.startswith("auth_"):
+        return f"claude_{reason}"
+    return f"claude_auth_probe_{reason}"
+
+
+def _resolve_binary(environ: Mapping[str, str] | None = None) -> Optional[str]:
     """Return the configured container-side Claude binary path, if usable."""
-    configured = os.getenv(_BINARY_ENV, "").strip()
+    env = environ if environ is not None else os.environ
+    configured = env.get(_BINARY_ENV, "").strip()
     if configured:
         if os.path.isabs(configured):
             return configured if os.path.isfile(configured) and os.access(configured, os.X_OK) else None

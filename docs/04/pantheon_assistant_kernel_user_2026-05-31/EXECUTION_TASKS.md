@@ -20,7 +20,7 @@ This path intentionally avoids API keys and avoids building a new standalone ass
 | ASST-OCGW-002 | Gemini2 | Codex2 | Gateway CLI image install/path/version/readiness probes |
 | ASST-OCGW-003 | Codex | Claude | Codex CLI provider inside OpenClaw gateway |
 | ASST-OCGW-004 | Claude | Codex | Claude CLI provider inside OpenClaw gateway |
-| ASST-OCGW-005 | Gemini | Claude2 | done · Credential refresh smoke/runbook + Claude readiness bugfix |
+| ASST-OCGW-005 | Codex2 | Gemini | Credential refresh smoke/runbook + degraded auth behavior |
 | ASST-KERNEL-006 | Codex2 | Claude | OpenClaw command broker observe/debug allowlists |
 | ASST-KERNEL-007 | Gemini | Codex | Repair-mode worktree workflow guardrails |
 | ASST-BFF-001 | Claude | Codex2 | `/bff/agora/ask` assistant-backed flow |
