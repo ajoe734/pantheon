@@ -7,6 +7,7 @@ import subprocess
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
 
@@ -122,6 +123,7 @@ class AssistantProviderRuntime:
         }
 
     def invoke(self, request: ProviderInvocationRequest) -> ProviderInvocationResult:
+        _enforce_session_policy(request)
         invocation_payload = {
             "provider": request.provider,
             "mode": request.mode,
@@ -190,6 +192,38 @@ def _ensure_mapping(value: Any, *, stage: str) -> Mapping[str, Any]:
             stage=stage,
         )
     return value
+
+
+def _enforce_session_policy(request: ProviderInvocationRequest) -> None:
+    metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+    status = str(metadata.get("session_status") or "").strip().lower()
+    if status in {"expired", "revoked"}:
+        code = "SESSION_EXPIRED" if status == "expired" else "SESSION_INACTIVE"
+        raise AssistantProviderRuntimeError(
+            code,
+            f"Assistant session is {status}; provider invocation denied.",
+            stage="session_policy",
+        )
+    expires_at = metadata.get("session_expires_at") or metadata.get("expires_at")
+    if _is_expired_iso(expires_at):
+        raise AssistantProviderRuntimeError(
+            "SESSION_EXPIRED",
+            "Assistant session TTL has expired; provider invocation denied.",
+            stage="session_policy",
+        )
+
+
+def _is_expired_iso(value: Any) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed <= datetime.now(timezone.utc)
 
 
 def _resolve_provider_binary(provider: str) -> str | None:
