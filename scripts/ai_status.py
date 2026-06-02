@@ -686,6 +686,29 @@ def int_config_setting(settings: dict[str, Any], key: str, default: int) -> int:
         return default
 
 
+def optional_int_config_setting(settings: dict[str, Any], key: str) -> int | None:
+    value = settings.get(key)
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def int_mapping_config_setting(settings: dict[str, Any], key: str) -> dict[str, int]:
+    raw = settings.get(key)
+    if not isinstance(raw, dict):
+        return {}
+    values: dict[str, int] = {}
+    for name, value in raw.items():
+        try:
+            values[str(name)] = int(value)
+        except (TypeError, ValueError):
+            continue
+    return values
+
+
 def build_dispatch_policy_summary(config: dict[str, Any]) -> dict[str, Any]:
     ready_dispatcher = config.get("ready_dispatcher") if isinstance(config.get("ready_dispatcher"), dict) else {}
     helper_claim = ready_dispatcher.get("helper_claim") if isinstance(ready_dispatcher.get("helper_claim"), dict) else {}
@@ -703,10 +726,73 @@ def build_dispatch_policy_summary(config: dict[str, Any]) -> dict[str, Any]:
         "require_owner_higher_priority_load": bool_config_setting(helper_claim, "require_owner_higher_priority_load", True),
         "owned_work_first": True,
         "max_dispatches_per_tick": int_config_setting(ready_dispatcher, "max_dispatches_per_tick", 4),
-        "max_tasks_per_agent": int_config_setting(ready_dispatcher, "max_tasks_per_agent", 1),
+        "max_tasks_per_agent": optional_int_config_setting(ready_dispatcher, "max_tasks_per_agent"),
+        "max_tasks_per_agent_by_agent": int_mapping_config_setting(ready_dispatcher, "max_tasks_per_agent_by_agent"),
+        "max_concurrent_per_quota_group": int_mapping_config_setting(ready_dispatcher, "max_concurrent_per_quota_group"),
         "sidecar_only_agents": ready_dispatcher.get("sidecar_only_agents") or [],
         "disabled_agents": ready_dispatcher.get("disabled_agents") or [],
     }
+
+
+def _dashboard_agent_id(config: dict[str, Any], agent_name: str | None) -> str:
+    raw = str(agent_name or "").strip()
+    canonical = canonical_agent_name(raw)
+    candidates = {
+        raw.lower(),
+        canonical.lower(),
+        raw.lower().replace("-", "_"),
+        canonical.lower().replace("-", "_"),
+    }
+    for agent_id, agent in (config.get("agents", {}) or {}).items():
+        display_name = str((agent or {}).get("display_name") or "").strip()
+        values = {
+            str(agent_id).lower(),
+            str(agent_id).lower().replace("-", "_"),
+            display_name.lower(),
+            display_name.lower().replace("-", "_"),
+        }
+        if candidates & values:
+            return str(agent_id)
+    return canonical or raw
+
+
+def _dashboard_slot_count(config: dict[str, Any], agent_id: str) -> int:
+    agents = config.get("agents", {}) or {}
+    agent = agents.get(agent_id) or {}
+    slots = [str(slot or "").strip() for slot in (agent.get("worker_slots", []) or [])]
+    slot_ids = {slot for slot in slots if slot and slot in agents}
+    for slot_id, slot_agent in agents.items():
+        if str((slot_agent or {}).get("dispatch_slot_for") or "").strip() == agent_id:
+            slot_ids.add(str(slot_id))
+    return len(slot_ids)
+
+
+def dashboard_agent_capacity(config: dict[str, Any], agent_name: str | None) -> int:
+    ready_dispatcher = config.get("ready_dispatcher") if isinstance(config.get("ready_dispatcher"), dict) else {}
+    caps = ready_dispatcher.get("max_tasks_per_agent_by_agent")
+    agent_id = _dashboard_agent_id(config, agent_name)
+    canonical = canonical_agent_name(agent_name)
+    lookup_keys = {
+        str(agent_name or "").strip().lower(),
+        canonical.lower(),
+        agent_id.lower(),
+        agent_id.lower().replace("_", "-"),
+        agent_id.lower().replace("-", "_"),
+    }
+    if isinstance(caps, dict):
+        for key, value in caps.items():
+            if str(key).strip().lower() not in lookup_keys:
+                continue
+            try:
+                return max(1, int(value))
+            except (TypeError, ValueError):
+                continue
+
+    default_capacity = optional_int_config_setting(ready_dispatcher, "max_tasks_per_agent")
+    slot_count = _dashboard_slot_count(config, agent_id)
+    if slot_count:
+        return max(default_capacity or 0, slot_count)
+    return default_capacity or 1
 
 
 def recent_helper_claims(limit: int = 8, max_scan_lines: int = 5000) -> list[dict[str, Any]]:
@@ -2987,12 +3073,15 @@ def build_dashboard_bundle(
         else {}
     )
     paused_actors = {str(actor or "").strip().lower() for actor in dispatch_pauses.keys() if str(actor or "").strip()}
-    occupied_actors = {
-        str(worker.get("actor") or worker.get("provider") or "").strip().lower()
-        for worker in live_workers
-        if str(worker.get("bucket") or "").lower() in {"running", "pending"}
-        and str(worker.get("actor") or worker.get("provider") or "").strip()
-    }
+    actor_loads: dict[str, int] = {}
+    for worker in live_workers:
+        if str(worker.get("bucket") or "").lower() not in {"running", "pending"}:
+            continue
+        actor = canonical_agent_name(worker.get("actor") or worker.get("provider"))
+        if not actor:
+            continue
+        actor_key = actor.lower()
+        actor_loads[actor_key] = actor_loads.get(actor_key, 0) + 1
 
     ready_now = 0
     dependency_ready = 0
@@ -3006,14 +3095,15 @@ def build_dashboard_bundle(
         status = str(task.get("status") or "").lower()
         if status == "todo" and all(dependency_is_satisfied(resolver, dep_id) for dep_id in task.get("depends_on", [])):
             dependency_ready += 1
-            owner_key = str(task.get("owner") or "").strip().lower()
+            owner = canonical_agent_name(task.get("owner"))
+            owner_key = owner.lower()
             if not owner_key:
                 continue
             if owner_key in paused_actors:
                 continue
-            if owner_key in occupied_actors:
-                continue
             if any(worker.get("bucket") in {"running", "pending"} for worker in live_workers_by_task.get(str(task.get("id") or ""), [])):
+                continue
+            if actor_loads.get(owner_key, 0) >= dashboard_agent_capacity(config, owner):
                 continue
             ready_now += 1
         elif status == "in_progress":

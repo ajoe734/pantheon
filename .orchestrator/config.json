@@ -919,21 +919,24 @@
       "Codex2": 35,
       "Copilot": 5
     },
-    "max_tasks_per_agent": 1,
     "max_tasks_per_agent_by_agent": {
+      "Claude": 3,
       "Claude2": 1,
-      "Codex": 3,
-      "Codex2": 3
+      "Gemini": 1,
+      "Gemini2": 1,
+      "Codex": 4,
+      "Codex2": 4,
+      "Copilot": 1
     },
     "max_dispatches_per_tick": 10,
     "max_active_workers_per_task": 1,
     "max_concurrent_per_quota_group": {
-      "claude": 1,
+      "claude": 3,
       "claude2": 1,
       "gemini": 1,
       "gemini2": 1,
-      "codex1": 3,
-      "codex2": 3,
+      "codex1": 4,
+      "codex2": 4,
       "copilot": 1
     },
     "max_concurrent_workers": 11

@@ -11,15 +11,105 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from assistant_claude_provider import (
+    AssistantClaudeProvider,
     ClaudeProviderResult,
     _normalize_output,
     invoke_claude,
 )
+from assistant_credential_mounts import CredentialMountValidation
 
 
 @pytest.fixture(autouse=True)
 def _clear_claude_binary_env(monkeypatch):
     monkeypatch.delenv("PANTHEON_ASSISTANT_CLAUDE_BIN", raising=False)
+
+
+# ---------------------------------------------------------------------------
+# AssistantClaudeProvider.readiness tests
+# ---------------------------------------------------------------------------
+
+
+def test_readiness_ready_no_probe():
+    mounts = _mock_mounts_ready()
+    provider = AssistantClaudeProvider(mounts=mounts)
+
+    with (
+        patch("assistant_claude_provider._resolve_binary", return_value="/usr/bin/claude"),
+        patch("subprocess.check_output", return_value=b"claude 2.0.0"),
+    ):
+        result = provider.readiness(auth_probe=False)
+
+    assert result["ready"] is True
+    assert result["status"] == "ready"
+    assert result["auth"] == "account_session"
+    assert result["auth_status"] == "not_checked"
+    assert result["version"] == "claude 2.0.0"
+    assert result["mount_mode"] == "rw"
+    assert result["credential_mount"]["container_target"] == "claude_config"
+    assert "/srv/pantheon-assistant" not in repr(result)
+    assert "/home/pantheon-assistant" not in repr(result)
+
+
+def test_readiness_ready_with_auth_probe():
+    mounts = _mock_mounts_ready()
+    provider = AssistantClaudeProvider(mounts=mounts)
+    mock_result = ClaudeProviderResult(status="ok", text="ok")
+
+    with (
+        patch("assistant_claude_provider._resolve_binary", return_value="/usr/bin/claude"),
+        patch("subprocess.check_output", return_value=b"claude 2.0.0"),
+        patch.object(AssistantClaudeProvider, "invoke", return_value=mock_result) as invoke_mock,
+    ):
+        result = provider.readiness(auth_probe=True)
+
+    assert result["ready"] is True
+    assert result["status"] == "ready"
+    assert result["auth"] == "account_session"
+    assert result["auth_status"] == "ready"
+    invoke_mock.assert_called_once_with("Reply with: ok", timeout=30)
+
+
+def test_readiness_degraded_binary_missing():
+    provider = AssistantClaudeProvider(mounts=_mock_mounts_ready())
+
+    with patch("assistant_claude_provider._resolve_binary", return_value=None):
+        result = provider.readiness()
+
+    assert result["ready"] is False
+    assert result["status"] == "degraded"
+    assert result["degraded_reason"] == "claude_binary_not_found"
+
+
+def test_readiness_degraded_mount_missing():
+    provider = AssistantClaudeProvider(mounts=_mock_mounts_missing())
+
+    with (
+        patch("assistant_claude_provider._resolve_binary", return_value="/usr/bin/claude"),
+        patch("subprocess.check_output", return_value=b"claude 2.0.0"),
+    ):
+        result = provider.readiness()
+
+    assert result["ready"] is False
+    assert result["status"] == "degraded"
+    assert result["degraded_reason"] == "claude_mount_not_configured"
+
+
+def test_readiness_degraded_auth_failed():
+    mounts = _mock_mounts_ready()
+    provider = AssistantClaudeProvider(mounts=mounts)
+    mock_result = ClaudeProviderResult(status="degraded", text="", degraded_reason="auth_failure")
+
+    with (
+        patch("assistant_claude_provider._resolve_binary", return_value="/usr/bin/claude"),
+        patch("subprocess.check_output", return_value=b"claude 2.0.0"),
+        patch.object(AssistantClaudeProvider, "invoke", return_value=mock_result),
+    ):
+        result = provider.readiness(auth_probe=True)
+
+    assert result["ready"] is False
+    assert result["status"] == "degraded"
+    assert result["auth_status"] == "failed"
+    assert result["degraded_reason"] == "claude_auth_failure"
 
 
 # ---------------------------------------------------------------------------
@@ -92,10 +182,26 @@ def _mock_mounts_missing():
     return mounts
 
 
+def _validation(
+    *,
+    ready: bool = True,
+    status: str = "ready",
+    mount_mode: str = "rw",
+) -> CredentialMountValidation:
+    return CredentialMountValidation(
+        provider="claude",
+        ready=ready,
+        status=status,
+        configured=True,
+        host_source="dedicated_service_user",
+        container_target="claude_config",
+        mount_mode=mount_mode,
+        owner_check="matched" if ready else "not_checked",
+    )
+
+
 def _mock_mounts_ready(config_dir="/home/pantheon-assistant/.claude"):
-    validation = MagicMock()
-    validation.ready = True
-    validation.status = "ready"
+    validation = _validation()
     mounts = MagicMock()
     mounts.validate_mounts.return_value = {"claude": validation}
 
@@ -107,9 +213,7 @@ def _mock_mounts_ready(config_dir="/home/pantheon-assistant/.claude"):
 
 
 def _mock_mounts_auth_failed(status="missing_host_mount"):
-    validation = MagicMock()
-    validation.ready = False
-    validation.status = status
+    validation = _validation(ready=False, status=status)
     mounts = MagicMock()
     mounts.validate_mounts.return_value = {"claude": validation}
     mounts._contracts.return_value = []
@@ -305,6 +409,8 @@ def test_provider_result_to_dict_ok():
     assert d["provider"] == "claude"
     assert d["status"] == "ok"
     assert d["text"] == "hi"
+    assert d["config_dir"] == "claude_config"
+    assert "/home/pa/.claude" not in repr(d)
     assert "degraded_reason" not in d
 
 
