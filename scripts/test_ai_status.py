@@ -1893,8 +1893,10 @@ class PortableStateRenderingTests(unittest.TestCase):
             },
         }
         approval_state = {"pending": [], "history": []}
+        config = {"ready_dispatcher": {"max_tasks_per_agent_by_agent": {"Claude": 1}}}
 
         with (
+            mock.patch.object(ai_status, "load_config", return_value=config),
             mock.patch.object(ai_status, "load_archive_index", return_value={"updated_at": None, "counts": {"total": 0, "completed": 0, "superseded": 0}, "recent_terminal_ids": []}),
             mock.patch.object(ai_status, "pid_is_alive", return_value=True),
         ):
@@ -1903,6 +1905,68 @@ class PortableStateRenderingTests(unittest.TestCase):
         self.assertEqual(bundle["runtime_summary"]["running_workers"], 1)
         self.assertEqual(bundle["execution_summary"]["ready_now"], 0)
         self.assertEqual(bundle["execution_summary"]["dependency_ready"], 2)
+
+    def test_build_dashboard_bundle_counts_ready_capacity_when_owner_has_free_slots(self) -> None:
+        state = {
+            "updated_at": "2026-04-16T08:50:00Z",
+            "agents": [],
+            "tasks": [
+                {
+                    "id": "RUN-CODEX",
+                    "title": "Running Codex task",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                    "status": "in_progress",
+                    "depends_on": [],
+                    "next": "Running",
+                    "last_update": "2026-04-16T08:50:00Z",
+                },
+                {
+                    "id": "TODO-CODEX",
+                    "title": "Ready Codex task",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                    "status": "todo",
+                    "depends_on": [],
+                    "next": "Ready to start",
+                    "last_update": "2026-04-16T08:50:00Z",
+                },
+            ],
+        }
+        planning_state = {"status": "accepted", "runtime_mode": "supervisor_managed_execution", "proposed_execution_tasks": []}
+        orchestrator_state = {
+            "supervisor": {"pid": 1, "last_heartbeat_at": "2026-04-16T08:50:05Z", "focus_mode": "execution"},
+            "queue": {"events": {}},
+            "workers": {
+                "codex-run": {
+                    "run_id": "codex-run",
+                    "logical_agent_id": "codex",
+                    "agent_id": "codex1_1",
+                    "provider": "codex1-1",
+                    "task_id": "RUN-CODEX",
+                    "status": "running",
+                    "last_event_at": "2026-04-16T08:50:04Z",
+                    "queue_event_id": "evt-1",
+                    "pid": 1234,
+                }
+            },
+            "provider_guardrails": {"dispatch_pauses": {}},
+        }
+        approval_state = {"pending": [], "history": []}
+        config = {"ready_dispatcher": {"max_tasks_per_agent_by_agent": {"Codex": 2}}}
+
+        with (
+            mock.patch.object(ai_status, "load_config", return_value=config),
+            mock.patch.object(ai_status, "load_archive_index", return_value={"updated_at": None, "counts": {"total": 0, "completed": 0, "superseded": 0}, "recent_terminal_ids": []}),
+            mock.patch.object(ai_status, "pid_is_alive", return_value=True),
+        ):
+            bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
+
+        self.assertEqual(bundle["runtime_summary"]["running_workers"], 1)
+        self.assertEqual(bundle["execution_summary"]["ready_now"], 1)
+        self.assertEqual(bundle["execution_summary"]["dependency_ready"], 1)
+        self.assertEqual(bundle["dispatch_policy"]["max_tasks_per_agent"], None)
+        self.assertEqual(bundle["dispatch_policy"]["max_tasks_per_agent_by_agent"], {"Codex": 2})
 
     def test_build_dashboard_bundle_includes_coordination_summary(self) -> None:
         state = {
