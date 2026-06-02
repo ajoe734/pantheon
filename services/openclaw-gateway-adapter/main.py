@@ -77,7 +77,7 @@ from live_gate_adapter import (
 )
 from assistant_credential_mounts import AssistantCredentialMounts
 from assistant_codex_provider import AssistantCodexProvider, CodexProviderError
-from assistant_claude_provider import ClaudeProviderResult, invoke_claude
+from assistant_claude_provider import AssistantClaudeProvider, ClaudeProviderResult
 from assistant_provider_runtime import (
     AssistantProviderRuntime,
     AssistantProviderRuntimeError,
@@ -687,17 +687,18 @@ def get_assistant_readiness(provider: str, auth_probe: bool = False) -> Dict[str
     """Probes the provider binary and auth mount readiness."""
     if provider in {"codex", "codex_cli"}:
         return _CODEX_PROVIDER.readiness(auth_probe=auth_probe)
+    if provider in {"claude", "claude_cli"}:
+        return _CLAUDE_PROVIDER.readiness(auth_probe=auth_probe)
     return _ASSISTANT_RUNTIME.check_readiness(provider)
 
 
 @app.get("/api/openclaw-adapter/assistant/providers")
 def list_assistant_providers(auth_probe: bool = False) -> Dict[str, Any]:
-    claude_readiness = _ASSISTANT_RUNTIME.check_readiness("claude")
     return {
         "status": "ok",
         "data": [
             _CODEX_PROVIDER.readiness(auth_probe=auth_probe),
-            {"provider": "claude", **claude_readiness},
+            _CLAUDE_PROVIDER.readiness(auth_probe=auth_probe),
         ],
     }
 
@@ -779,11 +780,10 @@ def invoke_claude_provider(
                 "message": "X-Operator-Id header is required for Claude provider invocation.",
             },
         )
-    result: ClaudeProviderResult = invoke_claude(
+    result: ClaudeProviderResult = _CLAUDE_PROVIDER.invoke(
         req.prompt,
         mode=req.mode,
         context_pack=req.context_pack,
-        mounts=_ASSISTANT_MOUNTS,
     )
     return JSONResponse(status_code=200, content=result.to_dict())
 
@@ -1216,6 +1216,7 @@ def _dummy_runner(payload: Dict[str, Any]) -> Any:
 
 _ASSISTANT_MOUNTS = AssistantCredentialMounts()
 _CODEX_PROVIDER = AssistantCodexProvider(mounts=_ASSISTANT_MOUNTS)
+_CLAUDE_PROVIDER = AssistantClaudeProvider(mounts=_ASSISTANT_MOUNTS)
 _CODEX_RUNTIME = AssistantProviderRuntime(runner=_CODEX_PROVIDER.invoke)
 _ASSISTANT_RUNTIME = AssistantProviderRuntime(runner=_dummy_runner)
 

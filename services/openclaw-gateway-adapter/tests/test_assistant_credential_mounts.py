@@ -153,6 +153,23 @@ def test_valid_mounts_return_ready_without_raw_paths(tmp_path: Path) -> None:
     assert "/home/pantheon-assistant" not in repr(metadata)
 
 
+def test_mount_mode_reporting_rw(tmp_path: Path) -> None:
+    codex_home = tmp_path / ".codex"
+    claude_home = tmp_path / ".claude"
+    codex_home.mkdir(mode=0o700)
+    claude_home.mkdir(mode=0o700)
+
+    mounts = AssistantCredentialMounts(
+        _env(PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE="rw"),
+        stat_func=lambda path: codex_home.stat() if path.endswith(".codex") else claude_home.stat(),
+        expected_uid=os.getuid(),
+    )
+
+    metadata = mounts.get_readiness_metadata()
+    assert metadata["mounts"]["codex"]["mount_mode"] == "rw"
+    assert metadata["mounts"]["claude"]["mount_mode"] == "rw"
+
+
 def test_invalid_mode_and_container_path_are_rejected() -> None:
     invalid_mode = AssistantCredentialMounts(
         _env(PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE="delegated"),
