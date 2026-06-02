@@ -72,7 +72,8 @@ def test_ready_dispatch_settings_current_defaults() -> None:
     assert settings["dependency_done_statuses"] == ["done"]
     assert settings["worker_terminal_statuses"] == ["review", "done", "review_approved"]
     assert settings["active_worker_statuses"] == DEFAULT_ACTIVE_WORKER_STATUSES
-    assert settings["max_tasks_per_agent"] == 1
+    assert settings["max_tasks_per_agent"] is None
+    assert settings["max_tasks_per_agent_by_agent"] == {}
     assert settings["max_dispatches_per_tick"] == 4
     assert settings["orphaned_queue_event_grace_seconds"] == DEFAULT_ORPHANED_QUEUE_EVENT_GRACE_SECONDS
 

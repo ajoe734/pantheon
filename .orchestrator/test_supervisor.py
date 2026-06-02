@@ -14,15 +14,30 @@ import supervisor
 
 
 class RuntimeConfigTests(unittest.TestCase):
-    def test_codex_quota_groups_allow_three_concurrent_slots(self) -> None:
+    def test_codex_quota_groups_allow_four_concurrent_slots(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
 
+        ready_dispatcher = config["ready_dispatcher"]
         quota_caps = config["ready_dispatcher"]["max_concurrent_per_quota_group"]
 
-        self.assertEqual(quota_caps["codex1"], 3)
-        self.assertEqual(quota_caps["codex2"], 3)
-        self.assertGreaterEqual(len(config["agents"]["codex"]["worker_slots"]), 3)
-        self.assertGreaterEqual(len(config["agents"]["codex2"]["worker_slots"]), 3)
+        self.assertNotIn("max_tasks_per_agent", ready_dispatcher)
+        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Codex"], 4)
+        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Codex2"], 4)
+        self.assertEqual(quota_caps["codex1"], 4)
+        self.assertEqual(quota_caps["codex2"], 4)
+        self.assertGreaterEqual(len(config["agents"]["codex"]["worker_slots"]), 4)
+        self.assertGreaterEqual(len(config["agents"]["codex2"]["worker_slots"]), 4)
+        self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex"), 4)
+        self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex2"), 4)
+
+    def test_claude_concurrency_is_explicitly_capped_at_three(self) -> None:
+        config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
+
+        ready_dispatcher = config["ready_dispatcher"]
+
+        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Claude"], 3)
+        self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["claude"], 3)
+        self.assertEqual(supervisor.agent_dispatch_capacity(config, "claude"), 3)
 
     def test_claude2_new_work_target_and_concurrency_are_capped(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
