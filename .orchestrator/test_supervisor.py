@@ -265,6 +265,20 @@ class DetectWorkerFailureTests(unittest.TestCase):
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
 
+    def test_ignores_diff_assignment_that_quotes_auth_failure(self) -> None:
+        worker = self._worker_for_log(
+            "\n".join(
+                [
+                    "**Blocker**",
+                    '+ completed.stderr = b"Error: not authenticated, please login first"',
+                    "The quoted failure came from a reviewed diff, not this worker process.",
+                ]
+            )
+            + "\n"
+        )
+
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
     def test_classifies_gemini_capacity_failure(self) -> None:
         config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
         worker = {"provider": "gemini"}
@@ -947,6 +961,63 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             copied_brief = Path(request.metadata["workspace_path"]) / ".orchestrator" / "task-briefs" / "ops_brief_001.md"
             self.assertEqual(copied_brief.read_text(encoding="utf-8"), "# Source brief\n")
             self.assertEqual(request.metadata["materialized_context_files"], [".orchestrator/task-briefs/ops_brief_001.md"])
+
+    def test_prepare_worker_workspace_blocks_dirty_reused_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            worktree_path = Path(tmpdir) / "workers" / "pantheon" / "ops-worktree-001"
+            config = {
+                **self.config,
+                "paths": {"status_file": str(repo_root / "ai-status.json")},
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(Path(tmpdir) / "workers"),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            state: dict[str, object] = {}
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id="OPS-WORKTREE-001",
+                reason="owned_in_progress_dispatch",
+            )
+
+            with (
+                mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=worktree_path),
+                mock.patch.object(
+                    supervisor,
+                    "_refresh_reused_worker_worktree",
+                    return_value=(False, "skipped_dirty_worktree"),
+                ) as refresh_worktree,
+                mock.patch.object(supervisor, "_create_worker_worktree") as create_worktree,
+                mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            ):
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    request,
+                    queue_event_id="evt-dirty",
+                    target_agent="Codex",
+                )
+
+        self.assertFalse(ok)
+        assert message is not None
+        self.assertIn("dirty tracked or staged changes", message)
+        self.assertNotIn("workspace_path", request.metadata)
+        self.assertNotIn("worker_worktrees", state)
+        refresh_worktree.assert_called_once()
+        create_worktree.assert_not_called()
+        self.assertEqual(
+            [call.args[1]["type"] for call in write_activity_log.call_args_list],
+            ["worker_worktree_refreshed", "dispatch_blocked_worktree_lease"],
+        )
+        self.assertEqual(write_activity_log.call_args_list[-1].args[1]["refresh_status"], "skipped_dirty_worktree")
 
     def test_process_queue_checks_worker_guard_inside_isolated_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

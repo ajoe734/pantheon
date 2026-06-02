@@ -122,6 +122,7 @@ WORKER_FAILURE_FALSE_POSITIVE_PATTERNS = (
     re.compile(r"^error:\s+BFF?[A-Za-z0-9_]*Error[A-Za-z0-9_]*,?$", re.IGNORECASE),
     re.compile(r"^error:\s+[A-Za-z_][A-Za-z0-9_<>{}\[\], :|?]+?\|\s*null$", re.IGNORECASE),
     re.compile(r"^[+-]?\s*console\.error\(", re.IGNORECASE),
+    re.compile(r"^[+-]\s*[A-Za-z_][A-Za-z0-9_.]*\s*=\s*", re.IGNORECASE),
     re.compile(r"^-\s+\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\s+·\s+", re.IGNORECASE),
     re.compile(r"\bauto-reassigned\b.*\bafter repeated\b.*\bquota\b", re.IGNORECASE),
 )
@@ -1217,8 +1218,8 @@ def _refresh_reused_worker_worktree(repo_root: Path, worktree_path: Path, base_r
 
     Strategy: fetch + `git merge --ff-only origin/<base>`. Never auto-resolve
     a real merge — if the branch genuinely diverged, leave it for the worker
-    to handle. Never block dispatch on refresh failure; the worker may still
-    do useful work even on a stale snapshot.
+    to handle. Dirty reused worktrees are blocked before dispatch so workers
+    cannot inherit unrelated staged or tracked changes.
     """
     base = base_ref.split("/", 1)[1] if base_ref.startswith("origin/") else base_ref
     fetch_proc = subprocess.run(
@@ -1391,6 +1392,27 @@ def prepare_worker_workspace(
                     "refresh_status": refresh_status,
                 },
             )
+            if not refresh_ok and refresh_status == "skipped_dirty_worktree":
+                message = (
+                    f"Cannot lease isolated worker worktree for {workspace_task_id}: "
+                    f"reused worktree {worktree_path} has dirty tracked or staged changes. "
+                    "Clean or remove that worktree before dispatch."
+                )
+                write_activity_log(
+                    config,
+                    {
+                        "type": "dispatch_blocked_worktree_lease",
+                        "task_id": request.task_id,
+                        "workspace_task_id": workspace_task_id,
+                        "target_agent": target_agent,
+                        "queue_event_id": queue_event_id,
+                        "message": message,
+                        "workspace_branch": branch,
+                        "workspace_path": str(worktree_path),
+                        "refresh_status": refresh_status,
+                    },
+                )
+                return False, message
 
     if not reused:
         if _branch_checked_out_in_root(repo_root, branch):
