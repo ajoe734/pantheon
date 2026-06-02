@@ -36,10 +36,19 @@ echo "=== Listing assistant providers ==="
 curl_json "/api/openclaw-adapter/assistant/providers"
 
 echo ""
+echo "=== Adapter liveness no-op ==="
+curl_json "/livez"
+
+echo ""
 echo "=== Probing Codex readiness ==="
 CODEX_READINESS=$(curl -fsS "${BASE_URL}/api/openclaw-adapter/assistant/readiness/codex?auth_probe=true")
 echo "$CODEX_READINESS" | jq .
 CODEX_READY=$(echo "$CODEX_READINESS" | jq -r '.ready')
+CODEX_MOUNT_MODE=$(echo "$CODEX_READINESS" | jq -r '.mount_mode // "unknown"')
+
+if [ "$CODEX_READY" = "true" ] && [ "$CODEX_MOUNT_MODE" = "ro" ]; then
+  echo "WARNING: Codex is ready but mount_mode is 'ro'. Automatic credential refresh will fail."
+fi
 
 echo ""
 echo "=== Codex provider invoke (tiny non-interactive probe) ==="
@@ -74,33 +83,42 @@ fi
 
 echo ""
 echo "=== Probing Claude readiness ==="
-CLAUDE_READINESS=$(curl -fsS "${BASE_URL}/api/openclaw-adapter/assistant/readiness/claude")
+CLAUDE_READINESS=$(curl -fsS "${BASE_URL}/api/openclaw-adapter/assistant/readiness/claude?auth_probe=true")
 echo "$CLAUDE_READINESS" | jq .
-
 CLAUDE_READY=$(echo "$CLAUDE_READINESS" | jq -r '.ready')
+CLAUDE_MOUNT_MODE=$(echo "$CLAUDE_READINESS" | jq -r '.mount_mode // "unknown"')
+
+if [ "$CLAUDE_READY" = "true" ] && [ "$CLAUDE_MOUNT_MODE" = "ro" ]; then
+  echo "WARNING: Claude is ready but mount_mode is 'ro'. Automatic credential refresh will fail."
+fi
 
 echo ""
 echo "=== Claude provider invoke (tiny non-interactive probe) ==="
+CLAUDE_INVOKE_PAYLOAD='{"prompt": "Say: smoke-ok", "mode": "user"}'
 if [ "$CLAUDE_READY" = "true" ]; then
-  curl -fsS -X POST "${BASE_URL}/api/openclaw-adapter/assistant/claude/invoke" \
-    -H "Content-Type: application/json" \
-    -H "X-Operator-Id: ${OPERATOR_ID}" \
-    -d '{"prompt": "Say: smoke-ok", "mode": "user"}' | jq .
-else
-  echo "Claude provider is not ready (expected in CI without auth mount)."
-  echo "Invoke smoke skipped; readiness probe showed degraded state."
-
-  INVOKE_RESULT=$(curl -fsS -X POST "${BASE_URL}/api/openclaw-adapter/assistant/claude/invoke" \
-    -H "Content-Type: application/json" \
-    -H "X-Operator-Id: ${OPERATOR_ID}" \
-    -d '{"prompt": "Say: smoke-ok", "mode": "user"}')
-  echo "$INVOKE_RESULT" | jq .
-  STATUS=$(echo "$INVOKE_RESULT" | jq -r '.status')
-  if [ "$STATUS" != "degraded" ] && [ "$STATUS" != "ok" ]; then
-    echo "ERROR: unexpected invoke status '$STATUS'; expected 'degraded' or 'ok'"
+  post_json_with_status "/api/openclaw-adapter/assistant/claude/invoke" "$CLAUDE_INVOKE_PAYLOAD"
+  CLAUDE_STATUS=$(echo "$POST_JSON_BODY" | jq -r '.status')
+  if [ "$POST_JSON_STATUS" != "200" ] || [ "$CLAUDE_STATUS" != "ok" ]; then
+    echo "ERROR: Claude readiness was ready but invoke returned HTTP ${POST_JSON_STATUS} status '${CLAUDE_STATUS}'"
     exit 1
   fi
-  echo "Degraded invoke returned expected status: $STATUS"
+  echo "Claude invoke returned expected status: $CLAUDE_STATUS"
+else
+  echo "Claude provider is not ready (expected in CI without auth mount)."
+  echo "Performing probe anyway to verify degraded behavior..."
+
+  post_json_with_status "/api/openclaw-adapter/assistant/claude/invoke" "$CLAUDE_INVOKE_PAYLOAD"
+  CLAUDE_STATUS=$(echo "$POST_JSON_BODY" | jq -r '.status')
+
+  if [ "$CLAUDE_STATUS" = "degraded" ]; then
+    CLAUDE_REASON=$(echo "$POST_JSON_BODY" | jq -r '.degraded_reason // ""')
+    echo "Claude invoke returned expected degraded status: $CLAUDE_STATUS (reason: $CLAUDE_REASON)"
+  elif [ "$CLAUDE_STATUS" = "ok" ]; then
+    echo "Claude invoke succeeded despite degraded readiness."
+  else
+    echo "ERROR: unexpected Claude invoke status '${CLAUDE_STATUS}'; expected 'ok' or 'degraded'"
+    exit 1
+  fi
 fi
 
 echo ""
