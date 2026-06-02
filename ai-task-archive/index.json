@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-06-01T23:51:30Z",
+  "updated_at": "2026-06-02T00:59:24Z",
   "counts": {
-    "total": 1333,
-    "completed": 1310,
+    "total": 1334,
+    "completed": 1311,
     "superseded": 23
   },
   "recent_terminal_ids": [
+    "ASST-OCGW-003",
     "ASST-OCGW-004",
     "ASST-KERNEL-001",
     "ASST-KERNEL-002",
@@ -25,7 +26,6 @@
     "BFF-INFRA-ERRORCODE-PACKD-001",
     "BFF-B6-002",
     "BFF-B6-003",
-    "BFF-B2-004",
-    "BFF-B6-001"
+    "BFF-B2-004"
   ]
 }
