@@ -39,6 +39,7 @@ ALLOWLISTED_SOURCES = frozenset(
         "health_probes",
         "sanitized_logs",
         "repo_status",
+        "management_nl",
     }
 )
 
@@ -73,6 +74,7 @@ SOURCE_HREFS = {
     "health_probes": "/bff/healthz",
     "sanitized_logs": "/bff/assistant/internal/sanitized-logs",
     "repo_status": "/bff/assistant/internal/repo-status",
+    "management_nl": "/bff/management/nl/ask",
 }
 
 BACKEND_PAYLOAD_SOURCES = frozenset(
@@ -83,6 +85,7 @@ BACKEND_PAYLOAD_SOURCES = frozenset(
         "audit",
         "persona_health",
         "strategy_health",
+        "management_nl",
     }
 )
 

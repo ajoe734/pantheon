@@ -29835,6 +29835,287 @@ def _mgmt_nl_synthesize_answer(question: str, snippets: Dict[str, Any], focus: s
     return intro + " ".join(parts)
 
 
+def _mgmt_nl_provider_feature_enabled() -> bool:
+    for env_name in (
+        "PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED",
+        "PANTHEON_MGMT_NL_ASSISTANT_PROVIDER_ENABLED",
+    ):
+        if os.getenv(env_name) is not None:
+            return _bool_from_env(env_name)
+    return _bool_from_env("PANTHEON_ASSISTANT_ENABLED")
+
+
+def _mgmt_nl_provider_name() -> str:
+    return (os.getenv("PANTHEON_ASSISTANT_PROVIDER", "codex_cli").strip().lower() or "codex_cli")
+
+
+def _mgmt_nl_provider_status(
+    *,
+    provider: str,
+    enabled: bool,
+    status: str,
+    reason: Optional[str] = None,
+    run_id: Optional[str] = None,
+    used: bool = False,
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "enabled": enabled,
+        "provider": provider,
+        "runtime": "openclaw_gateway_cli_mount",
+        "status": status,
+        "used": used,
+        "fallback": None if used else "deterministic_synthesis",
+    }
+    if reason:
+        payload["reason"] = reason
+    if run_id:
+        payload["run_id"] = run_id
+    return payload
+
+
+def _mgmt_nl_context_status(confidence: str) -> str:
+    if confidence == "high":
+        return "ok"
+    if confidence == "partial":
+        return "degraded"
+    return "unavailable"
+
+
+def _mgmt_nl_evidence_entities_payload(entities: Any) -> List[Dict[str, str]]:
+    return [
+        {"entity_type": str(entity_type), "entity_ref": str(entity_ref)}
+        for entity_type, entity_ref in sorted(list(entities or set()))
+    ]
+
+
+def _mgmt_nl_build_context_pack(
+    *,
+    session_id: str,
+    question: str,
+    focus: str,
+    identity: OperatorIdentity,
+    caller_tenant_id: str,
+    snippets: Dict[str, Any],
+    surfaces: Dict[str, Any],
+    source_keys: List[str],
+    confidence: str,
+    evidence_entities: Any,
+    evidence_source_types: Any,
+) -> Dict[str, Any]:
+    from assistant.context_composer import AssistantCollectedSource, compose_context_pack
+    from assistant.models import AssistantContextPackRequest, AssistantMode
+
+    management_payload = {
+        "question": question,
+        "focus": focus,
+        "tenant_id": caller_tenant_id,
+        "sources": source_keys,
+        "confidence": confidence,
+        "summary_context": snippets,
+        "surfaces": surfaces,
+        "evidence_entities": _mgmt_nl_evidence_entities_payload(evidence_entities),
+        "evidence_source_types": sorted(str(item) for item in (evidence_source_types or set())),
+    }
+
+    request = AssistantContextPackRequest(
+        mode=AssistantMode.USER,
+        include=["ui", "management_nl"],
+        question=question,
+        route="/management",
+        frontend={
+            "route": "/management",
+            "selectedEntity": {
+                "entityType": "management_nl_focus",
+                "entityId": focus,
+                "label": focus,
+                "route": "/management",
+            },
+        },
+        focus={
+            "entityType": "management_nl_focus",
+            "entityId": focus,
+            "label": focus,
+            "route": "/management",
+        },
+    )
+
+    def collect_source(source_id: str, _request: Any, snapshot_at: str) -> Any:
+        if source_id != "management_nl":
+            return None
+        return AssistantCollectedSource(
+            source_id="management_nl",
+            href="/bff/management/nl/ask",
+            payload={
+                "data": management_payload,
+                "meta": {
+                    "snapshot_at": snapshot_at,
+                    "surfaces": {"management_nl": {"status": _mgmt_nl_context_status(confidence)}},
+                },
+            },
+            status=_mgmt_nl_context_status(confidence),
+            source_kind="bff",
+        )
+
+    pack = compose_context_pack(
+        session_id=session_id,
+        request=request,
+        actor=identity,
+        collect_source=collect_source,
+    )
+    return pack.model_dump(mode="json", by_alias=False)
+
+
+def _mgmt_nl_provider_prompt(
+    *,
+    question: str,
+    focus: str,
+    context_pack: Dict[str, Any],
+) -> str:
+    context_json = json.dumps(context_pack, sort_keys=True, ensure_ascii=True)
+    return "\n".join(
+        [
+            "You are the Pantheon management assistant in user mode.",
+            "Answer only from the supplied BFF context pack.",
+            "Do not execute, approve, deploy, restart, trade, or mutate anything.",
+            "If evidence is missing or stale, say so and keep the answer concise.",
+            f"Focus: {focus}",
+            f"Question: {question}",
+            f"Context pack JSON: {context_json}",
+        ]
+    )
+
+
+def _mgmt_nl_text_from_provider_value(value: Any) -> Optional[str]:
+    if isinstance(value, str):
+        clean = value.strip()
+        return clean or None
+    if isinstance(value, list):
+        for item in reversed(value):
+            found = _mgmt_nl_text_from_provider_value(item)
+            if found:
+                return found
+        return None
+    if not isinstance(value, dict):
+        return None
+    for key in ("answer", "final", "content", "text", "message"):
+        found = _mgmt_nl_text_from_provider_value(value.get(key))
+        if found:
+            return found
+    events = value.get("json_events")
+    if isinstance(events, list):
+        found = _mgmt_nl_text_from_provider_value(events)
+        if found:
+            return found
+    stdout = value.get("stdout")
+    if isinstance(stdout, str):
+        lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+        for line in reversed(lines):
+            try:
+                loaded = json.loads(line)
+            except json.JSONDecodeError:
+                return line
+            found = _mgmt_nl_text_from_provider_value(loaded)
+            if found:
+                return found
+    return None
+
+
+def _mgmt_nl_extract_provider_answer(payload: Dict[str, Any]) -> Optional[str]:
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, dict):
+        return None
+    return _mgmt_nl_text_from_provider_value(data.get("output"))
+
+
+def _mgmt_nl_maybe_provider_answer(
+    *,
+    provider: str,
+    question: str,
+    focus: str,
+    identity: OperatorIdentity,
+    caller_tenant_id: str,
+    session_id: str,
+    message_id: str,
+    context_pack: Dict[str, Any],
+    audit_id: Optional[str],
+) -> Tuple[Optional[str], Dict[str, Any]]:
+    enabled = _mgmt_nl_provider_feature_enabled()
+    if provider in {"none", "off", "disabled", "deterministic"}:
+        return None, _mgmt_nl_provider_status(
+            provider=provider,
+            enabled=False,
+            status="disabled",
+            reason="provider_disabled",
+        )
+    if not enabled:
+        return None, _mgmt_nl_provider_status(
+            provider=provider,
+            enabled=False,
+            status="disabled",
+            reason="feature_disabled",
+        )
+    if provider not in {"codex", "codex_cli"}:
+        return None, _mgmt_nl_provider_status(
+            provider=provider,
+            enabled=True,
+            status="degraded",
+            reason="unsupported_provider",
+        )
+
+    run_id = f"mnl-provider-{uuid.uuid4().hex[:12]}"
+    prompt = _mgmt_nl_provider_prompt(
+        question=question,
+        focus=focus,
+        context_pack=context_pack,
+    )
+    try:
+        provider_payload = OpenClawOpsClient().invoke_assistant_provider(
+            provider=provider,
+            mode="user",
+            prompt=prompt,
+            context_pack=context_pack,
+            operator_id=identity.operator_id,
+            trace_id=run_id,
+            metadata={
+                "route": "POST /bff/management/nl/ask",
+                "session_id": session_id,
+                "message_id": message_id,
+                "tenant_id": caller_tenant_id,
+                "audit_id": audit_id,
+            },
+        )
+    except OpenClawOpsClientError as exc:
+        return None, _mgmt_nl_provider_status(
+            provider=provider,
+            enabled=True,
+            status="degraded",
+            reason=exc.error_code,
+            run_id=run_id,
+        )
+
+    answer = _mgmt_nl_extract_provider_answer(provider_payload)
+    data = provider_payload.get("data") if isinstance(provider_payload, dict) else {}
+    provider_state = str((data or {}).get("status") or provider_payload.get("status") or "ok")
+    if not answer:
+        return None, _mgmt_nl_provider_status(
+            provider=provider,
+            enabled=True,
+            status="degraded",
+            reason="provider_empty_answer",
+            run_id=run_id,
+        )
+    status = _mgmt_nl_provider_status(
+        provider=str((data or {}).get("provider") or provider),
+        enabled=True,
+        status=provider_state if provider_state != "ok" else "completed",
+        run_id=run_id,
+        used=True,
+    )
+    if isinstance(data, dict) and data.get("redaction") is not None:
+        status["redaction"] = data.get("redaction")
+    return answer, status
+
+
 @app.post("/bff/management/nl/ask", status_code=202)
 async def bff_management_nl_ask(
     payload: Dict[str, Any] = Body(default_factory=dict),
@@ -29912,9 +30193,22 @@ async def bff_management_nl_ask(
     evidence_entities = context_bundle.get("evidence_entities") or set()
     evidence_source_types = context_bundle.get("evidence_source_types") or set()
 
-    answer = _mgmt_nl_synthesize_answer(question, snippets, focus)
+    deterministic_answer = _mgmt_nl_synthesize_answer(question, snippets, focus)
     confidence = _mgmt_nl_surface_confidence(surfaces)
     source_keys = list(snippets.keys())
+    context_pack = _mgmt_nl_build_context_pack(
+        session_id=session_id,
+        question=question,
+        focus=focus,
+        identity=identity,
+        caller_tenant_id=caller_tenant_id,
+        snippets=snippets,
+        surfaces=surfaces,
+        source_keys=source_keys,
+        confidence=confidence,
+        evidence_entities=evidence_entities,
+        evidence_source_types=evidence_source_types,
+    )
 
     try:
         nl_capabilities = _capabilities_for_identity(identity)
@@ -29974,6 +30268,19 @@ async def bff_management_nl_ask(
     audit_ref["auditId"] = accepted_audit.get("auditId") or accepted_audit.get("eventId")
     audit_ref["audit_id"] = audit_ref["auditId"]
 
+    provider_answer, provider_status = _mgmt_nl_maybe_provider_answer(
+        provider=_mgmt_nl_provider_name(),
+        question=question,
+        focus=focus,
+        identity=identity,
+        caller_tenant_id=caller_tenant_id,
+        session_id=session_id,
+        message_id=message_id,
+        context_pack=context_pack,
+        audit_id=audit_ref.get("auditId"),
+    )
+    answer = provider_answer or deterministic_answer
+
     session = read_store.get_agora_session(session_id)
     if session is None:
         session = read_store.create_agora_session(
@@ -30020,6 +30327,10 @@ async def bff_management_nl_ask(
             "sources": source_keys,
             "confidence": confidence,
             "summary_context": snippets,
+            "contextPack": context_pack,
+            "context_pack": context_pack,
+            "providerStatus": provider_status,
+            "provider_status": provider_status,
             "auditRef": audit_ref,
             "audit_ref": audit_ref,
             "evidenceRefs": processed_evidence_refs,
@@ -30029,6 +30340,10 @@ async def bff_management_nl_ask(
             "snapshot_at": now,
             "surfaces": surfaces,
             "idempotency": {"idempotencyKey": resolved_key, "replayed": False},
+            "providerStatus": provider_status,
+            "provider_status": provider_status,
+            "contextPackId": context_pack.get("context_pack_id"),
+            "context_pack_id": context_pack.get("context_pack_id"),
             "redactedEvidenceCount": redacted_evidence_count,
             "redacted_evidence_count": redacted_evidence_count,
         },

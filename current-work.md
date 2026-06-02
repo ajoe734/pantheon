@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-06-02 07:51:31
+Last updated: 2026-06-02 08:59:25
 
 ## Objective
 
@@ -45,7 +45,6 @@ Pantheon BFF P0 Delta-v3 — close the v2 deploy-lag bottleneck plus 1 real Pack
 | `ASST-KERNEL-003` | Assistant OpenClaw Gateway Kernel/User Mode | Implement assistant session and transcript store | Claude | todo | `ASST-KERNEL-001` | 建立 assistant session/transcript store，保存 mode actor TTL reason context_pack_id provider_run_id source refs 與 SSE transcript。 |
 | `ASST-OCGW-001` | Assistant OpenClaw Gateway Kernel/User Mode | Add OpenClaw gateway credential mount contract | Gemini | todo | - | 保留 OpenClaw gateway 架構，新增 dedicated service-user .codex/.claude OAuth credential mount compose/env contract，禁止掛人類個人 home。 |
 | `ASST-OCGW-002` | Assistant OpenClaw Gateway Kernel/User Mode | Add gateway CLI image and readiness probes | Gemini2 | todo | `ASST-OCGW-001` | 在 OpenClaw gateway container 內安裝或探測 Codex/Claude CLI，回報 binary path version auth readiness mount mode 與 degraded reason。 |
-| `ASST-OCGW-003` | Assistant OpenClaw Gateway Kernel/User Mode | Implement Codex provider through OpenClaw gateway | Codex | todo | `ASST-KERNEL-002`, `ASST-KERNEL-003`, `ASST-OCGW-002` | 實作 OpenClaw gateway 內的 Codex CLI provider，以 mounted service-user .codex 執行 non-interactive codex exec，支援 timeout redaction audit fallback。 |
 | `ASST-OCGW-005` | Assistant OpenClaw Gateway Kernel/User Mode | Add credential refresh smoke and runbook | Gemini | todo | `ASST-OCGW-003`, `ASST-OCGW-004` | 補 OpenClaw gateway account-login credential refresh smoke/runbook，判斷 .codex/.claude mount 需 ro 或 rw 並定義過期重登 degraded 行為。 |
 | `ASST-KERNEL-006` | Assistant OpenClaw Gateway Kernel/User Mode | Implement OpenClaw command broker observe/debug allowlists | Codex2 | todo | `ASST-KERNEL-002`, `ASST-OCGW-001` | 建立 OpenClaw tool/workflow policy 下的 kernel observe/debug command broker，allowlist 診斷命令並 deny destructive git DB mutation secret reads sudo broker/live capital and exfiltration。 |
 | `ASST-KERNEL-007` | Assistant OpenClaw Gateway Kernel/User Mode | Implement repair-mode worktree workflow | Gemini | todo | `ASST-KERNEL-006`, `ASST-OCGW-003` | 建立 kernel repair 的 clean task branch/worktree guardrail，限制 staging scope 並記錄 validation commit PR merge target。 |
@@ -64,11 +63,12 @@ Pantheon BFF P0 Delta-v3 — close the v2 deploy-lag bottleneck plus 1 real Pack
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-06-02 07:51:30
-- Terminal tasks archived: `1333` total, `1310` completed, `23` superseded
+- Archive updated: 2026-06-02 08:59:24
+- Terminal tasks archived: `1334` total, `1311` completed, `23` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `ASST-OCGW-003` | Assistant OpenClaw Gateway Kernel/User Mode | Implement Codex provider through OpenClaw gateway | Codex | completed | 2026-06-02 08:59:24 | `ai-task-archive/tasks/ASST-OCGW-003.json` |
 | `ASST-OCGW-004` | Assistant OpenClaw Gateway Kernel/User Mode | Implement Claude provider through OpenClaw gateway | Codex2 | completed | 2026-06-02 07:51:30 | `ai-task-archive/tasks/ASST-OCGW-004.json` |
 | `ASST-KERNEL-001` | Assistant OpenClaw Gateway Kernel/User Mode | Implement assistant context-pack schema and BFF route | Codex | completed | 2026-06-01 00:32:48 | `ai-task-archive/tasks/ASST-KERNEL-001.json` |
 | `ASST-KERNEL-002` | Assistant OpenClaw Gateway Kernel/User Mode | Implement assistant redaction library | Codex2 | completed | 2026-06-01 00:23:21 | `ai-task-archive/tasks/ASST-KERNEL-002.json` |
@@ -88,7 +88,6 @@ Pantheon BFF P0 Delta-v3 — close the v2 deploy-lag bottleneck plus 1 real Pack
 | `BFF-B6-002` | Sprint BFF-6 / EPIC-BFF-GAP-NL | NL audit and evidence grounding | Claude | completed | 2026-05-23 20:49:33 | `ai-task-archive/tasks/BFF-B6-002.json` |
 | `BFF-B6-003` | Sprint BFF-6 / EPIC-BFF-GAP-NL | NL high-risk refusal policy | Codex | completed | 2026-05-23 20:34:24 | `ai-task-archive/tasks/BFF-B6-003.json` |
 | `BFF-B2-004` | Sprint BFF-2 / EPIC-BFF-GAP-CORE | Research and search facade: /bff/research-experiments and /bff/search | Codex2 | completed | 2026-05-23 20:14:36 | `ai-task-archive/tasks/BFF-B2-004.json` |
-| `BFF-B6-001` | Sprint BFF-6 / EPIC-BFF-GAP-NL | POST /bff/management/nl/ask Management NL endpoint | Claude | completed | 2026-05-23 19:57:54 | `ai-task-archive/tasks/BFF-B6-001.json` |
 
 ## Task Board
 
@@ -104,7 +103,6 @@ Pantheon BFF P0 Delta-v3 — close the v2 deploy-lag bottleneck plus 1 real Pack
 | `ASST-KERNEL-003` | Assistant OpenClaw Gateway Kernel/User Mode | Implement assistant session and transcript store | 建立 assistant session/transcript store，保存 mode actor TTL reason context_pack_id provider_run_id source refs 與 SSE transcript。 | Claude | Codex | todo | `ASST-KERNEL-001` | 2026-05-31 23:51:16 | Assignment created |
 | `ASST-OCGW-001` | Assistant OpenClaw Gateway Kernel/User Mode | Add OpenClaw gateway credential mount contract | 保留 OpenClaw gateway 架構，新增 dedicated service-user .codex/.claude OAuth credential mount compose/env contract，禁止掛人類個人 home。 | Gemini | Codex | todo | - | 2026-05-31 23:51:18 | Assignment created |
 | `ASST-OCGW-002` | Assistant OpenClaw Gateway Kernel/User Mode | Add gateway CLI image and readiness probes | 在 OpenClaw gateway container 內安裝或探測 Codex/Claude CLI，回報 binary path version auth readiness mount mode 與 degraded reason。 | Gemini2 | Codex2 | todo | `ASST-OCGW-001` | 2026-05-31 23:51:18 | Assignment created |
-| `ASST-OCGW-003` | Assistant OpenClaw Gateway Kernel/User Mode | Implement Codex provider through OpenClaw gateway | 實作 OpenClaw gateway 內的 Codex CLI provider，以 mounted service-user .codex 執行 non-interactive codex exec，支援 timeout redaction audit fallback。 | Codex | Claude | todo | `ASST-KERNEL-002`, `ASST-KERNEL-003`, `ASST-OCGW-002` | 2026-05-31 23:51:19 | Assignment created |
 | `ASST-OCGW-005` | Assistant OpenClaw Gateway Kernel/User Mode | Add credential refresh smoke and runbook | 補 OpenClaw gateway account-login credential refresh smoke/runbook，判斷 .codex/.claude mount 需 ro 或 rw 並定義過期重登 degraded 行為。 | Gemini | Claude2 | todo | `ASST-OCGW-003`, `ASST-OCGW-004` | 2026-05-31 23:51:21 | Assignment created |
 | `ASST-KERNEL-006` | Assistant OpenClaw Gateway Kernel/User Mode | Implement OpenClaw command broker observe/debug allowlists | 建立 OpenClaw tool/workflow policy 下的 kernel observe/debug command broker，allowlist 診斷命令並 deny destructive git DB mutation secret reads sudo broker/live capital and exfiltration。 | Codex2 | Claude | todo | `ASST-KERNEL-002`, `ASST-OCGW-001` | 2026-05-31 23:51:22 | Assignment created |
 | `ASST-KERNEL-007` | Assistant OpenClaw Gateway Kernel/User Mode | Implement repair-mode worktree workflow | 建立 kernel repair 的 clean task branch/worktree guardrail，限制 staging scope 並記錄 validation commit PR merge target。 | Gemini | Codex | todo | `ASST-KERNEL-006`, `ASST-OCGW-003` | 2026-05-31 23:51:22 | Assignment created |
@@ -163,7 +161,6 @@ Do not read those omitted modules as open Pantheon backlog purely because they a
 
 ## Latest Checkpoints
 
-- 2026-05-16 01:52:32 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:52:37 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:52:38 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:52:42 Orchestrator: PreToolUse: Bash
@@ -179,7 +176,8 @@ Do not read those omitted modules as open Pantheon backlog purely because they a
 - 2026-05-16 01:53:08 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:53:08 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:53:13 Orchestrator: PreToolUse: Bash
-- 2026-06-02 07:51:02 Codex2: `ASST-OCGW-004` Assigned ASST-OCGW-004 to Codex2 with reviewer Claude
-- 2026-06-02 07:51:12 Codex2: `ASST-OCGW-004` Owner picked up approved task for final closeout after PR #764 merge.
-- 2026-06-02 07:51:20 Codex2: `ASST-OCGW-004` Review approved by Claude and returned to Codex2 for finalization; PR #764 is merged.
-- 2026-06-02 07:51:30 Codex2: `ASST-OCGW-004` Owner finalized Claude provider closeout. Implementation PR #764 merged; closeout evidence PR #765 merged; focused validation passed: pytest provider/runtime/credential/main suite (76 passed).
+- 2026-06-02 08:59:07 Codex: `ASST-OCGW-003` Assigned ASST-OCGW-003 to Codex with reviewer Codex2
+- 2026-06-02 08:59:11 Codex: `ASST-OCGW-003` Owner closeout replay for done transition after PR #754 and PR #767 merged.
+- 2026-06-02 08:59:15 Codex: `ASST-OCGW-003` Handoff to Codex2: Implementation PR #754 and owner closeout PR #767 are merged; record canonical Codex2 approval before done transition.
+- 2026-06-02 08:59:20 Codex2: `ASST-OCGW-003` Review approved for PR #754 at f9336d19. Verified full gateway adapter suite (282 passed), focused Codex/main suite (60 passed), smoke syntax, py_compile provider/runtime/main, git diff --check scoped files, and Branch CI Gate green.
+- 2026-06-02 08:59:24 Codex: `ASST-OCGW-003` Owner closeout complete: PR #754 implementation merged at 51b17a83; closeout PR #767 merged at 651771ec with Branch CI Gate green. Local validation: focused Codex/main suite 60 passed; bash -n smoke; py_compile provider/runtime/main; git diff --check scoped files.

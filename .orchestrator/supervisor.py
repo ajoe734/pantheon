@@ -873,7 +873,13 @@ def dispatch_loop_agent_ids(config: dict[str, Any]) -> list[str]:
 def agent_dispatch_capacity(config: dict[str, Any], agent_id: str | None, settings: dict[str, Any] | None = None) -> int:
     normalized = normalize_agent_id(agent_id or "")
     settings = settings or ready_dispatch_settings(config)
-    default_capacity = max(1, int(settings.get("max_tasks_per_agent", 1)))
+    default_capacity: int | None = None
+    raw_default_capacity = settings.get("max_tasks_per_agent")
+    if raw_default_capacity not in (None, ""):
+        try:
+            default_capacity = max(1, int(raw_default_capacity))
+        except (TypeError, ValueError):
+            default_capacity = None
     display_name = display_name_for(config, normalized)
     overrides = settings.get("max_tasks_per_agent_by_agent", {}) or {}
     for key in (normalized, display_name):
@@ -883,7 +889,9 @@ def agent_dispatch_capacity(config: dict[str, Any], agent_id: str | None, settin
             except (TypeError, ValueError):
                 pass
     slot_count = len(logical_worker_slot_ids(config, normalized))
-    return max(default_capacity, slot_count) if slot_count else default_capacity
+    if slot_count:
+        return max(default_capacity or 0, slot_count)
+    return default_capacity or 1
 
 
 def dispatch_weight_mapping(settings: dict[str, Any] | None) -> dict[str, Any]:
