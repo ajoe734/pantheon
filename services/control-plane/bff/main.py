@@ -42949,13 +42949,161 @@ async def sem_agora_ask(
         {"actor": identity.operator_id, "live_capital_side_effects": False},
         {"idempotency_record": {"idempotency_key": resolved_key, "request_hash": request_hash, "status": "succeeded"}},
     )
+
+    # --- Assistant provider integration (ASST-BFF-001) ---
+    provider_status = "disabled"
+    provider_answer: Optional[str] = None
+    provider_run_id: Optional[str] = None
+    context_pack_id: Optional[str] = None
+
+    if _assistant_ask_enabled():
+        # Build context pack for provider invocation and transcript source refs.
+        _context_pack_dict: Dict[str, Any] = {}
+        try:
+            from assistant.models import AssistantContextPackRequest as _CPRequest, AssistantMode as _AMode
+            _cp_req = _CPRequest(
+                mode=_AMode.USER,
+                question=prompt or None,
+                route=str(payload.get("route") or "/"),
+            )
+            _context_pack = _assistant_build_context_pack(session_id, _cp_req, identity)
+            context_pack_id = _context_pack.context_pack_id
+            _context_pack_dict = _context_pack.model_dump(mode="json", by_alias=False)
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Ensure an assistant session lifecycle entry exists for this agora session.
+        if _ASSISTANT_SESSION_STORE is not None:
+            from assistant.transcript_store import (
+                AssistantSession as _ASession,
+                SessionNotFoundError as _SNFError,
+                build_session as _build_session,
+            )
+            from assistant.models import AssistantMode as _AMode2
+            try:
+                _ASSISTANT_SESSION_STORE.get(session_id)
+            except _SNFError:
+                _proto = _build_session(
+                    mode=_AMode2.USER,
+                    actor_id=identity.operator_id,
+                    roles=getattr(identity, "roles", []) or [],
+                    capabilities=[],
+                )
+                # Co-key assistant session with agora session_id for transcript correlation.
+                _asst_session = _ASession(
+                    session_id=session_id,
+                    mode=_proto.mode,
+                    actor_id=_proto.actor_id,
+                    roles=_proto.roles,
+                    capabilities=_proto.capabilities,
+                    created_at=_proto.created_at,
+                    expires_at=_proto.expires_at,
+                    status=_proto.status,
+                    reason=_proto.reason,
+                    ttl_seconds=_proto.ttl_seconds,
+                )
+                _ASSISTANT_SESSION_STORE.create(_asst_session)
+
+        try:
+            _ops_client = OpenClawOpsClient()
+            if _ops_client.configured:
+                raw = _ops_client.invoke_assistant(
+                    mode=str(payload.get("mode") or "user"),
+                    prompt=prompt or "?",
+                    operator_id=identity.operator_id,
+                    context_pack=_context_pack_dict or None,
+                )
+                _data = raw.get("data") or {}
+                _out = _data.get("output")
+                if isinstance(_out, str) and _out.strip():
+                    provider_answer = _out.strip()
+                    provider_status = "completed"
+                    provider_run_id = f"provider-run-{message_id}"
+                else:
+                    provider_status = "degraded"
+            else:
+                provider_status = "degraded"
+        except (OpenClawOpsClientError, Exception):  # noqa: BLE001
+            provider_status = "degraded"
+
+        # Emit ask.message.delta — includes provider answer or empty string when degraded
+        _publish_event(
+            _sse_buffers["ask"],
+            _sse_subscribers["ask"],
+            "ask.message.delta",
+            {
+                "session_id": session_id,
+                "message_id": message_id,
+                "delta": provider_answer or "",
+                "provider_status": provider_status,
+            },
+        )
+
+        # Record turns in assistant transcript store with context_pack_id for source readback.
+        if _ASSISTANT_TRANSCRIPT_STORE is not None:
+            from assistant.transcript_store import TurnRole, build_turn
+            _ASSISTANT_TRANSCRIPT_STORE.append(
+                build_turn(
+                    session_id=session_id,
+                    role=TurnRole.USER,
+                    content=prompt or "",
+                    context_pack_id=context_pack_id,
+                )
+            )
+            if provider_answer:
+                _ASSISTANT_TRANSCRIPT_STORE.append(
+                    build_turn(
+                        session_id=session_id,
+                        role=TurnRole.ASSISTANT,
+                        content=provider_answer,
+                        context_pack_id=context_pack_id,
+                        provider_run_id=provider_run_id,
+                    )
+                )
+
+        # Update session context with context_pack_id and provider_run_id.
+        if _ASSISTANT_SESSION_STORE is not None and (context_pack_id or provider_run_id):
+            try:
+                _ASSISTANT_SESSION_STORE.update_context(
+                    session_id,
+                    context_pack_id=context_pack_id,
+                    provider_run_id=provider_run_id,
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
+        # Emit ask.message.completed
+        _publish_event(
+            _sse_buffers["ask"],
+            _sse_subscribers["ask"],
+            "ask.message.completed",
+            {
+                "session_id": session_id,
+                "message_id": message_id,
+                "status": provider_status,
+            },
+        )
+
+        # Deterministic fallback when provider is degraded
+        if provider_answer is None:
+            provider_answer = _agora_ask_deterministic_fallback(prompt)
+
     result = {
         "status": "accepted",
-        "data": {"session": session, "message": message},
+        "data": {
+            "session": session,
+            "message": message,
+            "provider": {
+                "status": provider_status,
+                "answer": provider_answer,
+                "run_id": provider_run_id,
+            },
+        },
         "meta": {
             "snapshot_at": now,
             "command": {"command": CommandType.AGORA_MESSAGE_ACTION.value, "commandId": command_id},
             "idempotency": {"idempotencyKey": resolved_key, "replayed": False},
+            "assistant": {"enabled": _assistant_ask_enabled(), "provider_status": provider_status},
         },
     }
     _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
@@ -44561,15 +44709,39 @@ def _assistant_build_context_pack(session_id: str, request: Any, identity: Opera
     )
 
 
-def _include_assistant_routes() -> None:
-    from assistant.routes import create_assistant_router
+# Module-level assistant stores — set once by _include_assistant_routes so that
+# sem_agora_ask can record turns without a second store instantiation.
+_ASSISTANT_SESSION_STORE: Any = None
+_ASSISTANT_TRANSCRIPT_STORE: Any = None
 
+
+def _assistant_ask_enabled() -> bool:
+    return os.getenv("PANTHEON_ASSISTANT_ENABLED", "").strip().lower() in {"1", "true", "yes"}
+
+
+def _agora_ask_deterministic_fallback(prompt: str) -> str:
+    return (
+        "The assistant provider is currently unavailable. "
+        "Your question has been received and queued. "
+        "Please retry or use the management dashboard for current status."
+    )
+
+
+def _include_assistant_routes() -> None:
+    global _ASSISTANT_SESSION_STORE, _ASSISTANT_TRANSCRIPT_STORE
+    from assistant.routes import create_assistant_router
+    from assistant.transcript_store import InMemorySessionStore, InMemoryTranscriptStore
+
+    _ASSISTANT_SESSION_STORE = InMemorySessionStore()
+    _ASSISTANT_TRANSCRIPT_STORE = InMemoryTranscriptStore()
     app.include_router(
         create_assistant_router(
             build_context_pack=_assistant_build_context_pack,
             extract_identity=_extract_identity,
             require_read_role=_require_read_role,
             bff_error=_bff_error,
+            session_store=_ASSISTANT_SESSION_STORE,
+            transcript_store=_ASSISTANT_TRANSCRIPT_STORE,
         )
     )
 

@@ -38,11 +38,12 @@ class ClaudeProviderResult:
     config_dir: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
+        config_target = "claude_config" if self.config_dir else ""
         result: Dict[str, Any] = {
             "provider": _PROVIDER_NAME,
             "status": self.status,
             "text": self.text,
-            "config_dir": self.config_dir,
+            "config_dir": config_target,
         }
         if self.degraded_reason is not None:
             result["degraded_reason"] = self.degraded_reason
