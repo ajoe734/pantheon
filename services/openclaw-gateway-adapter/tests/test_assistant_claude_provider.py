@@ -409,6 +409,8 @@ def test_provider_result_to_dict_ok():
     assert d["provider"] == "claude"
     assert d["status"] == "ok"
     assert d["text"] == "hi"
+    assert d["config_dir"] == "claude_config"
+    assert "/home/pa/.claude" not in repr(d)
     assert "degraded_reason" not in d
 
 

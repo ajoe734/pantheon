@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Add credential refresh smoke and runbook
-- Status: todo
+- Status: review
 - Owner: Codex2
-- Reviewer: Gemini
+- Reviewer: Codex
 - Phase: Assistant OpenClaw Gateway Kernel/User Mode
-- Last update: 2026-06-02T01:33:33Z
-- Next: Helper-claimed by Codex2 while Gemini is dispatch-paused.
+- Last update: 2026-06-02T02:00:26Z
+- Next: Auto-reassigned review from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure
 
 ## Summary
 補 OpenClaw gateway account-login credential refresh smoke/runbook，判斷 .codex/.claude mount 需 ro 或 rw 並定義過期重登 degraded 行為。
@@ -27,12 +27,12 @@ Do not read `current-work.md` by default for implementation context.
 - services/openclaw-gateway-adapter/tests/test_assistant_credential_mounts.py
 
 ## Recent Task Activity
-- 2026-06-02T01:15:05Z · Orchestrator · worker_started · Worker started via gemini: owned_in_progress_dispatch
-- 2026-06-02T01:15:06Z · Gemini · progress · Supervisor re-dispatched ASST-OCGW-005; task remains in progress.
-- 2026-06-02T01:15:09Z · Orchestrator · task_dispatch_synced · Supervisor re-dispatched ASST-OCGW-005; task remains in progress.
-- 2026-06-02T01:20:18Z · Orchestrator · task_preempted_synced · Supervisor preempted ASST-OCGW-005 to free Gemini for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.
-- 2026-06-02T01:20:18Z · Orchestrator · worker_superseded · Worker superseded to prioritize higher-priority review/finalize work.
-- 2026-06-02T01:30:06Z · Orchestrator · chair_review_reassignment_skipped · Chair reviewer reassignment skipped because task ASST-OCGW-005 is status=todo.
+- 2026-06-02T01:55:21Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-02T01:55:21Z · Orchestrator · worker_worktree_reused · -
+- 2026-06-02T01:55:21Z · Orchestrator · worker_started · Worker started via gemini: review_ready_dispatch
+- 2026-06-02T02:00:26Z · Orchestrator · provider_dispatch_paused · Paused new dispatches for gemini until 2026-06-02T02:15:26Z after terminal quota failure: Capacity / rate limit failure
+- 2026-06-02T02:00:28Z · Orchestrator · task_reassigned · Auto-reassigned review from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure
+- 2026-06-02T02:15:42Z · Orchestrator · provider_dispatch_resumed · Dispatch pause for gemini expired at 2026-06-02T02:15:26Z; dispatch is enabled again.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
