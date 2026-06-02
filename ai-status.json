@@ -3,7 +3,7 @@
   "sprint": "2026-05-25-pantheon-bff-p0-delta-v3",
   "sprint_started_at": "2026-05-25T00:00:00Z",
   "objective": "Pantheon BFF P0 Delta-v3 — close the v2 deploy-lag bottleneck plus 1 real Pack D ErrorCode alignment plus 1 canonical path naming decision. v2 (2026-05-24) shipped 22 of 23 task to dev (routes + CORS + envelope) but the single deploy task OPS-BFF-LUPIN-DEV-REDEPLOY-20260524 blocked on Gemini2 GCP IAM (compute.instances.get missing on lupin project) and was cleaned up without ever rolling out a new image. Lovable v3 audit on 2026-05-25 therefore shows essentially the same surface as v2 - 24/24 management routes still 404, CORS still 400, envelope still detail-wrapped - all because lupin dev BFF is running stale image. v3 reassigns redeploy to Codex (user explicit), adds Pack D ErrorCode enum alignment (audit caught OBJECT_NOT_FOUND not in canonical 26), and one decision doc for 5 FE/BE naming alignments. Babysit protocol: do not mark sprint done until live BFF curls verify 8 audit paths return 200.",
-  "updated_at": "2026-06-02T03:41:37Z",
+  "updated_at": "2026-06-02T15:37:18Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -94,15 +94,11 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "waiting",
-      "current_task_ids": [
-        "ASST-KERNEL-003",
-        "ASST-BFF-001",
-        "ASST-USER-001"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "task/LSP-002-V2",
-      "next": "Assignment created",
-      "last_update": "2026-05-21T03:01:52Z"
+      "next": "",
+      "last_update": "2026-06-02T13:10:43Z"
     },
     {
       "name": "Gemini",
@@ -112,14 +108,11 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "ready",
-      "current_task_ids": [
-        "ASST-OCGW-001",
-        "ASST-OCGW-005"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/gemini-research-runtime",
-      "next": "Assignment created",
-      "last_update": "2026-05-31T15:51:18Z"
+      "next": "",
+      "last_update": "2026-06-02T01:20:16Z"
     },
     {
       "name": "Codex",
@@ -129,13 +122,11 @@
         "schema",
         "acceptance"
       ],
-      "status": "ready",
-      "current_task_ids": [
-        "ASST-KERNEL-001"
-      ],
-      "branch": "task/OODA-CANARY-004-V2",
-      "next": "Assignment created",
-      "last_update": "2026-05-31T15:51:13Z"
+      "status": "idle",
+      "current_task_ids": [],
+      "branch": "task/ASST-OCGW-001",
+      "next": "",
+      "last_update": "2026-06-02T13:31:43Z"
     },
     {
       "name": "Codex2",
@@ -145,13 +136,11 @@
         "schema",
         "acceptance"
       ],
-      "status": "ready",
-      "current_task_ids": [
-        "ASST-KERNEL-002"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "task/ASST-OCGW-004",
-      "next": "Assignment created",
-      "last_update": "2026-05-31T15:51:15Z"
+      "next": "",
+      "last_update": "2026-06-02T03:56:50Z"
     },
     {
       "name": "Copilot",
@@ -161,14 +150,11 @@
         "spec-review",
         "critique"
       ],
-      "status": "waiting",
-      "current_task_ids": [
-        "ASST-FE-001",
-        "ASST-FE-002"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/grok-research-critique",
-      "next": "Assignment created",
-      "last_update": "2026-05-19T13:09:48Z"
+      "next": "",
+      "last_update": "2026-06-02T13:14:10Z"
     },
     {
       "name": "Claude2",
@@ -181,7 +167,7 @@
       "current_task_ids": [],
       "branch": "feat/claude2-execution-control",
       "next": "",
-      "last_update": "2026-05-21T03:01:56Z"
+      "last_update": "2026-06-02T04:46:37Z"
     },
     {
       "name": "Gemini2",
@@ -191,13 +177,11 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "waiting",
-      "current_task_ids": [
-        "ASST-OCGW-002"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "bff-luv-fe-006-dev-deploy",
-      "next": "Assignment created",
-      "last_update": "2026-05-19T13:10:41Z",
+      "next": "",
+      "last_update": "2026-06-01T00:47:46Z",
       "last_action_at": "2026-05-20T11:29:47Z",
       "last_action_note": "Manual ai-status sync by Claude: cleared ['LOVABLE-STRICT-PUBLISH', 'OSS-QUANTLIB-V2-001'] after push-auth failure."
     },
@@ -212,670 +196,10 @@
       "current_task_ids": [],
       "branch": "human/ops",
       "next": "",
-      "last_update": "2026-06-01T01:01:26Z"
+      "last_update": "2026-06-01T02:42:08Z"
     }
   ],
-  "tasks": [
-    {
-      "id": "OSS-STAT-001-SIDECAR-ACCEPTANCE",
-      "title": "Prepare OSS-STAT-001 acceptance packet and dependency map",
-      "summary_zh": "平行支援 OSS-STAT-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
-      "phase": "Sprint 7 / EPIC-OSS-RESEARCH",
-      "owner": "Gemini",
-      "reviewer": "Claude",
-      "status": "done",
-      "depends_on": [],
-      "artifacts": [
-        "support/sidecars/OSS-STAT-001/OSS-STAT-001-SIDECAR-ACCEPTANCE.md"
-      ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "Owner finalized task and closed it. Sidecar acceptance packet is durable in support/sidecars/OSS-STAT-001/.",
-      "last_update": "2026-05-17T03:45:00Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "OSS-STAT-001",
-      "helper_kind": "acceptance_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization",
-      "review_notes_zh": [
-        "審查通過：sidecar acceptance packet 文件完整，正確記錄 shadowing 問題解決與最終 artifact 形狀"
-      ],
-      "review_file": "support/sidecars/OSS-STAT-001/OSS-STAT-001-SIDECAR-ACCEPTANCE.md"
-    },
-    {
-      "id": "LOVABLE-STRICT-PUBLISH",
-      "title": "Finalizing recovery closeout.",
-      "summary_zh": "SA § 2.2 列為 non-blocking follow-up：execute-plans@main build-time 應使用 strict env (VITE_BFF_MODE=live VITE_BFF_FALLBACK=strict VITE_BFF_REAL_WRITES=false) 重新發佈一次，並驗證發佈後的 bundle 不再含 seed fallback assets。本任務不直接動 execute-plans repo，而是寫一個 pantheon 端的 audit script + evidence packet，記錄 publish 條件、build env、bundle hash、verification probe 結果。",
-      "phase": "Sprint 7 / EPIC-LOVABLE-INFRA",
-      "owner": "Gemini2",
-      "reviewer": "Gemini",
-      "status": "done",
-      "depends_on": [],
-      "artifacts": [
-        "scripts/audit_lovable_strict_publish.py",
-        "support/evidence/LOVABLE-STRICT-PUBLISH/audit_report.md",
-        "support/evidence/LOVABLE-STRICT-PUBLISH/required_build_env.json",
-        "support/evidence/LOVABLE-STRICT-PUBLISH/bundle_verification_probe.md",
-        "scripts/test_audit_lovable_strict_publish.py"
-      ],
-      "acceptance": [
-        "audit_lovable_strict_publish.py exposes verify_strict_publish(deployment_url) returning AuditResult dict with strict_env_confirmed bool and missing_flags list",
-        "required_build_env.json lists exact VITE_* keys with required values (VITE_BFF_MODE=live VITE_BFF_FALLBACK=strict VITE_BFF_REAL_WRITES=false)",
-        "probe fails if deployed bundle requests any path matching /mocks/ or seed.* at runtime",
-        "audit_report.md is the human-readable evidence packet template",
-        "test_audit_lovable_strict_publish.py covers 1 pass case (all flags strict) and 1 fail case (any flag relaxed) with pytest -q exit 0",
-        "no execute-plans repo modification this task only produces audit infrastructure inside pantheon"
-      ],
-      "next": "Closeout PR #83 merged 2026-05-17T18:37:05Z; ai-status manual sync 2026-05-20T11:29:47Z after Gemini2 push-auth failure stalled lifecycle write.",
-      "last_update": "2026-05-20T11:29:47Z",
-      "terminal_outcome": "completed",
-      "delivery": {
-        "channel": "manual_ai_status_sync",
-        "merged_pr": 83,
-        "merged_at": "2026-05-17T18:37:05Z",
-        "recorded_at": "2026-05-20T11:29:47Z",
-        "actor": "Claude",
-        "reason": "Gemini2 push-auth failure prevented worker closeout; code already merged."
-      }
-    },
-    {
-      "id": "OSS-QUANTLIB-V2-001",
-      "title": "Reassigning for finalization",
-      "summary_zh": "把 OSS-QUANTLIB-001 option pricer 升級為 production：對台指選擇權(TXO)鏈跨多檔履約價與多個到期日定價，輸出含 greeks 的 pricing_snapshot artifact，提交 registry admission packet。獨立檔案。",
-      "phase": "Sprint 8 / EPIC-OSS-V2",
-      "owner": "Gemini2",
-      "reviewer": "Codex2",
-      "status": "done",
-      "depends_on": [
-        "OSS-QUANTLIB-001"
-      ],
-      "artifacts": [
-        "services/research/quantlib/production_option_chain.py",
-        "services/research/quantlib/test_production_option_chain.py",
-        "services/research/quantlib/registry_admission_packet.py",
-        "support/evidence/OSS-QUANTLIB-V2-001/admission_packet.json"
-      ],
-      "acceptance": [
-        "production_option_chain.py exposes price_chain(spot dividend_yield rate vol_surface chain_definition) returning list of dict with strike expiry call_put price delta gamma vega theta",
-        "price_chain handles ≥ 5 strikes × ≥ 3 expiries in one call",
-        "pricing_snapshot artifact registered with deterministic checksum for fixed inputs",
-        "admission_packet.json conforms to PromotionReadinessPacket",
-        "test fixture covers 1 TXO-like chain and asserts call-put parity within 1e-3 tolerance",
-        "pytest -q exit 0"
-      ],
-      "next": "Closeout PR #194 merged 2026-05-19T07:18:36Z; ai-status manual sync 2026-05-20T11:29:47Z after Gemini2 push-auth failure stalled lifecycle write.",
-      "last_update": "2026-05-20T11:29:47Z",
-      "review_notes_zh": [
-        "Codex2 re-review: implementation and evidence still satisfy acceptance; pytest and jq gates passed, PR #194 is merged. Lifecycle write is blocked if durable ai-status remains out of sync."
-      ],
-      "review_file": "support/reviews/OSS-QUANTLIB-V2-001-review-codex2.md",
-      "terminal_outcome": "completed",
-      "delivery": {
-        "channel": "manual_ai_status_sync",
-        "merged_pr": 194,
-        "merged_at": "2026-05-19T07:18:36Z",
-        "recorded_at": "2026-05-20T11:29:47Z",
-        "actor": "Claude",
-        "reason": "Gemini2 push-auth failure prevented worker closeout; code already merged."
-      }
-    },
-    {
-      "id": "PROD-WRITES-001-V2",
-      "title": "Enable production real writes (human gate)",
-      "summary_zh": "Human-only activation. Flips VITE_BFF_REAL_WRITES=true and equivalent BFF flags after dual signoff. Cannot be dispatched to AI worker.",
-      "phase": "Phase 8 / EPIC-LIVE-GATE",
-      "owner": "Human/Ops",
-      "reviewer": "Codex2",
-      "status": "done",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [
-        "Human risk-owner + operator signoff",
-        "Preconditions satisfied",
-        "Activation logged in audit chain"
-      ],
-      "next": "Human/Ops approved production real-writes gate; HumanGateDecision recorded at support/evidence/PROD-WRITES-001-V2/human-gate/decision.json. Runtime flag flip remains a separate operator action.",
-      "last_update": "2026-06-01T02:34:37Z",
-      "non_dispatchable": true,
-      "gate_status": "approved",
-      "allowed_workers": [],
-      "human_required_roles": [
-        "risk_owner",
-        "operator"
-      ],
-      "activation_effect": [
-        "irreversible_or_high_risk"
-      ],
-      "task_class": "human_gate",
-      "auto_created_by": "phase8-v3-audit-chain-fixup-20260521",
-      "auto_generated": true,
-      "mutates_canonical": false,
-      "terminal_outcome": "completed",
-      "human_gate_decision_ref": "support/evidence/PROD-WRITES-001-V2/human-gate/decision.json",
-      "activation_audit_ref": "support/evidence/PROD-WRITES-001-V2/human-gate/decision.json"
-    },
-    {
-      "id": "LIVE-SCALE-001-V2",
-      "title": "Live capital scale-up (human gate)",
-      "summary_zh": "Human-only activation. Raises live capital budget ceiling above first-window cap after first-week observation report + dual signoff. Cannot be dispatched to AI worker.",
-      "phase": "Phase 8 / EPIC-LIVE-GATE",
-      "owner": "Human/Ops",
-      "reviewer": "Codex",
-      "status": "done",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [
-        "Human risk-owner + operator signoff",
-        "Preconditions satisfied",
-        "Activation logged in audit chain"
-      ],
-      "next": "Human/Ops approved live-scale gate; HumanGateDecision recorded at support/evidence/LIVE-SCALE-001-V2/human-gate/decision.json. Capital budget/config mutation remains a separate operator action.",
-      "last_update": "2026-06-01T02:34:37Z",
-      "non_dispatchable": true,
-      "gate_status": "approved",
-      "allowed_workers": [],
-      "human_required_roles": [
-        "risk_owner",
-        "operator"
-      ],
-      "activation_effect": [
-        "irreversible_or_high_risk"
-      ],
-      "task_class": "human_gate",
-      "auto_created_by": "phase8-v3-audit-chain-fixup-20260521",
-      "auto_generated": true,
-      "mutates_canonical": false,
-      "terminal_outcome": "completed",
-      "human_gate_decision_ref": "support/evidence/LIVE-SCALE-001-V2/human-gate/decision.json",
-      "activation_audit_ref": "support/evidence/LIVE-SCALE-001-V2/human-gate/decision.json"
-    },
-    {
-      "id": "ASST-KERNEL-001",
-      "title": "Implement assistant context-pack schema and BFF route",
-      "summary_zh": "建立 assistant context pack model 與 BFF route，讓前端 route/entity/context refs 可被 BFF 組成帶來源、時間戳、staleness 與安全 allowlist 的後端觀測資料包。",
-      "phase": "Assistant OpenClaw Gateway Kernel/User Mode",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [
-        "services/control-plane/bff/assistant/models.py",
-        "services/control-plane/bff/assistant/context_composer.py",
-        "services/control-plane/bff/assistant/routes.py",
-        "services/control-plane/bff/main.py",
-        "services/control-plane/bff/tests/test_assistant_context_pack.py",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/"
-      ],
-      "acceptance": [
-        "context pack route builds structured snapshot",
-        "includes frontend route and selected entity",
-        "includes source refs timestamps and staleness metadata",
-        "composes allowlisted BFF surfaces only",
-        "user mode rejects kernel-only sources",
-        "tests cover allowlist missing sources and staleness"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-31T15:51:13Z",
-      "source_documents": [
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/SA_assistant_kernel_user_mode.md",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/SD_assistant_kernel_user_mode.md",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md"
-      ],
-      "implementation_track": "assistant-openclaw-gateway-cli-mount",
-      "provider_runtime": "openclaw_gateway_cli_mount",
-      "credential_policy": "dedicated_service_user_oauth_mount",
-      "delivery_layer": "primary"
-    },
-    {
-      "id": "ASST-KERNEL-002",
-      "title": "Implement assistant redaction library",
-      "summary_zh": "建立 assistant redaction library，provider invocation 與 transcript persistence 前先遮蔽 tokens cookies API keys .env DB URLs provider session paths broker credentials。",
-      "phase": "Assistant OpenClaw Gateway Kernel/User Mode",
-      "owner": "Codex2",
-      "reviewer": "Claude",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [
-        "services/control-plane/bff/assistant/redaction.py",
-        "services/control-plane/bff/assistant/tests/test_redaction.py",
-        "services/openclaw-gateway-adapter/assistant_provider_runtime.py",
-        "services/openclaw-gateway-adapter/tests/test_assistant_provider_runtime.py",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/"
-      ],
-      "acceptance": [
-        "redacts bearer tokens cookies API keys and private keys",
-        "redacts env values database credentials provider sessions and broker credentials",
-        "preserves diagnostic shape with redacted markers",
-        "user mode fails closed on redaction failure",
-        "tests cover representative secret patterns"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-31T15:51:15Z",
-      "source_documents": [
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/SA_assistant_kernel_user_mode.md",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/SD_assistant_kernel_user_mode.md",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md"
-      ],
-      "implementation_track": "assistant-openclaw-gateway-cli-mount",
-      "provider_runtime": "openclaw_gateway_cli_mount",
-      "credential_policy": "dedicated_service_user_oauth_mount",
-      "delivery_layer": "primary"
-    },
-    {
-      "id": "ASST-KERNEL-003",
-      "title": "Implement assistant session and transcript store",
-      "summary_zh": "建立 assistant session/transcript store，保存 mode actor TTL reason context_pack_id provider_run_id source refs 與 SSE transcript。",
-      "phase": "Assistant OpenClaw Gateway Kernel/User Mode",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [
-        "ASST-KERNEL-001"
-      ],
-      "artifacts": [
-        "services/control-plane/bff/assistant/transcript_store.py",
-        "services/control-plane/bff/assistant/mode_policy.py",
-        "services/control-plane/bff/assistant/routes.py",
-        "services/control-plane/bff/tests/test_assistant_sessions.py"
-      ],
-      "acceptance": [
-        "sessions carry mode actor roles reason TTL status and audit refs",
-        "transcripts record user assistant context and provider refs",
-        "kernel sessions require reason TTL and capability",
-        "expired or revoked sessions reject new messages",
-        "tests cover create expire revoke and readback"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-31T15:51:16Z",
-      "source_documents": [
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/SA_assistant_kernel_user_mode.md",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/SD_assistant_kernel_user_mode.md",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md"
-      ],
-      "implementation_track": "assistant-openclaw-gateway-cli-mount",
-      "provider_runtime": "openclaw_gateway_cli_mount",
-      "credential_policy": "dedicated_service_user_oauth_mount",
-      "delivery_layer": "primary"
-    },
-    {
-      "id": "ASST-OCGW-001",
-      "title": "Add OpenClaw gateway credential mount contract",
-      "summary_zh": "保留 OpenClaw gateway 架構，新增 dedicated service-user .codex/.claude OAuth credential mount compose/env contract，禁止掛人類個人 home。",
-      "phase": "Assistant OpenClaw Gateway Kernel/User Mode",
-      "owner": "Gemini",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [
-        "docker-compose.yml",
-        "docker-compose.control.yml",
-        "docker-compose.staging-full.yml",
-        "services/openclaw-gateway-adapter/Dockerfile",
-        "services/openclaw-gateway-adapter/assistant_credential_mounts.py",
-        "services/openclaw-gateway-adapter/tests/test_assistant_credential_mounts.py",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/"
-      ],
-      "acceptance": [
-        "compose exposes dedicated codex and claude mount envs",
-        "mount defaults are disabled or explicit",
-        "no human home path is accepted",
-        "mount paths are reported only as sanitized readiness metadata",
-        "tests cover missing mount wrong owner and forbidden home path"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-31T15:51:18Z",
-      "source_documents": [
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/SA_assistant_kernel_user_mode.md",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/SD_assistant_kernel_user_mode.md",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md"
-      ],
-      "implementation_track": "assistant-openclaw-gateway-cli-mount",
-      "provider_runtime": "openclaw_gateway_cli_mount",
-      "credential_policy": "dedicated_service_user_oauth_mount",
-      "delivery_layer": "primary"
-    },
-    {
-      "id": "ASST-OCGW-002",
-      "title": "Add gateway CLI image and readiness probes",
-      "summary_zh": "在 OpenClaw gateway container 內安裝或探測 Codex/Claude CLI，回報 binary path version auth readiness mount mode 與 degraded reason。",
-      "phase": "Assistant OpenClaw Gateway Kernel/User Mode",
-      "owner": "Gemini2",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [
-        "ASST-OCGW-001"
-      ],
-      "artifacts": [
-        "services/openclaw-gateway-adapter/Dockerfile",
-        "services/openclaw-gateway-adapter/assistant_provider_runtime.py",
-        "services/openclaw-gateway-adapter/main.py",
-        "services/openclaw-gateway-adapter/tests/test_assistant_provider_runtime.py",
-        "scripts/openclaw-assistant-provider-smoke.sh"
-      ],
-      "acceptance": [
-        "gateway reports provider binary path and version",
-        "gateway reports credential mount path and mode",
-        "gateway degrades when binary is missing",
-        "gateway degrades when auth mount is missing",
-        "smoke proves readiness endpoint shape for codex and claude"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-31T15:51:18Z",
-      "source_documents": [
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/SA_assistant_kernel_user_mode.md",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/SD_assistant_kernel_user_mode.md",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md"
-      ],
-      "implementation_track": "assistant-openclaw-gateway-cli-mount",
-      "provider_runtime": "openclaw_gateway_cli_mount",
-      "credential_policy": "dedicated_service_user_oauth_mount",
-      "delivery_layer": "primary"
-    },
-    {
-      "id": "ASST-OCGW-005",
-      "title": "Add credential refresh smoke and runbook",
-      "summary_zh": "補 OpenClaw gateway account-login credential refresh smoke/runbook，判斷 .codex/.claude mount 需 ro 或 rw 並定義過期重登 degraded 行為。",
-      "phase": "Assistant OpenClaw Gateway Kernel/User Mode",
-      "owner": "Gemini",
-      "reviewer": "Claude2",
-      "status": "todo",
-      "depends_on": [
-        "ASST-OCGW-003",
-        "ASST-OCGW-004"
-      ],
-      "artifacts": [
-        "scripts/openclaw-assistant-provider-smoke.sh",
-        "docs/runbooks/openclaw-assistant-credential-refresh.md",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md",
-        "services/openclaw-gateway-adapter/tests/test_assistant_credential_mounts.py"
-      ],
-      "acceptance": [
-        "smoke checks no-op health and tiny non-interactive invocation",
-        "runbook documents host-refresh container-refresh and degraded modes",
-        "expired auth produces degraded provider status",
-        "no secret contents appear in logs",
-        "ro or rw requirement is recorded per provider"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-31T15:51:21Z",
-      "source_documents": [
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/SA_assistant_kernel_user_mode.md",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/SD_assistant_kernel_user_mode.md",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md"
-      ],
-      "implementation_track": "assistant-openclaw-gateway-cli-mount",
-      "provider_runtime": "openclaw_gateway_cli_mount",
-      "credential_policy": "dedicated_service_user_oauth_mount",
-      "delivery_layer": "primary"
-    },
-    {
-      "id": "ASST-KERNEL-006",
-      "title": "Implement OpenClaw command broker observe/debug allowlists",
-      "summary_zh": "建立 OpenClaw tool/workflow policy 下的 kernel observe/debug command broker，allowlist 診斷命令並 deny destructive git DB mutation secret reads sudo broker/live capital and exfiltration。",
-      "phase": "Assistant OpenClaw Gateway Kernel/User Mode",
-      "owner": "Codex2",
-      "reviewer": "Claude",
-      "status": "todo",
-      "depends_on": [
-        "ASST-KERNEL-002",
-        "ASST-OCGW-001"
-      ],
-      "artifacts": [
-        "services/openclaw-gateway-adapter/assistant_command_policy.py",
-        "services/openclaw-gateway-adapter/tool_workflow_bridge.py",
-        "services/openclaw-gateway-adapter/tests/test_assistant_command_policy.py",
-        "services/control-plane/bff/assistant/mode_policy.py"
-      ],
-      "acceptance": [
-        "user mode denies every command",
-        "kernel observe allows read probes and git status",
-        "kernel debug allows bounded health rg file-slice tests and sanitized logs",
-        "denylist blocks destructive and secret commands",
-        "every allow and deny is audited"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-31T15:51:22Z",
-      "source_documents": [
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/SA_assistant_kernel_user_mode.md",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/SD_assistant_kernel_user_mode.md",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md"
-      ],
-      "implementation_track": "assistant-openclaw-gateway-cli-mount",
-      "provider_runtime": "openclaw_gateway_cli_mount",
-      "credential_policy": "dedicated_service_user_oauth_mount",
-      "delivery_layer": "primary"
-    },
-    {
-      "id": "ASST-KERNEL-007",
-      "title": "Implement repair-mode worktree workflow",
-      "summary_zh": "建立 kernel repair 的 clean task branch/worktree guardrail，限制 staging scope 並記錄 validation commit PR merge target。",
-      "phase": "Assistant OpenClaw Gateway Kernel/User Mode",
-      "owner": "Gemini",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [
-        "ASST-KERNEL-006",
-        "ASST-OCGW-003"
-      ],
-      "artifacts": [
-        "services/openclaw-gateway-adapter/assistant_repair_workflow.py",
-        "services/openclaw-gateway-adapter/tests/test_assistant_repair_workflow.py",
-        "scripts/assistant_repair_smoke.py",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/"
-      ],
-      "acceptance": [
-        "repair mode requires clean branch or worktree",
-        "records branch remote validation commit PR and merge target",
-        "cannot stage outside declared scope",
-        "destructive git remains denied",
-        "tests cover dirty unrelated worktree and missing PR"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-31T15:51:22Z",
-      "source_documents": [
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/SA_assistant_kernel_user_mode.md",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/SD_assistant_kernel_user_mode.md",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md"
-      ],
-      "implementation_track": "assistant-openclaw-gateway-cli-mount",
-      "provider_runtime": "openclaw_gateway_cli_mount",
-      "credential_policy": "dedicated_service_user_oauth_mount",
-      "delivery_layer": "primary"
-    },
-    {
-      "id": "ASST-BFF-001",
-      "title": "Wire provider-backed /bff/agora/ask flow",
-      "summary_zh": "將 /bff/agora/ask 串到 assistant session/context/OpenClaw provider lifecycle，保留 command receipt idempotency transcript 與 ask SSE。",
-      "phase": "Assistant OpenClaw Gateway Kernel/User Mode",
-      "owner": "Claude",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [
-        "ASST-KERNEL-001",
-        "ASST-KERNEL-003",
-        "ASST-OCGW-003"
-      ],
-      "artifacts": [
-        "services/control-plane/bff/main.py",
-        "services/control-plane/bff/assistant/routes.py",
-        "services/control-plane/bff/openclaw_ops_client.py",
-        "services/control-plane/bff/tests/test_assistant_agora_ask.py"
-      ],
-      "acceptance": [
-        "feature flag enables assistant-backed ask flow",
-        "existing command receipt and idempotency remain intact",
-        "route emits ask message delta and completed events",
-        "degraded provider returns deterministic fallback",
-        "tests cover enabled disabled replay degraded and transcript readback"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-31T15:51:23Z",
-      "source_documents": [
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/SA_assistant_kernel_user_mode.md",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/SD_assistant_kernel_user_mode.md",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md"
-      ],
-      "implementation_track": "assistant-openclaw-gateway-cli-mount",
-      "provider_runtime": "openclaw_gateway_cli_mount",
-      "credential_policy": "dedicated_service_user_oauth_mount",
-      "delivery_layer": "primary"
-    },
-    {
-      "id": "ASST-FE-001",
-      "title": "Wire Ask Personas to BFF assistant flow",
-      "summary_zh": "把 execute-plans Ask Personas 從 local mock response 改成 POST /bff/agora/ask 並接 ask SSE delta/completed 和 transcript resync。",
-      "phase": "Assistant OpenClaw Gateway Kernel/User Mode",
-      "owner": "Copilot",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [
-        "ASST-BFF-001"
-      ],
-      "artifacts": [
-        "execute-plans/src/agora/pages/AskPersonas.tsx",
-        "execute-plans/src/lib/bff/agora.ts",
-        "execute-plans/src/lib/bff-v1/paths.ts",
-        "execute-plans/e2e/13-agora.spec.ts"
-      ],
-      "acceptance": [
-        "live mode does not generate local mock assistant responses",
-        "frontend posts prompt persona IDs context refs and route metadata",
-        "frontend subscribes to ask SSE and appends deltas",
-        "frontend fetches transcript on reconnect or completion",
-        "E2E covers happy path and degraded fallback"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-31T15:51:24Z",
-      "source_documents": [
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/SA_assistant_kernel_user_mode.md",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/SD_assistant_kernel_user_mode.md",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md"
-      ],
-      "implementation_track": "assistant-openclaw-gateway-cli-mount",
-      "provider_runtime": "openclaw_gateway_cli_mount",
-      "target_repository": "execute-plans",
-      "delivery_layer": "primary"
-    },
-    {
-      "id": "ASST-FE-002",
-      "title": "Add assistant mode and provider UI signals",
-      "summary_zh": "在 execute-plans 顯示 kernel/user mode TTL provider status command-enabled state context snapshot and audit/session refs；user mode 僅顯示一般 helper 與 source citations。",
-      "phase": "Assistant OpenClaw Gateway Kernel/User Mode",
-      "owner": "Copilot",
-      "reviewer": "Claude2",
-      "status": "todo",
-      "depends_on": [
-        "ASST-FE-001",
-        "ASST-OCGW-003"
-      ],
-      "artifacts": [
-        "execute-plans/src/agora/pages/AskPersonas.tsx",
-        "execute-plans/src/platform/components/AssistantModeBadge.tsx",
-        "execute-plans/src/lib/bff-v1/paths.ts"
-      ],
-      "acceptance": [
-        "kernel sessions show mode TTL provider status command state snapshot and audit id",
-        "user mode shows only helper UI and source citations",
-        "unauthorized users cannot see kernel controls",
-        "provider degraded state is visible without blocking fallback",
-        "tests cover kernel and user mode rendering"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-31T15:51:25Z",
-      "source_documents": [
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/SA_assistant_kernel_user_mode.md",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/SD_assistant_kernel_user_mode.md",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md"
-      ],
-      "implementation_track": "assistant-openclaw-gateway-cli-mount",
-      "provider_runtime": "openclaw_gateway_cli_mount",
-      "target_repository": "execute-plans",
-      "delivery_layer": "primary"
-    },
-    {
-      "id": "ASST-SEC-001",
-      "title": "Add assistant security regression suite",
-      "summary_zh": "補 prompt injection redaction command broker credential mount security regressions，確保 logs 內惡意文字不能越權，secret 不進 context pack，deny command 有 audit。",
-      "phase": "Assistant OpenClaw Gateway Kernel/User Mode",
-      "owner": "Codex2",
-      "reviewer": "Claude",
-      "status": "todo",
-      "depends_on": [
-        "ASST-KERNEL-002",
-        "ASST-OCGW-003",
-        "ASST-OCGW-004",
-        "ASST-KERNEL-006"
-      ],
-      "artifacts": [
-        "services/control-plane/bff/tests/test_assistant_security.py",
-        "services/openclaw-gateway-adapter/tests/test_assistant_command_policy.py",
-        "services/openclaw-gateway-adapter/tests/test_assistant_credential_mounts.py",
-        "services/openclaw-gateway-adapter/tests/test_prompt_injection.py"
-      ],
-      "acceptance": [
-        "prompt injection inside logs cannot enable commands",
-        "env and provider session files are excluded from context",
-        "bearer cookies DB URLs broker credentials and private keys are redacted",
-        "denied commands are audited",
-        "kernel TTL expiry prevents provider calls and commands"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-31T15:51:26Z",
-      "source_documents": [
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/SA_assistant_kernel_user_mode.md",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/SD_assistant_kernel_user_mode.md",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md"
-      ],
-      "implementation_track": "assistant-openclaw-gateway-cli-mount",
-      "provider_runtime": "openclaw_gateway_cli_mount",
-      "credential_policy": "dedicated_service_user_oauth_mount",
-      "delivery_layer": "primary"
-    },
-    {
-      "id": "ASST-USER-001",
-      "title": "Contract assistant into product-safe user mode",
-      "summary_zh": "把正式產品預設收斂為 user mode，禁用 shell repo raw logs repair command broker，只保留 BFF-curated context 與 source-backed answer。",
-      "phase": "Assistant OpenClaw Gateway Kernel/User Mode",
-      "owner": "Claude",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [
-        "ASST-BFF-001",
-        "ASST-BFF-002",
-        "ASST-FE-001",
-        "ASST-SEC-001"
-      ],
-      "artifacts": [
-        "services/control-plane/bff/assistant/mode_policy.py",
-        "services/control-plane/bff/assistant/routes.py",
-        "execute-plans/src/agora/pages/AskPersonas.tsx",
-        "execute-plans/src/lib/bff-v1/paths.ts",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/"
-      ],
-      "acceptance": [
-        "product default mode is user",
-        "user mode has no shell repo raw-log repair or broker capability",
-        "user mode receives only BFF-curated context",
-        "action suggestions route through existing BFF command and approval flows",
-        "regression tests prove kernel controls are disabled"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-31T15:51:27Z",
-      "source_documents": [
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/SA_assistant_kernel_user_mode.md",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/SD_assistant_kernel_user_mode.md",
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md"
-      ],
-      "implementation_track": "assistant-openclaw-gateway-cli-mount",
-      "provider_runtime": "openclaw_gateway_cli_mount",
-      "credential_policy": "dedicated_service_user_oauth_mount",
-      "delivery_layer": "primary"
-    }
-  ],
+  "tasks": [],
   "handoffs": [
     {
       "task_id": "LUV-REVIEW-007",
@@ -885,145 +209,9 @@
       "status": "done",
       "created_at": "2026-04-17T11:50:38Z",
       "resolved_at": "2026-04-17T12:39:53Z"
-    },
-    {
-      "task_id": "OSS-STAT-001-SIDECAR-ACCEPTANCE",
-      "from": "Gemini",
-      "to": "Claude",
-      "message": "Acceptance packet drafted and ready for review in support/sidecars/OSS-STAT-001/OSS-STAT-001-SIDECAR-ACCEPTANCE.md. The packet documents the resolved shadowing issue and the final artifact shapes.",
-      "status": "done",
-      "created_at": "2026-05-17T01:05:00Z",
-      "resolved_at": "2026-05-17T02:06:16Z"
-    },
-    {
-      "task_id": "OSS-STAT-001-SIDECAR-ACCEPTANCE",
-      "from": "Claude",
-      "to": "Gemini",
-      "message": "Sidecar acceptance packet reviewed and approved. Documents the resolved adapter shadowing issue and verified artifact shapes accurately.",
-      "status": "done",
-      "created_at": "2026-05-17T02:06:16Z",
-      "resolved_at": "2026-05-17T03:33:14Z"
-    },
-    {
-      "task_id": "LOVABLE-STRICT-PUBLISH",
-      "from": "Gemini",
-      "to": "Claude",
-      "message": "Chair reassigned owner from Gemini to Claude: Gemini has repeated 429 quota failures with reset in about 12 hours; the task remains in_progress without a live worker.. Task returned to todo for a fresh run.",
-      "status": "done",
-      "created_at": "2026-05-19T12:17:35Z",
-      "resolved_at": "2026-05-19T12:22:57Z"
-    },
-    {
-      "task_id": "OSS-QUANTLIB-V2-001",
-      "from": "Copilot",
-      "to": "Gemini2",
-      "message": "Chair reassigned owner from Copilot to Gemini2: Copilot exits immediately with 402 no quota; Gemini2 is idle and reviewer remains Codex2.. Task returned to todo for a fresh run.",
-      "status": "done",
-      "created_at": "2026-05-19T12:17:38Z",
-      "resolved_at": "2026-05-19T12:17:45Z"
-    },
-    {
-      "task_id": "OSS-QUANTLIB-V2-001",
-      "from": "Gemini2",
-      "to": "Codex2",
-      "message": "Implementation complete, ready for review. Local commit: fbad08ba.",
-      "status": "done",
-      "created_at": "2026-05-19T12:20:05Z",
-      "resolved_at": "2026-05-19T12:25:31Z"
-    },
-    {
-      "task_id": "OSS-QUANTLIB-V2-001",
-      "from": "Codex2",
-      "to": "Gemini2",
-      "message": "Review failed: HEAD fbad08ba regresses the accepted production implementation; current worktree lacks required price_chain API, focused pytest fails, and shared index has inverse staged diffs. Owner must restore a single clean implementation surface and rerun pytest before review.",
-      "status": "done",
-      "created_at": "2026-05-19T12:25:31Z",
-      "resolved_at": "2026-05-19T12:25:31Z"
-    },
-    {
-      "task_id": "LOVABLE-STRICT-PUBLISH",
-      "from": "Claude",
-      "to": "Gemini2",
-      "message": "Recovery closeout: implementation unchanged from Gemini2's prior approval. PR #208 merged to dev (2026-05-19T12:27:56Z). All 5 acceptance criteria verified: pytest 2 passed, py_compile clean, no execute-plans modification. Requesting re-approval to finalize recovery done.",
-      "status": "done",
-      "created_at": "2026-05-19T12:28:47Z",
-      "resolved_at": "2026-05-19T12:33:49Z"
-    },
-    {
-      "task_id": "OSS-QUANTLIB-V2-001",
-      "from": "Gemini2",
-      "to": "Codex2",
-      "message": "Restored clean production implementation surface. Please review.",
-      "status": "done",
-      "created_at": "2026-05-19T12:30:18Z",
-      "resolved_at": "2026-05-19T12:37:08Z"
-    },
-    {
-      "task_id": "LOVABLE-STRICT-PUBLISH",
-      "from": "Gemini2",
-      "to": "Claude",
-      "message": "Finalized recovery verified, approved for closeout.",
-      "status": "done",
-      "created_at": "2026-05-19T12:33:49Z",
-      "resolved_at": "2026-05-19T12:34:07Z"
-    },
-    {
-      "task_id": "LOVABLE-STRICT-PUBLISH",
-      "from": "Gemini",
-      "to": "Gemini2",
-      "message": "Ownership updated",
-      "status": "done",
-      "created_at": "2026-05-19T12:34:07Z",
-      "resolved_at": "2026-05-19T12:50:04Z"
-    },
-    {
-      "task_id": "OSS-QUANTLIB-V2-001",
-      "from": "Codex2",
-      "to": "Gemini2",
-      "message": "Re-review approved: QuantLib production option chain remains valid; local pytest/jq gates pass and PR #194 is already merged.",
-      "status": "done",
-      "created_at": "2026-05-19T12:37:08Z",
-      "resolved_at": "2026-05-19T13:06:09Z"
     }
   ],
-  "blockers": [
-    {
-      "task_id": "LOVABLE-STRICT-PUBLISH",
-      "owner": "Gemini2",
-      "waiting_for": "Gemini",
-      "message": "PR push failed due to auth; requires manual intervention to push task branch and open PR",
-      "status": "open",
-      "created_at": "2026-05-19T12:50:04Z"
-    },
-    {
-      "task_id": "OSS-QUANTLIB-V2-001",
-      "owner": "Gemini2",
-      "waiting_for": "Gemini",
-      "message": "Unable to push branch and open PR due to authentication failure in task_finalize.sh",
-      "status": "open",
-      "created_at": "2026-05-19T13:10:41Z"
-    },
-    {
-      "task_id": "PROD-WRITES-001-V2",
-      "owner": "Human/Ops",
-      "waiting_for": "Human/Ops",
-      "message": "Awaiting: LSP-006-V2, HA-PROD-001-V2, risk_owner_signoff, operator_signoff",
-      "status": "resolved",
-      "created_at": "2026-05-21T03:01:52Z",
-      "resolved_at": "2026-06-01T02:34:37Z",
-      "resolution_ref": "support/evidence/PROD-WRITES-001-V2/human-gate/decision.json"
-    },
-    {
-      "task_id": "LIVE-SCALE-001-V2",
-      "owner": "Human/Ops",
-      "waiting_for": "Human/Ops",
-      "message": "Awaiting: CBL-LIVE-001-V2, BLA-007-V2, first_week_observation_report, risk_owner_signoff, operator_signoff",
-      "status": "resolved",
-      "created_at": "2026-05-21T03:01:56Z",
-      "resolved_at": "2026-06-01T02:34:37Z",
-      "resolution_ref": "support/evidence/LIVE-SCALE-001-V2/human-gate/decision.json"
-    }
-  ],
+  "blockers": [],
   "workload": {
     "Claude": 5,
     "Claude2": 5,
@@ -1036,13 +224,13 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 3,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 3
+      "todo": 0
     },
     "Claude2": {
       "total": 0,
@@ -1054,55 +242,55 @@
       "todo": 0
     },
     "Gemini": {
-      "total": 4,
+      "total": 0,
       "active": 0,
       "blocked": 0,
-      "done": 1,
+      "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 3
+      "todo": 0
     },
     "Gemini2": {
-      "total": 3,
+      "total": 0,
       "active": 0,
       "blocked": 0,
-      "done": 2,
+      "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Codex": {
-      "total": 1,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Codex2": {
-      "total": 3,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 3
+      "todo": 0
     },
     "Copilot": {
-      "total": 2,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 2
+      "todo": 0
     },
     "Human/Ops": {
-      "total": 2,
+      "total": 0,
       "active": 0,
       "blocked": 0,
-      "done": 2,
+      "done": 0,
       "review": 0,
       "review_approved": 0,
       "todo": 0

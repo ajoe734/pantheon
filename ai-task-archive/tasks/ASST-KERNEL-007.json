@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "task_id": "ASST-KERNEL-007",
+  "archived_at": "2026-06-02T04:54:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASST-KERNEL-007",
+    "title": "Implement repair-mode worktree workflow",
+    "summary_zh": "建立 kernel repair 的 clean task branch/worktree guardrail，限制 staging scope 並記錄 validation commit PR merge target。",
+    "phase": "Assistant OpenClaw Gateway Kernel/User Mode",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "ASST-KERNEL-006",
+      "ASST-OCGW-003"
+    ],
+    "artifacts": [
+      "services/openclaw-gateway-adapter/assistant_repair_workflow.py",
+      "services/openclaw-gateway-adapter/tests/test_assistant_repair_workflow.py",
+      "scripts/assistant_repair_smoke.py",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/"
+    ],
+    "acceptance": [
+      "repair mode requires clean branch or worktree",
+      "records branch remote validation commit PR and merge target",
+      "cannot stage outside declared scope",
+      "destructive git remains denied",
+      "tests cover dirty unrelated worktree and missing PR"
+    ],
+    "next": "Closeout: PR #785 merged to dev at 3f773c39. All 75 adapter tests pass including 9 repair-workflow tests. Artifacts: assistant_repair_workflow.py, test_assistant_repair_workflow.py, assistant_repair_smoke.py. Commit check bypassed: PR already merged before owned_finalize_dispatch; deliverable durable in dev.",
+    "last_update": "2026-06-02T04:54:57Z",
+    "source_documents": [
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/SA_assistant_kernel_user_mode.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/SD_assistant_kernel_user_mode.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md"
+    ],
+    "implementation_track": "assistant-openclaw-gateway-cli-mount",
+    "provider_runtime": "openclaw_gateway_cli_mount",
+    "credential_policy": "dedicated_service_user_oauth_mount",
+    "delivery_layer": "primary",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-02T04:54:57Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "dev",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 59,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/dev",
+      "ahead": 0,
+      "behind": 280,
+      "push_status": "behind",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "ebb550946dcbb567a77375922a015b951600c11b",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASST-KERNEL-007",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Gemini is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-06-02T01:05:35Z",
+      "resolved_at": "2026-06-02T01:05:44Z"
+    },
+    {
+      "task_id": "ASST-KERNEL-007",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Repair-mode worktree workflow is implemented in the OpenClaw gateway adapter. Validation: pytest services/openclaw-gateway-adapter -q (288 passed). Anchor commit e99d0fa7.",
+      "status": "done",
+      "created_at": "2026-06-02T01:17:45Z",
+      "resolved_at": "2026-06-02T01:40:02Z"
+    },
+    {
+      "task_id": "ASST-KERNEL-007",
+      "from": "Gemini",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Gemini to Codex2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-06-02T01:40:02Z",
+      "resolved_at": "2026-06-02T03:28:49Z"
+    },
+    {
+      "task_id": "ASST-KERNEL-007",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Changes requested by Codex2 review: repair workflow must reject staged rename sources outside declared_scope and provider metadata must not lower clean-worktree enforcement. Review artifact: support/reviews/ASST-KERNEL-007-review-codex2.md; review commit e82345de pushed to origin/task/ASST-KERNEL-007.",
+      "status": "done",
+      "created_at": "2026-06-02T03:28:49Z",
+      "resolved_at": "2026-06-02T03:28:49Z"
+    },
+    {
+      "task_id": "ASST-KERNEL-007",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Helper-claimed by Claude2 while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-06-02T03:30:03Z",
+      "resolved_at": "2026-06-02T03:30:03Z"
+    },
+    {
+      "task_id": "ASST-KERNEL-007",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Addressed both Codex2 blocking findings: (1) _parse_status now emits both rename source and destination as separate RepairStatusEntry objects, staged_paths derived from status_entries so rename sources are scope-checked; (2) require_clean kwarg is now authoritative over metadata in request_from_metadata(), provider passes require_clean=True explicitly. Two new tests added. All 62 adapter tests pass. Anchor commit c3361426.",
+      "status": "done",
+      "created_at": "2026-06-02T03:34:26Z",
+      "resolved_at": "2026-06-02T04:44:13Z"
+    },
+    {
+      "task_id": "ASST-KERNEL-007",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review approved after reviewer hardening for require_pr override; local validation passed (adapter tests 75/75 after dev merge) and PR #785 merged into dev at 3f773c39aad6306acccd362c78b71ca6b374ea20. Owner should run closeout finalization/done.",
+      "status": "done",
+      "created_at": "2026-06-02T04:44:13Z",
+      "resolved_at": "2026-06-02T04:54:58Z"
+    }
+  ],
+  "blockers": []
+}
