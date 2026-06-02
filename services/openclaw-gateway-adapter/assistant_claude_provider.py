@@ -23,6 +23,7 @@ from assistant_credential_mounts import (
 
 _DEFAULT_TIMEOUT = int(os.getenv("ASSISTANT_CLAUDE_PROVIDER_TIMEOUT", "60"))
 _BINARY_NAME = "claude"
+_BINARY_ENV = "PANTHEON_ASSISTANT_CLAUDE_BIN"
 _PROVIDER_NAME = "claude"
 
 
@@ -63,6 +64,16 @@ def _resolve_config_dir(mounts: AssistantCredentialMounts) -> str:
         if contract.provider == "claude":
             return contract.container_path
     return DEFAULT_CLAUDE_CONTAINER_CONFIG_DIR
+
+
+def _resolve_binary() -> Optional[str]:
+    """Return the configured container-side Claude binary path, if usable."""
+    configured = os.getenv(_BINARY_ENV, "").strip()
+    if configured:
+        if os.path.isabs(configured):
+            return configured if os.path.isfile(configured) and os.access(configured, os.X_OK) else None
+        return shutil.which(configured)
+    return shutil.which(_BINARY_NAME)
 
 
 def _normalize_output(raw: str) -> tuple[str, List[Dict[str, Any]]]:
@@ -127,7 +138,7 @@ def invoke_claude(
     if mounts is None:
         mounts = AssistantCredentialMounts()
 
-    binary = shutil.which(_BINARY_NAME)
+    binary = _resolve_binary()
     if not binary:
         return ClaudeProviderResult(
             status="degraded",

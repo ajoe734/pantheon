@@ -24,6 +24,21 @@ ProviderRunner = Callable[[Mapping[str, Any]], Any]
 TranscriptSink = Callable[[Mapping[str, Any]], None]
 Redactor = Callable[..., RedactionResult]
 
+_PROVIDER_BINARY_ENVS = {
+    "claude": "PANTHEON_ASSISTANT_CLAUDE_BIN",
+    "claude_cli": "PANTHEON_ASSISTANT_CLAUDE_BIN",
+    "codex": "PANTHEON_ASSISTANT_CODEX_BIN",
+    "codex_cli": "PANTHEON_ASSISTANT_CODEX_BIN",
+}
+_PROVIDER_BINARY_NAMES = {
+    "claude_cli": "claude",
+    "codex_cli": "codex",
+}
+_PROVIDER_MOUNT_KEYS = {
+    "claude_cli": "claude",
+    "codex_cli": "codex",
+}
+
 
 class AssistantProviderRuntimeError(RuntimeError):
     """Raised when provider runtime cannot safely continue."""
@@ -80,7 +95,7 @@ class AssistantProviderRuntime:
 
     def check_readiness(self, provider: str) -> Dict[str, Any]:
         """Probes the provider binary and auth mount readiness."""
-        binary_path = shutil.which(provider)
+        binary_path = _resolve_provider_binary(provider)
         if not binary_path:
             return {"ready": False, "reason": f"Binary {provider} not found"}
 
@@ -91,7 +106,7 @@ class AssistantProviderRuntime:
             return {"ready": False, "reason": f"Binary {provider} probe failed: {e}"}
 
         mounts = self._credential_mounts.validate_mounts()
-        mount_validation = mounts.get(provider)
+        mount_validation = mounts.get(_provider_mount_key(provider))
         
         if not mount_validation:
             return {"ready": False, "reason": f"No mount configuration for {provider}"}
@@ -175,3 +190,18 @@ def _ensure_mapping(value: Any, *, stage: str) -> Mapping[str, Any]:
             stage=stage,
         )
     return value
+
+
+def _resolve_provider_binary(provider: str) -> str | None:
+    normalized = str(provider or "").strip().lower()
+    configured = os.getenv(_PROVIDER_BINARY_ENVS.get(normalized, ""), "").strip()
+    if configured:
+        if os.path.isabs(configured):
+            return configured if os.path.isfile(configured) and os.access(configured, os.X_OK) else None
+        return shutil.which(configured)
+    return shutil.which(_PROVIDER_BINARY_NAMES.get(normalized, normalized))
+
+
+def _provider_mount_key(provider: str) -> str:
+    normalized = str(provider or "").strip().lower()
+    return _PROVIDER_MOUNT_KEYS.get(normalized, normalized)

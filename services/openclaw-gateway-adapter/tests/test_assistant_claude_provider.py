@@ -17,6 +17,11 @@ from assistant_claude_provider import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _clear_claude_binary_env(monkeypatch):
+    monkeypatch.delenv("PANTHEON_ASSISTANT_CLAUDE_BIN", raising=False)
+
+
 # ---------------------------------------------------------------------------
 # _normalize_output unit tests
 # ---------------------------------------------------------------------------
@@ -257,6 +262,36 @@ def test_invoke_claude_uses_plan_permission_mode():
         "--permission-mode",
         "plan",
     ]
+
+
+def test_invoke_claude_uses_configured_binary_path(monkeypatch):
+    monkeypatch.setenv("PANTHEON_ASSISTANT_CLAUDE_BIN", "/opt/pantheon/bin/claude")
+    completed = MagicMock()
+    completed.stdout = b"Hello from configured Claude"
+    completed.stderr = b""
+    completed.returncode = 0
+
+    with (
+        patch("assistant_claude_provider.os.path.isfile", return_value=True),
+        patch("assistant_claude_provider.os.access", return_value=True),
+        patch("shutil.which") as which_mock,
+        patch("subprocess.run", return_value=completed) as run_mock,
+    ):
+        result = invoke_claude("hello", mounts=_mock_mounts_ready())
+
+    assert result.status == "ok"
+    assert run_mock.call_args.args[0][0] == "/opt/pantheon/bin/claude"
+    which_mock.assert_not_called()
+
+
+def test_invoke_claude_configured_binary_missing_degrades(monkeypatch):
+    monkeypatch.setenv("PANTHEON_ASSISTANT_CLAUDE_BIN", "/opt/pantheon/bin/missing-claude")
+
+    with patch("assistant_claude_provider.os.path.isfile", return_value=False):
+        result = invoke_claude("hello", mounts=_mock_mounts_ready())
+
+    assert result.status == "degraded"
+    assert result.degraded_reason == "binary_not_found"
 
 
 # ---------------------------------------------------------------------------
