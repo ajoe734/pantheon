@@ -68,6 +68,7 @@ def _client_with_seeded_store(tmp_path):
 
 def test_assistant_context_pack_builds_structured_snapshot(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("BFF_READ_SURFACE_STATE", raising=False)
+    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
     client, original = _client_with_seeded_store(tmp_path)
     try:
         resp = client.post(
@@ -138,6 +139,7 @@ def test_assistant_context_pack_builds_structured_snapshot(tmp_path, monkeypatch
 
 def test_assistant_context_pack_omits_non_allowlisted_sources_and_marks_staleness(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("BFF_READ_SURFACE_STATE", "stale")
+    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
     client, original = _client_with_seeded_store(tmp_path)
     try:
         resp = client.post(

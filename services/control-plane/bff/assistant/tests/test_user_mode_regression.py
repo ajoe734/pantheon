@@ -158,11 +158,9 @@ class TestKernelEnabledGate:
 class TestKernelCapabilityGateWhenEnabled:
     """When kernel is enabled, kernel sessions still require capability, reason, TTL."""
 
-    def setup_method(self, method):
-        os.environ["PANTHEON_ASSISTANT_KERNEL_ENABLED"] = "true"
-
-    def teardown_method(self, method):
-        os.environ.pop("PANTHEON_ASSISTANT_KERNEL_ENABLED", None)
+    @pytest.fixture(autouse=True)
+    def _enable_kernel(self, monkeypatch):
+        monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
 
     def test_kernel_observe_requires_capability(self):
         from assistant.mode_policy import validate_session_request

@@ -55,6 +55,7 @@ def _client_with_seeded_store(tmp_path):
 
 def test_context_pack_redacts_secrets_embedded_in_prompt_injection_logs(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("BFF_READ_SURFACE_STATE", raising=False)
+    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
     client, original = _client_with_seeded_store(tmp_path)
     try:
         resp = client.post(
@@ -110,6 +111,7 @@ def test_context_pack_redacts_secrets_embedded_in_prompt_injection_logs(tmp_path
 
 def test_context_pack_omits_env_and_provider_session_sources(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("BFF_READ_SURFACE_STATE", raising=False)
+    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
     client, original = _client_with_seeded_store(tmp_path)
     try:
         resp = client.post(
