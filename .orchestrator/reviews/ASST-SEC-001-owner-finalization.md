@@ -32,6 +32,11 @@ python3 -m pytest services/control-plane/bff/tests/test_assistant_security.py se
 
 Result: 41 passed in 12.19s.
 
+After `dev` advanced through ASST-OCGW-005 PR #775, the task branch was refreshed
+on top of `03e8a029` and the same focused validation was rerun.
+
+Result: 41 passed in 12.79s.
+
 ## Boundaries
 
 Owned layer: task-scoped security regression evidence and owner closeout record.
