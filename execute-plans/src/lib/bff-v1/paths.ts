@@ -168,6 +168,7 @@ export const paths = {
   agoraInbox: () => `${BASE}/agora/inbox`,
   agoraJournal: () => `${BASE}/agora/journal`,
   agoraPostmortems: () => `${BASE}/agora/postmortems`,
+  agoraAsk: () => `${BASE}/agora/ask`,
   agoraAskSessions: () => `${BASE}/agora/ask/sessions`,
   agoraAskSession: (id: string) => `${BASE}/agora/ask/sessions/${enc(id)}`,
 
