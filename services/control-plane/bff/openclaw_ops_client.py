@@ -147,6 +147,41 @@ class OpenClawOpsClient:
             query["operator_id"] = operator_id
         return self._request("GET", "/api/openclaw-adapter/audit/invocations", query=query)
 
+    def invoke_assistant_provider(
+        self,
+        *,
+        provider: str,
+        mode: str,
+        prompt: str,
+        context_pack: Dict[str, Any],
+        operator_id: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        trace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        normalized = str(provider or "").strip().lower()
+        if normalized not in {"codex", "codex_cli"}:
+            raise OpenClawOpsClientError(
+                f"Assistant provider {provider!r} is not supported by the BFF OpenClaw client.",
+                status_code=400,
+                error_code="ASSISTANT_PROVIDER_NOT_SUPPORTED",
+                payload={"provider": provider},
+            )
+        headers = {"X-Operator-Id": operator_id}
+        if trace_id:
+            headers["X-Trace-Id"] = trace_id
+        return self._request(
+            "POST",
+            "/api/openclaw-adapter/assistant/providers/codex/invoke",
+            body={
+                "mode": mode,
+                "prompt": prompt,
+                "context_pack": context_pack,
+                "metadata": metadata or {},
+            },
+            headers=headers,
+            expected_status={200},
+        )
+
     def create_session(
         self,
         *,
