@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Wire Ask Personas to BFF assistant flow
-- Status: todo
+- Status: in_progress
 - Owner: Copilot
 - Reviewer: Codex2
 - Phase: Assistant OpenClaw Gateway Kernel/User Mode
-- Last update: 2026-05-31T15:51:24Z
-- Next: Assignment created
+- Last update: 2026-06-02T04:04:17Z
+- Next: Supervisor auto-started ASST-FE-001 after successful dispatch.
 
 ## Summary
 把 execute-plans Ask Personas 從 local mock response 改成 POST /bff/agora/ask 並接 ask SSE delta/completed 和 transcript resync。
@@ -26,7 +26,12 @@ Do not read `current-work.md` by default for implementation context.
 - execute-plans/e2e/13-agora.spec.ts
 
 ## Recent Task Activity
-- none
+- 2026-06-02T04:23:24Z · Orchestrator · dispatch_blocked_worktree_lease · Worker worktree path already exists and is not empty: /tmp/pantheon-worker-worktrees/pantheon/asst-fe-001
+- 2026-06-02T04:24:04Z · Orchestrator · dispatch_blocked_worktree_lease · Worker worktree path already exists and is not empty: /tmp/pantheon-worker-worktrees/pantheon/asst-fe-001
+- 2026-06-02T04:29:09Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 509.1s without a live worker or queue record.
+- 2026-06-02T04:29:10Z · Orchestrator · wake_queued · Wake-up queued for supervisor: owned_in_progress_dispatch
+- 2026-06-02T04:29:12Z · Orchestrator · dispatch_blocked_worktree_lease · Worker worktree path already exists and is not empty: /tmp/pantheon-worker-worktrees/pantheon/asst-fe-001
+- 2026-06-02T04:34:16Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 306.0s without a live worker or queue record.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md

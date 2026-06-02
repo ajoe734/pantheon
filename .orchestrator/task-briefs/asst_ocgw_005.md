@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Add credential refresh smoke and runbook
-- Status: review
+- Status: review_approved
 - Owner: Codex2
 - Reviewer: Codex
 - Phase: Assistant OpenClaw Gateway Kernel/User Mode
-- Last update: 2026-06-02T02:00:26Z
-- Next: Auto-reassigned review from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure
+- Last update: 2026-06-02T03:31:18Z
+- Next: Review approved after PR #775 follow-up fix sanitized Claude invoke metadata; Codex2 owner must finalize after PR #775 merges.
 
 ## Summary
 補 OpenClaw gateway account-login credential refresh smoke/runbook，判斷 .codex/.claude mount 需 ro 或 rw 並定義過期重登 degraded 行為。
@@ -27,12 +27,12 @@ Do not read `current-work.md` by default for implementation context.
 - services/openclaw-gateway-adapter/tests/test_assistant_credential_mounts.py
 
 ## Recent Task Activity
-- 2026-06-02T01:55:21Z · Orchestrator · worker_worktree_refreshed · -
-- 2026-06-02T01:55:21Z · Orchestrator · worker_worktree_reused · -
-- 2026-06-02T01:55:21Z · Orchestrator · worker_started · Worker started via gemini: review_ready_dispatch
-- 2026-06-02T02:00:26Z · Orchestrator · provider_dispatch_paused · Paused new dispatches for gemini until 2026-06-02T02:15:26Z after terminal quota failure: Capacity / rate limit failure
-- 2026-06-02T02:00:28Z · Orchestrator · task_reassigned · Auto-reassigned review from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure
-- 2026-06-02T02:15:42Z · Orchestrator · provider_dispatch_resumed · Dispatch pause for gemini expired at 2026-06-02T02:15:26Z; dispatch is enabled again.
+- 2026-06-02T03:22:49Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
+- 2026-06-02T03:28:13Z · Codex · worker_commit · Worker commit eadb75ad1817 recorded 3 staged file(s) for ASST-OCGW-005.
+- 2026-06-02T03:31:18Z · Codex · review_approved · Review approved after PR #775 follow-up fix sanitized Claude invoke metadata; Codex2 owner must finalize after PR #775 merges.
+- 2026-06-02T03:32:09Z · Codex · worker_commit · Worker commit 33e48927eb16 recorded 1 staged file(s) for ASST-OCGW-005.
+- 2026-06-02T03:33:18Z · Codex · worker_commit · Worker commit 00186873de9a recorded 1 staged file(s) for ASST-OCGW-005.
+- 2026-06-02T03:35:19Z · Orchestrator · worker_superseded · Worker superseded after task responsibility moved to another agent.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
