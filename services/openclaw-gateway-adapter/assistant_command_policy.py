@@ -583,9 +583,20 @@ class AssistantCommandBroker:
         command_class: Optional[str] = None,
         cwd: Optional[str] = None,
         trace_id: Optional[str] = None,
+        session_status: Optional[str] = None,
+        session_expires_at: Optional[str] = None,
     ) -> dict[str, Any]:
         command_id = self._command_id_factory()
-        decision = self._policy.evaluate(mode=mode, argv=argv, command_class=command_class, cwd=cwd)
+        decision = _session_policy_decision(
+            mode=mode,
+            argv=argv,
+            command_class=command_class,
+            cwd=cwd,
+            session_status=session_status,
+            session_expires_at=session_expires_at,
+        )
+        if decision is None:
+            decision = self._policy.evaluate(mode=mode, argv=argv, command_class=command_class, cwd=cwd)
         entry = _audit_entry(
             command_id=command_id,
             session_id=session_id,
@@ -656,6 +667,59 @@ def _audit_entry(
         "policy_class": decision.policy_class,
         "policy_reason": decision.reason,
     }
+
+
+def _session_policy_decision(
+    *,
+    mode: str,
+    argv: Sequence[Any],
+    command_class: Optional[str],
+    cwd: Optional[str],
+    session_status: Optional[str],
+    session_expires_at: Optional[str],
+) -> Optional[CommandPolicyDecision]:
+    normalized_status = str(session_status or "").strip().lower()
+    normalized_mode = _mode_value(mode)
+    normalized_argv = tuple(str(arg) for arg in argv if str(arg) != "")
+    normalized_class = (
+        _normalize_command_class(command_class)
+        if command_class
+        else _infer_command_class(normalized_argv)
+    )
+    if normalized_status in {"expired", "revoked"}:
+        return CommandPolicyDecision(
+            allowed=False,
+            reason=f"Assistant session is {normalized_status}; command denied.",
+            policy_class="session_expired" if normalized_status == "expired" else "session_inactive",
+            mode=normalized_mode,
+            command_class=normalized_class,
+            argv=normalized_argv,
+            cwd=cwd,
+        )
+    if _is_expired_iso(session_expires_at):
+        return CommandPolicyDecision(
+            allowed=False,
+            reason="Assistant session TTL has expired; command denied.",
+            policy_class="session_expired",
+            mode=normalized_mode,
+            command_class=normalized_class,
+            argv=normalized_argv,
+            cwd=cwd,
+        )
+    return None
+
+
+def _is_expired_iso(value: Optional[str]) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    try:
+        parsed = _dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=_dt.timezone.utc)
+    return parsed <= _dt.datetime.now(_dt.timezone.utc)
 
 
 def _mode_value(mode: Any) -> str:
