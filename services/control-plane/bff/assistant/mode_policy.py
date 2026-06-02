@@ -6,9 +6,14 @@ still carry a TTL when the caller supplies one.
 
 The default kernel TTL is 1800 s (30 minutes).  Callers may request a longer
 TTL up to MAX_KERNEL_TTL_SECONDS.  User-mode sessions default to no TTL.
+
+Product default mode is user.  Kernel mode requires the env flag
+PANTHEON_ASSISTANT_KERNEL_ENABLED=true to be set; if unset or false, any
+request for a kernel mode is rejected before capability checks run.
 """
 from __future__ import annotations
 
+import os
 from typing import Any, List, Optional
 
 from .models import AssistantMode
@@ -20,6 +25,8 @@ from .transcript_store import (
     _is_expired,
 )
 
+
+PRODUCT_DEFAULT_MODE = AssistantMode.USER
 
 DEFAULT_KERNEL_TTL_SECONDS = 1800
 MAX_KERNEL_TTL_SECONDS = 7200
@@ -63,6 +70,45 @@ COMMAND_CLASSES_BY_MODE = {
         COMMAND_CLASS_LOG_READ,
     ),
 }
+
+
+def kernel_sessions_enabled() -> bool:
+    """Return True only when the kernel feature flag is explicitly enabled."""
+    return os.environ.get("PANTHEON_ASSISTANT_KERNEL_ENABLED", "").lower() in ("1", "true", "yes")
+
+
+def assert_kernel_allowed(mode: AssistantMode | str) -> None:
+    """Raise ModePolicyViolation if a kernel mode is requested while kernel is disabled.
+
+    This gate runs before capability checks.  When PANTHEON_ASSISTANT_KERNEL_ENABLED is
+    not set or is false, the product default is user mode and kernel sessions are
+    unconditionally rejected regardless of the caller's capabilities.
+    """
+    resolved = mode if isinstance(mode, AssistantMode) else AssistantMode(str(mode))
+    if resolved in KERNEL_MODES and not kernel_sessions_enabled():
+        raise ModePolicyViolation(
+            "Kernel sessions are disabled.  Set PANTHEON_ASSISTANT_KERNEL_ENABLED=true "
+            "to allow kernel mode.  Product default is user mode.",
+            field="mode",
+        )
+
+
+def user_mode_capability_summary() -> dict:
+    """Return a stable summary of what user mode can and cannot do.
+
+    Intended for responses and tests that need a machine-readable capability snapshot.
+    """
+    return {
+        "mode": AssistantMode.USER.value,
+        "context": "bff_curated_only",
+        "command_broker": False,
+        "shell": False,
+        "repo": False,
+        "raw_logs": False,
+        "repair": False,
+        "provider_session_access": False,
+        "allowed_command_classes": [],
+    }
 
 
 class ModePolicyViolation(ValueError):
