@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Task board and dispatch queue are empty, so there is no parent support need for sidecars.",
+  "blocked_by": [
+    "no_runnable_execution_backlog",
+    "no_sidecar_parent_support_need"
+  ],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "OPS-GIT-ZOMBIE-BRANCH-AUDIT",
+    "OPS-PROVIDER-CAPABILITY-REFRESH"
+  ]
+}
