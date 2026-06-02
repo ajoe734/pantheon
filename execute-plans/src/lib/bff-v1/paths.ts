@@ -163,6 +163,16 @@ export const paths = {
   // ---- SSE ----
   sse: () => `${BASE}/events/stream`,
 
+  // ---- Assistant sessions (user-mode default) ----
+  assistantSessions: () => `${BASE}/assistant/sessions`,
+  assistantSession: (id: string) => `${BASE}/assistant/sessions/${enc(id)}`,
+  assistantSessionContext: (id: string) => `${BASE}/assistant/sessions/${enc(id)}/context`,
+  assistantSessionMessages: (id: string) => `${BASE}/assistant/sessions/${enc(id)}/messages`,
+  assistantSessionTranscript: (id: string) => `${BASE}/assistant/sessions/${enc(id)}/transcript`,
+  assistantSessionRevoke: (id: string) => `${BASE}/assistant/sessions/${enc(id)}/revoke`,
+  assistantProviders: () => `${BASE}/assistant/providers`,
+  assistantMode: () => `${BASE}/assistant/mode`,
+
   // ---- Agora ----
   agoraSignals: () => `${BASE}/agora/signals`,
   agoraInbox: () => `${BASE}/agora/inbox`,

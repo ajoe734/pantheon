@@ -41,7 +41,7 @@ class AssistantFrontendContext(AssistantBaseModel):
 
 
 class AssistantContextPackRequest(AssistantBaseModel):
-    mode: AssistantMode = AssistantMode.KERNEL_DEBUG
+    mode: AssistantMode = AssistantMode.USER
     include: List[str] = Field(default_factory=list)
     question: Optional[str] = None
     frontend: AssistantFrontendContext = Field(default_factory=AssistantFrontendContext)

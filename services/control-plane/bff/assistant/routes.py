@@ -7,7 +7,16 @@ from fastapi import APIRouter, Body, Header, HTTPException
 from models import ErrorCode
 
 from .context_composer import AssistantContextPolicyError
-from .mode_policy import ModePolicyViolation, check_session_active, create_session, session_to_dict, turn_to_dict
+from .mode_policy import (
+    ModePolicyViolation,
+    assert_kernel_allowed,
+    check_session_active,
+    create_session,
+    session_to_dict,
+    turn_to_dict,
+    user_mode_capability_summary,
+    PRODUCT_DEFAULT_MODE,
+)
 from .models import AssistantContextPack, AssistantContextPackRequest, AssistantContextPackResponse, AssistantMode
 from .transcript_store import (
     InMemorySessionStore,
@@ -98,11 +107,21 @@ def create_assistant_router(
         identity = extract_identity(authorization)
         require_read_role(identity)
 
-        mode_raw = payload.get("mode", AssistantMode.USER.value)
+        mode_raw = payload.get("mode", PRODUCT_DEFAULT_MODE.value)
         try:
             mode = AssistantMode(mode_raw)
         except ValueError:
             _raise_error(bff_error, 400, ErrorCode.VALIDATION_FAILED, f"Invalid mode: {mode_raw!r}")
+
+        try:
+            assert_kernel_allowed(mode)
+        except ModePolicyViolation as exc:
+            _raise_error(
+                bff_error, 403, ErrorCode.FORBIDDEN,
+                f"Mode policy violation: {exc}",
+                str(exc),
+                field=exc.field,
+            )
 
         reason: Optional[str] = payload.get("reason")
         ttl_seconds: Optional[int] = payload.get("ttl_seconds")
@@ -220,6 +239,26 @@ def create_assistant_router(
             )
 
         return {"data": turn_to_dict(turn)}
+
+    @router.get("/mode")
+    async def get_product_mode(
+        authorization: Optional[str] = Header(default=None),
+    ) -> dict[str, Any]:
+        """Return the product default mode and its capability summary.
+
+        Action suggestions in user mode route through existing BFF command and
+        approval flows; kernel controls are not exposed.
+        """
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+        from .mode_policy import kernel_sessions_enabled
+        return {
+            "data": {
+                "product_default_mode": PRODUCT_DEFAULT_MODE.value,
+                "kernel_enabled": kernel_sessions_enabled(),
+                "user_mode": user_mode_capability_summary(),
+            }
+        }
 
     return router
 
