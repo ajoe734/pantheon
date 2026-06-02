@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Idle capacity exists and ASST-FE-002 can accept scoped support; ASST-USER-001 is blocked only by task worktree hygiene.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "ASST-USER-001"
+  ],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260602T082357Z-1e012e34",
+      "decision": "allow",
+      "reason": "Read-only Claude Explore request scoped to tracing LLM call sites; no repo, task-state, push, credential, or live-runtime mutation.",
+      "remember": false
+    }
+  ],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "ASST-USER-001",
+    "ASST-FE-002",
+    "OPS-ARCHIVE-AUTO-COMMIT-20260531T165903Z",
+    "OPS-PR-HYGIENE-CHAIR-REVIEWS"
+  ]
+}
