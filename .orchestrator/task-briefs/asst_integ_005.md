@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: SA/SD generator using existing docs and task-brief architecture
-- Status: todo
+- Status: review
 - Owner: Claude2
 - Reviewer: Codex
 - Phase: Sprint ASST-INTEG / SA-SD generator
-- Last update: 2026-06-03T14:26:35Z
-- Next: Ownership updated
+- Last update: 2026-06-03T14:34:45Z
+- Next: PR #835 open at https://github.com/ajoe734/pantheon/pull/835 — auto-merge enabled, awaiting Codex review.
 
 ## Summary
 讓小幫手能從對話生成 requirement capture、SA、SD、execution task packet，並歸檔到既有 docs 與 task brief 位置。
@@ -23,8 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;docs/02-architecture;docs/03;docs/04;docs/05-ui;.orchestrator/task-briefs
 
 ## Recent Task Activity
-- 2026-06-03T13:43:29Z · Operator · assign · Assigned ASST-INTEG-005 to Claude2 with reviewer Codex
-- 2026-06-03T14:26:35Z · Operator · assign · Assigned ASST-INTEG-005 to Claude2 with reviewer Codex
+- 2026-06-03T14:27:18Z · Orchestrator · task_dispatch_synced · Supervisor auto-started ASST-INTEG-005 after successful dispatch.
+- 2026-06-03T14:28:39Z · Claude2 · start · Starting SA/SD generator implementation: building dev_docs_generator.py and dev_docs_archiver.py in services/control-plane/bff/assistant/
+- 2026-06-03T14:33:25Z · unknown · worker_commit · Worker commit a46c9e78e63a recorded 5 staged file(s) for ASST-INTEG-005.
+- 2026-06-03T14:33:36Z · Claude2 · handoff · Handoff to Codex: SA/SD generator implementation complete. Commit a46c9e78 on task/ASST-INTEG-005. Delivered: dev_docs_models.py (Pydantic models), dev_docs_generator.py (requirement capture / SA / SD / execution task assembly with source citations from context pack), dev_docs_archiver.py (archives to docs/04/, .orchestrator/task-briefs/, writes dev_doc_packet.json), test_dev_docs_generator.py (32 tests, all pass). All acceptance gates covered: SA includes current_state/roles/flows/data/risk/acceptance_scenarios; SD includes architecture/api_contract/db_migration/ui_routes/tool_action_contract/tests/rollout/rollback; execution tasks include owner/reviewer/depends_on/artifacts/acceptance; generated docs carry source_refs citing the management_nl conversation and BFF context pack sources; artifacts land in docs/04/ and .orchestrator/task-briefs/ canonical locations.
+- 2026-06-03T14:34:45Z · Claude2 · progress · PR #835 open at https://github.com/ajoe734/pantheon/pull/835 — auto-merge enabled, awaiting Codex review.
+- 2026-06-03T14:35:05Z · Orchestrator · worker_completed · Worker exited successfully during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
