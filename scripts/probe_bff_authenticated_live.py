@@ -68,6 +68,46 @@ READ_PROBES: tuple[Probe, ...] = (
     Probe("GET", "/bff/agora/journal", "agora-journal"),
     Probe("GET", "/bff/agora/postmortems", "agora-postmortems"),
     Probe("GET", "/bff/agora/ask/sessions", "agora-ask"),
+    Probe(
+        "POST",
+        "/bff/management/nl/ask",
+        "management-ai-multiturn",
+        body={
+            "question": "Give a concise management cockpit status for this smoke probe.",
+            "focus": "all",
+            "sessionId": None,
+            "conversation": {
+                "recentTurns": [
+                    {"role": "user", "content": "Start a management AI smoke conversation."}
+                ],
+                "summary": "Authenticated live smoke probe for the Management AI contract.",
+            },
+            "ui": {
+                "currentRoute": "/management/cockpit",
+                "selectedEntity": None,
+                "visiblePanels": ["ManagementAIPanel", "CockpitSummary"],
+                "filters": {"probe": "authenticated-live"},
+                "availableUiActions": [
+                    {"kind": "navigate", "description": "Navigate to a route", "paramsSchema": "{ to: string }"},
+                    {
+                        "kind": "refreshCurrentView",
+                        "description": "Refresh the visible management view",
+                        "paramsSchema": "{}",
+                    },
+                ],
+            },
+        },
+        expect_status={202},
+        required_paths=(
+            ("data", "answer"),
+            ("data", "sessionId"),
+            ("data", "traceId"),
+            ("data", "providerStatus"),
+            ("data", "actions"),
+            ("data", "conversation", "href"),
+            ("data", "session", "ttlSeconds"),
+        ),
+    ),
     Probe("GET", "/bff/v5/loop-runs", "v5-loop-runs"),
     Probe("GET", "/bff/v5/sentinel/findings", "v5-sentinel"),
     Probe("GET", "/bff/v5/execution/persona-health", "v5-persona-health"),

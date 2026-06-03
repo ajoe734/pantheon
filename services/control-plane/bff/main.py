@@ -29251,7 +29251,25 @@ async def bff_management_persona_fleet(
 _MGMT_NL_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 
 _MGMT_NL_VALID_FOCUS = {"cockpit", "trading_pulse", "portfolio", "persona_fleet", "all"}
+_MGMT_NL_FOCUS_ALIASES = {
+    "persona": "persona_fleet",
+    "personas": "persona_fleet",
+    "runtime": "trading_pulse",
+    "runtimes": "trading_pulse",
+}
 _MGMT_NL_MAX_QUESTION_BYTES = 2048
+_MGMT_AI_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60
+_MGMT_NL_MAX_RECENT_TURNS = 12
+_MGMT_NL_UI_ACTION_KINDS = {
+    "navigate",
+    "openDrawer",
+    "selectEntity",
+    "setFilter",
+    "focusPanel",
+    "refreshCurrentView",
+    "runBffAction",
+}
+_MGMT_NL_WRITE_ACTION_KINDS = {"runBffAction"}
 
 _MGMT_NL_HIGH_RISK_REFUSAL_FOLLOWUPS = [
     {
@@ -29531,7 +29549,7 @@ def _management_ai_audit_href(
 
 def _management_ai_conversation_href(session_id: str, *, trace_id: Optional[str] = None) -> str:
     route = f"/bff/management/ai/conversations/{quote(str(session_id or ''), safe='')}"
-    return _management_ai_href(route, trace_id=trace_id)
+    return route
 
 
 def _management_ai_conversation_turns(
@@ -29540,11 +29558,11 @@ def _management_ai_conversation_turns(
     trace_id: Optional[str] = None,
     limit: int = 100,
 ) -> List[Dict[str, Any]]:
-    event_limit = min(max(limit * 4, limit), 500)
+    event_limit = min(max(limit * 6, limit), 1200)
     turns: List[Dict[str, Any]] = []
     for event in _management_ai_list_audit_events(
         session_id=session_id,
-        trace_id=trace_id,
+        trace_id=None,
         limit=event_limit,
     ):
         event_type = str(event.get("event_type") or "").strip()
@@ -29554,11 +29572,15 @@ def _management_ai_conversation_turns(
                 continue
             turns.append(
                 {
+                    "id": message_id,
                     "turn_id": message_id,
                     "message_id": message_id,
+                    "traceId": event.get("trace_id"),
                     "trace_id": event.get("trace_id"),
                     "role": "user",
+                    "text": event.get("question") or "",
                     "content": event.get("question") or "",
+                    "createdAt": event.get("recorded_at"),
                     "created_at": event.get("recorded_at"),
                     "focus": event.get("focus"),
                     "tenant_id": event.get("tenant_id"),
@@ -29576,15 +29598,22 @@ def _management_ai_conversation_turns(
                 assistant_turn_id = f"{message_id}-assistant"
             if not assistant_turn_id:
                 continue
+            provider_status = event.get("provider_status") or {}
             turns.append(
                 {
+                    "id": assistant_turn_id,
                     "turn_id": assistant_turn_id,
                     "message_id": message_id,
+                    "traceId": event.get("trace_id"),
                     "trace_id": event.get("trace_id"),
                     "role": "assistant",
+                    "text": event.get("answer") or "",
                     "content": event.get("answer") or "",
+                    "createdAt": event.get("recorded_at"),
                     "created_at": event.get("recorded_at"),
-                    "provider_status": event.get("provider_status") or {},
+                    "providerStatus": provider_status,
+                    "provider_status": provider_status,
+                    "actions": event.get("actions") or [],
                     "fallback": event.get("fallback"),
                     "audit_event": {
                         "event_id": event.get("event_id"),
@@ -29593,6 +29622,244 @@ def _management_ai_conversation_turns(
                 }
             )
     return turns[-limit:]
+
+
+def _mgmt_nl_normalize_focus(value: Any) -> str:
+    focus = str(value or "all").strip().lower()
+    focus = _MGMT_NL_FOCUS_ALIASES.get(focus, focus)
+    if focus not in _MGMT_NL_VALID_FOCUS:
+        return "all"
+    return focus
+
+
+def _mgmt_nl_trim_text(value: Any, *, max_len: int = 4000) -> str:
+    clean = re.sub(r"\s+", " ", str(value or "").strip())
+    if len(clean) > max_len:
+        return f"{clean[:max_len]}..."
+    return clean
+
+
+def _mgmt_nl_normalize_conversation_context(value: Any) -> Dict[str, Any]:
+    conversation = value if isinstance(value, dict) else {}
+    raw_turns = conversation.get("recentTurns")
+    if raw_turns is None:
+        raw_turns = conversation.get("recent_turns")
+    recent_turns: List[Dict[str, str]] = []
+    if isinstance(raw_turns, list):
+        for raw_turn in raw_turns[-_MGMT_NL_MAX_RECENT_TURNS:]:
+            if not isinstance(raw_turn, dict):
+                continue
+            role = str(raw_turn.get("role") or "").strip().lower()
+            if role not in {"user", "assistant", "system"}:
+                continue
+            content = _mgmt_nl_trim_text(
+                raw_turn.get("content") if raw_turn.get("content") is not None else raw_turn.get("text"),
+                max_len=2000,
+            )
+            if not content:
+                continue
+            recent_turns.append({"role": role, "content": content, "text": content})
+    summary = _mgmt_nl_trim_text(conversation.get("summary"), max_len=4000)
+    return {
+        "recentTurns": recent_turns,
+        "recent_turns": recent_turns,
+        "summary": summary,
+        "maxRecentTurns": _MGMT_NL_MAX_RECENT_TURNS,
+        "max_recent_turns": _MGMT_NL_MAX_RECENT_TURNS,
+    }
+
+
+def _mgmt_nl_normalize_action_descriptor(value: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(value, dict):
+        return None
+    kind = str(value.get("kind") or value.get("type") or "").strip()
+    if kind not in _MGMT_NL_UI_ACTION_KINDS:
+        return None
+    descriptor: Dict[str, Any] = {
+        "kind": kind,
+        "description": _mgmt_nl_trim_text(value.get("description"), max_len=500),
+        "paramsSchema": _mgmt_nl_trim_text(
+            value.get("paramsSchema") if value.get("paramsSchema") is not None else value.get("params_schema"),
+            max_len=1000,
+        ),
+    }
+    if value.get("label") is not None:
+        descriptor["label"] = _mgmt_nl_trim_text(value.get("label"), max_len=120)
+    return descriptor
+
+
+def _mgmt_nl_normalize_available_ui_actions(value: Any) -> List[Dict[str, Any]]:
+    actions: List[Dict[str, Any]] = []
+    seen: Set[str] = set()
+    if not isinstance(value, list):
+        return actions
+    for item in value:
+        descriptor = _mgmt_nl_normalize_action_descriptor(item)
+        if not descriptor:
+            continue
+        kind = str(descriptor.get("kind") or "")
+        if kind in seen:
+            continue
+        seen.add(kind)
+        actions.append(descriptor)
+    return actions
+
+
+def _mgmt_nl_normalize_ui_context(value: Any, *, operator_context: str) -> Dict[str, Any]:
+    ui = value if isinstance(value, dict) else {}
+    current_route = str(ui.get("currentRoute") or ui.get("current_route") or "/management").strip() or "/management"
+    selected_entity = ui.get("selectedEntity") if "selectedEntity" in ui else ui.get("selected_entity")
+    if not isinstance(selected_entity, dict):
+        selected_entity = None
+    visible_panels = ui.get("visiblePanels") if "visiblePanels" in ui else ui.get("visible_panels")
+    if not isinstance(visible_panels, list):
+        visible_panels = []
+    filters = ui.get("filters") if isinstance(ui.get("filters"), dict) else {}
+    available_ui_actions = ui.get("availableUiActions")
+    if available_ui_actions is None:
+        available_ui_actions = ui.get("available_ui_actions")
+    normalized = {
+        "currentRoute": current_route,
+        "current_route": current_route,
+        "selectedEntity": selected_entity,
+        "selected_entity": selected_entity,
+        "visiblePanels": [str(item) for item in visible_panels[:20] if str(item or "").strip()],
+        "visible_panels": [str(item) for item in visible_panels[:20] if str(item or "").strip()],
+        "filters": filters,
+        "availableUiActions": _mgmt_nl_normalize_available_ui_actions(available_ui_actions),
+        "available_ui_actions": _mgmt_nl_normalize_available_ui_actions(available_ui_actions),
+    }
+    if operator_context:
+        normalized["legacyContext"] = operator_context
+        normalized["legacy_context"] = operator_context
+    return normalized
+
+
+def _mgmt_nl_frontend_selected_entity(ui_snapshot: Dict[str, Any], *, focus: str) -> Dict[str, Any]:
+    selected = ui_snapshot.get("selectedEntity")
+    route = str(ui_snapshot.get("currentRoute") or "/management")
+    if isinstance(selected, dict):
+        entity_type = str(selected.get("entityType") or selected.get("entity_type") or selected.get("kind") or "").strip()
+        entity_id = str(selected.get("entityId") or selected.get("entity_id") or selected.get("id") or "").strip()
+        if entity_type and entity_id:
+            return {
+                "entityType": entity_type,
+                "entityId": entity_id,
+                "label": str(selected.get("label") or entity_id),
+                "route": route,
+            }
+    return {
+        "entityType": "management_nl_focus",
+        "entityId": focus,
+        "label": focus,
+        "route": route,
+    }
+
+
+def _mgmt_nl_allowed_action_kinds(ui_snapshot: Dict[str, Any]) -> Set[str]:
+    actions = ui_snapshot.get("availableUiActions")
+    if not isinstance(actions, list):
+        return set()
+    return {
+        str(item.get("kind") or "")
+        for item in actions
+        if isinstance(item, dict) and str(item.get("kind") or "") in _MGMT_NL_UI_ACTION_KINDS
+    }
+
+
+def _mgmt_nl_jsonish(value: Any) -> Any:
+    if not isinstance(value, str):
+        return None
+    clean = value.strip()
+    if not clean or clean[0] not in "{[":
+        return None
+    try:
+        return json.loads(clean)
+    except json.JSONDecodeError:
+        return None
+
+
+def _mgmt_nl_find_action_values(value: Any, *, depth: int = 0) -> List[Any]:
+    if depth > 8:
+        return []
+    parsed = _mgmt_nl_jsonish(value)
+    if parsed is not None:
+        return _mgmt_nl_find_action_values(parsed, depth=depth + 1)
+    if isinstance(value, list):
+        found: List[Any] = []
+        for item in value:
+            found.extend(_mgmt_nl_find_action_values(item, depth=depth + 1))
+        return found
+    if not isinstance(value, dict):
+        return []
+
+    found = []
+    actions = value.get("actions")
+    if isinstance(actions, list):
+        found.extend(actions)
+    for key in ("data", "output", "final", "answer", "message", "content", "text", "item", "delta", "json_events"):
+        if key in value:
+            found.extend(_mgmt_nl_find_action_values(value.get(key), depth=depth + 1))
+    stdout = value.get("stdout")
+    if isinstance(stdout, str):
+        for line in stdout.splitlines():
+            found.extend(_mgmt_nl_find_action_values(line, depth=depth + 1))
+    return found
+
+
+def _mgmt_nl_action_params_valid(kind: str, params: Dict[str, Any]) -> bool:
+    if kind == "navigate":
+        return bool(str(params.get("to") or params.get("route") or "").strip())
+    if kind == "openDrawer":
+        return bool(str(params.get("drawer") or "").strip())
+    if kind == "selectEntity":
+        return bool(str(params.get("kind") or "").strip() and str(params.get("id") or "").strip())
+    if kind == "setFilter":
+        return bool(str(params.get("key") or "").strip())
+    if kind == "focusPanel":
+        return bool(str(params.get("panel") or "").strip())
+    if kind == "refreshCurrentView":
+        return True
+    if kind == "runBffAction":
+        endpoint = str(params.get("endpoint") or "").strip()
+        return endpoint.startswith("/bff/") or endpoint.startswith("/api/v1/")
+    return False
+
+
+def _mgmt_nl_extract_provider_actions(provider_payload: Any, *, allowed_action_kinds: Set[str]) -> List[Dict[str, Any]]:
+    if not allowed_action_kinds:
+        return []
+    actions: List[Dict[str, Any]] = []
+    for index, raw_action in enumerate(_mgmt_nl_find_action_values(provider_payload), start=1):
+        if not isinstance(raw_action, dict):
+            continue
+        kind = str(raw_action.get("kind") or raw_action.get("type") or "").strip()
+        if kind not in allowed_action_kinds or kind not in _MGMT_NL_UI_ACTION_KINDS:
+            continue
+        params = raw_action.get("params") if isinstance(raw_action.get("params"), dict) else {}
+        if not _mgmt_nl_action_params_valid(kind, params):
+            continue
+        requires_confirmation = bool(
+            raw_action.get("requiresConfirmation")
+            if "requiresConfirmation" in raw_action
+            else raw_action.get("requires_confirmation")
+        )
+        if kind in _MGMT_NL_WRITE_ACTION_KINDS:
+            requires_confirmation = True
+        actions.append(
+            {
+                "id": str(raw_action.get("id") or f"act_{index:02d}"),
+                "kind": kind,
+                "label": _mgmt_nl_trim_text(raw_action.get("label") or kind, max_len=120),
+                "rationale": _mgmt_nl_trim_text(
+                    raw_action.get("rationale") or raw_action.get("reason") or "",
+                    max_len=500,
+                ),
+                "params": params,
+                "requiresConfirmation": requires_confirmation,
+            }
+        )
+    return actions[:6]
 
 
 def _mgmt_nl_validate_question_size(question: str) -> None:
@@ -30162,16 +30429,30 @@ def _mgmt_nl_build_context_pack(
     confidence: str,
     evidence_entities: Any,
     evidence_source_types: Any,
+    operator_context: str,
+    conversation_context: Dict[str, Any],
+    ui_snapshot: Dict[str, Any],
 ) -> Dict[str, Any]:
     from assistant.context_composer import AssistantCollectedSource, compose_context_pack
     from assistant.models import AssistantContextPackRequest, AssistantMode
 
+    frontend_route = str(ui_snapshot.get("currentRoute") or "/management")
+    selected_entity = _mgmt_nl_frontend_selected_entity(ui_snapshot, focus=focus)
     management_payload = {
         "question": question,
         "focus": focus,
         "tenant_id": caller_tenant_id,
         "sources": source_keys,
         "confidence": confidence,
+        "conversation": conversation_context,
+        "ui": ui_snapshot,
+        "operator_context": operator_context,
+        "session": {
+            "sessionId": session_id,
+            "session_id": session_id,
+            "ttlSeconds": _MGMT_AI_SESSION_TTL_SECONDS,
+            "ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
+        },
         "summary_context": snippets,
         "surfaces": surfaces,
         "evidence_entities": _mgmt_nl_evidence_entities_payload(evidence_entities),
@@ -30182,21 +30463,20 @@ def _mgmt_nl_build_context_pack(
         mode=AssistantMode.USER,
         include=["ui", "management_nl"],
         question=question,
-        route="/management",
+        route=frontend_route,
         frontend={
-            "route": "/management",
-            "selectedEntity": {
-                "entityType": "management_nl_focus",
-                "entityId": focus,
-                "label": focus,
-                "route": "/management",
-            },
+            "route": frontend_route,
+            "selectedEntity": selected_entity,
+            "contextRefs": [
+                {"kind": "management_nl_session", "id": session_id},
+                {"kind": "management_nl_focus", "id": focus},
+            ],
         },
         focus={
-            "entityType": "management_nl_focus",
-            "entityId": focus,
-            "label": focus,
-            "route": "/management",
+            "entityType": selected_entity.get("entityType") or "management_nl_focus",
+            "entityId": selected_entity.get("entityId") or focus,
+            "label": selected_entity.get("label") or focus,
+            "route": frontend_route,
         },
     )
 
@@ -30238,6 +30518,9 @@ def _mgmt_nl_provider_prompt(
             "You are the Pantheon management assistant in user mode.",
             "Answer only from the supplied BFF context pack.",
             "Do not execute, approve, deploy, restart, trade, or mutate anything.",
+            "Use backend.management_nl.data.conversation for prior turns and backend.management_nl.data.ui for UI state.",
+            "If you suggest UI actions, return actions only with kinds listed in ui.availableUiActions.",
+            "Any runBffAction or write-style action must require confirmation.",
             "If evidence is missing or stale, say so and keep the answer concise.",
             f"Focus: {focus}",
             f"Question: {question}",
@@ -30304,7 +30587,8 @@ def _mgmt_nl_maybe_provider_answer(
     trace_id: str,
     context_pack: Dict[str, Any],
     audit_id: Optional[str],
-) -> Tuple[Optional[str], Dict[str, Any]]:
+    allowed_action_kinds: Set[str],
+) -> Tuple[Optional[str], Dict[str, Any], List[Dict[str, Any]]]:
     enabled = _mgmt_nl_provider_feature_enabled()
     if provider in {"none", "off", "disabled", "deterministic"}:
         _management_ai_record_event(
@@ -30323,7 +30607,7 @@ def _mgmt_nl_maybe_provider_answer(
             enabled=False,
             status="disabled",
             reason="provider_disabled",
-        )
+        ), []
     if not enabled:
         _management_ai_record_event(
             {
@@ -30341,7 +30625,7 @@ def _mgmt_nl_maybe_provider_answer(
             enabled=False,
             status="disabled",
             reason="feature_disabled",
-        )
+        ), []
     if provider not in {"codex", "codex_cli"}:
         _management_ai_record_event(
             {
@@ -30359,7 +30643,7 @@ def _mgmt_nl_maybe_provider_answer(
             enabled=True,
             status="degraded",
             reason="unsupported_provider",
-        )
+        ), []
 
     run_id = trace_id
     prompt = _mgmt_nl_provider_prompt(
@@ -30423,9 +30707,13 @@ def _mgmt_nl_maybe_provider_answer(
             status="degraded",
             reason=exc.error_code,
             run_id=run_id,
-        )
+        ), []
 
     answer = _mgmt_nl_extract_provider_answer(provider_payload)
+    actions = _mgmt_nl_extract_provider_actions(
+        provider_payload,
+        allowed_action_kinds=allowed_action_kinds,
+    )
     data = provider_payload.get("data") if isinstance(provider_payload, dict) else {}
     provider_state = str((data or {}).get("status") or provider_payload.get("status") or "ok")
     duration_ms = max(0, int((time.monotonic() - provider_started) * 1000))
@@ -30441,6 +30729,8 @@ def _mgmt_nl_maybe_provider_answer(
             "duration_ms": duration_ms,
             "provider_state": provider_state,
             "answer_present": bool(answer),
+            "action_count": len(actions),
+            "allowed_action_kinds": sorted(allowed_action_kinds),
             "output_summary": _management_ai_provider_output_summary(provider_payload),
         }
     )
@@ -30451,7 +30741,7 @@ def _mgmt_nl_maybe_provider_answer(
             status="degraded",
             reason="provider_empty_answer",
             run_id=run_id,
-        )
+        ), []
     status = _mgmt_nl_provider_status(
         provider=str((data or {}).get("provider") or provider),
         enabled=True,
@@ -30461,7 +30751,7 @@ def _mgmt_nl_maybe_provider_answer(
     )
     if isinstance(data, dict) and data.get("redaction") is not None:
         status["redaction"] = data.get("redaction")
-    return answer, status
+    return answer, status, actions
 
 
 @app.post("/bff/management/nl/ask", status_code=202)
@@ -30518,10 +30808,11 @@ async def bff_management_nl_ask(
         requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant),
     )
 
-    focus = str(payload.get("focus") or "all").strip().lower()
-    if focus not in _MGMT_NL_VALID_FOCUS:
-        focus = "all"
-    operator_context = str(payload.get("context") or "").strip()
+    operator_context = _mgmt_nl_trim_text(payload.get("context"), max_len=4000)
+    focus = _mgmt_nl_normalize_focus(payload.get("focus"))
+    conversation_context = _mgmt_nl_normalize_conversation_context(payload.get("conversation"))
+    ui_snapshot = _mgmt_nl_normalize_ui_context(payload.get("ui"), operator_context=operator_context)
+    allowed_action_kinds = _mgmt_nl_allowed_action_kinds(ui_snapshot)
 
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash({"route": "POST /bff/management/nl/ask", "payload": payload})
@@ -30570,6 +30861,9 @@ async def bff_management_nl_ask(
         confidence=confidence,
         evidence_entities=evidence_entities,
         evidence_source_types=evidence_source_types,
+        operator_context=operator_context,
+        conversation_context=conversation_context,
+        ui_snapshot=ui_snapshot,
     )
 
     try:
@@ -30644,12 +30938,17 @@ async def bff_management_nl_ask(
             "confidence": confidence,
             "source_keys": source_keys,
             "context_pack_id": context_pack.get("context_pack_id"),
+            "conversation_recent_turn_count": len(conversation_context.get("recentTurns") or []),
+            "conversation_summary_present": bool(conversation_context.get("summary")),
+            "ui": ui_snapshot,
+            "available_ui_action_kinds": sorted(allowed_action_kinds),
+            "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
             "surfaces": _management_ai_surface_summary(surfaces),
             "audit_ref": audit_ref,
         }
     )
 
-    provider_answer, provider_status = _mgmt_nl_maybe_provider_answer(
+    provider_answer, provider_status, actions = _mgmt_nl_maybe_provider_answer(
         provider=_mgmt_nl_provider_name(),
         question=question,
         focus=focus,
@@ -30660,12 +30959,13 @@ async def bff_management_nl_ask(
         trace_id=trace_id,
         context_pack=context_pack,
         audit_id=audit_ref.get("auditId"),
+        allowed_action_kinds=allowed_action_kinds,
     )
     answer = provider_answer or deterministic_answer
 
     assistant_turn_id = f"{message_id}-assistant"
     audit_log_href = _management_ai_audit_href(session_id=session_id, trace_id=trace_id)
-    conversation_href = _management_ai_conversation_href(session_id, trace_id=trace_id)
+    conversation_href = _management_ai_conversation_href(session_id)
 
     _publish_event(
         _sse_buffers["ask"],
@@ -30678,6 +30978,7 @@ async def bff_management_nl_ask(
         "status": "accepted",
         "data": {
             "answer": answer,
+            "sessionId": session_id,
             "session_id": session_id,
             "message_id": message_id,
             "traceId": trace_id,
@@ -30691,6 +30992,7 @@ async def bff_management_nl_ask(
             "context_pack": context_pack,
             "providerStatus": provider_status,
             "provider_status": provider_status,
+            "actions": actions,
             "auditRef": audit_ref,
             "audit_ref": audit_ref,
             "auditLog": {
@@ -30705,8 +31007,16 @@ async def bff_management_nl_ask(
             },
             "conversation": {
                 "href": conversation_href,
+                "sessionId": session_id,
+                "session_id": session_id,
                 "traceId": trace_id,
                 "trace_id": trace_id,
+            },
+            "session": {
+                "sessionId": session_id,
+                "session_id": session_id,
+                "ttlSeconds": _MGMT_AI_SESSION_TTL_SECONDS,
+                "ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
             },
             "evidenceRefs": processed_evidence_refs,
             "evidence_refs": processed_evidence_refs,
@@ -30723,6 +31033,8 @@ async def bff_management_nl_ask(
             "context_pack_id": context_pack.get("context_pack_id"),
             "redactedEvidenceCount": redacted_evidence_count,
             "redacted_evidence_count": redacted_evidence_count,
+            "sessionTtlSeconds": _MGMT_AI_SESSION_TTL_SECONDS,
+            "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
         },
     }
     _management_ai_record_event(
@@ -30736,6 +31048,9 @@ async def bff_management_nl_ask(
             "route": "POST /bff/management/nl/ask",
             "answer": _management_ai_summary_value(answer),
             "provider_status": provider_status,
+            "actions": actions,
+            "action_count": len(actions),
+            "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
             "fallback": provider_status.get("fallback"),
         }
     )
@@ -30784,13 +31099,13 @@ async def bff_management_ai_conversation(
     limit: int = Query(default=100, ge=1, le=200),
     authorization: Optional[str] = Header(default=None),
 ):
-    """Read Management AI conversation turns from backend audit events only."""
+    """Read full Management AI session turns from backend audit events only."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     clean_session_id = str(session_id or "").strip()
     turns = _management_ai_conversation_turns(
         session_id=clean_session_id,
-        trace_id=trace_id,
+        trace_id=None,
         limit=limit,
     )
     audit_log = {
@@ -30800,19 +31115,31 @@ async def bff_management_ai_conversation(
     }
     return {
         "data": {
+            "sessionId": clean_session_id,
             "session_id": clean_session_id,
             "traceId": trace_id,
             "trace_id": trace_id,
             "turns": turns,
             "auditLog": audit_log,
             "audit_log": audit_log,
+            "session": {
+                "sessionId": clean_session_id,
+                "session_id": clean_session_id,
+                "ttlSeconds": _MGMT_AI_SESSION_TTL_SECONDS,
+                "ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
+            },
         },
         "items": turns,
         "meta": {
             "count": len(turns),
+            "turnCap": limit,
+            "turn_cap": limit,
+            "sessionTtlSeconds": _MGMT_AI_SESSION_TTL_SECONDS,
+            "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
             "filters": {
                 "session_id": clean_session_id,
                 "trace_id": trace_id,
+                "trace_id_ignored": trace_id is not None,
             },
         },
     }
