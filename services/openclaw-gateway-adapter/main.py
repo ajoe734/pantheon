@@ -197,6 +197,10 @@ def _is_healthy_upstream_response(status: int, body: bytes) -> bool:
     if isinstance(payload, dict):
         if payload.get("ok") is True:
             return True
+        if payload.get("ready") is True:
+            return True
+        if payload.get("healthy") is True:
+            return True
         if str(payload.get("status", "")).lower() == "ok":
             return True
     return False

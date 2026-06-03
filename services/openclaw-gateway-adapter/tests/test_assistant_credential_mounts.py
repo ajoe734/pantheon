@@ -60,7 +60,7 @@ def test_macos_human_home_is_rejected_before_stat() -> None:
 
 
 def test_missing_mount_reports_sanitized_degraded_status() -> None:
-    missing = "/srv/pantheon-assistant/.codex"
+    missing = "/home/pantheon-assistant/.codex"
 
     def missing_stat(path: str) -> os.stat_result:
         raise FileNotFoundError(path)
@@ -74,6 +74,30 @@ def test_missing_mount_reports_sanitized_degraded_status() -> None:
     assert metadata["mounts"]["codex"]["status"] == "missing_host_mount"
     assert metadata["mounts"]["codex"]["container_target"] == "codex_home"
     assert missing not in repr(metadata)
+
+
+def test_mount_stat_uses_container_target_after_host_policy_passes(tmp_path: Path) -> None:
+    codex_home = tmp_path / "container" / ".codex"
+    claude_home = tmp_path / "container" / ".claude"
+    codex_home.mkdir(parents=True, mode=0o700)
+    claude_home.mkdir(parents=True, mode=0o700)
+
+    seen: list[str] = []
+
+    def stat_container(path: str) -> os.stat_result:
+        seen.append(path)
+        if path == "/home/pantheon-assistant/.codex":
+            return codex_home.stat()
+        if path == "/home/pantheon-assistant/.claude":
+            return claude_home.stat()
+        raise FileNotFoundError(path)
+
+    mounts = AssistantCredentialMounts(_env(), stat_func=stat_container, expected_uid=os.getuid())
+
+    metadata = mounts.get_readiness_metadata()
+
+    assert metadata["ready"] is True
+    assert seen == ["/home/pantheon-assistant/.codex", "/home/pantheon-assistant/.claude"]
 
 
 def test_metadata_never_exposes_provider_session_file_paths(tmp_path: Path) -> None:

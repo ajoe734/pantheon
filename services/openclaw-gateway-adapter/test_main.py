@@ -192,6 +192,9 @@ class _FakeProbeResponse:
 
 
 class TestUpstreamProbe(unittest.TestCase):
+    def test_upstream_ready_true_health_payload_is_reachable(self):
+        self.assertTrue(adapter_main._is_healthy_upstream_response(200, b'{"ready":true}'))
+
     def test_probe_prefers_readyz_for_upstream_readiness(self):
         calls = []
 
