@@ -22,5 +22,17 @@ def test_dev_compose_enables_codex_assistant_provider_for_bff() -> None:
         env["PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS"]
         == "${PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS:-75.0}"
     )
+    assert (
+        env["PANTHEON_MANAGEMENT_AI_STORE_PATH"]
+        == "${PANTHEON_MANAGEMENT_AI_STORE_PATH:-/data/bff/management-ai-conversations.sqlite3}"
+    )
+    assert (
+        env["PANTHEON_MANAGEMENT_AI_ATTACHMENT_STORE_PATH"]
+        == "${PANTHEON_MANAGEMENT_AI_ATTACHMENT_STORE_PATH:-/data/bff/management-ai-attachments}"
+    )
+    assert (
+        env["PANTHEON_MANAGEMENT_AI_AUDIT_PATH"]
+        == "${PANTHEON_MANAGEMENT_AI_AUDIT_PATH:-/data/bff/management-ai-audit.jsonl}"
+    )
     assert env["PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL"] == "http://openclaw-gateway-adapter:8104"
     assert env["PANTHEON_LIVE_BROKER_ENABLED"] == "${PANTHEON_LIVE_BROKER_ENABLED:-false}"
