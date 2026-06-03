@@ -5,26 +5,26 @@ Treat `ai-status.json` as the durable execution source of truth only when you ne
 Do not read `current-work.md` by default for implementation context.
 
 ## Task
-- Title: Route real assistant providers through existing OpenClaw adapter contracts
+- Title: Provider routing through existing OpenClaw adapter
 - Status: todo
-- Owner: Codex
-- Reviewer: Claude
+- Owner: Codex2
+- Reviewer: Codex
 - Phase: Sprint ASST-INTEG / Provider routing
-- Last update: 2026-06-03T13:43:24Z
-- Next: Assignment created
+- Last update: 2026-06-03T14:26:58Z
+- Next: Helper-claimed by Codex2 while Codex completes higher-priority work.
 
 ## Summary
 沿用 OpenClaw gateway adapter 的 readiness/provider invoke，不另建 gateway，並讓 dev 對 real provider 與 degraded 狀態誠實呈現。
 
 ## Dependencies
-- ASST-INTEG-001: todo · Unify Management AI durable conversation truth with assistant transcripts
-- ASST-INTEG-002: todo · Extend BFF assistant context mesh with UI hints BFF reads and docs citations
+- ASST-INTEG-001: done · Unify Management AI durable conversation truth with assistant transcripts
 
 ## Artifacts
 - docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;services/control-plane/bff/openclaw_ops_client.py;services/openclaw-gateway-adapter/main.py;services/openclaw-gateway-adapter/assistant_command_policy.py;scripts/openclaw-assistant-provider-smoke.sh;services/control-plane/bff/tests/test_management_nl_assistant_provider.py
 
 ## Recent Task Activity
 - 2026-06-03T13:43:24Z · Operator · assign · Assigned ASST-INTEG-003 to Codex with reviewer Claude
+- 2026-06-03T14:26:32Z · Operator · assign · Assigned ASST-INTEG-003 to Codex with reviewer Claude
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md

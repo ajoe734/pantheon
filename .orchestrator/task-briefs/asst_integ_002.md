@@ -5,13 +5,13 @@ Treat `ai-status.json` as the durable execution source of truth only when you ne
 Do not read `current-work.md` by default for implementation context.
 
 ## Task
-- Title: Extend BFF assistant context mesh with UI hints BFF reads and docs citations
+- Title: Context mesh over existing BFF assistant composer
 - Status: in_progress
-- Owner: Codex2
+- Owner: Codex
 - Reviewer: Claude2
 - Phase: Sprint ASST-INTEG / Context mesh
-- Last update: 2026-06-03T14:21:56Z
-- Next: Supervisor auto-started ASST-INTEG-002 after successful dispatch.
+- Last update: 2026-06-03T14:26:29Z
+- Next: Ownership updated
 
 ## Summary
 擴充既有 context composer，讓小幫手同時吃 UI hint、RBAC-filtered BFF read surfaces、以及 docs/RAG citation。
@@ -23,12 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;services/control-plane/bff/assistant/context_composer.py;services/control-plane/bff/assistant/models.py;services/control-plane/bff/tests/test_assistant_context_pack.py
 
 ## Recent Task Activity
-- 2026-06-03T14:21:53Z · Orchestrator · wake_queued · Wake-up queued for supervisor: owned_ready_dispatch
-- 2026-06-03T14:21:55Z · Orchestrator · worker_worktree_allocated · -
-- 2026-06-03T14:21:56Z · Orchestrator · worker_started · Worker started via codex: owned_ready_dispatch
-- 2026-06-03T14:21:56Z · Codex2 · start · Supervisor auto-started ASST-INTEG-002 after successful dispatch.
-- 2026-06-03T14:21:59Z · Orchestrator · task_dispatch_synced · Supervisor auto-started ASST-INTEG-002 after successful dispatch.
 - 2026-06-03T14:23:25Z · Orchestrator · worker_failed · ERROR: Your access token could not be refreshed because your refresh token was revoked. Please log out and sign in again.
+- 2026-06-03T14:23:25Z · Orchestrator · wake_queued · Wake-up queued for supervisor: owned_in_progress_dispatch
+- 2026-06-03T14:23:27Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-03T14:23:27Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for ASST-INTEG-002: reused worktree /tmp/pantheon-worker-worktrees/pantheon/asst-integ-002 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
+- 2026-06-03T14:25:03Z · Orchestrator · wake_skipped · Auto dispatch unavailable for codex2: codex2 local CLI worker is not ready
+- 2026-06-03T14:26:29Z · Operator · assign · Assigned ASST-INTEG-002 to Codex with reviewer Claude2
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
