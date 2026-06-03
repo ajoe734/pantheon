@@ -78,6 +78,41 @@ New read-only endpoint that returns the product default mode and whether
 kernel sessions are currently enabled.  Useful for frontend feature flag
 decisions and for operators verifying the current configuration.
 
+### 5.1 BFF Control-Mode Activation
+
+Frontend control-mode switching is exposed through BFF-owned endpoints, not by
+asking the assistant to self-promote:
+
+- `GET /bff/assistant/control-mode` returns the current operator's activation
+  state, required role/capability, MFA requirement, and passphrase-change href.
+- `POST /bff/assistant/control-mode/activate` activates a short-lived kernel
+  mode for the authenticated operator.
+- `POST /bff/assistant/control-mode/deactivate` revokes the current activation.
+- `POST /bff/assistant/control-mode/passphrase` initializes or changes the
+  activation passphrase.
+
+The passphrase is an activation factor only. It never grants RBAC by itself.
+Activation also requires:
+
+- `PANTHEON_ASSISTANT_KERNEL_ENABLED=true`
+- operator or admin role
+- MFA-verified session
+- an `assistant.kernel*` capability claim
+- non-empty reason
+- bounded `ttlSeconds` and `idleTtlSeconds`
+
+The passphrase is stored as a PBKDF2 hash. If no passphrase exists, an
+admin+MFA operator may initialize one. Once configured, changing it requires the
+current passphrase plus a new passphrase.
+`PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH` may bootstrap the first hash; once
+`PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH` contains a rotated hash, the store
+file takes precedence on restart.
+
+Management AI ask turns automatically touch the idle timer. If the operator
+does not keep interacting before `idleTtlSeconds`, the activation becomes
+inactive and subsequent `/bff/management/nl/ask` context packs return to
+`mode: "user"`.
+
 ### 6. Frontend Path Builders
 
 `execute-plans/src/lib/bff-v1/paths.ts` now includes canonical path builders
@@ -122,6 +157,10 @@ for all assistant session routes:
 | Source citations | enabled |
 | Action suggestions | route through existing BFF command/approval flows |
 
+Control-mode activation does not remove these invariants for inactive or
+unauthorized operators. A reviewer with no `assistant.kernel*` capability still
+receives user mode, even if they know the passphrase.
+
 ---
 
 ## Regression Test Coverage
@@ -141,6 +180,14 @@ verifies:
 9. `assert_kernel_allowed()` rejects `kernel_observe/debug/repair` when kernel is disabled
 10. `assert_kernel_allowed()` passes for user mode regardless of kernel flag
 11. Kernel modes still require capability/reason/TTL when kernel is enabled
+
+`services/control-plane/bff/tests/test_assistant_sessions.py` additionally
+verifies the control-mode activation routes: reviewer denial, MFA requirement,
+passphrase verification, activation status shape, and passphrase rotation.
+
+`services/control-plane/bff/tests/test_management_nl_assistant_provider.py`
+verifies that an active control-mode activation changes the Management AI
+context pack mode and actor capabilities seen by the provider.
 
 ---
 

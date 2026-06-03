@@ -33,6 +33,7 @@ from assistant.mode_policy import (
     mode_allows_command_broker,
     validate_session_request,
 )
+from assistant.control_mode import PASSPHRASE_HASH_ENV, ControlModeStore, passphrase_hash
 from assistant.models import AssistantMode
 from assistant.routes import create_assistant_router
 from assistant.transcript_store import (
@@ -62,18 +63,27 @@ class _FakeIdentity:
         operator_id: str = "op_test",
         roles: Optional[list] = None,
         capabilities: Optional[list] = None,
+        mfa_verified: bool = False,
     ) -> None:
         self.operator_id = operator_id
         self.roles = roles or ["read"]
+        self.mfa_verified = mfa_verified
         self.claims = {"capabilities": capabilities or []}
 
 
 def _make_client(
     *,
     capabilities: Optional[list] = None,
+    roles: Optional[list] = None,
+    mfa_verified: bool = False,
+    control_mode_store: Optional[ControlModeStore] = None,
 ) -> TestClient:
     """Build a test client with isolated in-memory stores."""
-    identity = _FakeIdentity(capabilities=capabilities or [])
+    identity = _FakeIdentity(
+        capabilities=capabilities or [],
+        roles=roles,
+        mfa_verified=mfa_verified,
+    )
 
     def _extract_identity(_auth: Optional[str]) -> _FakeIdentity:
         return identity
@@ -90,6 +100,7 @@ def _make_client(
         require_read_role=_require_read_role,
         session_store=session_store,
         transcript_store=transcript_store,
+        control_mode_store=control_mode_store,
     )
 
     app = FastAPI()
@@ -99,6 +110,15 @@ def _make_client(
 
 def _make_kernel_client() -> TestClient:
     return _make_client(capabilities=["assistant.kernel"])
+
+
+def _make_control_client(store: ControlModeStore) -> TestClient:
+    return _make_client(
+        capabilities=["assistant.kernel.debug"],
+        roles=["operator"],
+        mfa_verified=True,
+        control_mode_store=store,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -485,6 +505,156 @@ class TestCreateSessionRoute:
         assert resp.status_code == 422
         details = resp.json()["detail"]["error"]["details"]
         assert details["field"] == "capabilities"
+
+
+class TestControlModeRoutes:
+    def test_reviewer_cannot_activate_control_mode(self, monkeypatch):
+        monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+        store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
+        client = _make_client(
+            capabilities=["assistant.kernel.debug"],
+            roles=["reviewer"],
+            mfa_verified=True,
+            control_mode_store=store,
+        )
+
+        resp = client.post(
+            "/bff/assistant/control-mode/activate",
+            json={"passphrase": "control phrase ok", "reason": "debugging test"},
+            headers=HEADERS,
+        )
+
+        assert resp.status_code == 403
+
+    def test_operator_can_activate_and_status_reports_kernel_mode(self, monkeypatch):
+        monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+        store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
+        client = _make_control_client(store)
+
+        resp = client.post(
+            "/bff/assistant/control-mode/activate",
+            json={
+                "passphrase": "control phrase ok",
+                "reason": "debugging management AI",
+                "mode": "kernel_debug",
+                "ttlSeconds": 900,
+                "idleTtlSeconds": 120,
+            },
+            headers=HEADERS,
+        )
+
+        assert resp.status_code == 202, resp.text
+        data = resp.json()["data"]
+        assert data["active"] is True
+        assert data["mode"] == "kernel_debug"
+        assert data["ttlSeconds"] == 900
+        assert data["idleTtlSeconds"] == 120
+        assert "code_search" in data["commandClasses"]
+        assert data["requiresConfirmation"] is True
+
+        status = client.get("/bff/assistant/control-mode", headers=HEADERS)
+        assert status.status_code == 200
+        assert status.json()["data"]["active"] is True
+
+    def test_activate_requires_mfa(self, monkeypatch):
+        monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+        store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
+        client = _make_client(
+            capabilities=["assistant.kernel.debug"],
+            roles=["operator"],
+            mfa_verified=False,
+            control_mode_store=store,
+        )
+
+        resp = client.post(
+            "/bff/assistant/control-mode/activate",
+            json={"passphrase": "control phrase ok", "reason": "debugging test"},
+            headers=HEADERS,
+        )
+
+        assert resp.status_code == 403
+
+    def test_activate_rejects_bad_passphrase(self, monkeypatch):
+        monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+        store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
+        client = _make_control_client(store)
+
+        resp = client.post(
+            "/bff/assistant/control-mode/activate",
+            json={"passphrase": "wrong phrase", "reason": "debugging test"},
+            headers=HEADERS,
+        )
+
+        assert resp.status_code == 403
+
+    def test_passphrase_can_be_initialized_and_changed_by_admin_mfa(self, monkeypatch):
+        store = ControlModeStore(storage_path="off")
+        client = _make_client(
+            capabilities=["assistant.kernel.debug"],
+            roles=["admin"],
+            mfa_verified=True,
+            control_mode_store=store,
+        )
+
+        init_resp = client.post(
+            "/bff/assistant/control-mode/passphrase",
+            json={"newPassphrase": "initial control phrase"},
+            headers=HEADERS,
+        )
+        assert init_resp.status_code == 202, init_resp.text
+        assert init_resp.json()["data"]["initialized"] is True
+
+        change_resp = client.post(
+            "/bff/assistant/control-mode/passphrase",
+            json={
+                "currentPassphrase": "initial control phrase",
+                "newPassphrase": "rotated control phrase",
+            },
+            headers=HEADERS,
+        )
+        assert change_resp.status_code == 202, change_resp.text
+        assert change_resp.json()["data"]["initialized"] is False
+
+        monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+        activate_resp = client.post(
+            "/bff/assistant/control-mode/activate",
+            json={"passphrase": "rotated control phrase", "reason": "debugging test"},
+            headers=HEADERS,
+        )
+        assert activate_resp.status_code == 202, activate_resp.text
+
+    def test_rotated_store_passphrase_overrides_env_bootstrap(self, tmp_path, monkeypatch):
+        store_path = str(tmp_path / "control-mode.json")
+        env_hash = passphrase_hash("bootstrap control phrase")
+        store = ControlModeStore(storage_path=store_path, initial_passphrase_hash=env_hash)
+        store.set_passphrase(
+            current_passphrase="bootstrap control phrase",
+            new_passphrase="rotated control phrase",
+        )
+
+        monkeypatch.setenv(PASSPHRASE_HASH_ENV, env_hash)
+        reloaded = ControlModeStore(storage_path=store_path)
+        client = _make_client(
+            capabilities=["assistant.kernel.debug"],
+            roles=["operator"],
+            mfa_verified=True,
+            control_mode_store=reloaded,
+        )
+        monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+
+        old_resp = client.post(
+            "/bff/assistant/control-mode/activate",
+            json={"passphrase": "bootstrap control phrase", "reason": "debugging test"},
+            headers=HEADERS,
+        )
+        assert old_resp.status_code == 403
+
+        new_resp = client.post(
+            "/bff/assistant/control-mode/activate",
+            json={"passphrase": "rotated control phrase", "reason": "debugging test"},
+            headers=HEADERS,
+        )
+        assert new_resp.status_code == 202, new_resp.text
 
 
 class TestGetSessionRoute:

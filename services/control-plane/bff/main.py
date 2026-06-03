@@ -29862,6 +29862,65 @@ def _mgmt_nl_extract_provider_actions(provider_payload: Any, *, allowed_action_k
     return actions[:6]
 
 
+def _assistant_control_mode_for_identity(
+    identity: OperatorIdentity,
+    *,
+    management_session_id: Optional[str] = None,
+    touch: bool = False,
+) -> Dict[str, Any]:
+    store = globals().get("_ASSISTANT_CONTROL_MODE_STORE")
+    if store is None:
+        return {
+            "state": "inactive",
+            "active": False,
+            "reason": "control_mode_store_unavailable",
+            "configured": False,
+        }
+    try:
+        return store.status_for_actor(
+            identity.operator_id,
+            management_session_id=management_session_id,
+            touch=touch,
+        )
+    except Exception:
+        log.warning("Failed to read assistant control mode status", exc_info=True)
+        return {
+            "state": "inactive",
+            "active": False,
+            "reason": "control_mode_status_unavailable",
+        }
+
+
+def _mgmt_nl_identity_with_control_mode(
+    identity: OperatorIdentity,
+    control_mode: Dict[str, Any],
+) -> OperatorIdentity:
+    if not isinstance(control_mode, dict) or not control_mode.get("active"):
+        return identity
+    claims = dict(identity.claims or {})
+    raw_caps = claims.get("capabilities") or claims.get("capability") or []
+    if isinstance(raw_caps, str):
+        raw_caps = re.split(r"[\s,]+", raw_caps)
+    if not isinstance(raw_caps, list):
+        raw_caps = []
+    caps = _dedupe_nonblank_strings([
+        *raw_caps,
+        *(control_mode.get("capabilities") if isinstance(control_mode.get("capabilities"), list) else []),
+        "assistant.kernel",
+    ])
+    claims["capabilities"] = caps
+    try:
+        return identity.model_copy(update={"claims": claims})
+    except AttributeError:
+        return OperatorIdentity(
+            operator_id=identity.operator_id,
+            roles=identity.roles,
+            mfa_verified=identity.mfa_verified,
+            claims=claims,
+            token_kind=identity.token_kind,
+        )
+
+
 def _mgmt_nl_validate_question_size(question: str) -> None:
     question_size = len(question.encode("utf-8"))
     if question_size <= _MGMT_NL_MAX_QUESTION_BYTES:
@@ -30432,12 +30491,20 @@ def _mgmt_nl_build_context_pack(
     operator_context: str,
     conversation_context: Dict[str, Any],
     ui_snapshot: Dict[str, Any],
+    control_mode: Dict[str, Any],
 ) -> Dict[str, Any]:
     from assistant.context_composer import AssistantCollectedSource, compose_context_pack
     from assistant.models import AssistantContextPackRequest, AssistantMode
 
     frontend_route = str(ui_snapshot.get("currentRoute") or "/management")
     selected_entity = _mgmt_nl_frontend_selected_entity(ui_snapshot, focus=focus)
+    assistant_mode = AssistantMode.USER
+    if isinstance(control_mode, dict) and control_mode.get("active"):
+        try:
+            assistant_mode = AssistantMode(str(control_mode.get("mode") or AssistantMode.KERNEL_DEBUG.value))
+        except ValueError:
+            assistant_mode = AssistantMode.KERNEL_DEBUG
+    context_identity = _mgmt_nl_identity_with_control_mode(identity, control_mode)
     management_payload = {
         "question": question,
         "focus": focus,
@@ -30446,6 +30513,8 @@ def _mgmt_nl_build_context_pack(
         "confidence": confidence,
         "conversation": conversation_context,
         "ui": ui_snapshot,
+        "controlMode": control_mode,
+        "control_mode": control_mode,
         "operator_context": operator_context,
         "session": {
             "sessionId": session_id,
@@ -30460,7 +30529,7 @@ def _mgmt_nl_build_context_pack(
     }
 
     request = AssistantContextPackRequest(
-        mode=AssistantMode.USER,
+        mode=assistant_mode,
         include=["ui", "management_nl"],
         question=question,
         route=frontend_route,
@@ -30500,7 +30569,7 @@ def _mgmt_nl_build_context_pack(
     pack = compose_context_pack(
         session_id=session_id,
         request=request,
-        actor=identity,
+        actor=context_identity,
         collect_source=collect_source,
     )
     return pack.model_dump(mode="json", by_alias=False)
@@ -30838,6 +30907,11 @@ async def bff_management_nl_ask(
     session_id = str(payload.get("sessionId") or payload.get("session_id") or f"mgmt-nl-{uuid.uuid4().hex[:10]}")
     message_id = f"mnl-{uuid.uuid4().hex[:16]}"
     trace_id = str(payload.get("traceId") or payload.get("trace_id") or f"mnl-trace-{uuid.uuid4().hex[:12]}")
+    control_mode = _assistant_control_mode_for_identity(
+        identity,
+        management_session_id=session_id,
+        touch=True,
+    )
 
     # BFF-B6-001-SEC-FIX: pass tenant scope to context collection.
     context_bundle = _mgmt_nl_collect_context(focus, now, tenant_id=caller_tenant_id)
@@ -30864,6 +30938,7 @@ async def bff_management_nl_ask(
         operator_context=operator_context,
         conversation_context=conversation_context,
         ui_snapshot=ui_snapshot,
+        control_mode=control_mode,
     )
 
     try:
@@ -30943,6 +31018,12 @@ async def bff_management_nl_ask(
             "ui": ui_snapshot,
             "available_ui_action_kinds": sorted(allowed_action_kinds),
             "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
+            "control_mode": {
+                "state": control_mode.get("state"),
+                "active": control_mode.get("active"),
+                "mode": control_mode.get("mode"),
+                "activation_id": control_mode.get("activation_id") or control_mode.get("activationId"),
+            },
             "surfaces": _management_ai_surface_summary(surfaces),
             "audit_ref": audit_ref,
         }
@@ -30992,6 +31073,8 @@ async def bff_management_nl_ask(
             "context_pack": context_pack,
             "providerStatus": provider_status,
             "provider_status": provider_status,
+            "controlMode": control_mode,
+            "control_mode": control_mode,
             "actions": actions,
             "auditRef": audit_ref,
             "audit_ref": audit_ref,
@@ -31035,6 +31118,8 @@ async def bff_management_nl_ask(
             "redacted_evidence_count": redacted_evidence_count,
             "sessionTtlSeconds": _MGMT_AI_SESSION_TTL_SECONDS,
             "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
+            "controlMode": control_mode,
+            "control_mode": control_mode,
         },
     }
     _management_ai_record_event(
@@ -31051,6 +31136,12 @@ async def bff_management_nl_ask(
             "actions": actions,
             "action_count": len(actions),
             "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
+            "control_mode": {
+                "state": control_mode.get("state"),
+                "active": control_mode.get("active"),
+                "mode": control_mode.get("mode"),
+                "activation_id": control_mode.get("activation_id") or control_mode.get("activationId"),
+            },
             "fallback": provider_status.get("fallback"),
         }
     )
@@ -45506,6 +45597,7 @@ def _assistant_build_context_pack(session_id: str, request: Any, identity: Opera
 # sem_agora_ask can record turns without a second store instantiation.
 _ASSISTANT_SESSION_STORE: Any = None
 _ASSISTANT_TRANSCRIPT_STORE: Any = None
+_ASSISTANT_CONTROL_MODE_STORE: Any = None
 
 
 def _assistant_ask_enabled() -> bool:
@@ -45521,12 +45613,14 @@ def _agora_ask_deterministic_fallback(prompt: str) -> str:
 
 
 def _include_assistant_routes() -> None:
-    global _ASSISTANT_SESSION_STORE, _ASSISTANT_TRANSCRIPT_STORE
+    global _ASSISTANT_SESSION_STORE, _ASSISTANT_TRANSCRIPT_STORE, _ASSISTANT_CONTROL_MODE_STORE
+    from assistant.control_mode import ControlModeStore
     from assistant.routes import create_assistant_router
     from assistant.transcript_store import InMemorySessionStore, InMemoryTranscriptStore
 
     _ASSISTANT_SESSION_STORE = InMemorySessionStore()
     _ASSISTANT_TRANSCRIPT_STORE = InMemoryTranscriptStore()
+    _ASSISTANT_CONTROL_MODE_STORE = ControlModeStore()
     app.include_router(
         create_assistant_router(
             build_context_pack=_assistant_build_context_pack,
@@ -45535,6 +45629,7 @@ def _include_assistant_routes() -> None:
             bff_error=_bff_error,
             session_store=_ASSISTANT_SESSION_STORE,
             transcript_store=_ASSISTANT_TRANSCRIPT_STORE,
+            control_mode_store=_ASSISTANT_CONTROL_MODE_STORE,
         )
     )
 
