@@ -37,6 +37,10 @@ def _fresh_client(td: str) -> TestClient:
     bff_main.read_store = store
     bff_main._MGMT_NL_IDEMPOTENCY.clear()
     bff_main._sse_buffers["ask"].clear()
+    bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
+        storage_path="off",
+        attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
+    )
     return TestClient(bff_main.app)
 
 
