@@ -397,14 +397,26 @@ def test_management_ai_audit_records_exchange_and_provider_trace(tmp_path, monke
         assert body["data"]["audit_log"]["href"].endswith(
             "session_id=mgmt-audit-session&trace_id=mgmt-audit-trace"
         )
+        assert body["data"]["conversation"]["href"].endswith(
+            "/bff/management/ai/conversations/mgmt-audit-session?trace_id=mgmt-audit-trace"
+        )
         assert fake.calls[0]["trace_id"] == "mgmt-audit-trace"
         assert fake.calls[0]["metadata"]["trace_id"] == "mgmt-audit-trace"
 
-        session = bff_main.read_store.get_agora_session("mgmt-audit-session")
-        assert session is not None
-        roles = [message["role"] for message in session["messages"]]
-        assert roles == ["user", "assistant"]
-        assert session["messages"][1]["content"] == "Audited provider answer."
+        assert bff_main.read_store.get_agora_session("mgmt-audit-session") is None
+
+        conversation_resp = client.get(
+            "/bff/management/ai/conversations/mgmt-audit-session?trace_id=mgmt-audit-trace",
+            headers=OPERATOR_HEADERS,
+        )
+        assert conversation_resp.status_code == 200, conversation_resp.text
+        conversation = conversation_resp.json()["data"]
+        assert conversation["session_id"] == "mgmt-audit-session"
+        turns = conversation["turns"]
+        assert [turn["role"] for turn in turns] == ["user", "assistant"]
+        assert turns[0]["content"] == "What is the scoped portfolio?"
+        assert turns[1]["content"] == "Audited provider answer."
+        assert turns[1]["provider_status"]["used"] is True
 
         audit_resp = client.get(
             "/bff/management/ai/audit?session_id=mgmt-audit-session&trace_id=mgmt-audit-trace",

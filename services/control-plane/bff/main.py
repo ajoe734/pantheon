@@ -13,6 +13,7 @@ import uuid
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Set, Tuple
+from urllib.parse import quote, urlencode
 
 from fastapi import Body, Cookie, FastAPI, HTTPException, BackgroundTasks, Header, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
@@ -29501,6 +29502,99 @@ def _management_ai_list_audit_events(
     return filtered[-limit:]
 
 
+def _management_ai_href(route: str, **params: Optional[str]) -> str:
+    clean_params = {
+        key: str(value)
+        for key, value in params.items()
+        if value not in (None, "")
+    }
+    if not clean_params:
+        return route
+    return f"{route}?{urlencode(clean_params)}"
+
+
+def _management_ai_audit_href(
+    *,
+    session_id: Optional[str] = None,
+    trace_id: Optional[str] = None,
+    message_id: Optional[str] = None,
+    event_type: Optional[str] = None,
+) -> str:
+    return _management_ai_href(
+        "/bff/management/ai/audit",
+        session_id=session_id,
+        trace_id=trace_id,
+        message_id=message_id,
+        event_type=event_type,
+    )
+
+
+def _management_ai_conversation_href(session_id: str, *, trace_id: Optional[str] = None) -> str:
+    route = f"/bff/management/ai/conversations/{quote(str(session_id or ''), safe='')}"
+    return _management_ai_href(route, trace_id=trace_id)
+
+
+def _management_ai_conversation_turns(
+    *,
+    session_id: str,
+    trace_id: Optional[str] = None,
+    limit: int = 100,
+) -> List[Dict[str, Any]]:
+    event_limit = min(max(limit * 4, limit), 500)
+    turns: List[Dict[str, Any]] = []
+    for event in _management_ai_list_audit_events(
+        session_id=session_id,
+        trace_id=trace_id,
+        limit=event_limit,
+    ):
+        event_type = str(event.get("event_type") or "").strip()
+        message_id = str(event.get("message_id") or "").strip()
+        if event_type == "management_ai.exchange.accepted":
+            if not message_id:
+                continue
+            turns.append(
+                {
+                    "turn_id": message_id,
+                    "message_id": message_id,
+                    "trace_id": event.get("trace_id"),
+                    "role": "user",
+                    "content": event.get("question") or "",
+                    "created_at": event.get("recorded_at"),
+                    "focus": event.get("focus"),
+                    "tenant_id": event.get("tenant_id"),
+                    "confidence": event.get("confidence"),
+                    "source_keys": event.get("source_keys") or [],
+                    "audit_event": {
+                        "event_id": event.get("event_id"),
+                        "event_type": event_type,
+                    },
+                }
+            )
+        elif event_type == "management_ai.exchange.completed":
+            assistant_turn_id = str(event.get("assistant_turn_id") or "").strip()
+            if not assistant_turn_id and message_id:
+                assistant_turn_id = f"{message_id}-assistant"
+            if not assistant_turn_id:
+                continue
+            turns.append(
+                {
+                    "turn_id": assistant_turn_id,
+                    "message_id": message_id,
+                    "trace_id": event.get("trace_id"),
+                    "role": "assistant",
+                    "content": event.get("answer") or "",
+                    "created_at": event.get("recorded_at"),
+                    "provider_status": event.get("provider_status") or {},
+                    "fallback": event.get("fallback"),
+                    "audit_event": {
+                        "event_id": event.get("event_id"),
+                        "event_type": event_type,
+                    },
+                }
+            )
+    return turns[-limit:]
+
+
 def _mgmt_nl_validate_question_size(question: str) -> None:
     question_size = len(question.encode("utf-8"))
     if question_size <= _MGMT_NL_MAX_QUESTION_BYTES:
@@ -30569,53 +30663,9 @@ async def bff_management_nl_ask(
     )
     answer = provider_answer or deterministic_answer
 
-    session = read_store.get_agora_session(session_id)
-    if session is None:
-        session = read_store.create_agora_session(
-            session_id=session_id,
-            title=question[:80],
-            actor_id=identity.operator_id,
-            payload={
-                "mode": "management_nl",
-                "focus": focus,
-                "tenantId": caller_tenant_id,
-                "participants": [{"type": "operator", "id": identity.operator_id}],
-            },
-            created_at=now,
-        )
-    read_store.append_agora_session_message(
-        session_id,
-        message_id=message_id,
-        content=question,
-        actor_id=identity.operator_id,
-        payload={
-            "role": "user",
-            "focus": focus,
-            "context": operator_context or None,
-            "sender": {"type": "operator", "id": identity.operator_id},
-        },
-        created_at=now,
-    )
-    assistant_message_id = f"{message_id}-assistant"
-    read_store.append_agora_session_message(
-        session_id,
-        message_id=assistant_message_id,
-        content=answer,
-        actor_id=str(provider_status.get("provider") or "management-ai"),
-        payload={
-            "role": "assistant",
-            "focus": focus,
-            "providerStatus": provider_status,
-            "provider_status": provider_status,
-            "traceId": trace_id,
-            "trace_id": trace_id,
-            "sender": {
-                "type": "assistant",
-                "id": str(provider_status.get("provider") or "management-ai"),
-            },
-        },
-        created_at=utc_now(),
-    )
+    assistant_turn_id = f"{message_id}-assistant"
+    audit_log_href = _management_ai_audit_href(session_id=session_id, trace_id=trace_id)
+    conversation_href = _management_ai_conversation_href(session_id, trace_id=trace_id)
 
     _publish_event(
         _sse_buffers["ask"],
@@ -30644,12 +30694,17 @@ async def bff_management_nl_ask(
             "auditRef": audit_ref,
             "audit_ref": audit_ref,
             "auditLog": {
-                "href": f"/bff/management/ai/audit?session_id={session_id}&trace_id={trace_id}",
+                "href": audit_log_href,
                 "traceId": trace_id,
                 "trace_id": trace_id,
             },
             "audit_log": {
-                "href": f"/bff/management/ai/audit?session_id={session_id}&trace_id={trace_id}",
+                "href": audit_log_href,
+                "traceId": trace_id,
+                "trace_id": trace_id,
+            },
+            "conversation": {
+                "href": conversation_href,
                 "traceId": trace_id,
                 "trace_id": trace_id,
             },
@@ -30675,7 +30730,7 @@ async def bff_management_nl_ask(
             "event_type": "management_ai.exchange.completed",
             "session_id": session_id,
             "message_id": message_id,
-            "assistant_message_id": assistant_message_id,
+            "assistant_turn_id": assistant_turn_id,
             "trace_id": trace_id,
             "actor_id": identity.operator_id,
             "route": "POST /bff/management/nl/ask",
@@ -30717,6 +30772,47 @@ async def bff_management_ai_audit(
                 "trace_id": trace_id,
                 "message_id": message_id,
                 "event_type": event_type,
+            },
+        },
+    }
+
+
+@app.get("/bff/management/ai/conversations/{session_id}")
+async def bff_management_ai_conversation(
+    session_id: str,
+    trace_id: Optional[str] = None,
+    limit: int = Query(default=100, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Read Management AI conversation turns from backend audit events only."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    clean_session_id = str(session_id or "").strip()
+    turns = _management_ai_conversation_turns(
+        session_id=clean_session_id,
+        trace_id=trace_id,
+        limit=limit,
+    )
+    audit_log = {
+        "href": _management_ai_audit_href(session_id=clean_session_id, trace_id=trace_id),
+        "traceId": trace_id,
+        "trace_id": trace_id,
+    }
+    return {
+        "data": {
+            "session_id": clean_session_id,
+            "traceId": trace_id,
+            "trace_id": trace_id,
+            "turns": turns,
+            "auditLog": audit_log,
+            "audit_log": audit_log,
+        },
+        "items": turns,
+        "meta": {
+            "count": len(turns),
+            "filters": {
+                "session_id": clean_session_id,
+                "trace_id": trace_id,
             },
         },
     }
