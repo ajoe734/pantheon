@@ -7,17 +7,17 @@ Do not read `current-work.md` by default for implementation context.
 ## Task
 - Title: Bridge assistant-generated task packets into supervisor autoworker dispatch
 - Status: todo
-- Owner: Codex2
-- Reviewer: Claude
+- Owner: Claude2
+- Reviewer: Codex2
 - Phase: Sprint ASST-INTEG / Dev collaboration bridge
-- Last update: 2026-06-03T13:43:31Z
-- Next: Assignment created
+- Last update: 2026-06-03T15:26:31Z
+- Next: Helper-claimed by Claude2 while Codex2 is dispatch-paused.
 
 ## Summary
 建立 signed task packet 到既有 ai_status/supervisor/autoworker 的橋接，不讓 Web API 直接 shell 到 VM。
 
 ## Dependencies
-- ASST-INTEG-005: todo · Add SA SD requirement capture and execution task generator
+- ASST-INTEG-005: done · SA/SD generator using existing docs and task-brief architecture
 
 ## Artifacts
 - docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;scripts/ai_status.py;.orchestrator/supervisor.py;.orchestrator/worker_runner.py;.orchestrator/permission_broker.py;.orchestrator/task-briefs
