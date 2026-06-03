@@ -22042,6 +22042,18 @@ _STRATEGY_BFF_LIFECYCLE_MAP = {
     "retired": "retired",
 }
 
+_PERSONA_OPERATIONAL_LIFECYCLE_STATES = frozenset({
+    "active",
+    "deployed",
+    "ready",
+    "running",
+})
+
+
+def _is_persona_lifecycle_operational(value: Any) -> bool:
+    return str(value or "").strip().lower() in _PERSONA_OPERATIONAL_LIFECYCLE_STATES
+
+
 _STRATEGY_BFF_RISK_MAP = {
     "info": "info",
     "low": "low",
@@ -26652,7 +26664,7 @@ def _project_persona_fleet_health(
 ) -> Dict[str, Any]:
     reasons: List[str] = []
     lifecycle = str(persona.get("lifecycle_state") or persona.get("state") or "").lower()
-    if lifecycle and lifecycle not in {"active", "ready", "running"}:
+    if lifecycle and not _is_persona_lifecycle_operational(lifecycle):
         reasons.append("persona_lifecycle_not_active")
     if not runtime_bindings:
         reasons.append("no_runtime_binding")
@@ -32813,8 +32825,9 @@ def _pm12_persona_memory_summary(persona_id: str) -> Dict[str, Any]:
 
 def _pm12_persona_health_summary(persona: Dict[str, Any], sessions: Dict[str, Any], capabilities: Dict[str, Any]) -> Dict[str, Any]:
     state = str(persona.get("lifecycle_state") or persona.get("state") or "").lower()
-    health = "healthy" if state == "active" else "degraded"
-    if state == "active" and capabilities.get("hasSnapshot") is False:
+    is_operational = _is_persona_lifecycle_operational(state)
+    health = "healthy" if is_operational else "degraded"
+    if is_operational and capabilities.get("hasSnapshot") is False:
         health = "degraded"
     return {
         "health": health,
@@ -44493,7 +44506,11 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
                 "id": p.get("persona_id") or p.get("id"),
                 "persona_id": p.get("persona_id") or p.get("id"),
                 "name": p.get("name") or p.get("persona_id"),
-                "health": "healthy" if p.get("lifecycle_state") == "active" else "degraded",
+                "health": (
+                    "healthy"
+                    if _is_persona_lifecycle_operational(p.get("lifecycle_state"))
+                    else "degraded"
+                ),
                 "lifecycle_state": p.get("lifecycle_state"),
             }
             for p in personas
@@ -44844,7 +44861,11 @@ async def bff_v5_execution_persona_health(
             "id": p.get("persona_id") or p.get("id"),
             "persona_id": p.get("persona_id") or p.get("id"),
             "name": p.get("name") or p.get("persona_id"),
-            "health": "healthy" if p.get("lifecycle_state") == "active" else "degraded",
+            "health": (
+                "healthy"
+                if _is_persona_lifecycle_operational(p.get("lifecycle_state"))
+                else "degraded"
+            ),
             "lifecycle_state": p.get("lifecycle_state"),
         }
         for p in personas

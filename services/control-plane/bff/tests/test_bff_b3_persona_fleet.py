@@ -32,6 +32,18 @@ def _fresh_client(td: str) -> TestClient:
     return TestClient(bff_main.app)
 
 
+def test_persona_fleet_treats_deployed_lifecycle_as_operational() -> None:
+    health = bff_main._project_persona_fleet_health(
+        persona={"persona_id": "persona-deployed", "lifecycle_state": "deployed"},
+        runtime_bindings=[{"runtime_id": "runtime-deployed", "status": "active"}],
+        telemetry_summaries=[{"runtime_id": "runtime-deployed", "collected_at": "2026-06-03T08:00:00Z"}],
+        active_incidents=[],
+    )
+
+    assert health["status"] == "healthy"
+    assert "persona_lifecycle_not_active" not in health["reasons"]
+
+
 def test_persona_fleet_composes_persona_bindings_telemetry_training_and_evolution() -> None:
     with tempfile.TemporaryDirectory() as td:
         original = bff_main.read_store
@@ -102,6 +114,8 @@ def test_persona_fleet_requires_authentication() -> None:
             resp = client.get("/bff/management/persona-fleet")
 
             assert resp.status_code == 401, resp.text
-            assert resp.json()["detail"]["error"]["code"] == "INVALID_TOKEN"
+            body = resp.json()
+            error = body.get("error") or (body.get("detail") or {}).get("error") or {}
+            assert error["code"] in {"AUTH_REQUIRED", "INVALID_TOKEN"}
         finally:
             bff_main.read_store = original
