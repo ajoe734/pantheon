@@ -63,6 +63,14 @@ def _timeout_seconds() -> float:
         return 2.0
 
 
+def _assistant_provider_timeout_seconds() -> float:
+    raw = os.getenv("PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS", "75.0").strip()
+    try:
+        return max(float(raw), 0.1)
+    except ValueError:
+        return 75.0
+
+
 def _safe_json(raw: str) -> Dict[str, Any]:
     if not raw:
         return {}
@@ -85,6 +93,7 @@ class OpenClawOpsClient:
         raw = base_url if base_url is not None else _base_url_from_env()
         self._base_url = raw.rstrip("/") if raw else ""
         self._timeout = timeout_seconds if timeout_seconds is not None else _timeout_seconds()
+        self._timeout_explicit = timeout_seconds is not None
 
     @property
     def configured(self) -> bool:
@@ -180,6 +189,7 @@ class OpenClawOpsClient:
             },
             headers=headers,
             expected_status={200},
+            timeout_seconds=self._assistant_timeout_seconds(),
         )
 
     def create_session(
@@ -285,7 +295,13 @@ class OpenClawOpsClient:
             },
             headers={"X-Operator-Id": operator_id},
             expected_status={200},
+            timeout_seconds=self._assistant_timeout_seconds(),
         )
+
+    def _assistant_timeout_seconds(self) -> float:
+        if self._timeout_explicit:
+            return self._timeout
+        return _assistant_provider_timeout_seconds()
 
     def _request(
         self,
@@ -296,6 +312,7 @@ class OpenClawOpsClient:
         body: Optional[Dict[str, Any]] = None,
         headers: Optional[Dict[str, str]] = None,
         expected_status: Optional[set[int]] = None,
+        timeout_seconds: Optional[float] = None,
     ) -> Dict[str, Any]:
         if not self._base_url:
             raise OpenClawOpsClientError(
@@ -329,8 +346,9 @@ class OpenClawOpsClient:
             method=method,
         )
         expected = expected_status or {200}
+        timeout = timeout_seconds if timeout_seconds is not None else self._timeout
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout) as response:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
                 status = response.getcode()
                 raw = response.read().decode("utf-8").strip()
         except urllib.error.HTTPError as exc:

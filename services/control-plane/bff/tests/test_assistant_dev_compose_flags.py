@@ -18,5 +18,9 @@ def test_dev_compose_enables_codex_assistant_provider_for_bff() -> None:
         == "${PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED:-true}"
     )
     assert env["PANTHEON_ASSISTANT_PROVIDER"] == "${PANTHEON_ASSISTANT_PROVIDER:-codex_cli}"
+    assert (
+        env["PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS"]
+        == "${PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS:-75.0}"
+    )
     assert env["PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL"] == "http://openclaw-gateway-adapter:8104"
     assert env["PANTHEON_LIVE_BROKER_ENABLED"] == "${PANTHEON_LIVE_BROKER_ENABLED:-false}"
