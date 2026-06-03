@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-06-02T15:37:18Z",
+  "updated_at": "2026-06-03T14:21:35Z",
   "counts": {
-    "total": 1393,
-    "completed": 1370,
+    "total": 1394,
+    "completed": 1371,
     "superseded": 23
   },
   "recent_terminal_ids": [
+    "ASST-INTEG-001",
     "PROD-WRITES-001-V2",
     "LIVE-SCALE-001-V2",
     "ASST-USER-001",
@@ -25,7 +26,6 @@
     "ASST-KERNEL-003",
     "ASST-KERNEL-001",
     "ASST-KERNEL-002",
-    "SENTINEL-RULE-COVERAGE-HEALTHREASON-001",
-    "BFF-WRITE-P0-LIFECYCLE-002"
+    "SENTINEL-RULE-COVERAGE-HEALTHREASON-001"
   ]
 }

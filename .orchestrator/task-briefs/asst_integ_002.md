@@ -17,7 +17,7 @@ Do not read `current-work.md` by default for implementation context.
 擴充既有 context composer，讓小幫手同時吃 UI hint、RBAC-filtered BFF read surfaces、以及 docs/RAG citation。
 
 ## Dependencies
-- ASST-INTEG-001: todo · Unify Management AI durable conversation truth with assistant transcripts
+- ASST-INTEG-001: done · Unify Management AI durable conversation truth with assistant transcripts
 
 ## Artifacts
 - docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;services/control-plane/bff/assistant/context_composer.py;services/control-plane/bff/assistant/models.py;services/control-plane/bff/tests/test_assistant_context_pack.py
