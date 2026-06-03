@@ -66,16 +66,20 @@ def test_compose_wires_openclaw_gateway_adapter_without_broker_activation() -> N
         "${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}"
     )
 
-    assert (
+    codex_credential_volume = (
         "${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}:"
         "${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}:"
         "${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}"
-    ) in upstream["volumes"]
-    assert (
+    )
+    claude_credential_volume = (
         "${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}:"
         "${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}:"
         "${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}"
-    ) in upstream["volumes"]
+    )
+    assert codex_credential_volume in upstream["volumes"]
+    assert claude_credential_volume in upstream["volumes"]
+    assert codex_credential_volume in adapter["volumes"]
+    assert claude_credential_volume in adapter["volumes"]
 
     broker = services["broker"]
     assert broker["build"]["dockerfile"] == "services/broker/Dockerfile"
