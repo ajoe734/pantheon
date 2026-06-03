@@ -69,6 +69,18 @@ READ_PROBES: tuple[Probe, ...] = (
     Probe("GET", "/bff/agora/postmortems", "agora-postmortems"),
     Probe("GET", "/bff/agora/ask/sessions", "agora-ask"),
     Probe(
+        "GET",
+        "/bff/assistant/control-mode",
+        "assistant-control-mode",
+        required_paths=(
+            ("data", "state"),
+            ("data", "active"),
+            ("data", "requiresRole"),
+            ("data", "requiresMfa"),
+            ("data", "changePassphraseHref"),
+        ),
+    ),
+    Probe(
         "POST",
         "/bff/management/nl/ask",
         "management-ai-multiturn",

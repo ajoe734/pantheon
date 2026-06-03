@@ -12,6 +12,8 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
+from assistant.control_mode import ControlModeStore
+from assistant.models import AssistantMode
 from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 from read_store import ReadSurfaceStore
 
@@ -357,6 +359,52 @@ def test_management_nl_passes_conversation_and_ui_context_to_provider(tmp_path, 
         assert fake.calls[0]["context_pack"]["frontend"]["route"] == "/management/personas"
     finally:
         bff_main.read_store = original_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+        bff_main._sse_buffers["ask"].clear()
+
+
+def test_management_nl_context_pack_reflects_active_control_mode(tmp_path, monkeypatch) -> None:
+    original_store = bff_main.read_store
+    original_control_store = bff_main._ASSISTANT_CONTROL_MODE_STORE
+    control_store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
+    control_store.activate(
+        actor_id="asst-bff-002",
+        mode=AssistantMode.KERNEL_DEBUG,
+        capabilities=["assistant.kernel.debug"],
+        reason="debug management AI context",
+        passphrase="control phrase ok",
+        ttl_seconds=900,
+        idle_ttl_seconds=120,
+    )
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setattr(bff_main, "_ASSISTANT_CONTROL_MODE_STORE", control_store)
+        client = _seeded_client(tmp_path, monkeypatch)
+
+        resp = client.post(
+            "/bff/management/nl/ask",
+            json={
+                "question": "What mode is this management assistant using?",
+                "sessionId": "mgmt-control-session",
+                "ui": {"currentRoute": "/management/cockpit", "availableUiActions": []},
+            },
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-control-mode-context"},
+        )
+
+        assert resp.status_code == 202, resp.text
+        body = resp.json()
+        assert body["data"]["controlMode"]["active"] is True
+        assert body["data"]["controlMode"]["mode"] == "kernel_debug"
+        context_pack = body["data"]["contextPack"]
+        assert context_pack["mode"] == "kernel_debug"
+        assert "assistant.kernel.debug" in context_pack["actor"]["capabilities"]
+        management_context = context_pack["backend"]["management_nl"]["data"]
+        assert management_context["controlMode"]["active"] is True
+        assert management_context["controlMode"]["mode"] == "kernel_debug"
+    finally:
+        bff_main.read_store = original_store
+        bff_main._ASSISTANT_CONTROL_MODE_STORE = original_control_store
         bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
