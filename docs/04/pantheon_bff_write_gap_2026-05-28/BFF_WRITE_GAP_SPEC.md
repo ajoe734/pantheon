@@ -61,6 +61,7 @@ P1  POST /bff/agora/postmortems                                    405
 P2  POST /bff/v5/interventions/batch-decide                        405
 P2  (informational) Sentinel rule coverage for 6 HealthReasonCode  rule engine
 P0  POST /bff/management/nl/ask                                     Management AI multi-turn context/actions contract
+P0  GET  /bff/management/ai/conversations                           visible session list for frontend resync
 P0  GET  /bff/management/ai/conversations/{sessionId}               full session readback; ignores trace_id
 ```
 
@@ -130,7 +131,8 @@ If a `410 Gone` is returned, `error.details.replacement` MUST contain the canoni
 | Route | Requirement |
 |---|---|
 | `POST /bff/management/nl/ask` | Accept `conversation.recentTurns`, `conversation.summary`, `attachments`, and `ui.currentRoute/selectedEntity/visiblePanels/filters/availableUiActions`; create or validate a server-side Management AI session; persist the user turn before provider context construction; compose `backend.management_nl.data.conversation` from the server-side turn store, with FE turns retained only as `conversation.clientHint`; persist the assistant turn with `providerStatus` and `uiActions`; return canonical `data.sessionId`, `data.traceId`, `data.providerStatus`, `data.uiActions`, `data.actions`, `data.auditLog`, and `data.conversation.href`. |
-| `GET /bff/management/ai/conversations/{sessionId}` | Return the server-side session from creation with ordered turns containing `id`, `role`, `text`, `createdAt`, `providerStatus`, and attachment proxy URLs; do not require or filter by `trace_id`; nonexistent sessions return 404 instead of `{turns: []}`; visibility is owner or same tenant. |
+| `GET /bff/management/ai/conversations` | Return visible persisted sessions for the current owner or tenant with `sessionId`, `title`, owner/tenant, created/updated timestamps, `turnCount`, and readback `href`; supports a bounded `limit` for frontend resync. |
+| `GET /bff/management/ai/conversations/{sessionId}` | Return the server-side session from creation with ordered turns containing `id`, `role`, `text`, `createdAt`, `providerStatus`, and attachment proxy URLs; do not require or filter by `trace_id`; persisted sessions remain visible only to owner or same tenant. If the requested id exists only in browser-local conversation history, return a 200 local-only empty transcript with `localOnly`/`missingInStore` metadata so resync does not surface a raw BFF 404. |
 
 Action suggestions returned by `POST /bff/management/nl/ask` must be constrained to the request's `ui.availableUiActions`. `runBffAction` and any write-style action must set `requiresConfirmation: true`. Management AI session idle TTL is documented as at least 7 days.
 
@@ -476,6 +478,7 @@ Owner / reviewer matches the 3-class pattern set by 2026-05-24 delta (P0 / Class
 
 ## 7. Change log
 
+- **2026-06-03** v1.3 — adds Management AI conversation list resync and local-only empty readback metadata for browser-local orphan sessions, preventing stale local session ids from surfacing raw BFF 404 errors.
 - **2026-06-03** v1.2 — makes Management AI conversation readback server-side source of truth: persisted sessions/turns, server-history context, attachment proxy URLs, nonexistent-session 404, and idempotency no-duplicate-turn acceptance.
 - **2026-06-03** v1.1 — adds P0 Management AI multi-turn backend contract for `/bff/management/nl/ask` and `/bff/management/ai/conversations/{sessionId}`: conversation/UI context pack, session readback, action allowlist, providerStatus, 7-day idle TTL, and live probe coverage.
 - **2026-05-28** v1.0 — initial BE-view rewrite of Lovable FE spec `BE_WRITE_GAP_SPEC_2026-05-28` v1.0. Adds repo-map, action-catalog hints for P0-1/2/3, and sprint-to-EPIC ticket map.

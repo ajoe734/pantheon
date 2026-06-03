@@ -259,6 +259,59 @@ class ManagementAiConversationStore:
             session = self._sessions.get(clean_session_id)
             return dict(session) if session is not None else None
 
+    def list_sessions(
+        self,
+        *,
+        owner_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        clean_owner_id = str(owner_id or "").strip()
+        clean_tenant_id = str(tenant_id or "").strip()
+        clean_limit = max(1, int(limit or 100))
+        with self._lock:
+            if self._enabled():
+                where: List[str] = []
+                params: List[Any] = []
+                if clean_owner_id:
+                    where.append("owner_id = ?")
+                    params.append(clean_owner_id)
+                if clean_tenant_id:
+                    where.append("tenant_id = ?")
+                    params.append(clean_tenant_id)
+                query = "SELECT * FROM management_ai_sessions"
+                if where:
+                    query += " WHERE " + " OR ".join(where)
+                query += " ORDER BY updated_at DESC, created_at DESC, id ASC LIMIT ?"
+                params.append(clean_limit)
+                with self._connect() as conn:
+                    rows = conn.execute(query, tuple(params)).fetchall()
+                return [self._row_to_session(row) for row in rows]
+
+            sessions = list(self._sessions.values())
+
+        def visible(session: Dict[str, Any]) -> bool:
+            session_owner = str(session.get("ownerId") or session.get("owner_id") or "").strip()
+            session_tenant = str(session.get("tenantId") or session.get("tenant_id") or "").strip()
+            return (
+                (clean_owner_id and session_owner == clean_owner_id)
+                or (clean_tenant_id and session_tenant == clean_tenant_id)
+                or (not clean_owner_id and not clean_tenant_id)
+            )
+
+        return [
+            dict(item)
+            for item in sorted(
+                (session for session in sessions if visible(session)),
+                key=lambda item: (
+                    str(item.get("updatedAt") or item.get("updated_at") or ""),
+                    str(item.get("createdAt") or item.get("created_at") or ""),
+                    str(item.get("sessionId") or item.get("session_id") or item.get("id") or ""),
+                ),
+                reverse=True,
+            )[:clean_limit]
+        ]
+
     def upsert_session(
         self,
         *,
