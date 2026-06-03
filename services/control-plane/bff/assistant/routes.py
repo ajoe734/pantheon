@@ -475,6 +475,7 @@ def create_assistant_router(
         entity_id: Optional[str] = payload.get("entity_id")
         params = payload.get("params") or {}
         reason: Optional[str] = payload.get("reason")
+        confirmed: bool = bool(payload.get("confirmed", False))
         confirm_token: Optional[str] = payload.get("confirm_token")
         trace_id: Optional[str] = payload.get("trace_id")
 
@@ -490,6 +491,7 @@ def create_assistant_router(
                 actor_id=actor_id,
                 actor_roles=actor_roles,
                 reason=reason,
+                confirmed=confirmed,
                 confirm_token=confirm_token,
                 trace_id=trace_id,
                 auth_token=authorization,

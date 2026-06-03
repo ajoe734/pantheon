@@ -52,6 +52,12 @@ _RISK_REQUIRES_REASON: frozenset[RiskLevel] = frozenset({
     RiskLevel.CRITICAL,
 })
 
+# Medium-risk actions require an explicit operator confirmation marker in addition
+# to a reason. HIGH/CRITICAL already require confirm_token which serves that role.
+_RISK_REQUIRES_CONFIRMATION: frozenset[RiskLevel] = frozenset({
+    RiskLevel.MEDIUM,
+})
+
 _RISK_REQUIRES_CONFIRM_TOKEN: frozenset[RiskLevel] = frozenset({
     RiskLevel.HIGH,
     RiskLevel.CRITICAL,
@@ -147,6 +153,7 @@ class ToolReceipt:
     executed_at: str
     reason: Optional[str]
     source: str  # always "assistant_tool_contract"
+    confirmation_marker: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +262,7 @@ def execute_governed_tool(
     actor_id: str,
     actor_roles: List[str],
     reason: Optional[str] = None,
+    confirmed: bool = False,
     confirm_token: Optional[str] = None,
     trace_id: Optional[str] = None,
     auth_token: Optional[str] = None,
@@ -298,6 +306,11 @@ def execute_governed_tool(
         raise ToolValidationError(
             f"Action {action_id!r} (risk={risk.value}) requires a non-empty reason.",
             field_name="reason",
+        )
+    if risk in _RISK_REQUIRES_CONFIRMATION and not confirmed:
+        raise ToolValidationError(
+            f"Action {action_id!r} (risk={risk.value}) requires explicit operator confirmation.",
+            field_name="confirmed",
         )
     needs_token = entry.requires_confirm_token or (risk in _RISK_REQUIRES_CONFIRM_TOKEN)
     if needs_token and not (confirm_token and confirm_token.strip()):
@@ -354,6 +367,8 @@ def execute_governed_tool(
 
     audit_id = (result or {}).get("audit_id") or (error or {}).get("audit_id")
 
+    confirmation_marker = "operator_confirmed" if confirmed else None
+
     return ToolReceipt(
         receipt_id=f"asst-receipt-{uuid.uuid4().hex[:12]}",
         trace_id=_trace_id,
@@ -370,6 +385,7 @@ def execute_governed_tool(
         executed_at=executed_at,
         reason=reason,
         source="assistant_tool_contract",
+        confirmation_marker=confirmation_marker,
     )
 
 
@@ -391,4 +407,5 @@ def tool_receipt_to_dict(receipt: ToolReceipt) -> Dict[str, Any]:
         "executed_at": receipt.executed_at,
         "reason": receipt.reason,
         "source": receipt.source,
+        "confirmation_marker": receipt.confirmation_marker,
     }
