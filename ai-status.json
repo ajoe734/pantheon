@@ -1,9 +1,9 @@
 {
   "project": "pantheon",
-  "sprint": "2026-05-25-pantheon-bff-p0-delta-v3",
-  "sprint_started_at": "2026-05-25T00:00:00Z",
-  "objective": "Pantheon BFF P0 Delta-v3 — close the v2 deploy-lag bottleneck plus 1 real Pack D ErrorCode alignment plus 1 canonical path naming decision. v2 (2026-05-24) shipped 22 of 23 task to dev (routes + CORS + envelope) but the single deploy task OPS-BFF-LUPIN-DEV-REDEPLOY-20260524 blocked on Gemini2 GCP IAM (compute.instances.get missing on lupin project) and was cleaned up without ever rolling out a new image. Lovable v3 audit on 2026-05-25 therefore shows essentially the same surface as v2 - 24/24 management routes still 404, CORS still 400, envelope still detail-wrapped - all because lupin dev BFF is running stale image. v3 reassigns redeploy to Codex (user explicit), adds Pack D ErrorCode enum alignment (audit caught OBJECT_NOT_FOUND not in canonical 26), and one decision doc for 5 FE/BE naming alignments. Babysit protocol: do not mark sprint done until live BFF curls verify 8 audit paths return 200.",
-  "updated_at": "2026-06-02T15:37:18Z",
+  "sprint": "2026-06-03-pantheon-assistant-existing-architecture",
+  "sprint_started_at": "2026-06-03T00:00:00Z",
+  "objective": "Integrate Pantheon Management AI with existing BFF assistant surfaces plus OpenClaw adapter plus supervisor/autoworker orchestration. This wave explicitly reuses /bff/management/nl/ask durable conversation persistence plus /bff/assistant session/context/mode routes plus OpenClaw adapter provider/tool policy plus scripts/ai_status.py task dispatch. It must not create a second assistant gateway. It must not expose provider credentials to FE. It must not let Web API shell into the VM. Deliverables cover durable conversation truth alignment context mesh real provider routing governed operation tools SA/SD generator signed dev collaboration bridge orchestrator status readback FE follow-up brief and security/mode regression.",
+  "updated_at": "2026-06-03T13:33:58Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -94,10 +94,12 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "waiting",
+      "current_task_ids": [
+        "ASST-INTEG-004"
+      ],
       "branch": "task/LSP-002-V2",
-      "next": "",
+      "next": "Assignment created",
       "last_update": "2026-06-02T13:10:43Z"
     },
     {
@@ -108,10 +110,12 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "waiting",
+      "current_task_ids": [
+        "ASST-INTEG-007"
+      ],
       "branch": "feat/gemini-research-runtime",
-      "next": "",
+      "next": "Assignment created",
       "last_update": "2026-06-02T01:20:16Z"
     },
     {
@@ -122,11 +126,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "ready",
+      "current_task_ids": [
+        "ASST-INTEG-001"
+      ],
       "branch": "task/ASST-OCGW-001",
-      "next": "",
-      "last_update": "2026-06-02T13:31:43Z"
+      "next": "Assignment created",
+      "last_update": "2026-06-03T13:33:51Z"
     },
     {
       "name": "Codex2",
@@ -136,10 +142,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "waiting",
+      "current_task_ids": [
+        "ASST-INTEG-002",
+        "ASST-INTEG-006"
+      ],
       "branch": "task/ASST-OCGW-004",
-      "next": "",
+      "next": "Assignment created",
       "last_update": "2026-06-02T03:56:50Z"
     },
     {
@@ -150,10 +159,12 @@
         "spec-review",
         "critique"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "waiting",
+      "current_task_ids": [
+        "ASST-INTEG-008"
+      ],
       "branch": "feat/grok-research-critique",
-      "next": "",
+      "next": "Assignment created",
       "last_update": "2026-06-02T13:14:10Z"
     },
     {
@@ -163,10 +174,12 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "waiting",
+      "current_task_ids": [
+        "ASST-INTEG-005"
+      ],
       "branch": "feat/claude2-execution-control",
-      "next": "",
+      "next": "Assignment created",
       "last_update": "2026-06-02T04:46:37Z"
     },
     {
@@ -199,7 +212,218 @@
       "last_update": "2026-06-01T02:42:08Z"
     }
   ],
-  "tasks": [],
+  "tasks": [
+    {
+      "id": "ASST-INTEG-001",
+      "title": "Unify Management AI durable conversation truth with assistant transcripts",
+      "summary_zh": "把 Management AI 的 durable conversation store 與 /bff/assistant transcript/session surface 對齊，避免 dev/prod 仍有另一份 in-memory 對話真相。",
+      "phase": "Sprint ASST-INTEG / Durable conversation truth",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;services/control-plane/bff/assistant/routes.py;services/control-plane/bff/assistant/transcript_store.py;services/control-plane/bff/management_ai_store.py;services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py;services/control-plane/bff/tests/test_assistant_sessions.py"
+      ],
+      "acceptance": [
+        "/bff/management/nl/ask and /bff/management/ai/conversations remain canonical ask/readback;/bff/assistant/sessions/{sessionId}/transcript does not create a separate in-memory truth in dev/prod;Unknown session ids return 404;Idempotency-Key replay does not duplicate user or assistant turns;BFF restart preserves conversation history in dev;Tests cover management ask plus assistant transcript readback"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-03T13:33:51Z",
+      "task_class": "assistant_integration",
+      "auto_created_by": "dispatch_assistant_existing_architecture_2026-06-03",
+      "auto_generated": true
+    },
+    {
+      "id": "ASST-INTEG-002",
+      "title": "Extend BFF assistant context mesh with UI hints BFF reads and docs citations",
+      "summary_zh": "擴充既有 context composer，讓小幫手同時吃 UI hint、RBAC-filtered BFF read surfaces、以及 docs/RAG citation。",
+      "phase": "Sprint ASST-INTEG / Context mesh",
+      "owner": "Codex2",
+      "reviewer": "Claude2",
+      "status": "todo",
+      "depends_on": [
+        "ASST-INTEG-001"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;services/control-plane/bff/assistant/context_composer.py;services/control-plane/bff/assistant/models.py;services/control-plane/bff/tests/test_assistant_context_pack.py"
+      ],
+      "acceptance": [
+        "Context pack has separate UI hint BFF read and docs/RAG sections;FE context cannot grant access and remains hint-only;BFF read sources enforce actor RBAC and tenant visibility;Provider context includes source_refs for docs and API snapshots;Redaction runs before persistence and provider invocation;Tests cover denied source plus redacted source refs"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-03T13:33:53Z",
+      "task_class": "assistant_integration",
+      "auto_created_by": "dispatch_assistant_existing_architecture_2026-06-03",
+      "auto_generated": true
+    },
+    {
+      "id": "ASST-INTEG-003",
+      "title": "Route real assistant providers through existing OpenClaw adapter contracts",
+      "summary_zh": "沿用 OpenClaw gateway adapter 的 readiness/provider invoke，不另建 gateway，並讓 dev 對 real provider 與 degraded 狀態誠實呈現。",
+      "phase": "Sprint ASST-INTEG / Provider routing",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "ASST-INTEG-001",
+        "ASST-INTEG-002"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;services/control-plane/bff/openclaw_ops_client.py;services/openclaw-gateway-adapter/main.py;services/openclaw-gateway-adapter/assistant_command_policy.py;scripts/openclaw-assistant-provider-smoke.sh;services/control-plane/bff/tests/test_management_nl_assistant_provider.py"
+      ],
+      "acceptance": [
+        "BFF calls existing OpenClaw adapter provider readiness and invoke routes;Dev uses real provider when configured;Missing credentials return explicit degraded provider status;Mock fallback is labelled local_or_ci_fallback only;FE-visible payloads never include credentials or local session paths;Smoke script proves readiness plus degraded cases"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-03T13:33:54Z",
+      "task_class": "assistant_integration",
+      "auto_created_by": "dispatch_assistant_existing_architecture_2026-06-03",
+      "auto_generated": true
+    },
+    {
+      "id": "ASST-INTEG-004",
+      "title": "Implement governed assistant operation tool contracts on existing BFF actions",
+      "summary_zh": "把小幫手的系統操作能力接到既有 action_catalog/command_executor/audit receipt，而不是直接操作 DOM 或 shell。",
+      "phase": "Sprint ASST-INTEG / Governed operation tools",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "ASST-INTEG-002"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;services/control-plane/bff/action_catalog.py;services/control-plane/bff/command_executor.py;services/control-plane/bff/assistant;services/control-plane/bff/tests/test_assistant_security.py"
+      ],
+      "acceptance": [
+        "Tools follow preview validation confirmation execute receipt;Low-risk actions execute only within RBAC;Medium and high-risk actions require reason and confirmation;Every execution writes audit receipt and trace id;Assistant cannot use hidden DOM submit as authoritative mutation path;Tests cover allowlist denial and receipt shape"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-03T13:33:54Z",
+      "task_class": "assistant_integration",
+      "auto_created_by": "dispatch_assistant_existing_architecture_2026-06-03",
+      "auto_generated": true
+    },
+    {
+      "id": "ASST-INTEG-005",
+      "title": "Add SA SD requirement capture and execution task generator",
+      "summary_zh": "讓小幫手能從對話生成 requirement capture、SA、SD、execution task packet，並歸檔到既有 docs 與 task brief 位置。",
+      "phase": "Sprint ASST-INTEG / SA-SD generator",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "ASST-INTEG-001",
+        "ASST-INTEG-002"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;docs/02-architecture;docs/03;docs/04;docs/05-ui;.orchestrator/task-briefs"
+      ],
+      "acceptance": [
+        "Requirement capture is generated from a Management AI conversation;SA includes current state roles flows data risk and acceptance scenarios;SD includes architecture API DB/migration UI tool/action tests rollout and rollback;Generated docs include source citations;Execution tasks include owner reviewer dependencies artifacts and acceptance;Generated artifacts land in existing docs and task-brief locations"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-03T13:33:55Z",
+      "task_class": "assistant_integration",
+      "auto_created_by": "dispatch_assistant_existing_architecture_2026-06-03",
+      "auto_generated": true
+    },
+    {
+      "id": "ASST-INTEG-006",
+      "title": "Bridge assistant-generated task packets into supervisor autoworker dispatch",
+      "summary_zh": "建立 signed task packet 到既有 ai_status/supervisor/autoworker 的橋接，不讓 Web API 直接 shell 到 VM。",
+      "phase": "Sprint ASST-INTEG / Dev collaboration bridge",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "ASST-INTEG-005"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;scripts/ai_status.py;.orchestrator/supervisor.py;.orchestrator/worker_runner.py;.orchestrator/permission_broker.py;.orchestrator/task-briefs"
+      ],
+      "acceptance": [
+        "BFF emits or stores signed task packet and never shells directly;Packet includes actor mode source conversation source turns docs tasks constraints and signature;Replay protection rejects duplicate signed packets;Dispatcher materializes tasks through scripts/ai_status.py;Supervisor and autoworker can pick up generated tasks;Audit links packet id to conversation and generated docs"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-03T13:33:56Z",
+      "task_class": "assistant_integration",
+      "auto_created_by": "dispatch_assistant_existing_architecture_2026-06-03",
+      "auto_generated": true
+    },
+    {
+      "id": "ASST-INTEG-007",
+      "title": "Expose orchestrator worker PR CI and deploy status readback to assistant",
+      "summary_zh": "讓小幫手可從既有 orchestrator/GitHub 狀態讀回 task、worker、PR、CI、deploy 進度，用於閉環回覆。",
+      "phase": "Sprint ASST-INTEG / Orchestrator status readback",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "ASST-INTEG-006"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;scripts/ai_status.py;.orchestrator/runtime_state.py;.orchestrator/supervisor.py;services/control-plane/bff/assistant"
+      ],
+      "acceptance": [
+        "Assistant can read task owner reviewer blocker next action and task brief path;Assistant can read worker dispatch state without provider credentials;Assistant can report PR CI merge and deploy status when available;Status payloads include source refs and snapshot timestamps;Tests or probe cover unavailable GitHub status degradation"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-03T13:33:57Z",
+      "task_class": "assistant_integration",
+      "auto_created_by": "dispatch_assistant_existing_architecture_2026-06-03",
+      "auto_generated": true
+    },
+    {
+      "id": "ASST-INTEG-008",
+      "title": "Prepare execution-plans FE context registry and stale-session UX follow-up",
+      "summary_zh": "產出跨 repo FE follow-up brief：assistant-readable form registry、BFF 404 stale session UX、SSE degraded 診斷；本任務不直接修改 FE。",
+      "phase": "Sprint ASST-INTEG / FE follow-up brief",
+      "owner": "Copilot",
+      "reviewer": "Claude2",
+      "status": "todo",
+      "depends_on": [
+        "ASST-INTEG-001",
+        "ASST-INTEG-002"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;docs/05-ui;docs/pantheon-handoffs;.orchestrator/task-briefs"
+      ],
+      "acceptance": [
+        "FE brief specifies route form table filter selected-row and validator context;Brief preserves BFF conversation readback as source of truth;Brief covers BFF 404 stale local-only session recovery;Brief covers SSE failure diagnosis by auth network path or server stream;No execution-plans code is changed by this dispatch task"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-03T13:33:57Z",
+      "task_class": "assistant_integration",
+      "auto_created_by": "dispatch_assistant_existing_architecture_2026-06-03",
+      "auto_generated": true
+    },
+    {
+      "id": "ASST-INTEG-009",
+      "title": "Add security mode and tool-boundary regression suite for assistant integration",
+      "summary_zh": "補 user-mode contraction、control-mode TTL/passphrase、tool allowlist、redaction、provider credential non-exposure 的安全回歸。",
+      "phase": "Sprint ASST-INTEG / Security and mode regression",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "ASST-INTEG-003",
+        "ASST-INTEG-004",
+        "ASST-INTEG-006"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;services/control-plane/bff/tests/test_assistant_security.py;services/control-plane/bff/assistant/tests/test_user_mode_regression.py;services/openclaw-gateway-adapter;docs/04/pantheon_assistant_kernel_user_2026-05-31/ASST_KERNEL_007_REPAIR_WORKFLOW.md"
+      ],
+      "acceptance": [
+        "User mode cannot access shell repo write raw logs docker secret store provider session or command broker;Control/kernel mode requires RBAC MFA capability passphrase TTL and idle timeout;Passphrase change requires admin plus MFA;OpenClaw tool policy remains deny-first;Prompt injection cannot expand tools or expose secrets;Regression suite runs in local validation and CI"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-03T13:33:58Z",
+      "task_class": "assistant_integration",
+      "auto_created_by": "dispatch_assistant_existing_architecture_2026-06-03",
+      "auto_generated": true
+    }
+  ],
   "handoffs": [
     {
       "task_id": "LUV-REVIEW-007",
@@ -224,31 +448,31 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 0,
+      "total": 1,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Claude2": {
-      "total": 0,
+      "total": 1,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Gemini": {
-      "total": 0,
+      "total": 1,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Gemini2": {
       "total": 0,
@@ -260,31 +484,31 @@
       "todo": 0
     },
     "Codex": {
-      "total": 0,
+      "total": 3,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 3
     },
     "Codex2": {
-      "total": 0,
+      "total": 2,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 2
     },
     "Copilot": {
-      "total": 0,
+      "total": 1,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Human/Ops": {
       "total": 0,
