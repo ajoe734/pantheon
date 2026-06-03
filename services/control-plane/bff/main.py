@@ -13,6 +13,7 @@ import uuid
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Set, Tuple
+from urllib.parse import quote, urlencode
 
 from fastapi import Body, Cookie, FastAPI, HTTPException, BackgroundTasks, Header, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
@@ -29333,6 +29334,266 @@ _MGMT_NL_HIGH_RISK_PATTERNS: List[tuple[str, List[str], str]] = [
     ),
 ]
 
+_MGMT_AI_AUDIT_EVENTS: deque = deque(maxlen=500)
+
+
+def _management_ai_audit_path() -> Optional[str]:
+    raw = os.getenv(
+        "PANTHEON_MANAGEMENT_AI_AUDIT_PATH",
+        "/tmp/pantheon-bff/management-ai-audit.jsonl",
+    ).strip()
+    if not raw or raw.lower() in {"off", "false", "disabled", "none"}:
+        return None
+    return raw
+
+
+def _management_ai_summary_value(value: Any, *, max_len: int = 400) -> Any:
+    if isinstance(value, str):
+        clean = value.strip()
+        if len(clean) > max_len:
+            return f"{clean[:max_len]}..."
+        return clean
+    return value
+
+
+def _management_ai_surface_summary(surfaces: Dict[str, Any]) -> Dict[str, Any]:
+    summary: Dict[str, Any] = {}
+    for key, value in (surfaces or {}).items():
+        if not isinstance(value, dict):
+            continue
+        summary[str(key)] = {
+            clean_key: value.get(clean_key)
+            for clean_key in ("status", "source", "reason", "message")
+            if value.get(clean_key) is not None
+        }
+    return summary
+
+
+def _management_ai_provider_output_summary(provider_payload: Any) -> Dict[str, Any]:
+    data = provider_payload.get("data") if isinstance(provider_payload, dict) else {}
+    output = data.get("output") if isinstance(data, dict) else {}
+    if not isinstance(output, dict):
+        output = {}
+    events = output.get("json_events")
+    if not isinstance(events, list):
+        events = []
+        stdout = output.get("stdout")
+        if isinstance(stdout, str):
+            for line in stdout.splitlines():
+                clean = line.strip()
+                if not clean:
+                    continue
+                try:
+                    loaded = json.loads(clean)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(loaded, dict):
+                    events.append(loaded)
+
+    event_types: List[str] = []
+    assistant_messages: List[str] = []
+    usage: Optional[Dict[str, Any]] = None
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        event_type = str(event.get("type") or "").strip()
+        if event_type:
+            event_types.append(event_type)
+        item = event.get("item")
+        if isinstance(item, dict) and item.get("type") == "agent_message" and item.get("text") is not None:
+            assistant_messages.append(str(_management_ai_summary_value(item.get("text"))))
+        if event_type == "turn.completed" and isinstance(event.get("usage"), dict):
+            usage = event.get("usage")
+
+    return {
+        "provider": data.get("provider") if isinstance(data, dict) else None,
+        "status": data.get("status") if isinstance(data, dict) else None,
+        "returncode": output.get("returncode"),
+        "duration_ms": output.get("duration_ms"),
+        "json_event_count": len(events),
+        "json_event_types": event_types,
+        "assistant_messages": assistant_messages[:3],
+        "usage": usage,
+    }
+
+
+def _management_ai_record_event(event: Dict[str, Any]) -> Dict[str, Any]:
+    payload = jsonable_encoder(
+        {
+            "event_id": event.get("event_id") or f"mgmt-ai-evt-{uuid.uuid4().hex[:16]}",
+            "recorded_at": event.get("recorded_at") or utc_now(),
+            **event,
+        }
+    )
+    _MGMT_AI_AUDIT_EVENTS.append(payload)
+    path = _management_ai_audit_path()
+    if path:
+        try:
+            directory = os.path.dirname(path)
+            if directory:
+                os.makedirs(directory, exist_ok=True)
+            with open(path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+        except Exception:
+            log.warning("Failed to persist management AI audit event", exc_info=True)
+    return payload
+
+
+def _management_ai_read_audit_file(limit: int) -> List[Dict[str, Any]]:
+    path = _management_ai_audit_path()
+    if not path or not os.path.exists(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as handle:
+            lines = handle.readlines()
+    except Exception:
+        log.warning("Failed to read management AI audit log", exc_info=True)
+        return []
+    events: List[Dict[str, Any]] = []
+    for line in lines[-max(limit * 4, limit):]:
+        try:
+            loaded = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(loaded, dict):
+            events.append(loaded)
+    return events
+
+
+def _management_ai_event_matches(
+    event: Dict[str, Any],
+    *,
+    session_id: Optional[str],
+    trace_id: Optional[str],
+    message_id: Optional[str],
+    event_type: Optional[str],
+) -> bool:
+    if session_id and str(event.get("session_id") or "") != session_id:
+        return False
+    if trace_id and str(event.get("trace_id") or "") != trace_id:
+        return False
+    if message_id and str(event.get("message_id") or "") != message_id:
+        return False
+    if event_type and str(event.get("event_type") or "") != event_type:
+        return False
+    return True
+
+
+def _management_ai_list_audit_events(
+    *,
+    session_id: Optional[str] = None,
+    trace_id: Optional[str] = None,
+    message_id: Optional[str] = None,
+    event_type: Optional[str] = None,
+    limit: int = 100,
+) -> List[Dict[str, Any]]:
+    candidates = _management_ai_read_audit_file(limit) or list(_MGMT_AI_AUDIT_EVENTS)
+    filtered = [
+        event
+        for event in candidates
+        if _management_ai_event_matches(
+            event,
+            session_id=session_id,
+            trace_id=trace_id,
+            message_id=message_id,
+            event_type=event_type,
+        )
+    ]
+    return filtered[-limit:]
+
+
+def _management_ai_href(route: str, **params: Optional[str]) -> str:
+    clean_params = {
+        key: str(value)
+        for key, value in params.items()
+        if value not in (None, "")
+    }
+    if not clean_params:
+        return route
+    return f"{route}?{urlencode(clean_params)}"
+
+
+def _management_ai_audit_href(
+    *,
+    session_id: Optional[str] = None,
+    trace_id: Optional[str] = None,
+    message_id: Optional[str] = None,
+    event_type: Optional[str] = None,
+) -> str:
+    return _management_ai_href(
+        "/bff/management/ai/audit",
+        session_id=session_id,
+        trace_id=trace_id,
+        message_id=message_id,
+        event_type=event_type,
+    )
+
+
+def _management_ai_conversation_href(session_id: str, *, trace_id: Optional[str] = None) -> str:
+    route = f"/bff/management/ai/conversations/{quote(str(session_id or ''), safe='')}"
+    return _management_ai_href(route, trace_id=trace_id)
+
+
+def _management_ai_conversation_turns(
+    *,
+    session_id: str,
+    trace_id: Optional[str] = None,
+    limit: int = 100,
+) -> List[Dict[str, Any]]:
+    event_limit = min(max(limit * 4, limit), 500)
+    turns: List[Dict[str, Any]] = []
+    for event in _management_ai_list_audit_events(
+        session_id=session_id,
+        trace_id=trace_id,
+        limit=event_limit,
+    ):
+        event_type = str(event.get("event_type") or "").strip()
+        message_id = str(event.get("message_id") or "").strip()
+        if event_type == "management_ai.exchange.accepted":
+            if not message_id:
+                continue
+            turns.append(
+                {
+                    "turn_id": message_id,
+                    "message_id": message_id,
+                    "trace_id": event.get("trace_id"),
+                    "role": "user",
+                    "content": event.get("question") or "",
+                    "created_at": event.get("recorded_at"),
+                    "focus": event.get("focus"),
+                    "tenant_id": event.get("tenant_id"),
+                    "confidence": event.get("confidence"),
+                    "source_keys": event.get("source_keys") or [],
+                    "audit_event": {
+                        "event_id": event.get("event_id"),
+                        "event_type": event_type,
+                    },
+                }
+            )
+        elif event_type == "management_ai.exchange.completed":
+            assistant_turn_id = str(event.get("assistant_turn_id") or "").strip()
+            if not assistant_turn_id and message_id:
+                assistant_turn_id = f"{message_id}-assistant"
+            if not assistant_turn_id:
+                continue
+            turns.append(
+                {
+                    "turn_id": assistant_turn_id,
+                    "message_id": message_id,
+                    "trace_id": event.get("trace_id"),
+                    "role": "assistant",
+                    "content": event.get("answer") or "",
+                    "created_at": event.get("recorded_at"),
+                    "provider_status": event.get("provider_status") or {},
+                    "fallback": event.get("fallback"),
+                    "audit_event": {
+                        "event_id": event.get("event_id"),
+                        "event_type": event_type,
+                    },
+                }
+            )
+    return turns[-limit:]
+
 
 def _mgmt_nl_validate_question_size(question: str) -> None:
     question_size = len(question.encode("utf-8"))
@@ -30040,11 +30301,23 @@ def _mgmt_nl_maybe_provider_answer(
     caller_tenant_id: str,
     session_id: str,
     message_id: str,
+    trace_id: str,
     context_pack: Dict[str, Any],
     audit_id: Optional[str],
 ) -> Tuple[Optional[str], Dict[str, Any]]:
     enabled = _mgmt_nl_provider_feature_enabled()
     if provider in {"none", "off", "disabled", "deterministic"}:
+        _management_ai_record_event(
+            {
+                "event_type": "management_ai.provider.skipped",
+                "session_id": session_id,
+                "message_id": message_id,
+                "trace_id": trace_id,
+                "actor_id": identity.operator_id,
+                "provider": provider,
+                "reason": "provider_disabled",
+            }
+        )
         return None, _mgmt_nl_provider_status(
             provider=provider,
             enabled=False,
@@ -30052,6 +30325,17 @@ def _mgmt_nl_maybe_provider_answer(
             reason="provider_disabled",
         )
     if not enabled:
+        _management_ai_record_event(
+            {
+                "event_type": "management_ai.provider.skipped",
+                "session_id": session_id,
+                "message_id": message_id,
+                "trace_id": trace_id,
+                "actor_id": identity.operator_id,
+                "provider": provider,
+                "reason": "feature_disabled",
+            }
+        )
         return None, _mgmt_nl_provider_status(
             provider=provider,
             enabled=False,
@@ -30059,6 +30343,17 @@ def _mgmt_nl_maybe_provider_answer(
             reason="feature_disabled",
         )
     if provider not in {"codex", "codex_cli"}:
+        _management_ai_record_event(
+            {
+                "event_type": "management_ai.provider.skipped",
+                "session_id": session_id,
+                "message_id": message_id,
+                "trace_id": trace_id,
+                "actor_id": identity.operator_id,
+                "provider": provider,
+                "reason": "unsupported_provider",
+            }
+        )
         return None, _mgmt_nl_provider_status(
             provider=provider,
             enabled=True,
@@ -30066,11 +30361,26 @@ def _mgmt_nl_maybe_provider_answer(
             reason="unsupported_provider",
         )
 
-    run_id = f"mnl-provider-{uuid.uuid4().hex[:12]}"
+    run_id = trace_id
     prompt = _mgmt_nl_provider_prompt(
         question=question,
         focus=focus,
         context_pack=context_pack,
+    )
+    provider_started = time.monotonic()
+    _management_ai_record_event(
+        {
+            "event_type": "management_ai.provider.started",
+            "session_id": session_id,
+            "message_id": message_id,
+            "trace_id": trace_id,
+            "provider_run_id": run_id,
+            "actor_id": identity.operator_id,
+            "provider": provider,
+            "route": "POST /api/openclaw-adapter/assistant/providers/codex/invoke",
+            "context_pack_id": context_pack.get("context_pack_id"),
+            "prompt_bytes": len(prompt.encode("utf-8")),
+        }
     )
     try:
         provider_payload = OpenClawOpsClient().invoke_assistant_provider(
@@ -30084,11 +30394,29 @@ def _mgmt_nl_maybe_provider_answer(
                 "route": "POST /bff/management/nl/ask",
                 "session_id": session_id,
                 "message_id": message_id,
+                "trace_id": trace_id,
+                "provider_run_id": run_id,
                 "tenant_id": caller_tenant_id,
                 "audit_id": audit_id,
             },
         )
     except OpenClawOpsClientError as exc:
+        duration_ms = max(0, int((time.monotonic() - provider_started) * 1000))
+        _management_ai_record_event(
+            {
+                "event_type": "management_ai.provider.failed",
+                "session_id": session_id,
+                "message_id": message_id,
+                "trace_id": trace_id,
+                "provider_run_id": run_id,
+                "actor_id": identity.operator_id,
+                "provider": provider,
+                "duration_ms": duration_ms,
+                "status_code": exc.status_code,
+                "error_code": exc.error_code,
+                "error_message": _management_ai_summary_value(exc.message),
+            }
+        )
         return None, _mgmt_nl_provider_status(
             provider=provider,
             enabled=True,
@@ -30100,6 +30428,22 @@ def _mgmt_nl_maybe_provider_answer(
     answer = _mgmt_nl_extract_provider_answer(provider_payload)
     data = provider_payload.get("data") if isinstance(provider_payload, dict) else {}
     provider_state = str((data or {}).get("status") or provider_payload.get("status") or "ok")
+    duration_ms = max(0, int((time.monotonic() - provider_started) * 1000))
+    _management_ai_record_event(
+        {
+            "event_type": "management_ai.provider.completed",
+            "session_id": session_id,
+            "message_id": message_id,
+            "trace_id": trace_id,
+            "provider_run_id": run_id,
+            "actor_id": identity.operator_id,
+            "provider": str((data or {}).get("provider") or provider),
+            "duration_ms": duration_ms,
+            "provider_state": provider_state,
+            "answer_present": bool(answer),
+            "output_summary": _management_ai_provider_output_summary(provider_payload),
+        }
+    )
     if not answer:
         return None, _mgmt_nl_provider_status(
             provider=provider,
@@ -30183,12 +30527,26 @@ async def bff_management_nl_ask(
     request_hash = _stable_json_hash({"route": "POST /bff/management/nl/ask", "payload": payload})
     cached = _mgmt_nl_idempotency_check(resolved_key, request_hash)
     if cached is not None:
+        cached_data = cached.get("data") if isinstance(cached, dict) else {}
+        _management_ai_record_event(
+            {
+                "event_type": "management_ai.exchange.replayed",
+                "session_id": str((cached_data or {}).get("session_id") or payload.get("session_id") or payload.get("sessionId") or ""),
+                "message_id": str((cached_data or {}).get("message_id") or ""),
+                "trace_id": str((cached_data or {}).get("trace_id") or (cached_data or {}).get("traceId") or ""),
+                "actor_id": identity.operator_id,
+                "focus": focus,
+                "route": "POST /bff/management/nl/ask",
+                "idempotency_key": resolved_key,
+            }
+        )
         replayed = {**cached, "meta": {**cached.get("meta", {}), "idempotency": {**cached.get("meta", {}).get("idempotency", {}), "replayed": True}}}
         return JSONResponse(status_code=202, content=replayed)
 
     now = utc_now()
     session_id = str(payload.get("sessionId") or payload.get("session_id") or f"mgmt-nl-{uuid.uuid4().hex[:10]}")
     message_id = f"mnl-{uuid.uuid4().hex[:16]}"
+    trace_id = str(payload.get("traceId") or payload.get("trace_id") or f"mnl-trace-{uuid.uuid4().hex[:12]}")
 
     # BFF-B6-001-SEC-FIX: pass tenant scope to context collection.
     context_bundle = _mgmt_nl_collect_context(focus, now, tenant_id=caller_tenant_id)
@@ -30272,6 +30630,25 @@ async def bff_management_nl_ask(
     audit_ref["auditId"] = accepted_audit.get("auditId") or accepted_audit.get("eventId")
     audit_ref["audit_id"] = audit_ref["auditId"]
 
+    _management_ai_record_event(
+        {
+            "event_type": "management_ai.exchange.accepted",
+            "session_id": session_id,
+            "message_id": message_id,
+            "trace_id": trace_id,
+            "actor_id": identity.operator_id,
+            "route": "POST /bff/management/nl/ask",
+            "question": _management_ai_summary_value(question),
+            "focus": focus,
+            "tenant_id": caller_tenant_id,
+            "confidence": confidence,
+            "source_keys": source_keys,
+            "context_pack_id": context_pack.get("context_pack_id"),
+            "surfaces": _management_ai_surface_summary(surfaces),
+            "audit_ref": audit_ref,
+        }
+    )
+
     provider_answer, provider_status = _mgmt_nl_maybe_provider_answer(
         provider=_mgmt_nl_provider_name(),
         question=question,
@@ -30280,44 +30657,21 @@ async def bff_management_nl_ask(
         caller_tenant_id=caller_tenant_id,
         session_id=session_id,
         message_id=message_id,
+        trace_id=trace_id,
         context_pack=context_pack,
         audit_id=audit_ref.get("auditId"),
     )
     answer = provider_answer or deterministic_answer
 
-    session = read_store.get_agora_session(session_id)
-    if session is None:
-        session = read_store.create_agora_session(
-            session_id=session_id,
-            title=question[:80],
-            actor_id=identity.operator_id,
-            payload={
-                "mode": "management_nl",
-                "focus": focus,
-                "tenantId": caller_tenant_id,
-                "participants": [{"type": "operator", "id": identity.operator_id}],
-            },
-            created_at=now,
-        )
-    read_store.append_agora_session_message(
-        session_id,
-        message_id=message_id,
-        content=question,
-        actor_id=identity.operator_id,
-        payload={
-            "role": "user",
-            "focus": focus,
-            "context": operator_context or None,
-            "sender": {"type": "operator", "id": identity.operator_id},
-        },
-        created_at=now,
-    )
+    assistant_turn_id = f"{message_id}-assistant"
+    audit_log_href = _management_ai_audit_href(session_id=session_id, trace_id=trace_id)
+    conversation_href = _management_ai_conversation_href(session_id, trace_id=trace_id)
 
     _publish_event(
         _sse_buffers["ask"],
         _sse_subscribers["ask"],
         "management.nl.ask.accepted",
-        {"session_id": session_id, "message_id": message_id, "focus": focus},
+        {"session_id": session_id, "message_id": message_id, "trace_id": trace_id, "focus": focus},
     )
 
     result = {
@@ -30326,6 +30680,8 @@ async def bff_management_nl_ask(
             "answer": answer,
             "session_id": session_id,
             "message_id": message_id,
+            "traceId": trace_id,
+            "trace_id": trace_id,
             "question": question,
             "focus": focus,
             "sources": source_keys,
@@ -30337,6 +30693,21 @@ async def bff_management_nl_ask(
             "provider_status": provider_status,
             "auditRef": audit_ref,
             "audit_ref": audit_ref,
+            "auditLog": {
+                "href": audit_log_href,
+                "traceId": trace_id,
+                "trace_id": trace_id,
+            },
+            "audit_log": {
+                "href": audit_log_href,
+                "traceId": trace_id,
+                "trace_id": trace_id,
+            },
+            "conversation": {
+                "href": conversation_href,
+                "traceId": trace_id,
+                "trace_id": trace_id,
+            },
             "evidenceRefs": processed_evidence_refs,
             "evidence_refs": processed_evidence_refs,
         },
@@ -30346,14 +30717,105 @@ async def bff_management_nl_ask(
             "idempotency": {"idempotencyKey": resolved_key, "replayed": False},
             "providerStatus": provider_status,
             "provider_status": provider_status,
+            "traceId": trace_id,
+            "trace_id": trace_id,
             "contextPackId": context_pack.get("context_pack_id"),
             "context_pack_id": context_pack.get("context_pack_id"),
             "redactedEvidenceCount": redacted_evidence_count,
             "redacted_evidence_count": redacted_evidence_count,
         },
     }
+    _management_ai_record_event(
+        {
+            "event_type": "management_ai.exchange.completed",
+            "session_id": session_id,
+            "message_id": message_id,
+            "assistant_turn_id": assistant_turn_id,
+            "trace_id": trace_id,
+            "actor_id": identity.operator_id,
+            "route": "POST /bff/management/nl/ask",
+            "answer": _management_ai_summary_value(answer),
+            "provider_status": provider_status,
+            "fallback": provider_status.get("fallback"),
+        }
+    )
     _MGMT_NL_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
     return JSONResponse(status_code=202, content=result)
+
+
+@app.get("/bff/management/ai/audit")
+async def bff_management_ai_audit(
+    session_id: Optional[str] = None,
+    trace_id: Optional[str] = None,
+    message_id: Optional[str] = None,
+    event_type: Optional[str] = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Read backend Management AI audit events for conversation/provider tracing."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    events = _management_ai_list_audit_events(
+        session_id=session_id,
+        trace_id=trace_id,
+        message_id=message_id,
+        event_type=event_type,
+        limit=limit,
+    )
+    return {
+        "data": events,
+        "items": events,
+        "meta": {
+            "count": len(events),
+            "filters": {
+                "session_id": session_id,
+                "trace_id": trace_id,
+                "message_id": message_id,
+                "event_type": event_type,
+            },
+        },
+    }
+
+
+@app.get("/bff/management/ai/conversations/{session_id}")
+async def bff_management_ai_conversation(
+    session_id: str,
+    trace_id: Optional[str] = None,
+    limit: int = Query(default=100, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Read Management AI conversation turns from backend audit events only."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    clean_session_id = str(session_id or "").strip()
+    turns = _management_ai_conversation_turns(
+        session_id=clean_session_id,
+        trace_id=trace_id,
+        limit=limit,
+    )
+    audit_log = {
+        "href": _management_ai_audit_href(session_id=clean_session_id, trace_id=trace_id),
+        "traceId": trace_id,
+        "trace_id": trace_id,
+    }
+    return {
+        "data": {
+            "session_id": clean_session_id,
+            "traceId": trace_id,
+            "trace_id": trace_id,
+            "turns": turns,
+            "auditLog": audit_log,
+            "audit_log": audit_log,
+        },
+        "items": turns,
+        "meta": {
+            "count": len(turns),
+            "filters": {
+                "session_id": clean_session_id,
+                "trace_id": trace_id,
+            },
+        },
+    }
 
 
 @app.get("/bff/management/evidence")

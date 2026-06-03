@@ -250,12 +250,14 @@ class AssistantCodexProvider:
         env = self._build_env()
         timeout = self._timeout_seconds()
         started = time.monotonic()
+        audit_context = _audit_context(metadata)
 
         self._audit.record(
             {
                 "event_type": "assistant.provider.started",
                 "provider": CODEX_PROVIDER_ID,
                 "runtime": PROVIDER_RUNTIME,
+                **audit_context,
                 "mode": mode,
                 "sandbox": context.sandbox,
                 "workspace_class": context.workspace_class,
@@ -281,6 +283,7 @@ class AssistantCodexProvider:
                     "event_type": "assistant.provider.timeout",
                     "provider": CODEX_PROVIDER_ID,
                     "runtime": PROVIDER_RUNTIME,
+                    **audit_context,
                     "mode": mode,
                     "sandbox": context.sandbox,
                     "workspace_class": context.workspace_class,
@@ -314,6 +317,7 @@ class AssistantCodexProvider:
                     "event_type": "assistant.provider.failed",
                     "provider": CODEX_PROVIDER_ID,
                     "runtime": PROVIDER_RUNTIME,
+                    **audit_context,
                     "mode": mode,
                     "sandbox": context.sandbox,
                     "workspace_class": context.workspace_class,
@@ -338,12 +342,14 @@ class AssistantCodexProvider:
                 "event_type": "assistant.provider.completed",
                 "provider": CODEX_PROVIDER_ID,
                 "runtime": PROVIDER_RUNTIME,
+                **audit_context,
                 "mode": mode,
                 "sandbox": context.sandbox,
                 "workspace_class": context.workspace_class,
                 **({"repair_workflow": context.repair_workflow} if context.repair_workflow else {}),
                 "duration_ms": duration_ms,
                 "returncode": completed.returncode,
+                "output_summary": _codex_output_summary(completed.stdout),
             }
         )
         return {
@@ -600,3 +606,40 @@ def _coerce_output(value: Any) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
     return str(value)
+
+
+def _audit_context(metadata: Mapping[str, Any]) -> dict[str, Any]:
+    context: dict[str, Any] = {}
+    for key in (
+        "trace_id",
+        "provider_run_id",
+        "session_id",
+        "message_id",
+        "operator_id",
+        "tenant_id",
+        "audit_id",
+        "route",
+    ):
+        value = metadata.get(key)
+        if value not in (None, ""):
+            context[key] = str(value)
+    return context
+
+
+def _codex_output_summary(stdout: str) -> dict[str, Any]:
+    events = _parse_json_lines(stdout)
+    event_types: list[str] = []
+    usage: Mapping[str, Any] | None = None
+    for event in events:
+        if not isinstance(event, Mapping):
+            continue
+        event_type = str(event.get("type") or "").strip()
+        if event_type:
+            event_types.append(event_type)
+        if event_type == "turn.completed" and isinstance(event.get("usage"), Mapping):
+            usage = event.get("usage")
+    return {
+        "json_event_count": len(events),
+        "json_event_types": event_types,
+        "usage": dict(usage or {}),
+    }

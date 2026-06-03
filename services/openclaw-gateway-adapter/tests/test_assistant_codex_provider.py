@@ -183,6 +183,57 @@ def test_invoke_uses_read_only_workspace_by_default(tmp_path: Path) -> None:
     assert kwargs["env"]["CODEX_HOME"] == "/home/pantheon-assistant/.codex"
 
 
+def test_invoke_audit_records_trace_context_and_output_summary(tmp_path: Path) -> None:
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=(
+                '{"type":"thread.started","thread_id":"thread-test"}\n'
+                '{"type":"turn.started"}\n'
+                '{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}\n'
+                '{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":1}}\n'
+            ),
+            stderr="",
+        )
+
+    provider = _provider(tmp_path, fake_run)
+    provider.invoke(
+        {
+            "mode": "user",
+            "prompt": "hello",
+            "metadata": {
+                "operator_id": "op-1",
+                "trace_id": "trace-1",
+                "provider_run_id": "trace-1",
+                "session_id": "session-1",
+                "message_id": "message-1",
+                "tenant_id": "tenant-alpha",
+                "route": "POST /bff/management/nl/ask",
+            },
+        }
+    )
+
+    audit_lines = [
+        json.loads(line)
+        for line in (tmp_path / "provider-audit.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    started = audit_lines[0]
+    completed = audit_lines[-1]
+    assert started["trace_id"] == "trace-1"
+    assert started["session_id"] == "[REDACTED_SESSION]"
+    assert started["message_id"] == "message-1"
+    assert started["route"] == "POST /bff/management/nl/ask"
+    assert completed["output_summary"]["json_event_types"] == [
+        "thread.started",
+        "turn.started",
+        "item.completed",
+        "turn.completed",
+    ]
+    assert completed["output_summary"]["usage"] == {"input_tokens": 3, "output_tokens": 1}
+    assert "hello" not in json.dumps(audit_lines)
+
+
 def test_invoke_requires_operator_id_metadata_before_exec(tmp_path: Path) -> None:
     calls = []
 
