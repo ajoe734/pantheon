@@ -257,6 +257,9 @@ services:
       BFF_DATA_DIR: /data/bff
       BFF_READ_SURFACE_STATE: ${BFF_READ_SURFACE_STATE:-fresh}
       PANTHEON_BFF_ALLOW_LOCAL_SNAPSHOT_FALLBACK: "false"
+      PANTHEON_BFF_CAPABILITY_SNAPSHOT_STORE: /data/bff/capability_snapshots.json
+      PANTHEON_BFF_PERSONA_SESSION_STORE: /data/bff/persona_sessions.json
+      PANTHEON_BFF_PAPER_LIVE_DRIFT_STORE: /data/bff/paper_live_drift_reports.json
       PANTHEON_BFF_CORS_ORIGINS: ${PANTHEON_BFF_CORS_ORIGINS:-https://pantheon-ai-system-front-staging-live.lovable.app}
       PANTHEON_ENV: ${PANTHEON_ENV:-staging-live}
       PANTHEON_LIVE_BROKER_ENABLED: ${PANTHEON_LIVE_BROKER_ENABLED:-true}
