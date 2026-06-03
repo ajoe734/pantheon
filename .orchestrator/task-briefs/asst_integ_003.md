@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Provider routing through existing OpenClaw adapter
-- Status: todo
+- Status: review
 - Owner: Claude
 - Reviewer: Codex
 - Phase: Sprint ASST-INTEG / Provider routing
-- Last update: 2026-06-03T14:27:18Z
-- Next: Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: ERROR: Your access token could not be refreshed because your refresh token was already used. Please log out and sign in again.. Task returned to todo until Claude starts a fresh run.
+- Last update: 2026-06-03T14:38:46Z
+- Next: Provider routing for Claude/claude_cli provider complete. Changes: (1) openclaw_ops_client.invoke_assistant_provider now routes claude/claude_cli to /api/openclaw-adapter/assistant/claude/invoke (separate URL from codex path); (2) invoke_assistant applies same routing; (3) BFF _mgmt_nl_maybe_provider_answer expanded allowlist to include claude/claude_cli; (4) _mgmt_nl_extract_provider_answer handles Claude flat text response; (5) audit log records correct route per provider; (6) 4 new tests added: claude endpoint routing, unsupported provider error, claude BFF invocation, claude degraded fallback. All 26 existing tests + 4 new tests pass (51 total with delta routes). PR #836 open with auto-merge. Please review for acceptance.
 
 ## Summary
 沿用 OpenClaw gateway adapter 的 readiness/provider invoke，不另建 gateway，並讓 dev 對 real provider 與 degraded 狀態誠實呈現。
@@ -23,12 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;services/control-plane/bff/openclaw_ops_client.py;services/openclaw-gateway-adapter/main.py;services/openclaw-gateway-adapter/assistant_command_policy.py;scripts/openclaw-assistant-provider-smoke.sh;services/control-plane/bff/tests/test_management_nl_assistant_provider.py
 
 ## Recent Task Activity
-- 2026-06-03T14:27:01Z · Orchestrator · task_helper_claimed · Helper-claimed by Codex2 while Codex completes higher-priority work.
-- 2026-06-03T14:27:08Z · Orchestrator · worker_worktree_allocated · -
-- 2026-06-03T14:27:08Z · Orchestrator · worker_started · Worker started via codex: owned_ready_dispatch
-- 2026-06-03T14:27:08Z · Codex2 · start · Supervisor auto-started ASST-INTEG-003 after successful dispatch.
-- 2026-06-03T14:27:13Z · Orchestrator · task_dispatch_synced · Supervisor auto-started ASST-INTEG-003 after successful dispatch.
-- 2026-06-03T14:27:20Z · Orchestrator · task_reassigned · Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: ERROR: Your access token could not be refreshed because your refresh token was already used. Please log out and sign in again.. Task returned to todo until Claude starts a fresh run.
+- 2026-06-03T14:32:42Z · Claude · start · Claude starting provider routing implementation: extend openclaw_ops_client to support claude provider, fix invoke routing, expand BFF allowlist
+- 2026-06-03T14:32:49Z · Claude · start · Claude starting provider routing: extend openclaw client to support claude/claude_cli, fix invoke URL routing, expand BFF provider allowlist
+- 2026-06-03T14:37:57Z · unknown · worker_commit · Worker commit f3cc6ca392d0 recorded 3 staged file(s) for ASST-INTEG-003.
+- 2026-06-03T14:38:08Z · Claude · progress · Implementation complete: claude/claude_cli provider routing added to openclaw_ops_client and BFF management NL path; 4 new tests; 51 tests passing. Anchor commit f3cc6ca3. Opening PR for review.
+- 2026-06-03T14:38:46Z · Claude · handoff · Handoff to Codex: Provider routing for Claude/claude_cli provider complete. Changes: (1) openclaw_ops_client.invoke_assistant_provider now routes claude/claude_cli to /api/openclaw-adapter/assistant/claude/invoke (separate URL from codex path); (2) invoke_assistant applies same routing; (3) BFF _mgmt_nl_maybe_provider_answer expanded allowlist to include claude/claude_cli; (4) _mgmt_nl_extract_provider_answer handles Claude flat text response; (5) audit log records correct route per provider; (6) 4 new tests added: claude endpoint routing, unsupported provider error, claude BFF invocation, claude degraded fallback. All 26 existing tests + 4 new tests pass (51 total with delta routes). PR #836 open with auto-merge. Please review for acceptance.
+- 2026-06-03T14:40:11Z · Orchestrator · worker_completed · Worker exited successfully during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md

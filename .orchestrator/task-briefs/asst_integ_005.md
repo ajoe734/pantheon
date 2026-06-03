@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: SA/SD generator using existing docs and task-brief architecture
-- Status: todo
+- Status: in_progress
 - Owner: Claude2
 - Reviewer: Codex
 - Phase: Sprint ASST-INTEG / SA-SD generator
-- Last update: 2026-06-03T14:26:35Z
-- Next: Ownership updated
+- Last update: 2026-06-03T14:59:57Z
+- Next: Codex review found blocking integration issues: support dict-shaped BFF context packs for actor/mode/sources/backend citations, and align generated task artifact paths with archive_packet output paths before merge.
 
 ## Summary
 讓小幫手能從對話生成 requirement capture、SA、SD、execution task packet，並歸檔到既有 docs 與 task brief 位置。
@@ -23,8 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;docs/02-architecture;docs/03;docs/04;docs/05-ui;.orchestrator/task-briefs
 
 ## Recent Task Activity
-- 2026-06-03T13:43:29Z · Operator · assign · Assigned ASST-INTEG-005 to Claude2 with reviewer Codex
-- 2026-06-03T14:26:35Z · Operator · assign · Assigned ASST-INTEG-005 to Claude2 with reviewer Codex
+- 2026-06-03T14:35:05Z · Orchestrator · worker_completed · Worker exited successfully during supervisor boot reconciliation.
+- 2026-06-03T14:54:22Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-06-03T14:54:34Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-03T14:54:34Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for ASST-INTEG-005: reused worktree /tmp/pantheon-worker-worktrees/pantheon/asst-integ-005 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
+- 2026-06-03T14:55:45Z · Orchestrator · wake_skipped · Auto dispatch unavailable for codex: codex local CLI worker is not ready
+- 2026-06-03T14:59:57Z · Codex · reopen · Codex review found blocking integration issues: support dict-shaped BFF context packs for actor/mode/sources/backend citations, and align generated task artifact paths with archive_packet output paths before merge.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
