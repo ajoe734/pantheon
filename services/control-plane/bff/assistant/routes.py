@@ -29,6 +29,16 @@ from .mode_policy import (
     PRODUCT_DEFAULT_MODE,
 )
 from .models import AssistantContextPack, AssistantContextPackRequest, AssistantContextPackResponse, AssistantMode
+from .tool_contracts import (
+    ASSISTANT_TOOL_ALLOWLIST,
+    ToolNotAllowedError,
+    ToolRbacError,
+    ToolValidationError,
+    execute_governed_tool,
+    preview_tool,
+    tool_receipt_to_dict,
+    validate_tool,
+)
 from .transcript_store import (
     InMemorySessionStore,
     InMemoryTranscriptStore,
@@ -351,6 +361,160 @@ def create_assistant_router(
                 reason=str(payload.get("reason") or "operator_deactivated").strip(),
             )
         }
+
+    # ------------------------------------------------------------------
+    # Governed tool contract routes (ASST-INTEG-004)
+    # preview → validate → execute → receipt
+    # All mutations route through action_catalog + command_executor.
+    # ------------------------------------------------------------------
+
+    @router.get("/tools")
+    async def list_assistant_tools(
+        authorization: Optional[str] = Header(default=None),
+    ) -> dict[str, Any]:
+        """Return the allowlisted tool action_ids the assistant may invoke."""
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+        return {"data": {"allowlist": sorted(ASSISTANT_TOOL_ALLOWLIST)}}
+
+    @router.post("/tools/preview", status_code=200)
+    async def preview_assistant_tool(
+        payload: dict = Body(default_factory=dict),
+        authorization: Optional[str] = Header(default=None),
+    ) -> dict[str, Any]:
+        """Return a preview descriptor for a tool without executing it."""
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+
+        action_id = str(payload.get("action_id") or "").strip()
+        if not action_id:
+            _raise_error(bff_error, 400, ErrorCode.VALIDATION_FAILED, "action_id is required", field="action_id")
+
+        try:
+            preview = preview_tool(action_id)
+        except ToolNotAllowedError as exc:
+            _raise_error(
+                bff_error, 403, ErrorCode.FORBIDDEN,
+                f"Tool not in assistant allowlist: {action_id!r}",
+                str(exc),
+            )
+
+        return {
+            "data": {
+                "action_id": preview.action_id,
+                "entity_type": preview.entity_type,
+                "description": preview.description,
+                "risk_level": preview.risk_level,
+                "requires_reason": preview.requires_reason,
+                "requires_confirmation": preview.requires_confirmation,
+                "requires_confirm_token": preview.requires_confirm_token,
+                "requires_two_man": preview.requires_two_man,
+                "endpoint": preview.endpoint,
+                "required_roles": preview.required_roles,
+                "in_allowlist": preview.in_allowlist,
+            }
+        }
+
+    @router.post("/tools/validate", status_code=200)
+    async def validate_assistant_tool(
+        payload: dict = Body(default_factory=dict),
+        authorization: Optional[str] = Header(default=None),
+    ) -> dict[str, Any]:
+        """Validate a tool request against RBAC and risk policy without executing."""
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+
+        action_id = str(payload.get("action_id") or "").strip()
+        if not action_id:
+            _raise_error(bff_error, 400, ErrorCode.VALIDATION_FAILED, "action_id is required", field="action_id")
+
+        try:
+            result = validate_tool(
+                action_id,
+                payload.get("params") or {},
+                list(getattr(identity, "roles", []) or []),
+                reason=payload.get("reason"),
+                confirm_token=payload.get("confirm_token"),
+            )
+        except ToolNotAllowedError as exc:
+            _raise_error(
+                bff_error, 403, ErrorCode.FORBIDDEN,
+                f"Tool not in assistant allowlist: {action_id!r}",
+                str(exc),
+            )
+
+        return {
+            "data": {
+                "ok": result.ok,
+                "action_id": result.action_id,
+                "actor_roles": result.actor_roles,
+                "errors": result.errors,
+                "missing_reason": result.missing_reason,
+                "missing_confirm_token": result.missing_confirm_token,
+            }
+        }
+
+    @router.post("/tools/execute", status_code=201)
+    async def execute_assistant_tool(
+        payload: dict = Body(default_factory=dict),
+        authorization: Optional[str] = Header(default=None),
+    ) -> dict[str, Any]:
+        """Execute a governed tool and return an audit receipt.
+
+        Routes through action_catalog + command_executor. Never calls shell or
+        submits hidden DOM actions.
+        """
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+
+        action_id = str(payload.get("action_id") or "").strip()
+        if not action_id:
+            _raise_error(bff_error, 400, ErrorCode.VALIDATION_FAILED, "action_id is required", field="action_id")
+
+        entity_type = str(payload.get("entity_type") or "").strip() or "Unknown"
+        entity_id: Optional[str] = payload.get("entity_id")
+        params = payload.get("params") or {}
+        reason: Optional[str] = payload.get("reason")
+        confirm_token: Optional[str] = payload.get("confirm_token")
+        trace_id: Optional[str] = payload.get("trace_id")
+
+        actor_id = str(getattr(identity, "operator_id", None) or "unknown")
+        actor_roles: List[Any] = list(getattr(identity, "roles", []) or [])
+
+        try:
+            receipt = execute_governed_tool(
+                action_id=action_id,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                params=params,
+                actor_id=actor_id,
+                actor_roles=actor_roles,
+                reason=reason,
+                confirm_token=confirm_token,
+                trace_id=trace_id,
+                auth_token=authorization,
+            )
+        except ToolNotAllowedError as exc:
+            _raise_error(
+                bff_error, 403, ErrorCode.FORBIDDEN,
+                f"Tool not in assistant allowlist: {action_id!r}",
+                str(exc),
+            )
+        except ToolRbacError as exc:
+            _raise_error(
+                bff_error, 403, ErrorCode.FORBIDDEN,
+                f"Actor lacks required role for {action_id!r}",
+                str(exc),
+            )
+        except ToolValidationError as exc:
+            _raise_error(
+                bff_error, 422, ErrorCode.BUSINESS_RULE_VIOLATION,
+                str(exc),
+                str(exc),
+                field=exc.field_name,
+            )
+
+        return {"data": tool_receipt_to_dict(receipt)}
 
     @router.post("/control-mode/passphrase", status_code=202)
     async def update_control_mode_passphrase(
