@@ -291,6 +291,57 @@ def test_provider_enabled_invokes_openclaw_with_tenant_scoped_context(tmp_path, 
         bff_main._sse_buffers["ask"].clear()
 
 
+def test_provider_enabled_extracts_codex_item_completed_text(tmp_path, monkeypatch) -> None:
+    original_store = bff_main.read_store
+    fake = FakeProviderClient(
+        result={
+            "status": "ok",
+            "data": {
+                "provider": "codex_cli",
+                "status": "completed",
+                "output": {
+                    "json_events": [
+                        {"type": "thread.started", "thread_id": "thread-test"},
+                        {"type": "turn.started"},
+                        {
+                            "type": "item.completed",
+                            "item": {
+                                "id": "item_0",
+                                "type": "agent_message",
+                                "text": "Codex transcript answer.",
+                            },
+                        },
+                        {"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 1}},
+                    ],
+                },
+            },
+        }
+    )
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "codex_cli")
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        client = _seeded_client(tmp_path, monkeypatch)
+
+        resp = client.post(
+            "/bff/management/nl/ask",
+            json={"question": "What is the scoped portfolio?", "focus": "portfolio"},
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-codex-item"},
+        )
+
+        assert resp.status_code == 202, resp.text
+        body = resp.json()
+        assert body["data"]["answer"] == "Codex transcript answer."
+        assert body["data"]["providerStatus"]["status"] == "completed"
+        assert body["data"]["providerStatus"]["used"] is True
+        assert "reason" not in body["data"]["providerStatus"]
+    finally:
+        bff_main.read_store = original_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._sse_buffers["ask"].clear()
+
+
 def test_provider_degraded_falls_back_to_deterministic_answer(tmp_path, monkeypatch) -> None:
     original_store = bff_main.read_store
     fake = FakeProviderClient(

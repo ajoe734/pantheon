@@ -30001,6 +30001,10 @@ def _mgmt_nl_text_from_provider_value(value: Any) -> Optional[str]:
         found = _mgmt_nl_text_from_provider_value(value.get(key))
         if found:
             return found
+    for key in ("item", "delta", "output"):
+        found = _mgmt_nl_text_from_provider_value(value.get(key))
+        if found:
+            return found
     events = value.get("json_events")
     if isinstance(events, list):
         found = _mgmt_nl_text_from_provider_value(events)
