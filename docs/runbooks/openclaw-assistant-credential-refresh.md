@@ -66,9 +66,15 @@ Use this when you can access the host path that backs the container mount.
    service user, and are not group/world-readable:
 
    ```bash
+   sudo id -u pantheon-assistant >/dev/null 2>&1 || \
+     sudo useradd --uid 10001 --home-dir /srv/pantheon-assistant --no-create-home --shell /usr/sbin/nologin pantheon-assistant
+   sudo install -d -m 0750 -o pantheon-assistant -g pantheon-assistant /srv/pantheon-assistant
    sudo install -d -m 0700 -o pantheon-assistant -g pantheon-assistant /srv/pantheon-assistant/.codex
    sudo install -d -m 0700 -o pantheon-assistant -g pantheon-assistant /srv/pantheon-assistant/.claude
    ```
+
+   The adapter image contains the same `pantheon-assistant` UID (`10001`) so
+   container-side owner checks match the host-owned credential mounts.
 
 2. Refresh Codex on the host:
 
