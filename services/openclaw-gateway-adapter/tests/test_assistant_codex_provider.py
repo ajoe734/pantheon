@@ -125,7 +125,15 @@ def test_readiness_ready_with_auth_probe(tmp_path: Path) -> None:
     assert result["version"] == "codex 1.2.3"
     assert result["credential_mount"]["container_target"] == "codex_home"
     auth_cmd = calls[1][0]
-    assert auth_cmd[:6] == ["/usr/bin/codex", "exec", "-C", str(tmp_path / "read-only"), "-s", "read-only"]
+    assert auth_cmd[:7] == [
+        "/usr/bin/codex",
+        "exec",
+        "-C",
+        str(tmp_path / "read-only"),
+        "--skip-git-repo-check",
+        "-s",
+        "read-only",
+    ]
     assert "--dangerously-bypass-approvals-and-sandbox" not in auth_cmd
     assert calls[1][1]["env"]["CODEX_HOME"] == "/home/pantheon-assistant/.codex"
 
@@ -162,6 +170,7 @@ def test_invoke_uses_read_only_workspace_by_default(tmp_path: Path) -> None:
         "exec",
         "-C",
         str(tmp_path / "read-only"),
+        "--skip-git-repo-check",
         "-s",
         "read-only",
         "-c",
@@ -238,6 +247,7 @@ def test_repair_mode_uses_workspace_write_for_task_worktree(tmp_path: Path) -> N
     )
     cmd = calls[0][0]
     assert cmd[cmd.index("-C") + 1] == str(worktree)
+    assert "--skip-git-repo-check" in cmd
     assert cmd[cmd.index("-s") + 1] == "workspace-write"
     assert result["repair_workflow"]["branch"] == f"task/{task_id}"
     assert result["repair_workflow"]["merge_target"] == "dev"

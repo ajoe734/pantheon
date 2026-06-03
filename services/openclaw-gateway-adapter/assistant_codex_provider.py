@@ -367,6 +367,7 @@ class AssistantCodexProvider:
             "exec",
             "-C",
             context.workspace,
+            "--skip-git-repo-check",
             "-s",
             context.sandbox,
             "-c",
