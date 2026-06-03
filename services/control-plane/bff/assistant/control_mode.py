@@ -232,6 +232,13 @@ class ControlModeStore:
             return False
         return verify_passphrase_hash(passphrase, encoded_hash)
 
+    def matches_passphrase(self, candidate: str) -> bool:
+        clean_candidate = str(candidate or "")
+        if not clean_candidate:
+            return False
+        with self._lock:
+            return self._verify_passphrase(clean_candidate)
+
     def set_passphrase(
         self,
         *,
@@ -239,9 +246,9 @@ class ControlModeStore:
         current_passphrase: Optional[str] = None,
         require_current: bool = True,
     ) -> None:
-        if len(str(new_passphrase or "")) < MIN_CONTROL_PASSPHRASE_LENGTH:
+        if len(str(new_passphrase or "").encode("utf-8")) < MIN_CONTROL_PASSPHRASE_LENGTH:
             raise ControlModeError(
-                f"Control mode passphrase must be at least {MIN_CONTROL_PASSPHRASE_LENGTH} characters.",
+                f"Control mode passphrase must be at least {MIN_CONTROL_PASSPHRASE_LENGTH} UTF-8 bytes.",
                 field="newPassphrase",
                 reason="passphrase_too_short",
             )

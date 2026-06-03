@@ -29282,6 +29282,54 @@ _MGMT_NL_UI_ACTION_KINDS = {
     "runBffAction",
 }
 _MGMT_NL_WRITE_ACTION_KINDS = {"runBffAction"}
+_MGMT_NL_CONTROL_REDACTED_QUESTION = "[CONTROL MODE COMMAND REDACTED]"
+_MGMT_NL_CONTROL_ACTIVATE_PREFIXES = (
+    "/control",
+    "/kernel",
+    "control mode",
+    "kernel mode",
+    "控制模式",
+    "啟動控制模式",
+    "启动控制模式",
+    "開啟控制模式",
+    "开启控制模式",
+    "暗號",
+    "暗号",
+    "通關密語",
+    "通关密语",
+)
+_MGMT_NL_CONTROL_SEPARATOR_ACTIVATE_PREFIXES = {
+    "control mode",
+    "kernel mode",
+    "控制模式",
+    "暗號",
+    "暗号",
+    "通關密語",
+    "通关密语",
+}
+_MGMT_NL_CONTROL_STATUS_COMMANDS = {
+    "/control status",
+    "/kernel status",
+    "control mode status",
+    "kernel mode status",
+    "控制模式狀態",
+    "控制模式状态",
+    "查看控制模式",
+}
+_MGMT_NL_CONTROL_DEACTIVATE_COMMANDS = {
+    "/control off",
+    "/control stop",
+    "/control deactivate",
+    "/kernel off",
+    "/kernel stop",
+    "/kernel deactivate",
+    "control mode off",
+    "kernel mode off",
+    "退出控制模式",
+    "關閉控制模式",
+    "关闭控制模式",
+    "停用控制模式",
+}
 
 _MGMT_NL_HIGH_RISK_REFUSAL_FOLLOWUPS = [
     {
@@ -29949,6 +29997,476 @@ def _mgmt_nl_validate_question_size(question: str) -> None:
             "actualQuestionBytes": question_size,
         },
     )
+
+
+def _mgmt_nl_control_store() -> Optional[Any]:
+    store = globals().get("_ASSISTANT_CONTROL_MODE_STORE")
+    if store is None:
+        return None
+    return store
+
+
+def _mgmt_nl_control_strip_activation_prefix(clean_question: str) -> Optional[str]:
+    for prefix in sorted(_MGMT_NL_CONTROL_ACTIVATE_PREFIXES, key=len, reverse=True):
+        if not clean_question.lower().startswith(prefix.lower()):
+            continue
+        raw_remainder = clean_question[len(prefix):]
+        if prefix.lower() in _MGMT_NL_CONTROL_SEPARATOR_ACTIVATE_PREFIXES:
+            if not re.match(r"^\s*(?:是|為|为|:|：|=|＝)", raw_remainder):
+                continue
+        remainder = raw_remainder.strip()
+        remainder = re.sub(r"^(?:on|activate|啟動|启动|開啟|开启)\b", "", remainder, flags=re.IGNORECASE).strip()
+        remainder = re.sub(r"^(?:是|為|为|:|：|=|＝|\s)+", "", remainder).strip()
+        return remainder or None
+    return None
+
+
+def _mgmt_nl_parse_control_command(question: str) -> Optional[Dict[str, Any]]:
+    clean_question = re.sub(r"\s+", " ", str(question or "").strip())
+    if not clean_question:
+        return None
+
+    lowered = clean_question.lower()
+    if lowered in _MGMT_NL_CONTROL_STATUS_COMMANDS:
+        return {"kind": "status", "source": "explicit"}
+    if lowered in _MGMT_NL_CONTROL_DEACTIVATE_COMMANDS:
+        return {"kind": "deactivate", "source": "explicit"}
+
+    prefixed_passphrase = _mgmt_nl_control_strip_activation_prefix(clean_question)
+    if prefixed_passphrase is not None:
+        return {
+            "kind": "activate",
+            "source": "explicit",
+            "passphrase": prefixed_passphrase,
+        }
+
+    store = _mgmt_nl_control_store()
+    matcher = getattr(store, "matches_passphrase", None)
+    if callable(matcher):
+        try:
+            if matcher(clean_question):
+                return {
+                    "kind": "activate",
+                    "source": "direct_passphrase",
+                    "passphrase": clean_question,
+                }
+        except Exception:
+            log.warning("Failed to match management NL direct control passphrase", exc_info=True)
+    return None
+
+
+def _mgmt_nl_positive_int(value: Any, fallback: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    return parsed
+
+
+def _mgmt_nl_control_options(payload: Dict[str, Any]) -> Dict[str, Any]:
+    raw_options = payload.get("controlMode")
+    if raw_options is None:
+        raw_options = payload.get("control_mode")
+    options = raw_options if isinstance(raw_options, dict) else {}
+    result = dict(options)
+    for key in ("mode", "ttlSeconds", "ttl_seconds", "idleTtlSeconds", "idle_ttl_seconds"):
+        if key in payload and key not in result:
+            result[key] = payload.get(key)
+    return result
+
+
+def _mgmt_nl_raise_control_mode_actor_error(identity: OperatorIdentity) -> None:
+    from assistant.control_mode import (
+        CONTROL_MODE_CAPABILITY_PREFIX,
+        CONTROL_MODE_ROLES,
+        actor_has_control_role,
+        actor_has_kernel_capability,
+    )
+
+    if not actor_has_control_role(identity):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Control mode requires operator or admin role",
+            "Actor does not hold a role allowed to activate control mode",
+            precondition_failed="control_mode_role",
+            details_extra={
+                "field": "roles",
+                "required_roles": sorted(CONTROL_MODE_ROLES),
+            },
+        )
+    if not getattr(identity, "mfa_verified", False):
+        raise _bff_error(
+            403,
+            ErrorCode.AUTH_REQUIRED,
+            "Control mode requires MFA",
+            "Actor must complete MFA before activating control mode",
+            precondition_failed="control_mode_mfa",
+            details_extra={"field": "mfa"},
+        )
+    if not actor_has_kernel_capability(identity):
+        raise _bff_error(
+            422,
+            ErrorCode.BUSINESS_RULE_VIOLATION,
+            "Control mode requires assistant kernel capability",
+            f"Actor capabilities must include a value starting with {CONTROL_MODE_CAPABILITY_PREFIX!r}",
+            precondition_failed="control_mode_capability",
+            details_extra={
+                "field": "capabilities",
+                "required_capability_prefix": CONTROL_MODE_CAPABILITY_PREFIX,
+            },
+        )
+
+
+def _mgmt_nl_raise_control_mode_error(exc: Exception) -> None:
+    status_code = int(getattr(exc, "status_code", 422) or 422)
+    if status_code == 403:
+        code = ErrorCode.FORBIDDEN
+    elif status_code == 409:
+        code = ErrorCode.RESOURCE_CONFLICT
+    elif status_code == 400:
+        code = ErrorCode.VALIDATION_FAILED
+    else:
+        code = ErrorCode.BUSINESS_RULE_VIOLATION
+    reason = str(getattr(exc, "reason", "") or getattr(exc, "field", "") or "control_mode_error")
+    raise _bff_error(
+        status_code,
+        code,
+        str(exc),
+        reason,
+        precondition_failed=f"control_mode_{reason}",
+        details_extra={"field": getattr(exc, "field", None)},
+    )
+
+
+def _mgmt_nl_control_provider_status(command_kind: str) -> Dict[str, Any]:
+    status = _mgmt_nl_provider_status(
+        provider="pantheon_bff",
+        enabled=True,
+        status="completed",
+        reason=f"control_mode_{command_kind}",
+        used=True,
+    )
+    status["runtime"] = "management_nl_control_command_interceptor"
+    status["fallback"] = None
+    return status
+
+
+def _mgmt_nl_control_answer(command_kind: str, control_mode: Dict[str, Any]) -> str:
+    if command_kind == "activate" and control_mode.get("active"):
+        return (
+            "Control mode activated for this Management AI session. "
+            "It will expire automatically at the configured TTL or idle timeout."
+        )
+    if command_kind == "deactivate":
+        return "Control mode deactivated. This Management AI session is back in user mode."
+    if control_mode.get("active"):
+        return "Control mode is active for this Management AI session."
+    return "Control mode is inactive for this Management AI session."
+
+
+def _mgmt_nl_record_control_audit(
+    *,
+    identity: OperatorIdentity,
+    command_kind: str,
+    session_id: str,
+    message_id: str,
+    trace_id: str,
+    focus: str,
+    tenant_id: str,
+    now: Any,
+) -> Dict[str, Any]:
+    audit_ref = {
+        "targetType": "ManagementNLExchange",
+        "target_type": "ManagementNLExchange",
+        "targetId": message_id,
+        "target_id": message_id,
+        "href": f"/bff/audit/entities/ManagementNLExchange/{message_id}",
+    }
+    try:
+        accepted_audit = read_store.record_agora_audit_event(
+            {
+                "action": f"management.nl.control_mode.{command_kind}",
+                "targetType": "ManagementNLExchange",
+                "targetId": message_id,
+                "actorId": identity.operator_id,
+                "recordedAt": now,
+                "sessionId": session_id,
+                "focus": focus,
+                "tenantId": tenant_id,
+                "traceId": trace_id,
+                "question": _MGMT_NL_CONTROL_REDACTED_QUESTION,
+            }
+        )
+    except Exception:
+        log.warning("Failed to record management NL control-mode audit event", exc_info=True)
+        raise _bff_error(
+            503,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
+            "Management NL control-mode audit write failed",
+            "control_mode_audit_write_failed",
+            precondition_failed="audit_write",
+            suggestion="Retry after the Agora audit store is available",
+        )
+    audit_ref["auditId"] = accepted_audit.get("auditId") or accepted_audit.get("eventId")
+    audit_ref["audit_id"] = audit_ref["auditId"]
+    return audit_ref
+
+
+def _mgmt_nl_handle_control_command(
+    *,
+    control_command: Dict[str, Any],
+    payload: Dict[str, Any],
+    identity: OperatorIdentity,
+    caller_tenant_id: str,
+    focus: str,
+    resolved_key: str,
+    request_hash: str,
+    session_id: str,
+    message_id: str,
+    trace_id: str,
+    now: Any,
+) -> JSONResponse:
+    from assistant.control_mode import ControlModeError, actor_capabilities, default_idle_ttl
+    from assistant.mode_policy import DEFAULT_KERNEL_TTL_SECONDS, ModePolicyViolation, assert_kernel_allowed
+    from assistant.models import AssistantMode
+
+    store = _mgmt_nl_control_store()
+    if store is None:
+        raise _bff_error(
+            503,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
+            "Control mode store is unavailable",
+            "control_mode_store_unavailable",
+            precondition_failed="control_mode_store",
+        )
+
+    command_kind = str(control_command.get("kind") or "").strip()
+    if command_kind == "activate":
+        _mgmt_nl_raise_control_mode_actor_error(identity)
+        options = _mgmt_nl_control_options(payload)
+        mode_raw = str(options.get("mode") or AssistantMode.KERNEL_DEBUG.value)
+        try:
+            mode = AssistantMode(mode_raw)
+        except ValueError:
+            raise _bff_error(
+                400,
+                ErrorCode.VALIDATION_FAILED,
+                f"Invalid mode: {mode_raw!r}",
+                "invalid_control_mode",
+                precondition_failed="control_mode_mode",
+                details_extra={"field": "mode"},
+            )
+        try:
+            assert_kernel_allowed(mode)
+        except ModePolicyViolation as exc:
+            raise _bff_error(
+                403,
+                ErrorCode.FORBIDDEN,
+                f"Mode policy violation: {exc}",
+                str(exc),
+                precondition_failed="control_mode_kernel_policy",
+                details_extra={"field": exc.field},
+            )
+        ttl_seconds = _mgmt_nl_positive_int(
+            options.get("ttlSeconds", options.get("ttl_seconds")),
+            DEFAULT_KERNEL_TTL_SECONDS,
+        )
+        idle_ttl_seconds = _mgmt_nl_positive_int(
+            options.get("idleTtlSeconds", options.get("idle_ttl_seconds")),
+            default_idle_ttl(ttl_seconds),
+        )
+        try:
+            control_mode = store.activate(
+                actor_id=identity.operator_id,
+                mode=mode,
+                capabilities=actor_capabilities(identity),
+                reason=str(options.get("reason") or "management_nl_chat_control_command").strip(),
+                passphrase=str(control_command.get("passphrase") or ""),
+                ttl_seconds=ttl_seconds,
+                idle_ttl_seconds=idle_ttl_seconds,
+                management_session_id=session_id,
+            )
+        except ControlModeError as exc:
+            _mgmt_nl_raise_control_mode_error(exc)
+    elif command_kind == "deactivate":
+        control_mode = store.deactivate(identity.operator_id, reason="management_nl_chat_control_command")
+    elif command_kind == "status":
+        control_mode = _assistant_control_mode_for_identity(
+            identity,
+            management_session_id=session_id,
+            touch=False,
+        )
+    else:
+        raise _bff_error(
+            400,
+            ErrorCode.VALIDATION_FAILED,
+            "Unsupported control-mode command",
+            "unsupported_control_mode_command",
+            precondition_failed="control_mode_command",
+        )
+
+    provider_status = _mgmt_nl_control_provider_status(command_kind)
+    answer = _mgmt_nl_control_answer(command_kind, control_mode)
+    assistant_turn_id = f"{message_id}-assistant"
+    audit_log_href = _management_ai_audit_href(session_id=session_id, trace_id=trace_id)
+    conversation_href = _management_ai_conversation_href(session_id)
+    audit_ref = _mgmt_nl_record_control_audit(
+        identity=identity,
+        command_kind=command_kind,
+        session_id=session_id,
+        message_id=message_id,
+        trace_id=trace_id,
+        focus=focus,
+        tenant_id=caller_tenant_id,
+        now=now,
+    )
+
+    redaction = {
+        "question": "redacted",
+        "passphrase": "not_persisted",
+        "provider": "not_invoked",
+    }
+    _management_ai_record_event(
+        {
+            "event_type": "management_ai.exchange.accepted",
+            "session_id": session_id,
+            "message_id": message_id,
+            "trace_id": trace_id,
+            "actor_id": identity.operator_id,
+            "route": "POST /bff/management/nl/ask",
+            "question": _MGMT_NL_CONTROL_REDACTED_QUESTION,
+            "focus": focus,
+            "tenant_id": caller_tenant_id,
+            "confidence": "high",
+            "source_keys": [],
+            "control_command": command_kind,
+            "control_command_source": control_command.get("source"),
+            "redaction": redaction,
+            "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
+            "control_mode": {
+                "state": control_mode.get("state"),
+                "active": control_mode.get("active"),
+                "mode": control_mode.get("mode"),
+                "activation_id": control_mode.get("activation_id") or control_mode.get("activationId"),
+            },
+            "audit_ref": audit_ref,
+        }
+    )
+
+    _publish_event(
+        _sse_buffers["ask"],
+        _sse_subscribers["ask"],
+        "management.nl.ask.accepted",
+        {
+            "session_id": session_id,
+            "message_id": message_id,
+            "trace_id": trace_id,
+            "focus": focus,
+            "control_command": command_kind,
+        },
+    )
+
+    result = {
+        "status": "accepted",
+        "data": {
+            "answer": answer,
+            "sessionId": session_id,
+            "session_id": session_id,
+            "message_id": message_id,
+            "traceId": trace_id,
+            "trace_id": trace_id,
+            "question": _MGMT_NL_CONTROL_REDACTED_QUESTION,
+            "focus": focus,
+            "sources": [],
+            "confidence": "high",
+            "summary_context": {},
+            "contextPack": None,
+            "context_pack": None,
+            "providerStatus": provider_status,
+            "provider_status": provider_status,
+            "controlMode": control_mode,
+            "control_mode": control_mode,
+            "controlCommand": command_kind,
+            "control_command": command_kind,
+            "actions": [],
+            "auditRef": audit_ref,
+            "audit_ref": audit_ref,
+            "auditLog": {
+                "href": audit_log_href,
+                "traceId": trace_id,
+                "trace_id": trace_id,
+            },
+            "audit_log": {
+                "href": audit_log_href,
+                "traceId": trace_id,
+                "trace_id": trace_id,
+            },
+            "conversation": {
+                "href": conversation_href,
+                "sessionId": session_id,
+                "session_id": session_id,
+                "traceId": trace_id,
+                "trace_id": trace_id,
+            },
+            "session": {
+                "sessionId": session_id,
+                "session_id": session_id,
+                "ttlSeconds": _MGMT_AI_SESSION_TTL_SECONDS,
+                "ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
+            },
+            "evidenceRefs": [],
+            "evidence_refs": [],
+            "redaction": redaction,
+        },
+        "meta": {
+            "snapshot_at": now,
+            "surfaces": {"management_nl_control_command": {"status": "ok", "source": "bff_interceptor"}},
+            "idempotency": {"idempotencyKey": resolved_key, "replayed": False},
+            "providerStatus": provider_status,
+            "provider_status": provider_status,
+            "traceId": trace_id,
+            "trace_id": trace_id,
+            "contextPackId": None,
+            "context_pack_id": None,
+            "redactedEvidenceCount": 0,
+            "redacted_evidence_count": 0,
+            "sessionTtlSeconds": _MGMT_AI_SESSION_TTL_SECONDS,
+            "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
+            "controlMode": control_mode,
+            "control_mode": control_mode,
+            "controlCommand": command_kind,
+            "control_command": command_kind,
+            "redaction": redaction,
+        },
+    }
+    _management_ai_record_event(
+        {
+            "event_type": "management_ai.exchange.completed",
+            "session_id": session_id,
+            "message_id": message_id,
+            "assistant_turn_id": assistant_turn_id,
+            "trace_id": trace_id,
+            "actor_id": identity.operator_id,
+            "route": "POST /bff/management/nl/ask",
+            "answer": _management_ai_summary_value(answer),
+            "provider_status": provider_status,
+            "actions": [],
+            "action_count": 0,
+            "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
+            "control_command": command_kind,
+            "redaction": redaction,
+            "control_mode": {
+                "state": control_mode.get("state"),
+                "active": control_mode.get("active"),
+                "mode": control_mode.get("mode"),
+                "activation_id": control_mode.get("activation_id") or control_mode.get("activationId"),
+            },
+            "fallback": provider_status.get("fallback"),
+        }
+    )
+    _MGMT_NL_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return JSONResponse(status_code=202, content=result)
 
 
 def _mgmt_nl_normalize_question_text(value: str) -> str:
@@ -30851,10 +31369,11 @@ async def bff_management_nl_ask(
 
     question = _agora_required_text(payload, "question")
     _mgmt_nl_validate_question_size(question)
+    control_command = _mgmt_nl_parse_control_command(question)
 
     # BFF-B6-003: high-risk refusal policy — must run before idempotency, surface
     # collection, session creation, or SSE emission.
-    risk = _mgmt_nl_high_risk_classify(question)
+    risk = None if control_command is not None else _mgmt_nl_high_risk_classify(question)
     if risk is not None:
         audit_id = _mgmt_nl_record_high_risk_refusal(
             identity=identity,
@@ -30919,6 +31438,21 @@ async def bff_management_nl_ask(
     session_id = str(payload.get("sessionId") or payload.get("session_id") or f"mgmt-nl-{uuid.uuid4().hex[:10]}")
     message_id = f"mnl-{uuid.uuid4().hex[:16]}"
     trace_id = str(payload.get("traceId") or payload.get("trace_id") or f"mnl-trace-{uuid.uuid4().hex[:12]}")
+    if control_command is not None:
+        return _mgmt_nl_handle_control_command(
+            control_command=control_command,
+            payload=payload,
+            identity=identity,
+            caller_tenant_id=caller_tenant_id,
+            focus=focus,
+            resolved_key=resolved_key,
+            request_hash=request_hash,
+            session_id=session_id,
+            message_id=message_id,
+            trace_id=trace_id,
+            now=now,
+        )
+
     control_mode = _assistant_control_mode_for_identity(
         identity,
         management_session_id=session_id,
