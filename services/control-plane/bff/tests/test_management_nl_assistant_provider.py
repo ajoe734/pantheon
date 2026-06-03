@@ -1311,3 +1311,141 @@ def test_high_risk_refusal_runs_before_provider_invocation(tmp_path, monkeypatch
         bff_main.read_store = original_store
         bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._sse_buffers["ask"].clear()
+
+
+def test_openclaw_client_routes_claude_provider_to_correct_endpoint(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
+    recorded: dict[str, Any] = {}
+
+    def fake_urlopen(request, timeout):
+        recorded["url"] = request.full_url
+        recorded["headers"] = dict(request.header_items())
+        recorded["body"] = json.loads(request.data.decode("utf-8"))
+        return FakeHttpResponse(
+            {
+                "provider": "claude",
+                "status": "ok",
+                "text": "claude-smoke-ok",
+                "config_dir": "claude_config",
+            }
+        )
+
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen", fake_urlopen):
+        result = OpenClawOpsClient(timeout_seconds=2.0).invoke_assistant_provider(
+            provider="claude_cli",
+            mode="user",
+            prompt="Reply with: smoke-ok",
+            context_pack={"context_pack_id": "ctx-claude-test"},
+            operator_id="operator-claude",
+            trace_id="trace-claude-1",
+        )
+
+    assert result["status"] == "ok"
+    assert recorded["url"] == (
+        "http://openclaw-adapter:8104/api/openclaw-adapter/assistant/claude/invoke"
+    )
+    assert recorded["headers"]["X-operator-id"] == "operator-claude"
+    assert recorded["headers"]["X-trace-id"] == "trace-claude-1"
+    assert recorded["body"] == {
+        "prompt": "Reply with: smoke-ok",
+        "mode": "user",
+        "context_pack": {"context_pack_id": "ctx-claude-test"},
+    }
+
+
+def test_openclaw_client_unsupported_provider_raises_error(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
+    client = OpenClawOpsClient(timeout_seconds=1.0)
+    try:
+        client.invoke_assistant_provider(
+            provider="gpt-4o",
+            mode="user",
+            prompt="hello",
+            context_pack={},
+            operator_id="operator-test",
+        )
+        assert False, "Expected OpenClawOpsClientError"
+    except OpenClawOpsClientError as exc:
+        assert exc.error_code == "ASSISTANT_PROVIDER_NOT_SUPPORTED"
+        assert exc.status_code == 400
+
+
+def test_claude_provider_enabled_invokes_openclaw_claude_route(tmp_path, monkeypatch) -> None:
+    original_store = bff_main.read_store
+    recorded_calls: list[dict[str, Any]] = []
+
+    class FakeClaudeProviderClient:
+        def invoke_assistant_provider(self, **kwargs: Any) -> dict[str, Any]:
+            recorded_calls.append(kwargs)
+            # Claude adapter returns a flat response with "text", not nested data.output.
+            return {
+                "provider": "claude",
+                "status": "ok",
+                "text": "Claude management answer.",
+                "config_dir": "claude_config",
+            }
+
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "claude_cli")
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: FakeClaudeProviderClient())
+        client = _seeded_client(tmp_path, monkeypatch)
+
+        resp = client.post(
+            "/bff/management/nl/ask",
+            json={"question": "What is the portfolio status?", "focus": "portfolio"},
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-claude-provider"},
+        )
+
+        assert resp.status_code == 202, resp.text
+        body = resp.json()
+        assert len(recorded_calls) == 1
+        call = recorded_calls[0]
+        assert call["provider"] == "claude_cli"
+        assert call["mode"] == "user"
+        assert call["operator_id"] == "asst-bff-002"
+        provider_status = body["data"]["providerStatus"]
+        assert provider_status["used"] is True
+    finally:
+        bff_main.read_store = original_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+        bff_main._sse_buffers["ask"].clear()
+
+
+def test_claude_provider_degraded_falls_back_to_deterministic_answer(tmp_path, monkeypatch) -> None:
+    original_store = bff_main.read_store
+    fake = FakeProviderClient(
+        exc=OpenClawOpsClientError(
+            "claude binary not found",
+            status_code=503,
+            error_code="CLAUDE_BINARY_NOT_FOUND",
+        )
+    )
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "claude_cli")
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        client = _seeded_client(tmp_path, monkeypatch)
+
+        resp = client.post(
+            "/bff/management/nl/ask",
+            json={"question": "What is the portfolio status?", "focus": "portfolio"},
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-claude-degraded"},
+        )
+
+        assert resp.status_code == 202, resp.text
+        body = resp.json()
+        assert body["data"]["answer"].startswith("Management summary for question:")
+        provider_status = body["data"]["providerStatus"]
+        assert provider_status["status"] == "degraded"
+        assert provider_status["reason"] == "CLAUDE_BINARY_NOT_FOUND"
+        assert provider_status["fallback"] == "deterministic_synthesis"
+        assert provider_status["used"] is False
+        assert len(fake.calls) == 1
+    finally:
+        bff_main.read_store = original_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._sse_buffers["ask"].clear()
