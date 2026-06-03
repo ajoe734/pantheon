@@ -30,23 +30,43 @@ def _uid(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:12]}"
 
 
+def _slug(text: str, max_len: int = 40) -> str:
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in text.lower())
+    return safe[:max_len].strip("_")
+
+
+def _get(obj: Any, *keys: str, default: Any = None) -> Any:
+    """Fetch a nested value from a dict or object, traversing nested keys.
+
+    Supports both dict-shaped BFF context packs and Pydantic/MagicMock objects.
+    Returns *default* when any intermediate or final value is None.
+    """
+    cur: Any = obj
+    for k in keys:
+        if cur is None:
+            return default
+        cur = cur.get(k) if isinstance(cur, dict) else getattr(cur, k, None)
+    return cur if cur is not None else default
+
+
 # ---------------------------------------------------------------------------
 # Source citation helpers
 # ---------------------------------------------------------------------------
 
 def _context_pack_source_refs(context_pack: Optional[Any]) -> List[DocSourceRef]:
-    """Convert AssistantContextPack.sources into DocSourceRef list."""
+    """Convert BFF context pack sources into DocSourceRef list (dict or object)."""
     if context_pack is None:
         return []
-    raw_sources = getattr(context_pack, "sources", []) or []
+    raw_sources = _get(context_pack, "sources", default=[]) or []
     refs: List[DocSourceRef] = []
     for src in raw_sources:
+        source_id = _get(src, "source_id") or str(src)
         refs.append(
             DocSourceRef(
-                sourceId=getattr(src, "source_id", str(src)),
-                href=getattr(src, "href", None),
-                snapshotAt=getattr(src, "snapshot_at", None),
-                kind=getattr(src, "source_kind", "bff"),
+                sourceId=source_id,
+                href=_get(src, "href"),
+                snapshotAt=_get(src, "snapshot_at"),
+                kind=_get(src, "source_kind", default="bff") or "bff",
             )
         )
     return refs
@@ -114,12 +134,10 @@ def build_requirement_capture(
 
 
 def _actor_id_from_context(context_pack: Optional[Any]) -> Optional[str]:
-    if context_pack is None:
-        return None
-    actor = getattr(context_pack, "actor", None)
+    actor = _get(context_pack, "actor")
     if actor is None:
         return None
-    return str(getattr(actor, "operator_id", None) or "unknown")
+    return str(_get(actor, "operator_id", default="unknown"))
 
 
 def _infer_user_intent(turns: List[Dict[str, Any]], fallback: str) -> str:
@@ -133,13 +151,11 @@ def _infer_user_intent(turns: List[Dict[str, Any]], fallback: str) -> str:
 
 
 def _infer_constraints(context_pack: Optional[Any]) -> List[str]:
-    """Extract constraints from context pack mode."""
-    if context_pack is None:
-        return []
-    mode = getattr(context_pack, "mode", None)
+    """Extract constraints from context pack mode (dict or object)."""
+    mode = _get(context_pack, "mode")
     if mode is None:
         return []
-    mode_val = getattr(mode, "value", str(mode))
+    mode_val = _get(mode, "value", default=str(mode)) or str(mode)
     if mode_val == "user":
         return [
             "No shell access",
@@ -213,10 +229,8 @@ def _describe_current_state(capture: RequirementCapture, context_pack: Optional[
 
 
 def _mode_str(context_pack: Optional[Any]) -> str:
-    if context_pack is None:
-        return "unknown mode"
-    mode = getattr(context_pack, "mode", None)
-    return str(getattr(mode, "value", mode) or "unknown mode")
+    mode = _get(context_pack, "mode")
+    return str(_get(mode, "value", default=mode) or "unknown mode")
 
 
 def _infer_flows(capture: RequirementCapture) -> List[str]:
@@ -231,12 +245,11 @@ def _infer_flows(capture: RequirementCapture) -> List[str]:
 
 def _infer_data_surfaces(capture: RequirementCapture, context_pack: Optional[Any]) -> List[str]:
     surfaces = []
-    if context_pack is not None:
-        backend = getattr(context_pack, "backend", None)
-        if backend is not None:
-            for attr in ("control_room", "jobs", "alerts", "audit", "persona_health", "strategy_health"):
-                if getattr(backend, attr, None) is not None:
-                    surfaces.append(f"BFF backend surface: {attr}")
+    backend = _get(context_pack, "backend")
+    if backend is not None:
+        for attr in ("control_room", "jobs", "alerts", "audit", "persona_health", "strategy_health"):
+            if _get(backend, attr) is not None:
+                surfaces.append(f"BFF backend surface: {attr}")
     for mod in (capture.affected_modules or []):
         surfaces.append(f"Module data: {mod}")
     if not surfaces:
@@ -390,8 +403,13 @@ def build_execution_tasks(
     sd: SystemDesign,
     request: DevDocGenerateRequest,
     context_pack: Optional[Any],
+    packet_id: str = "",
 ) -> List[ExecutionTask]:
-    """Produce execution task list from the generated SA/SD."""
+    """Produce execution task list from the generated SA/SD.
+
+    Pass *packet_id* from generate_dev_doc_packet so artifact paths align with
+    the archive_packet output directory (docs/04/sa_sd_{packet_id}_{slug}/).
+    """
     owner = request.proposed_owner or _default_owner(context_pack)
     reviewer = request.proposed_reviewer or _default_reviewer(owner)
 
@@ -409,7 +427,7 @@ def build_execution_tasks(
             reviewer=reviewer,
             phase=f"Sprint ASST-INTEG / {capture.problem[:40]}",
             dependsOn=[],
-            artifacts=_artifact_paths(capture, sd),
+            artifacts=_artifact_paths(capture, sd, packet_id),
             acceptance=list(sa.acceptance_scenarios),
             sourceRefs=source_refs,
         )
@@ -424,7 +442,7 @@ def build_execution_tasks(
             owner=reviewer,
             reviewer=owner,
             dependsOn=[tasks[0].task_id],
-            artifacts=[p for p in _artifact_paths(capture, sd) if "test" in p.lower()],
+            artifacts=[p for p in _artifact_paths(capture, sd, packet_id) if "test" in p.lower()],
             acceptance=list(sd.tests),
             sourceRefs=source_refs,
         )
@@ -434,12 +452,10 @@ def build_execution_tasks(
 
 
 def _default_owner(context_pack: Optional[Any]) -> str:
-    if context_pack is None:
-        return "Codex"
-    actor = getattr(context_pack, "actor", None)
+    actor = _get(context_pack, "actor")
     if actor is None:
         return "Codex"
-    roles = list(getattr(actor, "roles", []) or [])
+    roles = list(_get(actor, "roles", default=[]) or [])
     if "admin" in roles:
         return "Claude"
     return "Codex"
@@ -458,11 +474,17 @@ def _default_reviewer(owner: str) -> str:
     return reviewer_map.get(owner, "Claude")
 
 
-def _artifact_paths(capture: RequirementCapture, sd: SystemDesign) -> List[str]:
+def _artifact_paths(capture: RequirementCapture, sd: SystemDesign, packet_id: str) -> List[str]:
+    """Return artifact paths matching the archive_packet output directory convention.
+
+    Uses docs/04/sa_sd_{packet_id}_{slug}/ to align with archive_packet().
+    """
+    slug = _slug(capture.problem)
+    bundle_prefix = f"docs/04/sa_sd_{packet_id}_{slug}" if packet_id else f"docs/04/sa_sd_{slug}"
     paths = [
-        f"docs/04/sa_sd_{capture.capture_id}/requirement_capture.md",
-        f"docs/04/sa_sd_{capture.capture_id}/system_analysis.md",
-        f"docs/04/sa_sd_{capture.capture_id}/system_design.md",
+        f"{bundle_prefix}/requirement_capture.md",
+        f"{bundle_prefix}/system_analysis.md",
+        f"{bundle_prefix}/system_design.md",
     ]
     for mod in (capture.affected_modules or []):
         safe = mod.lower().replace("/", "_").replace(" ", "_")
@@ -482,8 +504,13 @@ def generate_dev_doc_packet(
     context_pack: Optional[Any],
     archive_locations: Optional[ArchiveLocations] = None,
 ) -> DevDocPacket:
-    """Assemble the full DevDocPacket from conversation turns and context pack."""
+    """Assemble the full DevDocPacket from conversation turns and context pack.
+
+    Generates packet_id first so execution task artifact paths align with the
+    archive_packet() output directory (docs/04/sa_sd_{packet_id}_{slug}/).
+    """
     generated_at = _now()
+    packet_id = _uid("pkt")
     actor_id = _actor_id_from_context(context_pack) or "unknown"
 
     capture = build_requirement_capture(
@@ -507,13 +534,14 @@ def generate_dev_doc_packet(
         sd=sd,
         request=request,
         context_pack=context_pack,
+        packet_id=packet_id,
     )
 
     top_source_refs: List[DocSourceRef] = [_conversation_source_ref(request.conversation_id)]
     top_source_refs.extend(_context_pack_source_refs(context_pack))
 
     return DevDocPacket(
-        packetId=_uid("pkt"),
+        packetId=packet_id,
         conversationId=request.conversation_id,
         generatedAt=generated_at,
         actorId=actor_id,

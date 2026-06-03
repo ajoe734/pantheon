@@ -6,9 +6,12 @@ Acceptance gates:
 - SD includes architecture, api_contract, db_migration, ui_routes, tests, rollout, rollback
 - Execution tasks include owner, reviewer, depends_on, artifacts, acceptance
 - Archiver writes docs to correct paths and returns archive_locations
+- Dict-shaped BFF context packs supported for actor/mode/sources/backend
+- Generated task artifact paths align with archive_packet output paths
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -71,6 +74,7 @@ def _make_turns() -> list:
 
 
 def _make_context_pack() -> MagicMock:
+    """Object-shaped context pack (MagicMock, simulates Pydantic model attributes)."""
     pack = MagicMock()
     pack.mode.value = "user"
     pack.actor.operator_id = "op-001"
@@ -84,6 +88,26 @@ def _make_context_pack() -> MagicMock:
     pack.backend.control_room = {"status": "ok"}
     pack.backend.jobs = None
     return pack
+
+
+def _make_dict_context_pack() -> dict:
+    """Dict-shaped BFF context pack (as produced by the real ASST-INTEG-002 composer)."""
+    return {
+        "actor": {"operator_id": "op-dict-001", "roles": ["operator"]},
+        "mode": {"value": "user"},
+        "sources": [
+            {
+                "source_id": "control_room",
+                "href": "/bff/v5/control-room",
+                "snapshot_at": "2026-06-03T12:00:00Z",
+                "source_kind": "bff",
+            }
+        ],
+        "backend": {
+            "control_room": {"status": "ok"},
+            "jobs": None,
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +264,10 @@ class TestExecutionTasks:
         capture = build_requirement_capture(request=req, turns=turns, context_pack=pack)
         sa = build_system_analysis(capture=capture, context_pack=pack)
         sd = build_system_design(sa=sa, capture=capture, context_pack=pack)
-        return build_execution_tasks(capture=capture, sa=sa, sd=sd, request=req, context_pack=pack)
+        return build_execution_tasks(
+            capture=capture, sa=sa, sd=sd, request=req, context_pack=pack,
+            packet_id="pkt_test000001",
+        )
 
     def test_at_least_two_tasks(self):
         tasks = self._make_tasks()
@@ -265,10 +292,79 @@ class TestExecutionTasks:
         assert tasks[0].owner == "Gemini"
         assert tasks[0].reviewer == "Claude"
 
-    def test_artifact_paths_contain_capture_id(self):
+    def test_artifact_paths_use_docs04(self):
         tasks = self._make_tasks()
         all_artifacts = " ".join(tasks[0].artifacts)
         assert "docs/04/" in all_artifacts
+
+    def test_artifact_paths_include_packet_id(self):
+        tasks = self._make_tasks()
+        all_artifacts = " ".join(tasks[0].artifacts)
+        assert "pkt_test000001" in all_artifacts
+
+
+# ---------------------------------------------------------------------------
+# Dict-shaped BFF context pack tests
+# ---------------------------------------------------------------------------
+
+class TestDictContextPack:
+    """Verify that dict-shaped context packs (actor/mode/sources/backend) are
+    correctly handled alongside object-shaped (MagicMock/Pydantic) packs."""
+
+    def test_source_refs_from_dict_context_pack(self):
+        req = _make_request()
+        pack = _make_dict_context_pack()
+        capture = build_requirement_capture(request=req, turns=[], context_pack=pack)
+        ids = [r.source_id for r in capture.source_refs]
+        assert "management_nl" in ids
+        assert "control_room" in ids
+
+    def test_actor_id_from_dict_context_pack(self):
+        req = _make_request()
+        pack = _make_dict_context_pack()
+        packet = generate_dev_doc_packet(request=req, turns=[], context_pack=pack)
+        assert packet.actor_id == "op-dict-001"
+
+    def test_mode_constraints_from_dict_context_pack(self):
+        req = _make_request()
+        pack = _make_dict_context_pack()
+        capture = build_requirement_capture(request=req, turns=[], context_pack=pack)
+        assert any("shell" in c.lower() for c in capture.constraints)
+
+    def test_backend_surfaces_from_dict_context_pack(self):
+        req = _make_request()
+        pack = _make_dict_context_pack()
+        capture = build_requirement_capture(request=req, turns=[], context_pack=pack)
+        sa = build_system_analysis(capture=capture, context_pack=pack)
+        data_text = " ".join(sa.data)
+        assert "control_room" in data_text
+
+    def test_source_refs_in_sa_from_dict_pack(self):
+        req = _make_request()
+        pack = _make_dict_context_pack()
+        capture = build_requirement_capture(request=req, turns=[], context_pack=pack)
+        sa = build_system_analysis(capture=capture, context_pack=pack)
+        ids = [r.source_id for r in sa.source_refs]
+        assert "management_nl" in ids
+        assert "control_room" in ids
+
+    def test_full_packet_with_dict_context_pack(self):
+        req = _make_request()
+        turns = _make_turns()
+        pack = _make_dict_context_pack()
+        packet = generate_dev_doc_packet(request=req, turns=turns, context_pack=pack)
+        assert packet.packet_id.startswith("pkt_")
+        assert packet.actor_id == "op-dict-001"
+        assert len(packet.source_refs) > 0
+        ids = [r.source_id for r in packet.source_refs]
+        assert "control_room" in ids
+
+    def test_kernel_mode_dict_constraints(self):
+        req = _make_request()
+        pack = dict(_make_dict_context_pack())
+        pack["mode"] = {"value": "kernel"}
+        capture = build_requirement_capture(request=req, turns=[], context_pack=pack)
+        assert any("branch" in c.lower() or "kernel" in c.lower() for c in capture.constraints)
 
 
 # ---------------------------------------------------------------------------
@@ -295,6 +391,15 @@ class TestGenerateDevDocPacket:
         packet = generate_dev_doc_packet(request=req, turns=[], context_pack=None)
         ids = [r.source_id for r in packet.source_refs]
         assert "management_nl" in ids
+
+    def test_packet_id_used_in_task_artifact_paths(self):
+        req = _make_request()
+        turns = _make_turns()
+        pack = _make_context_pack()
+        packet = generate_dev_doc_packet(request=req, turns=turns, context_pack=pack)
+        # Task artifact paths must reference the packet's own id
+        all_artifacts = " ".join(packet.execution_tasks[0].artifacts)
+        assert packet.packet_id in all_artifacts
 
 
 # ---------------------------------------------------------------------------
@@ -382,3 +487,25 @@ class TestDevDocsArchiver:
             assert json_file.exists()
             data = json_file.read_text(encoding="utf-8")
             assert packet.packet_id in data
+
+    def test_artifact_paths_align_with_archive_locations(self):
+        """Task artifact paths must reference the same files archive_packet() writes."""
+        req = _make_request()
+        turns = _make_turns()
+        pack = _make_context_pack()
+        packet = generate_dev_doc_packet(request=req, turns=turns, context_pack=pack)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "ai-status.json").write_text("{}", encoding="utf-8")
+            locations = archive_packet(packet, repo_root=tmp)
+
+        all_artifacts = " ".join(packet.execution_tasks[0].artifacts)
+        assert locations.requirement_capture in all_artifacts, (
+            f"Expected {locations.requirement_capture!r} in task artifacts"
+        )
+        assert locations.system_analysis in all_artifacts, (
+            f"Expected {locations.system_analysis!r} in task artifacts"
+        )
+        assert locations.system_design in all_artifacts, (
+            f"Expected {locations.system_design!r} in task artifacts"
+        )
