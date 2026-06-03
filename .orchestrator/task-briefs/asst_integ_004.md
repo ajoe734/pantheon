@@ -10,8 +10,8 @@ Do not read `current-work.md` by default for implementation context.
 - Owner: Claude
 - Reviewer: Codex2
 - Phase: Sprint ASST-INTEG / Governed operation tools
-- Last update: 2026-06-03T15:27:03Z
-- Next: Blocking review: AuditExport is allowlisted as a low-risk assistant tool, but execute_governed_tool(action_id="AuditExport") currently returns status=failed because CommandType.AUDIT_EXPORT has no command_executor executor. The route test allows failed and masks the regression. Fix by routing AuditExport through an existing durable BFF command/admission path or adding a governed executor/receipt path, and tighten tests so low-risk execution cannot pass with status=failed.
+- Last update: 2026-06-03T15:32:44Z
+- Next: Blocking review: (1) Low-risk AuditExport is allowlisted but execute_governed_tool returns status=failed with EXECUTION_ERROR because CommandType.AUDIT_EXPORT has no executor; tighten tests so low-risk execution cannot pass with status=failed. (2) Medium-risk PersonaAction executes with only reason and no confirmation marker, but acceptance requires reason plus confirmation. Route executions through the durable BFF command/admission/audit receipt path or add governed executor/admission handling, and add tests for successful/admitted low-risk receipt plus medium confirmation enforcement.
 
 ## Summary
 把小幫手的系統操作能力接到既有 action_catalog/command_executor/audit receipt，而不是直接操作 DOM 或 shell。
@@ -23,12 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;services/control-plane/bff/action_catalog.py;services/control-plane/bff/command_executor.py;services/control-plane/bff/assistant;services/control-plane/bff/tests/test_assistant_security.py
 
 ## Recent Task Activity
-- 2026-06-03T15:20:03Z · Orchestrator · worker_superseded · Worker superseded after task responsibility moved to another agent.
-- 2026-06-03T15:26:51Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
-- 2026-06-03T15:26:52Z · Orchestrator · worker_worktree_refreshed · -
 - 2026-06-03T15:26:52Z · Orchestrator · worker_worktree_reused · -
 - 2026-06-03T15:26:52Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
 - 2026-06-03T15:27:03Z · Codex2 · reopen · Blocking review: AuditExport is allowlisted as a low-risk assistant tool, but execute_governed_tool(action_id="AuditExport") currently returns status=failed because CommandType.AUDIT_EXPORT has no command_executor executor. The route test allows failed and masks the regression. Fix by routing AuditExport through an existing durable BFF command/admission path or adding a governed executor/receipt path, and tighten tests so low-risk execution cannot pass with status=failed.
+- 2026-06-03T15:27:40Z · Orchestrator · wake_queued · Wake-up queued for supervisor: owned_in_progress_dispatch
+- 2026-06-03T15:32:44Z · Codex2 · reopen · Blocking review: (1) Low-risk AuditExport is allowlisted but execute_governed_tool returns status=failed with EXECUTION_ERROR because CommandType.AUDIT_EXPORT has no executor; tighten tests so low-risk execution cannot pass with status=failed. (2) Medium-risk PersonaAction executes with only reason and no confirmation marker, but acceptance requires reason plus confirmation. Route executions through the durable BFF command/admission/audit receipt path or add governed executor/admission handling, and add tests for successful/admitted low-risk receipt plus medium confirmation enforcement.
+- 2026-06-03T15:35:07Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 447.5s without a live worker or queue record.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
