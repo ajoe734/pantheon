@@ -31454,9 +31454,11 @@ def _mgmt_nl_text_from_provider_value(value: Any) -> Optional[str]:
 
 def _mgmt_nl_extract_provider_answer(payload: Dict[str, Any]) -> Optional[str]:
     data = payload.get("data") if isinstance(payload, dict) else None
-    if not isinstance(data, dict):
-        return None
-    return _mgmt_nl_text_from_provider_value(data.get("output"))
+    if isinstance(data, dict):
+        return _mgmt_nl_text_from_provider_value(data.get("output"))
+    # Claude and other flat-format providers return the answer in a top-level
+    # "text" field rather than nesting it under data.output.
+    return _mgmt_nl_text_from_provider_value(payload)
 
 
 def _mgmt_nl_maybe_provider_answer(
@@ -31511,7 +31513,7 @@ def _mgmt_nl_maybe_provider_answer(
             status="disabled",
             reason="feature_disabled",
         ), []
-    if provider not in {"codex", "codex_cli"}:
+    if provider not in {"codex", "codex_cli", "claude", "claude_cli"}:
         _management_ai_record_event(
             {
                 "event_type": "management_ai.provider.skipped",
@@ -31546,7 +31548,11 @@ def _mgmt_nl_maybe_provider_answer(
             "provider_run_id": run_id,
             "actor_id": identity.operator_id,
             "provider": provider,
-            "route": "POST /api/openclaw-adapter/assistant/providers/codex/invoke",
+            "route": (
+                "POST /api/openclaw-adapter/assistant/claude/invoke"
+                if provider in {"claude", "claude_cli"}
+                else "POST /api/openclaw-adapter/assistant/providers/codex/invoke"
+            ),
             "context_pack_id": context_pack.get("context_pack_id"),
             "prompt_bytes": len(prompt.encode("utf-8")),
         }
