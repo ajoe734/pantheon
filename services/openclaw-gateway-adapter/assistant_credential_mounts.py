@@ -163,8 +163,10 @@ class AssistantCredentialMounts:
         if self._invalid_mount_mode():
             return self._metadata(contract, False, "invalid_mount_mode", "not_checked")
 
+        # The host path is validated as policy, but the running container can
+        # only prove readability through the mounted container target path.
         try:
-            host_stat = self._stat(os.path.normpath(contract.host_path))
+            mount_stat = self._stat(os.path.normpath(contract.container_path))
         except FileNotFoundError:
             return self._metadata(contract, False, "missing_host_mount", "not_checked")
         except PermissionError:
@@ -172,16 +174,16 @@ class AssistantCredentialMounts:
         except OSError:
             return self._metadata(contract, False, "host_mount_unavailable", "not_checked")
 
-        if not stat.S_ISDIR(host_stat.st_mode):
+        if not stat.S_ISDIR(mount_stat.st_mode):
             return self._metadata(contract, False, "host_mount_not_directory", "not_checked")
 
         if self._expected_uid is None:
             return self._metadata(contract, False, "owner_unverified", "unverified")
 
-        if host_stat.st_uid != self._expected_uid:
+        if mount_stat.st_uid != self._expected_uid:
             return self._metadata(contract, False, "wrong_owner", "mismatch")
 
-        if host_stat.st_mode & 0o077:
+        if mount_stat.st_mode & 0o077:
             return self._metadata(contract, False, "permissions_too_open", "matched")
 
         return self._metadata(contract, True, "ready", "matched")
