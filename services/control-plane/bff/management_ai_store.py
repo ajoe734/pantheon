@@ -137,6 +137,7 @@ class ManagementAiConversationStore:
         self._attachment_store = attachment_store or ManagementAiAttachmentStore()
         self._sessions: Dict[str, Dict[str, Any]] = {}
         self._turns: Dict[str, List[Dict[str, Any]]] = {}
+        self._assistant_sessions: Dict[str, Dict[str, Any]] = {}
         self._sequence = 0
         if self._enabled():
             self._init_db()
@@ -183,9 +184,37 @@ class ManagementAiConversationStore:
                     )
                     """
                 )
+                turn_columns = {
+                    str(row["name"])
+                    for row in conn.execute("PRAGMA table_info(management_ai_turns)").fetchall()
+                }
+                if "assistant_metadata" not in turn_columns:
+                    conn.execute("ALTER TABLE management_ai_turns ADD COLUMN assistant_metadata TEXT")
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_management_ai_turns_session_created "
                     "ON management_ai_turns(session_id, created_at, sequence)"
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS management_ai_assistant_sessions (
+                      session_id TEXT PRIMARY KEY REFERENCES management_ai_sessions(id) ON DELETE CASCADE,
+                      mode TEXT NOT NULL,
+                      actor_id TEXT NOT NULL,
+                      roles TEXT NOT NULL DEFAULT '[]',
+                      capabilities TEXT NOT NULL DEFAULT '[]',
+                      created_at TEXT NOT NULL,
+                      expires_at TEXT,
+                      status TEXT NOT NULL,
+                      reason TEXT,
+                      ttl_seconds INTEGER,
+                      context_pack_id TEXT,
+                      provider_run_id TEXT,
+                      audit_refs TEXT NOT NULL DEFAULT '[]',
+                      revoked_at TEXT,
+                      revoke_reason TEXT,
+                      updated_at TEXT NOT NULL
+                    )
+                    """
                 )
 
     def _row_to_session(self, row: sqlite3.Row) -> Dict[str, Any]:
@@ -212,6 +241,11 @@ class ManagementAiConversationStore:
         ui_snapshot = _json_loads(row["ui_snapshot"], None)
         ui_actions = _json_loads(row["ui_actions"], [])
         attachments = _json_loads(row["attachments"], [])
+        assistant_metadata = (
+            _json_loads(row["assistant_metadata"], {})
+            if "assistant_metadata" in row.keys()
+            else {}
+        )
         return {
             "id": turn_id,
             "turnId": turn_id,
@@ -231,9 +265,46 @@ class ManagementAiConversationStore:
             "uiActions": ui_actions if isinstance(ui_actions, list) else [],
             "ui_actions": ui_actions if isinstance(ui_actions, list) else [],
             "actions": ui_actions if isinstance(ui_actions, list) else [],
+            "assistantMetadata": assistant_metadata if isinstance(assistant_metadata, dict) else {},
+            "assistant_metadata": assistant_metadata if isinstance(assistant_metadata, dict) else {},
             "createdAt": row["created_at"],
             "created_at": row["created_at"],
             "sequence": int(row["sequence"] or 0),
+        }
+
+    def _row_to_assistant_session(self, row: sqlite3.Row) -> Dict[str, Any]:
+        roles = _json_loads(row["roles"], [])
+        capabilities = _json_loads(row["capabilities"], [])
+        audit_refs = _json_loads(row["audit_refs"], [])
+        ttl_seconds = row["ttl_seconds"]
+        return {
+            "sessionId": row["session_id"],
+            "session_id": row["session_id"],
+            "mode": row["mode"],
+            "actorId": row["actor_id"],
+            "actor_id": row["actor_id"],
+            "roles": roles if isinstance(roles, list) else [],
+            "capabilities": capabilities if isinstance(capabilities, list) else [],
+            "createdAt": row["created_at"],
+            "created_at": row["created_at"],
+            "expiresAt": row["expires_at"],
+            "expires_at": row["expires_at"],
+            "status": row["status"],
+            "reason": row["reason"],
+            "ttlSeconds": int(ttl_seconds) if ttl_seconds is not None else None,
+            "ttl_seconds": int(ttl_seconds) if ttl_seconds is not None else None,
+            "contextPackId": row["context_pack_id"],
+            "context_pack_id": row["context_pack_id"],
+            "providerRunId": row["provider_run_id"],
+            "provider_run_id": row["provider_run_id"],
+            "auditRefs": audit_refs if isinstance(audit_refs, list) else [],
+            "audit_refs": audit_refs if isinstance(audit_refs, list) else [],
+            "revokedAt": row["revoked_at"],
+            "revoked_at": row["revoked_at"],
+            "revokeReason": row["revoke_reason"],
+            "revoke_reason": row["revoke_reason"],
+            "updatedAt": row["updated_at"],
+            "updated_at": row["updated_at"],
         }
 
     def reset(self) -> None:
@@ -241,9 +312,11 @@ class ManagementAiConversationStore:
             if self._enabled():
                 with self._connect() as conn:
                     conn.execute("DELETE FROM management_ai_turns")
+                    conn.execute("DELETE FROM management_ai_assistant_sessions")
                     conn.execute("DELETE FROM management_ai_sessions")
             self._sessions = {}
             self._turns = {}
+            self._assistant_sessions = {}
             self._sequence = 0
 
     def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
@@ -441,6 +514,7 @@ class ManagementAiConversationStore:
         provider_status: Optional[Dict[str, Any]] = None,
         ui_snapshot: Optional[Dict[str, Any]] = None,
         ui_actions: Optional[List[Dict[str, Any]]] = None,
+        assistant_metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         clean_session_id = str(session_id or "").strip()
         clean_role = str(role or "").strip().lower()
@@ -451,6 +525,7 @@ class ManagementAiConversationStore:
         clean_trace_id = str(trace_id or "").strip() or None
         clean_attachments = list(attachments or [])
         clean_ui_actions = list(ui_actions or [])
+        clean_assistant_metadata = dict(assistant_metadata) if isinstance(assistant_metadata, dict) else {}
         with self._lock:
             if self._enabled():
                 with self._connect() as conn:
@@ -469,8 +544,9 @@ class ManagementAiConversationStore:
                         """
                         INSERT INTO management_ai_turns
                           (id, session_id, role, text, attachments, provider_status,
-                           trace_id, ui_snapshot, ui_actions, created_at, sequence)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           trace_id, ui_snapshot, ui_actions, assistant_metadata,
+                           created_at, sequence)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             clean_turn_id,
@@ -482,6 +558,7 @@ class ManagementAiConversationStore:
                             clean_trace_id,
                             _json_dumps(ui_snapshot) if isinstance(ui_snapshot, dict) else None,
                             _json_dumps(clean_ui_actions),
+                            _json_dumps(clean_assistant_metadata) if clean_assistant_metadata else None,
                             created_at,
                             next_sequence,
                         ),
@@ -520,6 +597,8 @@ class ManagementAiConversationStore:
                 "uiActions": clean_ui_actions,
                 "ui_actions": clean_ui_actions,
                 "actions": clean_ui_actions,
+                "assistantMetadata": clean_assistant_metadata,
+                "assistant_metadata": clean_assistant_metadata,
                 "createdAt": created_at,
                 "created_at": created_at,
                 "sequence": self._sequence,
@@ -555,6 +634,146 @@ class ManagementAiConversationStore:
                 ),
             )
         ]
+
+    def upsert_assistant_session(
+        self,
+        *,
+        session_id: str,
+        mode: str,
+        actor_id: str,
+        roles: List[str],
+        capabilities: List[str],
+        created_at: str,
+        expires_at: Optional[str],
+        status: str,
+        reason: Optional[str],
+        ttl_seconds: Optional[int],
+        context_pack_id: Optional[str],
+        provider_run_id: Optional[str],
+        audit_refs: List[str],
+        revoked_at: Optional[str],
+        revoke_reason: Optional[str],
+        updated_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        clean_session_id = str(session_id or "").strip()
+        clean_updated_at = str(updated_at or created_at or "")
+        payload = {
+            "sessionId": clean_session_id,
+            "session_id": clean_session_id,
+            "mode": str(mode or "user"),
+            "actorId": str(actor_id or ""),
+            "actor_id": str(actor_id or ""),
+            "roles": [str(role) for role in list(roles or [])],
+            "capabilities": [str(cap) for cap in list(capabilities or [])],
+            "createdAt": str(created_at or clean_updated_at),
+            "created_at": str(created_at or clean_updated_at),
+            "expiresAt": expires_at,
+            "expires_at": expires_at,
+            "status": str(status or "active"),
+            "reason": reason,
+            "ttlSeconds": int(ttl_seconds) if ttl_seconds is not None else None,
+            "ttl_seconds": int(ttl_seconds) if ttl_seconds is not None else None,
+            "contextPackId": context_pack_id,
+            "context_pack_id": context_pack_id,
+            "providerRunId": provider_run_id,
+            "provider_run_id": provider_run_id,
+            "auditRefs": [str(ref) for ref in list(audit_refs or [])],
+            "audit_refs": [str(ref) for ref in list(audit_refs or [])],
+            "revokedAt": revoked_at,
+            "revoked_at": revoked_at,
+            "revokeReason": revoke_reason,
+            "revoke_reason": revoke_reason,
+            "updatedAt": clean_updated_at,
+            "updated_at": clean_updated_at,
+        }
+        with self._lock:
+            if self._enabled():
+                with self._connect() as conn:
+                    existing = conn.execute(
+                        "SELECT session_id FROM management_ai_assistant_sessions WHERE session_id = ?",
+                        (clean_session_id,),
+                    ).fetchone()
+                    values = (
+                        clean_session_id,
+                        payload["mode"],
+                        payload["actorId"],
+                        _json_dumps(payload["roles"]),
+                        _json_dumps(payload["capabilities"]),
+                        payload["createdAt"],
+                        expires_at,
+                        payload["status"],
+                        reason,
+                        payload["ttlSeconds"],
+                        context_pack_id,
+                        provider_run_id,
+                        _json_dumps(payload["auditRefs"]),
+                        revoked_at,
+                        revoke_reason,
+                        clean_updated_at,
+                    )
+                    if existing is None:
+                        conn.execute(
+                            """
+                            INSERT INTO management_ai_assistant_sessions
+                              (session_id, mode, actor_id, roles, capabilities, created_at,
+                               expires_at, status, reason, ttl_seconds, context_pack_id,
+                               provider_run_id, audit_refs, revoked_at, revoke_reason,
+                               updated_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            values,
+                        )
+                    else:
+                        conn.execute(
+                            """
+                            UPDATE management_ai_assistant_sessions
+                            SET mode = ?, actor_id = ?, roles = ?, capabilities = ?,
+                                created_at = ?, expires_at = ?, status = ?, reason = ?,
+                                ttl_seconds = ?, context_pack_id = ?, provider_run_id = ?,
+                                audit_refs = ?, revoked_at = ?, revoke_reason = ?,
+                                updated_at = ?
+                            WHERE session_id = ?
+                            """,
+                            (
+                                payload["mode"],
+                                payload["actorId"],
+                                _json_dumps(payload["roles"]),
+                                _json_dumps(payload["capabilities"]),
+                                payload["createdAt"],
+                                expires_at,
+                                payload["status"],
+                                reason,
+                                payload["ttlSeconds"],
+                                context_pack_id,
+                                provider_run_id,
+                                _json_dumps(payload["auditRefs"]),
+                                revoked_at,
+                                revoke_reason,
+                                clean_updated_at,
+                                clean_session_id,
+                            ),
+                        )
+                    row = conn.execute(
+                        "SELECT * FROM management_ai_assistant_sessions WHERE session_id = ?",
+                        (clean_session_id,),
+                    ).fetchone()
+                return self._row_to_assistant_session(row)
+
+            self._assistant_sessions[clean_session_id] = payload
+            return dict(payload)
+
+    def get_assistant_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        clean_session_id = str(session_id or "").strip()
+        with self._lock:
+            if self._enabled():
+                with self._connect() as conn:
+                    row = conn.execute(
+                        "SELECT * FROM management_ai_assistant_sessions WHERE session_id = ?",
+                        (clean_session_id,),
+                    ).fetchone()
+                return self._row_to_assistant_session(row) if row is not None else None
+            session = self._assistant_sessions.get(clean_session_id)
+            return dict(session) if session is not None else None
 
     def find_attachment(self, attachment_id: str) -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
         clean_id = str(attachment_id or "").strip()

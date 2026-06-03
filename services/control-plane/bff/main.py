@@ -46660,10 +46660,17 @@ def _include_assistant_routes() -> None:
     global _ASSISTANT_SESSION_STORE, _ASSISTANT_TRANSCRIPT_STORE, _ASSISTANT_CONTROL_MODE_STORE
     from assistant.control_mode import ControlModeStore
     from assistant.routes import create_assistant_router
-    from assistant.transcript_store import InMemorySessionStore, InMemoryTranscriptStore
+    from assistant.transcript_store import (
+        ManagementAiAssistantSessionStore,
+        ManagementAiAssistantTranscriptStore,
+    )
 
-    _ASSISTANT_SESSION_STORE = InMemorySessionStore()
-    _ASSISTANT_TRANSCRIPT_STORE = InMemoryTranscriptStore()
+    _ASSISTANT_SESSION_STORE = ManagementAiAssistantSessionStore(
+        store_factory=_management_ai_conversation_store,
+    )
+    _ASSISTANT_TRANSCRIPT_STORE = ManagementAiAssistantTranscriptStore(
+        store_factory=_management_ai_conversation_store,
+    )
     _ASSISTANT_CONTROL_MODE_STORE = ControlModeStore()
     app.include_router(
         create_assistant_router(

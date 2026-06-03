@@ -175,7 +175,7 @@ def create_assistant_router(
         require_read_role(identity)
 
         try:
-            session = _session_store.get(session_id)
+            session = _get_session_for_identity(_session_store, session_id, identity)
         except SessionNotFoundError:
             _raise_error(bff_error, 404, ErrorCode.RESOURCE_NOT_FOUND, f"Session not found: {session_id!r}")
 
@@ -191,6 +191,7 @@ def create_assistant_router(
         require_read_role(identity)
 
         try:
+            _get_session_for_identity(_session_store, session_id, identity)
             session = _session_store.revoke(session_id, reason=payload.get("reason"))
         except SessionNotFoundError:
             _raise_error(bff_error, 404, ErrorCode.RESOURCE_NOT_FOUND, f"Session not found: {session_id!r}")
@@ -206,7 +207,7 @@ def create_assistant_router(
         require_read_role(identity)
 
         try:
-            _session_store.get(session_id)
+            _get_session_for_identity(_session_store, session_id, identity)
         except SessionNotFoundError:
             _raise_error(bff_error, 404, ErrorCode.RESOURCE_NOT_FOUND, f"Session not found: {session_id!r}")
 
@@ -223,7 +224,7 @@ def create_assistant_router(
         require_read_role(identity)
 
         try:
-            session = _session_store.get(session_id)
+            session = _get_session_for_identity(_session_store, session_id, identity)
         except SessionNotFoundError:
             _raise_error(bff_error, 404, ErrorCode.RESOURCE_NOT_FOUND, f"Session not found: {session_id!r}")
 
@@ -423,6 +424,13 @@ def _raise_error(
             }
         },
     )
+
+
+def _get_session_for_identity(session_store: Any, session_id: str, identity: Any) -> Any:
+    getter = getattr(session_store, "get_for_identity", None)
+    if callable(getter):
+        return getter(session_id, identity)
+    return session_store.get(session_id)
 
 
 def _positive_int(value: Any, fallback: int) -> int:
