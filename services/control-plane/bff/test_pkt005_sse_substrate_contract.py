@@ -54,6 +54,15 @@ FINAL_CHANNEL_CATALOG = (
 )
 
 
+def _error_code_value(code):
+    return getattr(code, "value", code)
+
+
+def _response_error(response) -> dict:
+    payload = response.json()
+    return payload.get("detail", payload)["error"]
+
+
 @pytest.fixture(autouse=True)
 def clean_sse_buffers():
     for buffer in bff_main._sse_buffers.values():
@@ -171,9 +180,8 @@ def test_replay_unavailable_uses_final_error_envelope_with_resync_metadata() -> 
     )
 
     assert response.status_code == 409, response.text
-    detail = response.json()["detail"]
-    error = detail["error"]
-    assert error["code"] == "SSE_REPLAY_UNAVAILABLE"
+    error = _response_error(response)
+    assert _error_code_value(error["code"]) == "RESOURCE_CONFLICT"
     assert error["details"]["reason"] == "SSE_REPLAY_HISTORY_MISSING"
     assert error["details"]["channel"] == "approval"
     assert error["details"]["lastEventId"] == "evt-final-sse-missing"
@@ -189,7 +197,12 @@ def test_approval_and_ask_stream_routes_publish_replay_metadata_headers() -> Non
         (
             bff_main.stream_ask_events,
             "ask",
-            "/bff/agora/ask/sessions/{id},/bff/agora/committee/sessions/{id}",
+            (
+                "/bff/management/ai/conversations,"
+                "/bff/management/ai/conversations/{id},"
+                "/bff/agora/ask/sessions/{id},"
+                "/bff/agora/committee/sessions/{id}"
+            ),
         ),
     ]:
         response = asyncio.run(route(last_event_id=None, authorization=AUTH))
@@ -315,7 +328,8 @@ def test_execute_plans_sse_aliases_return_replay_unavailable_envelope() -> None:
 
     assert exc_info.value.status_code == 409
     error = exc_info.value.detail["error"]
-    assert error["code"] == "SSE_REPLAY_UNAVAILABLE"
+    assert _error_code_value(error["code"]) == "RESOURCE_CONFLICT"
+    assert error["details"]["reason"] == "SSE_REPLAY_HISTORY_MISSING"
     assert error["details"]["channel"] == "inbox"
     assert error["details"]["lastEventId"] == "evt-final-sse-missing"
 
@@ -381,10 +395,10 @@ def test_invalid_generic_channel_returns_catalog_validation_error() -> None:
     response = client.get("/api/v1/stream/not-a-channel", headers={"Authorization": AUTH})
 
     assert response.status_code == 400, response.text
-    detail = response.json()["detail"]
-    assert detail["error"]["code"] == "INVALID_REQUEST"
-    assert "approval" in detail["error"]["details"]["reason"]
-    assert "ask" in detail["error"]["details"]["reason"]
+    error = _response_error(response)
+    assert _error_code_value(error["code"]) == "VALIDATION_FAILED"
+    assert "approval" in error["details"]["reason"]
+    assert "ask" in error["details"]["reason"]
 
 
 def test_ask_replay_payload_is_json_serializable_sse_data() -> None:

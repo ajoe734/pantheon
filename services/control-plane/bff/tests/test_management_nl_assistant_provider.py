@@ -208,6 +208,9 @@ def test_management_ai_conversation_store_persists_sessions_and_turns_to_sqlite(
     assert turns[0]["text"] == "Persist me"
     assert turns[0]["attachments"][0]["storageUrl"] == "local://x"
     assert turns[0]["uiSnapshot"] == {"route": "/management"}
+    sessions = reloaded.list_sessions(owner_id="asst-bff-002", tenant_id="tenant-alpha")
+    assert [session["sessionId"] for session in sessions] == ["mgmt-sqlite-session"]
+    assert reloaded.list_sessions(owner_id="other-operator", tenant_id="tenant-other") == []
 
 
 def test_openclaw_client_invokes_codex_provider_contract(monkeypatch) -> None:
@@ -961,6 +964,13 @@ def test_management_ai_conversation_reader_returns_full_session_and_ignores_trac
         assert turns[1]["providerStatus"]["provider"] == "codex_cli"
         assert turns[1]["actions"] == []
         assert body["data"]["session"]["ttlSeconds"] >= 7 * 24 * 60 * 60
+
+        list_resp = client.get("/bff/management/ai/conversations", headers=OPERATOR_HEADERS)
+        assert list_resp.status_code == 200, list_resp.text
+        sessions = list_resp.json()["items"]
+        assert sessions[0]["sessionId"] == "mgmt-full-session"
+        assert sessions[0]["href"] == "/bff/management/ai/conversations/mgmt-full-session"
+        assert sessions[0]["turnCount"] == 4
     finally:
         bff_main.read_store = original_store
         bff_main._MGMT_NL_IDEMPOTENCY.clear()
@@ -1114,7 +1124,10 @@ def test_management_ai_idempotency_replay_does_not_duplicate_persisted_turns(
         bff_main._sse_buffers["ask"].clear()
 
 
-def test_management_ai_conversation_missing_session_returns_404(tmp_path, monkeypatch) -> None:
+def test_management_ai_conversation_missing_session_returns_local_only_empty_transcript(
+    tmp_path,
+    monkeypatch,
+) -> None:
     original_store = bff_main.read_store
     try:
         client = _seeded_client(tmp_path, monkeypatch)
@@ -1122,8 +1135,19 @@ def test_management_ai_conversation_missing_session_returns_404(tmp_path, monkey
             "/bff/management/ai/conversations/mgmt-missing-session",
             headers=OPERATOR_HEADERS,
         )
-        assert resp.status_code == 404, resp.text
-        assert resp.json()["error"]["details"]["precondition_failed"] == "management_ai_session"
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["data"]["sessionId"] == "mgmt-missing-session"
+        assert body["data"]["turns"] == []
+        assert body["items"] == []
+        assert body["data"]["localOnly"] is True
+        assert body["data"]["missingInStore"] is True
+        assert body["meta"]["count"] == 0
+        assert body["meta"]["surfaces"]["management_ai_conversation"] == {
+            "status": "local_only",
+            "source": "client_resync",
+            "reason": "session_missing_in_store",
+        }
     finally:
         bff_main.read_store = original_store
         bff_main._MGMT_NL_IDEMPOTENCY.clear()

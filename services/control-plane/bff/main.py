@@ -13954,7 +13954,7 @@ async def get_operator_home(
 async def bff_management_cockpit(
     authorization: Optional[str] = Header(default=None),
 ):
-    """BFF-B3-001: Pathreon Management cockpit aggregate."""
+    """BFF-B3-001: Pantheon Management cockpit aggregate."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
@@ -32061,6 +32061,72 @@ async def bff_management_ai_audit(
     }
 
 
+@app.get("/bff/management/ai/conversations")
+async def bff_management_ai_conversations(
+    limit: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+    x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+):
+    """List visible server-side Management AI conversations for frontend resync."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    caller_tenant_id = _mgmt_nl_caller_tenant(
+        identity,
+        requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant),
+    )
+    sessions = _management_ai_conversation_store().list_sessions(
+        owner_id=identity.operator_id,
+        tenant_id=caller_tenant_id,
+        limit=limit,
+    )
+    items: List[Dict[str, Any]] = []
+    for session in sessions:
+        session_id = str(session.get("sessionId") or session.get("session_id") or session.get("id") or "").strip()
+        if not session_id:
+            continue
+        try:
+            _management_ai_require_session_access(session, identity, tenant_id=caller_tenant_id)
+        except HTTPException:
+            continue
+        turn_count = len(_management_ai_conversation_store().list_turns(session_id))
+        items.append(
+            {
+                "id": session_id,
+                "sessionId": session_id,
+                "session_id": session_id,
+                "title": session.get("title") or "",
+                "ownerId": session.get("ownerId") or session.get("owner_id"),
+                "owner_id": session.get("owner_id") or session.get("ownerId"),
+                "tenantId": session.get("tenantId") or session.get("tenant_id"),
+                "tenant_id": session.get("tenant_id") or session.get("tenantId"),
+                "createdAt": session.get("createdAt") or session.get("created_at"),
+                "created_at": session.get("created_at") or session.get("createdAt"),
+                "updatedAt": session.get("updatedAt") or session.get("updated_at"),
+                "updated_at": session.get("updated_at") or session.get("updatedAt"),
+                "turnCount": turn_count,
+                "turn_count": turn_count,
+                "href": _management_ai_conversation_href(session_id),
+            }
+        )
+    return {
+        "data": items,
+        "items": items,
+        "meta": {
+            "count": len(items),
+            "limit": limit,
+            "sessionTtlSeconds": _MGMT_AI_SESSION_TTL_SECONDS,
+            "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
+            "surfaces": {
+                "management_ai_conversation_list": {
+                    "status": "ok",
+                    "source": "management_ai_store",
+                }
+            },
+        },
+    }
+
+
 @app.get("/bff/management/ai/conversations/{session_id}")
 async def bff_management_ai_conversation(
     session_id: str,
@@ -32078,15 +32144,26 @@ async def bff_management_ai_conversation(
         identity,
         requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant),
     )
-    session = _management_ai_get_session_or_404(
-        clean_session_id,
-        identity,
-        tenant_id=caller_tenant_id,
-    )
-    turns = [
-        _management_ai_turn_api_payload(turn)
-        for turn in _management_ai_conversation_store().list_turns(clean_session_id)
-    ][:limit]
+    session = _management_ai_conversation_store().get_session(clean_session_id)
+    local_only = session is None
+    if session is not None:
+        _management_ai_require_session_access(session, identity, tenant_id=caller_tenant_id)
+        turns = [
+            _management_ai_turn_api_payload(turn)
+            for turn in _management_ai_conversation_store().list_turns(clean_session_id)
+        ][:limit]
+    else:
+        turns = []
+        session = {
+            "ownerId": identity.operator_id,
+            "owner_id": identity.operator_id,
+            "tenantId": caller_tenant_id,
+            "tenant_id": caller_tenant_id,
+            "createdAt": None,
+            "created_at": None,
+            "updatedAt": None,
+            "updated_at": None,
+        }
     audit_log = {
         "href": _management_ai_audit_href(session_id=clean_session_id, trace_id=trace_id),
         "traceId": trace_id,
@@ -32099,6 +32176,10 @@ async def bff_management_ai_conversation(
             "traceId": trace_id,
             "trace_id": trace_id,
             "turns": turns,
+            "localOnly": local_only,
+            "local_only": local_only,
+            "missingInStore": local_only,
+            "missing_in_store": local_only,
             "ownerId": session.get("ownerId") or session.get("owner_id"),
             "owner_id": session.get("owner_id") or session.get("ownerId"),
             "tenantId": session.get("tenantId") or session.get("tenant_id"),
@@ -32127,6 +32208,13 @@ async def bff_management_ai_conversation(
                 "session_id": clean_session_id,
                 "trace_id": trace_id,
                 "trace_id_ignored": trace_id is not None,
+            },
+            "surfaces": {
+                "management_ai_conversation": {
+                    "status": "local_only" if local_only else "ok",
+                    "source": "client_resync" if local_only else "management_ai_store",
+                    "reason": "session_missing_in_store" if local_only else None,
+                }
             },
         },
     }
@@ -38044,7 +38132,12 @@ SSE_ASK_EVENT_TYPES = {
 
 _SSE_RESYNC_ROUTES: Dict[str, tuple[str, ...]] = {
     "approval": ("/bff/approvals", "/bff/v5/interventions"),
-    "ask": ("/bff/agora/ask/sessions/{id}", "/bff/agora/committee/sessions/{id}"),
+    "ask": (
+        "/bff/management/ai/conversations",
+        "/bff/management/ai/conversations/{id}",
+        "/bff/agora/ask/sessions/{id}",
+        "/bff/agora/committee/sessions/{id}",
+    ),
 }
 
 
