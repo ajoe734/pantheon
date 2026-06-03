@@ -145,6 +145,11 @@ Storage defaults are BFF-owned: `PANTHEON_MANAGEMENT_AI_STORE_PATH` points to
 the SQLite session/turn database and
 `PANTHEON_MANAGEMENT_AI_ATTACHMENT_STORE_PATH` points to the attachment object
 directory. These are the deploy-time swap points for Postgres/GCS/S3 adapters.
+The dev compose deployment pins these paths under the mounted BFF data volume:
+`/data/bff/management-ai-conversations.sqlite3`,
+`/data/bff/management-ai-attachments`, and
+`/data/bff/management-ai-audit.jsonl`, so a BFF container recreate does not drop
+server-side conversation truth.
 
 Already-existing generic action endpoints (workers extend these instead of creating new routes for P0-1/2/3 — register `AdvanceLifecycle` / `ApprovePool` / `StartRuntime` in the action catalog + handler):
 
