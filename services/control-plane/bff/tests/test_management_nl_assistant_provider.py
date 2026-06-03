@@ -136,6 +136,7 @@ def _clear_provider_env(monkeypatch) -> None:
     for env_name in (
         "PANTHEON_ASSISTANT_ENABLED",
         "PANTHEON_ASSISTANT_PROVIDER",
+        "PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS",
         "PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED",
         "PANTHEON_MGMT_NL_ASSISTANT_PROVIDER_ENABLED",
     ):
@@ -186,6 +187,41 @@ def test_openclaw_client_invokes_codex_provider_contract(monkeypatch) -> None:
         "metadata": {"tenant_id": "tenant-alpha"},
     }
     assert recorded["timeout"] == 1.5
+
+
+def test_openclaw_client_uses_assistant_provider_timeout_by_default(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
+    monkeypatch.setenv("PANTHEON_BFF_SERVICE_TIMEOUT_SECONDS", "2.0")
+    monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS", "75.0")
+    recorded: dict[str, Any] = {}
+
+    def fake_urlopen(request, timeout):
+        recorded["url"] = request.full_url
+        recorded["timeout"] = timeout
+        return FakeHttpResponse(
+            {
+                "status": "ok",
+                "data": {
+                    "provider": "codex_cli",
+                    "status": "completed",
+                    "output": {"json_events": [{"final": "ok"}]},
+                },
+            }
+        )
+
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen", fake_urlopen):
+        OpenClawOpsClient().invoke_assistant_provider(
+            provider="codex_cli",
+            mode="user",
+            prompt="hello",
+            context_pack={"context_pack_id": "ctx-test"},
+            operator_id="operator-1",
+        )
+
+    assert recorded["url"] == (
+        "http://openclaw-adapter:8104/api/openclaw-adapter/assistant/providers/codex/invoke"
+    )
+    assert recorded["timeout"] == 75.0
 
 
 def test_provider_disabled_returns_deterministic_answer_and_context_pack(tmp_path, monkeypatch) -> None:
