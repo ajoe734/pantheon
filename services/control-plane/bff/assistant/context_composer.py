@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import re
 import uuid
 from dataclasses import dataclass
@@ -11,12 +12,15 @@ from .models import (
     AssistantBackendContext,
     AssistantContextPack,
     AssistantContextPackRequest,
+    AssistantBffReadSection,
+    AssistantDocsRagSection,
     AssistantFrontendContext,
     AssistantInternalDebugContext,
     AssistantMode,
     AssistantOmittedSource,
     AssistantRedactionSummary,
     AssistantSourceRef,
+    AssistantUiHintSection,
 )
 from .redaction import redact_payload
 
@@ -30,6 +34,7 @@ DEFAULT_CONTEXT_SOURCES = (
     "recent_sse",
     "persona_health",
     "strategy_health",
+    "docs_rag",
 )
 
 ALLOWLISTED_SOURCES = frozenset(
@@ -40,6 +45,7 @@ ALLOWLISTED_SOURCES = frozenset(
         "sanitized_logs",
         "repo_status",
         "management_nl",
+        "docs_rag",
     }
 )
 
@@ -60,6 +66,10 @@ SOURCE_ALIASES = {
     "persona": "persona_health",
     "strategy": "strategy_health",
     "logs": "job_logs",
+    "docs": "docs_rag",
+    "rag": "docs_rag",
+    "documentation": "docs_rag",
+    "docs/rag": "docs_rag",
 }
 
 SOURCE_HREFS = {
@@ -75,6 +85,7 @@ SOURCE_HREFS = {
     "sanitized_logs": "/bff/assistant/internal/sanitized-logs",
     "repo_status": "/bff/assistant/internal/repo-status",
     "management_nl": "/bff/management/nl/ask",
+    "docs_rag": "docs://assistant/context",
 }
 
 BACKEND_PAYLOAD_SOURCES = frozenset(
@@ -89,6 +100,8 @@ BACKEND_PAYLOAD_SOURCES = frozenset(
     }
 )
 
+DOCS_RAG_SOURCES = frozenset({"docs_rag"})
+
 
 @dataclass(frozen=True)
 class AssistantCollectedSource:
@@ -99,6 +112,7 @@ class AssistantCollectedSource:
     snapshot_at: Optional[str] = None
     staleness: Optional[Dict[str, Any]] = None
     source_kind: str = "bff"
+    source_refs: Optional[List[Dict[str, Any]]] = None
 
 
 AssistantSourceCollector = Callable[
@@ -198,6 +212,63 @@ def _redact(value: Any) -> Tuple[Any, int]:
     return result.value, summary.redacted_fields + summary.redacted_values
 
 
+def _collect_source(
+    collect_source: AssistantSourceCollector,
+    source_id: str,
+    request: AssistantContextPackRequest,
+    snapshot_at: str,
+    actor: Any,
+) -> Optional[AssistantCollectedSource]:
+    try:
+        parameters = inspect.signature(collect_source).parameters
+    except (TypeError, ValueError):
+        parameters = {}
+    if len(parameters) >= 4:
+        return collect_source(source_id, request, snapshot_at, actor)  # type: ignore[misc]
+    return collect_source(source_id, request, snapshot_at)
+
+
+def _source_ref_from_payload(
+    payload: Dict[str, Any],
+    *,
+    fallback_source_id: str,
+    fallback_href: str,
+    fallback_snapshot_at: str,
+    fallback_status: str,
+    fallback_staleness: Dict[str, Any],
+    fallback_source_kind: str,
+) -> Tuple[AssistantSourceRef, int]:
+    raw = dict(payload)
+    raw.setdefault("source_id", raw.get("sourceId") or fallback_source_id)
+    raw.setdefault("href", fallback_href)
+    raw.setdefault("snapshot_at", raw.get("snapshotAt") or fallback_snapshot_at)
+    raw.setdefault("status", fallback_status)
+    raw.setdefault("staleness", fallback_staleness)
+    raw.setdefault("source_kind", raw.get("sourceKind") or fallback_source_kind)
+    redacted, count = _redact(raw)
+    return AssistantSourceRef(**redacted), count
+
+
+def _single_source_ref(
+    *,
+    source_id: str,
+    href: str,
+    snapshot_at: str,
+    status: str,
+    staleness: Dict[str, Any],
+    source_kind: str,
+) -> Tuple[AssistantSourceRef, int]:
+    return _source_ref_from_payload(
+        {},
+        fallback_source_id=source_id,
+        fallback_href=href,
+        fallback_snapshot_at=snapshot_at,
+        fallback_status=status,
+        fallback_staleness=staleness,
+        fallback_source_kind=source_kind,
+    )
+
+
 def _payload_meta(payload: Any) -> Dict[str, Any]:
     if isinstance(payload, dict) and isinstance(payload.get("meta"), dict):
         return dict(payload["meta"])
@@ -293,6 +364,22 @@ def _assign_payload(
         internal_debug.repo_status = payload
 
 
+def _assign_docs_payload(docs_rag: AssistantDocsRagSection, payload: Any) -> None:
+    if not isinstance(payload, dict):
+        return
+    items = payload.get("items")
+    if isinstance(items, list):
+        docs_rag.items = [item for item in items if isinstance(item, dict)]
+    citations = payload.get("citations")
+    if isinstance(citations, list):
+        docs_rag.citations = [item for item in citations if isinstance(item, dict)]
+
+
+def _source_access(meta: Dict[str, Any]) -> Dict[str, Any]:
+    access = meta.get("access")
+    return dict(access) if isinstance(access, dict) else {}
+
+
 def compose_context_pack(
     *,
     session_id: str,
@@ -311,9 +398,15 @@ def compose_context_pack(
 
     backend = AssistantBackendContext()
     internal_debug = AssistantInternalDebugContext()
+    docs_rag = AssistantDocsRagSection()
     source_refs: List[AssistantSourceRef] = []
+    ui_source_refs: List[AssistantSourceRef] = []
+    bff_source_refs: List[AssistantSourceRef] = []
+    docs_source_refs: List[AssistantSourceRef] = []
+    bff_access: Dict[str, Any] = {}
     omitted: List[AssistantOmittedSource] = []
     redacted_fields = frontend_redacted_count
+    actor_context = _actor_context(actor)
 
     for source_id in sources:
         if source_id not in ALLOWLISTED_SOURCES:
@@ -327,19 +420,20 @@ def compose_context_pack(
             continue
 
         if source_id == "ui":
-            source_refs.append(
-                AssistantSourceRef(
-                    sourceId="ui",
-                    href=frontend.route,
-                    snapshotAt=snapshot_at,
-                    status="ok",
-                    staleness={"status": "fresh", "served_from": "frontend", "last_known_at": snapshot_at},
-                    sourceKind="frontend",
-                )
+            ref, count = _single_source_ref(
+                source_id="ui",
+                href=frontend.route,
+                snapshot_at=snapshot_at,
+                status="ok",
+                staleness={"status": "fresh", "served_from": "frontend", "last_known_at": snapshot_at},
+                source_kind="frontend",
             )
+            redacted_fields += count
+            source_refs.append(ref)
+            ui_source_refs.append(ref)
             continue
 
-        collected = collect_source(source_id, request, snapshot_at)
+        collected = _collect_source(collect_source, source_id, request, snapshot_at, actor)
         if collected is None:
             omitted.append(
                 AssistantOmittedSource(
@@ -355,35 +449,68 @@ def compose_context_pack(
         source_snapshot_at = _source_snapshot_at(collected, payload, snapshot_at)
         status = _source_status(collected, payload, source_id)
         staleness = _source_staleness(collected, payload, source_id, status, source_snapshot_at)
+        meta = _payload_meta(payload)
 
-        _assign_payload(
-            backend=backend,
-            internal_debug=internal_debug,
-            source_id=source_id,
-            payload=payload,
-        )
-        source_refs.append(
-            AssistantSourceRef(
-                sourceId=source_id,
-                href=collected.href or SOURCE_HREFS.get(source_id, f"/bff/{source_id}"),
-                snapshotAt=source_snapshot_at,
-                status=status,
-                staleness=staleness,
-                sourceKind=collected.source_kind,
+        if source_id in DOCS_RAG_SOURCES or collected.source_kind == "docs":
+            _assign_docs_payload(docs_rag, payload)
+        else:
+            _assign_payload(
+                backend=backend,
+                internal_debug=internal_debug,
+                source_id=source_id,
+                payload=payload,
             )
-        )
+            if collected.source_kind == "bff":
+                access = _source_access(meta)
+                if access:
+                    bff_access[source_id] = access
+
+        raw_source_refs = collected.source_refs or [{}]
+        for raw_ref in raw_source_refs:
+            ref, count = _source_ref_from_payload(
+                raw_ref,
+                fallback_source_id=source_id,
+                fallback_href=collected.href or SOURCE_HREFS.get(source_id, f"/bff/{source_id}"),
+                fallback_snapshot_at=source_snapshot_at,
+                fallback_status=status,
+                fallback_staleness=staleness,
+                fallback_source_kind=collected.source_kind,
+            )
+            redacted_fields += count
+            source_refs.append(ref)
+            if ref.source_kind == "frontend":
+                ui_source_refs.append(ref)
+            elif ref.source_kind == "docs":
+                docs_source_refs.append(ref)
+            else:
+                bff_source_refs.append(ref)
 
     return AssistantContextPack(
         contextPackId=f"ctx_{uuid.uuid4().hex[:16]}",
         sessionId=session_id,
         mode=request.mode,
         question=request.question,
-        actor=_actor_context(actor),
+        actor=actor_context,
         snapshotAt=snapshot_at,
         frontend=frontend,
         backend=backend,
         internalDebug=internal_debug,
         sources=source_refs,
+        sourceRefs=source_refs,
+        uiHints=AssistantUiHintSection(
+            context=frontend,
+            sourceRefs=ui_source_refs,
+        ),
+        bffReads=AssistantBffReadSection(
+            context=backend,
+            sourceRefs=bff_source_refs,
+            access=bff_access,
+        ),
+        docsRag=AssistantDocsRagSection(
+            items=docs_rag.items,
+            citations=docs_rag.citations,
+            sourceRefs=docs_source_refs,
+        ),
         redaction=AssistantRedactionSummary(redactedFields=redacted_fields),
         omittedSources=omitted,
     )
