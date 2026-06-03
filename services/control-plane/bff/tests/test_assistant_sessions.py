@@ -623,6 +623,30 @@ class TestControlModeRoutes:
         )
         assert activate_resp.status_code == 202, activate_resp.text
 
+    def test_unicode_passphrase_is_measured_by_utf8_bytes(self, monkeypatch):
+        store = ControlModeStore(storage_path="off")
+        client = _make_client(
+            capabilities=["assistant.kernel.debug"],
+            roles=["admin"],
+            mfa_verified=True,
+            control_mode_store=store,
+        )
+
+        init_resp = client.post(
+            "/bff/assistant/control-mode/passphrase",
+            json={"newPassphrase": "九條好漢在一班"},
+            headers=HEADERS,
+        )
+        assert init_resp.status_code == 202, init_resp.text
+
+        monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+        activate_resp = client.post(
+            "/bff/assistant/control-mode/activate",
+            json={"passphrase": "九條好漢在一班", "reason": "debugging test"},
+            headers=HEADERS,
+        )
+        assert activate_resp.status_code == 202, activate_resp.text
+
     def test_rotated_store_passphrase_overrides_env_bootstrap(self, tmp_path, monkeypatch):
         store_path = str(tmp_path / "control-mode.json")
         env_hash = passphrase_hash("bootstrap control phrase")

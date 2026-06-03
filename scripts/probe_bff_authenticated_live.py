@@ -115,6 +115,7 @@ READ_PROBES: tuple[Probe, ...] = (
             ("data", "sessionId"),
             ("data", "traceId"),
             ("data", "providerStatus"),
+            ("data", "controlMode"),
             ("data", "actions"),
             ("data", "conversation", "href"),
             ("data", "session", "ttlSeconds"),

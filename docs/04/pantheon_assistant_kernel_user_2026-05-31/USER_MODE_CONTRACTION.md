@@ -91,6 +91,29 @@ asking the assistant to self-promote:
 - `POST /bff/assistant/control-mode/passphrase` initializes or changes the
   activation passphrase.
 
+The Management AI chatbox may use the same `/bff/management/nl/ask` endpoint
+for control-mode commands; no separate frontend control panel is required. The
+BFF intercepts these commands before high-risk classification, context-pack
+composition, provider invocation, transcript readback, or audit persistence:
+
+- Type the passphrase alone, for example `九條好漢在一班`, to activate control
+  mode when it exactly matches the stored passphrase hash.
+- Type an explicit command such as `/control <passphrase>`,
+  `/kernel <passphrase>`, `控制模式：<passphrase>`, or `暗號是：<passphrase>`
+  to activate and redact even failed passphrase attempts.
+- Type `/control status` or `控制模式狀態` to read the current activation state.
+- Type `/control off` or `退出控制模式` to revoke the current activation.
+
+Successful chat activation returns the normal Management NL response shape with
+`controlMode.active=true`, `controlCommand="activate"`, and
+`providerStatus.runtime="management_nl_control_command_interceptor"`.
+The returned `question`, Management AI conversation readback, and Management AI
+audit events use `[CONTROL MODE COMMAND REDACTED]`; the raw passphrase is not
+sent to the assistant provider and is not stored in readback/audit payloads.
+For sensitive environments, operators should prefer the explicit `/control
+<passphrase>` form because failed explicit attempts are also intercepted and
+redacted.
+
 The passphrase is an activation factor only. It never grants RBAC by itself.
 Activation also requires:
 
@@ -101,7 +124,8 @@ Activation also requires:
 - non-empty reason
 - bounded `ttlSeconds` and `idleTtlSeconds`
 
-The passphrase is stored as a PBKDF2 hash. If no passphrase exists, an
+The passphrase is stored as a PBKDF2 hash. The minimum length check is measured
+in UTF-8 bytes so non-ASCII passphrases can be used. If no passphrase exists, an
 admin+MFA operator may initialize one. Once configured, changing it requires the
 current passphrase plus a new passphrase.
 `PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH` may bootstrap the first hash; once

@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import main as bff_main
 from assistant.control_mode import ControlModeStore
 from assistant.models import AssistantMode
+from models import OperatorIdentity
 from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 from read_store import ReadSurfaceStore
 
@@ -145,6 +146,28 @@ def _clear_provider_env(monkeypatch) -> None:
         "PANTHEON_MGMT_NL_ASSISTANT_PROVIDER_ENABLED",
     ):
         monkeypatch.delenv(env_name, raising=False)
+
+
+def _kernel_operator_identity(
+    *,
+    operator_id: str = "asst-bff-002",
+    roles: list[str] | None = None,
+    mfa_verified: bool = True,
+    capabilities: list[str] | None = None,
+) -> OperatorIdentity:
+    resolved_roles = roles or ["operator"]
+    resolved_capabilities = capabilities or ["assistant.kernel.debug"]
+    return OperatorIdentity(
+        operator_id=operator_id,
+        roles=resolved_roles,
+        mfa_verified=mfa_verified,
+        claims={
+            "sub": operator_id,
+            "roles": resolved_roles,
+            "capabilities": resolved_capabilities,
+        },
+        token_kind="stub",
+    )
 
 
 def test_openclaw_client_invokes_codex_provider_contract(monkeypatch) -> None:
@@ -402,6 +425,176 @@ def test_management_nl_context_pack_reflects_active_control_mode(tmp_path, monke
         management_context = context_pack["backend"]["management_nl"]["data"]
         assert management_context["controlMode"]["active"] is True
         assert management_context["controlMode"]["mode"] == "kernel_debug"
+    finally:
+        bff_main.read_store = original_store
+        bff_main._ASSISTANT_CONTROL_MODE_STORE = original_control_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+        bff_main._sse_buffers["ask"].clear()
+
+
+def test_management_nl_direct_passphrase_activates_control_mode_without_provider_or_secret_readback(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    original_store = bff_main.read_store
+    original_control_store = bff_main._ASSISTANT_CONTROL_MODE_STORE
+    passphrase = "九條好漢在一班"
+    control_store = ControlModeStore(storage_path="off", initial_passphrase=passphrase)
+    fake = FakeProviderClient()
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setattr(bff_main, "_ASSISTANT_CONTROL_MODE_STORE", control_store)
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        monkeypatch.setattr(
+            bff_main,
+            "_extract_identity",
+            lambda authorization: _kernel_operator_identity(),
+        )
+        client = _seeded_client(tmp_path, monkeypatch)
+
+        resp = client.post(
+            "/bff/management/nl/ask",
+            json={
+                "question": passphrase,
+                "sessionId": "mgmt-chat-control-session",
+                "focus": "cockpit",
+                "ui": {"currentRoute": "/management/cockpit", "availableUiActions": []},
+            },
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-direct-passphrase"},
+        )
+
+        assert resp.status_code == 202, resp.text
+        body = resp.json()
+        assert body["data"]["question"] == "[CONTROL MODE COMMAND REDACTED]"
+        assert body["data"]["controlMode"]["active"] is True
+        assert body["data"]["controlMode"]["mode"] == "kernel_debug"
+        assert body["data"]["controlCommand"] == "activate"
+        assert body["data"]["contextPack"] is None
+        provider_status = body["data"]["providerStatus"]
+        assert provider_status["provider"] == "pantheon_bff"
+        assert provider_status["runtime"] == "management_nl_control_command_interceptor"
+        assert provider_status["used"] is True
+        assert fake.calls == []
+
+        conversation_resp = client.get(
+            "/bff/management/ai/conversations/mgmt-chat-control-session",
+            headers=OPERATOR_HEADERS,
+        )
+        assert conversation_resp.status_code == 200, conversation_resp.text
+        serialized_conversation = json.dumps(conversation_resp.json(), ensure_ascii=False)
+        assert passphrase not in serialized_conversation
+        assert "[CONTROL MODE COMMAND REDACTED]" in serialized_conversation
+        assert "Control mode activated" in serialized_conversation
+
+        serialized_audit = json.dumps(list(bff_main._MGMT_AI_AUDIT_EVENTS), ensure_ascii=False)
+        assert passphrase not in serialized_audit
+        assert "[CONTROL MODE COMMAND REDACTED]" in serialized_audit
+    finally:
+        bff_main.read_store = original_store
+        bff_main._ASSISTANT_CONTROL_MODE_STORE = original_control_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+        bff_main._sse_buffers["ask"].clear()
+
+
+def test_management_nl_explicit_control_status_and_off_are_redacted(tmp_path, monkeypatch) -> None:
+    original_store = bff_main.read_store
+    original_control_store = bff_main._ASSISTANT_CONTROL_MODE_STORE
+    passphrase = "九條好漢在一班"
+    control_store = ControlModeStore(storage_path="off", initial_passphrase=passphrase)
+    fake = FakeProviderClient()
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setattr(bff_main, "_ASSISTANT_CONTROL_MODE_STORE", control_store)
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        monkeypatch.setattr(
+            bff_main,
+            "_extract_identity",
+            lambda authorization: _kernel_operator_identity(),
+        )
+        client = _seeded_client(tmp_path, monkeypatch)
+
+        activate_resp = client.post(
+            "/bff/management/nl/ask",
+            json={"question": f"控制模式：{passphrase}", "sessionId": "mgmt-chat-control-status"},
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-control-prefix"},
+        )
+        assert activate_resp.status_code == 202, activate_resp.text
+        assert activate_resp.json()["data"]["controlMode"]["active"] is True
+
+        status_resp = client.post(
+            "/bff/management/nl/ask",
+            json={"question": "/control status", "sessionId": "mgmt-chat-control-status"},
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-control-status"},
+        )
+        assert status_resp.status_code == 202, status_resp.text
+        assert status_resp.json()["data"]["controlMode"]["active"] is True
+        assert status_resp.json()["data"]["controlCommand"] == "status"
+
+        off_resp = client.post(
+            "/bff/management/nl/ask",
+            json={"question": "/control off", "sessionId": "mgmt-chat-control-status"},
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-control-off"},
+        )
+        assert off_resp.status_code == 202, off_resp.text
+        assert off_resp.json()["data"]["controlMode"]["active"] is False
+        assert off_resp.json()["data"]["controlCommand"] == "deactivate"
+        assert fake.calls == []
+
+        conversation_resp = client.get(
+            "/bff/management/ai/conversations/mgmt-chat-control-status",
+            headers=OPERATOR_HEADERS,
+        )
+        assert conversation_resp.status_code == 200, conversation_resp.text
+        conversation = conversation_resp.json()["data"]
+        serialized = json.dumps(conversation, ensure_ascii=False)
+        assert passphrase not in serialized
+        user_turns = [turn for turn in conversation["turns"] if turn["role"] == "user"]
+        assert len(user_turns) == 3
+        assert all(turn["text"] == "[CONTROL MODE COMMAND REDACTED]" for turn in user_turns)
+    finally:
+        bff_main.read_store = original_store
+        bff_main._ASSISTANT_CONTROL_MODE_STORE = original_control_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+        bff_main._sse_buffers["ask"].clear()
+
+
+def test_management_nl_chat_control_command_requires_authorized_operator(tmp_path, monkeypatch) -> None:
+    original_store = bff_main.read_store
+    original_control_store = bff_main._ASSISTANT_CONTROL_MODE_STORE
+    passphrase = "九條好漢在一班"
+    control_store = ControlModeStore(storage_path="off", initial_passphrase=passphrase)
+    fake = FakeProviderClient()
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setattr(bff_main, "_ASSISTANT_CONTROL_MODE_STORE", control_store)
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        monkeypatch.setattr(
+            bff_main,
+            "_extract_identity",
+            lambda authorization: _kernel_operator_identity(roles=["reviewer"]),
+        )
+        client = _seeded_client(tmp_path, monkeypatch)
+
+        resp = client.post(
+            "/bff/management/nl/ask",
+            json={"question": f"/control {passphrase}", "sessionId": "mgmt-chat-control-denied"},
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-control-denied"},
+        )
+
+        assert resp.status_code == 403, resp.text
+        assert resp.json()["error"]["details"]["precondition_failed"] == "control_mode_role"
+        assert control_store.status_for_actor("asst-bff-002")["active"] is False
+        assert fake.calls == []
+        assert passphrase not in json.dumps(list(bff_main._MGMT_AI_AUDIT_EVENTS), ensure_ascii=False)
     finally:
         bff_main.read_store = original_store
         bff_main._ASSISTANT_CONTROL_MODE_STORE = original_control_store
