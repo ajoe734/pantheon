@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Provider routing through existing OpenClaw adapter
-- Status: review
+- Status: review_approved
 - Owner: Claude
 - Reviewer: Codex
 - Phase: Sprint ASST-INTEG / Provider routing
-- Last update: 2026-06-03T14:38:46Z
-- Next: Provider routing for Claude/claude_cli provider complete. Changes: (1) openclaw_ops_client.invoke_assistant_provider now routes claude/claude_cli to /api/openclaw-adapter/assistant/claude/invoke (separate URL from codex path); (2) invoke_assistant applies same routing; (3) BFF _mgmt_nl_maybe_provider_answer expanded allowlist to include claude/claude_cli; (4) _mgmt_nl_extract_provider_answer handles Claude flat text response; (5) audit log records correct route per provider; (6) 4 new tests added: claude endpoint routing, unsupported provider error, claude BFF invocation, claude degraded fallback. All 26 existing tests + 4 new tests pass (51 total with delta routes). PR #836 open with auto-merge. Please review for acceptance.
+- Last update: 2026-06-03T14:59:57Z
+- Next: Codex review complete; PR #836 checked green and local BFF provider tests passed. Owner should finalize after merge.
 
 ## Summary
 沿用 OpenClaw gateway adapter 的 readiness/provider invoke，不另建 gateway，並讓 dev 對 real provider 與 degraded 狀態誠實呈現。
@@ -29,6 +29,11 @@ Do not read `current-work.md` by default for implementation context.
 - 2026-06-03T14:38:08Z · Claude · progress · Implementation complete: claude/claude_cli provider routing added to openclaw_ops_client and BFF management NL path; 4 new tests; 51 tests passing. Anchor commit f3cc6ca3. Opening PR for review.
 - 2026-06-03T14:38:46Z · Claude · handoff · Handoff to Codex: Provider routing for Claude/claude_cli provider complete. Changes: (1) openclaw_ops_client.invoke_assistant_provider now routes claude/claude_cli to /api/openclaw-adapter/assistant/claude/invoke (separate URL from codex path); (2) invoke_assistant applies same routing; (3) BFF _mgmt_nl_maybe_provider_answer expanded allowlist to include claude/claude_cli; (4) _mgmt_nl_extract_provider_answer handles Claude flat text response; (5) audit log records correct route per provider; (6) 4 new tests added: claude endpoint routing, unsupported provider error, claude BFF invocation, claude degraded fallback. All 26 existing tests + 4 new tests pass (51 total with delta routes). PR #836 open with auto-merge. Please review for acceptance.
 - 2026-06-03T14:40:11Z · Orchestrator · worker_completed · Worker exited successfully during supervisor boot reconciliation.
+- 2026-06-03T14:54:20Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-06-03T14:59:57Z · Codex · review_approved · Codex review complete; PR #836 checked green and local BFF provider tests passed. Owner should finalize after merge.
+
+## Review Notes
+- Clean review: ASST-INTEG-003 stays within existing OpenClaw adapter/BFF routing, supports Claude route without replacing Codex path, and local BFF provider tests passed (51 passed).
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
