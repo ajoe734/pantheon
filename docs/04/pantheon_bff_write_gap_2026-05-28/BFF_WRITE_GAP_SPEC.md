@@ -129,10 +129,22 @@ If a `410 Gone` is returned, `error.details.replacement` MUST contain the canoni
 
 | Route | Requirement |
 |---|---|
-| `POST /bff/management/nl/ask` | Accept `conversation.recentTurns`, `conversation.summary`, and `ui.currentRoute/selectedEntity/visiblePanels/filters/availableUiActions`; persist each turn by server-created or supplied `sessionId`; pass conversation/UI into `backend.management_nl.data` in the assistant context pack; return canonical `data.sessionId`, `data.traceId`, `data.providerStatus`, `data.actions`, and `data.conversation.href`. |
-| `GET /bff/management/ai/conversations/{sessionId}` | Return full ordered session turns with `id`, `role`, `text`, `createdAt`, and optional `providerStatus`; do not require or filter by `trace_id`; cap server-side at 200 turns for v1. |
+| `POST /bff/management/nl/ask` | Accept `conversation.recentTurns`, `conversation.summary`, `attachments`, and `ui.currentRoute/selectedEntity/visiblePanels/filters/availableUiActions`; create or validate a server-side Management AI session; persist the user turn before provider context construction; compose `backend.management_nl.data.conversation` from the server-side turn store, with FE turns retained only as `conversation.clientHint`; persist the assistant turn with `providerStatus` and `uiActions`; return canonical `data.sessionId`, `data.traceId`, `data.providerStatus`, `data.uiActions`, `data.actions`, `data.auditLog`, and `data.conversation.href`. |
+| `GET /bff/management/ai/conversations/{sessionId}` | Return the server-side session from creation with ordered turns containing `id`, `role`, `text`, `createdAt`, `providerStatus`, and attachment proxy URLs; do not require or filter by `trace_id`; nonexistent sessions return 404 instead of `{turns: []}`; visibility is owner or same tenant. |
 
 Action suggestions returned by `POST /bff/management/nl/ask` must be constrained to the request's `ui.availableUiActions`. `runBffAction` and any write-style action must set `requiresConfirmation: true`. Management AI session idle TTL is documented as at least 7 days.
+
+Inline attachment input uses `attachments[].dataBase64`. The BFF stores object
+bytes under the Management AI attachment store and persists only metadata plus
+`storageUrl` in the turn record. Conversation readback returns
+`attachments[].url` as `/bff/management/ai/attachments/{attachmentId}` and never
+returns base64 payloads. Idempotency replay returns the original response and
+does not append duplicate user/assistant turns.
+
+Storage defaults are BFF-owned: `PANTHEON_MANAGEMENT_AI_STORE_PATH` points to
+the SQLite session/turn database and
+`PANTHEON_MANAGEMENT_AI_ATTACHMENT_STORE_PATH` points to the attachment object
+directory. These are the deploy-time swap points for Postgres/GCS/S3 adapters.
 
 Already-existing generic action endpoints (workers extend these instead of creating new routes for P0-1/2/3 — register `AdvanceLifecycle` / `ApprovePool` / `StartRuntime` in the action catalog + handler):
 
@@ -459,5 +471,6 @@ Owner / reviewer matches the 3-class pattern set by 2026-05-24 delta (P0 / Class
 
 ## 7. Change log
 
+- **2026-06-03** v1.2 — makes Management AI conversation readback server-side source of truth: persisted sessions/turns, server-history context, attachment proxy URLs, nonexistent-session 404, and idempotency no-duplicate-turn acceptance.
 - **2026-06-03** v1.1 — adds P0 Management AI multi-turn backend contract for `/bff/management/nl/ask` and `/bff/management/ai/conversations/{sessionId}`: conversation/UI context pack, session readback, action allowlist, providerStatus, 7-day idle TTL, and live probe coverage.
 - **2026-05-28** v1.0 — initial BE-view rewrite of Lovable FE spec `BE_WRITE_GAP_SPEC_2026-05-28` v1.0. Adds repo-map, action-catalog hints for P0-1/2/3, and sprint-to-EPIC ticket map.

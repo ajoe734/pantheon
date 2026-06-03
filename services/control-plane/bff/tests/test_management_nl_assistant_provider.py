@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
@@ -134,6 +135,10 @@ def _seeded_client(tmp_path: Path, monkeypatch) -> TestClient:
     bff_main._MGMT_NL_IDEMPOTENCY.clear()
     bff_main._MGMT_AI_AUDIT_EVENTS.clear()
     bff_main._sse_buffers["ask"].clear()
+    bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
+        storage_path="off",
+        attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
+    )
     return TestClient(bff_main.app, raise_server_exceptions=False)
 
 
@@ -168,6 +173,41 @@ def _kernel_operator_identity(
         },
         token_kind="stub",
     )
+
+
+def test_management_ai_conversation_store_persists_sessions_and_turns_to_sqlite(tmp_path: Path) -> None:
+    store_path = str(tmp_path / "management-ai.sqlite3")
+    store = bff_main.ManagementAiConversationStore(
+        storage_path=store_path,
+        attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
+    )
+    store.upsert_session(
+        session_id="mgmt-sqlite-session",
+        owner_id="asst-bff-002",
+        tenant_id="tenant-alpha",
+        now="2026-06-03T00:00:00Z",
+        title="SQLite persistence",
+    )
+    store.append_turn(
+        turn_id="turn-user",
+        session_id="mgmt-sqlite-session",
+        role="user",
+        text="Persist me",
+        created_at="2026-06-03T00:00:01Z",
+        attachments=[{"id": "att-1", "kind": "image", "mimeType": "image/png", "filename": "x.png", "sizeBytes": 3, "storageUrl": "local://x"}],
+        ui_snapshot={"route": "/management"},
+    )
+
+    reloaded = bff_main.ManagementAiConversationStore(
+        storage_path=store_path,
+        attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
+    )
+    assert reloaded.get_session("mgmt-sqlite-session")["ownerId"] == "asst-bff-002"
+    turns = reloaded.list_turns("mgmt-sqlite-session")
+    assert len(turns) == 1
+    assert turns[0]["text"] == "Persist me"
+    assert turns[0]["attachments"][0]["storageUrl"] == "local://x"
+    assert turns[0]["uiSnapshot"] == {"route": "/management"}
 
 
 def test_openclaw_client_invokes_codex_provider_contract(monkeypatch) -> None:
@@ -370,7 +410,9 @@ def test_management_nl_passes_conversation_and_ui_context_to_provider(tmp_path, 
 
         management_context = fake.calls[0]["context_pack"]["backend"]["management_nl"]["data"]
         assert management_context["focus"] == "persona_fleet"
-        assert management_context["conversation"]["recentTurns"][0]["content"] == "What is unhealthy?"
+        assert management_context["conversation"]["source"] == "server"
+        assert management_context["conversation"]["recentTurns"][0]["content"] == "Continue from the previous answer."
+        assert management_context["conversation"]["clientHint"]["recentTurns"][0]["content"] == "What is unhealthy?"
         assert management_context["conversation"]["summary"] == "The operator is reviewing degraded personas."
         assert management_context["ui"]["currentRoute"] == "/management/personas"
         assert management_context["ui"]["selectedEntity"] == {"kind": "persona", "id": "persona-alpha"}
@@ -919,6 +961,243 @@ def test_management_ai_conversation_reader_returns_full_session_and_ignores_trac
         assert turns[1]["providerStatus"]["provider"] == "codex_cli"
         assert turns[1]["actions"] == []
         assert body["data"]["session"]["ttlSeconds"] >= 7 * 24 * 60 * 60
+    finally:
+        bff_main.read_store = original_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+        bff_main._sse_buffers["ask"].clear()
+
+
+def test_management_ai_persists_30_messages_as_60_ordered_turns(tmp_path, monkeypatch) -> None:
+    original_store = bff_main.read_store
+    fake = FakeProviderClient()
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "codex_cli")
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        client = _seeded_client(tmp_path, monkeypatch)
+
+        for turn_no in range(1, 31):
+            resp = client.post(
+                "/bff/management/nl/ask",
+                json={
+                    "question": f"Persistence question {turn_no}?",
+                    "focus": "portfolio",
+                    "sessionId": "mgmt-persist-30-session",
+                    "conversation": {
+                        "recentTurns": [
+                            {"role": "user", "content": f"FE window only has turn {turn_no}."}
+                        ],
+                        "summary": "FE hint must not replace server-side history.",
+                    },
+                },
+                headers={**OPERATOR_HEADERS, "Idempotency-Key": f"asst-bff-002-persist-30-{turn_no}"},
+            )
+            assert resp.status_code == 202, resp.text
+
+        conversation_resp = client.get(
+            "/bff/management/ai/conversations/mgmt-persist-30-session",
+            headers=OPERATOR_HEADERS,
+        )
+        assert conversation_resp.status_code == 200, conversation_resp.text
+        turns = conversation_resp.json()["data"]["turns"]
+        assert len(turns) == 60
+        assert [turn["role"] for turn in turns[:4]] == ["user", "assistant", "user", "assistant"]
+        assert turns[0]["text"] == "Persistence question 1?"
+        assert turns[-2]["text"] == "Persistence question 30?"
+        assert turns[-1]["text"] == "Provider grounded management answer."
+
+        last_management_context = fake.calls[-1]["context_pack"]["backend"]["management_nl"]["data"]
+        assert last_management_context["conversation"]["source"] == "server"
+        assert len(last_management_context["conversation"]["recentTurns"]) == 59
+        assert last_management_context["conversation"]["recentTurns"][0]["content"] == "Persistence question 1?"
+    finally:
+        bff_main.read_store = original_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+        bff_main._sse_buffers["ask"].clear()
+
+
+def test_management_ai_uses_server_history_when_fe_recent_turns_are_truncated(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    original_store = bff_main.read_store
+    fake = FakeProviderClient()
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "codex_cli")
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        client = _seeded_client(tmp_path, monkeypatch)
+
+        for turn_no in range(1, 4):
+            resp = client.post(
+                "/bff/management/nl/ask",
+                json={
+                    "question": f"Server history question {turn_no}?",
+                    "focus": "portfolio",
+                    "sessionId": "mgmt-server-history-session",
+                    "conversation": {
+                        "recentTurns": [
+                            {"role": "user", "content": "Only the latest FE-window hint remains."}
+                        ],
+                        "summary": "Short FE summary hint.",
+                    },
+                },
+                headers={**OPERATOR_HEADERS, "Idempotency-Key": f"asst-bff-002-server-history-{turn_no}"},
+            )
+            assert resp.status_code == 202, resp.text
+
+        management_context = fake.calls[-1]["context_pack"]["backend"]["management_nl"]["data"]
+        conversation = management_context["conversation"]
+        assert conversation["source"] == "server"
+        assert [turn["content"] for turn in conversation["recentTurns"]] == [
+            "Server history question 1?",
+            "Provider grounded management answer.",
+            "Server history question 2?",
+            "Provider grounded management answer.",
+            "Server history question 3?",
+        ]
+        assert conversation["clientHint"]["recentTurns"] == [
+            {
+                "role": "user",
+                "content": "Only the latest FE-window hint remains.",
+                "text": "Only the latest FE-window hint remains.",
+            }
+        ]
+    finally:
+        bff_main.read_store = original_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+        bff_main._sse_buffers["ask"].clear()
+
+
+def test_management_ai_idempotency_replay_does_not_duplicate_persisted_turns(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    original_store = bff_main.read_store
+    fake = FakeProviderClient()
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        client = _seeded_client(tmp_path, monkeypatch)
+
+        payload = {
+            "question": "Will idempotency duplicate turns?",
+            "focus": "portfolio",
+            "sessionId": "mgmt-idempotent-session",
+        }
+        headers = {**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-idempotent-persist"}
+        first = client.post("/bff/management/nl/ask", json=payload, headers=headers)
+        replay = client.post("/bff/management/nl/ask", json=payload, headers=headers)
+        assert first.status_code == 202, first.text
+        assert replay.status_code == 202, replay.text
+        assert replay.json()["meta"]["idempotency"]["replayed"] is True
+
+        conversation_resp = client.get(
+            "/bff/management/ai/conversations/mgmt-idempotent-session",
+            headers=OPERATOR_HEADERS,
+        )
+        assert conversation_resp.status_code == 200, conversation_resp.text
+        turns = conversation_resp.json()["data"]["turns"]
+        assert len(turns) == 2
+        assert [turn["role"] for turn in turns] == ["user", "assistant"]
+        assert len(fake.calls) == 1
+    finally:
+        bff_main.read_store = original_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+        bff_main._sse_buffers["ask"].clear()
+
+
+def test_management_ai_conversation_missing_session_returns_404(tmp_path, monkeypatch) -> None:
+    original_store = bff_main.read_store
+    try:
+        client = _seeded_client(tmp_path, monkeypatch)
+        resp = client.get(
+            "/bff/management/ai/conversations/mgmt-missing-session",
+            headers=OPERATOR_HEADERS,
+        )
+        assert resp.status_code == 404, resp.text
+        assert resp.json()["error"]["details"]["precondition_failed"] == "management_ai_session"
+    finally:
+        bff_main.read_store = original_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+        bff_main._sse_buffers["ask"].clear()
+
+
+def test_management_ai_inline_attachment_is_stored_and_read_back_as_proxy_url(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    original_store = bff_main.read_store
+    fake = FakeProviderClient()
+    image_bytes = b"not-a-real-png-but-stable"
+    encoded = base64.b64encode(image_bytes).decode("ascii")
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        client = _seeded_client(tmp_path, monkeypatch)
+
+        resp = client.post(
+            "/bff/management/nl/ask",
+            json={
+                "question": "Please inspect this screenshot.",
+                "focus": "cockpit",
+                "sessionId": "mgmt-attachment-session",
+                "attachments": [
+                    {
+                        "kind": "image",
+                        "mimeType": "image/png",
+                        "filename": "screen.png",
+                        "sizeBytes": len(image_bytes),
+                        "dataBase64": encoded,
+                    }
+                ],
+            },
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-attachment"},
+        )
+        assert resp.status_code == 202, resp.text
+
+        stored_turns = bff_main._MGMT_AI_CONVERSATION_STORE.list_turns("mgmt-attachment-session")
+        stored_attachment = stored_turns[0]["attachments"][0]
+        assert stored_attachment["storageUrl"].startswith("local://management-ai-attachments/")
+        assert "dataBase64" not in stored_attachment
+        assert encoded not in json.dumps(stored_turns, ensure_ascii=False)
+
+        conversation_resp = client.get(
+            "/bff/management/ai/conversations/mgmt-attachment-session",
+            headers=OPERATOR_HEADERS,
+        )
+        assert conversation_resp.status_code == 200, conversation_resp.text
+        attachment = conversation_resp.json()["data"]["turns"][0]["attachments"][0]
+        assert attachment == {
+            "id": stored_attachment["id"],
+            "attachmentId": stored_attachment["id"],
+            "attachment_id": stored_attachment["id"],
+            "kind": "image",
+            "mimeType": "image/png",
+            "mime_type": "image/png",
+            "filename": "screen.png",
+            "sizeBytes": len(image_bytes),
+            "size_bytes": len(image_bytes),
+            "url": f"/bff/management/ai/attachments/{stored_attachment['id']}",
+        }
+        assert "dataBase64" not in json.dumps(conversation_resp.json(), ensure_ascii=False)
+
+        attachment_resp = client.get(attachment["url"], headers=OPERATOR_HEADERS)
+        assert attachment_resp.status_code == 200, attachment_resp.text
+        assert attachment_resp.content == image_bytes
+        assert attachment_resp.headers["content-type"].startswith("image/png")
+
+        metadata_attachments = fake.calls[0]["metadata"]["attachments"]
+        assert metadata_attachments[0]["url"] == attachment["url"]
     finally:
         bff_main.read_store = original_store
         bff_main._MGMT_NL_IDEMPOTENCY.clear()

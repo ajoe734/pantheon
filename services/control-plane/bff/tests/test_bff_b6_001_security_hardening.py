@@ -102,6 +102,10 @@ def _seeded_client(
         allow_local_snapshot_fallback=True,
     )
     bff_main._MGMT_NL_IDEMPOTENCY.clear()
+    bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
+        storage_path="off",
+        attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
+    )
     bff_main._sse_buffers["ask"].clear()
     try:
         yield TestClient(bff_main.app, raise_server_exceptions=False)

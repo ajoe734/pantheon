@@ -38,6 +38,7 @@ class Probe:
     body: dict[str, Any] | None = None
     expect_status: set[int] = field(default_factory=lambda: {200})
     required_paths: tuple[tuple[str, ...], ...] = ()
+    min_turn_count: int = 0
 
 
 READ_PROBES: tuple[Probe, ...] = (
@@ -116,6 +117,7 @@ READ_PROBES: tuple[Probe, ...] = (
             ("data", "traceId"),
             ("data", "providerStatus"),
             ("data", "controlMode"),
+            ("data", "uiActions"),
             ("data", "actions"),
             ("data", "conversation", "href"),
             ("data", "session", "ttlSeconds"),
@@ -242,6 +244,18 @@ def body_summary(data: Any) -> dict[str, Any]:
     return {"type": type(data).__name__}
 
 
+def probe_path_from_href(href: str) -> str:
+    parsed = urllib.parse.urlparse(str(href or ""))
+    if parsed.scheme and parsed.netloc:
+        path = parsed.path or "/"
+    else:
+        path = str(href or "")
+    query = parsed.query
+    if query and "?" not in path:
+        return f"{path}?{query}"
+    return path
+
+
 def request_json(
     *,
     base_url: str,
@@ -301,8 +315,14 @@ def request_json(
         for path in probe.required_paths
         if not has_path(parsed, path)
     ]
+    if probe.min_turn_count:
+        turns = None
+        if isinstance(parsed, dict) and isinstance(parsed.get("data"), dict):
+            turns = parsed["data"].get("turns")
+        if not isinstance(turns, list) or len(turns) < probe.min_turn_count:
+            missing_paths.append(f"data.turns>={probe.min_turn_count}")
     ok = status in probe.expect_status and not missing_paths
-    return {
+    result = {
         "family": probe.family,
         "method": probe.method,
         "path": probe.path,
@@ -319,6 +339,13 @@ def request_json(
         "body_summary": body_summary(parsed),
         "body_prefix": text[:300] if not ok else None,
     }
+    if probe.family == "management-ai-multiturn" and isinstance(parsed, dict):
+        data = parsed.get("data")
+        if isinstance(data, dict):
+            conversation = data.get("conversation")
+            if isinstance(conversation, dict) and conversation.get("href"):
+                result["conversation_href"] = str(conversation["href"])
+    return result
 
 
 def parse_args() -> argparse.Namespace:
@@ -368,6 +395,29 @@ def main() -> int:
         )
         for probe in probes
     ]
+    followup_results = []
+    for result in route_results:
+        if result.get("family") != "management-ai-multiturn" or not result.get("ok"):
+            continue
+        conversation_href = result.get("conversation_href")
+        if not conversation_href:
+            continue
+        followup_results.append(
+            request_json(
+                base_url=args.base_url,
+                probe=Probe(
+                    "GET",
+                    probe_path_from_href(str(conversation_href)),
+                    "management-ai-conversation-readback",
+                    required_paths=(("data", "sessionId"), ("data", "turns")),
+                    min_turn_count=2,
+                ),
+                token=token,
+                timeout=args.timeout,
+                idempotency_prefix=idempotency_prefix,
+            )
+        )
+    route_results.extend(followup_results)
 
     all_results = [health, openapi, *route_results]
     failed = [item for item in all_results if not item.get("ok")]

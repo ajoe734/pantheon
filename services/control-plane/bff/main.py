@@ -96,6 +96,7 @@ from action_catalog import get_action_catalog, get_catalog_entry
 from command_queue import CommandStore
 from command_executor import execute_command_with_status
 from session_lifecycle_store import SessionLifecycleStore
+from management_ai_store import ManagementAiAttachmentStore, ManagementAiConversationStore
 from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 from source_search_ops_client import (
     SearchIndexCommandClient,
@@ -29413,6 +29414,7 @@ _MGMT_NL_HIGH_RISK_PATTERNS: List[tuple[str, List[str], str]] = [
 ]
 
 _MGMT_AI_AUDIT_EVENTS: deque = deque(maxlen=500)
+_MGMT_AI_CONVERSATION_STORE = ManagementAiConversationStore()
 
 
 def _management_ai_audit_path() -> Optional[str]:
@@ -29682,6 +29684,257 @@ def _management_ai_conversation_turns(
                 }
             )
     return turns[-limit:]
+
+
+def _management_ai_conversation_store() -> ManagementAiConversationStore:
+    store = globals().get("_MGMT_AI_CONVERSATION_STORE")
+    if store is None:
+        store = ManagementAiConversationStore()
+        globals()["_MGMT_AI_CONVERSATION_STORE"] = store
+    return store
+
+
+def _management_ai_attachment_url(attachment_id: str) -> str:
+    return f"/bff/management/ai/attachments/{quote(str(attachment_id or ''), safe='')}"
+
+
+def _management_ai_attachment_api_payload(attachment: Dict[str, Any]) -> Dict[str, Any]:
+    attachment_id = str(
+        attachment.get("id")
+        or attachment.get("attachmentId")
+        or attachment.get("attachment_id")
+        or ""
+    ).strip()
+    mime_type = str(attachment.get("mimeType") or attachment.get("mime_type") or "application/octet-stream")
+    size_bytes = int(attachment.get("sizeBytes") or attachment.get("size_bytes") or 0)
+    return {
+        "id": attachment_id,
+        "attachmentId": attachment_id,
+        "attachment_id": attachment_id,
+        "kind": str(attachment.get("kind") or "file"),
+        "mimeType": mime_type,
+        "mime_type": mime_type,
+        "filename": str(attachment.get("filename") or attachment_id or "attachment"),
+        "sizeBytes": size_bytes,
+        "size_bytes": size_bytes,
+        "url": _management_ai_attachment_url(attachment_id) if attachment_id else "",
+    }
+
+
+def _management_ai_turn_api_payload(turn: Dict[str, Any]) -> Dict[str, Any]:
+    attachments = [
+        _management_ai_attachment_api_payload(item)
+        for item in (turn.get("attachments") or [])
+        if isinstance(item, dict)
+    ]
+    provider_status = turn.get("providerStatus") if isinstance(turn.get("providerStatus"), dict) else None
+    ui_actions = turn.get("uiActions") if isinstance(turn.get("uiActions"), list) else []
+    payload = {
+        "id": turn.get("id"),
+        "turn_id": turn.get("turn_id") or turn.get("turnId") or turn.get("id"),
+        "message_id": turn.get("message_id") or turn.get("id"),
+        "sessionId": turn.get("sessionId") or turn.get("session_id"),
+        "session_id": turn.get("session_id") or turn.get("sessionId"),
+        "traceId": turn.get("traceId"),
+        "trace_id": turn.get("trace_id"),
+        "role": turn.get("role"),
+        "text": turn.get("text") or "",
+        "content": turn.get("text") or "",
+        "createdAt": turn.get("createdAt") or turn.get("created_at"),
+        "created_at": turn.get("created_at") or turn.get("createdAt"),
+        "providerStatus": provider_status,
+        "provider_status": provider_status,
+        "attachments": attachments,
+        "uiActions": ui_actions,
+        "ui_actions": ui_actions,
+        "actions": ui_actions,
+    }
+    ui_snapshot = turn.get("uiSnapshot") if isinstance(turn.get("uiSnapshot"), dict) else None
+    if ui_snapshot is not None:
+        payload["uiSnapshot"] = ui_snapshot
+        payload["ui_snapshot"] = ui_snapshot
+    return payload
+
+
+def _management_ai_require_session_access(
+    session: Dict[str, Any],
+    identity: OperatorIdentity,
+    *,
+    tenant_id: Optional[str],
+) -> None:
+    owner_id = str(session.get("ownerId") or session.get("owner_id") or "").strip()
+    session_tenant_id = str(session.get("tenantId") or session.get("tenant_id") or "").strip()
+    clean_tenant_id = str(tenant_id or "").strip()
+    if owner_id and owner_id == identity.operator_id:
+        return
+    if clean_tenant_id and session_tenant_id and clean_tenant_id == session_tenant_id:
+        return
+    raise _bff_error(
+        403,
+        ErrorCode.FORBIDDEN,
+        "Management AI session is not visible to this operator",
+        "management_ai_session_not_visible",
+        precondition_failed="management_ai_session_visibility",
+    )
+
+
+def _management_ai_get_session_or_404(
+    session_id: str,
+    identity: OperatorIdentity,
+    *,
+    tenant_id: Optional[str],
+) -> Dict[str, Any]:
+    clean_session_id = str(session_id or "").strip()
+    session = _management_ai_conversation_store().get_session(clean_session_id)
+    if session is None:
+        raise _bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            f"Management AI session not found: {clean_session_id!r}",
+            "management_ai_session_not_found",
+            precondition_failed="management_ai_session",
+        )
+    _management_ai_require_session_access(session, identity, tenant_id=tenant_id)
+    return session
+
+
+def _management_ai_ensure_session(
+    *,
+    session_id: str,
+    identity: OperatorIdentity,
+    tenant_id: Optional[str],
+    now: str,
+    title: str,
+) -> Dict[str, Any]:
+    store = _management_ai_conversation_store()
+    existing = store.get_session(session_id)
+    if existing is not None:
+        _management_ai_require_session_access(existing, identity, tenant_id=tenant_id)
+    try:
+        return store.upsert_session(
+            session_id=session_id,
+            owner_id=identity.operator_id,
+            tenant_id=tenant_id,
+            now=now,
+            title=title,
+        )
+    except Exception as exc:
+        log.warning("Failed to persist Management AI session", exc_info=True)
+        raise _bff_error(
+            503,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
+            "Management AI session store write failed",
+            str(exc),
+            precondition_failed="management_ai_session_store",
+        )
+
+
+def _management_ai_store_attachments(
+    *,
+    attachments: Any,
+    session_id: str,
+    turn_id: str,
+) -> List[Dict[str, Any]]:
+    try:
+        return _management_ai_conversation_store().store_attachments(
+            attachments,
+            session_id=session_id,
+            turn_id=turn_id,
+        )
+    except ValueError as exc:
+        raise _bff_error(
+            400,
+            ErrorCode.VALIDATION_FAILED,
+            "Management AI attachment payload is invalid",
+            str(exc),
+            precondition_failed="management_ai_attachment",
+        )
+    except Exception as exc:
+        log.warning("Failed to persist Management AI attachment", exc_info=True)
+        raise _bff_error(
+            503,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
+            "Management AI attachment store write failed",
+            str(exc),
+            precondition_failed="management_ai_attachment_store",
+        )
+
+
+def _management_ai_append_turn(
+    *,
+    turn_id: str,
+    session_id: str,
+    role: str,
+    text: str,
+    created_at: str,
+    trace_id: Optional[str] = None,
+    attachments: Optional[List[Dict[str, Any]]] = None,
+    provider_status: Optional[Dict[str, Any]] = None,
+    ui_snapshot: Optional[Dict[str, Any]] = None,
+    ui_actions: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    try:
+        return _management_ai_conversation_store().append_turn(
+            turn_id=turn_id,
+            session_id=session_id,
+            role=role,
+            text=text,
+            created_at=created_at,
+            trace_id=trace_id,
+            attachments=attachments,
+            provider_status=provider_status,
+            ui_snapshot=ui_snapshot,
+            ui_actions=ui_actions,
+        )
+    except Exception as exc:
+        log.warning("Failed to persist Management AI turn", exc_info=True)
+        raise _bff_error(
+            503,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
+            "Management AI turn store write failed",
+            str(exc),
+            precondition_failed="management_ai_turn_store",
+        )
+
+
+def _management_ai_server_conversation_context(
+    *,
+    session_id: str,
+    client_hint: Dict[str, Any],
+) -> Dict[str, Any]:
+    stored_turns = _management_ai_conversation_store().list_turns(session_id)
+    turns = []
+    for turn in stored_turns:
+        api_turn = _management_ai_turn_api_payload(turn)
+        turns.append(
+            {
+                "id": api_turn.get("id"),
+                "role": api_turn.get("role"),
+                "content": api_turn.get("text") or "",
+                "text": api_turn.get("text") or "",
+                "createdAt": api_turn.get("createdAt"),
+                "created_at": api_turn.get("created_at"),
+                "attachments": api_turn.get("attachments") or [],
+                "providerStatus": api_turn.get("providerStatus"),
+                "provider_status": api_turn.get("provider_status"),
+                "traceId": api_turn.get("traceId"),
+                "trace_id": api_turn.get("trace_id"),
+            }
+        )
+    return {
+        "recentTurns": turns,
+        "recent_turns": turns,
+        "allTurns": turns,
+        "all_turns": turns,
+        "turnCount": len(turns),
+        "turn_count": len(turns),
+        "source": "server",
+        "summary": client_hint.get("summary") or "",
+        "clientHint": client_hint,
+        "client_hint": client_hint,
+        "maxRecentTurns": None,
+        "max_recent_turns": None,
+    }
 
 
 def _mgmt_nl_normalize_focus(value: Any) -> str:
@@ -30220,6 +30473,7 @@ def _mgmt_nl_handle_control_command(
     identity: OperatorIdentity,
     caller_tenant_id: str,
     focus: str,
+    ui_snapshot: Dict[str, Any],
     resolved_key: str,
     request_hash: str,
     session_id: str,
@@ -30321,6 +30575,23 @@ def _mgmt_nl_handle_control_command(
         tenant_id=caller_tenant_id,
         now=now,
     )
+    _management_ai_ensure_session(
+        session_id=session_id,
+        identity=identity,
+        tenant_id=caller_tenant_id,
+        now=now,
+        title=_MGMT_NL_CONTROL_REDACTED_QUESTION,
+    )
+    _management_ai_append_turn(
+        turn_id=message_id,
+        session_id=session_id,
+        role="user",
+        text=_MGMT_NL_CONTROL_REDACTED_QUESTION,
+        created_at=now,
+        trace_id=trace_id,
+        attachments=[],
+        ui_snapshot=ui_snapshot,
+    )
 
     redaction = {
         "question": "redacted",
@@ -30389,6 +30660,8 @@ def _mgmt_nl_handle_control_command(
             "control_mode": control_mode,
             "controlCommand": command_kind,
             "control_command": command_kind,
+            "uiActions": [],
+            "ui_actions": [],
             "actions": [],
             "auditRef": audit_ref,
             "audit_ref": audit_ref,
@@ -30464,6 +30737,16 @@ def _mgmt_nl_handle_control_command(
             },
             "fallback": provider_status.get("fallback"),
         }
+    )
+    _management_ai_append_turn(
+        turn_id=assistant_turn_id,
+        session_id=session_id,
+        role="assistant",
+        text=answer,
+        created_at=utc_now(),
+        trace_id=trace_id,
+        provider_status=provider_status,
+        ui_actions=[],
     )
     _MGMT_NL_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
     return JSONResponse(status_code=202, content=result)
@@ -31117,7 +31400,8 @@ def _mgmt_nl_provider_prompt(
             "You are the Pantheon management assistant in user mode.",
             "Answer only from the supplied BFF context pack.",
             "Do not execute, approve, deploy, restart, trade, or mutate anything.",
-            "Use backend.management_nl.data.conversation for prior turns and backend.management_nl.data.ui for UI state.",
+            "Use backend.management_nl.data.conversation for server-side prior turns and backend.management_nl.data.ui for UI state.",
+            "Treat backend.management_nl.data.conversation.clientHint as a frontend hint, never as the conversation source of truth.",
             "If you suggest UI actions, return actions only with kinds listed in ui.availableUiActions.",
             "Any runBffAction or write-style action must require confirmation.",
             "If evidence is missing or stale, say so and keep the answer concise.",
@@ -31187,6 +31471,7 @@ def _mgmt_nl_maybe_provider_answer(
     context_pack: Dict[str, Any],
     audit_id: Optional[str],
     allowed_action_kinds: Set[str],
+    current_user_attachments: Optional[List[Dict[str, Any]]] = None,
 ) -> Tuple[Optional[str], Dict[str, Any], List[Dict[str, Any]]]:
     enabled = _mgmt_nl_provider_feature_enabled()
     if provider in {"none", "off", "disabled", "deterministic"}:
@@ -31281,6 +31566,7 @@ def _mgmt_nl_maybe_provider_answer(
                 "provider_run_id": run_id,
                 "tenant_id": caller_tenant_id,
                 "audit_id": audit_id,
+                "attachments": current_user_attachments or [],
             },
         )
     except OpenClawOpsClientError as exc:
@@ -31410,7 +31696,7 @@ async def bff_management_nl_ask(
 
     operator_context = _mgmt_nl_trim_text(payload.get("context"), max_len=4000)
     focus = _mgmt_nl_normalize_focus(payload.get("focus"))
-    conversation_context = _mgmt_nl_normalize_conversation_context(payload.get("conversation"))
+    client_conversation_hint = _mgmt_nl_normalize_conversation_context(payload.get("conversation"))
     ui_snapshot = _mgmt_nl_normalize_ui_context(payload.get("ui"), operator_context=operator_context)
     allowed_action_kinds = _mgmt_nl_allowed_action_kinds(ui_snapshot)
 
@@ -31445,6 +31731,7 @@ async def bff_management_nl_ask(
             identity=identity,
             caller_tenant_id=caller_tenant_id,
             focus=focus,
+            ui_snapshot=ui_snapshot,
             resolved_key=resolved_key,
             request_hash=request_hash,
             session_id=session_id,
@@ -31458,6 +31745,36 @@ async def bff_management_nl_ask(
         management_session_id=session_id,
         touch=True,
     )
+    _management_ai_ensure_session(
+        session_id=session_id,
+        identity=identity,
+        tenant_id=caller_tenant_id,
+        now=now,
+        title=question,
+    )
+    user_attachments = _management_ai_store_attachments(
+        attachments=payload.get("attachments"),
+        session_id=session_id,
+        turn_id=message_id,
+    )
+    _management_ai_append_turn(
+        turn_id=message_id,
+        session_id=session_id,
+        role="user",
+        text=question,
+        created_at=now,
+        trace_id=trace_id,
+        attachments=user_attachments,
+        ui_snapshot=ui_snapshot,
+    )
+    conversation_context = _management_ai_server_conversation_context(
+        session_id=session_id,
+        client_hint=client_conversation_hint,
+    )
+    current_user_attachments = [
+        _management_ai_attachment_api_payload(item)
+        for item in user_attachments
+    ]
 
     # BFF-B6-001-SEC-FIX: pass tenant scope to context collection.
     context_bundle = _mgmt_nl_collect_context(focus, now, tenant_id=caller_tenant_id)
@@ -31560,8 +31877,10 @@ async def bff_management_nl_ask(
             "source_keys": source_keys,
             "context_pack_id": context_pack.get("context_pack_id"),
             "conversation_recent_turn_count": len(conversation_context.get("recentTurns") or []),
+            "client_conversation_recent_turn_count": len(client_conversation_hint.get("recentTurns") or []),
             "conversation_summary_present": bool(conversation_context.get("summary")),
             "ui": ui_snapshot,
+            "attachment_count": len(user_attachments),
             "available_ui_action_kinds": sorted(allowed_action_kinds),
             "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
             "control_mode": {
@@ -31587,6 +31906,7 @@ async def bff_management_nl_ask(
         context_pack=context_pack,
         audit_id=audit_ref.get("auditId"),
         allowed_action_kinds=allowed_action_kinds,
+        current_user_attachments=current_user_attachments,
     )
     answer = provider_answer or deterministic_answer
 
@@ -31621,6 +31941,8 @@ async def bff_management_nl_ask(
             "provider_status": provider_status,
             "controlMode": control_mode,
             "control_mode": control_mode,
+            "uiActions": actions,
+            "ui_actions": actions,
             "actions": actions,
             "auditRef": audit_ref,
             "audit_ref": audit_ref,
@@ -31691,6 +32013,16 @@ async def bff_management_nl_ask(
             "fallback": provider_status.get("fallback"),
         }
     )
+    _management_ai_append_turn(
+        turn_id=assistant_turn_id,
+        session_id=session_id,
+        role="assistant",
+        text=answer,
+        created_at=utc_now(),
+        trace_id=trace_id,
+        provider_status=provider_status,
+        ui_actions=actions,
+    )
     _MGMT_NL_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
     return JSONResponse(status_code=202, content=result)
 
@@ -31733,18 +32065,28 @@ async def bff_management_ai_audit(
 async def bff_management_ai_conversation(
     session_id: str,
     trace_id: Optional[str] = None,
-    limit: int = Query(default=100, ge=1, le=200),
+    limit: int = Query(default=500, ge=1, le=1000),
     authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+    x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
 ):
-    """Read full Management AI session turns from backend audit events only."""
+    """Read full Management AI session turns from the server-side conversation store."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     clean_session_id = str(session_id or "").strip()
-    turns = _management_ai_conversation_turns(
-        session_id=clean_session_id,
-        trace_id=None,
-        limit=limit,
+    caller_tenant_id = _mgmt_nl_caller_tenant(
+        identity,
+        requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant),
     )
+    session = _management_ai_get_session_or_404(
+        clean_session_id,
+        identity,
+        tenant_id=caller_tenant_id,
+    )
+    turns = [
+        _management_ai_turn_api_payload(turn)
+        for turn in _management_ai_conversation_store().list_turns(clean_session_id)
+    ][:limit]
     audit_log = {
         "href": _management_ai_audit_href(session_id=clean_session_id, trace_id=trace_id),
         "traceId": trace_id,
@@ -31757,6 +32099,14 @@ async def bff_management_ai_conversation(
             "traceId": trace_id,
             "trace_id": trace_id,
             "turns": turns,
+            "ownerId": session.get("ownerId") or session.get("owner_id"),
+            "owner_id": session.get("owner_id") or session.get("ownerId"),
+            "tenantId": session.get("tenantId") or session.get("tenant_id"),
+            "tenant_id": session.get("tenant_id") or session.get("tenantId"),
+            "createdAt": session.get("createdAt") or session.get("created_at"),
+            "created_at": session.get("created_at") or session.get("createdAt"),
+            "updatedAt": session.get("updatedAt") or session.get("updated_at"),
+            "updated_at": session.get("updated_at") or session.get("updatedAt"),
             "auditLog": audit_log,
             "audit_log": audit_log,
             "session": {
@@ -31780,6 +32130,52 @@ async def bff_management_ai_conversation(
             },
         },
     }
+
+
+@app.get("/bff/management/ai/attachments/{attachment_id}")
+async def bff_management_ai_attachment(
+    attachment_id: str,
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+    x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+):
+    """Return a BFF-proxied Management AI attachment object for visible sessions."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    found = _management_ai_conversation_store().find_attachment(attachment_id)
+    if found is None:
+        raise _bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            f"Management AI attachment not found: {attachment_id!r}",
+            "management_ai_attachment_not_found",
+            precondition_failed="management_ai_attachment",
+        )
+    metadata, turn = found
+    caller_tenant_id = _mgmt_nl_caller_tenant(
+        identity,
+        requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant),
+    )
+    _management_ai_get_session_or_404(
+        str(turn.get("sessionId") or turn.get("session_id") or ""),
+        identity,
+        tenant_id=caller_tenant_id,
+    )
+    try:
+        content, mime_type, filename = _management_ai_conversation_store().read_attachment(attachment_id, metadata)
+    except FileNotFoundError:
+        raise _bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            f"Management AI attachment object not found: {attachment_id!r}",
+            "management_ai_attachment_object_not_found",
+            precondition_failed="management_ai_attachment_object",
+        )
+    return Response(
+        content=content,
+        media_type=mime_type,
+        headers={"Content-Disposition": f"inline; filename=\"{filename}\""},
+    )
 
 
 @app.get("/bff/management/evidence")
