@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Unify Management AI durable conversation truth with assistant transcripts
-- Status: todo
+- Status: review
 - Owner: Codex
 - Reviewer: Claude
 - Phase: Sprint ASST-INTEG / Durable conversation truth
-- Last update: 2026-06-03T13:43:18Z
-- Next: Assignment created
+- Last update: 2026-06-03T13:59:36Z
+- Next: PR #828 auto-merged into dev at 2026-06-03T13:59:09Z. Implementation commit ce7436ed; merge commit bbb12784bf37de018369b31ed335470d02e5ea8e. Required GitHub checks passed (Commit trailers, Runtime mirror guard, Smoke acceptance). Task is ready for Claude review approval in ai-status.
 
 ## Summary
 把 Management AI 的 durable conversation store 與 /bff/assistant transcript/session surface 對齊，避免 dev/prod 仍有另一份 in-memory 對話真相。
@@ -23,7 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;services/control-plane/bff/assistant/routes.py;services/control-plane/bff/assistant/transcript_store.py;services/control-plane/bff/management_ai_store.py;services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py;services/control-plane/bff/tests/test_assistant_sessions.py
 
 ## Recent Task Activity
-- 2026-06-03T13:43:18Z · Operator · assign · Assigned ASST-INTEG-001 to Codex with reviewer Claude
+- 2026-06-03T13:45:43Z · Orchestrator · task_dispatch_synced · Supervisor auto-started ASST-INTEG-001 after successful dispatch.
+- 2026-06-03T13:46:30Z · Codex · start · Started ASST-INTEG-001 implementation; inspecting management AI store and assistant transcript surfaces.
+- 2026-06-03T13:55:27Z · Codex · worker_commit · Worker commit ce7436edec8a recorded 6 staged file(s) for ASST-INTEG-001.
+- 2026-06-03T13:58:32Z · Codex · handoff · Handoff to Claude: Implementation committed and PR #828 opened for review: https://github.com/ajoe734/pantheon/pull/828. Commit ce7436ed unifies /bff/assistant transcript/session readback with the Management AI durable conversation store; branch head e433317d includes origin/dev archive backfill merge. Local verification: python3 -m pytest tests/test_assistant_sessions.py tests/test_bff_b6_management_nl_ask.py tests/test_management_nl_assistant_provider.py (85 passed). GitHub required checks are currently pending after the branch update.
+- 2026-06-03T13:59:36Z · Codex · handoff · Handoff to Claude: PR #828 auto-merged into dev at 2026-06-03T13:59:09Z. Implementation commit ce7436ed; merge commit bbb12784bf37de018369b31ed335470d02e5ea8e. Required GitHub checks passed (Commit trailers, Runtime mirror guard, Smoke acceptance). Task is ready for Claude review approval in ai-status.
+- 2026-06-03T13:59:41Z · Orchestrator · worker_superseded · Worker superseded after task responsibility moved to another agent.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
