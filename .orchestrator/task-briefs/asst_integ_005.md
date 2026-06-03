@@ -5,26 +5,26 @@ Treat `ai-status.json` as the durable execution source of truth only when you ne
 Do not read `current-work.md` by default for implementation context.
 
 ## Task
-- Title: Add SA SD requirement capture and execution task generator
+- Title: SA/SD generator using existing docs and task-brief architecture
 - Status: todo
 - Owner: Claude2
 - Reviewer: Codex
 - Phase: Sprint ASST-INTEG / SA-SD generator
-- Last update: 2026-06-03T13:43:29Z
-- Next: Assignment created
+- Last update: 2026-06-03T14:26:35Z
+- Next: Ownership updated
 
 ## Summary
 讓小幫手能從對話生成 requirement capture、SA、SD、execution task packet，並歸檔到既有 docs 與 task brief 位置。
 
 ## Dependencies
-- ASST-INTEG-001: todo · Unify Management AI durable conversation truth with assistant transcripts
-- ASST-INTEG-002: todo · Extend BFF assistant context mesh with UI hints BFF reads and docs citations
+- ASST-INTEG-001: done · Unify Management AI durable conversation truth with assistant transcripts
 
 ## Artifacts
 - docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;docs/02-architecture;docs/03;docs/04;docs/05-ui;.orchestrator/task-briefs
 
 ## Recent Task Activity
 - 2026-06-03T13:43:29Z · Operator · assign · Assigned ASST-INTEG-005 to Claude2 with reviewer Codex
+- 2026-06-03T14:26:35Z · Operator · assign · Assigned ASST-INTEG-005 to Claude2 with reviewer Codex
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
