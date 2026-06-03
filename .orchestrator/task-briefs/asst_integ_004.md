@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Implement governed assistant operation tool contracts on existing BFF actions
-- Status: todo
+- Status: in_progress
 - Owner: Claude
 - Reviewer: Codex2
 - Phase: Sprint ASST-INTEG / Governed operation tools
-- Last update: 2026-06-03T13:43:26Z
-- Next: Assignment created
+- Last update: 2026-06-03T15:27:03Z
+- Next: Blocking review: AuditExport is allowlisted as a low-risk assistant tool, but execute_governed_tool(action_id="AuditExport") currently returns status=failed because CommandType.AUDIT_EXPORT has no command_executor executor. The route test allows failed and masks the regression. Fix by routing AuditExport through an existing durable BFF command/admission path or adding a governed executor/receipt path, and tighten tests so low-risk execution cannot pass with status=failed.
 
 ## Summary
 把小幫手的系統操作能力接到既有 action_catalog/command_executor/audit receipt，而不是直接操作 DOM 或 shell。
@@ -23,7 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;services/control-plane/bff/action_catalog.py;services/control-plane/bff/command_executor.py;services/control-plane/bff/assistant;services/control-plane/bff/tests/test_assistant_security.py
 
 ## Recent Task Activity
-- 2026-06-03T13:43:26Z · Operator · assign · Assigned ASST-INTEG-004 to Claude with reviewer Codex2
+- 2026-06-03T15:20:03Z · Orchestrator · worker_superseded · Worker superseded after task responsibility moved to another agent.
+- 2026-06-03T15:26:51Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-06-03T15:26:52Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-03T15:26:52Z · Orchestrator · worker_worktree_reused · -
+- 2026-06-03T15:26:52Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
+- 2026-06-03T15:27:03Z · Codex2 · reopen · Blocking review: AuditExport is allowlisted as a low-risk assistant tool, but execute_governed_tool(action_id="AuditExport") currently returns status=failed because CommandType.AUDIT_EXPORT has no command_executor executor. The route test allows failed and masks the regression. Fix by routing AuditExport through an existing durable BFF command/admission path or adding a governed executor/receipt path, and tighten tests so low-risk execution cannot pass with status=failed.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
