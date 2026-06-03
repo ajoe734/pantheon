@@ -40,6 +40,8 @@ from assistant.transcript_store import (
     AssistantSession,
     InMemorySessionStore,
     InMemoryTranscriptStore,
+    ManagementAiAssistantSessionStore,
+    ManagementAiAssistantTranscriptStore,
     SessionNotFoundError,
     SessionRejectedError,
     SessionStatus,
@@ -48,6 +50,7 @@ from assistant.transcript_store import (
     build_session,
     build_turn,
 )
+from management_ai_store import ManagementAiAttachmentStore, ManagementAiConversationStore
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +122,26 @@ def _make_control_client(store: ControlModeStore) -> TestClient:
         mfa_verified=True,
         control_mode_store=store,
     )
+
+
+def _make_management_ai_backed_client(
+    store: ManagementAiConversationStore,
+    *,
+    identity: Optional[_FakeIdentity] = None,
+) -> TestClient:
+    actor = identity or _FakeIdentity()
+
+    router = create_assistant_router(
+        build_context_pack=lambda sid, req, actor: (_ for _ in ()).throw(NotImplementedError),
+        extract_identity=lambda _auth: actor,
+        require_read_role=lambda _id: None,
+        session_store=ManagementAiAssistantSessionStore(store=store),
+        transcript_store=ManagementAiAssistantTranscriptStore(store=store),
+    )
+
+    app = FastAPI()
+    app.include_router(router)
+    return TestClient(app, raise_server_exceptions=True)
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +262,68 @@ class TestInMemoryTranscriptStore:
         store.append(turn)
         stored = store.list_turns("sess2")[0]
         assert stored.source_refs == refs
+
+
+class TestManagementAiBackedAssistantStores:
+    def test_session_and_transcript_survive_store_reload(self, tmp_path):
+        store_path = str(tmp_path / "management-ai.sqlite3")
+        store = ManagementAiConversationStore(
+            storage_path=store_path,
+            attachment_store=ManagementAiAttachmentStore(storage_path="off"),
+        )
+        client = _make_management_ai_backed_client(store)
+
+        create_resp = client.post(
+            "/bff/assistant/sessions", json={"mode": "user"}, headers=HEADERS
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        session_id = create_resp.json()["data"]["session_id"]
+        source_refs = [{"source_id": "control_room", "href": "/bff/v5/control-room"}]
+
+        append_resp = client.post(
+            f"/bff/assistant/sessions/{session_id}/transcript",
+            json={
+                "role": "assistant",
+                "content": "Durable turn",
+                "context_pack_id": "ctx_durable",
+                "provider_run_id": "run_durable",
+                "source_refs": source_refs,
+            },
+            headers=HEADERS,
+        )
+        assert append_resp.status_code == 201, append_resp.text
+
+        reloaded = ManagementAiConversationStore(
+            storage_path=store_path,
+            attachment_store=ManagementAiAttachmentStore(storage_path="off"),
+        )
+        reloaded_client = _make_management_ai_backed_client(reloaded)
+
+        session_resp = reloaded_client.get(
+            f"/bff/assistant/sessions/{session_id}", headers=HEADERS
+        )
+        assert session_resp.status_code == 200, session_resp.text
+        assert session_resp.json()["data"]["session_id"] == session_id
+
+        transcript_resp = reloaded_client.get(
+            f"/bff/assistant/sessions/{session_id}/transcript", headers=HEADERS
+        )
+        assert transcript_resp.status_code == 200, transcript_resp.text
+        turns = transcript_resp.json()["data"]
+        assert len(turns) == 1
+        assert turns[0]["content"] == "Durable turn"
+        assert turns[0]["context_pack_id"] == "ctx_durable"
+        assert turns[0]["provider_run_id"] == "run_durable"
+        assert turns[0]["source_refs"] == source_refs
+
+        other_client = _make_management_ai_backed_client(
+            reloaded,
+            identity=_FakeIdentity(operator_id="op_other"),
+        )
+        other_resp = other_client.get(
+            f"/bff/assistant/sessions/{session_id}/transcript", headers=HEADERS
+        )
+        assert other_resp.status_code == 404
 
 
 class TestAssertSessionAcceptsMessages:
