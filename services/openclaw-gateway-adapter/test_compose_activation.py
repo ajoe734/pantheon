@@ -43,6 +43,9 @@ def test_compose_wires_openclaw_gateway_adapter_without_broker_activation() -> N
     assert adapter["environment"]["OPENCLAW_BROKER_SIDECAR_URL"] == "http://broker:8102"
     assert adapter["environment"]["OPENCLAW_RUNTIME_MANAGER_URL"] == "http://runtime-manager:8081"
     assert adapter["environment"]["PANTHEON_RUNTIME_MANAGER_TOKEN"] == "runtime-control-internal"
+    assert adapter["environment"]["PANTHEON_ASSISTANT_CODEX_WORKSPACE"] == (
+        "${PANTHEON_ASSISTANT_CODEX_WORKSPACE:-/workspace}"
+    )
     assert (
         adapter["environment"]["PANTHEON_ASSISTANT_CODEX_HOST_HOME"]
         == "${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}"
