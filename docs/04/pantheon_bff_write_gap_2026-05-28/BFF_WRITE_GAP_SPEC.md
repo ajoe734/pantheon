@@ -3,13 +3,14 @@
 | | |
 |---|---|
 | **Doc ID** | `BFF_WRITE_GAP_SPEC_2026-05-28` |
-| **Version** | 1.0 |
+| **Version** | 1.1 |
 | **Date** | 2026-05-28 |
 | **Author** | Pantheon Operator (rewrite from Lovable FE spec) |
 | **Audience** | BE / BFF owners (workers under `EPIC-WRITE-GAP-*`) |
 | **Probe env** | `https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io` |
 | **Probe auth** | `Authorization: Bearer pantheon-dev-browser:reviewer`, `X-Dry-Run: 1` |
 | **Upstream FE spec** | `execute-plans/.lovable/specs/be-requirements/BE_WRITE_GAP_SPEC_2026-05-28.md` (origin/main, 506 lines) |
+| **Related FE requirement** | `BE Requirements — Management AI Multi-Turn Assistant` v2026-06-03 |
 
 ## 0. Why this exists
 
@@ -19,6 +20,7 @@ Lovable FE shipped `withWriteFallback` 30-min overlay + `LiveStatusBanner` so th
 - Every high-risk action (retire, promote_live, force-transition, break-glass) — confirm endpoint missing
 - 5 Agora writes (signal/feedback/triage/coaching/postmortem) — all return 4xx
 - v5 Intervention batch decide — single-item works, batch does not
+- Management AI multi-turn panel — FE sends conversation/UI context, but BE must persist session turns, pass UI context to OpenClaw, and return allowlisted actions.
 
 The 15-endpoint surface, classification, and acceptance criteria come straight from two FE probes ran on 2026-05-28:
 
@@ -35,8 +37,9 @@ This doc translates the FE-view spec into BE-view tickets so workers can land ro
 | **P0 wizard middle** | 4 | `EPIC-WRITE-GAP-P0-WIZARD` |
 | **P1 runtime + agora** | 6 | `EPIC-WRITE-GAP-P1-AGORA` |
 | **P2 batch + sentinel** | 2 | `EPIC-WRITE-GAP-P2-MISC` |
+| **P0 management AI multi-turn** | 2 contract gaps | `EPIC-MGMT-AI-MULTITURN` |
 | **OPS redeploy + live verify** | 1 | `EPIC-WRITE-GAP-OPS` |
-| **Total** | **17** | — |
+| **Total** | **17 routes + 2 contract gaps** | — |
 
 ### Open endpoints — index
 
@@ -57,6 +60,8 @@ P1  POST /bff/agora/skill-coaching                                 404
 P1  POST /bff/agora/postmortems                                    405
 P2  POST /bff/v5/interventions/batch-decide                        405
 P2  (informational) Sentinel rule coverage for 6 HealthReasonCode  rule engine
+P0  POST /bff/management/nl/ask                                     Management AI multi-turn context/actions contract
+P0  GET  /bff/management/ai/conversations/{sessionId}               full session readback; ignores trace_id
 ```
 
 ## 2. Cross-cutting contract (apply to every endpoint)
@@ -119,6 +124,15 @@ If a `410 Gone` is returned, `error.details.replacement` MUST contain the canoni
 | Models / schemas | `services/control-plane/bff/models.py` |
 | Contract test (envelope) | `services/control-plane/bff/test_bff_error_envelope_shape.py` |
 | Contract test (this sprint) | `services/control-plane/bff/test_bff_write_gap_2026_05_28.py` *(new)* |
+
+### 3.1 Management AI multi-turn addendum (2026-06-03)
+
+| Route | Requirement |
+|---|---|
+| `POST /bff/management/nl/ask` | Accept `conversation.recentTurns`, `conversation.summary`, and `ui.currentRoute/selectedEntity/visiblePanels/filters/availableUiActions`; persist each turn by server-created or supplied `sessionId`; pass conversation/UI into `backend.management_nl.data` in the assistant context pack; return canonical `data.sessionId`, `data.traceId`, `data.providerStatus`, `data.actions`, and `data.conversation.href`. |
+| `GET /bff/management/ai/conversations/{sessionId}` | Return full ordered session turns with `id`, `role`, `text`, `createdAt`, and optional `providerStatus`; do not require or filter by `trace_id`; cap server-side at 200 turns for v1. |
+
+Action suggestions returned by `POST /bff/management/nl/ask` must be constrained to the request's `ui.availableUiActions`. `runBffAction` and any write-style action must set `requiresConfirmation: true`. Management AI session idle TTL is documented as at least 7 days.
 
 Already-existing generic action endpoints (workers extend these instead of creating new routes for P0-1/2/3 — register `AdvanceLifecycle` / `ApprovePool` / `StartRuntime` in the action catalog + handler):
 
@@ -445,4 +459,5 @@ Owner / reviewer matches the 3-class pattern set by 2026-05-24 delta (P0 / Class
 
 ## 7. Change log
 
+- **2026-06-03** v1.1 — adds P0 Management AI multi-turn backend contract for `/bff/management/nl/ask` and `/bff/management/ai/conversations/{sessionId}`: conversation/UI context pack, session readback, action allowlist, providerStatus, 7-day idle TTL, and live probe coverage.
 - **2026-05-28** v1.0 — initial BE-view rewrite of Lovable FE spec `BE_WRITE_GAP_SPEC_2026-05-28` v1.0. Adds repo-map, action-catalog hints for P0-1/2/3, and sprint-to-EPIC ticket map.

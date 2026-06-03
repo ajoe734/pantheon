@@ -46,6 +46,7 @@ def _fresh_client(td: str) -> TestClient:
     )
     bff_main.read_store = store
     bff_main._MGMT_NL_IDEMPOTENCY.clear()
+    bff_main._MGMT_AI_AUDIT_EVENTS.clear()
     return TestClient(bff_main.app)
 
 
@@ -68,8 +69,16 @@ def test_nl_ask_authenticated_returns_202_with_data_fields() -> None:
             assert body["status"] == "accepted"
             data = body["data"]
             assert isinstance(data["answer"], str) and data["answer"]
+            assert isinstance(data["sessionId"], str) and data["sessionId"]
             assert isinstance(data["session_id"], str) and data["session_id"]
+            assert data["sessionId"] == data["session_id"]
             assert isinstance(data["message_id"], str) and data["message_id"]
+            assert isinstance(data["traceId"], str) and data["traceId"]
+            assert isinstance(data["providerStatus"], dict)
+            assert isinstance(data["actions"], list)
+            assert data["conversation"]["href"].startswith("/bff/management/ai/conversations/")
+            assert "trace_id=" not in data["conversation"]["href"]
+            assert data["session"]["ttlSeconds"] >= 7 * 24 * 60 * 60
             assert data["question"] == "What is the current portfolio PnL?"
             assert isinstance(data["sources"], list)
             assert data["confidence"] in {"high", "partial", "unavailable"}
@@ -201,10 +210,11 @@ def test_nl_ask_session_id_echoed_when_supplied() -> None:
             supplied_id = "my-session-b6-xyz"
             resp = client.post(
                 "/bff/management/nl/ask",
-                json={"question": "Session test?", "session_id": supplied_id},
+                json={"question": "Session test?", "sessionId": supplied_id},
                 headers={**OPERATOR_HEADERS, "Idempotency-Key": "ik-sess-001"},
             )
             assert resp.status_code == 202, resp.text
+            assert resp.json()["data"]["sessionId"] == supplied_id
             assert resp.json()["data"]["session_id"] == supplied_id
         finally:
             bff_main.read_store = original

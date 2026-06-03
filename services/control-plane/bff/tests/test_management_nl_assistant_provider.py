@@ -293,6 +293,171 @@ def test_provider_enabled_invokes_openclaw_with_tenant_scoped_context(tmp_path, 
         bff_main._sse_buffers["ask"].clear()
 
 
+def test_management_nl_passes_conversation_and_ui_context_to_provider(tmp_path, monkeypatch) -> None:
+    original_store = bff_main.read_store
+    fake = FakeProviderClient()
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "codex_cli")
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        client = _seeded_client(tmp_path, monkeypatch)
+
+        resp = client.post(
+            "/bff/management/nl/ask",
+            json={
+                "question": "Continue from the previous answer.",
+                "focus": "persona",
+                "sessionId": "mgmt-multi-session",
+                "conversation": {
+                    "recentTurns": [
+                        {"role": "user", "content": "What is unhealthy?"},
+                        {"role": "assistant", "content": "Persona alpha is degraded."},
+                    ],
+                    "summary": "The operator is reviewing degraded personas.",
+                },
+                "ui": {
+                    "currentRoute": "/management/personas",
+                    "selectedEntity": {"kind": "persona", "id": "persona-alpha"},
+                    "visiblePanels": ["AgentPanel", "PersonaFleet"],
+                    "filters": {"severity": "high"},
+                    "availableUiActions": [
+                        {"kind": "navigate", "description": "Go to a route", "paramsSchema": "{ to: string }"},
+                        {
+                            "kind": "runBffAction",
+                            "description": "Run a BFF action",
+                            "paramsSchema": "{ endpoint: string, body?: object }",
+                        },
+                    ],
+                },
+            },
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-multiturn-context"},
+        )
+
+        assert resp.status_code == 202, resp.text
+        body = resp.json()
+        assert body["data"]["sessionId"] == "mgmt-multi-session"
+        assert body["data"]["conversation"]["href"].endswith(
+            "/bff/management/ai/conversations/mgmt-multi-session"
+        )
+        assert "trace_id=" not in body["data"]["conversation"]["href"]
+        assert body["data"]["session"]["ttlSeconds"] >= 7 * 24 * 60 * 60
+
+        management_context = fake.calls[0]["context_pack"]["backend"]["management_nl"]["data"]
+        assert management_context["focus"] == "persona_fleet"
+        assert management_context["conversation"]["recentTurns"][0]["content"] == "What is unhealthy?"
+        assert management_context["conversation"]["summary"] == "The operator is reviewing degraded personas."
+        assert management_context["ui"]["currentRoute"] == "/management/personas"
+        assert management_context["ui"]["selectedEntity"] == {"kind": "persona", "id": "persona-alpha"}
+        assert management_context["ui"]["filters"] == {"severity": "high"}
+        assert [item["kind"] for item in management_context["ui"]["availableUiActions"]] == [
+            "navigate",
+            "runBffAction",
+        ]
+        assert fake.calls[0]["context_pack"]["frontend"]["route"] == "/management/personas"
+    finally:
+        bff_main.read_store = original_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+        bff_main._sse_buffers["ask"].clear()
+
+
+def test_management_nl_filters_provider_actions_to_ui_allowlist(tmp_path, monkeypatch) -> None:
+    original_store = bff_main.read_store
+    fake = FakeProviderClient(
+        result={
+            "status": "ok",
+            "data": {
+                "provider": "codex_cli",
+                "status": "completed",
+                "output": {
+                    "json_events": [
+                        {
+                            "final": {
+                                "answer": "Action-aware provider answer.",
+                                "actions": [
+                                    {
+                                        "id": "nav-ok",
+                                        "kind": "navigate",
+                                        "label": "Open cockpit",
+                                        "rationale": "The user asked for cockpit context.",
+                                        "params": {"to": "/management/cockpit"},
+                                    },
+                                    {
+                                        "id": "write-ok",
+                                        "kind": "runBffAction",
+                                        "label": "Run refresh",
+                                        "rationale": "Needs an explicit operator click.",
+                                        "params": {"endpoint": "/bff/runtimes/rt-alpha/actions/Refresh", "body": {}},
+                                        "requiresConfirmation": False,
+                                    },
+                                    {
+                                        "id": "bad-kind",
+                                        "kind": "openDrawer",
+                                        "params": {"drawer": "personaDetail"},
+                                    },
+                                    {
+                                        "id": "bad-params",
+                                        "kind": "navigate",
+                                        "params": {},
+                                    },
+                                ],
+                            }
+                        }
+                    ],
+                },
+            },
+        }
+    )
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "codex_cli")
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        client = _seeded_client(tmp_path, monkeypatch)
+
+        resp = client.post(
+            "/bff/management/nl/ask",
+            json={
+                "question": "Show me the cockpit and suggest the refresh.",
+                "sessionId": "mgmt-action-session",
+                "ui": {
+                    "availableUiActions": [
+                        {"kind": "navigate", "description": "Navigate", "paramsSchema": "{ to: string }"},
+                        {
+                            "kind": "runBffAction",
+                            "description": "Run BFF action",
+                            "paramsSchema": "{ endpoint: string, body?: object }",
+                        },
+                    ]
+                },
+            },
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-actions"},
+        )
+
+        assert resp.status_code == 202, resp.text
+        body = resp.json()
+        assert body["data"]["answer"] == "Action-aware provider answer."
+        actions = body["data"]["actions"]
+        assert [action["id"] for action in actions] == ["nav-ok", "write-ok"]
+        assert actions[0]["requiresConfirmation"] is False
+        assert actions[1]["requiresConfirmation"] is True
+        assert actions[1]["kind"] == "runBffAction"
+        assert actions[1]["params"]["endpoint"].startswith("/bff/")
+
+        completed = [
+            event for event in bff_main._MGMT_AI_AUDIT_EVENTS
+            if event.get("event_type") == "management_ai.exchange.completed"
+        ][-1]
+        assert completed["action_count"] == 2
+        assert completed["actions"] == actions
+    finally:
+        bff_main.read_store = original_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+        bff_main._sse_buffers["ask"].clear()
+
+
 def test_provider_enabled_extracts_codex_item_completed_text(tmp_path, monkeypatch) -> None:
     original_store = bff_main.read_store
     fake = FakeProviderClient(
@@ -398,8 +563,9 @@ def test_management_ai_audit_records_exchange_and_provider_trace(tmp_path, monke
             "session_id=mgmt-audit-session&trace_id=mgmt-audit-trace"
         )
         assert body["data"]["conversation"]["href"].endswith(
-            "/bff/management/ai/conversations/mgmt-audit-session?trace_id=mgmt-audit-trace"
+            "/bff/management/ai/conversations/mgmt-audit-session"
         )
+        assert "trace_id=" not in body["data"]["conversation"]["href"]
         assert fake.calls[0]["trace_id"] == "mgmt-audit-trace"
         assert fake.calls[0]["metadata"]["trace_id"] == "mgmt-audit-trace"
 
@@ -411,11 +577,17 @@ def test_management_ai_audit_records_exchange_and_provider_trace(tmp_path, monke
         )
         assert conversation_resp.status_code == 200, conversation_resp.text
         conversation = conversation_resp.json()["data"]
+        assert conversation["sessionId"] == "mgmt-audit-session"
         assert conversation["session_id"] == "mgmt-audit-session"
         turns = conversation["turns"]
         assert [turn["role"] for turn in turns] == ["user", "assistant"]
+        assert turns[0]["id"] == turns[0]["message_id"]
+        assert turns[0]["text"] == "What is the scoped portfolio?"
+        assert turns[0]["createdAt"]
         assert turns[0]["content"] == "What is the scoped portfolio?"
+        assert turns[1]["text"] == "Audited provider answer."
         assert turns[1]["content"] == "Audited provider answer."
+        assert turns[1]["providerStatus"]["used"] is True
         assert turns[1]["provider_status"]["used"] is True
 
         audit_resp = client.get(
@@ -440,6 +612,72 @@ def test_management_ai_audit_records_exchange_and_provider_trace(tmp_path, monke
         ]
         assert completed["output_summary"]["assistant_messages"] == ["Audited provider answer."]
         assert "Authorization" not in json.dumps(events)
+    finally:
+        bff_main.read_store = original_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+        bff_main._sse_buffers["ask"].clear()
+
+
+def test_management_ai_conversation_reader_returns_full_session_and_ignores_trace_filter(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    original_store = bff_main.read_store
+    fake = FakeProviderClient(
+        result={
+            "status": "ok",
+            "data": {
+                "provider": "codex_cli",
+                "status": "completed",
+                "output": {"json_events": [{"final": "Threaded provider answer."}]},
+            },
+        }
+    )
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "codex_cli")
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        client = _seeded_client(tmp_path, monkeypatch)
+
+        for turn_no, trace_id in enumerate(("trace-one", "trace-two"), start=1):
+            resp = client.post(
+                "/bff/management/nl/ask",
+                json={
+                    "question": f"Question {turn_no}?",
+                    "focus": "portfolio",
+                    "sessionId": "mgmt-full-session",
+                    "traceId": trace_id,
+                    "ui": {
+                        "availableUiActions": [
+                            {"kind": "navigate", "description": "Navigate", "paramsSchema": "{ to: string }"},
+                        ]
+                    },
+                },
+                headers={**OPERATOR_HEADERS, "Idempotency-Key": f"asst-bff-002-full-session-{turn_no}"},
+            )
+            assert resp.status_code == 202, resp.text
+
+        conversation_resp = client.get(
+            "/bff/management/ai/conversations/mgmt-full-session?trace_id=trace-one",
+            headers=OPERATOR_HEADERS,
+        )
+        assert conversation_resp.status_code == 200, conversation_resp.text
+        body = conversation_resp.json()
+        assert body["data"]["sessionId"] == "mgmt-full-session"
+        assert body["meta"]["filters"]["trace_id_ignored"] is True
+        turns = body["data"]["turns"]
+        assert [turn["role"] for turn in turns] == ["user", "assistant", "user", "assistant"]
+        assert [turn["text"] for turn in turns] == [
+            "Question 1?",
+            "Threaded provider answer.",
+            "Question 2?",
+            "Threaded provider answer.",
+        ]
+        assert turns[1]["providerStatus"]["provider"] == "codex_cli"
+        assert turns[1]["actions"] == []
+        assert body["data"]["session"]["ttlSeconds"] >= 7 * 24 * 60 * 60
     finally:
         bff_main.read_store = original_store
         bff_main._MGMT_NL_IDEMPOTENCY.clear()
