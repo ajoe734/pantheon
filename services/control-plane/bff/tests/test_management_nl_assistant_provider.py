@@ -123,11 +123,13 @@ def _seeded_client(tmp_path: Path, monkeypatch) -> TestClient:
     )
     monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
     monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-alpha,tenant-beta")
+    monkeypatch.setenv("PANTHEON_MANAGEMENT_AI_AUDIT_PATH", str(tmp_path / "management-ai-audit.jsonl"))
     bff_main.read_store = ReadSurfaceStore(
         str(read_surface_path),
         allow_local_snapshot_fallback=True,
     )
     bff_main._MGMT_NL_IDEMPOTENCY.clear()
+    bff_main._MGMT_AI_AUDIT_EVENTS.clear()
     bff_main._sse_buffers["ask"].clear()
     return TestClient(bff_main.app, raise_server_exceptions=False)
 
@@ -339,6 +341,97 @@ def test_provider_enabled_extracts_codex_item_completed_text(tmp_path, monkeypat
     finally:
         bff_main.read_store = original_store
         bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._sse_buffers["ask"].clear()
+
+
+def test_management_ai_audit_records_exchange_and_provider_trace(tmp_path, monkeypatch) -> None:
+    original_store = bff_main.read_store
+    fake = FakeProviderClient(
+        result={
+            "status": "ok",
+            "data": {
+                "provider": "codex_cli",
+                "status": "completed",
+                "output": {
+                    "returncode": 0,
+                    "duration_ms": 1234,
+                    "json_events": [
+                        {"type": "thread.started", "thread_id": "thread-test"},
+                        {"type": "turn.started"},
+                        {
+                            "type": "item.completed",
+                            "item": {
+                                "id": "item_0",
+                                "type": "agent_message",
+                                "text": "Audited provider answer.",
+                            },
+                        },
+                        {"type": "turn.completed", "usage": {"input_tokens": 10, "output_tokens": 4}},
+                    ],
+                },
+                "redaction": {"provider_invocation": {"redacted_fields": 0}},
+            },
+        }
+    )
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "codex_cli")
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        client = _seeded_client(tmp_path, monkeypatch)
+
+        resp = client.post(
+            "/bff/management/nl/ask",
+            json={
+                "question": "What is the scoped portfolio?",
+                "focus": "portfolio",
+                "session_id": "mgmt-audit-session",
+                "trace_id": "mgmt-audit-trace",
+            },
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-audit"},
+        )
+
+        assert resp.status_code == 202, resp.text
+        body = resp.json()
+        assert body["data"]["trace_id"] == "mgmt-audit-trace"
+        assert body["data"]["audit_log"]["href"].endswith(
+            "session_id=mgmt-audit-session&trace_id=mgmt-audit-trace"
+        )
+        assert fake.calls[0]["trace_id"] == "mgmt-audit-trace"
+        assert fake.calls[0]["metadata"]["trace_id"] == "mgmt-audit-trace"
+
+        session = bff_main.read_store.get_agora_session("mgmt-audit-session")
+        assert session is not None
+        roles = [message["role"] for message in session["messages"]]
+        assert roles == ["user", "assistant"]
+        assert session["messages"][1]["content"] == "Audited provider answer."
+
+        audit_resp = client.get(
+            "/bff/management/ai/audit?session_id=mgmt-audit-session&trace_id=mgmt-audit-trace",
+            headers=OPERATOR_HEADERS,
+        )
+        assert audit_resp.status_code == 200, audit_resp.text
+        events = audit_resp.json()["data"]
+        event_types = [event["event_type"] for event in events]
+        assert event_types == [
+            "management_ai.exchange.accepted",
+            "management_ai.provider.started",
+            "management_ai.provider.completed",
+            "management_ai.exchange.completed",
+        ]
+        completed = next(event for event in events if event["event_type"] == "management_ai.provider.completed")
+        assert completed["output_summary"]["json_event_types"] == [
+            "thread.started",
+            "turn.started",
+            "item.completed",
+            "turn.completed",
+        ]
+        assert completed["output_summary"]["assistant_messages"] == ["Audited provider answer."]
+        assert "Authorization" not in json.dumps(events)
+    finally:
+        bff_main.read_store = original_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
 
 
