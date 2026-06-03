@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-06-03T15:23:19Z",
+  "updated_at": "2026-06-03T15:44:31Z",
   "counts": {
-    "total": 1396,
-    "completed": 1373,
+    "total": 1397,
+    "completed": 1374,
     "superseded": 23
   },
   "recent_terminal_ids": [
+    "ASST-INTEG-003",
     "ASST-INTEG-005",
     "ASST-INTEG-002",
     "ASST-INTEG-001",
@@ -25,7 +26,6 @@
     "ASST-OCGW-002",
     "ASST-KERNEL-006",
     "ASST-OCGW-001",
-    "ASST-KERNEL-003",
-    "ASST-KERNEL-001"
+    "ASST-KERNEL-003"
   ]
 }
