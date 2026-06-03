@@ -26,7 +26,7 @@ Scope: supervisor/autoworker task materialization for integrating the Management
 | ASST-INTEG-005 | Claude2 | Codex | SA/SD generator | Build requirement capture, SA, SD, and execution task packet generation using existing docs locations and source refs. |
 | ASST-INTEG-006 | Codex2 | Claude | Dev collaboration bridge | Add signed task packet handoff to existing supervisor/autoworker tooling without direct Web API shell. |
 | ASST-INTEG-007 | Gemini | Codex | Orchestrator status readback | Expose task, worker, PR, CI, and deploy status to the assistant from existing orchestrator/GitHub surfaces. |
-| ASST-INTEG-008 | Copilot | Claude2 | FE context registry and stale-session UX | Future cross-repo FE task for assistant-readable form registry, BFF 404 resync UX, and SSE degraded clarity. |
+| ASST-INTEG-008 | Codex2 | Copilot | FE context registry and stale-session UX | Publish the cross-repo FE follow-up brief for assistant-readable form registry, BFF 404 resync UX, and SSE degraded clarity; do not change FE code in this task. |
 | ASST-INTEG-009 | Codex | Claude | Security and mode regression | Regression suite for user-mode contraction, control-mode expiry, tool allowlists, redaction, and provider credential non-exposure. |
 
 ## Detailed Acceptance
@@ -158,9 +158,10 @@ Acceptance:
 
 Artifacts:
 
-- `execute-plans/src/lib/bff-v1/managementAi.ts`
-- `execute-plans/src/management/components/agent/AgentPanelBody.tsx`
-- `execute-plans/src/management/**`
+- `docs/pantheon-handoffs/ASST-INTEG-008-execution-plans-assistant-follow-up/FRONTEND_CHANGE_SPEC.md`
+- Follow-up target, not modified by this task: `execute-plans/src/lib/bff/agora.ts`
+- Follow-up target, not modified by this task: `execute-plans/src/agora/pages/AskPersonas.tsx`
+- Follow-up target, not modified by this task: `execute-plans/src/management/**`
 
 Acceptance:
 
@@ -168,6 +169,7 @@ Acceptance:
 - BFF 404 on old local-only sessions is shown as stale local session, with clear new-session recovery.
 - SSE failure explains whether the source is auth, network, path, or server stream degraded.
 - FE still treats BFF conversation readback as source of truth once available.
+- The ASST-INTEG-008 Pantheon task publishes the brief only and does not change `execute-plans` code.
 
 ### ASST-INTEG-009 Security And Mode Regression
 

@@ -12,6 +12,7 @@ import time
 import uuid
 from collections import deque
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Set, Tuple
 from urllib.parse import quote, urlencode
 
@@ -46422,12 +46423,88 @@ def _assistant_focus_entity(
     return None, None
 
 
+def _assistant_source_access_meta(identity: Optional[OperatorIdentity]) -> Dict[str, Any]:
+    roles = list(getattr(identity, "roles", []) or [])
+    tenant: Dict[str, Any] = {
+        "id": None,
+        "allowed_ids": [],
+        "scope": "unknown",
+    }
+    if identity is not None:
+        try:
+            tenant = _bff_me_tenant_payload(identity, requested_tenant=None)
+        except HTTPException:
+            tenant = {
+                "id": None,
+                "allowed_ids": [],
+                "scope": "denied",
+            }
+    return {
+        "rbac": {
+            "enforced": True,
+            "required_roles": sorted(_READ_ROLES),
+            "actor_roles": roles,
+        },
+        "tenant": {
+            "enforced": True,
+            "tenant_id": tenant.get("id"),
+            "allowed_tenants": list(tenant.get("allowed_ids") or []),
+            "scope": tenant.get("scope") or "unknown",
+        },
+    }
+
+
+def _assistant_attach_access_meta(
+    payload: Any,
+    *,
+    source_id: str,
+    identity: Optional[OperatorIdentity],
+    snapshot_at: str,
+) -> Dict[str, Any]:
+    result = dict(payload) if isinstance(payload, dict) else {"data": payload}
+    meta = dict(result.get("meta") if isinstance(result.get("meta"), dict) else {})
+    meta.setdefault("snapshot_at", snapshot_at)
+    meta.setdefault("surfaces", {source_id: {"status": "ok", "source": "bff_read"}})
+    meta["access"] = _assistant_source_access_meta(identity)
+    result["meta"] = meta
+    return result
+
+
+def _assistant_tenant_scope(identity: Optional[OperatorIdentity]) -> Dict[str, Any]:
+    return _assistant_source_access_meta(identity).get("tenant", {})
+
+
+def _assistant_filter_tenant_records(
+    records: List[Dict[str, Any]],
+    identity: Optional[OperatorIdentity],
+) -> List[Dict[str, Any]]:
+    tenant = _assistant_tenant_scope(identity)
+    if tenant.get("scope") == "global":
+        return [record for record in records if isinstance(record, dict)]
+    return _mgmt_nl_filter_tenant_records(
+        [record for record in records if isinstance(record, dict)],
+        str(tenant.get("tenant_id") or ""),
+    )
+
+
+def _assistant_filter_payload_tenant(payload: Any, identity: Optional[OperatorIdentity]) -> Any:
+    if not isinstance(payload, dict):
+        return payload
+    result = dict(payload)
+    for key in ("items", "alerts", "events", "data"):
+        value = result.get(key)
+        if isinstance(value, list):
+            result[key] = _assistant_filter_tenant_records(value, identity)
+    return result
+
+
 def _assistant_unavailable_source(
     source_id: str,
     *,
     href: str,
     snapshot_at: str,
     dataset: str,
+    identity: Optional[OperatorIdentity] = None,
 ) -> Any:
     from assistant.context_composer import AssistantCollectedSource
 
@@ -46435,28 +46512,39 @@ def _assistant_unavailable_source(
     return AssistantCollectedSource(
         source_id=source_id,
         href=href,
-        payload={
-            "data": None,
-            "meta": {
-                "snapshot_at": snapshot_at,
-                "surfaces": {source_id: surface},
+        payload=_assistant_attach_access_meta(
+            {
+                "data": None,
+                "meta": {
+                    "snapshot_at": snapshot_at,
+                    "surfaces": {source_id: surface},
+                },
             },
-        },
+            source_id=source_id,
+            identity=identity,
+            snapshot_at=snapshot_at,
+        ),
         status=str(surface.get("status") or "unavailable"),
     )
 
 
-def _assistant_collect_jobs_source(request: Any, snapshot_at: str) -> Any:
+def _assistant_collect_jobs_source(
+    request: Any,
+    snapshot_at: str,
+    identity: Optional[OperatorIdentity] = None,
+) -> Any:
     from assistant.context_composer import AssistantCollectedSource
 
     entity_type, entity_id = _assistant_focus_entity(request)
     selected_job = None
     href = "/bff/jobs"
     if entity_type and entity_type.lower() in {"job", "jobs"} and entity_id:
-        selected_job = _get_bff_job(entity_id)
+        raw_job = _get_bff_job(entity_id)
+        if isinstance(raw_job, dict):
+            selected_job = next(iter(_assistant_filter_tenant_records([raw_job], identity)), None)
         href = f"/bff/jobs/{entity_id}"
 
-    jobs = _list_bff_jobs()
+    jobs = _assistant_filter_tenant_records(_list_bff_jobs(), identity)
     surface = _dataset_surface_status(
         "jobs",
         snapshot_at=snapshot_at,
@@ -46475,48 +46563,69 @@ def _assistant_collect_jobs_source(request: Any, snapshot_at: str) -> Any:
         payload["selected_missing"] = {
             "entity_type": entity_type,
             "entity_id": entity_id,
-            "reason": "job_not_found",
+            "reason": "job_not_found_or_not_visible",
         }
     return AssistantCollectedSource(
         source_id="jobs",
         href=href,
-        payload=payload,
+        payload=_assistant_attach_access_meta(
+            payload,
+            source_id="jobs",
+            identity=identity,
+            snapshot_at=snapshot_at,
+        ),
         status=str(surface.get("status") or "ok"),
     )
 
 
-def _assistant_collect_job_logs_source(request: Any, snapshot_at: str) -> Any:
+def _assistant_collect_job_logs_source(
+    request: Any,
+    snapshot_at: str,
+    identity: Optional[OperatorIdentity] = None,
+) -> Any:
     from assistant.context_composer import AssistantCollectedSource
 
     entity_type, entity_id = _assistant_focus_entity(request)
     if not entity_id or (entity_type and entity_type.lower() not in {"job", "jobs"}):
         return None
     job = _get_bff_job(entity_id)
+    if isinstance(job, dict):
+        job = next(iter(_assistant_filter_tenant_records([job], identity)), None)
     if job is None:
         return _assistant_unavailable_source(
             "job_logs",
             href=f"/bff/jobs/{entity_id}/logs",
             snapshot_at=snapshot_at,
             dataset="jobs",
+            identity=identity,
         )
     logs = list(job.get("logs") or [])
     surface = _dataset_surface_status("jobs", snapshot_at=snapshot_at, has_data=True)
     return AssistantCollectedSource(
         source_id="job_logs",
         href=f"/bff/jobs/{entity_id}/logs",
-        payload={
-            "job_id": entity_id,
-            "logs": logs[:50],
-            "meta": {
-                "snapshot_at": snapshot_at,
-                "surfaces": {"job_logs": surface},
+        payload=_assistant_attach_access_meta(
+            {
+                "job_id": entity_id,
+                "logs": logs[:50],
+                "meta": {
+                    "snapshot_at": snapshot_at,
+                    "surfaces": {"job_logs": surface},
+                },
             },
-        },
+            source_id="job_logs",
+            identity=identity,
+            snapshot_at=snapshot_at,
+        ),
         status=str(surface.get("status") or "ok"),
     )
 
 
-def _assistant_collect_audit_source(request: Any, snapshot_at: str) -> Any:
+def _assistant_collect_audit_source(
+    request: Any,
+    snapshot_at: str,
+    identity: Optional[OperatorIdentity] = None,
+) -> Any:
     from assistant.context_composer import AssistantCollectedSource
 
     entity_type, entity_id = _assistant_focus_entity(request)
@@ -46530,6 +46639,7 @@ def _assistant_collect_audit_source(request: Any, snapshot_at: str) -> Any:
         href = f"/bff/audit/entities/{entity_type}/{entity_id}"
     else:
         events = _list_governance_audit_events()
+    events = _assistant_filter_tenant_records(events, identity)
     surface = _dataset_surface_status(
         "governance_audit_events",
         snapshot_at=snapshot_at,
@@ -46538,22 +46648,31 @@ def _assistant_collect_audit_source(request: Any, snapshot_at: str) -> Any:
     return AssistantCollectedSource(
         source_id="audit",
         href=href,
-        payload={
-            "items": events[:50],
-            "page_info": {"next_page_token": None, "total": len(events)},
-            "meta": {
-                "snapshot_at": snapshot_at,
-                "surfaces": {"audit": surface},
+        payload=_assistant_attach_access_meta(
+            {
+                "items": events[:50],
+                "page_info": {"next_page_token": None, "total": len(events)},
+                "meta": {
+                    "snapshot_at": snapshot_at,
+                    "surfaces": {"audit": surface},
+                },
             },
-        },
+            source_id="audit",
+            identity=identity,
+            snapshot_at=snapshot_at,
+        ),
         status=str(surface.get("status") or "ok"),
     )
 
 
-def _assistant_collect_recent_sse_source(_request: Any, snapshot_at: str) -> Any:
+def _assistant_collect_recent_sse_source(
+    _request: Any,
+    snapshot_at: str,
+    identity: Optional[OperatorIdentity] = None,
+) -> Any:
     from assistant.context_composer import AssistantCollectedSource
 
-    events = read_store.list_events_bff(page_size=25)
+    events = _assistant_filter_tenant_records(read_store.list_events_bff(page_size=25), identity)
     surface = _dataset_surface_status(
         "governance_audit_events",
         snapshot_at=snapshot_at,
@@ -46562,19 +46681,164 @@ def _assistant_collect_recent_sse_source(_request: Any, snapshot_at: str) -> Any
     return AssistantCollectedSource(
         source_id="recent_sse",
         href="/bff/events",
-        payload={
-            "items": events[:25],
-            "page_info": {"next_page_token": None},
-            "meta": {
-                "snapshot_at": snapshot_at,
-                "surfaces": {"recent_sse": surface},
+        payload=_assistant_attach_access_meta(
+            {
+                "items": events[:25],
+                "page_info": {"next_page_token": None},
+                "meta": {
+                    "snapshot_at": snapshot_at,
+                    "surfaces": {"recent_sse": surface},
+                },
             },
-        },
+            source_id="recent_sse",
+            identity=identity,
+            snapshot_at=snapshot_at,
+        ),
         status=str(surface.get("status") or "ok"),
     )
 
 
-def _assistant_collect_source(source_id: str, request: Any, snapshot_at: str) -> Any:
+_ASSISTANT_DOCS_RAG_ALLOWLIST = (
+    (
+        "existing_architecture_plan",
+        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md",
+        "Pantheon Management Assistant existing architecture integration plan",
+    ),
+    (
+        "existing_architecture_tasks",
+        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md",
+        "Existing architecture assistant integration execution tasks",
+    ),
+    (
+        "ai_collaboration_guide",
+        "AI_COLLABORATION_GUIDE.md",
+        "Pantheon AI collaboration and repository workflow guide",
+    ),
+)
+
+
+def _assistant_repo_root() -> Path:
+    return Path(_REPO_ROOT)
+
+
+def _assistant_doc_query_terms(request: Any) -> List[str]:
+    values: List[str] = []
+    for value in (
+        getattr(request, "question", None),
+        getattr(request, "route", None),
+    ):
+        if value:
+            values.extend(str(value).lower().split())
+    frontend = getattr(request, "frontend", None)
+    if frontend is not None and getattr(frontend, "route", None):
+        values.extend(str(frontend.route).lower().split("/"))
+    return [value.strip(".,:;()[]{}").lower() for value in values if len(value.strip(".,:;()[]{}")) > 3]
+
+
+def _assistant_doc_snippet(text: str, terms: List[str], *, limit: int = 900) -> str:
+    compact = " ".join(line.strip() for line in text.splitlines() if line.strip())
+    lower = compact.lower()
+    start = 0
+    for term in terms:
+        found = lower.find(term)
+        if found >= 0:
+            start = max(0, found - 160)
+            break
+    return compact[start:start + limit]
+
+
+def _assistant_collect_docs_rag_source(
+    request: Any,
+    snapshot_at: str,
+    identity: Optional[OperatorIdentity] = None,
+) -> Any:
+    from assistant.context_composer import AssistantCollectedSource
+
+    root = _assistant_repo_root()
+    terms = _assistant_doc_query_terms(request)
+    items: List[Dict[str, Any]] = []
+    citations: List[Dict[str, Any]] = []
+    source_refs: List[Dict[str, Any]] = []
+
+    for slug, relative_path, title in _ASSISTANT_DOCS_RAG_ALLOWLIST:
+        path = root / relative_path
+        if not path.exists() or not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        ref_id = f"doc:{slug}"
+        snippet = _assistant_doc_snippet(text, terms)
+        citation = {
+            "ref_id": ref_id,
+            "title": title,
+            "path": relative_path,
+        }
+        items.append({
+            "ref_id": ref_id,
+            "title": title,
+            "path": relative_path,
+            "snippet": snippet,
+        })
+        citations.append(citation)
+        source_refs.append({
+            "source_id": ref_id,
+            "href": relative_path,
+            "snapshot_at": snapshot_at,
+            "status": "ok",
+            "staleness": {
+                "status": "fresh",
+                "served_from": "repo_doc_allowlist",
+                "last_known_at": snapshot_at,
+            },
+            "source_kind": "docs",
+        })
+
+    status = "ok" if items else "unavailable"
+    surface = {
+        "status": status,
+        "source": "repo_doc_allowlist",
+    }
+    source_refs.insert(0, {
+        "source_id": "docs_rag",
+        "href": "docs://assistant/context",
+        "snapshot_at": snapshot_at,
+        "status": status,
+        "staleness": {
+            "status": "fresh" if items else "unavailable",
+            "served_from": "repo_doc_allowlist",
+            "last_known_at": snapshot_at,
+        },
+        "source_kind": "docs",
+    })
+    return AssistantCollectedSource(
+        source_id="docs_rag",
+        href="docs://assistant/context",
+        payload={
+            "items": items,
+            "citations": citations,
+            "meta": {
+                "snapshot_at": snapshot_at,
+                "surfaces": {"docs_rag": surface},
+                "access": {
+                    **_assistant_source_access_meta(identity),
+                    "corpus": "repo_doc_allowlist",
+                },
+            },
+        },
+        status=status,
+        source_kind="docs",
+        source_refs=source_refs,
+    )
+
+
+def _assistant_collect_source(
+    source_id: str,
+    request: Any,
+    snapshot_at: str,
+    identity: Optional[OperatorIdentity] = None,
+) -> Any:
     from assistant.context_composer import AssistantCollectedSource
 
     if source_id == "control_room":
@@ -46585,20 +46849,37 @@ def _assistant_collect_source(source_id: str, request: Any, snapshot_at: str) ->
                 href="/bff/v5/control-room",
                 snapshot_at=snapshot_at,
                 dataset="incidents",
+                identity=identity,
             )
-        return AssistantCollectedSource(source_id=source_id, href="/bff/v5/control-room", payload=payload)
+        payload = _assistant_filter_payload_tenant(payload, identity)
+        return AssistantCollectedSource(
+            source_id=source_id,
+            href="/bff/v5/control-room",
+            payload=_assistant_attach_access_meta(
+                payload,
+                source_id=source_id,
+                identity=identity,
+                snapshot_at=snapshot_at,
+            ),
+        )
     if source_id == "jobs":
-        return _assistant_collect_jobs_source(request, snapshot_at)
+        return _assistant_collect_jobs_source(request, snapshot_at, identity)
     if source_id == "alerts":
+        payload = _assistant_filter_payload_tenant(_build_operator_alerts_payload(snapshot_at), identity)
         return AssistantCollectedSource(
             source_id=source_id,
             href="/bff/alerts",
-            payload=_build_operator_alerts_payload(snapshot_at),
+            payload=_assistant_attach_access_meta(
+                payload,
+                source_id=source_id,
+                identity=identity,
+                snapshot_at=snapshot_at,
+            ),
         )
     if source_id == "audit":
-        return _assistant_collect_audit_source(request, snapshot_at)
+        return _assistant_collect_audit_source(request, snapshot_at, identity)
     if source_id == "recent_sse":
-        return _assistant_collect_recent_sse_source(request, snapshot_at)
+        return _assistant_collect_recent_sse_source(request, snapshot_at, identity)
     if source_id == "persona_health":
         payload = _sem_final_generic_list_for_path("/bff/v5/execution/persona-health")
         if payload is None:
@@ -46607,11 +46888,18 @@ def _assistant_collect_source(source_id: str, request: Any, snapshot_at: str) ->
                 href="/bff/v5/execution/persona-health",
                 snapshot_at=snapshot_at,
                 dataset="personas",
+                identity=identity,
             )
+        payload = _assistant_filter_payload_tenant(payload, identity)
         return AssistantCollectedSource(
             source_id=source_id,
             href="/bff/v5/execution/persona-health",
-            payload=payload,
+            payload=_assistant_attach_access_meta(
+                payload,
+                source_id=source_id,
+                identity=identity,
+                snapshot_at=snapshot_at,
+            ),
         )
     if source_id == "strategy_health":
         payload = _sem_final_generic_list_for_path("/bff/v5/execution/strategy-health")
@@ -46621,14 +46909,23 @@ def _assistant_collect_source(source_id: str, request: Any, snapshot_at: str) ->
                 href="/bff/v5/execution/strategy-health",
                 snapshot_at=snapshot_at,
                 dataset="strategy_specs",
+                identity=identity,
             )
+        payload = _assistant_filter_payload_tenant(payload, identity)
         return AssistantCollectedSource(
             source_id=source_id,
             href="/bff/v5/execution/strategy-health",
-            payload=payload,
+            payload=_assistant_attach_access_meta(
+                payload,
+                source_id=source_id,
+                identity=identity,
+                snapshot_at=snapshot_at,
+            ),
         )
     if source_id == "job_logs":
-        return _assistant_collect_job_logs_source(request, snapshot_at)
+        return _assistant_collect_job_logs_source(request, snapshot_at, identity)
+    if source_id == "docs_rag":
+        return _assistant_collect_docs_rag_source(request, snapshot_at, identity)
     return None
 
 

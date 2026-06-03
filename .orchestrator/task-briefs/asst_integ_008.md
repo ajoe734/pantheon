@@ -7,18 +7,18 @@ Do not read `current-work.md` by default for implementation context.
 ## Task
 - Title: Prepare execution-plans FE context registry and stale-session UX follow-up
 - Status: todo
-- Owner: Copilot
-- Reviewer: Claude2
+- Owner: Codex2
+- Reviewer: Copilot
 - Phase: Sprint ASST-INTEG / FE follow-up brief
-- Last update: 2026-06-03T13:43:36Z
-- Next: Assignment created
+- Last update: 2026-06-03T14:54:20Z
+- Next: Helper-claimed by Codex2 while Copilot is dispatch-paused.
 
 ## Summary
 產出跨 repo FE follow-up brief：assistant-readable form registry、BFF 404 stale session UX、SSE degraded 診斷；本任務不直接修改 FE。
 
 ## Dependencies
-- ASST-INTEG-001: todo · Unify Management AI durable conversation truth with assistant transcripts
-- ASST-INTEG-002: todo · Extend BFF assistant context mesh with UI hints BFF reads and docs citations
+- ASST-INTEG-001: done · Unify Management AI durable conversation truth with assistant transcripts
+- ASST-INTEG-002: done · Context mesh over existing BFF assistant composer
 
 ## Artifacts
 - docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;docs/05-ui;docs/pantheon-handoffs;.orchestrator/task-briefs

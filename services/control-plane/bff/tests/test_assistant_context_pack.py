@@ -22,6 +22,7 @@ def _seed_store(path: str) -> ReadSurfaceStore:
             "job_id": "job_123",
             "job_type": "paper-loop",
             "status": "running",
+            "tenant_id": "tenant-alpha",
             "created_at": "2026-05-31T15:00:00Z",
             "logs": [
                 {
@@ -30,7 +31,16 @@ def _seed_store(path: str) -> ReadSurfaceStore:
                     "message": "loop tick",
                 }
             ],
-        }
+        },
+        "job_beta": {
+            "id": "job_beta",
+            "job_id": "job_beta",
+            "job_type": "paper-loop",
+            "status": "running",
+            "tenant_id": "tenant-beta",
+            "created_at": "2026-05-31T15:05:00Z",
+            "logs": [{"ts": "2026-05-31T15:06:00Z", "level": "info", "message": "beta tick"}],
+        },
     }
     store._data["governance_audit_events"] = [
         {
@@ -38,8 +48,17 @@ def _seed_store(path: str) -> ReadSurfaceStore:
             "target_type": "job",
             "target_id": "job_123",
             "action_type": "job.started",
+            "tenant_id": "tenant-alpha",
             "timestamp": "2026-05-31T15:00:30Z",
-        }
+        },
+        {
+            "entry_id": "audit_beta",
+            "target_type": "job",
+            "target_id": "job_beta",
+            "action_type": "job.started",
+            "tenant_id": "tenant-beta",
+            "timestamp": "2026-05-31T15:05:30Z",
+        },
     ]
     store._data["personas"] = {
         "persona_1": {
@@ -68,6 +87,8 @@ def _client_with_seeded_store(tmp_path):
 
 def test_assistant_context_pack_builds_structured_snapshot(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("BFF_READ_SURFACE_STATE", raising=False)
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
+    monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-alpha")
     monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
     client, original = _client_with_seeded_store(tmp_path)
     try:
@@ -85,6 +106,7 @@ def test_assistant_context_pack_builds_structured_snapshot(tmp_path, monkeypatch
                     "recent_sse",
                     "persona_health",
                     "strategy_health",
+                    "docs_rag",
                 ],
                 "frontend": {
                     "route": "/agora/ask",
@@ -122,6 +144,7 @@ def test_assistant_context_pack_builds_structured_snapshot(tmp_path, monkeypatch
             "recent_sse",
             "persona_health",
             "strategy_health",
+            "docs_rag",
         }.issubset(source_ids)
         for source in data["sources"]:
             assert source["snapshot_at"]
@@ -131,7 +154,71 @@ def test_assistant_context_pack_builds_structured_snapshot(tmp_path, monkeypatch
 
         job_source = next(source for source in data["sources"] if source["source_id"] == "jobs")
         assert job_source["href"] == "/bff/jobs/job_123"
+        assert data["ui_hints"]["hint_only"] is True
+        assert data["ui_hints"]["authority"] == "frontend_hint_only"
+        assert data["ui_hints"]["source_refs"][0]["source_kind"] == "frontend"
+        assert data["bff_reads"]["rbac_enforced"] is True
+        assert data["bff_reads"]["tenant_filtered"] is True
+        assert data["bff_reads"]["context"]["jobs"]["selected"]["job_id"] == "job_123"
+        assert data["bff_reads"]["access"]["jobs"]["tenant"]["tenant_id"] == "tenant-alpha"
+        assert data["docs_rag"]["items"]
+        assert data["docs_rag"]["citations"]
+        assert any(ref["source_kind"] == "docs" for ref in data["docs_rag"]["source_refs"])
+        assert any(ref["source_id"] == "jobs" for ref in data["source_refs"])
         assert data["redaction"]["enabled"] is True
+        assert data["redaction"]["redacted_fields"] >= 1
+    finally:
+        bff_main.read_store = original
+
+
+def test_assistant_context_pack_filters_bff_reads_by_tenant(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("BFF_READ_SURFACE_STATE", raising=False)
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
+    monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-alpha")
+    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+    client, original = _client_with_seeded_store(tmp_path)
+    try:
+        resp = client.post(
+            "/bff/assistant/sessions/asst_tenant/context",
+            json={
+                "mode": "kernel_debug",
+                "include": ["jobs", "audit"],
+                "focus": {"entity_type": "job", "entity_id": "job_beta"},
+            },
+            headers=OPERATOR_HEADERS,
+        )
+        assert resp.status_code == 201, resp.text
+        data = resp.json()["data"]
+
+        jobs_context = data["backend"]["jobs"]
+        assert jobs_context["selected"] is None
+        assert jobs_context["selected_missing"]["reason"] == "job_not_found_or_not_visible"
+        assert {job["job_id"] for job in jobs_context["items"]} == {"job_123"}
+        assert data["backend"]["audit"]["items"] == []
+        assert data["bff_reads"]["access"]["jobs"]["tenant"]["tenant_id"] == "tenant-alpha"
+        assert data["bff_reads"]["access"]["audit"]["tenant"]["tenant_id"] == "tenant-alpha"
+    finally:
+        bff_main.read_store = original
+
+
+def test_assistant_context_pack_redacts_source_refs(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("BFF_READ_SURFACE_STATE", raising=False)
+    client, original = _client_with_seeded_store(tmp_path)
+    try:
+        resp = client.post(
+            "/bff/assistant/sessions/asst_refs/context",
+            json={
+                "mode": "user",
+                "include": ["ui"],
+                "frontend": {"route": "/agora/ask?access_token=frontend-secret-123456"},
+            },
+            headers=OPERATOR_HEADERS,
+        )
+        assert resp.status_code == 201, resp.text
+        data = resp.json()["data"]
+        rendered_refs = repr(data["source_refs"])
+        assert "frontend-secret-123456" not in rendered_refs
+        assert "[REDACTED_" in rendered_refs
         assert data["redaction"]["redacted_fields"] >= 1
     finally:
         bff_main.read_store = original
