@@ -7,11 +7,11 @@ Do not read `current-work.md` by default for implementation context.
 ## Task
 - Title: Provider routing through existing OpenClaw adapter
 - Status: todo
-- Owner: Codex2
+- Owner: Claude
 - Reviewer: Codex
 - Phase: Sprint ASST-INTEG / Provider routing
-- Last update: 2026-06-03T14:26:58Z
-- Next: Helper-claimed by Codex2 while Codex completes higher-priority work.
+- Last update: 2026-06-03T14:27:18Z
+- Next: Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: ERROR: Your access token could not be refreshed because your refresh token was already used. Please log out and sign in again.. Task returned to todo until Claude starts a fresh run.
 
 ## Summary
 沿用 OpenClaw gateway adapter 的 readiness/provider invoke，不另建 gateway，並讓 dev 對 real provider 與 degraded 狀態誠實呈現。
@@ -23,8 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;services/control-plane/bff/openclaw_ops_client.py;services/openclaw-gateway-adapter/main.py;services/openclaw-gateway-adapter/assistant_command_policy.py;scripts/openclaw-assistant-provider-smoke.sh;services/control-plane/bff/tests/test_management_nl_assistant_provider.py
 
 ## Recent Task Activity
-- 2026-06-03T13:43:24Z · Operator · assign · Assigned ASST-INTEG-003 to Codex with reviewer Claude
-- 2026-06-03T14:26:32Z · Operator · assign · Assigned ASST-INTEG-003 to Codex with reviewer Claude
+- 2026-06-03T14:27:01Z · Orchestrator · task_helper_claimed · Helper-claimed by Codex2 while Codex completes higher-priority work.
+- 2026-06-03T14:27:08Z · Orchestrator · worker_worktree_allocated · -
+- 2026-06-03T14:27:08Z · Orchestrator · worker_started · Worker started via codex: owned_ready_dispatch
+- 2026-06-03T14:27:08Z · Codex2 · start · Supervisor auto-started ASST-INTEG-003 after successful dispatch.
+- 2026-06-03T14:27:13Z · Orchestrator · task_dispatch_synced · Supervisor auto-started ASST-INTEG-003 after successful dispatch.
+- 2026-06-03T14:27:20Z · Orchestrator · task_reassigned · Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: ERROR: Your access token could not be refreshed because your refresh token was already used. Please log out and sign in again.. Task returned to todo until Claude starts a fresh run.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
