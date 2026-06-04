@@ -9,7 +9,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Protocol
 
 from services.foundation.persistence_posture import validate_persistence_posture
-from services.foundation.postgres_json_store import PostgresJsonOwnerStore, quote_pg_identifier
+from services.foundation.postgres_json_store import (
+    PostgresJsonOwnerStore,
+    ensure_postgres_schema,
+    quote_pg_identifier,
+)
 
 
 BACKEND_ENV = "MANAGEMENT_AI_STORE_BACKEND"
@@ -561,8 +565,7 @@ class PostgresAssistantConversationStore:
     def bootstrap(self) -> None:
         index_name = quote_pg_identifier(f"{self.schema}.{self.surface}_turns_session_created_idx")
         with self._connect() as conn:
-            if self.schema:
-                conn.execute(f"CREATE SCHEMA IF NOT EXISTS {quote_pg_identifier(self.schema)}")
+            ensure_postgres_schema(conn, self.schema)
             conn.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {self.turns_table} (
