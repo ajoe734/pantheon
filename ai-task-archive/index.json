@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-06-04T13:57:22Z",
+  "updated_at": "2026-06-04T23:28:45Z",
   "counts": {
-    "total": 1408,
-    "completed": 1385,
+    "total": 1409,
+    "completed": 1386,
     "superseded": 23
   },
   "recent_terminal_ids": [
+    "ASST-INTEG-008",
     "ASST-INTEG-009",
     "ASST-INTEG-004",
     "ASST-INTEG-007",
@@ -25,7 +26,6 @@
     "PROD-WRITES-001-V2",
     "LIVE-SCALE-001-V2",
     "ASST-USER-001",
-    "ASST-FE-002",
-    "ASST-KERNEL-007"
+    "ASST-FE-002"
   ]
 }
