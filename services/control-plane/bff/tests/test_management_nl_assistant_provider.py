@@ -259,6 +259,58 @@ def test_openclaw_client_invokes_codex_provider_contract(monkeypatch) -> None:
     assert recorded["timeout"] == 1.5
 
 
+def test_openclaw_client_forwards_codex_multimodal_body(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
+    recorded: dict[str, Any] = {}
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "inspect"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,aW1n"},
+                    "attachmentId": "att-1",
+                },
+            ],
+        }
+    ]
+    attachments = [
+        {
+            "type": "image_url",
+            "image_url": {"url": "data:image/png;base64,aW1n"},
+            "attachmentId": "att-1",
+        }
+    ]
+
+    def fake_urlopen(request, timeout):
+        recorded["body"] = json.loads(request.data.decode("utf-8"))
+        return FakeHttpResponse(
+            {
+                "status": "ok",
+                "data": {
+                    "provider": "codex_cli",
+                    "status": "completed",
+                    "output": {"json_events": [{"final": "ok"}]},
+                },
+            }
+        )
+
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen", fake_urlopen):
+        OpenClawOpsClient(timeout_seconds=1.5).invoke_assistant_provider(
+            provider="codex_cli",
+            mode="user",
+            prompt="hello",
+            context_pack={"context_pack_id": "ctx-test"},
+            operator_id="operator-1",
+            messages=messages,
+            attachments=attachments,
+        )
+
+    assert recorded["body"]["messages"] == messages
+    assert recorded["body"]["attachments"] == attachments
+
+
 def test_openclaw_client_uses_assistant_provider_timeout_by_default(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
     monkeypatch.setenv("PANTHEON_BFF_SERVICE_TIMEOUT_SECONDS", "2.0")

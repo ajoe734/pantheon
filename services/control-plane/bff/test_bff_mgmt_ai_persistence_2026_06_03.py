@@ -355,6 +355,23 @@ def test_postgres_assistant_conversation_store_roundtrip_when_database_available
 _OPERATOR_HEADERS = {"Authorization": "Bearer op-persist-write-002:operator"}
 
 
+class _FakeProviderClient:
+    def __init__(self, result: dict | None = None) -> None:
+        self.result = result or {
+            "status": "ok",
+            "data": {
+                "provider": "codex_cli",
+                "status": "completed",
+                "output": {"json_events": [{"final": "Provider inspected the attachment."}]},
+            },
+        }
+        self.calls: list[dict] = []
+
+    def invoke_assistant_provider(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.result
+
+
 @contextmanager
 def _persist_client(tmp_path: Path, store_path: Path) -> Iterator[object]:
     """
@@ -535,6 +552,110 @@ def test_attachment_storage_base64_proxy_url_and_size_rejections(
             unsupported_mime_body["error"]["details"]["precondition_failed"]
             == "management_ai_attachment_mime_type"
         )
+
+
+def test_multimodal_image_attachment_is_forwarded_to_codex_provider(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """
+    ATTACH-007 acceptance: after ATTACH-006 stores inline image bytes in the
+    object store, provider invocation resolves those bytes into a multimodal
+    image_url payload instead of forwarding DB metadata only.
+    """
+    fake = _FakeProviderClient()
+    monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "codex_cli")
+    monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+    monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+
+    store_path = tmp_path / "mgmt-ai-attachment-provider.json"
+    image_bytes = b"\x89PNG\r\n\x1a\nprovider-forward"
+    encoded = base64.b64encode(image_bytes).decode("ascii")
+
+    with _persist_client(tmp_path, store_path) as (client, store):
+        resp = client.post(
+            "/bff/management/nl/ask",
+            json={
+                "question": "What is visible in this screenshot?",
+                "sessionId": "attach-007-codex-session",
+                "attachments": [
+                    {
+                        "kind": "image",
+                        "mimeType": "image/png",
+                        "filename": "screen.png",
+                        "dataBase64": encoded,
+                    }
+                ],
+            },
+            headers={**_OPERATOR_HEADERS, "Idempotency-Key": "attach-007-codex"},
+        )
+
+        assert resp.status_code == 202, resp.text
+        assert resp.json()["data"]["answer"] == "Provider inspected the attachment."
+        assert fake.calls, "provider must be invoked"
+        call = fake.calls[0]
+        assert call["metadata"]["attachments"][0]["url"].startswith("/bff/management/ai/attachments/")
+        assert "storageUrl" not in call["metadata"]["attachments"][0]
+        assert call["metadata"]["multimodal"]["attachment_count"] == 1
+        assert call["metadata"]["multimodal"]["forwarded"] is True
+
+        message = call["messages"][0]
+        assert message["role"] == "user"
+        image_part = next(part for part in message["content"] if part["type"] == "image_url")
+        assert image_part["image_url"]["url"] == f"data:image/png;base64,{encoded}"
+        assert image_part["source"] == "management_ai_attachment_store"
+        assert call["attachments"][0]["attachmentId"] == image_part["attachmentId"]
+
+        stored_dump = json.dumps(store.list_turns("attach-007-codex-session"), ensure_ascii=False)
+        assert encoded not in stored_dump
+        assert "dataBase64" not in stored_dump
+
+
+def test_multimodal_attachment_falls_back_to_text_only_for_unsupported_provider(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    fake = _FakeProviderClient(
+        result={
+            "provider": "claude",
+            "status": "ok",
+            "text": "Claude handled the text-only fallback.",
+        }
+    )
+    monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "claude_cli")
+    monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+    monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+
+    store_path = tmp_path / "mgmt-ai-attachment-provider-fallback.json"
+    encoded = base64.b64encode(b"\x89PNG\r\n\x1a\nfallback").decode("ascii")
+
+    with _persist_client(tmp_path, store_path) as (client, _store):
+        resp = client.post(
+            "/bff/management/nl/ask",
+            json={
+                "question": "Please inspect this screenshot.",
+                "sessionId": "attach-007-claude-session",
+                "attachments": [
+                    {
+                        "kind": "image",
+                        "mimeType": "image/png",
+                        "filename": "screen.png",
+                        "dataBase64": encoded,
+                    }
+                ],
+            },
+            headers={**_OPERATOR_HEADERS, "Idempotency-Key": "attach-007-claude"},
+        )
+
+    assert resp.status_code == 202, resp.text
+    body = resp.json()
+    assert body["data"]["answer"] == "Claude handled the text-only fallback."
+    provider_status = body["data"]["providerStatus"]
+    assert provider_status["reason"] == "multimodal_unsupported"
+    assert provider_status["multimodal"]["forwarded"] is False
+    assert provider_status["multimodal"]["fallback"] == "text_only"
+    assert "messages" not in fake.calls[0]
+    assert "attachments" not in fake.calls[0]
 
 
 def test_persist_turns(tmp_path: Path) -> None:
