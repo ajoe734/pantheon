@@ -14,6 +14,7 @@ from services.foundation.postgres_json_store import PostgresJsonOwnerStore, quot
 
 BACKEND_ENV = "MANAGEMENT_AI_STORE_BACKEND"
 DSN_ENV = "MANAGEMENT_AI_STORE_DSN"
+DATABASE_URL_ENV = "MANAGEMENT_AI_DATABASE_URL"
 SCHEMA_ENV = "MANAGEMENT_AI_STORE_SCHEMA"
 SURFACE_ENV = "MANAGEMENT_AI_STORE_SURFACE"
 OWNER_SERVICE_ENV = "MANAGEMENT_AI_STORE_OWNER_SERVICE"
@@ -850,7 +851,13 @@ class AssistantConversationStore:
         if selected_backend == "postgres":
             self.backend = selected_backend
             self._impl = PostgresAssistantConversationStore(
-                dsn=str(dsn or env_map.get(DSN_ENV) or env_map.get("DATABASE_URL") or ""),
+                dsn=str(
+                    dsn
+                    or env_map.get(DSN_ENV)
+                    or env_map.get(DATABASE_URL_ENV)
+                    or env_map.get("DATABASE_URL")
+                    or ""
+                ),
                 schema=str(schema or env_map.get(SCHEMA_ENV) or DEFAULT_SCHEMA),
                 surface=str(surface or env_map.get(SURFACE_ENV) or DEFAULT_SURFACE),
                 owner_service=str(owner_service or env_map.get(OWNER_SERVICE_ENV) or DEFAULT_OWNER_SERVICE),
