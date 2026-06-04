@@ -143,15 +143,16 @@ bytes under the Management AI attachment store and persists only metadata plus
 returns base64 payloads. Idempotency replay returns the original response and
 does not append duplicate user/assistant turns.
 
-Storage defaults are BFF-owned: `PANTHEON_MANAGEMENT_AI_STORE_PATH` points to
-the SQLite session/turn database and
+Storage defaults are BFF-owned: `MANAGEMENT_AI_STORE_BACKEND` selects the
+conversation backend (`json` for dev, `postgres` for staging/prod) and
+`PANTHEON_MANAGEMENT_AI_STORE_PATH` points to the dev JSON conversation file.
 `PANTHEON_MANAGEMENT_AI_ATTACHMENT_STORE_PATH` points to the attachment object
-directory. These are the deploy-time swap points for Postgres/GCS/S3 adapters.
-The dev compose deployment pins these paths under the mounted BFF data volume:
-`/data/bff/management-ai-conversations.sqlite3`,
+directory. The dev compose deployment pins these paths under the mounted BFF
+data volume: `/data/bff/management-ai-conversations.json`,
 `/data/bff/management-ai-attachments`, and
 `/data/bff/management-ai-audit.jsonl`, so a BFF container recreate does not drop
-server-side conversation truth.
+server-side conversation truth. Staging/prod use the shared Postgres
+`management_ai` schema for sessions, turns, and idempotency.
 
 Already-existing generic action endpoints (workers extend these instead of creating new routes for P0-1/2/3 — register `AdvanceLifecycle` / `ApprovePool` / `StartRuntime` in the action catalog + handler):
 

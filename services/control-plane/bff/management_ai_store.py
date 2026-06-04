@@ -11,10 +11,12 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from assistant_conversation_store import build_assistant_conversation_store, storage_disabled as _conversation_storage_disabled
+
 
 STORE_PATH_ENV = "PANTHEON_MANAGEMENT_AI_STORE_PATH"
 ATTACHMENT_STORE_PATH_ENV = "PANTHEON_MANAGEMENT_AI_ATTACHMENT_STORE_PATH"
-DEFAULT_STORE_PATH = "/tmp/pantheon-bff/management-ai-conversations.sqlite3"
+DEFAULT_STORE_PATH = "/tmp/pantheon-bff/management-ai-conversations.json"
 DEFAULT_ATTACHMENT_STORE_PATH = "/tmp/pantheon-bff/management-ai-attachments"
 
 
@@ -57,7 +59,7 @@ class ManagementAiAttachmentStore:
         self._memory_objects: Dict[str, Tuple[bytes, str, str]] = {}
 
     def _enabled(self) -> bool:
-        return not _storage_disabled(self._storage_path)
+        return not _conversation_storage_disabled(self._storage_path)
 
     def _path_for(self, attachment_id: str) -> Path:
         return Path(str(self._storage_path)) / f"{attachment_id}.bin"
@@ -139,8 +141,9 @@ class ManagementAiConversationStore:
         self._turns: Dict[str, List[Dict[str, Any]]] = {}
         self._assistant_sessions: Dict[str, Dict[str, Any]] = {}
         self._sequence = 0
-        if self._enabled():
-            self._init_db()
+        self._conversation_store = build_assistant_conversation_store(
+            storage_path=None if self._storage_path is None else str(self._storage_path),
+        )
 
     def _enabled(self) -> bool:
         return not _storage_disabled(self._storage_path)
@@ -308,12 +311,8 @@ class ManagementAiConversationStore:
         }
 
     def reset(self) -> None:
+        self._conversation_store.reset()
         with self._lock:
-            if self._enabled():
-                with self._connect() as conn:
-                    conn.execute("DELETE FROM management_ai_turns")
-                    conn.execute("DELETE FROM management_ai_assistant_sessions")
-                    conn.execute("DELETE FROM management_ai_sessions")
             self._sessions = {}
             self._turns = {}
             self._assistant_sessions = {}
@@ -321,6 +320,7 @@ class ManagementAiConversationStore:
 
     def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         clean_session_id = str(session_id or "").strip()
+        return self._conversation_store.get_session(clean_session_id)
         with self._lock:
             if self._enabled():
                 with self._connect() as conn:
@@ -342,6 +342,11 @@ class ManagementAiConversationStore:
         clean_owner_id = str(owner_id or "").strip()
         clean_tenant_id = str(tenant_id or "").strip()
         clean_limit = max(1, int(limit or 100))
+        return self._conversation_store.list_sessions(
+            owner_id=clean_owner_id or None,
+            tenant_id=clean_tenant_id or None,
+            limit=clean_limit,
+        )
         with self._lock:
             if self._enabled():
                 where: List[str] = []
@@ -396,6 +401,13 @@ class ManagementAiConversationStore:
     ) -> Dict[str, Any]:
         clean_session_id = str(session_id or "").strip()
         clean_title = _clean_text(title or "", max_len=160)
+        return self._conversation_store.create_session(
+            session_id=clean_session_id,
+            owner_id=owner_id,
+            tenant_id=tenant_id,
+            now=now,
+            title=clean_title,
+        )
         with self._lock:
             if self._enabled():
                 with self._connect() as conn:
@@ -526,6 +538,19 @@ class ManagementAiConversationStore:
         clean_attachments = list(attachments or [])
         clean_ui_actions = list(ui_actions or [])
         clean_assistant_metadata = dict(assistant_metadata) if isinstance(assistant_metadata, dict) else {}
+        return self._conversation_store.append_turn(
+            turn_id=clean_turn_id,
+            session_id=clean_session_id,
+            role=clean_role,
+            text=clean_text,
+            created_at=created_at,
+            trace_id=clean_trace_id,
+            attachments=clean_attachments,
+            provider_status=provider_status,
+            ui_snapshot=ui_snapshot,
+            ui_actions=clean_ui_actions,
+            assistant_metadata=clean_assistant_metadata,
+        )
         with self._lock:
             if self._enabled():
                 with self._connect() as conn:
@@ -611,6 +636,7 @@ class ManagementAiConversationStore:
 
     def list_turns(self, session_id: str) -> List[Dict[str, Any]]:
         clean_session_id = str(session_id or "").strip()
+        return self._conversation_store.list_turns(clean_session_id)
         with self._lock:
             if self._enabled():
                 with self._connect() as conn:
@@ -656,36 +682,25 @@ class ManagementAiConversationStore:
         updated_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         clean_session_id = str(session_id or "").strip()
-        clean_updated_at = str(updated_at or created_at or "")
-        payload = {
-            "sessionId": clean_session_id,
-            "session_id": clean_session_id,
-            "mode": str(mode or "user"),
-            "actorId": str(actor_id or ""),
-            "actor_id": str(actor_id or ""),
-            "roles": [str(role) for role in list(roles or [])],
-            "capabilities": [str(cap) for cap in list(capabilities or [])],
-            "createdAt": str(created_at or clean_updated_at),
-            "created_at": str(created_at or clean_updated_at),
-            "expiresAt": expires_at,
-            "expires_at": expires_at,
-            "status": str(status or "active"),
-            "reason": reason,
-            "ttlSeconds": int(ttl_seconds) if ttl_seconds is not None else None,
-            "ttl_seconds": int(ttl_seconds) if ttl_seconds is not None else None,
-            "contextPackId": context_pack_id,
-            "context_pack_id": context_pack_id,
-            "providerRunId": provider_run_id,
-            "provider_run_id": provider_run_id,
-            "auditRefs": [str(ref) for ref in list(audit_refs or [])],
-            "audit_refs": [str(ref) for ref in list(audit_refs or [])],
-            "revokedAt": revoked_at,
-            "revoked_at": revoked_at,
-            "revokeReason": revoke_reason,
-            "revoke_reason": revoke_reason,
-            "updatedAt": clean_updated_at,
-            "updated_at": clean_updated_at,
-        }
+        payload = self._conversation_store.put_assistant_session(
+            session_id=clean_session_id,
+            mode=mode,
+            actor_id=actor_id,
+            roles=roles,
+            capabilities=capabilities,
+            created_at=created_at,
+            expires_at=expires_at,
+            status=status,
+            reason=reason,
+            ttl_seconds=ttl_seconds,
+            context_pack_id=context_pack_id,
+            provider_run_id=provider_run_id,
+            audit_refs=audit_refs,
+            revoked_at=revoked_at,
+            revoke_reason=revoke_reason,
+            updated_at=updated_at,
+        )
+        return payload
         with self._lock:
             if self._enabled():
                 with self._connect() as conn:
@@ -764,6 +779,7 @@ class ManagementAiConversationStore:
 
     def get_assistant_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         clean_session_id = str(session_id or "").strip()
+        return self._conversation_store.get_assistant_session(clean_session_id)
         with self._lock:
             if self._enabled():
                 with self._connect() as conn:
@@ -777,6 +793,13 @@ class ManagementAiConversationStore:
 
     def find_attachment(self, attachment_id: str) -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
         clean_id = str(attachment_id or "").strip()
+        for turn in self._conversation_store.list_all_turns():
+            for attachment in turn.get("attachments") or []:
+                if not isinstance(attachment, dict):
+                    continue
+                if str(attachment.get("id") or attachment.get("attachmentId") or attachment.get("attachment_id") or "") == clean_id:
+                    return dict(attachment), dict(turn)
+        return None
         if self._enabled():
             with self._lock:
                 with self._connect() as conn:
@@ -802,3 +825,9 @@ class ManagementAiConversationStore:
 
     def read_attachment(self, attachment_id: str, metadata: Dict[str, Any]) -> Tuple[bytes, str, str]:
         return self._attachment_store.read(attachment_id, metadata)
+
+    def put_idempotency(self, key: str, *, request_hash: str, result: Dict[str, Any]) -> Dict[str, Any]:
+        return self._conversation_store.put_idempotency(key, request_hash=request_hash, result=result)
+
+    def get_idempotency(self, key: str) -> Optional[Dict[str, Any]]:
+        return self._conversation_store.get_idempotency(key)
