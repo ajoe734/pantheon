@@ -23,6 +23,8 @@ substrate with:
 - Implementation merge commit: `9ed9ebab0d6930d8429272518282f427c1c3150c`
 - Review closeout PR: #877
 - Review closeout merge commit: `0699853d2c66700ffdc1140b031d81fa54610b23`
+- Final evidence PR: #884
+- Branch refresh base: `2e55a44e64a912f6972ebf3503f260e1d47e8db4`
 
 ## Verification
 
