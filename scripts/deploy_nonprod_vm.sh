@@ -572,6 +572,15 @@ SQL
 REMOTE_DB
 }
 
+dump_dev_root_failure_diagnostics() {
+  info "dev root compose ps after failure"
+  docker compose -p pantheon -f docker-compose.yml ps || true
+  info "operator-bff logs after failure"
+  docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=240 operator-bff || true
+  info "postgres logs after failure"
+  docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=120 postgres || true
+}
+
 cd "${PANTHEON_REMOTE_DIR}"
 git rev-parse --is-inside-work-tree >/dev/null
 
@@ -606,9 +615,12 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_LIVE_BROKER_ENABLED=false \
     PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
     PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" \
-      docker compose -p pantheon -f docker-compose.yml up -d --build
-    curl_with_retry http://127.0.0.1:18001/health
-    curl_with_retry http://127.0.0.1:18001/readyz
+      docker compose -p pantheon -f docker-compose.yml up -d --build \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    curl_with_retry http://127.0.0.1:18001/health \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    curl_with_retry http://127.0.0.1:18001/readyz \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
     ;;
 
   exec)
