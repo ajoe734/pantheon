@@ -31764,8 +31764,7 @@ async def bff_management_nl_ask(
                 "idempotency_key": resolved_key,
             }
         )
-        replayed = {**cached, "meta": {**cached.get("meta", {}), "idempotency": {**cached.get("meta", {}).get("idempotency", {}), "replayed": True}}}
-        return JSONResponse(status_code=202, content=replayed)
+        return JSONResponse(status_code=202, content=_management_json_clone(cached))
 
     now = utc_now()
     session_id = str(payload.get("sessionId") or payload.get("session_id") or f"mgmt-nl-{uuid.uuid4().hex[:10]}")
