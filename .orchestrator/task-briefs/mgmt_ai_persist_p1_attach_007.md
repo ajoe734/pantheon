@@ -14,7 +14,8 @@ Do not read `current-work.md` by default for implementation context.
 - Next: Review approved: multimodal attachment forwarding is correct, secure, and well-tested. Returned to Codex2 for owner closeout.
 
 ## Summary
--
+- Implementation merged in PR #921 (`178ebc6a`); reviewer approval and closeout records merged in PR #1014 (`e86f4b69`).
+- Owner finalization validation passed on 2026-06-04: compileall; BFF persistence pytest (`8 passed, 1 skipped`); BFF provider pytest (`29 passed`); OpenClaw adapter pytest (`53 passed`).
 
 ## Dependencies
 - MGMT-AI-PERSIST-P1-ATTACH-006: done · Attachment ingest to object storage - DB stores metadata + storageUrl (not base64)
