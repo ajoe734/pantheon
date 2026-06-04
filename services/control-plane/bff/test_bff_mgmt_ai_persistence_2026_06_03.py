@@ -182,6 +182,32 @@ def test_json_assistant_conversation_store_can_run_in_memory() -> None:
     assert store.list_turns(session_id)[0]["text"] == "in memory"
 
 
+def test_postgres_store_uses_management_ai_database_url_alias(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakePostgresStore:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setattr(
+        "assistant_conversation_store.PostgresAssistantConversationStore",
+        FakePostgresStore,
+    )
+
+    store = AssistantConversationStore(
+        env={
+            "MANAGEMENT_AI_STORE_BACKEND": "postgres",
+            "MANAGEMENT_AI_DATABASE_URL": "postgresql://management-ai@postgres/pantheon",
+            "DATABASE_URL": "postgresql://shared-app@postgres/pantheon",
+            "MANAGEMENT_AI_STORE_SCHEMA": "management_ai",
+        }
+    )
+
+    assert store.backend == "postgres"
+    assert captured["dsn"] == "postgresql://management-ai@postgres/pantheon"
+    assert captured["schema"] == "management_ai"
+
+
 def test_bff_management_ai_read_conversations_store_backed_404_scope_and_full_turns(monkeypatch) -> None:
     client = _management_ai_route_client(monkeypatch)
     store = bff_main._MGMT_AI_CONVERSATION_STORE
