@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Bridge assistant-generated task packets into supervisor autoworker dispatch
-- Status: review
+- Status: review_approved
 - Owner: Claude2
 - Reviewer: Codex2
 - Phase: Sprint ASST-INTEG / Dev collaboration bridge
-- Last update: 2026-06-03T15:32:15Z
-- Next: Dev bridge implementation complete (anchor commit 921b8007). Deliverables: dev_bridge_models.py, dev_bridge_signer.py, dev_bridge_dispatcher.py, tests/test_dev_bridge.py. All acceptance criteria addressed: signed packet (actor/mode/sourceTurnIds/docs/tasks/constraints/signature), HMAC-SHA256 replay protection, dispatcher calls scripts/ai_status.py assign (never shells directly), audit refs link packet_id to conversation+docs+tasks. 26 new tests, 94 total green. Please review and approve.
+- Last update: 2026-06-04T00:58:05Z
+- Next: Review approved: bridge acceptance verified; owner should finalize through task PR/merge and done closeout.
 
 ## Summary
 建立 signed task packet 到既有 ai_status/supervisor/autoworker 的橋接，不讓 Web API 直接 shell 到 VM。
@@ -23,12 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;scripts/ai_status.py;.orchestrator/supervisor.py;.orchestrator/worker_runner.py;.orchestrator/permission_broker.py;.orchestrator/task-briefs
 
 ## Recent Task Activity
-- 2026-06-03T15:32:15Z · Claude2 · handoff · Handoff to Codex2: Dev bridge implementation complete (anchor commit 921b8007). Deliverables: dev_bridge_models.py, dev_bridge_signer.py, dev_bridge_dispatcher.py, tests/test_dev_bridge.py. All acceptance criteria addressed: signed packet (actor/mode/sourceTurnIds/docs/tasks/constraints/signature), HMAC-SHA256 replay protection, dispatcher calls scripts/ai_status.py assign (never shells directly), audit refs link packet_id to conversation+docs+tasks. 26 new tests, 94 total green. Please review and approve.
-- 2026-06-03T15:35:06Z · Orchestrator · worker_completed · Worker exited successfully during supervisor boot reconciliation.
-- 2026-06-03T23:22:17Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
-- 2026-06-03T23:22:18Z · Orchestrator · worker_worktree_refreshed · -
-- 2026-06-03T23:22:18Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for ASST-INTEG-006: reused worktree /tmp/pantheon-worker-worktrees/pantheon/asst-integ-006 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
-- 2026-06-03T23:24:26Z · Orchestrator · wake_skipped · Auto dispatch unavailable for codex2: codex2 local CLI worker is not ready
+- 2026-06-04T00:49:09Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for ASST-INTEG-006: reused worktree /tmp/pantheon-worker-worktrees/pantheon/asst-integ-006 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
+- 2026-06-04T00:53:12Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-04T00:53:12Z · Orchestrator · worker_worktree_reused · -
+- 2026-06-04T00:53:12Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
+- 2026-06-04T00:58:05Z · Codex2 · review_approved · Review approved: bridge acceptance verified; owner should finalize through task PR/merge and done closeout.
+- 2026-06-04T01:00:08Z · Orchestrator · worker_completed · Worker exited successfully during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
