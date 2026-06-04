@@ -23,12 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_management_ai_persistence_2026-06-03/MANAGEMENT_AI_PERSISTENCE_GAP_SPEC.md;services/control-plane/bff/main.py;services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py
 
 ## Recent Task Activity
-- 2026-06-04T08:23:05Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for MGMT-AI-PERSIST-P1-ATTACH-007: reused worktree /tmp/pantheon-worker-worktrees/pantheon/mgmt-ai-persist-p1-attach-007 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
-- 2026-06-04T08:28:21Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 318.3s without a live worker or queue record.
-- 2026-06-04T08:28:21Z · Orchestrator · wake_queued · Wake-up queued for supervisor: owned_finalize_dispatch
-- 2026-06-04T08:28:23Z · Orchestrator · worker_worktree_refreshed · -
 - 2026-06-04T08:28:23Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for MGMT-AI-PERSIST-P1-ATTACH-007: reused worktree /tmp/pantheon-worker-worktrees/pantheon/mgmt-ai-persist-p1-attach-007 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
 - 2026-06-04T08:33:39Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 318.5s without a live worker or queue record.
+- 2026-06-04T08:33:39Z · Orchestrator · wake_queued · Wake-up queued for supervisor: owned_finalize_dispatch
+- 2026-06-04T08:33:41Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-04T08:33:41Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for MGMT-AI-PERSIST-P1-ATTACH-007: reused worktree /tmp/pantheon-worker-worktrees/pantheon/mgmt-ai-persist-p1-attach-007 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
+- 2026-06-04T08:38:56Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 317.2s without a live worker or queue record.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
