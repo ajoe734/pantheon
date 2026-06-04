@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import fcntl
 import fnmatch
 import importlib
 import json
@@ -152,6 +153,46 @@ def supervisor_pid_path(config: dict[str, Any]) -> Path:
     return config_path(config, "state_file").parent / "supervisor.pid"
 
 
+def supervisor_lock_path(config: dict[str, Any]) -> Path:
+    return config_path(config, "state_file").parent / "supervisor.lock"
+
+
+# Held open for the lifetime of the winning supervisor process. The advisory
+# flock is released automatically by the kernel when the process exits (or is
+# killed), so a crashed supervisor never leaves the lock stuck.
+_SINGLETON_LOCK_HANDLE: Any = None
+
+
+def acquire_singleton_lock(config: dict[str, Any]) -> bool:
+    """Acquire the exclusive supervisor singleton lock.
+
+    Returns True if this process is now the sole supervisor, False if another
+    live supervisor already holds the lock (in which case the caller should
+    exit WITHOUT touching the shared pid file or runtime state). This is the
+    race-proof single-instance guard that covers every launch path
+    (cron/tmux/run-supervisor.sh and the watchdog's direct spawn), replacing
+    the PID-ordering heuristic that broke under PID wraparound.
+    """
+    global _SINGLETON_LOCK_HANDLE
+    path = supervisor_lock_path(config)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(path, "a+", encoding="utf-8")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return False
+    _SINGLETON_LOCK_HANDLE = handle
+    try:
+        handle.seek(0)
+        handle.truncate()
+        handle.write(f"{os.getpid()}\n")
+        handle.flush()
+    except OSError:
+        pass
+    return True
+
+
 def write_supervisor_pid(config: dict[str, Any]) -> None:
     path = supervisor_pid_path(config)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -222,11 +263,19 @@ def iter_matching_supervisor_pids() -> list[int]:
     return sorted(matches)
 
 
-def terminate_older_supervisors(config: dict[str, Any]) -> None:
+def terminate_other_supervisors(config: dict[str, Any]) -> None:
+    """Terminate every other matching supervisor process except this one.
+
+    Called only by the process that just won the singleton flock, so killing all
+    other matches (rather than only lower-PID "older" ones) is safe and clears
+    any lock-less straggler from an earlier code version. The previous
+    pid < current_pid heuristic silently failed under PID wraparound, which let a
+    later-started supervisor with a smaller PID coexist with an earlier one.
+    """
     current_pid = os.getpid()
     terminated: list[int] = []
     for pid in iter_matching_supervisor_pids():
-        if pid >= current_pid:
+        if pid == current_pid:
             continue
         if not pid_is_alive(pid):
             continue
@@ -9007,7 +9056,14 @@ def main() -> int:
             quiet=args.quiet,
         )
         return 0
-    terminate_older_supervisors(config)
+    if not acquire_singleton_lock(config):
+        console_log(
+            "another supervisor already holds the singleton lock; exiting without "
+            "touching shared state",
+            quiet=args.quiet,
+        )
+        return 0
+    terminate_other_supervisors(config)
     atexit.register(clear_supervisor_pid, config)
     write_supervisor_pid(config)
     bootstrap_supervisor_runtime_state(config, lifecycle="starting")
