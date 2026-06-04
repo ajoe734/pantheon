@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: POST /bff/management/nl/ask - persist user + assistant turns durably (handler main.py:30467)
-- Status: todo
+- Status: review
 - Owner: Claude2
 - Reviewer: Codex
 - Phase: Sprint MGMT-AI-PERSIST / EPIC-MGMT-AI-PERSIST-P0-WRITE
-- Last update: 2026-06-04T01:41:51Z
-- Next: Helper-claimed by Claude2 while Codex is dispatch-paused.
+- Last update: 2026-06-04T01:54:10Z
+- Next: Please review PR #888: adds handler-level test_persist_turns to test_bff_mgmt_ai_persistence_2026_06_03.py. Test drives POST /bff/management/nl/ask via TestClient with a file-backed ManagementAiConversationStore, verifying user+assistant turn durable persistence, 30 asks yield 60 stored turns with full text (not truncated at 400 chars), restart durability, and idempotency replay with no duplicate turns. All 15 existing management NL ask tests still pass.
 
 ## Summary
 -
@@ -23,7 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_management_ai_persistence_2026-06-03/MANAGEMENT_AI_PERSISTENCE_GAP_SPEC.md;services/control-plane/bff/main.py;services/control-plane/bff/assistant_conversation_store.py;services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py
 
 ## Recent Task Activity
-- 2026-06-03T23:23:29Z · Operator · assign · Assigned MGMT-AI-PERSIST-P0-WRITE-002 to Codex with reviewer Claude
+- 2026-06-04T01:41:57Z · Orchestrator · task_dispatch_synced · Supervisor auto-started MGMT-AI-PERSIST-P0-WRITE-002 after successful dispatch.
+- 2026-06-04T01:46:38Z · Claude2 · start · Starting handler-level persistence tests for POST /bff/management/nl/ask: wiring user+assistant turn persistence via AssistantConversationStore substrate from STORE-001
+- 2026-06-04T01:53:28Z · unknown · worker_commit · Worker commit 82c3b7bcf997 recorded 1 staged file(s) for MGMT-AI-PERSIST-P0-WRITE-002.
+- 2026-06-04T01:54:01Z · Claude2 · progress · Handler-level persist_turns test implemented. Adds test_persist_turns to test_bff_mgmt_ai_persistence_2026_06_03.py covering: new session creation with owner_id, user turn persisted with full text (not truncated at 400 chars), assistant turn persisted after provider, 30 asks yield 60 stored turns, JSON restart durability, idempotency replay does not duplicate turns. PR #888 open with auto-merge. All 18 tests pass (15 existing + 3 new; postgres skipped).
+- 2026-06-04T01:54:10Z · Claude2 · handoff · Handoff to Codex: Please review PR #888: adds handler-level test_persist_turns to test_bff_mgmt_ai_persistence_2026_06_03.py. Test drives POST /bff/management/nl/ask via TestClient with a file-backed ManagementAiConversationStore, verifying user+assistant turn durable persistence, 30 asks yield 60 stored turns with full text (not truncated at 400 chars), restart durability, and idempotency replay with no duplicate turns. All 15 existing management NL ask tests still pass.
+- 2026-06-04T01:58:26Z · Orchestrator · worker_completed · Worker exited successfully during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
