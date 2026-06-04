@@ -75,6 +75,7 @@ const mockSeed = { user: "demo" };
 const silentFallbackEnabled = true;
 const env = "VITE_BFF_FALLBACK=auto";
 const localSeedHydrationEnabled = true;
+const nav = "Ask Pathreon Management";
 """
     )
 
@@ -87,6 +88,7 @@ const localSeedHydrationEnabled = true;
         "silent fallback marker",
         "VITE_BFF_FALLBACK=auto",
         "local seed hydration",
+        "Pathreon brand typo",
     ]
     assert {signal["source_url"] for signal in result["forbidden_signals"]} == {
         "https://pantheon-dev.lovable.app/assets/index.js"

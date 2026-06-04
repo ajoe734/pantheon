@@ -1113,6 +1113,13 @@ class ServiceBackedReadAdapter:
             "nested_key": "postmortems",
             "snapshot_key": "postmortems",
         },
+        "kill_switch": {
+            "env": "PANTHEON_BFF_KILL_SWITCH_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["id", "status"],
+            "snapshot_key": "kill_switch",
+        },
         "evolution_decisions": {
             "env": "PANTHEON_BFF_EVOLUTION_DECISION_STORE",
             "dirs": ("EVOLUTION_DATA_DIR",),
@@ -1315,6 +1322,13 @@ class ServiceBackedReadAdapter:
             "filenames": (),
             "keys": ["id"],
             "snapshot_key": "sentinel_findings",
+        },
+        "v5_interventions": {
+            "env": "PANTHEON_BFF_V5_INTERVENTION_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["intervention_id", "id"],
+            "snapshot_key": "v5_interventions",
         },
         "ooda_packets": {
             "env": "PANTHEON_BFF_OODA_PACKET_STORE",
@@ -13145,7 +13159,14 @@ class ReadSurfaceStore:
         return self._service.get_sentinel_finding(finding_id)
 
     def get_kill_switch_status(self) -> Dict[str, Any]:
-        ks = self._local_fallback("kill_switch") or {}
+        available, raw = self._service.record("kill_switch", "current")
+        if available and isinstance(raw, dict):
+            ks = json.loads(json.dumps(raw))
+        elif available:
+            _, records = self._service.list_records("kill_switch")
+            ks = json.loads(json.dumps(records[0])) if records else {}
+        else:
+            ks = self._local_fallback("kill_switch") or {}
         status = str(ks.get("status") or "").lower()
         if status not in {"armed", "triggered", "cooling_down"}:
             safe_mode_status = str(ks.get("safe_mode_status") or "").lower()

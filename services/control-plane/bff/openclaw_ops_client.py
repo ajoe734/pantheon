@@ -166,30 +166,53 @@ class OpenClawOpsClient:
         operator_id: str,
         metadata: Optional[Dict[str, Any]] = None,
         trace_id: Optional[str] = None,
+        messages: Optional[list[Dict[str, Any]]] = None,
+        attachments: Optional[list[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         normalized = str(provider or "").strip().lower()
-        if normalized not in {"codex", "codex_cli"}:
-            raise OpenClawOpsClientError(
-                f"Assistant provider {provider!r} is not supported by the BFF OpenClaw client.",
-                status_code=400,
-                error_code="ASSISTANT_PROVIDER_NOT_SUPPORTED",
-                payload={"provider": provider},
-            )
-        headers = {"X-Operator-Id": operator_id}
+        headers: Dict[str, str] = {"X-Operator-Id": operator_id}
         if trace_id:
             headers["X-Trace-Id"] = trace_id
-        return self._request(
-            "POST",
-            "/api/openclaw-adapter/assistant/providers/codex/invoke",
-            body={
+        if normalized in {"codex", "codex_cli"}:
+            body: Dict[str, Any] = {
                 "mode": mode,
                 "prompt": prompt,
                 "context_pack": context_pack,
                 "metadata": metadata or {},
-            },
-            headers=headers,
-            expected_status={200},
-            timeout_seconds=self._assistant_timeout_seconds(),
+            }
+            if messages is not None:
+                body["messages"] = messages
+            if attachments is not None:
+                body["attachments"] = attachments
+            return self._request(
+                "POST",
+                "/api/openclaw-adapter/assistant/providers/codex/invoke",
+                body=body,
+                headers=headers,
+                expected_status={200},
+                timeout_seconds=self._assistant_timeout_seconds(),
+            )
+        if normalized in {"claude", "claude_cli"}:
+            # Claude invoke route uses a different URL pattern from Codex.
+            # The adapter's /assistant/claude/invoke does not accept a metadata
+            # body field; operator identity is carried only via X-Operator-Id.
+            return self._request(
+                "POST",
+                "/api/openclaw-adapter/assistant/claude/invoke",
+                body={
+                    "prompt": prompt,
+                    "mode": mode,
+                    "context_pack": context_pack,
+                },
+                headers=headers,
+                expected_status={200},
+                timeout_seconds=self._assistant_timeout_seconds(),
+            )
+        raise OpenClawOpsClientError(
+            f"Assistant provider {provider!r} is not supported by the BFF OpenClaw client.",
+            status_code=400,
+            error_code="ASSISTANT_PROVIDER_NOT_SUPPORTED",
+            payload={"provider": provider},
         )
 
     def create_session(
@@ -282,17 +305,29 @@ class OpenClawOpsClient:
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Invoke the assistant CLI provider through the OpenClaw gateway adapter."""
+        normalized = str(provider or "codex").strip().lower()
         meta = dict(metadata or {})
         meta["operator_id"] = operator_id
-        return self._request(
-            "POST",
-            f"/api/openclaw-adapter/assistant/providers/{provider}/invoke",
-            body={
+        if normalized in {"claude", "claude_cli"}:
+            # Claude uses a distinct route in the gateway adapter.
+            path = "/api/openclaw-adapter/assistant/claude/invoke"
+            body: Dict[str, Any] = {
+                "prompt": prompt,
+                "mode": mode,
+                "context_pack": context_pack or {},
+            }
+        else:
+            path = f"/api/openclaw-adapter/assistant/providers/{normalized}/invoke"
+            body = {
                 "mode": mode,
                 "prompt": prompt,
                 "context_pack": context_pack or {},
                 "metadata": meta,
-            },
+            }
+        return self._request(
+            "POST",
+            path,
+            body=body,
             headers={"X-Operator-Id": operator_id},
             expected_status={200},
             timeout_seconds=self._assistant_timeout_seconds(),

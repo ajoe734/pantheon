@@ -129,6 +129,7 @@ FORBIDDEN_PATTERNS: list[tuple[str, Pattern[str]]] = [
             re.IGNORECASE,
         ),
     ),
+    ("Pathreon brand typo", re.compile(r"\bPathreon\b")),
 ]
 
 

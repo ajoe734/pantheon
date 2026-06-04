@@ -135,6 +135,8 @@ def test_readiness_ready_with_auth_probe(tmp_path: Path) -> None:
         "read-only",
     ]
     assert "--dangerously-bypass-approvals-and-sandbox" not in auth_cmd
+    assert auth_cmd[-1] == "-"
+    assert calls[1][1]["input"] == "Reply with exactly: ok"
     assert calls[1][1]["env"]["CODEX_HOME"] == "/home/pantheon-assistant/.codex"
 
 
@@ -176,11 +178,48 @@ def test_invoke_uses_read_only_workspace_by_default(tmp_path: Path) -> None:
         "-c",
         'ask_for_approval="never"',
         "--json",
-        "hello",
+        "-",
     ]
+    assert kwargs["input"] == "hello"
     assert kwargs["cwd"] == str(tmp_path / "read-only")
     assert kwargs["timeout"] == 7
     assert kwargs["env"]["CODEX_HOME"] == "/home/pantheon-assistant/.codex"
+
+
+def test_invoke_sends_large_prompt_on_stdin_not_argv(tmp_path: Path) -> None:
+    calls = []
+    prompt = "persona context\n" * 10000
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return subprocess.CompletedProcess(cmd, 0, stdout='{"final":"ok"}\n', stderr="")
+
+    provider = _provider(tmp_path, fake_run)
+    result = provider.invoke({"mode": "user", "prompt": prompt, "metadata": {"operator_id": "op-1"}})
+
+    cmd, kwargs = calls[0]
+    assert result["status"] == "completed"
+    assert prompt not in cmd
+    assert cmd[-1] == "-"
+    assert kwargs["input"] == prompt
+
+
+def test_process_start_failure_returns_provider_error(tmp_path: Path) -> None:
+    def fake_run(cmd, **kwargs):
+        raise OSError(7, "Argument list too long", "/usr/bin/codex")
+
+    provider = _provider(tmp_path, fake_run)
+
+    with pytest.raises(CodexProviderError) as exc_info:
+        provider.invoke({"mode": "user", "prompt": "hello", "metadata": {"operator_id": "op-1"}})
+
+    assert exc_info.value.code == "CODEX_PROCESS_START_FAILED"
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.retryable is True
+    assert exc_info.value.details["errno"] == 7
+    audit_text = (tmp_path / "provider-audit.jsonl").read_text(encoding="utf-8")
+    assert "assistant.provider.start_failed" in audit_text
+    assert "Argument list too long" not in audit_text
 
 
 def test_invoke_audit_records_trace_context_and_output_summary(tmp_path: Path) -> None:

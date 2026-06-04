@@ -7,6 +7,7 @@ Acceptance criteria:
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -25,6 +26,7 @@ from models import (
     InterventionStatus,
     ObjectType,
 )
+from read_store import ReadSurfaceStore
 
 
 OPERATOR_TOKEN = "Bearer op-v5:operator"
@@ -128,6 +130,48 @@ def test_get_v5_interventions_filters_by_status() -> None:
         body = response.json()
         assert body["count"] == 1
         assert body["items"][0]["intervention_id"] == "intv-v5-002"
+
+
+def test_get_v5_interventions_reads_service_backed_store() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        intervention_path = os.path.join(td, "v5_interventions.json")
+        with open(intervention_path, "w", encoding="utf-8") as handle:
+            json.dump(
+                {
+                    "intv-store-001": {
+                        "intervention_id": "intv-store-001",
+                        "kind": "hiq_sentinel",
+                        "status": "pending",
+                        "target_type": "Runtime",
+                        "target_id": "rt-store-001",
+                        "triggered_at": "2026-06-03T08:00:00Z",
+                    }
+                },
+                handle,
+            )
+        original_env = os.environ.get("PANTHEON_BFF_V5_INTERVENTION_STORE")
+        original_read_store = bff_main.read_store
+        os.environ["PANTHEON_BFF_V5_INTERVENTION_STORE"] = intervention_path
+        bff_main.read_store = ReadSurfaceStore(
+            os.path.join(td, "read_surfaces.json"),
+            allow_local_snapshot_fallback=False,
+        )
+        try:
+            with _isolated_client() as client:
+                response = client.get(
+                    "/bff/v5/interventions",
+                    headers={"Authorization": OPERATOR_TOKEN},
+                )
+                assert response.status_code == 200, response.text
+                body = response.json()
+                assert body["count"] == 1
+                assert body["items"][0]["intervention_id"] == "intv-store-001"
+        finally:
+            bff_main.read_store = original_read_store
+            if original_env is None:
+                os.environ.pop("PANTHEON_BFF_V5_INTERVENTION_STORE", None)
+            else:
+                os.environ["PANTHEON_BFF_V5_INTERVENTION_STORE"] = original_env
 
 
 def test_get_v5_interventions_requires_auth() -> None:

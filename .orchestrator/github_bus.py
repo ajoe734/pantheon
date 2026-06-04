@@ -6,6 +6,7 @@ import os
 import re
 import signal
 import subprocess
+import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1293,41 +1294,58 @@ def poll_pr_reviews(config: dict[str, Any], bus_state: dict[str, Any], status: d
         number = pr_ref.get("number")
         if not number:
             continue
+
         reviews = gh_json(["api", f"repos/{repo}/pulls/{number}/reviews?per_page=100"])
-        if not isinstance(reviews, list):
-            continue
-        allowed = allowed_logins(config, task)
-        for review in reviews:
-            review_id = review.get("id")
-            if review_id is None:
-                continue
-            key = comment_key("review", review_id)
-            if key in seen:
-                continue
-            actor = ((review.get("user") or {}).get("login") or "").strip()
-            if allowed and actor not in allowed:
+        if isinstance(reviews, list):
+            allowed = allowed_logins(config, task)
+            for review in reviews:
+                review_id = review.get("id")
+                if review_id is None:
+                    continue
+                key = comment_key("review", review_id)
+                if key in seen:
+                    continue
+                actor = ((review.get("user") or {}).get("login") or "").strip()
+                if allowed and actor not in allowed:
+                    seen.add(key)
+                    continue
+                state_value = str(review.get("state") or "").upper()
+                body = trim_text(review.get("body"), 240)
+                if state_value == "APPROVED":
+                    run_ai_status("approve", task["id"], f"GitHub PR approved via PR #{number} by @{actor}.", actor=str(task.get("reviewer") or "").strip() or None)
+                    write_activity_log(config, {"type": "github_review_approved", "task_id": task["id"], "message": f"PR #{number} approved by @{actor}.", "github_pr": number})
+                    changed = True
+                elif state_value == "CHANGES_REQUESTED":
+                    detail = f"GitHub PR requested changes via PR #{number} by @{actor}."
+                    if body:
+                        detail += f" {body}"
+                    run_ai_status("reopen", task["id"], detail, actor=str(task.get("reviewer") or task.get("owner") or "").strip() or None)
+                    write_activity_log(config, {"type": "github_review_changes_requested", "task_id": task["id"], "message": detail, "github_pr": number})
+                    changed = True
+                elif state_value == "COMMENTED":
+                    note = f"GitHub PR comment via PR #{number} by @{actor}."
+                    if body:
+                        note += f" {body}"
+                    run_ai_status("note", task["id"], note, actor=str(task.get("reviewer") or task.get("owner") or "").strip() or None)
+                    changed = True
                 seen.add(key)
-                continue
-            state_value = str(review.get("state") or "").upper()
-            body = trim_text(review.get("body"), 240)
-            if state_value == "APPROVED":
-                run_ai_status("approve", task["id"], f"GitHub PR approved via PR #{number} by @{actor}.", actor=str(task.get("reviewer") or "").strip() or None)
-                write_activity_log(config, {"type": "github_review_approved", "task_id": task["id"], "message": f"PR #{number} approved by @{actor}.", "github_pr": number})
+        try:
+            pr_details = gh_json([
+                "pr", "view", str(number), "--repo", repo,
+                "--json", "statusCheckRollup,mergeStateStatus,mergeable,state,mergedAt"
+            ])
+            if isinstance(pr_details, dict):
+                pr_ref["status_check_rollup"] = pr_details.get("statusCheckRollup")
+                pr_ref["merge_state_status"] = pr_details.get("mergeStateStatus")
+                pr_ref["mergeable"] = pr_details.get("mergeable")
+                pr_ref["state"] = pr_details.get("state")
+                pr_ref["merged_at"] = pr_details.get("mergedAt")
+                pr_ref["last_status_check_at"] = utc_now()
                 changed = True
-            elif state_value == "CHANGES_REQUESTED":
-                detail = f"GitHub PR requested changes via PR #{number} by @{actor}."
-                if body:
-                    detail += f" {body}"
-                run_ai_status("reopen", task["id"], detail, actor=str(task.get("reviewer") or task.get("owner") or "").strip() or None)
-                write_activity_log(config, {"type": "github_review_changes_requested", "task_id": task["id"], "message": detail, "github_pr": number})
-                changed = True
-            elif state_value == "COMMENTED":
-                note = f"GitHub PR comment via PR #{number} by @{actor}."
-                if body:
-                    note += f" {body}"
-                run_ai_status("note", task["id"], note, actor=str(task.get("reviewer") or task.get("owner") or "").strip() or None)
-                changed = True
-            seen.add(key)
+        except Exception as exc:
+            # Don't fail the whole sync if one PR view fails
+            print(f"Warning: failed to poll PR #{number} status: {exc}", file=sys.stderr)
+
     bus_state["processed_review_ids"] = list(seen)
     return changed
 

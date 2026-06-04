@@ -11,6 +11,7 @@ Covers:
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -123,6 +124,37 @@ def test_v5_persona_health_items_have_required_fields() -> None:
                 assert "id" in item or "persona_id" in item
                 assert "health" in item
                 assert item["health"] in ("healthy", "degraded")
+        finally:
+            bff_main.read_store = original
+
+
+def test_v5_persona_health_treats_deployed_lifecycle_as_healthy() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        snapshot_path = os.path.join(td, "read_surfaces.json")
+        with open(snapshot_path, "w", encoding="utf-8") as handle:
+            json.dump(
+                {
+                    "personas": {
+                        "persona-deployed": {
+                            "persona_id": "persona-deployed",
+                            "name": "Deployed Persona",
+                            "lifecycle_state": "deployed",
+                            "created_at": "2026-06-03T08:00:00Z",
+                        }
+                    }
+                },
+                handle,
+            )
+        try:
+            client = _fresh_client(td)
+            resp = client.get("/bff/v5/execution/persona-health", headers=OPERATOR_HEADERS)
+            assert resp.status_code == 200, resp.text
+            item = next(
+                item for item in resp.json().get("items", [])
+                if item.get("persona_id") == "persona-deployed" or item.get("id") == "persona-deployed"
+            )
+            assert item["health"] == "healthy"
         finally:
             bff_main.read_store = original
 

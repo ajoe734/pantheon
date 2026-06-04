@@ -46,6 +46,11 @@ def _fresh_client(td: str) -> TestClient:
     )
     bff_main.read_store = store
     bff_main._MGMT_NL_IDEMPOTENCY.clear()
+    bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+    bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
+        storage_path="off",
+        attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
+    )
     return TestClient(bff_main.app)
 
 
@@ -68,8 +73,16 @@ def test_nl_ask_authenticated_returns_202_with_data_fields() -> None:
             assert body["status"] == "accepted"
             data = body["data"]
             assert isinstance(data["answer"], str) and data["answer"]
+            assert isinstance(data["sessionId"], str) and data["sessionId"]
             assert isinstance(data["session_id"], str) and data["session_id"]
+            assert data["sessionId"] == data["session_id"]
             assert isinstance(data["message_id"], str) and data["message_id"]
+            assert isinstance(data["traceId"], str) and data["traceId"]
+            assert isinstance(data["providerStatus"], dict)
+            assert isinstance(data["actions"], list)
+            assert data["conversation"]["href"].startswith("/bff/management/ai/conversations/")
+            assert "trace_id=" not in data["conversation"]["href"]
+            assert data["session"]["ttlSeconds"] >= 7 * 24 * 60 * 60
             assert data["question"] == "What is the current portfolio PnL?"
             assert isinstance(data["sources"], list)
             assert data["confidence"] in {"high", "partial", "unavailable"}
@@ -157,13 +170,123 @@ def test_nl_ask_idempotency_replay_returns_cached() -> None:
                 # Context collection should not have been called again on replay
                 assert call_count["n"] == first_count, "Management surfaces re-queried on replay"
 
-                # Both responses should have the same message_id
-                assert resp1.json()["data"]["message_id"] == resp2.json()["data"]["message_id"]
-                assert resp2.json()["meta"]["idempotency"]["replayed"] is True
+                assert resp2.json() == resp1.json()
             finally:
                 bff_main._mgmt_nl_collect_context = original_collect
         finally:
             bff_main.read_store = original
+
+
+def test_nl_ask_assistant_transcript_aliases_management_store() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            resp = client.post(
+                "/bff/management/nl/ask",
+                json={"question": "Show the durable assistant transcript.", "sessionId": "mgmt-asst-alias-session"},
+                headers={**OPERATOR_HEADERS, "Idempotency-Key": "ik-asst-transcript-alias-001"},
+            )
+            assert resp.status_code == 202, resp.text
+
+            transcript_resp = client.get(
+                "/bff/assistant/sessions/mgmt-asst-alias-session/transcript",
+                headers=OPERATOR_HEADERS,
+            )
+            assert transcript_resp.status_code == 200, transcript_resp.text
+            turns = transcript_resp.json()["data"]
+            assert [turn["role"] for turn in turns] == ["user", "assistant"]
+            assert turns[0]["content"] == "Show the durable assistant transcript."
+            assert turns[1]["content"] == resp.json()["data"]["answer"]
+            assert transcript_resp.json()["meta"]["count"] == 2
+        finally:
+            bff_main.read_store = original
+
+
+def test_nl_ask_assistant_transcript_unknown_session_returns_404() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            resp = client.get(
+                "/bff/assistant/sessions/local-only-browser-session/transcript",
+                headers=OPERATOR_HEADERS,
+            )
+            assert resp.status_code == 404
+        finally:
+            bff_main.read_store = original
+
+
+def test_nl_ask_idempotency_replay_does_not_duplicate_assistant_transcript() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            payload = {
+                "question": "Replay should not duplicate transcript turns.",
+                "sessionId": "mgmt-asst-idem-session",
+            }
+            headers = {**OPERATOR_HEADERS, "Idempotency-Key": "ik-asst-transcript-idem-001"}
+
+            resp1 = client.post("/bff/management/nl/ask", json=payload, headers=headers)
+            resp2 = client.post("/bff/management/nl/ask", json=payload, headers=headers)
+            assert resp1.status_code == 202, resp1.text
+            assert resp2.status_code == 202, resp2.text
+            assert resp2.json() == resp1.json()
+
+            transcript_resp = client.get(
+                "/bff/assistant/sessions/mgmt-asst-idem-session/transcript",
+                headers=OPERATOR_HEADERS,
+            )
+            assert transcript_resp.status_code == 200, transcript_resp.text
+            turns = transcript_resp.json()["data"]
+            assert [turn["role"] for turn in turns] == ["user", "assistant"]
+            assert transcript_resp.json()["meta"]["count"] == 2
+        finally:
+            bff_main.read_store = original
+
+
+def test_nl_ask_assistant_transcript_survives_conversation_store_reload() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_read_store = bff_main.read_store
+        original_conversation_store = bff_main._MGMT_AI_CONVERSATION_STORE
+        store_path = os.path.join(td, "management-ai.json")
+        try:
+            bff_main.read_store = ReadSurfaceStore(
+                os.path.join(td, "read_surfaces.json"),
+                allow_local_snapshot_fallback=True,
+            )
+            bff_main._MGMT_NL_IDEMPOTENCY.clear()
+            bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+            bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
+                storage_path=store_path,
+                attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
+            )
+            client = TestClient(bff_main.app)
+
+            ask_resp = client.post(
+                "/bff/management/nl/ask",
+                json={"question": "Persist this through a store reload.", "sessionId": "mgmt-asst-reload-session"},
+                headers={**OPERATOR_HEADERS, "Idempotency-Key": "ik-asst-transcript-reload-001"},
+            )
+            assert ask_resp.status_code == 202, ask_resp.text
+
+            bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
+                storage_path=store_path,
+                attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
+            )
+
+            transcript_resp = client.get(
+                "/bff/assistant/sessions/mgmt-asst-reload-session/transcript",
+                headers=OPERATOR_HEADERS,
+            )
+            assert transcript_resp.status_code == 200, transcript_resp.text
+            turns = transcript_resp.json()["data"]
+            assert [turn["role"] for turn in turns] == ["user", "assistant"]
+            assert turns[0]["content"] == "Persist this through a store reload."
+        finally:
+            bff_main.read_store = original_read_store
+            bff_main._MGMT_AI_CONVERSATION_STORE = original_conversation_store
 
 
 # ---------------------------------------------------------------------------
@@ -201,10 +324,11 @@ def test_nl_ask_session_id_echoed_when_supplied() -> None:
             supplied_id = "my-session-b6-xyz"
             resp = client.post(
                 "/bff/management/nl/ask",
-                json={"question": "Session test?", "session_id": supplied_id},
+                json={"question": "Session test?", "sessionId": supplied_id},
                 headers={**OPERATOR_HEADERS, "Idempotency-Key": "ik-sess-001"},
             )
             assert resp.status_code == 202, resp.text
+            assert resp.json()["data"]["sessionId"] == supplied_id
             assert resp.json()["data"]["session_id"] == supplied_id
         finally:
             bff_main.read_store = original

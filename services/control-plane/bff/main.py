@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import hmac
 import json
@@ -12,6 +13,7 @@ import time
 import uuid
 from collections import deque
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Set, Tuple
 from urllib.parse import quote, urlencode
 
@@ -96,6 +98,7 @@ from action_catalog import get_action_catalog, get_catalog_entry
 from command_queue import CommandStore
 from command_executor import execute_command_with_status
 from session_lifecycle_store import SessionLifecycleStore
+from management_ai_store import ManagementAiAttachmentError, ManagementAiAttachmentStore, ManagementAiConversationStore
 from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 from source_search_ops_client import (
     SearchIndexCommandClient,
@@ -13953,7 +13956,7 @@ async def get_operator_home(
 async def bff_management_cockpit(
     authorization: Optional[str] = Header(default=None),
 ):
-    """BFF-B3-001: Pathreon Management cockpit aggregate."""
+    """BFF-B3-001: Pantheon Management cockpit aggregate."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
@@ -22042,6 +22045,18 @@ _STRATEGY_BFF_LIFECYCLE_MAP = {
     "retired": "retired",
 }
 
+_PERSONA_OPERATIONAL_LIFECYCLE_STATES = frozenset({
+    "active",
+    "deployed",
+    "ready",
+    "running",
+})
+
+
+def _is_persona_lifecycle_operational(value: Any) -> bool:
+    return str(value or "").strip().lower() in _PERSONA_OPERATIONAL_LIFECYCLE_STATES
+
+
 _STRATEGY_BFF_RISK_MAP = {
     "info": "info",
     "low": "low",
@@ -26652,7 +26667,7 @@ def _project_persona_fleet_health(
 ) -> Dict[str, Any]:
     reasons: List[str] = []
     lifecycle = str(persona.get("lifecycle_state") or persona.get("state") or "").lower()
-    if lifecycle and lifecycle not in {"active", "ready", "running"}:
+    if lifecycle and not _is_persona_lifecycle_operational(lifecycle):
         reasons.append("persona_lifecycle_not_active")
     if not runtime_bindings:
         reasons.append("no_runtime_binding")
@@ -29251,7 +29266,75 @@ async def bff_management_persona_fleet(
 _MGMT_NL_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 
 _MGMT_NL_VALID_FOCUS = {"cockpit", "trading_pulse", "portfolio", "persona_fleet", "all"}
+_MGMT_NL_FOCUS_ALIASES = {
+    "persona": "persona_fleet",
+    "personas": "persona_fleet",
+    "runtime": "trading_pulse",
+    "runtimes": "trading_pulse",
+}
 _MGMT_NL_MAX_QUESTION_BYTES = 2048
+_MGMT_AI_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60
+_MGMT_NL_MAX_RECENT_TURNS = 12
+_MGMT_NL_FE_RECENT_TURNS_CHAR_BUDGET = 32 * 1024
+_MGMT_NL_PROVIDER_HISTORY_CHAR_BUDGET = 64 * 1024
+_MGMT_NL_UI_ACTION_KINDS = {
+    "navigate",
+    "openDrawer",
+    "selectEntity",
+    "setFilter",
+    "focusPanel",
+    "refreshCurrentView",
+    "runBffAction",
+}
+_MGMT_NL_WRITE_ACTION_KINDS = {"runBffAction"}
+_MGMT_NL_CONTROL_REDACTED_QUESTION = "[CONTROL MODE COMMAND REDACTED]"
+_MGMT_NL_CONTROL_ACTIVATE_PREFIXES = (
+    "/control",
+    "/kernel",
+    "control mode",
+    "kernel mode",
+    "控制模式",
+    "啟動控制模式",
+    "启动控制模式",
+    "開啟控制模式",
+    "开启控制模式",
+    "暗號",
+    "暗号",
+    "通關密語",
+    "通关密语",
+)
+_MGMT_NL_CONTROL_SEPARATOR_ACTIVATE_PREFIXES = {
+    "control mode",
+    "kernel mode",
+    "控制模式",
+    "暗號",
+    "暗号",
+    "通關密語",
+    "通关密语",
+}
+_MGMT_NL_CONTROL_STATUS_COMMANDS = {
+    "/control status",
+    "/kernel status",
+    "control mode status",
+    "kernel mode status",
+    "控制模式狀態",
+    "控制模式状态",
+    "查看控制模式",
+}
+_MGMT_NL_CONTROL_DEACTIVATE_COMMANDS = {
+    "/control off",
+    "/control stop",
+    "/control deactivate",
+    "/kernel off",
+    "/kernel stop",
+    "/kernel deactivate",
+    "control mode off",
+    "kernel mode off",
+    "退出控制模式",
+    "關閉控制模式",
+    "关闭控制模式",
+    "停用控制模式",
+}
 
 _MGMT_NL_HIGH_RISK_REFUSAL_FOLLOWUPS = [
     {
@@ -29335,6 +29418,7 @@ _MGMT_NL_HIGH_RISK_PATTERNS: List[tuple[str, List[str], str]] = [
 ]
 
 _MGMT_AI_AUDIT_EVENTS: deque = deque(maxlen=500)
+_MGMT_AI_CONVERSATION_STORE = ManagementAiConversationStore()
 
 
 def _management_ai_audit_path() -> Optional[str]:
@@ -29531,7 +29615,7 @@ def _management_ai_audit_href(
 
 def _management_ai_conversation_href(session_id: str, *, trace_id: Optional[str] = None) -> str:
     route = f"/bff/management/ai/conversations/{quote(str(session_id or ''), safe='')}"
-    return _management_ai_href(route, trace_id=trace_id)
+    return route
 
 
 def _management_ai_conversation_turns(
@@ -29540,11 +29624,11 @@ def _management_ai_conversation_turns(
     trace_id: Optional[str] = None,
     limit: int = 100,
 ) -> List[Dict[str, Any]]:
-    event_limit = min(max(limit * 4, limit), 500)
+    event_limit = min(max(limit * 6, limit), 1200)
     turns: List[Dict[str, Any]] = []
     for event in _management_ai_list_audit_events(
         session_id=session_id,
-        trace_id=trace_id,
+        trace_id=None,
         limit=event_limit,
     ):
         event_type = str(event.get("event_type") or "").strip()
@@ -29554,11 +29638,15 @@ def _management_ai_conversation_turns(
                 continue
             turns.append(
                 {
+                    "id": message_id,
                     "turn_id": message_id,
                     "message_id": message_id,
+                    "traceId": event.get("trace_id"),
                     "trace_id": event.get("trace_id"),
                     "role": "user",
+                    "text": event.get("question") or "",
                     "content": event.get("question") or "",
+                    "createdAt": event.get("recorded_at"),
                     "created_at": event.get("recorded_at"),
                     "focus": event.get("focus"),
                     "tenant_id": event.get("tenant_id"),
@@ -29576,15 +29664,22 @@ def _management_ai_conversation_turns(
                 assistant_turn_id = f"{message_id}-assistant"
             if not assistant_turn_id:
                 continue
+            provider_status = event.get("provider_status") or {}
             turns.append(
                 {
+                    "id": assistant_turn_id,
                     "turn_id": assistant_turn_id,
                     "message_id": message_id,
+                    "traceId": event.get("trace_id"),
                     "trace_id": event.get("trace_id"),
                     "role": "assistant",
+                    "text": event.get("answer") or "",
                     "content": event.get("answer") or "",
+                    "createdAt": event.get("recorded_at"),
                     "created_at": event.get("recorded_at"),
-                    "provider_status": event.get("provider_status") or {},
+                    "providerStatus": provider_status,
+                    "provider_status": provider_status,
+                    "actions": event.get("actions") or [],
                     "fallback": event.get("fallback"),
                     "audit_event": {
                         "event_id": event.get("event_id"),
@@ -29593,6 +29688,656 @@ def _management_ai_conversation_turns(
                 }
             )
     return turns[-limit:]
+
+
+def _management_ai_conversation_store() -> ManagementAiConversationStore:
+    store = globals().get("_MGMT_AI_CONVERSATION_STORE")
+    if store is None:
+        store = ManagementAiConversationStore()
+        globals()["_MGMT_AI_CONVERSATION_STORE"] = store
+    return store
+
+
+def _management_ai_attachment_url(attachment_id: str) -> str:
+    return f"/bff/management/ai/attachments/{quote(str(attachment_id or ''), safe='')}"
+
+
+def _management_ai_attachment_api_payload(attachment: Dict[str, Any]) -> Dict[str, Any]:
+    attachment_id = str(
+        attachment.get("id")
+        or attachment.get("attachmentId")
+        or attachment.get("attachment_id")
+        or ""
+    ).strip()
+    mime_type = str(attachment.get("mimeType") or attachment.get("mime_type") or "application/octet-stream")
+    size_bytes = int(attachment.get("sizeBytes") or attachment.get("size_bytes") or 0)
+    return {
+        "id": attachment_id,
+        "attachmentId": attachment_id,
+        "attachment_id": attachment_id,
+        "kind": str(attachment.get("kind") or "file"),
+        "mimeType": mime_type,
+        "mime_type": mime_type,
+        "filename": str(attachment.get("filename") or attachment_id or "attachment"),
+        "sizeBytes": size_bytes,
+        "size_bytes": size_bytes,
+        "url": _management_ai_attachment_url(attachment_id) if attachment_id else "",
+    }
+
+
+def _management_ai_turn_api_payload(turn: Dict[str, Any]) -> Dict[str, Any]:
+    attachments = [
+        _management_ai_attachment_api_payload(item)
+        for item in (turn.get("attachments") or [])
+        if isinstance(item, dict)
+    ]
+    provider_status = turn.get("providerStatus") if isinstance(turn.get("providerStatus"), dict) else None
+    ui_actions = turn.get("uiActions") if isinstance(turn.get("uiActions"), list) else []
+    payload = {
+        "id": turn.get("id"),
+        "turn_id": turn.get("turn_id") or turn.get("turnId") or turn.get("id"),
+        "message_id": turn.get("message_id") or turn.get("id"),
+        "sessionId": turn.get("sessionId") or turn.get("session_id"),
+        "session_id": turn.get("session_id") or turn.get("sessionId"),
+        "traceId": turn.get("traceId"),
+        "trace_id": turn.get("trace_id"),
+        "role": turn.get("role"),
+        "text": turn.get("text") or "",
+        "content": turn.get("text") or "",
+        "createdAt": turn.get("createdAt") or turn.get("created_at"),
+        "created_at": turn.get("created_at") or turn.get("createdAt"),
+        "providerStatus": provider_status,
+        "provider_status": provider_status,
+        "attachments": attachments,
+        "uiActions": ui_actions,
+        "ui_actions": ui_actions,
+        "actions": ui_actions,
+    }
+    ui_snapshot = turn.get("uiSnapshot") if isinstance(turn.get("uiSnapshot"), dict) else None
+    if ui_snapshot is not None:
+        payload["uiSnapshot"] = ui_snapshot
+        payload["ui_snapshot"] = ui_snapshot
+    return payload
+
+
+def _management_ai_require_session_access(
+    session: Dict[str, Any],
+    identity: OperatorIdentity,
+    *,
+    tenant_id: Optional[str],
+) -> None:
+    owner_id = str(session.get("ownerId") or session.get("owner_id") or "").strip()
+    session_tenant_id = str(session.get("tenantId") or session.get("tenant_id") or "").strip()
+    clean_tenant_id = str(tenant_id or "").strip()
+    if owner_id and owner_id == identity.operator_id:
+        return
+    if clean_tenant_id and session_tenant_id and clean_tenant_id == session_tenant_id:
+        return
+    raise _bff_error(
+        403,
+        ErrorCode.FORBIDDEN,
+        "Management AI session is not visible to this operator",
+        "management_ai_session_not_visible",
+        precondition_failed="management_ai_session_visibility",
+    )
+
+
+def _management_ai_session_not_found(session_id: str) -> HTTPException:
+    clean_session_id = str(session_id or "").strip()
+    return _bff_error(
+        404,
+        ErrorCode.RESOURCE_NOT_FOUND,
+        f"Management AI session not found: {clean_session_id!r}",
+        "management_ai_session_not_found",
+        precondition_failed="management_ai_session",
+    )
+
+
+def _management_ai_get_visible_session_or_404(
+    session_id: str,
+    identity: OperatorIdentity,
+    *,
+    tenant_id: Optional[str],
+) -> Dict[str, Any]:
+    clean_session_id = str(session_id or "").strip()
+    session = _management_ai_conversation_store().get_session(clean_session_id)
+    if session is None:
+        raise _management_ai_session_not_found(clean_session_id)
+    try:
+        _management_ai_require_session_access(session, identity, tenant_id=tenant_id)
+    except HTTPException as exc:
+        if exc.status_code == 403:
+            raise _management_ai_session_not_found(clean_session_id) from exc
+        raise
+    return session
+
+
+def _management_ai_get_session_or_404(
+    session_id: str,
+    identity: OperatorIdentity,
+    *,
+    tenant_id: Optional[str],
+) -> Dict[str, Any]:
+    clean_session_id = str(session_id or "").strip()
+    session = _management_ai_conversation_store().get_session(clean_session_id)
+    if session is None:
+        raise _management_ai_session_not_found(clean_session_id)
+    _management_ai_require_session_access(session, identity, tenant_id=tenant_id)
+    return session
+
+
+def _management_ai_ensure_session(
+    *,
+    session_id: str,
+    identity: OperatorIdentity,
+    tenant_id: Optional[str],
+    now: str,
+    title: str,
+) -> Dict[str, Any]:
+    store = _management_ai_conversation_store()
+    existing = store.get_session(session_id)
+    if existing is not None:
+        _management_ai_require_session_access(existing, identity, tenant_id=tenant_id)
+    try:
+        return store.upsert_session(
+            session_id=session_id,
+            owner_id=identity.operator_id,
+            tenant_id=tenant_id,
+            now=now,
+            title=title,
+        )
+    except Exception as exc:
+        log.warning("Failed to persist Management AI session", exc_info=True)
+        raise _bff_error(
+            503,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
+            "Management AI session store write failed",
+            str(exc),
+            precondition_failed="management_ai_session_store",
+        )
+
+
+def _management_ai_store_attachments(
+    *,
+    attachments: Any,
+    session_id: str,
+    turn_id: str,
+) -> List[Dict[str, Any]]:
+    try:
+        return _management_ai_conversation_store().store_attachments(
+            attachments,
+            session_id=session_id,
+            turn_id=turn_id,
+        )
+    except ManagementAiAttachmentError as exc:
+        status_code = int(getattr(exc, "status_code", 422) or 422)
+        code = ErrorCode.REQUEST_TOO_LARGE if status_code == 413 else ErrorCode.VALIDATION_FAILED
+        raise _bff_error(
+            status_code,
+            code,
+            (
+                "Management AI attachment payload is too large"
+                if status_code == 413
+                else "Management AI attachment payload is invalid"
+            ),
+            str(exc),
+            precondition_failed=getattr(exc, "precondition_failed", "management_ai_attachment"),
+            details_extra=getattr(exc, "details", {}),
+        )
+    except ValueError as exc:
+        raise _bff_error(
+            400,
+            ErrorCode.VALIDATION_FAILED,
+            "Management AI attachment payload is invalid",
+            str(exc),
+            precondition_failed="management_ai_attachment",
+        )
+    except Exception as exc:
+        log.warning("Failed to persist Management AI attachment", exc_info=True)
+        raise _bff_error(
+            503,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
+            "Management AI attachment store write failed",
+            str(exc),
+            precondition_failed="management_ai_attachment_store",
+        )
+
+
+def _management_ai_append_turn(
+    *,
+    turn_id: str,
+    session_id: str,
+    role: str,
+    text: str,
+    created_at: str,
+    trace_id: Optional[str] = None,
+    attachments: Optional[List[Dict[str, Any]]] = None,
+    provider_status: Optional[Dict[str, Any]] = None,
+    ui_snapshot: Optional[Dict[str, Any]] = None,
+    ui_actions: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    try:
+        return _management_ai_conversation_store().append_turn(
+            turn_id=turn_id,
+            session_id=session_id,
+            role=role,
+            text=text,
+            created_at=created_at,
+            trace_id=trace_id,
+            attachments=attachments,
+            provider_status=provider_status,
+            ui_snapshot=ui_snapshot,
+            ui_actions=ui_actions,
+        )
+    except Exception as exc:
+        log.warning("Failed to persist Management AI turn", exc_info=True)
+        raise _bff_error(
+            503,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
+            "Management AI turn store write failed",
+            str(exc),
+            precondition_failed="management_ai_turn_store",
+        )
+
+
+def _management_ai_server_conversation_context(
+    *,
+    session_id: str,
+    client_hint: Dict[str, Any],
+) -> Dict[str, Any]:
+    stored_turns = _management_ai_conversation_store().list_turns(session_id)
+    turns = []
+    for turn in stored_turns:
+        api_turn = _management_ai_turn_api_payload(turn)
+        turns.append(
+            {
+                "id": api_turn.get("id"),
+                "role": api_turn.get("role"),
+                "content": api_turn.get("text") or "",
+                "text": api_turn.get("text") or "",
+                "createdAt": api_turn.get("createdAt"),
+                "created_at": api_turn.get("created_at"),
+                "attachments": api_turn.get("attachments") or [],
+                "providerStatus": api_turn.get("providerStatus"),
+                "provider_status": api_turn.get("provider_status"),
+                "traceId": api_turn.get("traceId"),
+                "trace_id": api_turn.get("trace_id"),
+            }
+        )
+    provider_turns, history_budget = _management_ai_provider_history_window(turns)
+    return {
+        "recentTurns": provider_turns,
+        "recent_turns": provider_turns,
+        "allTurns": provider_turns,
+        "all_turns": provider_turns,
+        "turnCount": len(provider_turns),
+        "turn_count": len(provider_turns),
+        "storedTurnCount": len(turns),
+        "stored_turn_count": len(turns),
+        "source": "server",
+        "historySource": "management_ai_store",
+        "history_source": "management_ai_store",
+        "historyCharBudget": history_budget["historyCharBudget"],
+        "history_char_budget": history_budget["historyCharBudget"],
+        "historyEstimatedChars": history_budget["historyEstimatedChars"],
+        "history_estimated_chars": history_budget["historyEstimatedChars"],
+        "historyTruncated": history_budget["historyTruncated"],
+        "history_truncated": history_budget["historyTruncated"],
+        "historyOmittedTurnCount": history_budget["historyOmittedTurnCount"],
+        "history_omitted_turn_count": history_budget["historyOmittedTurnCount"],
+        "summary": client_hint.get("summary") or "",
+        "clientHint": client_hint,
+        "client_hint": client_hint,
+        "maxRecentTurns": None,
+        "max_recent_turns": None,
+    }
+
+
+def _management_ai_provider_history_size(turns: List[Dict[str, Any]]) -> int:
+    return len(json.dumps(turns, sort_keys=True, ensure_ascii=True))
+
+
+def _management_ai_provider_history_window(
+    turns: List[Dict[str, Any]],
+    *,
+    char_budget: int = _MGMT_NL_PROVIDER_HISTORY_CHAR_BUDGET,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    if _management_ai_provider_history_size(turns) <= char_budget:
+        return list(turns), {
+            "historyCharBudget": char_budget,
+            "historyEstimatedChars": _management_ai_provider_history_size(turns),
+            "historyTruncated": False,
+            "historyOmittedTurnCount": 0,
+        }
+
+    selected: List[Dict[str, Any]] = []
+    for turn in reversed(turns):
+        candidate = [turn, *selected]
+        if _management_ai_provider_history_size(candidate) > char_budget:
+            if selected:
+                break
+            selected = [_management_ai_provider_history_minimal_turn(turn)]
+            break
+        selected = candidate
+
+    return selected, {
+        "historyCharBudget": char_budget,
+        "historyEstimatedChars": _management_ai_provider_history_size(selected),
+        "historyTruncated": True,
+        "historyOmittedTurnCount": max(0, len(turns) - len(selected)),
+    }
+
+
+def _management_ai_provider_history_minimal_turn(turn: Dict[str, Any]) -> Dict[str, Any]:
+    text = str(turn.get("content") or turn.get("text") or "")
+    trimmed_text = _mgmt_nl_trim_text(text, max_len=2048)
+    return {
+        "id": turn.get("id"),
+        "role": turn.get("role"),
+        "content": trimmed_text,
+        "text": trimmed_text,
+        "createdAt": turn.get("createdAt"),
+        "created_at": turn.get("created_at"),
+        "traceId": turn.get("traceId"),
+        "trace_id": turn.get("trace_id"),
+    }
+
+
+def _mgmt_nl_normalize_focus(value: Any) -> str:
+    focus = str(value or "all").strip().lower()
+    focus = _MGMT_NL_FOCUS_ALIASES.get(focus, focus)
+    if focus not in _MGMT_NL_VALID_FOCUS:
+        return "all"
+    return focus
+
+
+def _mgmt_nl_trim_text(value: Any, *, max_len: int = 4000) -> str:
+    clean = re.sub(r"\s+", " ", str(value or "").strip())
+    if len(clean) > max_len:
+        return f"{clean[:max_len]}..."
+    return clean
+
+
+def _mgmt_nl_normalize_conversation_context(value: Any) -> Dict[str, Any]:
+    conversation = value if isinstance(value, dict) else {}
+    raw_turns = conversation.get("recentTurns")
+    if raw_turns is None:
+        raw_turns = conversation.get("recent_turns")
+    recent_turns: List[Dict[str, str]] = []
+    if isinstance(raw_turns, list):
+        for raw_turn in raw_turns[-_MGMT_NL_MAX_RECENT_TURNS:]:
+            if not isinstance(raw_turn, dict):
+                continue
+            role = str(raw_turn.get("role") or "").strip().lower()
+            if role not in {"user", "assistant", "system"}:
+                continue
+            content = _mgmt_nl_trim_text(
+                raw_turn.get("content") if raw_turn.get("content") is not None else raw_turn.get("text"),
+                max_len=2000,
+            )
+            if not content:
+                continue
+            recent_turns.append({"role": role, "content": content, "text": content})
+    summary = _mgmt_nl_trim_text(conversation.get("summary"), max_len=4000)
+    return {
+        "recentTurns": recent_turns,
+        "recent_turns": recent_turns,
+        "summary": summary,
+        "maxRecentTurns": _MGMT_NL_MAX_RECENT_TURNS,
+        "max_recent_turns": _MGMT_NL_MAX_RECENT_TURNS,
+    }
+
+
+def _mgmt_nl_normalize_action_descriptor(value: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(value, dict):
+        return None
+    kind = str(value.get("kind") or value.get("type") or "").strip()
+    if kind not in _MGMT_NL_UI_ACTION_KINDS:
+        return None
+    descriptor: Dict[str, Any] = {
+        "kind": kind,
+        "description": _mgmt_nl_trim_text(value.get("description"), max_len=500),
+        "paramsSchema": _mgmt_nl_trim_text(
+            value.get("paramsSchema") if value.get("paramsSchema") is not None else value.get("params_schema"),
+            max_len=1000,
+        ),
+    }
+    if value.get("label") is not None:
+        descriptor["label"] = _mgmt_nl_trim_text(value.get("label"), max_len=120)
+    return descriptor
+
+
+def _mgmt_nl_normalize_available_ui_actions(value: Any) -> List[Dict[str, Any]]:
+    actions: List[Dict[str, Any]] = []
+    seen: Set[str] = set()
+    if not isinstance(value, list):
+        return actions
+    for item in value:
+        descriptor = _mgmt_nl_normalize_action_descriptor(item)
+        if not descriptor:
+            continue
+        kind = str(descriptor.get("kind") or "")
+        if kind in seen:
+            continue
+        seen.add(kind)
+        actions.append(descriptor)
+    return actions
+
+
+def _mgmt_nl_normalize_ui_context(value: Any, *, operator_context: str) -> Dict[str, Any]:
+    ui = value if isinstance(value, dict) else {}
+    current_route = str(ui.get("currentRoute") or ui.get("current_route") or "/management").strip() or "/management"
+    selected_entity = ui.get("selectedEntity") if "selectedEntity" in ui else ui.get("selected_entity")
+    if not isinstance(selected_entity, dict):
+        selected_entity = None
+    visible_panels = ui.get("visiblePanels") if "visiblePanels" in ui else ui.get("visible_panels")
+    if not isinstance(visible_panels, list):
+        visible_panels = []
+    filters = ui.get("filters") if isinstance(ui.get("filters"), dict) else {}
+    available_ui_actions = ui.get("availableUiActions")
+    if available_ui_actions is None:
+        available_ui_actions = ui.get("available_ui_actions")
+    normalized = {
+        "currentRoute": current_route,
+        "current_route": current_route,
+        "selectedEntity": selected_entity,
+        "selected_entity": selected_entity,
+        "visiblePanels": [str(item) for item in visible_panels[:20] if str(item or "").strip()],
+        "visible_panels": [str(item) for item in visible_panels[:20] if str(item or "").strip()],
+        "filters": filters,
+        "availableUiActions": _mgmt_nl_normalize_available_ui_actions(available_ui_actions),
+        "available_ui_actions": _mgmt_nl_normalize_available_ui_actions(available_ui_actions),
+    }
+    if operator_context:
+        normalized["legacyContext"] = operator_context
+        normalized["legacy_context"] = operator_context
+    return normalized
+
+
+def _mgmt_nl_frontend_selected_entity(ui_snapshot: Dict[str, Any], *, focus: str) -> Dict[str, Any]:
+    selected = ui_snapshot.get("selectedEntity")
+    route = str(ui_snapshot.get("currentRoute") or "/management")
+    if isinstance(selected, dict):
+        entity_type = str(selected.get("entityType") or selected.get("entity_type") or selected.get("kind") or "").strip()
+        entity_id = str(selected.get("entityId") or selected.get("entity_id") or selected.get("id") or "").strip()
+        if entity_type and entity_id:
+            return {
+                "entityType": entity_type,
+                "entityId": entity_id,
+                "label": str(selected.get("label") or entity_id),
+                "route": route,
+            }
+    return {
+        "entityType": "management_nl_focus",
+        "entityId": focus,
+        "label": focus,
+        "route": route,
+    }
+
+
+def _mgmt_nl_allowed_action_kinds(ui_snapshot: Dict[str, Any]) -> Set[str]:
+    actions = ui_snapshot.get("availableUiActions")
+    if not isinstance(actions, list):
+        return set()
+    return {
+        str(item.get("kind") or "")
+        for item in actions
+        if isinstance(item, dict) and str(item.get("kind") or "") in _MGMT_NL_UI_ACTION_KINDS
+    }
+
+
+def _mgmt_nl_jsonish(value: Any) -> Any:
+    if not isinstance(value, str):
+        return None
+    clean = value.strip()
+    if not clean or clean[0] not in "{[":
+        return None
+    try:
+        return json.loads(clean)
+    except json.JSONDecodeError:
+        return None
+
+
+def _mgmt_nl_find_action_values(value: Any, *, depth: int = 0) -> List[Any]:
+    if depth > 8:
+        return []
+    parsed = _mgmt_nl_jsonish(value)
+    if parsed is not None:
+        return _mgmt_nl_find_action_values(parsed, depth=depth + 1)
+    if isinstance(value, list):
+        found: List[Any] = []
+        for item in value:
+            found.extend(_mgmt_nl_find_action_values(item, depth=depth + 1))
+        return found
+    if not isinstance(value, dict):
+        return []
+
+    found = []
+    actions = value.get("actions")
+    if isinstance(actions, list):
+        found.extend(actions)
+    for key in ("data", "output", "final", "answer", "message", "content", "text", "item", "delta", "json_events"):
+        if key in value:
+            found.extend(_mgmt_nl_find_action_values(value.get(key), depth=depth + 1))
+    stdout = value.get("stdout")
+    if isinstance(stdout, str):
+        for line in stdout.splitlines():
+            found.extend(_mgmt_nl_find_action_values(line, depth=depth + 1))
+    return found
+
+
+def _mgmt_nl_action_params_valid(kind: str, params: Dict[str, Any]) -> bool:
+    if kind == "navigate":
+        return bool(str(params.get("to") or params.get("route") or "").strip())
+    if kind == "openDrawer":
+        return bool(str(params.get("drawer") or "").strip())
+    if kind == "selectEntity":
+        return bool(str(params.get("kind") or "").strip() and str(params.get("id") or "").strip())
+    if kind == "setFilter":
+        return bool(str(params.get("key") or "").strip())
+    if kind == "focusPanel":
+        return bool(str(params.get("panel") or "").strip())
+    if kind == "refreshCurrentView":
+        return True
+    if kind == "runBffAction":
+        endpoint = str(params.get("endpoint") or "").strip()
+        return endpoint.startswith("/bff/") or endpoint.startswith("/api/v1/")
+    return False
+
+
+def _mgmt_nl_extract_provider_actions(provider_payload: Any, *, allowed_action_kinds: Set[str]) -> List[Dict[str, Any]]:
+    if not allowed_action_kinds:
+        return []
+    actions: List[Dict[str, Any]] = []
+    for index, raw_action in enumerate(_mgmt_nl_find_action_values(provider_payload), start=1):
+        if not isinstance(raw_action, dict):
+            continue
+        kind = str(raw_action.get("kind") or raw_action.get("type") or "").strip()
+        if kind not in allowed_action_kinds or kind not in _MGMT_NL_UI_ACTION_KINDS:
+            continue
+        params = raw_action.get("params") if isinstance(raw_action.get("params"), dict) else {}
+        if not _mgmt_nl_action_params_valid(kind, params):
+            continue
+        requires_confirmation = bool(
+            raw_action.get("requiresConfirmation")
+            if "requiresConfirmation" in raw_action
+            else raw_action.get("requires_confirmation")
+        )
+        if kind in _MGMT_NL_WRITE_ACTION_KINDS:
+            requires_confirmation = True
+        actions.append(
+            {
+                "id": str(raw_action.get("id") or f"act_{index:02d}"),
+                "kind": kind,
+                "label": _mgmt_nl_trim_text(raw_action.get("label") or kind, max_len=120),
+                "rationale": _mgmt_nl_trim_text(
+                    raw_action.get("rationale") or raw_action.get("reason") or "",
+                    max_len=500,
+                ),
+                "params": params,
+                "requiresConfirmation": requires_confirmation,
+            }
+        )
+    return actions[:6]
+
+
+def _assistant_control_mode_for_identity(
+    identity: OperatorIdentity,
+    *,
+    management_session_id: Optional[str] = None,
+    touch: bool = False,
+) -> Dict[str, Any]:
+    store = globals().get("_ASSISTANT_CONTROL_MODE_STORE")
+    if store is None:
+        return {
+            "state": "inactive",
+            "active": False,
+            "reason": "control_mode_store_unavailable",
+            "configured": False,
+        }
+    try:
+        return store.status_for_actor(
+            identity.operator_id,
+            management_session_id=management_session_id,
+            touch=touch,
+        )
+    except Exception:
+        log.warning("Failed to read assistant control mode status", exc_info=True)
+        return {
+            "state": "inactive",
+            "active": False,
+            "reason": "control_mode_status_unavailable",
+        }
+
+
+def _mgmt_nl_identity_with_control_mode(
+    identity: OperatorIdentity,
+    control_mode: Dict[str, Any],
+) -> OperatorIdentity:
+    if not isinstance(control_mode, dict) or not control_mode.get("active"):
+        return identity
+    claims = dict(identity.claims or {})
+    raw_caps = claims.get("capabilities") or claims.get("capability") or []
+    if isinstance(raw_caps, str):
+        raw_caps = re.split(r"[\s,]+", raw_caps)
+    if not isinstance(raw_caps, list):
+        raw_caps = []
+    caps = _dedupe_nonblank_strings([
+        *raw_caps,
+        *(control_mode.get("capabilities") if isinstance(control_mode.get("capabilities"), list) else []),
+        "assistant.kernel",
+    ])
+    claims["capabilities"] = caps
+    try:
+        return identity.model_copy(update={"claims": claims})
+    except AttributeError:
+        return OperatorIdentity(
+            operator_id=identity.operator_id,
+            roles=identity.roles,
+            mfa_verified=identity.mfa_verified,
+            claims=claims,
+            token_kind=identity.token_kind,
+        )
 
 
 def _mgmt_nl_validate_question_size(question: str) -> None:
@@ -29611,6 +30356,506 @@ def _mgmt_nl_validate_question_size(question: str) -> None:
             "actualQuestionBytes": question_size,
         },
     )
+
+
+def _mgmt_nl_control_store() -> Optional[Any]:
+    store = globals().get("_ASSISTANT_CONTROL_MODE_STORE")
+    if store is None:
+        return None
+    return store
+
+
+def _mgmt_nl_control_strip_activation_prefix(clean_question: str) -> Optional[str]:
+    for prefix in sorted(_MGMT_NL_CONTROL_ACTIVATE_PREFIXES, key=len, reverse=True):
+        if not clean_question.lower().startswith(prefix.lower()):
+            continue
+        raw_remainder = clean_question[len(prefix):]
+        if prefix.lower() in _MGMT_NL_CONTROL_SEPARATOR_ACTIVATE_PREFIXES:
+            if not re.match(r"^\s*(?:是|為|为|:|：|=|＝)", raw_remainder):
+                continue
+        remainder = raw_remainder.strip()
+        remainder = re.sub(r"^(?:on|activate|啟動|启动|開啟|开启)\b", "", remainder, flags=re.IGNORECASE).strip()
+        remainder = re.sub(r"^(?:是|為|为|:|：|=|＝|\s)+", "", remainder).strip()
+        return remainder or None
+    return None
+
+
+def _mgmt_nl_parse_control_command(question: str) -> Optional[Dict[str, Any]]:
+    clean_question = re.sub(r"\s+", " ", str(question or "").strip())
+    if not clean_question:
+        return None
+
+    lowered = clean_question.lower()
+    if lowered in _MGMT_NL_CONTROL_STATUS_COMMANDS:
+        return {"kind": "status", "source": "explicit"}
+    if lowered in _MGMT_NL_CONTROL_DEACTIVATE_COMMANDS:
+        return {"kind": "deactivate", "source": "explicit"}
+
+    prefixed_passphrase = _mgmt_nl_control_strip_activation_prefix(clean_question)
+    if prefixed_passphrase is not None:
+        return {
+            "kind": "activate",
+            "source": "explicit",
+            "passphrase": prefixed_passphrase,
+        }
+
+    store = _mgmt_nl_control_store()
+    matcher = getattr(store, "matches_passphrase", None)
+    if callable(matcher):
+        try:
+            if matcher(clean_question):
+                return {
+                    "kind": "activate",
+                    "source": "direct_passphrase",
+                    "passphrase": clean_question,
+                }
+        except Exception:
+            log.warning("Failed to match management NL direct control passphrase", exc_info=True)
+    return None
+
+
+def _mgmt_nl_positive_int(value: Any, fallback: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    return parsed
+
+
+def _mgmt_nl_control_options(payload: Dict[str, Any]) -> Dict[str, Any]:
+    raw_options = payload.get("controlMode")
+    if raw_options is None:
+        raw_options = payload.get("control_mode")
+    options = raw_options if isinstance(raw_options, dict) else {}
+    result = dict(options)
+    for key in ("mode", "ttlSeconds", "ttl_seconds", "idleTtlSeconds", "idle_ttl_seconds"):
+        if key in payload and key not in result:
+            result[key] = payload.get(key)
+    return result
+
+
+def _mgmt_nl_raise_control_mode_actor_error(identity: OperatorIdentity) -> None:
+    from assistant.control_mode import (
+        CONTROL_MODE_CAPABILITY_PREFIX,
+        CONTROL_MODE_ROLES,
+        actor_has_control_role,
+        actor_has_kernel_capability,
+    )
+
+    if not actor_has_control_role(identity):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Control mode requires operator or admin role",
+            "Actor does not hold a role allowed to activate control mode",
+            precondition_failed="control_mode_role",
+            details_extra={
+                "field": "roles",
+                "required_roles": sorted(CONTROL_MODE_ROLES),
+            },
+        )
+    if not getattr(identity, "mfa_verified", False):
+        raise _bff_error(
+            403,
+            ErrorCode.AUTH_REQUIRED,
+            "Control mode requires MFA",
+            "Actor must complete MFA before activating control mode",
+            precondition_failed="control_mode_mfa",
+            details_extra={"field": "mfa"},
+        )
+    if not actor_has_kernel_capability(identity):
+        raise _bff_error(
+            422,
+            ErrorCode.BUSINESS_RULE_VIOLATION,
+            "Control mode requires assistant kernel capability",
+            f"Actor capabilities must include a value starting with {CONTROL_MODE_CAPABILITY_PREFIX!r}",
+            precondition_failed="control_mode_capability",
+            details_extra={
+                "field": "capabilities",
+                "required_capability_prefix": CONTROL_MODE_CAPABILITY_PREFIX,
+            },
+        )
+
+
+def _mgmt_nl_raise_control_mode_error(exc: Exception) -> None:
+    status_code = int(getattr(exc, "status_code", 422) or 422)
+    if status_code == 403:
+        code = ErrorCode.FORBIDDEN
+    elif status_code == 409:
+        code = ErrorCode.RESOURCE_CONFLICT
+    elif status_code == 400:
+        code = ErrorCode.VALIDATION_FAILED
+    else:
+        code = ErrorCode.BUSINESS_RULE_VIOLATION
+    reason = str(getattr(exc, "reason", "") or getattr(exc, "field", "") or "control_mode_error")
+    raise _bff_error(
+        status_code,
+        code,
+        str(exc),
+        reason,
+        precondition_failed=f"control_mode_{reason}",
+        details_extra={"field": getattr(exc, "field", None)},
+    )
+
+
+def _mgmt_nl_control_provider_status(command_kind: str) -> Dict[str, Any]:
+    status = _mgmt_nl_provider_status(
+        provider="pantheon_bff",
+        enabled=True,
+        status="completed",
+        reason=f"control_mode_{command_kind}",
+        used=True,
+    )
+    status["runtime"] = "management_nl_control_command_interceptor"
+    status["fallback"] = None
+    return status
+
+
+def _mgmt_nl_control_answer(command_kind: str, control_mode: Dict[str, Any]) -> str:
+    if command_kind == "activate" and control_mode.get("active"):
+        return (
+            "Control mode activated for this Management AI session. "
+            "It will expire automatically at the configured TTL or idle timeout."
+        )
+    if command_kind == "deactivate":
+        return "Control mode deactivated. This Management AI session is back in user mode."
+    if control_mode.get("active"):
+        return "Control mode is active for this Management AI session."
+    return "Control mode is inactive for this Management AI session."
+
+
+def _mgmt_nl_record_control_audit(
+    *,
+    identity: OperatorIdentity,
+    command_kind: str,
+    session_id: str,
+    message_id: str,
+    trace_id: str,
+    focus: str,
+    tenant_id: str,
+    now: Any,
+) -> Dict[str, Any]:
+    audit_ref = {
+        "targetType": "ManagementNLExchange",
+        "target_type": "ManagementNLExchange",
+        "targetId": message_id,
+        "target_id": message_id,
+        "href": f"/bff/audit/entities/ManagementNLExchange/{message_id}",
+    }
+    try:
+        accepted_audit = read_store.record_agora_audit_event(
+            {
+                "action": f"management.nl.control_mode.{command_kind}",
+                "targetType": "ManagementNLExchange",
+                "targetId": message_id,
+                "actorId": identity.operator_id,
+                "recordedAt": now,
+                "sessionId": session_id,
+                "focus": focus,
+                "tenantId": tenant_id,
+                "traceId": trace_id,
+                "question": _MGMT_NL_CONTROL_REDACTED_QUESTION,
+            }
+        )
+    except Exception:
+        log.warning("Failed to record management NL control-mode audit event", exc_info=True)
+        raise _bff_error(
+            503,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
+            "Management NL control-mode audit write failed",
+            "control_mode_audit_write_failed",
+            precondition_failed="audit_write",
+            suggestion="Retry after the Agora audit store is available",
+        )
+    audit_ref["auditId"] = accepted_audit.get("auditId") or accepted_audit.get("eventId")
+    audit_ref["audit_id"] = audit_ref["auditId"]
+    return audit_ref
+
+
+def _mgmt_nl_handle_control_command(
+    *,
+    control_command: Dict[str, Any],
+    payload: Dict[str, Any],
+    identity: OperatorIdentity,
+    caller_tenant_id: str,
+    focus: str,
+    ui_snapshot: Dict[str, Any],
+    resolved_key: str,
+    request_hash: str,
+    session_id: str,
+    message_id: str,
+    trace_id: str,
+    now: Any,
+) -> JSONResponse:
+    from assistant.control_mode import ControlModeError, actor_capabilities, default_idle_ttl
+    from assistant.mode_policy import DEFAULT_KERNEL_TTL_SECONDS, ModePolicyViolation, assert_kernel_allowed
+    from assistant.models import AssistantMode
+
+    store = _mgmt_nl_control_store()
+    if store is None:
+        raise _bff_error(
+            503,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
+            "Control mode store is unavailable",
+            "control_mode_store_unavailable",
+            precondition_failed="control_mode_store",
+        )
+
+    command_kind = str(control_command.get("kind") or "").strip()
+    if command_kind == "activate":
+        _mgmt_nl_raise_control_mode_actor_error(identity)
+        options = _mgmt_nl_control_options(payload)
+        mode_raw = str(options.get("mode") or AssistantMode.KERNEL_DEBUG.value)
+        try:
+            mode = AssistantMode(mode_raw)
+        except ValueError:
+            raise _bff_error(
+                400,
+                ErrorCode.VALIDATION_FAILED,
+                f"Invalid mode: {mode_raw!r}",
+                "invalid_control_mode",
+                precondition_failed="control_mode_mode",
+                details_extra={"field": "mode"},
+            )
+        try:
+            assert_kernel_allowed(mode)
+        except ModePolicyViolation as exc:
+            raise _bff_error(
+                403,
+                ErrorCode.FORBIDDEN,
+                f"Mode policy violation: {exc}",
+                str(exc),
+                precondition_failed="control_mode_kernel_policy",
+                details_extra={"field": exc.field},
+            )
+        ttl_seconds = _mgmt_nl_positive_int(
+            options.get("ttlSeconds", options.get("ttl_seconds")),
+            DEFAULT_KERNEL_TTL_SECONDS,
+        )
+        idle_ttl_seconds = _mgmt_nl_positive_int(
+            options.get("idleTtlSeconds", options.get("idle_ttl_seconds")),
+            default_idle_ttl(ttl_seconds),
+        )
+        try:
+            control_mode = store.activate(
+                actor_id=identity.operator_id,
+                mode=mode,
+                capabilities=actor_capabilities(identity),
+                reason=str(options.get("reason") or "management_nl_chat_control_command").strip(),
+                passphrase=str(control_command.get("passphrase") or ""),
+                ttl_seconds=ttl_seconds,
+                idle_ttl_seconds=idle_ttl_seconds,
+                management_session_id=session_id,
+            )
+        except ControlModeError as exc:
+            _mgmt_nl_raise_control_mode_error(exc)
+    elif command_kind == "deactivate":
+        control_mode = store.deactivate(identity.operator_id, reason="management_nl_chat_control_command")
+    elif command_kind == "status":
+        control_mode = _assistant_control_mode_for_identity(
+            identity,
+            management_session_id=session_id,
+            touch=False,
+        )
+    else:
+        raise _bff_error(
+            400,
+            ErrorCode.VALIDATION_FAILED,
+            "Unsupported control-mode command",
+            "unsupported_control_mode_command",
+            precondition_failed="control_mode_command",
+        )
+
+    provider_status = _mgmt_nl_control_provider_status(command_kind)
+    answer = _mgmt_nl_control_answer(command_kind, control_mode)
+    assistant_turn_id = f"{message_id}-assistant"
+    audit_log_href = _management_ai_audit_href(session_id=session_id, trace_id=trace_id)
+    conversation_href = _management_ai_conversation_href(session_id)
+    audit_ref = _mgmt_nl_record_control_audit(
+        identity=identity,
+        command_kind=command_kind,
+        session_id=session_id,
+        message_id=message_id,
+        trace_id=trace_id,
+        focus=focus,
+        tenant_id=caller_tenant_id,
+        now=now,
+    )
+    _management_ai_ensure_session(
+        session_id=session_id,
+        identity=identity,
+        tenant_id=caller_tenant_id,
+        now=now,
+        title=_MGMT_NL_CONTROL_REDACTED_QUESTION,
+    )
+    _management_ai_append_turn(
+        turn_id=message_id,
+        session_id=session_id,
+        role="user",
+        text=_MGMT_NL_CONTROL_REDACTED_QUESTION,
+        created_at=now,
+        trace_id=trace_id,
+        attachments=[],
+        ui_snapshot=ui_snapshot,
+    )
+
+    redaction = {
+        "question": "redacted",
+        "passphrase": "not_persisted",
+        "provider": "not_invoked",
+    }
+    _management_ai_record_event(
+        {
+            "event_type": "management_ai.exchange.accepted",
+            "session_id": session_id,
+            "message_id": message_id,
+            "trace_id": trace_id,
+            "actor_id": identity.operator_id,
+            "route": "POST /bff/management/nl/ask",
+            "question": _MGMT_NL_CONTROL_REDACTED_QUESTION,
+            "focus": focus,
+            "tenant_id": caller_tenant_id,
+            "confidence": "high",
+            "source_keys": [],
+            "control_command": command_kind,
+            "control_command_source": control_command.get("source"),
+            "redaction": redaction,
+            "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
+            "control_mode": {
+                "state": control_mode.get("state"),
+                "active": control_mode.get("active"),
+                "mode": control_mode.get("mode"),
+                "activation_id": control_mode.get("activation_id") or control_mode.get("activationId"),
+            },
+            "audit_ref": audit_ref,
+        }
+    )
+
+    _publish_event(
+        _sse_buffers["ask"],
+        _sse_subscribers["ask"],
+        "management.nl.ask.accepted",
+        {
+            "session_id": session_id,
+            "message_id": message_id,
+            "trace_id": trace_id,
+            "focus": focus,
+            "control_command": command_kind,
+        },
+    )
+
+    result = {
+        "status": "accepted",
+        "data": {
+            "answer": answer,
+            "sessionId": session_id,
+            "session_id": session_id,
+            "message_id": message_id,
+            "traceId": trace_id,
+            "trace_id": trace_id,
+            "question": _MGMT_NL_CONTROL_REDACTED_QUESTION,
+            "focus": focus,
+            "sources": [],
+            "confidence": "high",
+            "summary_context": {},
+            "contextPack": None,
+            "context_pack": None,
+            "providerStatus": provider_status,
+            "provider_status": provider_status,
+            "controlMode": control_mode,
+            "control_mode": control_mode,
+            "controlCommand": command_kind,
+            "control_command": command_kind,
+            "uiActions": [],
+            "ui_actions": [],
+            "actions": [],
+            "auditRef": audit_ref,
+            "audit_ref": audit_ref,
+            "auditLog": {
+                "href": audit_log_href,
+                "traceId": trace_id,
+                "trace_id": trace_id,
+            },
+            "audit_log": {
+                "href": audit_log_href,
+                "traceId": trace_id,
+                "trace_id": trace_id,
+            },
+            "conversation": {
+                "href": conversation_href,
+                "sessionId": session_id,
+                "session_id": session_id,
+                "traceId": trace_id,
+                "trace_id": trace_id,
+            },
+            "session": {
+                "sessionId": session_id,
+                "session_id": session_id,
+                "ttlSeconds": _MGMT_AI_SESSION_TTL_SECONDS,
+                "ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
+            },
+            "evidenceRefs": [],
+            "evidence_refs": [],
+            "redaction": redaction,
+        },
+        "meta": {
+            "snapshot_at": now,
+            "surfaces": {"management_nl_control_command": {"status": "ok", "source": "bff_interceptor"}},
+            "idempotency": {"idempotencyKey": resolved_key, "replayed": False},
+            "providerStatus": provider_status,
+            "provider_status": provider_status,
+            "traceId": trace_id,
+            "trace_id": trace_id,
+            "contextPackId": None,
+            "context_pack_id": None,
+            "redactedEvidenceCount": 0,
+            "redacted_evidence_count": 0,
+            "sessionTtlSeconds": _MGMT_AI_SESSION_TTL_SECONDS,
+            "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
+            "controlMode": control_mode,
+            "control_mode": control_mode,
+            "controlCommand": command_kind,
+            "control_command": command_kind,
+            "redaction": redaction,
+        },
+    }
+    _management_ai_record_event(
+        {
+            "event_type": "management_ai.exchange.completed",
+            "session_id": session_id,
+            "message_id": message_id,
+            "assistant_turn_id": assistant_turn_id,
+            "trace_id": trace_id,
+            "actor_id": identity.operator_id,
+            "route": "POST /bff/management/nl/ask",
+            "answer": _management_ai_summary_value(answer),
+            "provider_status": provider_status,
+            "actions": [],
+            "action_count": 0,
+            "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
+            "control_command": command_kind,
+            "redaction": redaction,
+            "control_mode": {
+                "state": control_mode.get("state"),
+                "active": control_mode.get("active"),
+                "mode": control_mode.get("mode"),
+                "activation_id": control_mode.get("activation_id") or control_mode.get("activationId"),
+            },
+            "fallback": provider_status.get("fallback"),
+        }
+    )
+    _management_ai_append_turn(
+        turn_id=assistant_turn_id,
+        session_id=session_id,
+        role="assistant",
+        text=answer,
+        created_at=utc_now(),
+        trace_id=trace_id,
+        provider_status=provider_status,
+        ui_actions=[],
+    )
+    _mgmt_nl_idempotency_put(resolved_key, request_hash=request_hash, result=result)
+    return JSONResponse(status_code=202, content=result)
 
 
 def _mgmt_nl_normalize_question_text(value: str) -> str:
@@ -29689,7 +30934,9 @@ def _mgmt_nl_record_high_risk_refusal(
 
 
 def _mgmt_nl_idempotency_check(resolved_key: str, request_hash: str) -> Optional[Dict[str, Any]]:
-    existing = _MGMT_NL_IDEMPOTENCY.get(resolved_key)
+    existing = _management_ai_conversation_store().get_idempotency(resolved_key)
+    if existing is None:
+        existing = _MGMT_NL_IDEMPOTENCY.get(resolved_key)
     if existing is None:
         return None
     if existing.get("request_hash") != request_hash:
@@ -29702,6 +30949,20 @@ def _mgmt_nl_idempotency_check(resolved_key: str, request_hash: str) -> Optional
             suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
         )
     return existing.get("result")
+
+
+def _mgmt_nl_idempotency_put(
+    resolved_key: str,
+    *,
+    request_hash: str,
+    result: Dict[str, Any],
+) -> None:
+    _management_ai_conversation_store().put_idempotency(
+        resolved_key,
+        request_hash=request_hash,
+        result=result,
+    )
+    _MGMT_NL_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
 
 
 def _mgmt_nl_surface_confidence(surfaces: Dict[str, Any]) -> str:
@@ -30021,6 +31282,7 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
             snippets["persona_fleet"] = {
                 "total": len(fleet_items),
                 "summary": fleet_summary,
+                "items": fleet_items,
             }
             surfaces["persona_fleet"] = {"status": "ok" if personas else "unavailable", "source": "bff_composed"}
         except Exception:
@@ -30134,6 +31396,113 @@ def _mgmt_nl_provider_status(
     return payload
 
 
+def _mgmt_nl_provider_supports_multimodal(provider: str) -> bool:
+    return str(provider or "").strip().lower() in {"codex", "codex_cli"}
+
+
+def _mgmt_nl_multimodal_attachment_payload(
+    attachments: Optional[List[Dict[str, Any]]],
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    image_parts: List[Dict[str, Any]] = []
+    attachment_summaries: List[Dict[str, Any]] = []
+    errors: List[Dict[str, Any]] = []
+    store = _management_ai_conversation_store()
+    for attachment in attachments or []:
+        if not isinstance(attachment, dict):
+            continue
+        attachment_id = str(
+            attachment.get("id")
+            or attachment.get("attachmentId")
+            or attachment.get("attachment_id")
+            or ""
+        ).strip()
+        mime_type = str(attachment.get("mimeType") or attachment.get("mime_type") or "").strip().lower()
+        if not attachment_id or not mime_type.startswith("image/"):
+            continue
+        try:
+            found = store.find_attachment(attachment_id)
+            if found is None:
+                raise FileNotFoundError(attachment_id)
+            metadata, _turn = found
+            content, resolved_mime_type, filename = store.read_attachment(attachment_id, metadata)
+        except Exception as exc:  # noqa: BLE001 - provider should degrade, not fail the ask.
+            errors.append(
+                {
+                    "attachmentId": attachment_id,
+                    "attachment_id": attachment_id,
+                    "reason": "attachment_unavailable",
+                    "error": type(exc).__name__,
+                }
+            )
+            continue
+        clean_mime_type = str(resolved_mime_type or mime_type or "application/octet-stream").strip().lower()
+        data_url = f"data:{clean_mime_type};base64,{base64.b64encode(content).decode('ascii')}"
+        image_parts.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": data_url},
+                "attachmentId": attachment_id,
+                "attachment_id": attachment_id,
+                "mimeType": clean_mime_type,
+                "mime_type": clean_mime_type,
+                "filename": filename or attachment.get("filename") or attachment_id,
+                "sizeBytes": len(content),
+                "size_bytes": len(content),
+                "source": "management_ai_attachment_store",
+            }
+        )
+        attachment_summaries.append(
+            {
+                "attachmentId": attachment_id,
+                "attachment_id": attachment_id,
+                "kind": str(attachment.get("kind") or "image"),
+                "mimeType": clean_mime_type,
+                "mime_type": clean_mime_type,
+                "filename": filename or attachment.get("filename") or attachment_id,
+                "sizeBytes": len(content),
+                "size_bytes": len(content),
+                "source": "management_ai_attachment_store",
+            }
+        )
+    return image_parts, attachment_summaries, errors
+
+
+def _mgmt_nl_provider_multimodal_payload(
+    *,
+    prompt: str,
+    attachments: Optional[List[Dict[str, Any]]],
+) -> Optional[Dict[str, Any]]:
+    image_parts, attachment_summaries, errors = _mgmt_nl_multimodal_attachment_payload(attachments)
+    if not image_parts and not errors:
+        return None
+    content = [{"type": "text", "text": prompt}, *image_parts]
+    return {
+        "messages": [{"role": "user", "content": content}],
+        "attachments": image_parts,
+        "summary": {
+            "attempted": bool(attachments),
+            "forwarded": bool(image_parts),
+            "attachment_count": len(image_parts),
+            "unavailable_attachment_count": len(errors),
+            "attachments": attachment_summaries,
+            "errors": errors,
+        },
+    }
+
+
+def _mgmt_nl_multimodal_unsupported_error(exc: OpenClawOpsClientError) -> bool:
+    code = str(getattr(exc, "error_code", "") or "").strip().lower()
+    message = str(getattr(exc, "message", "") or str(exc)).strip().lower()
+    unsupported_tokens = ("multimodal", "image", "vision", "attachment")
+    return (
+        "unsupported" in code
+        and any(token in code for token in unsupported_tokens)
+    ) or (
+        "unsupported" in message
+        and any(token in message for token in unsupported_tokens)
+    )
+
+
 def _mgmt_nl_context_status(confidence: str) -> str:
     if confidence == "high":
         return "ok"
@@ -30162,16 +31531,40 @@ def _mgmt_nl_build_context_pack(
     confidence: str,
     evidence_entities: Any,
     evidence_source_types: Any,
+    operator_context: str,
+    conversation_context: Dict[str, Any],
+    ui_snapshot: Dict[str, Any],
+    control_mode: Dict[str, Any],
 ) -> Dict[str, Any]:
     from assistant.context_composer import AssistantCollectedSource, compose_context_pack
     from assistant.models import AssistantContextPackRequest, AssistantMode
 
+    frontend_route = str(ui_snapshot.get("currentRoute") or "/management")
+    selected_entity = _mgmt_nl_frontend_selected_entity(ui_snapshot, focus=focus)
+    assistant_mode = AssistantMode.USER
+    if isinstance(control_mode, dict) and control_mode.get("active"):
+        try:
+            assistant_mode = AssistantMode(str(control_mode.get("mode") or AssistantMode.KERNEL_DEBUG.value))
+        except ValueError:
+            assistant_mode = AssistantMode.KERNEL_DEBUG
+    context_identity = _mgmt_nl_identity_with_control_mode(identity, control_mode)
     management_payload = {
         "question": question,
         "focus": focus,
         "tenant_id": caller_tenant_id,
         "sources": source_keys,
         "confidence": confidence,
+        "conversation": conversation_context,
+        "ui": ui_snapshot,
+        "controlMode": control_mode,
+        "control_mode": control_mode,
+        "operator_context": operator_context,
+        "session": {
+            "sessionId": session_id,
+            "session_id": session_id,
+            "ttlSeconds": _MGMT_AI_SESSION_TTL_SECONDS,
+            "ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
+        },
         "summary_context": snippets,
         "surfaces": surfaces,
         "evidence_entities": _mgmt_nl_evidence_entities_payload(evidence_entities),
@@ -30179,30 +31572,56 @@ def _mgmt_nl_build_context_pack(
     }
 
     request = AssistantContextPackRequest(
-        mode=AssistantMode.USER,
-        include=["ui", "management_nl"],
+        mode=assistant_mode,
+        include=["ui", "management_nl", "persona_health"],
         question=question,
-        route="/management",
+        route=frontend_route,
         frontend={
-            "route": "/management",
-            "selectedEntity": {
-                "entityType": "management_nl_focus",
-                "entityId": focus,
-                "label": focus,
-                "route": "/management",
-            },
+            "route": frontend_route,
+            "selectedEntity": selected_entity,
+            "contextRefs": [
+                {"kind": "management_nl_session", "id": session_id},
+                {"kind": "management_nl_focus", "id": focus},
+            ],
         },
         focus={
-            "entityType": "management_nl_focus",
-            "entityId": focus,
-            "label": focus,
-            "route": "/management",
+            "entityType": selected_entity.get("entityType") or "management_nl_focus",
+            "entityId": selected_entity.get("entityId") or focus,
+            "label": selected_entity.get("label") or focus,
+            "route": frontend_route,
         },
     )
 
     def collect_source(source_id: str, _request: Any, snapshot_at: str) -> Any:
+        if source_id == "persona_health":
+            persona_surface = _dataset_surface_status("personas", snapshot_at=snapshot_at)
+            scoped_personas = _mgmt_nl_filter_tenant_records(_list_persona_records(), caller_tenant_id)
+            return AssistantCollectedSource(
+                source_id="persona_health",
+                href="/bff/v5/execution/persona-health",
+                payload={
+                    "items": [
+                        {
+                            "id": persona.get("persona_id") or persona.get("id"),
+                            "persona_id": persona.get("persona_id") or persona.get("id"),
+                            "name": persona.get("name") or persona.get("persona_id"),
+                            "health": "healthy"
+                            if persona.get("lifecycle_state") == "active"
+                            else "degraded",
+                            "lifecycle_state": persona.get("lifecycle_state"),
+                        }
+                        for persona in scoped_personas
+                    ],
+                    "meta": {
+                        "snapshot_at": snapshot_at,
+                        "surfaces": {"persona_health": persona_surface},
+                    },
+                },
+                status=str(persona_surface.get("status") or "ok"),
+                source_kind="bff",
+            )
         if source_id != "management_nl":
-            return None
+            return _assistant_collect_source(source_id, _request, snapshot_at)
         return AssistantCollectedSource(
             source_id="management_nl",
             href="/bff/management/nl/ask",
@@ -30220,7 +31639,7 @@ def _mgmt_nl_build_context_pack(
     pack = compose_context_pack(
         session_id=session_id,
         request=request,
-        actor=identity,
+        actor=context_identity,
         collect_source=collect_source,
     )
     return pack.model_dump(mode="json", by_alias=False)
@@ -30232,15 +31651,44 @@ def _mgmt_nl_provider_prompt(
     focus: str,
     context_pack: Dict[str, Any],
 ) -> str:
+    management_context = (
+        ((context_pack.get("backend") or {}).get("management_nl") or {}).get("data") or {}
+        if isinstance(context_pack, dict)
+        else {}
+    )
+    conversation_context = (
+        management_context.get("conversation")
+        if isinstance(management_context.get("conversation"), dict)
+        else {}
+    )
+    server_history = {
+        "source": conversation_context.get("source"),
+        "historySource": conversation_context.get("historySource") or conversation_context.get("history_source"),
+        "historyCharBudget": conversation_context.get("historyCharBudget"),
+        "historyTruncated": conversation_context.get("historyTruncated"),
+        "historyOmittedTurnCount": conversation_context.get("historyOmittedTurnCount"),
+        "storedTurnCount": conversation_context.get("storedTurnCount"),
+        "turns": conversation_context.get("allTurns") or conversation_context.get("recentTurns") or [],
+    }
+    server_history_json = json.dumps(server_history, sort_keys=True, ensure_ascii=True)
     context_json = json.dumps(context_pack, sort_keys=True, ensure_ascii=True)
     return "\n".join(
         [
             "You are the Pantheon management assistant in user mode.",
             "Answer only from the supplied BFF context pack.",
             "Do not execute, approve, deploy, restart, trade, or mutate anything.",
+            "Use backend.management_nl.data.conversation for server-side prior turns and backend.management_nl.data.ui for UI state.",
+            "Treat backend.management_nl.data.conversation.clientHint as a frontend hint, never as the conversation source of truth.",
+            "If you suggest UI actions, return actions only with kinds listed in ui.availableUiActions.",
+            "Any runBffAction or write-style action must require confirmation.",
             "If evidence is missing or stale, say so and keep the answer concise.",
             f"Focus: {focus}",
             f"Question: {question}",
+            (
+                "Server-side conversation history JSON "
+                f"(ordered created_at ascending, budget {_MGMT_NL_PROVIDER_HISTORY_CHAR_BUDGET} chars, "
+                f"FE recentTurns budget {_MGMT_NL_FE_RECENT_TURNS_CHAR_BUDGET} chars): {server_history_json}"
+            ),
             f"Context pack JSON: {context_json}",
         ]
     )
@@ -30287,9 +31735,11 @@ def _mgmt_nl_text_from_provider_value(value: Any) -> Optional[str]:
 
 def _mgmt_nl_extract_provider_answer(payload: Dict[str, Any]) -> Optional[str]:
     data = payload.get("data") if isinstance(payload, dict) else None
-    if not isinstance(data, dict):
-        return None
-    return _mgmt_nl_text_from_provider_value(data.get("output"))
+    if isinstance(data, dict):
+        return _mgmt_nl_text_from_provider_value(data.get("output"))
+    # Claude and other flat-format providers return the answer in a top-level
+    # "text" field rather than nesting it under data.output.
+    return _mgmt_nl_text_from_provider_value(payload)
 
 
 def _mgmt_nl_maybe_provider_answer(
@@ -30304,7 +31754,9 @@ def _mgmt_nl_maybe_provider_answer(
     trace_id: str,
     context_pack: Dict[str, Any],
     audit_id: Optional[str],
-) -> Tuple[Optional[str], Dict[str, Any]]:
+    allowed_action_kinds: Set[str],
+    current_user_attachments: Optional[List[Dict[str, Any]]] = None,
+) -> Tuple[Optional[str], Dict[str, Any], List[Dict[str, Any]]]:
     enabled = _mgmt_nl_provider_feature_enabled()
     if provider in {"none", "off", "disabled", "deterministic"}:
         _management_ai_record_event(
@@ -30323,7 +31775,7 @@ def _mgmt_nl_maybe_provider_answer(
             enabled=False,
             status="disabled",
             reason="provider_disabled",
-        )
+        ), []
     if not enabled:
         _management_ai_record_event(
             {
@@ -30341,8 +31793,8 @@ def _mgmt_nl_maybe_provider_answer(
             enabled=False,
             status="disabled",
             reason="feature_disabled",
-        )
-    if provider not in {"codex", "codex_cli"}:
+        ), []
+    if provider not in {"codex", "codex_cli", "claude", "claude_cli"}:
         _management_ai_record_event(
             {
                 "event_type": "management_ai.provider.skipped",
@@ -30359,7 +31811,7 @@ def _mgmt_nl_maybe_provider_answer(
             enabled=True,
             status="degraded",
             reason="unsupported_provider",
-        )
+        ), []
 
     run_id = trace_id
     prompt = _mgmt_nl_provider_prompt(
@@ -30367,6 +31819,32 @@ def _mgmt_nl_maybe_provider_answer(
         focus=focus,
         context_pack=context_pack,
     )
+    multimodal_payload = _mgmt_nl_provider_multimodal_payload(
+        prompt=prompt,
+        attachments=current_user_attachments,
+    )
+    multimodal_summary = (
+        multimodal_payload.get("summary")
+        if isinstance(multimodal_payload, dict)
+        else None
+    )
+    multimodal_supported = (
+        bool(multimodal_payload and multimodal_summary and multimodal_summary.get("forwarded"))
+        and _mgmt_nl_provider_supports_multimodal(provider)
+    )
+    multimodal_unsupported = bool(
+        multimodal_payload
+        and multimodal_summary
+        and multimodal_summary.get("forwarded")
+        and not multimodal_supported
+    )
+    if multimodal_unsupported:
+        multimodal_summary = {
+            **multimodal_summary,
+            "forwarded": False,
+            "reason": "multimodal_unsupported",
+            "fallback": "text_only",
+        }
     provider_started = time.monotonic()
     _management_ai_record_event(
         {
@@ -30377,30 +31855,29 @@ def _mgmt_nl_maybe_provider_answer(
             "provider_run_id": run_id,
             "actor_id": identity.operator_id,
             "provider": provider,
-            "route": "POST /api/openclaw-adapter/assistant/providers/codex/invoke",
+            "route": (
+                "POST /api/openclaw-adapter/assistant/claude/invoke"
+                if provider in {"claude", "claude_cli"}
+                else "POST /api/openclaw-adapter/assistant/providers/codex/invoke"
+            ),
             "context_pack_id": context_pack.get("context_pack_id"),
             "prompt_bytes": len(prompt.encode("utf-8")),
+            "multimodal": multimodal_summary,
         }
     )
-    try:
-        provider_payload = OpenClawOpsClient().invoke_assistant_provider(
-            provider=provider,
-            mode="user",
-            prompt=prompt,
-            context_pack=context_pack,
-            operator_id=identity.operator_id,
-            trace_id=run_id,
-            metadata={
-                "route": "POST /bff/management/nl/ask",
-                "session_id": session_id,
-                "message_id": message_id,
-                "trace_id": trace_id,
-                "provider_run_id": run_id,
-                "tenant_id": caller_tenant_id,
-                "audit_id": audit_id,
-            },
-        )
-    except OpenClawOpsClientError as exc:
+    metadata = {
+        "route": "POST /bff/management/nl/ask",
+        "session_id": session_id,
+        "message_id": message_id,
+        "trace_id": trace_id,
+        "provider_run_id": run_id,
+        "tenant_id": caller_tenant_id,
+        "audit_id": audit_id,
+        "attachments": current_user_attachments or [],
+        "multimodal": multimodal_summary,
+    }
+
+    def _provider_failure(error: OpenClawOpsClientError) -> Tuple[None, Dict[str, Any], List[Dict[str, Any]]]:
         duration_ms = max(0, int((time.monotonic() - provider_started) * 1000))
         _management_ai_record_event(
             {
@@ -30412,20 +31889,81 @@ def _mgmt_nl_maybe_provider_answer(
                 "actor_id": identity.operator_id,
                 "provider": provider,
                 "duration_ms": duration_ms,
-                "status_code": exc.status_code,
-                "error_code": exc.error_code,
-                "error_message": _management_ai_summary_value(exc.message),
+                "status_code": error.status_code,
+                "error_code": error.error_code,
+                "error_message": _management_ai_summary_value(error.message),
+                "multimodal": multimodal_summary,
             }
         )
-        return None, _mgmt_nl_provider_status(
+        status = _mgmt_nl_provider_status(
             provider=provider,
             enabled=True,
             status="degraded",
-            reason=exc.error_code,
+            reason=error.error_code,
             run_id=run_id,
         )
+        if multimodal_summary:
+            status["multimodal"] = multimodal_summary
+        return None, status, []
+
+    invoke_kwargs: Dict[str, Any] = {
+        "provider": provider,
+        "mode": "user",
+        "prompt": prompt,
+        "context_pack": context_pack,
+        "operator_id": identity.operator_id,
+        "trace_id": run_id,
+        "metadata": metadata,
+    }
+    if multimodal_supported and multimodal_payload:
+        invoke_kwargs["messages"] = multimodal_payload.get("messages")
+        invoke_kwargs["attachments"] = multimodal_payload.get("attachments")
+
+    try:
+        provider_payload = OpenClawOpsClient().invoke_assistant_provider(**invoke_kwargs)
+    except OpenClawOpsClientError as exc:
+        if not (multimodal_payload and multimodal_supported and _mgmt_nl_multimodal_unsupported_error(exc)):
+            return _provider_failure(exc)
+        multimodal_unsupported = True
+        multimodal_summary = {
+            **(multimodal_summary or {}),
+            "forwarded": False,
+            "reason": "multimodal_unsupported",
+            "fallback": "text_only",
+        }
+        metadata["multimodal"] = multimodal_summary
+        _management_ai_record_event(
+            {
+                "event_type": "management_ai.provider.multimodal_unsupported",
+                "session_id": session_id,
+                "message_id": message_id,
+                "trace_id": trace_id,
+                "provider_run_id": run_id,
+                "actor_id": identity.operator_id,
+                "provider": provider,
+                "error_code": exc.error_code,
+                "error_message": _management_ai_summary_value(exc.message),
+                "multimodal": multimodal_summary,
+            }
+        )
+        try:
+            provider_payload = OpenClawOpsClient().invoke_assistant_provider(
+                provider=provider,
+                mode="user",
+                prompt=prompt,
+                context_pack=context_pack,
+                operator_id=identity.operator_id,
+                trace_id=run_id,
+                metadata=metadata,
+            )
+        except OpenClawOpsClientError as retry_exc:
+            return _provider_failure(retry_exc)
 
     answer = _mgmt_nl_extract_provider_answer(provider_payload)
+    actions = _mgmt_nl_extract_provider_actions(
+        provider_payload,
+        allowed_action_kinds=allowed_action_kinds,
+    )
     data = provider_payload.get("data") if isinstance(provider_payload, dict) else {}
     provider_state = str((data or {}).get("status") or provider_payload.get("status") or "ok")
     duration_ms = max(0, int((time.monotonic() - provider_started) * 1000))
@@ -30441,17 +31979,23 @@ def _mgmt_nl_maybe_provider_answer(
             "duration_ms": duration_ms,
             "provider_state": provider_state,
             "answer_present": bool(answer),
+            "action_count": len(actions),
+            "allowed_action_kinds": sorted(allowed_action_kinds),
             "output_summary": _management_ai_provider_output_summary(provider_payload),
+            "multimodal": multimodal_summary,
         }
     )
     if not answer:
-        return None, _mgmt_nl_provider_status(
+        empty_status = _mgmt_nl_provider_status(
             provider=provider,
             enabled=True,
             status="degraded",
             reason="provider_empty_answer",
             run_id=run_id,
         )
+        if multimodal_summary:
+            empty_status["multimodal"] = multimodal_summary
+        return None, empty_status, []
     status = _mgmt_nl_provider_status(
         provider=str((data or {}).get("provider") or provider),
         enabled=True,
@@ -30459,9 +32003,13 @@ def _mgmt_nl_maybe_provider_answer(
         run_id=run_id,
         used=True,
     )
+    if multimodal_summary:
+        status["multimodal"] = multimodal_summary
+    if multimodal_unsupported:
+        status["reason"] = "multimodal_unsupported"
     if isinstance(data, dict) and data.get("redaction") is not None:
         status["redaction"] = data.get("redaction")
-    return answer, status
+    return answer, status, actions
 
 
 @app.post("/bff/management/nl/ask", status_code=202)
@@ -30480,10 +32028,11 @@ async def bff_management_nl_ask(
 
     question = _agora_required_text(payload, "question")
     _mgmt_nl_validate_question_size(question)
+    control_command = _mgmt_nl_parse_control_command(question)
 
     # BFF-B6-003: high-risk refusal policy — must run before idempotency, surface
     # collection, session creation, or SSE emission.
-    risk = _mgmt_nl_high_risk_classify(question)
+    risk = None if control_command is not None else _mgmt_nl_high_risk_classify(question)
     if risk is not None:
         audit_id = _mgmt_nl_record_high_risk_refusal(
             identity=identity,
@@ -30518,10 +32067,11 @@ async def bff_management_nl_ask(
         requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant),
     )
 
-    focus = str(payload.get("focus") or "all").strip().lower()
-    if focus not in _MGMT_NL_VALID_FOCUS:
-        focus = "all"
-    operator_context = str(payload.get("context") or "").strip()
+    operator_context = _mgmt_nl_trim_text(payload.get("context"), max_len=4000)
+    focus = _mgmt_nl_normalize_focus(payload.get("focus"))
+    client_conversation_hint = _mgmt_nl_normalize_conversation_context(payload.get("conversation"))
+    ui_snapshot = _mgmt_nl_normalize_ui_context(payload.get("ui"), operator_context=operator_context)
+    allowed_action_kinds = _mgmt_nl_allowed_action_kinds(ui_snapshot)
 
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash({"route": "POST /bff/management/nl/ask", "payload": payload})
@@ -30540,13 +32090,63 @@ async def bff_management_nl_ask(
                 "idempotency_key": resolved_key,
             }
         )
-        replayed = {**cached, "meta": {**cached.get("meta", {}), "idempotency": {**cached.get("meta", {}).get("idempotency", {}), "replayed": True}}}
-        return JSONResponse(status_code=202, content=replayed)
+        return JSONResponse(status_code=202, content=_management_json_clone(cached))
 
     now = utc_now()
     session_id = str(payload.get("sessionId") or payload.get("session_id") or f"mgmt-nl-{uuid.uuid4().hex[:10]}")
     message_id = f"mnl-{uuid.uuid4().hex[:16]}"
     trace_id = str(payload.get("traceId") or payload.get("trace_id") or f"mnl-trace-{uuid.uuid4().hex[:12]}")
+    if control_command is not None:
+        return _mgmt_nl_handle_control_command(
+            control_command=control_command,
+            payload=payload,
+            identity=identity,
+            caller_tenant_id=caller_tenant_id,
+            focus=focus,
+            ui_snapshot=ui_snapshot,
+            resolved_key=resolved_key,
+            request_hash=request_hash,
+            session_id=session_id,
+            message_id=message_id,
+            trace_id=trace_id,
+            now=now,
+        )
+
+    control_mode = _assistant_control_mode_for_identity(
+        identity,
+        management_session_id=session_id,
+        touch=True,
+    )
+    _management_ai_ensure_session(
+        session_id=session_id,
+        identity=identity,
+        tenant_id=caller_tenant_id,
+        now=now,
+        title=question,
+    )
+    user_attachments = _management_ai_store_attachments(
+        attachments=payload.get("attachments"),
+        session_id=session_id,
+        turn_id=message_id,
+    )
+    _management_ai_append_turn(
+        turn_id=message_id,
+        session_id=session_id,
+        role="user",
+        text=question,
+        created_at=now,
+        trace_id=trace_id,
+        attachments=user_attachments,
+        ui_snapshot=ui_snapshot,
+    )
+    conversation_context = _management_ai_server_conversation_context(
+        session_id=session_id,
+        client_hint=client_conversation_hint,
+    )
+    current_user_attachments = [
+        _management_ai_attachment_api_payload(item)
+        for item in user_attachments
+    ]
 
     # BFF-B6-001-SEC-FIX: pass tenant scope to context collection.
     context_bundle = _mgmt_nl_collect_context(focus, now, tenant_id=caller_tenant_id)
@@ -30570,6 +32170,10 @@ async def bff_management_nl_ask(
         confidence=confidence,
         evidence_entities=evidence_entities,
         evidence_source_types=evidence_source_types,
+        operator_context=operator_context,
+        conversation_context=conversation_context,
+        ui_snapshot=ui_snapshot,
+        control_mode=control_mode,
     )
 
     try:
@@ -30644,12 +32248,25 @@ async def bff_management_nl_ask(
             "confidence": confidence,
             "source_keys": source_keys,
             "context_pack_id": context_pack.get("context_pack_id"),
+            "conversation_recent_turn_count": len(conversation_context.get("recentTurns") or []),
+            "client_conversation_recent_turn_count": len(client_conversation_hint.get("recentTurns") or []),
+            "conversation_summary_present": bool(conversation_context.get("summary")),
+            "ui": ui_snapshot,
+            "attachment_count": len(user_attachments),
+            "available_ui_action_kinds": sorted(allowed_action_kinds),
+            "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
+            "control_mode": {
+                "state": control_mode.get("state"),
+                "active": control_mode.get("active"),
+                "mode": control_mode.get("mode"),
+                "activation_id": control_mode.get("activation_id") or control_mode.get("activationId"),
+            },
             "surfaces": _management_ai_surface_summary(surfaces),
             "audit_ref": audit_ref,
         }
     )
 
-    provider_answer, provider_status = _mgmt_nl_maybe_provider_answer(
+    provider_answer, provider_status, actions = _mgmt_nl_maybe_provider_answer(
         provider=_mgmt_nl_provider_name(),
         question=question,
         focus=focus,
@@ -30660,12 +32277,14 @@ async def bff_management_nl_ask(
         trace_id=trace_id,
         context_pack=context_pack,
         audit_id=audit_ref.get("auditId"),
+        allowed_action_kinds=allowed_action_kinds,
+        current_user_attachments=current_user_attachments,
     )
     answer = provider_answer or deterministic_answer
 
     assistant_turn_id = f"{message_id}-assistant"
     audit_log_href = _management_ai_audit_href(session_id=session_id, trace_id=trace_id)
-    conversation_href = _management_ai_conversation_href(session_id, trace_id=trace_id)
+    conversation_href = _management_ai_conversation_href(session_id)
 
     _publish_event(
         _sse_buffers["ask"],
@@ -30678,6 +32297,7 @@ async def bff_management_nl_ask(
         "status": "accepted",
         "data": {
             "answer": answer,
+            "sessionId": session_id,
             "session_id": session_id,
             "message_id": message_id,
             "traceId": trace_id,
@@ -30691,6 +32311,11 @@ async def bff_management_nl_ask(
             "context_pack": context_pack,
             "providerStatus": provider_status,
             "provider_status": provider_status,
+            "controlMode": control_mode,
+            "control_mode": control_mode,
+            "uiActions": actions,
+            "ui_actions": actions,
+            "actions": actions,
             "auditRef": audit_ref,
             "audit_ref": audit_ref,
             "auditLog": {
@@ -30705,8 +32330,16 @@ async def bff_management_nl_ask(
             },
             "conversation": {
                 "href": conversation_href,
+                "sessionId": session_id,
+                "session_id": session_id,
                 "traceId": trace_id,
                 "trace_id": trace_id,
+            },
+            "session": {
+                "sessionId": session_id,
+                "session_id": session_id,
+                "ttlSeconds": _MGMT_AI_SESSION_TTL_SECONDS,
+                "ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
             },
             "evidenceRefs": processed_evidence_refs,
             "evidence_refs": processed_evidence_refs,
@@ -30723,6 +32356,10 @@ async def bff_management_nl_ask(
             "context_pack_id": context_pack.get("context_pack_id"),
             "redactedEvidenceCount": redacted_evidence_count,
             "redacted_evidence_count": redacted_evidence_count,
+            "sessionTtlSeconds": _MGMT_AI_SESSION_TTL_SECONDS,
+            "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
+            "controlMode": control_mode,
+            "control_mode": control_mode,
         },
     }
     _management_ai_record_event(
@@ -30736,10 +32373,29 @@ async def bff_management_nl_ask(
             "route": "POST /bff/management/nl/ask",
             "answer": _management_ai_summary_value(answer),
             "provider_status": provider_status,
+            "actions": actions,
+            "action_count": len(actions),
+            "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
+            "control_mode": {
+                "state": control_mode.get("state"),
+                "active": control_mode.get("active"),
+                "mode": control_mode.get("mode"),
+                "activation_id": control_mode.get("activation_id") or control_mode.get("activationId"),
+            },
             "fallback": provider_status.get("fallback"),
         }
     )
-    _MGMT_NL_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    _management_ai_append_turn(
+        turn_id=assistant_turn_id,
+        session_id=session_id,
+        role="assistant",
+        text=answer,
+        created_at=utc_now(),
+        trace_id=trace_id,
+        provider_status=provider_status,
+        ui_actions=actions,
+    )
+    _mgmt_nl_idempotency_put(resolved_key, request_hash=request_hash, result=result)
     return JSONResponse(status_code=202, content=result)
 
 
@@ -30777,22 +32433,98 @@ async def bff_management_ai_audit(
     }
 
 
+@app.get("/bff/management/ai/conversations")
+async def bff_management_ai_conversations(
+    limit: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+    x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+):
+    """List visible server-side Management AI conversations for frontend resync."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    caller_tenant_id = _mgmt_nl_caller_tenant(
+        identity,
+        requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant),
+    )
+    sessions = _management_ai_conversation_store().list_sessions(
+        owner_id=identity.operator_id,
+        tenant_id=caller_tenant_id,
+        limit=limit,
+    )
+    items: List[Dict[str, Any]] = []
+    for session in sessions:
+        session_id = str(session.get("sessionId") or session.get("session_id") or session.get("id") or "").strip()
+        if not session_id:
+            continue
+        try:
+            _management_ai_require_session_access(session, identity, tenant_id=caller_tenant_id)
+        except HTTPException:
+            continue
+        turn_count = len(_management_ai_conversation_store().list_turns(session_id))
+        items.append(
+            {
+                "id": session_id,
+                "sessionId": session_id,
+                "session_id": session_id,
+                "title": session.get("title") or "",
+                "ownerId": session.get("ownerId") or session.get("owner_id"),
+                "owner_id": session.get("owner_id") or session.get("ownerId"),
+                "tenantId": session.get("tenantId") or session.get("tenant_id"),
+                "tenant_id": session.get("tenant_id") or session.get("tenantId"),
+                "createdAt": session.get("createdAt") or session.get("created_at"),
+                "created_at": session.get("created_at") or session.get("createdAt"),
+                "updatedAt": session.get("updatedAt") or session.get("updated_at"),
+                "updated_at": session.get("updated_at") or session.get("updatedAt"),
+                "turnCount": turn_count,
+                "turn_count": turn_count,
+                "href": _management_ai_conversation_href(session_id),
+            }
+        )
+    return {
+        "data": items,
+        "items": items,
+        "meta": {
+            "count": len(items),
+            "limit": limit,
+            "sessionTtlSeconds": _MGMT_AI_SESSION_TTL_SECONDS,
+            "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
+            "surfaces": {
+                "management_ai_conversation_list": {
+                    "status": "ok",
+                    "source": "management_ai_store",
+                }
+            },
+        },
+    }
+
+
 @app.get("/bff/management/ai/conversations/{session_id}")
 async def bff_management_ai_conversation(
     session_id: str,
     trace_id: Optional[str] = None,
-    limit: int = Query(default=100, ge=1, le=200),
+    limit: int = Query(default=500, ge=1, le=1000),
     authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+    x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
 ):
-    """Read Management AI conversation turns from backend audit events only."""
+    """Read full Management AI session turns from the server-side conversation store."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     clean_session_id = str(session_id or "").strip()
-    turns = _management_ai_conversation_turns(
-        session_id=clean_session_id,
-        trace_id=trace_id,
-        limit=limit,
+    caller_tenant_id = _mgmt_nl_caller_tenant(
+        identity,
+        requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant),
     )
+    session = _management_ai_get_visible_session_or_404(
+        clean_session_id,
+        identity,
+        tenant_id=caller_tenant_id,
+    )
+    turns = [
+        _management_ai_turn_api_payload(turn)
+        for turn in _management_ai_conversation_store().list_turns(clean_session_id)
+    ][:limit]
     audit_log = {
         "href": _management_ai_audit_href(session_id=clean_session_id, trace_id=trace_id),
         "traceId": trace_id,
@@ -30800,22 +32532,99 @@ async def bff_management_ai_conversation(
     }
     return {
         "data": {
+            "sessionId": clean_session_id,
             "session_id": clean_session_id,
             "traceId": trace_id,
             "trace_id": trace_id,
             "turns": turns,
+            "localOnly": False,
+            "local_only": False,
+            "missingInStore": False,
+            "missing_in_store": False,
+            "ownerId": session.get("ownerId") or session.get("owner_id"),
+            "owner_id": session.get("owner_id") or session.get("ownerId"),
+            "tenantId": session.get("tenantId") or session.get("tenant_id"),
+            "tenant_id": session.get("tenant_id") or session.get("tenantId"),
+            "createdAt": session.get("createdAt") or session.get("created_at"),
+            "created_at": session.get("created_at") or session.get("createdAt"),
+            "updatedAt": session.get("updatedAt") or session.get("updated_at"),
+            "updated_at": session.get("updated_at") or session.get("updatedAt"),
             "auditLog": audit_log,
             "audit_log": audit_log,
+            "session": {
+                "sessionId": clean_session_id,
+                "session_id": clean_session_id,
+                "ttlSeconds": _MGMT_AI_SESSION_TTL_SECONDS,
+                "ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
+            },
         },
         "items": turns,
         "meta": {
             "count": len(turns),
+            "turnCap": limit,
+            "turn_cap": limit,
+            "sessionTtlSeconds": _MGMT_AI_SESSION_TTL_SECONDS,
+            "session_ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
             "filters": {
                 "session_id": clean_session_id,
                 "trace_id": trace_id,
+                "trace_id_ignored": trace_id is not None,
+            },
+            "surfaces": {
+                "management_ai_conversation": {
+                    "status": "ok",
+                    "source": "management_ai_store",
+                    "reason": None,
+                }
             },
         },
     }
+
+
+@app.get("/bff/management/ai/attachments/{attachment_id}")
+async def bff_management_ai_attachment(
+    attachment_id: str,
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+    x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+):
+    """Return a BFF-proxied Management AI attachment object for visible sessions."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    found = _management_ai_conversation_store().find_attachment(attachment_id)
+    if found is None:
+        raise _bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            f"Management AI attachment not found: {attachment_id!r}",
+            "management_ai_attachment_not_found",
+            precondition_failed="management_ai_attachment",
+        )
+    metadata, turn = found
+    caller_tenant_id = _mgmt_nl_caller_tenant(
+        identity,
+        requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant),
+    )
+    _management_ai_get_session_or_404(
+        str(turn.get("sessionId") or turn.get("session_id") or ""),
+        identity,
+        tenant_id=caller_tenant_id,
+    )
+    try:
+        content, mime_type, filename = _management_ai_conversation_store().read_attachment(attachment_id, metadata)
+    except FileNotFoundError:
+        raise _bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            f"Management AI attachment object not found: {attachment_id!r}",
+            "management_ai_attachment_object_not_found",
+            precondition_failed="management_ai_attachment_object",
+        )
+    return Response(
+        content=content,
+        media_type=mime_type,
+        headers={"Content-Disposition": f"inline; filename=\"{filename}\""},
+    )
 
 
 @app.get("/bff/management/evidence")
@@ -32395,8 +34204,9 @@ def _pm12_persona_memory_summary(persona_id: str) -> Dict[str, Any]:
 
 def _pm12_persona_health_summary(persona: Dict[str, Any], sessions: Dict[str, Any], capabilities: Dict[str, Any]) -> Dict[str, Any]:
     state = str(persona.get("lifecycle_state") or persona.get("state") or "").lower()
-    health = "healthy" if state == "active" else "degraded"
-    if state == "active" and capabilities.get("hasSnapshot") is False:
+    is_operational = _is_persona_lifecycle_operational(state)
+    health = "healthy" if is_operational else "degraded"
+    if is_operational and capabilities.get("hasSnapshot") is False:
         health = "degraded"
     return {
         "health": health,
@@ -36683,7 +38493,12 @@ SSE_ASK_EVENT_TYPES = {
 
 _SSE_RESYNC_ROUTES: Dict[str, tuple[str, ...]] = {
     "approval": ("/bff/approvals", "/bff/v5/interventions"),
-    "ask": ("/bff/agora/ask/sessions/{id}", "/bff/agora/committee/sessions/{id}"),
+    "ask": (
+        "/bff/management/ai/conversations",
+        "/bff/management/ai/conversations/{id}",
+        "/bff/agora/ask/sessions/{id}",
+        "/bff/agora/committee/sessions/{id}",
+    ),
 }
 
 
@@ -44075,7 +45890,11 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
                 "id": p.get("persona_id") or p.get("id"),
                 "persona_id": p.get("persona_id") or p.get("id"),
                 "name": p.get("name") or p.get("persona_id"),
-                "health": "healthy" if p.get("lifecycle_state") == "active" else "degraded",
+                "health": (
+                    "healthy"
+                    if _is_persona_lifecycle_operational(p.get("lifecycle_state"))
+                    else "degraded"
+                ),
                 "lifecycle_state": p.get("lifecycle_state"),
             }
             for p in personas
@@ -44426,7 +46245,11 @@ async def bff_v5_execution_persona_health(
             "id": p.get("persona_id") or p.get("id"),
             "persona_id": p.get("persona_id") or p.get("id"),
             "name": p.get("name") or p.get("persona_id"),
-            "health": "healthy" if p.get("lifecycle_state") == "active" else "degraded",
+            "health": (
+                "healthy"
+                if _is_persona_lifecycle_operational(p.get("lifecycle_state"))
+                else "degraded"
+            ),
             "lifecycle_state": p.get("lifecycle_state"),
         }
         for p in personas
@@ -44954,12 +46777,88 @@ def _assistant_focus_entity(
     return None, None
 
 
+def _assistant_source_access_meta(identity: Optional[OperatorIdentity]) -> Dict[str, Any]:
+    roles = list(getattr(identity, "roles", []) or [])
+    tenant: Dict[str, Any] = {
+        "id": None,
+        "allowed_ids": [],
+        "scope": "unknown",
+    }
+    if identity is not None:
+        try:
+            tenant = _bff_me_tenant_payload(identity, requested_tenant=None)
+        except HTTPException:
+            tenant = {
+                "id": None,
+                "allowed_ids": [],
+                "scope": "denied",
+            }
+    return {
+        "rbac": {
+            "enforced": True,
+            "required_roles": sorted(_READ_ROLES),
+            "actor_roles": roles,
+        },
+        "tenant": {
+            "enforced": True,
+            "tenant_id": tenant.get("id"),
+            "allowed_tenants": list(tenant.get("allowed_ids") or []),
+            "scope": tenant.get("scope") or "unknown",
+        },
+    }
+
+
+def _assistant_attach_access_meta(
+    payload: Any,
+    *,
+    source_id: str,
+    identity: Optional[OperatorIdentity],
+    snapshot_at: str,
+) -> Dict[str, Any]:
+    result = dict(payload) if isinstance(payload, dict) else {"data": payload}
+    meta = dict(result.get("meta") if isinstance(result.get("meta"), dict) else {})
+    meta.setdefault("snapshot_at", snapshot_at)
+    meta.setdefault("surfaces", {source_id: {"status": "ok", "source": "bff_read"}})
+    meta["access"] = _assistant_source_access_meta(identity)
+    result["meta"] = meta
+    return result
+
+
+def _assistant_tenant_scope(identity: Optional[OperatorIdentity]) -> Dict[str, Any]:
+    return _assistant_source_access_meta(identity).get("tenant", {})
+
+
+def _assistant_filter_tenant_records(
+    records: List[Dict[str, Any]],
+    identity: Optional[OperatorIdentity],
+) -> List[Dict[str, Any]]:
+    tenant = _assistant_tenant_scope(identity)
+    if tenant.get("scope") == "global":
+        return [record for record in records if isinstance(record, dict)]
+    return _mgmt_nl_filter_tenant_records(
+        [record for record in records if isinstance(record, dict)],
+        str(tenant.get("tenant_id") or ""),
+    )
+
+
+def _assistant_filter_payload_tenant(payload: Any, identity: Optional[OperatorIdentity]) -> Any:
+    if not isinstance(payload, dict):
+        return payload
+    result = dict(payload)
+    for key in ("items", "alerts", "events", "data"):
+        value = result.get(key)
+        if isinstance(value, list):
+            result[key] = _assistant_filter_tenant_records(value, identity)
+    return result
+
+
 def _assistant_unavailable_source(
     source_id: str,
     *,
     href: str,
     snapshot_at: str,
     dataset: str,
+    identity: Optional[OperatorIdentity] = None,
 ) -> Any:
     from assistant.context_composer import AssistantCollectedSource
 
@@ -44967,28 +46866,39 @@ def _assistant_unavailable_source(
     return AssistantCollectedSource(
         source_id=source_id,
         href=href,
-        payload={
-            "data": None,
-            "meta": {
-                "snapshot_at": snapshot_at,
-                "surfaces": {source_id: surface},
+        payload=_assistant_attach_access_meta(
+            {
+                "data": None,
+                "meta": {
+                    "snapshot_at": snapshot_at,
+                    "surfaces": {source_id: surface},
+                },
             },
-        },
+            source_id=source_id,
+            identity=identity,
+            snapshot_at=snapshot_at,
+        ),
         status=str(surface.get("status") or "unavailable"),
     )
 
 
-def _assistant_collect_jobs_source(request: Any, snapshot_at: str) -> Any:
+def _assistant_collect_jobs_source(
+    request: Any,
+    snapshot_at: str,
+    identity: Optional[OperatorIdentity] = None,
+) -> Any:
     from assistant.context_composer import AssistantCollectedSource
 
     entity_type, entity_id = _assistant_focus_entity(request)
     selected_job = None
     href = "/bff/jobs"
     if entity_type and entity_type.lower() in {"job", "jobs"} and entity_id:
-        selected_job = _get_bff_job(entity_id)
+        raw_job = _get_bff_job(entity_id)
+        if isinstance(raw_job, dict):
+            selected_job = next(iter(_assistant_filter_tenant_records([raw_job], identity)), None)
         href = f"/bff/jobs/{entity_id}"
 
-    jobs = _list_bff_jobs()
+    jobs = _assistant_filter_tenant_records(_list_bff_jobs(), identity)
     surface = _dataset_surface_status(
         "jobs",
         snapshot_at=snapshot_at,
@@ -45007,48 +46917,69 @@ def _assistant_collect_jobs_source(request: Any, snapshot_at: str) -> Any:
         payload["selected_missing"] = {
             "entity_type": entity_type,
             "entity_id": entity_id,
-            "reason": "job_not_found",
+            "reason": "job_not_found_or_not_visible",
         }
     return AssistantCollectedSource(
         source_id="jobs",
         href=href,
-        payload=payload,
+        payload=_assistant_attach_access_meta(
+            payload,
+            source_id="jobs",
+            identity=identity,
+            snapshot_at=snapshot_at,
+        ),
         status=str(surface.get("status") or "ok"),
     )
 
 
-def _assistant_collect_job_logs_source(request: Any, snapshot_at: str) -> Any:
+def _assistant_collect_job_logs_source(
+    request: Any,
+    snapshot_at: str,
+    identity: Optional[OperatorIdentity] = None,
+) -> Any:
     from assistant.context_composer import AssistantCollectedSource
 
     entity_type, entity_id = _assistant_focus_entity(request)
     if not entity_id or (entity_type and entity_type.lower() not in {"job", "jobs"}):
         return None
     job = _get_bff_job(entity_id)
+    if isinstance(job, dict):
+        job = next(iter(_assistant_filter_tenant_records([job], identity)), None)
     if job is None:
         return _assistant_unavailable_source(
             "job_logs",
             href=f"/bff/jobs/{entity_id}/logs",
             snapshot_at=snapshot_at,
             dataset="jobs",
+            identity=identity,
         )
     logs = list(job.get("logs") or [])
     surface = _dataset_surface_status("jobs", snapshot_at=snapshot_at, has_data=True)
     return AssistantCollectedSource(
         source_id="job_logs",
         href=f"/bff/jobs/{entity_id}/logs",
-        payload={
-            "job_id": entity_id,
-            "logs": logs[:50],
-            "meta": {
-                "snapshot_at": snapshot_at,
-                "surfaces": {"job_logs": surface},
+        payload=_assistant_attach_access_meta(
+            {
+                "job_id": entity_id,
+                "logs": logs[:50],
+                "meta": {
+                    "snapshot_at": snapshot_at,
+                    "surfaces": {"job_logs": surface},
+                },
             },
-        },
+            source_id="job_logs",
+            identity=identity,
+            snapshot_at=snapshot_at,
+        ),
         status=str(surface.get("status") or "ok"),
     )
 
 
-def _assistant_collect_audit_source(request: Any, snapshot_at: str) -> Any:
+def _assistant_collect_audit_source(
+    request: Any,
+    snapshot_at: str,
+    identity: Optional[OperatorIdentity] = None,
+) -> Any:
     from assistant.context_composer import AssistantCollectedSource
 
     entity_type, entity_id = _assistant_focus_entity(request)
@@ -45062,6 +46993,7 @@ def _assistant_collect_audit_source(request: Any, snapshot_at: str) -> Any:
         href = f"/bff/audit/entities/{entity_type}/{entity_id}"
     else:
         events = _list_governance_audit_events()
+    events = _assistant_filter_tenant_records(events, identity)
     surface = _dataset_surface_status(
         "governance_audit_events",
         snapshot_at=snapshot_at,
@@ -45070,22 +47002,31 @@ def _assistant_collect_audit_source(request: Any, snapshot_at: str) -> Any:
     return AssistantCollectedSource(
         source_id="audit",
         href=href,
-        payload={
-            "items": events[:50],
-            "page_info": {"next_page_token": None, "total": len(events)},
-            "meta": {
-                "snapshot_at": snapshot_at,
-                "surfaces": {"audit": surface},
+        payload=_assistant_attach_access_meta(
+            {
+                "items": events[:50],
+                "page_info": {"next_page_token": None, "total": len(events)},
+                "meta": {
+                    "snapshot_at": snapshot_at,
+                    "surfaces": {"audit": surface},
+                },
             },
-        },
+            source_id="audit",
+            identity=identity,
+            snapshot_at=snapshot_at,
+        ),
         status=str(surface.get("status") or "ok"),
     )
 
 
-def _assistant_collect_recent_sse_source(_request: Any, snapshot_at: str) -> Any:
+def _assistant_collect_recent_sse_source(
+    _request: Any,
+    snapshot_at: str,
+    identity: Optional[OperatorIdentity] = None,
+) -> Any:
     from assistant.context_composer import AssistantCollectedSource
 
-    events = read_store.list_events_bff(page_size=25)
+    events = _assistant_filter_tenant_records(read_store.list_events_bff(page_size=25), identity)
     surface = _dataset_surface_status(
         "governance_audit_events",
         snapshot_at=snapshot_at,
@@ -45094,19 +47035,164 @@ def _assistant_collect_recent_sse_source(_request: Any, snapshot_at: str) -> Any
     return AssistantCollectedSource(
         source_id="recent_sse",
         href="/bff/events",
-        payload={
-            "items": events[:25],
-            "page_info": {"next_page_token": None},
-            "meta": {
-                "snapshot_at": snapshot_at,
-                "surfaces": {"recent_sse": surface},
+        payload=_assistant_attach_access_meta(
+            {
+                "items": events[:25],
+                "page_info": {"next_page_token": None},
+                "meta": {
+                    "snapshot_at": snapshot_at,
+                    "surfaces": {"recent_sse": surface},
+                },
             },
-        },
+            source_id="recent_sse",
+            identity=identity,
+            snapshot_at=snapshot_at,
+        ),
         status=str(surface.get("status") or "ok"),
     )
 
 
-def _assistant_collect_source(source_id: str, request: Any, snapshot_at: str) -> Any:
+_ASSISTANT_DOCS_RAG_ALLOWLIST = (
+    (
+        "existing_architecture_plan",
+        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md",
+        "Pantheon Management Assistant existing architecture integration plan",
+    ),
+    (
+        "existing_architecture_tasks",
+        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md",
+        "Existing architecture assistant integration execution tasks",
+    ),
+    (
+        "ai_collaboration_guide",
+        "AI_COLLABORATION_GUIDE.md",
+        "Pantheon AI collaboration and repository workflow guide",
+    ),
+)
+
+
+def _assistant_repo_root() -> Path:
+    return Path(_REPO_ROOT)
+
+
+def _assistant_doc_query_terms(request: Any) -> List[str]:
+    values: List[str] = []
+    for value in (
+        getattr(request, "question", None),
+        getattr(request, "route", None),
+    ):
+        if value:
+            values.extend(str(value).lower().split())
+    frontend = getattr(request, "frontend", None)
+    if frontend is not None and getattr(frontend, "route", None):
+        values.extend(str(frontend.route).lower().split("/"))
+    return [value.strip(".,:;()[]{}").lower() for value in values if len(value.strip(".,:;()[]{}")) > 3]
+
+
+def _assistant_doc_snippet(text: str, terms: List[str], *, limit: int = 900) -> str:
+    compact = " ".join(line.strip() for line in text.splitlines() if line.strip())
+    lower = compact.lower()
+    start = 0
+    for term in terms:
+        found = lower.find(term)
+        if found >= 0:
+            start = max(0, found - 160)
+            break
+    return compact[start:start + limit]
+
+
+def _assistant_collect_docs_rag_source(
+    request: Any,
+    snapshot_at: str,
+    identity: Optional[OperatorIdentity] = None,
+) -> Any:
+    from assistant.context_composer import AssistantCollectedSource
+
+    root = _assistant_repo_root()
+    terms = _assistant_doc_query_terms(request)
+    items: List[Dict[str, Any]] = []
+    citations: List[Dict[str, Any]] = []
+    source_refs: List[Dict[str, Any]] = []
+
+    for slug, relative_path, title in _ASSISTANT_DOCS_RAG_ALLOWLIST:
+        path = root / relative_path
+        if not path.exists() or not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        ref_id = f"doc:{slug}"
+        snippet = _assistant_doc_snippet(text, terms)
+        citation = {
+            "ref_id": ref_id,
+            "title": title,
+            "path": relative_path,
+        }
+        items.append({
+            "ref_id": ref_id,
+            "title": title,
+            "path": relative_path,
+            "snippet": snippet,
+        })
+        citations.append(citation)
+        source_refs.append({
+            "source_id": ref_id,
+            "href": relative_path,
+            "snapshot_at": snapshot_at,
+            "status": "ok",
+            "staleness": {
+                "status": "fresh",
+                "served_from": "repo_doc_allowlist",
+                "last_known_at": snapshot_at,
+            },
+            "source_kind": "docs",
+        })
+
+    status = "ok" if items else "unavailable"
+    surface = {
+        "status": status,
+        "source": "repo_doc_allowlist",
+    }
+    source_refs.insert(0, {
+        "source_id": "docs_rag",
+        "href": "docs://assistant/context",
+        "snapshot_at": snapshot_at,
+        "status": status,
+        "staleness": {
+            "status": "fresh" if items else "unavailable",
+            "served_from": "repo_doc_allowlist",
+            "last_known_at": snapshot_at,
+        },
+        "source_kind": "docs",
+    })
+    return AssistantCollectedSource(
+        source_id="docs_rag",
+        href="docs://assistant/context",
+        payload={
+            "items": items,
+            "citations": citations,
+            "meta": {
+                "snapshot_at": snapshot_at,
+                "surfaces": {"docs_rag": surface},
+                "access": {
+                    **_assistant_source_access_meta(identity),
+                    "corpus": "repo_doc_allowlist",
+                },
+            },
+        },
+        status=status,
+        source_kind="docs",
+        source_refs=source_refs,
+    )
+
+
+def _assistant_collect_source(
+    source_id: str,
+    request: Any,
+    snapshot_at: str,
+    identity: Optional[OperatorIdentity] = None,
+) -> Any:
     from assistant.context_composer import AssistantCollectedSource
 
     if source_id == "control_room":
@@ -45117,20 +47203,37 @@ def _assistant_collect_source(source_id: str, request: Any, snapshot_at: str) ->
                 href="/bff/v5/control-room",
                 snapshot_at=snapshot_at,
                 dataset="incidents",
+                identity=identity,
             )
-        return AssistantCollectedSource(source_id=source_id, href="/bff/v5/control-room", payload=payload)
+        payload = _assistant_filter_payload_tenant(payload, identity)
+        return AssistantCollectedSource(
+            source_id=source_id,
+            href="/bff/v5/control-room",
+            payload=_assistant_attach_access_meta(
+                payload,
+                source_id=source_id,
+                identity=identity,
+                snapshot_at=snapshot_at,
+            ),
+        )
     if source_id == "jobs":
-        return _assistant_collect_jobs_source(request, snapshot_at)
+        return _assistant_collect_jobs_source(request, snapshot_at, identity)
     if source_id == "alerts":
+        payload = _assistant_filter_payload_tenant(_build_operator_alerts_payload(snapshot_at), identity)
         return AssistantCollectedSource(
             source_id=source_id,
             href="/bff/alerts",
-            payload=_build_operator_alerts_payload(snapshot_at),
+            payload=_assistant_attach_access_meta(
+                payload,
+                source_id=source_id,
+                identity=identity,
+                snapshot_at=snapshot_at,
+            ),
         )
     if source_id == "audit":
-        return _assistant_collect_audit_source(request, snapshot_at)
+        return _assistant_collect_audit_source(request, snapshot_at, identity)
     if source_id == "recent_sse":
-        return _assistant_collect_recent_sse_source(request, snapshot_at)
+        return _assistant_collect_recent_sse_source(request, snapshot_at, identity)
     if source_id == "persona_health":
         payload = _sem_final_generic_list_for_path("/bff/v5/execution/persona-health")
         if payload is None:
@@ -45139,11 +47242,18 @@ def _assistant_collect_source(source_id: str, request: Any, snapshot_at: str) ->
                 href="/bff/v5/execution/persona-health",
                 snapshot_at=snapshot_at,
                 dataset="personas",
+                identity=identity,
             )
+        payload = _assistant_filter_payload_tenant(payload, identity)
         return AssistantCollectedSource(
             source_id=source_id,
             href="/bff/v5/execution/persona-health",
-            payload=payload,
+            payload=_assistant_attach_access_meta(
+                payload,
+                source_id=source_id,
+                identity=identity,
+                snapshot_at=snapshot_at,
+            ),
         )
     if source_id == "strategy_health":
         payload = _sem_final_generic_list_for_path("/bff/v5/execution/strategy-health")
@@ -45153,14 +47263,23 @@ def _assistant_collect_source(source_id: str, request: Any, snapshot_at: str) ->
                 href="/bff/v5/execution/strategy-health",
                 snapshot_at=snapshot_at,
                 dataset="strategy_specs",
+                identity=identity,
             )
+        payload = _assistant_filter_payload_tenant(payload, identity)
         return AssistantCollectedSource(
             source_id=source_id,
             href="/bff/v5/execution/strategy-health",
-            payload=payload,
+            payload=_assistant_attach_access_meta(
+                payload,
+                source_id=source_id,
+                identity=identity,
+                snapshot_at=snapshot_at,
+            ),
         )
     if source_id == "job_logs":
-        return _assistant_collect_job_logs_source(request, snapshot_at)
+        return _assistant_collect_job_logs_source(request, snapshot_at, identity)
+    if source_id == "docs_rag":
+        return _assistant_collect_docs_rag_source(request, snapshot_at, identity)
     return None
 
 
@@ -45179,6 +47298,7 @@ def _assistant_build_context_pack(session_id: str, request: Any, identity: Opera
 # sem_agora_ask can record turns without a second store instantiation.
 _ASSISTANT_SESSION_STORE: Any = None
 _ASSISTANT_TRANSCRIPT_STORE: Any = None
+_ASSISTANT_CONTROL_MODE_STORE: Any = None
 
 
 def _assistant_ask_enabled() -> bool:
@@ -45194,12 +47314,21 @@ def _agora_ask_deterministic_fallback(prompt: str) -> str:
 
 
 def _include_assistant_routes() -> None:
-    global _ASSISTANT_SESSION_STORE, _ASSISTANT_TRANSCRIPT_STORE
+    global _ASSISTANT_SESSION_STORE, _ASSISTANT_TRANSCRIPT_STORE, _ASSISTANT_CONTROL_MODE_STORE
+    from assistant.control_mode import ControlModeStore
     from assistant.routes import create_assistant_router
-    from assistant.transcript_store import InMemorySessionStore, InMemoryTranscriptStore
+    from assistant.transcript_store import (
+        ManagementAiAssistantSessionStore,
+        ManagementAiAssistantTranscriptStore,
+    )
 
-    _ASSISTANT_SESSION_STORE = InMemorySessionStore()
-    _ASSISTANT_TRANSCRIPT_STORE = InMemoryTranscriptStore()
+    _ASSISTANT_SESSION_STORE = ManagementAiAssistantSessionStore(
+        store_factory=_management_ai_conversation_store,
+    )
+    _ASSISTANT_TRANSCRIPT_STORE = ManagementAiAssistantTranscriptStore(
+        store_factory=_management_ai_conversation_store,
+    )
+    _ASSISTANT_CONTROL_MODE_STORE = ControlModeStore()
     app.include_router(
         create_assistant_router(
             build_context_pack=_assistant_build_context_pack,
@@ -45208,6 +47337,7 @@ def _include_assistant_routes() -> None:
             bff_error=_bff_error,
             session_store=_ASSISTANT_SESSION_STORE,
             transcript_store=_ASSISTANT_TRANSCRIPT_STORE,
+            control_mode_store=_ASSISTANT_CONTROL_MODE_STORE,
         )
     )
 
