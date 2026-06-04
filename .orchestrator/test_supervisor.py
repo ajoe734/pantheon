@@ -6532,7 +6532,10 @@ class SingleSupervisorGuardTests(unittest.TestCase):
             supervisor.cmdline_is_supervisor_process(["bash", "-lc", "python3 .orchestrator/supervisor.py --verbose"])
         )
 
-    def test_terminate_older_supervisors_kills_only_older_matching_processes(self) -> None:
+    def test_terminate_other_supervisors_kills_all_matching_except_self(self) -> None:
+        # Singleton semantics: the flock winner terminates every other matching
+        # supervisor regardless of PID ordering. 404 > 202 must still be killed
+        # (PID wraparound previously let a higher-PID older supervisor survive).
         config = {"activity_log": "/tmp/fake-log.jsonl"}
         killed: list[tuple[int, int]] = []
         alive = {101: True, 202: True, 404: True}
@@ -6550,14 +6553,93 @@ class SingleSupervisorGuardTests(unittest.TestCase):
             mock.patch.object(supervisor.time, "sleep"),
             mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
         ):
-            supervisor.terminate_older_supervisors(config)
+            supervisor.terminate_other_supervisors(config)
 
-        self.assertEqual(killed, [(101, supervisor.signal.SIGTERM)])
-        write_activity_log.assert_called_once()
-        payload = write_activity_log.call_args.args[1]
-        self.assertEqual(payload["type"], "supervisor_replaced")
-        self.assertEqual(payload["old_pid"], 101)
-        self.assertEqual(payload["new_pid"], 202)
+        self.assertEqual(
+            killed,
+            [(101, supervisor.signal.SIGTERM), (404, supervisor.signal.SIGTERM)],
+        )
+        self.assertEqual(write_activity_log.call_count, 2)
+        terminated_pids = {
+            call.args[1]["old_pid"] for call in write_activity_log.call_args_list
+        }
+        self.assertEqual(terminated_pids, {101, 404})
+        for call in write_activity_log.call_args_list:
+            self.assertEqual(call.args[1]["type"], "supervisor_replaced")
+            self.assertEqual(call.args[1]["new_pid"], 202)
+
+    def test_singleton_lock_is_exclusive_and_released_on_close(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = {"paths": {"state_file": str(Path(tmp) / "runtime-state.json")}}
+
+            # First acquirer wins.
+            self.assertTrue(supervisor.acquire_singleton_lock(config))
+            first_handle = supervisor._SINGLETON_LOCK_HANDLE
+            self.assertIsNotNone(first_handle)
+            # pid file content reflects the owner.
+            self.assertEqual(
+                supervisor.supervisor_lock_path(config).read_text(encoding="utf-8").strip(),
+                str(supervisor.os.getpid()),
+            )
+
+            # A concurrent acquirer (separate fd) is refused while the lock is held.
+            import fcntl as _fcntl
+
+            contender = open(supervisor.supervisor_lock_path(config), "a+", encoding="utf-8")
+            try:
+                with self.assertRaises(OSError):
+                    _fcntl.flock(
+                        contender.fileno(), _fcntl.LOCK_EX | _fcntl.LOCK_NB
+                    )
+            finally:
+                contender.close()
+
+            # Releasing (process exit simulated by closing the fd) frees the lock.
+            first_handle.close()
+            regained = open(supervisor.supervisor_lock_path(config), "a+", encoding="utf-8")
+            try:
+                _fcntl.flock(regained.fileno(), _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+            finally:
+                _fcntl.flock(regained.fileno(), _fcntl.LOCK_UN)
+                regained.close()
+
+
+class WorktreeDirtClassificationTests(unittest.TestCase):
+    def test_clean_status(self) -> None:
+        self.assertEqual(supervisor._classify_worktree_dirt(""), ("clean", []))
+        self.assertEqual(supervisor._classify_worktree_dirt("\n  \n"), ("clean", []))
+
+    def test_scratch_only_is_reusable(self) -> None:
+        # Exactly the dirt that jammed the fleet: brief modified + review re-staged.
+        status = (
+            "MM .orchestrator/task-briefs/mgmt_ai_persist_p1_attach_007.md\n"
+            "D  .orchestrator/reviews/mgmt_ai_persist_p1_attach_007_review.md\n"
+        )
+        kind, paths = supervisor._classify_worktree_dirt(status)
+        self.assertEqual(kind, "scratch_only")
+        self.assertEqual(
+            set(paths),
+            {
+                ".orchestrator/task-briefs/mgmt_ai_persist_p1_attach_007.md",
+                ".orchestrator/reviews/mgmt_ai_persist_p1_attach_007_review.md",
+            },
+        )
+
+    def test_real_product_dirt_still_blocks(self) -> None:
+        status = (
+            " M .orchestrator/task-briefs/asst_integ_004.md\n"
+            " M services/control-plane/bff/main.py\n"
+        )
+        kind, paths = supervisor._classify_worktree_dirt(status)
+        self.assertEqual(kind, "real")
+        self.assertEqual(paths, [])
+
+    def test_rename_uses_new_path(self) -> None:
+        status = "R  old/file.py -> services/new/file.py\n"
+        kind, _ = supervisor._classify_worktree_dirt(status)
+        self.assertEqual(kind, "real")
 
 
 class WorkerReassignmentTests(unittest.TestCase):
