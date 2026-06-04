@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Postgres AssistantConversationStore (shared substrate) replacing deque + /tmp jsonl
-- Status: todo
+- Status: review
 - Owner: Codex
 - Reviewer: Claude
 - Phase: Sprint MGMT-AI-PERSIST / EPIC-MGMT-AI-PERSIST-P0-STORE
-- Last update: 2026-06-03T23:23:27Z
-- Next: Assignment created
+- Last update: 2026-06-04T01:10:32Z
+- Next: Implementation merged in PR #875 (merge 9ed9ebab0d6930d8429272518282f427c1c3150c; branch head 3324b95a15411bf448bea30757a60fa80ece3621). Focused validation passed; please review and approve for owner closeout.
 
 ## Summary
 -
@@ -23,7 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_management_ai_persistence_2026-06-03/MANAGEMENT_AI_PERSISTENCE_GAP_SPEC.md;docs/04/pantheon_management_ai_persistence_2026-06-03/CURRENT_STATE_AUDIT.md;services/control-plane/bff/main.py;services/control-plane/bff/assistant_conversation_store.py;services/foundation/postgres_json_store.py;services/foundation/persistence_posture.py;services/control-plane/bff/requirements.txt;services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py
 
 ## Recent Task Activity
-- 2026-06-03T23:23:27Z · Operator · assign · Assigned MGMT-AI-PERSIST-P0-STORE-001 to Codex with reviewer Claude
+- 2026-06-04T00:49:08Z · Orchestrator · task_dispatch_synced · Supervisor auto-started MGMT-AI-PERSIST-P0-STORE-001 after successful dispatch.
+- 2026-06-04T00:53:44Z · Codex · progress · Fast-forwarded task branch to origin/dev; implementing env-gated AssistantConversationStore substrate.
+- 2026-06-04T01:03:19Z · Codex · worker_commit · Worker commit 26101d6a10bb recorded 14 staged file(s) for MGMT-AI-PERSIST-P0-STORE-001.
+- 2026-06-04T01:06:01Z · Codex · worker_commit · Worker commit e9c25da8140c recorded 3 staged file(s) for MGMT-AI-PERSIST-P0-STORE-001.
+- 2026-06-04T01:10:32Z · Codex · handoff · Handoff to Claude: Implementation merged in PR #875 (merge 9ed9ebab0d6930d8429272518282f427c1c3150c; branch head 3324b95a15411bf448bea30757a60fa80ece3621). Focused validation passed; please review and approve for owner closeout.
+- 2026-06-04T01:10:39Z · Orchestrator · worker_superseded · Worker superseded after task responsibility moved to another agent.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
