@@ -17,6 +17,7 @@ def test_dev_compose_enables_codex_assistant_provider_for_bff() -> None:
         env["PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED"]
         == "${PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED:-true}"
     )
+    assert env["MANAGEMENT_AI_STORE_BACKEND"] == "${MANAGEMENT_AI_STORE_BACKEND:-json}"
     assert env["PANTHEON_ASSISTANT_PROVIDER"] == "${PANTHEON_ASSISTANT_PROVIDER:-codex_cli}"
     assert (
         env["PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS"]
@@ -24,7 +25,7 @@ def test_dev_compose_enables_codex_assistant_provider_for_bff() -> None:
     )
     assert (
         env["PANTHEON_MANAGEMENT_AI_STORE_PATH"]
-        == "${PANTHEON_MANAGEMENT_AI_STORE_PATH:-/data/bff/management-ai-conversations.sqlite3}"
+        == "${PANTHEON_MANAGEMENT_AI_STORE_PATH:-/data/bff/management-ai-conversations.json}"
     )
     assert (
         env["PANTHEON_MANAGEMENT_AI_ATTACHMENT_STORE_PATH"]

@@ -30749,7 +30749,7 @@ def _mgmt_nl_handle_control_command(
         provider_status=provider_status,
         ui_actions=[],
     )
-    _MGMT_NL_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    _mgmt_nl_idempotency_put(resolved_key, request_hash=request_hash, result=result)
     return JSONResponse(status_code=202, content=result)
 
 
@@ -30829,7 +30829,9 @@ def _mgmt_nl_record_high_risk_refusal(
 
 
 def _mgmt_nl_idempotency_check(resolved_key: str, request_hash: str) -> Optional[Dict[str, Any]]:
-    existing = _MGMT_NL_IDEMPOTENCY.get(resolved_key)
+    existing = _management_ai_conversation_store().get_idempotency(resolved_key)
+    if existing is None:
+        existing = _MGMT_NL_IDEMPOTENCY.get(resolved_key)
     if existing is None:
         return None
     if existing.get("request_hash") != request_hash:
@@ -30842,6 +30844,20 @@ def _mgmt_nl_idempotency_check(resolved_key: str, request_hash: str) -> Optional
             suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
         )
     return existing.get("result")
+
+
+def _mgmt_nl_idempotency_put(
+    resolved_key: str,
+    *,
+    request_hash: str,
+    result: Dict[str, Any],
+) -> None:
+    _management_ai_conversation_store().put_idempotency(
+        resolved_key,
+        request_hash=request_hash,
+        result=result,
+    )
+    _MGMT_NL_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
 
 
 def _mgmt_nl_surface_confidence(surfaces: Dict[str, Any]) -> str:
@@ -32030,7 +32046,7 @@ async def bff_management_nl_ask(
         provider_status=provider_status,
         ui_actions=actions,
     )
-    _MGMT_NL_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    _mgmt_nl_idempotency_put(resolved_key, request_hash=request_hash, result=result)
     return JSONResponse(status_code=202, content=result)
 
 

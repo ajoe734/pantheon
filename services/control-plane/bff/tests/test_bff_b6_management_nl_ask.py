@@ -252,7 +252,7 @@ def test_nl_ask_assistant_transcript_survives_conversation_store_reload() -> Non
     with tempfile.TemporaryDirectory() as td:
         original_read_store = bff_main.read_store
         original_conversation_store = bff_main._MGMT_AI_CONVERSATION_STORE
-        store_path = os.path.join(td, "management-ai.sqlite3")
+        store_path = os.path.join(td, "management-ai.json")
         try:
             bff_main.read_store = ReadSurfaceStore(
                 os.path.join(td, "read_surfaces.json"),
