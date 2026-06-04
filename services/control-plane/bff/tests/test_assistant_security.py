@@ -297,13 +297,13 @@ def test_execute_low_risk_returns_receipt_shape() -> None:
     assert receipt.entity_type == "AuditExport"
     assert receipt.risk_level == "low"
     assert receipt.actor_id == "op-001"
-    assert receipt.status in ("executed", "admitted", "failed", "timeout")
+    assert receipt.status in ("executed", "admitted")
     assert receipt.executed_at  # non-empty ISO timestamp
     assert receipt.source == "assistant_tool_contract"
 
 
 def test_execute_medium_risk_with_reason_returns_receipt() -> None:
-    """Medium-risk execution with reason produces a receipt."""
+    """Medium-risk execution with reason and confirmed=True produces an admitted receipt."""
     receipt = execute_governed_tool(
         action_id="JobAction",
         entity_type="Job",
@@ -312,11 +312,50 @@ def test_execute_medium_risk_with_reason_returns_receipt() -> None:
         actor_id="op-001",
         actor_roles=["operator"],
         reason="cancel stale paper-loop job",
+        confirmed=True,
     )
     assert receipt.receipt_id.startswith("asst-receipt-")
     assert receipt.action_id == "JobAction"
     assert receipt.risk_level == "medium"
     assert receipt.reason == "cancel stale paper-loop job"
+    assert receipt.source == "assistant_tool_contract"
+    assert receipt.confirmation_marker == "operator_confirmed"
+
+
+def test_execute_medium_risk_requires_confirmation() -> None:
+    """Medium-risk execute raises ToolValidationError when confirmed=False even if reason is present."""
+    import pytest
+    with pytest.raises(ToolValidationError) as exc_info:
+        execute_governed_tool(
+            action_id="PersonaAction",
+            entity_type="Persona",
+            entity_id="p-001",
+            params={},
+            actor_id="op-001",
+            actor_roles=["operator"],
+            reason="retire draft persona p-123",
+            confirmed=False,
+        )
+    assert exc_info.value.field_name == "confirmed"
+
+
+def test_execute_medium_risk_persona_action_with_confirmation_returns_admitted_receipt() -> None:
+    """PersonaAction with reason and confirmed=True produces an admitted receipt with confirmation_marker."""
+    receipt = execute_governed_tool(
+        action_id="PersonaAction",
+        entity_type="Persona",
+        entity_id="p-001",
+        params={},
+        actor_id="op-001",
+        actor_roles=["operator"],
+        reason="retire draft persona p-123",
+        confirmed=True,
+    )
+    assert receipt.status in ("admitted", "executed")
+    assert receipt.confirmation_marker == "operator_confirmed"
+    assert receipt.reason == "retire draft persona p-123"
+    assert receipt.risk_level == "medium"
+    assert receipt.action_id == "PersonaAction"
     assert receipt.source == "assistant_tool_contract"
 
 
@@ -439,3 +478,107 @@ def test_tool_execute_route_requires_reason_for_medium_risk(tmp_path) -> None:
         headers=OPERATOR_TOOL_HEADERS,
     )
     assert resp.status_code == 422
+
+
+def test_tool_execute_route_string_false_does_not_bypass_medium_risk_gate(tmp_path) -> None:
+    """confirmed='false' (string) must not pass the medium-risk gate.
+
+    bool('false') == True in Python, so the route must use `is True` not
+    bool() when extracting confirmed from the JSON payload.
+    """
+    client = TestClient(bff_main.app)
+    resp = client.post(
+        "/bff/assistant/tools/execute",
+        json={
+            "action_id": "PersonaAction",
+            "entity_type": "Persona",
+            "entity_id": "p-001",
+            "params": {},
+            "reason": "retire draft persona p-123",
+            "confirmed": "false",
+        },
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert resp.status_code == 422
+
+
+def test_tool_execute_route_integer_one_does_not_bypass_medium_risk_gate(tmp_path) -> None:
+    """confirmed=1 (integer) must not pass the medium-risk gate.
+
+    bool(1) == True but the route requires the literal JSON boolean true.
+    """
+    client = TestClient(bff_main.app)
+    resp = client.post(
+        "/bff/assistant/tools/execute",
+        json={
+            "action_id": "PersonaAction",
+            "entity_type": "Persona",
+            "entity_id": "p-001",
+            "params": {},
+            "reason": "retire draft persona p-123",
+            "confirmed": 1,
+        },
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert resp.status_code == 422
+
+
+def test_execute_governed_tool_direct_string_false_does_not_bypass_medium_risk_gate() -> None:
+    """execute_governed_tool called directly with confirmed='false' must raise ToolValidationError.
+
+    bool('false') is True so `not confirmed` would silently pass; `confirmed is not True`
+    is required at the contract boundary, not just at the HTTP route layer.
+    """
+    import pytest
+    with pytest.raises(ToolValidationError) as exc_info:
+        execute_governed_tool(
+            action_id="PersonaAction",
+            entity_type="Persona",
+            entity_id="p-001",
+            params={},
+            actor_id="op-001",
+            actor_roles=["operator"],
+            reason="retire draft persona p-123",
+            confirmed="false",  # type: ignore[arg-type]
+        )
+    assert exc_info.value.field_name == "confirmed"
+
+
+def test_execute_governed_tool_direct_integer_one_does_not_bypass_medium_risk_gate() -> None:
+    """execute_governed_tool called directly with confirmed=1 must raise ToolValidationError.
+
+    bool(1) is True so `not confirmed` would silently pass; the gate requires the literal bool True.
+    """
+    import pytest
+    with pytest.raises(ToolValidationError) as exc_info:
+        execute_governed_tool(
+            action_id="PersonaAction",
+            entity_type="Persona",
+            entity_id="p-001",
+            params={},
+            actor_id="op-001",
+            actor_roles=["operator"],
+            reason="retire draft persona p-123",
+            confirmed=1,  # type: ignore[arg-type]
+        )
+    assert exc_info.value.field_name == "confirmed"
+
+
+def test_tool_execute_route_boolean_true_passes_medium_risk_gate(tmp_path) -> None:
+    """Only the explicit JSON boolean true passes the medium-risk confirmation gate."""
+    client = TestClient(bff_main.app)
+    resp = client.post(
+        "/bff/assistant/tools/execute",
+        json={
+            "action_id": "PersonaAction",
+            "entity_type": "Persona",
+            "entity_id": "p-001",
+            "params": {},
+            "reason": "retire draft persona p-123",
+            "confirmed": True,
+        },
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert resp.status_code == 201
+    data = resp.json()["data"]
+    assert data["confirmation_marker"] == "operator_confirmed"
