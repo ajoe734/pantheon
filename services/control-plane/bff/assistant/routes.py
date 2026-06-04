@@ -28,7 +28,8 @@ from .mode_policy import (
     user_mode_capability_summary,
     PRODUCT_DEFAULT_MODE,
 )
-from .models import AssistantContextPack, AssistantContextPackRequest, AssistantContextPackResponse, AssistantMode
+from .models import AssistantContextPack, AssistantContextPackRequest, AssistantContextPackResponse, AssistantMode, OrchestratorStatusResponse
+from .orchestrator_status import read_orchestrator_status
 from .tool_contracts import (
     ASSISTANT_TOOL_ALLOWLIST,
     ToolNotAllowedError,
@@ -361,6 +362,25 @@ def create_assistant_router(
                 reason=str(payload.get("reason") or "operator_deactivated").strip(),
             )
         }
+
+    # ------------------------------------------------------------------
+    # Orchestrator status readback (ASST-INTEG-007)
+    # ------------------------------------------------------------------
+
+    @router.get("/orchestrator/status")
+    async def get_orchestrator_status(
+        authorization: Optional[str] = Header(default=None),
+    ) -> dict[str, Any]:
+        """Return the current orchestrator status, tasks, and worker activity.
+
+        Assistant uses this to report CI/CD and worker progress to the user
+        without needing direct shell or provider credentials.
+        """
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+
+        status = read_orchestrator_status()
+        return {"data": status.model_dump(mode="json", by_alias=True)}
 
     # ------------------------------------------------------------------
     # Governed tool contract routes (ASST-INTEG-004)
