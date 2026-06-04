@@ -671,6 +671,8 @@ class AssistantProviderInvokeRequest(BaseModel):
     prompt: str
     context_pack: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
+    messages: Optional[List[Dict[str, Any]]] = None
+    attachments: Optional[List[Dict[str, Any]]] = None
 
 
 def _assistant_provider_runtime_error_response(exc: AssistantProviderRuntimeError) -> JSONResponse:
@@ -734,6 +736,8 @@ def invoke_codex_provider(
                 prompt=req.prompt,
                 context_pack=req.context_pack or {},
                 metadata=metadata,
+                messages=req.messages,
+                attachments=req.attachments,
             )
         )
     except CodexProviderError as exc:

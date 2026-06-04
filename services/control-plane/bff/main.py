@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import hmac
 import json
@@ -31394,6 +31395,113 @@ def _mgmt_nl_provider_status(
     return payload
 
 
+def _mgmt_nl_provider_supports_multimodal(provider: str) -> bool:
+    return str(provider or "").strip().lower() in {"codex", "codex_cli"}
+
+
+def _mgmt_nl_multimodal_attachment_payload(
+    attachments: Optional[List[Dict[str, Any]]],
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    image_parts: List[Dict[str, Any]] = []
+    attachment_summaries: List[Dict[str, Any]] = []
+    errors: List[Dict[str, Any]] = []
+    store = _management_ai_conversation_store()
+    for attachment in attachments or []:
+        if not isinstance(attachment, dict):
+            continue
+        attachment_id = str(
+            attachment.get("id")
+            or attachment.get("attachmentId")
+            or attachment.get("attachment_id")
+            or ""
+        ).strip()
+        mime_type = str(attachment.get("mimeType") or attachment.get("mime_type") or "").strip().lower()
+        if not attachment_id or not mime_type.startswith("image/"):
+            continue
+        try:
+            found = store.find_attachment(attachment_id)
+            if found is None:
+                raise FileNotFoundError(attachment_id)
+            metadata, _turn = found
+            content, resolved_mime_type, filename = store.read_attachment(attachment_id, metadata)
+        except Exception as exc:  # noqa: BLE001 - provider should degrade, not fail the ask.
+            errors.append(
+                {
+                    "attachmentId": attachment_id,
+                    "attachment_id": attachment_id,
+                    "reason": "attachment_unavailable",
+                    "error": type(exc).__name__,
+                }
+            )
+            continue
+        clean_mime_type = str(resolved_mime_type or mime_type or "application/octet-stream").strip().lower()
+        data_url = f"data:{clean_mime_type};base64,{base64.b64encode(content).decode('ascii')}"
+        image_parts.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": data_url},
+                "attachmentId": attachment_id,
+                "attachment_id": attachment_id,
+                "mimeType": clean_mime_type,
+                "mime_type": clean_mime_type,
+                "filename": filename or attachment.get("filename") or attachment_id,
+                "sizeBytes": len(content),
+                "size_bytes": len(content),
+                "source": "management_ai_attachment_store",
+            }
+        )
+        attachment_summaries.append(
+            {
+                "attachmentId": attachment_id,
+                "attachment_id": attachment_id,
+                "kind": str(attachment.get("kind") or "image"),
+                "mimeType": clean_mime_type,
+                "mime_type": clean_mime_type,
+                "filename": filename or attachment.get("filename") or attachment_id,
+                "sizeBytes": len(content),
+                "size_bytes": len(content),
+                "source": "management_ai_attachment_store",
+            }
+        )
+    return image_parts, attachment_summaries, errors
+
+
+def _mgmt_nl_provider_multimodal_payload(
+    *,
+    prompt: str,
+    attachments: Optional[List[Dict[str, Any]]],
+) -> Optional[Dict[str, Any]]:
+    image_parts, attachment_summaries, errors = _mgmt_nl_multimodal_attachment_payload(attachments)
+    if not image_parts and not errors:
+        return None
+    content = [{"type": "text", "text": prompt}, *image_parts]
+    return {
+        "messages": [{"role": "user", "content": content}],
+        "attachments": image_parts,
+        "summary": {
+            "attempted": bool(attachments),
+            "forwarded": bool(image_parts),
+            "attachment_count": len(image_parts),
+            "unavailable_attachment_count": len(errors),
+            "attachments": attachment_summaries,
+            "errors": errors,
+        },
+    }
+
+
+def _mgmt_nl_multimodal_unsupported_error(exc: OpenClawOpsClientError) -> bool:
+    code = str(getattr(exc, "error_code", "") or "").strip().lower()
+    message = str(getattr(exc, "message", "") or str(exc)).strip().lower()
+    unsupported_tokens = ("multimodal", "image", "vision", "attachment")
+    return (
+        "unsupported" in code
+        and any(token in code for token in unsupported_tokens)
+    ) or (
+        "unsupported" in message
+        and any(token in message for token in unsupported_tokens)
+    )
+
+
 def _mgmt_nl_context_status(confidence: str) -> str:
     if confidence == "high":
         return "ok"
@@ -31683,6 +31791,32 @@ def _mgmt_nl_maybe_provider_answer(
         focus=focus,
         context_pack=context_pack,
     )
+    multimodal_payload = _mgmt_nl_provider_multimodal_payload(
+        prompt=prompt,
+        attachments=current_user_attachments,
+    )
+    multimodal_summary = (
+        multimodal_payload.get("summary")
+        if isinstance(multimodal_payload, dict)
+        else None
+    )
+    multimodal_supported = (
+        bool(multimodal_payload and multimodal_summary and multimodal_summary.get("forwarded"))
+        and _mgmt_nl_provider_supports_multimodal(provider)
+    )
+    multimodal_unsupported = bool(
+        multimodal_payload
+        and multimodal_summary
+        and multimodal_summary.get("forwarded")
+        and not multimodal_supported
+    )
+    if multimodal_unsupported:
+        multimodal_summary = {
+            **multimodal_summary,
+            "forwarded": False,
+            "reason": "multimodal_unsupported",
+            "fallback": "text_only",
+        }
     provider_started = time.monotonic()
     _management_ai_record_event(
         {
@@ -31700,28 +31834,22 @@ def _mgmt_nl_maybe_provider_answer(
             ),
             "context_pack_id": context_pack.get("context_pack_id"),
             "prompt_bytes": len(prompt.encode("utf-8")),
+            "multimodal": multimodal_summary,
         }
     )
-    try:
-        provider_payload = OpenClawOpsClient().invoke_assistant_provider(
-            provider=provider,
-            mode="user",
-            prompt=prompt,
-            context_pack=context_pack,
-            operator_id=identity.operator_id,
-            trace_id=run_id,
-            metadata={
-                "route": "POST /bff/management/nl/ask",
-                "session_id": session_id,
-                "message_id": message_id,
-                "trace_id": trace_id,
-                "provider_run_id": run_id,
-                "tenant_id": caller_tenant_id,
-                "audit_id": audit_id,
-                "attachments": current_user_attachments or [],
-            },
-        )
-    except OpenClawOpsClientError as exc:
+    metadata = {
+        "route": "POST /bff/management/nl/ask",
+        "session_id": session_id,
+        "message_id": message_id,
+        "trace_id": trace_id,
+        "provider_run_id": run_id,
+        "tenant_id": caller_tenant_id,
+        "audit_id": audit_id,
+        "attachments": current_user_attachments or [],
+        "multimodal": multimodal_summary,
+    }
+
+    def _provider_failure(error: OpenClawOpsClientError) -> Tuple[None, Dict[str, Any], List[Dict[str, Any]]]:
         duration_ms = max(0, int((time.monotonic() - provider_started) * 1000))
         _management_ai_record_event(
             {
@@ -31733,18 +31861,75 @@ def _mgmt_nl_maybe_provider_answer(
                 "actor_id": identity.operator_id,
                 "provider": provider,
                 "duration_ms": duration_ms,
-                "status_code": exc.status_code,
-                "error_code": exc.error_code,
-                "error_message": _management_ai_summary_value(exc.message),
+                "status_code": error.status_code,
+                "error_code": error.error_code,
+                "error_message": _management_ai_summary_value(error.message),
+                "multimodal": multimodal_summary,
             }
         )
-        return None, _mgmt_nl_provider_status(
+        status = _mgmt_nl_provider_status(
             provider=provider,
             enabled=True,
             status="degraded",
-            reason=exc.error_code,
+            reason=error.error_code,
             run_id=run_id,
-        ), []
+        )
+        if multimodal_summary:
+            status["multimodal"] = multimodal_summary
+        return None, status, []
+
+    invoke_kwargs: Dict[str, Any] = {
+        "provider": provider,
+        "mode": "user",
+        "prompt": prompt,
+        "context_pack": context_pack,
+        "operator_id": identity.operator_id,
+        "trace_id": run_id,
+        "metadata": metadata,
+    }
+    if multimodal_supported and multimodal_payload:
+        invoke_kwargs["messages"] = multimodal_payload.get("messages")
+        invoke_kwargs["attachments"] = multimodal_payload.get("attachments")
+
+    try:
+        provider_payload = OpenClawOpsClient().invoke_assistant_provider(**invoke_kwargs)
+    except OpenClawOpsClientError as exc:
+        if not (multimodal_payload and multimodal_supported and _mgmt_nl_multimodal_unsupported_error(exc)):
+            return _provider_failure(exc)
+        multimodal_unsupported = True
+        multimodal_summary = {
+            **(multimodal_summary or {}),
+            "forwarded": False,
+            "reason": "multimodal_unsupported",
+            "fallback": "text_only",
+        }
+        metadata["multimodal"] = multimodal_summary
+        _management_ai_record_event(
+            {
+                "event_type": "management_ai.provider.multimodal_unsupported",
+                "session_id": session_id,
+                "message_id": message_id,
+                "trace_id": trace_id,
+                "provider_run_id": run_id,
+                "actor_id": identity.operator_id,
+                "provider": provider,
+                "error_code": exc.error_code,
+                "error_message": _management_ai_summary_value(exc.message),
+                "multimodal": multimodal_summary,
+            }
+        )
+        try:
+            provider_payload = OpenClawOpsClient().invoke_assistant_provider(
+                provider=provider,
+                mode="user",
+                prompt=prompt,
+                context_pack=context_pack,
+                operator_id=identity.operator_id,
+                trace_id=run_id,
+                metadata=metadata,
+            )
+        except OpenClawOpsClientError as retry_exc:
+            return _provider_failure(retry_exc)
 
     answer = _mgmt_nl_extract_provider_answer(provider_payload)
     actions = _mgmt_nl_extract_provider_actions(
@@ -31769,16 +31954,20 @@ def _mgmt_nl_maybe_provider_answer(
             "action_count": len(actions),
             "allowed_action_kinds": sorted(allowed_action_kinds),
             "output_summary": _management_ai_provider_output_summary(provider_payload),
+            "multimodal": multimodal_summary,
         }
     )
     if not answer:
-        return None, _mgmt_nl_provider_status(
+        empty_status = _mgmt_nl_provider_status(
             provider=provider,
             enabled=True,
             status="degraded",
             reason="provider_empty_answer",
             run_id=run_id,
-        ), []
+        )
+        if multimodal_summary:
+            empty_status["multimodal"] = multimodal_summary
+        return None, empty_status, []
     status = _mgmt_nl_provider_status(
         provider=str((data or {}).get("provider") or provider),
         enabled=True,
@@ -31786,6 +31975,10 @@ def _mgmt_nl_maybe_provider_answer(
         run_id=run_id,
         used=True,
     )
+    if multimodal_summary:
+        status["multimodal"] = multimodal_summary
+    if multimodal_unsupported:
+        status["reason"] = "multimodal_unsupported"
     if isinstance(data, dict) and data.get("redaction") is not None:
         status["redaction"] = data.get("redaction")
     return answer, status, actions

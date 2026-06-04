@@ -57,6 +57,8 @@ class ProviderInvocationRequest:
     prompt: str
     context_pack: Mapping[str, Any] | None = None
     metadata: Mapping[str, Any] | None = None
+    messages: Any = None
+    attachments: Any = None
 
 
 @dataclass(frozen=True)
@@ -131,6 +133,10 @@ class AssistantProviderRuntime:
             "context_pack": request.context_pack if request.context_pack is not None else {},
             "metadata": request.metadata if request.metadata is not None else {},
         }
+        if request.messages is not None:
+            invocation_payload["messages"] = request.messages
+        if request.attachments is not None:
+            invocation_payload["attachments"] = request.attachments
         invocation_redaction = self._redact(
             invocation_payload,
             mode=request.mode,

@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "task_id": "MGMT-AI-PERSIST-P0-WRITE-004",
+  "archived_at": "2026-06-04T04:25:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-AI-PERSIST-P0-WRITE-004",
+    "title": "Durable Idempotency-Key - replay original response with zero duplicate turns",
+    "summary_zh": null,
+    "phase": "Sprint MGMT-AI-PERSIST / EPIC-MGMT-AI-PERSIST-P0-WRITE",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MGMT-AI-PERSIST-P0-WRITE-002"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_management_ai_persistence_2026-06-03/MANAGEMENT_AI_PERSISTENCE_GAP_SPEC.md;services/control-plane/bff/main.py;services/control-plane/bff/assistant_conversation_store.py;services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py"
+    ],
+    "acceptance": [
+      "Replace the in-memory _MGMT_NL_IDEMPOTENCY dict (main.py:29251) with the store idempotency table;On nl/ask resolve the key via _resolve_final_idempotency_key then check the store: matching request_hash replays the stored response_json and writes ZERO new turns; missing key proceeds and records key+hash+response after success;Mismatched request_hash for the same key keeps the existing 409 behavior;Idempotency survives a BFF restart (durable) and is consistent across workers when the store is shared;pytest case idempotency_no_dup covers replay returns identical body plus turn count unchanged after replay plus restart-then-replay still dedups"
+    ],
+    "next": "Owner finalized after PR #915 merged to dev at e3eab3f5dff0d92259df5ae02c719ae482b82517; verified pytest management persistence and idempotency replay suites.",
+    "last_update": "2026-06-04T04:25:44Z",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-04T04:25:44Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-ai-persist-p0-write-004",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-AI-PERSIST-P0-WRITE-004",
+      "git_clean_required": false,
+      "commit": "74ca88649239db0c0e952a10c33d12b5d0ec9faf",
+      "commit_subject": "MGMT-AI-PERSIST-P0-WRITE-004: replay stored NL ask response",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-AI-PERSIST-P0-WRITE-004",
+        "Reviewer": "Claude",
+        "Verified": "pytest services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py; pytest services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py services/control-plane/bff/tests/test_management_nl_assistant_provider.py -k 'idempotency or persist_turns or replay'"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-AI-PERSIST-P0-WRITE-004",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "6c3640b3f66676a0530c99f9c84db1b9435f5c2c",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-AI-PERSIST-P0-WRITE-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "PR #915 merged into dev (merge e3eab3f5, head 74ca8864). Durable NL ask idempotency now replays the stored response body verbatim and writes zero duplicate turns; focused pytest passed. Please review/approve so owner can run done closeout.",
+      "status": "done",
+      "created_at": "2026-06-04T04:14:27Z",
+      "resolved_at": "2026-06-04T04:19:07Z"
+    },
+    {
+      "task_id": "MGMT-AI-PERSIST-P0-WRITE-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation approved: verbatim JSON clone on replay path is correct and minimal; tests assert strict body equality plus zero duplicate turns; audit event preserved. Owner may proceed with done closeout.",
+      "status": "done",
+      "created_at": "2026-06-04T04:19:07Z",
+      "resolved_at": "2026-06-04T04:25:45Z"
+    }
+  ],
+  "blockers": []
+}
