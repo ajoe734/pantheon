@@ -367,6 +367,41 @@ def test_postgres_assistant_conversation_store_roundtrip_when_database_available
     assert reloaded.get_idempotency("idem-key-1")["result"]["status"] == "accepted"
 
 
+def test_postgres_assistant_conversation_bootstrap_uses_valid_index_name(monkeypatch) -> None:
+    executed: list[str] = []
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, sql, *args):
+            executed.append(str(sql))
+            return None
+
+    store = PostgresAssistantConversationStore(
+        dsn="postgresql://example.invalid/pantheon",
+        schema="management_ai",
+        surface="assistant_conversation",
+        owner_service="operator-bff-test",
+        bootstrap=False,
+    )
+    monkeypatch.setattr(store, "_connect", lambda: FakeConnection())
+
+    store.bootstrap()
+
+    create_index_sql = " ".join(
+        next(sql for sql in executed if "CREATE INDEX IF NOT EXISTS" in sql).split()
+    )
+    assert (
+        'CREATE INDEX IF NOT EXISTS "assistant_conversation_turns_session_created_idx" '
+        'ON "management_ai"."assistant_conversation_turns"'
+    ) in create_index_sql
+    assert '"management_ai"."assistant_conversation_turns_session_created_idx"' not in create_index_sql
+
+
 # ---------------------------------------------------------------------------
 # Handler-level persistence tests (MGMT-AI-PERSIST-P0-WRITE-002)
 # These tests drive POST /bff/management/nl/ask via the FastAPI TestClient and

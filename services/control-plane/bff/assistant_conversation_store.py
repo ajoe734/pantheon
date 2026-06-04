@@ -563,7 +563,7 @@ class PostgresAssistantConversationStore:
         return psycopg.connect(self.dsn)
 
     def bootstrap(self) -> None:
-        index_name = quote_pg_identifier(f"{self.schema}.{self.surface}_turns_session_created_idx")
+        index_name = quote_pg_identifier(f"{self.surface}_turns_session_created_idx")
         with self._connect() as conn:
             ensure_postgres_schema(conn, self.schema)
             conn.execute(
