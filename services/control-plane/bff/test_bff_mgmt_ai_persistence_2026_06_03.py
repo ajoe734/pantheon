@@ -6,6 +6,7 @@ import os
 import sys
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Iterator
 from contextlib import contextmanager
 
@@ -206,6 +207,36 @@ def test_postgres_store_uses_management_ai_database_url_alias(monkeypatch) -> No
     assert store.backend == "postgres"
     assert captured["dsn"] == "postgresql://management-ai@postgres/pantheon"
     assert captured["schema"] == "management_ai"
+
+
+def test_postgres_assistant_conversation_bootstrap_uses_unqualified_index_name(monkeypatch) -> None:
+    statements: list[str] = []
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def execute(self, sql, params=()):
+            statements.append(sql)
+            return None
+
+    conn = FakeConnection()
+    monkeypatch.setitem(sys.modules, "psycopg", SimpleNamespace(connect=lambda dsn: conn))
+
+    PostgresAssistantConversationStore(
+        dsn="postgresql://management-ai@postgres/pantheon",
+        schema="management_ai",
+        surface="assistant_conversation",
+        owner_service="operator-bff",
+    )
+
+    create_index = next(statement for statement in statements if "CREATE INDEX IF NOT EXISTS" in statement)
+    assert 'CREATE INDEX IF NOT EXISTS "assistant_conversation_turns_session_created_idx"' in create_index
+    assert 'CREATE INDEX IF NOT EXISTS "management_ai".' not in create_index
+    assert 'ON "management_ai"."assistant_conversation_turns"' in create_index
 
 
 def test_bff_management_ai_read_conversations_store_backed_404_scope_and_full_turns(monkeypatch) -> None:
