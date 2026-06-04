@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "MGMT-AI-PERSIST-P0-WRITE-003",
+  "archived_at": "2026-06-04T04:33:20Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-AI-PERSIST-P0-WRITE-003",
+    "title": "Build provider context from server-side history (recentTurns demoted to hint)",
+    "summary_zh": null,
+    "phase": "Sprint MGMT-AI-PERSIST / EPIC-MGMT-AI-PERSIST-P0-WRITE",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MGMT-AI-PERSIST-P0-WRITE-002"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_management_ai_persistence_2026-06-03/MANAGEMENT_AI_PERSISTENCE_GAP_SPEC.md;services/control-plane/bff/main.py;services/control-plane/bff/assistant_conversation_store.py;services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py"
+    ],
+    "acceptance": [
+      "Augment _mgmt_nl_provider_prompt path (main.py:30229) so the provider receives the full stored conversation history for the session ordered created_at ascending - not only question plus focus plus context_pack;Server-side history from the store is authoritative; FE conversation.recentTurns is treated as a hint only and never replaces stored truth;Apply a sane provider-side token/char budget when assembling history (oldest-first summarize or window) but the budget must exceed the FE 32KB window so server history is strictly richer;Acceptance: with FE sending only the last 2 recentTurns the assembled provider prompt still contains earlier turns from the store;pytest case history_to_provider asserts the provider prompt includes a turn that exists in the store but was omitted from the FE recentTurns payload"
+    ],
+    "next": "Closeout: PR #916 merged into dev at f27f3ff3; implementation commit 681c1018; verified pytest -q tests/test_management_nl_assistant_provider.py test_bff_mgmt_ai_persistence_2026_06_03.py (34 passed, 1 skipped: TEST_DATABASE_URL not set).",
+    "last_update": "2026-06-04T04:33:20Z",
+    "review_notes_zh": [
+      "Claude review approved provider history prompt: store-backed conversation window, 64KB provider budget, FE recentTurns as 32KB hint only, chronological windowing, and regression coverage for truncated FE recentTurns."
+    ],
+    "reviewer_approval": "Claude 2026-06-04T04:22:05Z",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-04T04:33:20Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-closeout-mgmt-ai-persist-p0-write-003",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "HEAD",
+      "git_clean_required": false,
+      "commit": "681c1018eaa8be723d777a9b7ad86b4c80770d79",
+      "commit_subject": "MGMT-AI-PERSIST-P0-WRITE-003: add provider history prompt",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "BFF Management NL provider context assembly and regression tests.",
+        "Not changing": "durable conversation store schema, readback route semantics, or attachment persistence.",
+        "Composes with": "MGMT-AI-PERSIST-P0-WRITE-002 durable turn writes and MGMT-AI-PERSIST-P0-READ-005 conversation readback.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-AI-PERSIST-P0-WRITE-003",
+        "Reviewer": "Claude",
+        "Verified": "pytest -q tests/test_management_nl_assistant_provider.py test_bff_mgmt_ai_persistence_2026_06_03.py"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "d8e8abfbfcf256dc87bbd86178d8814df039b836",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-AI-PERSIST-P0-WRITE-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implementation committed in 681c1018 and PR #916 is open with auto-merge enabled. Verified: pytest -q tests/test_management_nl_assistant_provider.py test_bff_mgmt_ai_persistence_2026_06_03.py (32 passed, 1 skipped).",
+      "status": "done",
+      "created_at": "2026-06-04T04:15:54Z",
+      "resolved_at": "2026-06-04T04:22:05Z"
+    },
+    {
+      "task_id": "MGMT-AI-PERSIST-P0-WRITE-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: provider history prompt correctly injects full store-backed conversation window (64KB budget, FE 32KB hint), windowing preserves chronological order, test confirms store-only turns appear in provider prompt when FE recentTurns is truncated. Returned to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-06-04T04:22:05Z",
+      "resolved_at": "2026-06-04T04:33:21Z"
+    }
+  ],
+  "blockers": []
+}

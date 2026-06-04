@@ -1,12 +1,17 @@
 {
   "version": 1,
-  "updated_at": "2026-06-04T01:41:23Z",
+  "updated_at": "2026-06-04T04:36:15Z",
   "counts": {
-    "total": 1399,
-    "completed": 1376,
+    "total": 1404,
+    "completed": 1381,
     "superseded": 23
   },
   "recent_terminal_ids": [
+    "MGMT-AI-PERSIST-P1-ATTACH-006",
+    "MGMT-AI-PERSIST-P0-WRITE-003",
+    "MGMT-AI-PERSIST-P0-WRITE-004",
+    "MGMT-AI-PERSIST-P0-WRITE-002",
+    "MGMT-AI-PERSIST-P0-READ-005",
     "MGMT-AI-PERSIST-P0-STORE-001",
     "ASST-INTEG-006",
     "ASST-INTEG-003",
@@ -21,11 +26,6 @@
     "ASST-FE-001",
     "ASST-OCGW-005",
     "ASST-BFF-001",
-    "ASST-BFF-002",
-    "ASST-SEC-001",
-    "ASST-OCGW-003",
-    "ASST-OCGW-004",
-    "ASST-OCGW-002",
-    "ASST-KERNEL-006"
+    "ASST-BFF-002"
   ]
 }

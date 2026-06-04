@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "task_id": "MGMT-AI-PERSIST-P1-ATTACH-006",
+  "archived_at": "2026-06-04T04:36:15Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-AI-PERSIST-P1-ATTACH-006",
+    "title": "Attachment ingest to object storage - DB stores metadata + storageUrl (not base64)",
+    "summary_zh": null,
+    "phase": "Sprint MGMT-AI-PERSIST / EPIC-MGMT-AI-PERSIST-P1-ATTACH",
+    "owner": "Codex2",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "MGMT-AI-PERSIST-P0-WRITE-002"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_management_ai_persistence_2026-06-03/MANAGEMENT_AI_PERSISTENCE_GAP_SPEC.md;services/control-plane/bff/main.py;services/control-plane/bff/assistant_conversation_store.py;services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py"
+    ],
+    "acceptance": [
+      "On nl/ask decode FE attachments[].dataBase64 and upload bytes to object storage (GCS bucket from env PANTHEON_MGMT_AI_ATTACH_BUCKET reusing existing BFF VM GCS creds);Persist ONLY metadata in the turn attachments JSON: kind mimeType filename sizeBytes storageUrl - never store base64 in the store;Enforce a per-attachment size cap plus per-request total cap plus a mimeType allowlist (images first) returning 413 or 422 on violation;GET conversations returns attachments[].url as a signed URL (or a BFF proxy URL) openable in a browser - never base64;pytest case attachment_storage covers base64 in -> storageUrl stored plus no base64 in the store row plus GET returns a signed/proxy url plus oversize rejected;Live verification after OPS: upload a small PNG then GET the conversation and open the returned url"
+    ],
+    "next": "Owner finalized: implementation PR #917 merged at a46e161a; closeout PR #918 merged at 931837f8. Verified py_compile, Management AI persistence pytest (6 passed, 1 skipped), assistant compose flags pytest (1 passed), provider attachment proxy pytest (1 passed), and closeout diff check.",
+    "last_update": "2026-06-04T04:36:15Z",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-04T04:36:15Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-ai-persist-p1-attach-006",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-AI-PERSIST-P1-ATTACH-006",
+      "git_clean_required": false,
+      "commit": "889beb78b5970fff59fd402fe1251051a70c232c",
+      "commit_subject": "MGMT-AI-PERSIST-P1-ATTACH-006: refresh closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-AI-PERSIST-P1-ATTACH-006",
+        "Reviewer": "Claude2",
+        "Verified": "git diff --check -- docs/04/pantheon_management_ai_persistence_2026-06-03/MGMT_AI_PERSIST_P1_ATTACH_006_CLOSEOUT.md"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-AI-PERSIST-P1-ATTACH-006",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "931837f8dc03682058889c60fad1693cff1df995",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-AI-PERSIST-P1-ATTACH-006",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Implementation anchored in commit 21beb182 and PR #917; focused validation passed. Ready for Claude2 review of attachment ingest metadata-only storage, caps, allowlist, and proxy URL readback.",
+      "status": "done",
+      "created_at": "2026-06-04T04:17:57Z",
+      "resolved_at": "2026-06-04T04:25:22Z"
+    },
+    {
+      "task_id": "MGMT-AI-PERSIST-P1-ATTACH-006",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Review approved: GCS+local object-store path, MIME allowlist, per-attachment/request/count caps, two-phase prepare-then-write, metadata-only turn rows, proxy URL readback with storageUrl stripped, 413/422 error shapes. All 6 tests pass (1 Postgres skipped). PR #917 merged.",
+      "status": "done",
+      "created_at": "2026-06-04T04:25:22Z",
+      "resolved_at": "2026-06-04T04:36:16Z"
+    }
+  ],
+  "blockers": []
+}
