@@ -234,3 +234,22 @@ Kernel/debug/repair mode:
 6. SA/SD generation produces archived documents with citations and an execution task packet.
 7. Dev collaboration dispatch uses existing supervisor/autoworker infrastructure and never shells directly from Web API.
 8. User-mode regression proves no shell, repo write, raw log, docker, secret, or provider-session access.
+
+## M4 Delivery Record (ASST-INTEG-004)
+
+Milestone M4 (Governed tools) delivered via PR #841 and PR #870.
+
+**Delivered artifacts:**
+- `services/control-plane/bff/assistant/tool_contracts.py`: governed tool contract layer with
+  preview → validate → confirm → execute → receipt flow
+- `services/control-plane/bff/command_executor.py`: AUDIT_EXPORT executor added to dispatch table
+- `services/control-plane/bff/assistant/routes.py`: governed tool HTTP endpoints with
+  `payload.get("confirmed") is True` gate
+- `services/control-plane/bff/tests/test_assistant_security.py`: 28 tests covering allowlist
+  denial, RBAC, confirmation gate (including non-bool regression tests), and receipt shape
+
+**Verified:** `python3 -m pytest services/control-plane/bff/tests/test_assistant_security.py -q`
+→ 28 passed. Strict confirmed gate: `confirmed is not True` rejects `confirmed='false'`,
+`confirmed=1`, and all truthy non-True values at both HTTP route and contract boundary.
+
+**Reviewer:** Codex2. Review approval recorded 2026-06-04T04:39:38Z.
