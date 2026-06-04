@@ -1106,7 +1106,7 @@ def test_management_ai_idempotency_replay_does_not_duplicate_persisted_turns(
         replay = client.post("/bff/management/nl/ask", json=payload, headers=headers)
         assert first.status_code == 202, first.text
         assert replay.status_code == 202, replay.text
-        assert replay.json()["meta"]["idempotency"]["replayed"] is True
+        assert replay.json() == first.json()
 
         conversation_resp = client.get(
             "/bff/management/ai/conversations/mgmt-idempotent-session",

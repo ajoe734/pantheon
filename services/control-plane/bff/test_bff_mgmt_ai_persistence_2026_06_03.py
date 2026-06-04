@@ -450,7 +450,8 @@ def test_persist_turns(tmp_path: Path) -> None:
             headers={**_OPERATOR_HEADERS, "Idempotency-Key": idem_key},
         )
         assert r1.status_code == 202, f"Idempotency first ask failed: {r1.text}"
-        meta1 = r1.json().get("meta", {})
+        first_body = r1.json()
+        meta1 = first_body.get("meta", {})
         assert meta1.get("idempotency", {}).get("replayed") is False, (
             "First request with key must NOT be a replay"
         )
@@ -461,10 +462,7 @@ def test_persist_turns(tmp_path: Path) -> None:
             headers={**_OPERATOR_HEADERS, "Idempotency-Key": idem_key},
         )
         assert r2.status_code == 202, f"Idempotency replay failed: {r2.text}"
-        meta2 = r2.json().get("meta", {})
-        assert meta2.get("idempotency", {}).get("replayed") is True, (
-            f"Second request with same key must be replayed, meta={meta2}"
-        )
+        assert r2.json() == first_body, "Replay must return the original stored response body verbatim"
 
         # Replay must not add extra turns: still 60 + 2 (from the idempotency ask) = 62.
         after_idem = store.list_turns(session_id)
@@ -476,3 +474,4 @@ def test_persist_turns(tmp_path: Path) -> None:
         idem_record = store.get_idempotency(idem_key)
         assert idem_record is not None, "Idempotency record must be written to durable store"
         assert isinstance(idem_record.get("request_hash"), str)
+        assert idem_record.get("result") == first_body
