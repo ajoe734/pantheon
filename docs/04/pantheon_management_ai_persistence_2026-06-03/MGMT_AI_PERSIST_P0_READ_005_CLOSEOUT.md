@@ -41,4 +41,4 @@ Result: `4 passed, 23 deselected`.
 
 This closeout records the approved delivery and does not broaden canonical architecture truth. Code behavior was already merged through PR #889; this artifact exists so the owner finalization commit can be task-scoped and auditable before the `done` transition.
 
-The closeout branch was refreshed with `origin/dev` at `0ce5f877` before publication so the final PR carries only this task's closeout evidence.
+The closeout branch was refreshed with `origin/dev` at `72bbf50f` before publication so the final PR carries only this task's closeout evidence.
