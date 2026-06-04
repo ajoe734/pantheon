@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-06-03 21:33:58
+Last updated: 2026-06-04 23:06:34
 
 ## Objective
 
@@ -25,12 +25,12 @@ Integrate Pantheon Management AI with existing BFF assistant surfaces plus OpenC
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Assignment created
-- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: Assignment created
-- `Codex`: integration, status-system, schema, acceptance; next: Assignment created
-- `Codex2`: integration, status-system, schema, acceptance; next: Assignment created
+- `Claude`: execution, control-plane, governance-review; next: No active assignment
+- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
+- `Codex`: integration, status-system, schema, acceptance; next: No active assignment
+- `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: Assignment created
-- `Claude2`: execution, control-plane, governance-review; next: Assignment created
+- `Claude2`: execution, control-plane, governance-review; next: No active assignment
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 - `Human/Ops`: human-gate, operations, signoff; next: No active assignment
 
@@ -40,62 +40,47 @@ Integrate Pantheon Management AI with existing BFF assistant surfaces plus OpenC
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `ASST-INTEG-001` | Sprint ASST-INTEG / Durable conversation truth | Unify Management AI durable conversation truth with assistant transcripts | Codex | todo | - | 把 Management AI 的 durable conversation store 與 /bff/assistant transcript/session surface 對齊，避免 dev/prod 仍有另一份 in-memory 對話真相。 |
-| `ASST-INTEG-002` | Sprint ASST-INTEG / Context mesh | Extend BFF assistant context mesh with UI hints BFF reads and docs citations | Codex2 | todo | `ASST-INTEG-001` | 擴充既有 context composer，讓小幫手同時吃 UI hint、RBAC-filtered BFF read surfaces、以及 docs/RAG citation。 |
-| `ASST-INTEG-004` | Sprint ASST-INTEG / Governed operation tools | Implement governed assistant operation tool contracts on existing BFF actions | Claude | todo | `ASST-INTEG-002` | 把小幫手的系統操作能力接到既有 action_catalog/command_executor/audit receipt，而不是直接操作 DOM 或 shell。 |
-| `ASST-INTEG-005` | Sprint ASST-INTEG / SA-SD generator | Add SA SD requirement capture and execution task generator | Claude2 | todo | `ASST-INTEG-001`, `ASST-INTEG-002` | 讓小幫手能從對話生成 requirement capture、SA、SD、execution task packet，並歸檔到既有 docs 與 task brief 位置。 |
-| `ASST-INTEG-006` | Sprint ASST-INTEG / Dev collaboration bridge | Bridge assistant-generated task packets into supervisor autoworker dispatch | Codex2 | todo | `ASST-INTEG-005` | 建立 signed task packet 到既有 ai_status/supervisor/autoworker 的橋接，不讓 Web API 直接 shell 到 VM。 |
-| `ASST-INTEG-007` | Sprint ASST-INTEG / Orchestrator status readback | Expose orchestrator worker PR CI and deploy status readback to assistant | Gemini | todo | `ASST-INTEG-006` | 讓小幫手可從既有 orchestrator/GitHub 狀態讀回 task、worker、PR、CI、deploy 進度，用於閉環回覆。 |
 | `ASST-INTEG-008` | Sprint ASST-INTEG / FE follow-up brief | Prepare execution-plans FE context registry and stale-session UX follow-up | Copilot | todo | `ASST-INTEG-001`, `ASST-INTEG-002` | 產出跨 repo FE follow-up brief：assistant-readable form registry、BFF 404 stale session UX、SSE degraded 診斷；本任務不直接修改 FE。 |
-| `ASST-INTEG-009` | Sprint ASST-INTEG / Security and mode regression | Add security mode and tool-boundary regression suite for assistant integration | Codex | todo | `ASST-INTEG-003`, `ASST-INTEG-004`, `ASST-INTEG-006` | 補 user-mode contraction、control-mode TTL/passphrase、tool allowlist、redaction、provider credential non-exposure 的安全回歸。 |
 
 ### External / Upstream Integration Work
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `ASST-INTEG-003` | Sprint ASST-INTEG / Provider routing | Route real assistant providers through existing OpenClaw adapter contracts | Codex | todo | `ASST-INTEG-001`, `ASST-INTEG-002` | 沿用 OpenClaw gateway adapter 的 readiness/provider invoke，不另建 gateway，並讓 dev 對 real provider 與 degraded 狀態誠實呈現。 |
+| _(none)_ | - | - | - | - | - | - |
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-06-02 23:37:18
-- Terminal tasks archived: `1393` total, `1370` completed, `23` superseded
+- Archive updated: 2026-06-04 21:57:22
+- Terminal tasks archived: `1408` total, `1385` completed, `23` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `ASST-INTEG-009` | Sprint ASST-INTEG / Security and mode regression | Add security mode and tool-boundary regression suite for assistant integration | Codex | completed | 2026-06-04 21:57:22 | `ai-task-archive/tasks/ASST-INTEG-009.json` |
+| `ASST-INTEG-004` | Sprint ASST-INTEG / Governed operation tools | Implement governed assistant operation tool contracts on existing BFF actions | Claude | completed | 2026-06-04 21:16:59 | `ai-task-archive/tasks/ASST-INTEG-004.json` |
+| `ASST-INTEG-007` | Sprint ASST-INTEG / Orchestrator status readback | Expose orchestrator worker PR CI and deploy status readback to assistant | Codex2 | completed | 2026-06-04 21:15:35 | `ai-task-archive/tasks/ASST-INTEG-007.json` |
+| `MGMT-AI-PERSIST-P1-ATTACH-007` | Sprint MGMT-AI-PERSIST / EPIC-MGMT-AI-PERSIST-P1-ATTACH | Forward attachments to OpenClaw/Codex provider as multimodal payload | Codex2 | completed | 2026-06-04 21:12:32 | `ai-task-archive/tasks/MGMT-AI-PERSIST-P1-ATTACH-007.json` |
+| `MGMT-AI-PERSIST-P1-ATTACH-006` | Sprint MGMT-AI-PERSIST / EPIC-MGMT-AI-PERSIST-P1-ATTACH | Attachment ingest to object storage - DB stores metadata + storageUrl (not base64) | Codex2 | completed | 2026-06-04 12:36:15 | `ai-task-archive/tasks/MGMT-AI-PERSIST-P1-ATTACH-006.json` |
+| `MGMT-AI-PERSIST-P0-WRITE-003` | Sprint MGMT-AI-PERSIST / EPIC-MGMT-AI-PERSIST-P0-WRITE | Build provider context from server-side history (recentTurns demoted to hint) | Codex | completed | 2026-06-04 12:33:20 | `ai-task-archive/tasks/MGMT-AI-PERSIST-P0-WRITE-003.json` |
+| `MGMT-AI-PERSIST-P0-WRITE-004` | Sprint MGMT-AI-PERSIST / EPIC-MGMT-AI-PERSIST-P0-WRITE | Durable Idempotency-Key - replay original response with zero duplicate turns | Codex | completed | 2026-06-04 12:25:44 | `ai-task-archive/tasks/MGMT-AI-PERSIST-P0-WRITE-004.json` |
+| `MGMT-AI-PERSIST-P0-WRITE-002` | Sprint MGMT-AI-PERSIST / EPIC-MGMT-AI-PERSIST-P0-WRITE | POST /bff/management/nl/ask - persist user + assistant turns durably (handler main.py:30467) | Claude2 | completed | 2026-06-04 12:04:36 | `ai-task-archive/tasks/MGMT-AI-PERSIST-P0-WRITE-002.json` |
+| `MGMT-AI-PERSIST-P0-READ-005` | Sprint MGMT-AI-PERSIST / EPIC-MGMT-AI-PERSIST-P0-READ | GET /bff/management/ai/conversations/{sessionId} - store-backed + 404 + owner/tenant scope | Codex | completed | 2026-06-04 11:48:22 | `ai-task-archive/tasks/MGMT-AI-PERSIST-P0-READ-005.json` |
+| `MGMT-AI-PERSIST-P0-STORE-001` | Sprint MGMT-AI-PERSIST / EPIC-MGMT-AI-PERSIST-P0-STORE | Postgres AssistantConversationStore (shared substrate) replacing deque + /tmp jsonl | Codex | completed | 2026-06-04 09:41:23 | `ai-task-archive/tasks/MGMT-AI-PERSIST-P0-STORE-001.json` |
+| `ASST-INTEG-006` | Sprint ASST-INTEG / Dev collaboration bridge | Bridge assistant-generated task packets into supervisor autoworker dispatch | Claude2 | completed | 2026-06-04 09:32:52 | `ai-task-archive/tasks/ASST-INTEG-006.json` |
+| `ASST-INTEG-003` | Sprint ASST-INTEG / Provider routing | Provider routing through existing OpenClaw adapter | Claude | completed | 2026-06-03 23:44:31 | `ai-task-archive/tasks/ASST-INTEG-003.json` |
+| `ASST-INTEG-005` | Sprint ASST-INTEG / SA-SD generator | SA/SD generator using existing docs and task-brief architecture | Claude2 | completed | 2026-06-03 23:23:19 | `ai-task-archive/tasks/ASST-INTEG-005.json` |
+| `ASST-INTEG-002` | Sprint ASST-INTEG / Context mesh | Context mesh over existing BFF assistant composer | Codex | completed | 2026-06-03 22:53:58 | `ai-task-archive/tasks/ASST-INTEG-002.json` |
+| `ASST-INTEG-001` | Sprint ASST-INTEG / Durable conversation truth | Unify Management AI durable conversation truth with assistant transcripts | Codex | completed | 2026-06-03 22:21:35 | `ai-task-archive/tasks/ASST-INTEG-001.json` |
 | `PROD-WRITES-001-V2` | Phase 8 / EPIC-LIVE-GATE | Enable production real writes (human gate) | Human/Ops | completed | 2026-06-02 23:37:18 | `ai-task-archive/tasks/PROD-WRITES-001-V2.json` |
 | `LIVE-SCALE-001-V2` | Phase 8 / EPIC-LIVE-GATE | Live capital scale-up (human gate) | Human/Ops | completed | 2026-06-02 23:37:18 | `ai-task-archive/tasks/LIVE-SCALE-001-V2.json` |
 | `ASST-USER-001` | Assistant OpenClaw Gateway Kernel/User Mode | Contract assistant into product-safe user mode | Claude | completed | 2026-06-02 23:36:42 | `ai-task-archive/tasks/ASST-USER-001.json` |
 | `ASST-FE-002` | Assistant OpenClaw Gateway Kernel/User Mode | Add assistant mode and provider UI signals | Codex | completed | 2026-06-02 23:36:41 | `ai-task-archive/tasks/ASST-FE-002.json` |
 | `ASST-KERNEL-007` | Assistant OpenClaw Gateway Kernel/User Mode | Implement repair-mode worktree workflow | Claude2 | completed | 2026-06-02 12:54:57 | `ai-task-archive/tasks/ASST-KERNEL-007.json` |
-| `ASST-FE-001` | Assistant OpenClaw Gateway Kernel/User Mode | Wire Ask Personas to BFF assistant flow | Copilot | completed | 2026-06-02 12:49:53 | `ai-task-archive/tasks/ASST-FE-001.json` |
-| `ASST-OCGW-005` | Assistant OpenClaw Gateway Kernel/User Mode | Add credential refresh smoke and runbook | Codex2 | completed | 2026-06-02 12:06:04 | `ai-task-archive/tasks/ASST-OCGW-005.json` |
-| `ASST-BFF-001` | Assistant OpenClaw Gateway Kernel/User Mode | Wire provider-backed /bff/agora/ask flow | Claude | completed | 2026-06-02 11:59:39 | `ai-task-archive/tasks/ASST-BFF-001.json` |
-| `ASST-BFF-002` | Assistant OpenClaw Gateway Kernel/User Mode | Add provider option for management NL ask | Codex | completed | 2026-06-02 11:45:14 | `ai-task-archive/tasks/ASST-BFF-002.json` |
-| `ASST-SEC-001` | Assistant OpenClaw Gateway Kernel/User Mode | Add assistant security regression suite | Codex2 | completed | 2026-06-02 11:38:06 | `ai-task-archive/tasks/ASST-SEC-001.json` |
-| `ASST-OCGW-003` | Assistant OpenClaw Gateway Kernel/User Mode | Implement Codex provider through OpenClaw gateway | Codex | completed | 2026-06-02 08:57:06 | `ai-task-archive/tasks/ASST-OCGW-003.json` |
-| `ASST-OCGW-004` | Assistant OpenClaw Gateway Kernel/User Mode | Implement Claude provider through OpenClaw gateway | Codex2 | completed | 2026-06-02 07:51:30 | `ai-task-archive/tasks/ASST-OCGW-004.json` |
-| `ASST-OCGW-002` | Assistant OpenClaw Gateway Kernel/User Mode | Add gateway CLI image and readiness probes | Claude | completed | 2026-06-01 18:09:11 | `ai-task-archive/tasks/ASST-OCGW-002.json` |
-| `ASST-KERNEL-006` | Assistant OpenClaw Gateway Kernel/User Mode | Implement OpenClaw command broker observe/debug allowlists | Codex2 | completed | 2026-06-01 09:16:06 | `ai-task-archive/tasks/ASST-KERNEL-006.json` |
-| `ASST-OCGW-001` | Assistant OpenClaw Gateway Kernel/User Mode | Add OpenClaw gateway credential mount contract | Codex | completed | 2026-06-01 08:38:18 | `ai-task-archive/tasks/ASST-OCGW-001.json` |
-| `ASST-KERNEL-003` | Assistant OpenClaw Gateway Kernel/User Mode | Implement assistant session and transcript store | Claude | completed | 2026-06-01 01:12:23 | `ai-task-archive/tasks/ASST-KERNEL-003.json` |
-| `ASST-KERNEL-001` | Assistant OpenClaw Gateway Kernel/User Mode | Implement assistant context-pack schema and BFF route | Codex | completed | 2026-06-01 00:32:48 | `ai-task-archive/tasks/ASST-KERNEL-001.json` |
-| `ASST-KERNEL-002` | Assistant OpenClaw Gateway Kernel/User Mode | Implement assistant redaction library | Codex2 | completed | 2026-06-01 00:23:21 | `ai-task-archive/tasks/ASST-KERNEL-002.json` |
-| `SENTINEL-RULE-COVERAGE-HEALTHREASON-001` | Sprint BFF-WRITE-GAP / EPIC-WRITE-GAP-P2-MISC | Add Sentinel rules covering 6 HealthReasonCode values (rule engine work; not an endpoint) | Claude | completed | 2026-05-30 00:35:43 | `ai-task-archive/tasks/SENTINEL-RULE-COVERAGE-HEALTHREASON-001.json` |
-| `BFF-WRITE-P0-LIFECYCLE-002` | Sprint BFF-WRITE-GAP / EPIC-WRITE-GAP-P0-LIFECYCLE | POST /bff/capital-pools/{id}/actions/ApprovePool (register in action_catalog) | Claude2 | completed | 2026-05-29 19:02:44 | `ai-task-archive/tasks/BFF-WRITE-P0-LIFECYCLE-002.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `ASST-INTEG-001` | Sprint ASST-INTEG / Durable conversation truth | Unify Management AI durable conversation truth with assistant transcripts | 把 Management AI 的 durable conversation store 與 /bff/assistant transcript/session surface 對齊，避免 dev/prod 仍有另一份 in-memory 對話真相。 | Codex | Claude | todo | - | 2026-06-03 21:33:51 | Assignment created |
-| `ASST-INTEG-002` | Sprint ASST-INTEG / Context mesh | Extend BFF assistant context mesh with UI hints BFF reads and docs citations | 擴充既有 context composer，讓小幫手同時吃 UI hint、RBAC-filtered BFF read surfaces、以及 docs/RAG citation。 | Codex2 | Claude2 | todo | `ASST-INTEG-001` | 2026-06-03 21:33:53 | Assignment created |
-| `ASST-INTEG-003` | Sprint ASST-INTEG / Provider routing | Route real assistant providers through existing OpenClaw adapter contracts | 沿用 OpenClaw gateway adapter 的 readiness/provider invoke，不另建 gateway，並讓 dev 對 real provider 與 degraded 狀態誠實呈現。 | Codex | Claude | todo | `ASST-INTEG-001`, `ASST-INTEG-002` | 2026-06-03 21:33:54 | Assignment created |
-| `ASST-INTEG-004` | Sprint ASST-INTEG / Governed operation tools | Implement governed assistant operation tool contracts on existing BFF actions | 把小幫手的系統操作能力接到既有 action_catalog/command_executor/audit receipt，而不是直接操作 DOM 或 shell。 | Claude | Codex2 | todo | `ASST-INTEG-002` | 2026-06-03 21:33:54 | Assignment created |
-| `ASST-INTEG-005` | Sprint ASST-INTEG / SA-SD generator | Add SA SD requirement capture and execution task generator | 讓小幫手能從對話生成 requirement capture、SA、SD、execution task packet，並歸檔到既有 docs 與 task brief 位置。 | Claude2 | Codex | todo | `ASST-INTEG-001`, `ASST-INTEG-002` | 2026-06-03 21:33:55 | Assignment created |
-| `ASST-INTEG-006` | Sprint ASST-INTEG / Dev collaboration bridge | Bridge assistant-generated task packets into supervisor autoworker dispatch | 建立 signed task packet 到既有 ai_status/supervisor/autoworker 的橋接，不讓 Web API 直接 shell 到 VM。 | Codex2 | Claude | todo | `ASST-INTEG-005` | 2026-06-03 21:33:56 | Assignment created |
-| `ASST-INTEG-007` | Sprint ASST-INTEG / Orchestrator status readback | Expose orchestrator worker PR CI and deploy status readback to assistant | 讓小幫手可從既有 orchestrator/GitHub 狀態讀回 task、worker、PR、CI、deploy 進度，用於閉環回覆。 | Gemini | Codex | todo | `ASST-INTEG-006` | 2026-06-03 21:33:57 | Assignment created |
 | `ASST-INTEG-008` | Sprint ASST-INTEG / FE follow-up brief | Prepare execution-plans FE context registry and stale-session UX follow-up | 產出跨 repo FE follow-up brief：assistant-readable form registry、BFF 404 stale session UX、SSE degraded 診斷；本任務不直接修改 FE。 | Copilot | Claude2 | todo | `ASST-INTEG-001`, `ASST-INTEG-002` | 2026-06-03 21:33:57 | Assignment created |
-| `ASST-INTEG-009` | Sprint ASST-INTEG / Security and mode regression | Add security mode and tool-boundary regression suite for assistant integration | 補 user-mode contraction、control-mode TTL/passphrase、tool allowlist、redaction、provider credential non-exposure 的安全回歸。 | Codex | Claude | todo | `ASST-INTEG-003`, `ASST-INTEG-004`, `ASST-INTEG-006` | 2026-06-03 21:33:58 | Assignment created |
 
 ## Handoff Queue
 
@@ -143,6 +128,15 @@ Do not read those omitted modules as open Pantheon backlog purely because they a
 
 ## Latest Checkpoints
 
+- 2026-05-16 01:52:26 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:52:26 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:52:28 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:52:31 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:52:32 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:52:37 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:52:38 Orchestrator: PostToolUse: Bash
+- 2026-05-16 01:52:42 Orchestrator: PreToolUse: Bash
+- 2026-05-16 01:52:43 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:52:47 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:52:48 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:52:52 Orchestrator: PreToolUse: Bash
@@ -154,12 +148,3 @@ Do not read those omitted modules as open Pantheon backlog purely because they a
 - 2026-05-16 01:53:08 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:53:08 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:53:13 Orchestrator: PreToolUse: Bash
-- 2026-06-03 21:33:51 Operator: `ASST-INTEG-001` Assigned ASST-INTEG-001 to Codex with reviewer Claude
-- 2026-06-03 21:33:53 Operator: `ASST-INTEG-002` Assigned ASST-INTEG-002 to Codex2 with reviewer Claude2
-- 2026-06-03 21:33:54 Operator: `ASST-INTEG-003` Assigned ASST-INTEG-003 to Codex with reviewer Claude
-- 2026-06-03 21:33:54 Operator: `ASST-INTEG-004` Assigned ASST-INTEG-004 to Claude with reviewer Codex2
-- 2026-06-03 21:33:55 Operator: `ASST-INTEG-005` Assigned ASST-INTEG-005 to Claude2 with reviewer Codex
-- 2026-06-03 21:33:56 Operator: `ASST-INTEG-006` Assigned ASST-INTEG-006 to Codex2 with reviewer Claude
-- 2026-06-03 21:33:57 Operator: `ASST-INTEG-007` Assigned ASST-INTEG-007 to Gemini with reviewer Codex
-- 2026-06-03 21:33:57 Operator: `ASST-INTEG-008` Assigned ASST-INTEG-008 to Copilot with reviewer Claude2
-- 2026-06-03 21:33:58 Operator: `ASST-INTEG-009` Assigned ASST-INTEG-009 to Codex with reviewer Claude
