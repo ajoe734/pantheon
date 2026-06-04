@@ -246,7 +246,7 @@ class AssistantCodexProvider:
         context = self._command_context(mode, metadata)
         self._ensure_workspace_available(context)
         binary = self._require_binary()
-        cmd = self._build_command(binary=binary, prompt=prompt, context=context)
+        cmd = self._build_command(binary=binary, context=context)
         env = self._build_env()
         timeout = self._timeout_seconds()
         started = time.monotonic()
@@ -275,6 +275,7 @@ class AssistantCodexProvider:
                 env=env,
                 cwd=context.workspace,
                 check=False,
+                input=prompt,
             )
         except subprocess.TimeoutExpired as exc:
             duration_ms = _duration_ms(started)
@@ -307,6 +308,35 @@ class AssistantCodexProvider:
                 "Codex binary is not available inside the gateway container.",
                 status_code=503,
                 retryable=False,
+            ) from exc
+        except OSError as exc:
+            duration_ms = _duration_ms(started)
+            self._audit.record(
+                {
+                    "event_type": "assistant.provider.start_failed",
+                    "provider": CODEX_PROVIDER_ID,
+                    "runtime": PROVIDER_RUNTIME,
+                    **audit_context,
+                    "mode": mode,
+                    "sandbox": context.sandbox,
+                    "workspace_class": context.workspace_class,
+                    **({"repair_workflow": context.repair_workflow} if context.repair_workflow else {}),
+                    "duration_ms": duration_ms,
+                    "error_code": "CODEX_PROCESS_START_FAILED",
+                    "error_type": type(exc).__name__,
+                    "errno": getattr(exc, "errno", None),
+                }
+            )
+            raise CodexProviderError(
+                "CODEX_PROCESS_START_FAILED",
+                "Codex provider process could not be started.",
+                status_code=503,
+                retryable=True,
+                details={
+                    "duration_ms": duration_ms,
+                    "error_type": type(exc).__name__,
+                    "errno": getattr(exc, "errno", None),
+                },
             ) from exc
 
         duration_ms = _duration_ms(started)
@@ -367,7 +397,7 @@ class AssistantCodexProvider:
             "json_events": _parse_json_lines(completed.stdout),
         }
 
-    def _build_command(self, *, binary: str, prompt: str, context: _CommandContext) -> list[str]:
+    def _build_command(self, *, binary: str, context: _CommandContext) -> list[str]:
         return [
             binary,
             "exec",
@@ -379,7 +409,7 @@ class AssistantCodexProvider:
             "-c",
             'ask_for_approval="never"',
             "--json",
-            prompt,
+            "-",
         ]
 
     def _command_context(self, mode: str, metadata: Mapping[str, Any]) -> _CommandContext:
@@ -490,13 +520,14 @@ class AssistantCodexProvider:
             }
         try:
             completed = self._run(
-                self._build_command(binary=binary, prompt="Reply with exactly: ok", context=context),
+                self._build_command(binary=binary, context=context),
                 capture_output=True,
                 text=True,
                 timeout=min(30, self._timeout_seconds()),
                 env=self._build_env(),
                 cwd=context.workspace,
                 check=False,
+                input="Reply with exactly: ok",
             )
         except subprocess.TimeoutExpired:
             return {"ready": False, "auth": "unknown", "auth_status": "timeout", "reason": "codex_auth_probe_timeout"}
