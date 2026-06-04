@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import json
 import os
 import sys
 import uuid
@@ -28,6 +30,54 @@ def _management_ai_route_client(monkeypatch) -> TestClient:
         attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
     )
     return TestClient(bff_main.app, raise_server_exceptions=False)
+
+
+def test_management_ai_attachment_store_uses_gcs_bucket_metadata(monkeypatch) -> None:
+    image_bytes = b"\x89PNG\r\n\x1a\nstored-in-fake-gcs"
+    uploads: dict[str, dict[str, object]] = {}
+
+    class FakeBlob:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def upload_from_string(self, content: bytes, content_type: str | None = None) -> None:
+            uploads[self.name] = {"content": content, "content_type": content_type}
+
+        def download_as_bytes(self) -> bytes:
+            return uploads[self.name]["content"]  # type: ignore[return-value]
+
+    class FakeBucket:
+        def blob(self, name: str) -> FakeBlob:
+            return FakeBlob(name)
+
+    store = bff_main.ManagementAiAttachmentStore(
+        storage_path="off",
+        bucket_name="pantheon-test-attachments",
+    )
+    monkeypatch.setattr(store, "_gcs_bucket", lambda bucket_name=None: FakeBucket())
+
+    metadata = store.store_inline_attachment(
+        {
+            "kind": "image",
+            "mimeType": "image/png",
+            "filename": "screen.png",
+            "dataBase64": base64.b64encode(image_bytes).decode("ascii"),
+        },
+        session_id="mgmt-gcs-session",
+        turn_id="turn-gcs",
+    )
+
+    assert metadata["storageUrl"].startswith("gs://pantheon-test-attachments/management-ai-attachments/")
+    assert metadata["sizeBytes"] == len(image_bytes)
+    assert "dataBase64" not in metadata
+    object_name = metadata["objectName"]
+    assert uploads[object_name]["content"] == image_bytes
+    assert uploads[object_name]["content_type"] == "image/png"
+
+    content, mime_type, filename = store.read(metadata["id"], metadata)
+    assert content == image_bytes
+    assert mime_type == "image/png"
+    assert filename == "screen.png"
 
 # ---------------------------------------------------------------------------
 # Handler-level imports (used by the persist_turns handler tests below).
@@ -338,6 +388,153 @@ def _persist_client(tmp_path: Path, store_path: Path) -> Iterator[object]:
         bff_main.read_store = saved_read_store
         bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_NL_IDEMPOTENCY.update(saved_idem)
+
+
+def test_attachment_storage_base64_proxy_url_and_size_rejections(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """
+    ATTACH-006 acceptance: inline base64 attachments are decoded into the BFF
+    object store, turn rows keep metadata/storageUrl only, conversation GET
+    returns a proxy URL, and oversize payloads are rejected with 413.
+    """
+    from management_ai_store import ManagementAiConversationStore
+
+    monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "deterministic")
+    monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "false")
+    monkeypatch.setenv("PANTHEON_MGMT_AI_ATTACH_MAX_BYTES", "32")
+    monkeypatch.setenv("PANTHEON_MGMT_AI_ATTACH_MAX_REQUEST_BYTES", "48")
+
+    store_path = tmp_path / "mgmt-ai-attachment-storage.json"
+    image_bytes = b"\x89PNG\r\n\x1a\nok"
+    encoded = base64.b64encode(image_bytes).decode("ascii")
+
+    with _persist_client(tmp_path, store_path) as (client, store):
+        resp = client.post(
+            "/bff/management/nl/ask",
+            json={
+                "question": "Please inspect this screenshot.",
+                "sessionId": "attach-006-session",
+                "attachments": [
+                    {
+                        "kind": "image",
+                        "mimeType": "image/png",
+                        "filename": "screen.png",
+                        "sizeBytes": 999999,
+                        "dataBase64": encoded,
+                    }
+                ],
+            },
+            headers={**_OPERATOR_HEADERS, "Idempotency-Key": "attach-006-ok"},
+        )
+        assert resp.status_code == 202, resp.text
+
+        stored_turns = store.list_turns("attach-006-session")
+        stored_dump = json.dumps(stored_turns, ensure_ascii=False)
+        assert encoded not in stored_dump
+        assert "dataBase64" not in stored_dump
+        stored_attachment = stored_turns[0]["attachments"][0]
+        assert stored_attachment["storageUrl"].startswith("local://management-ai-attachments/")
+        assert stored_attachment["sizeBytes"] == len(image_bytes)
+        assert stored_attachment["mimeType"] == "image/png"
+
+        reloaded = ManagementAiConversationStore(storage_path=str(store_path))
+        reloaded_dump = json.dumps(reloaded.list_turns("attach-006-session"), ensure_ascii=False)
+        assert encoded not in reloaded_dump
+        assert "dataBase64" not in reloaded_dump
+
+        conversation_resp = client.get(
+            "/bff/management/ai/conversations/attach-006-session",
+            headers=_OPERATOR_HEADERS,
+        )
+        assert conversation_resp.status_code == 200, conversation_resp.text
+        conversation_dump = json.dumps(conversation_resp.json(), ensure_ascii=False)
+        assert encoded not in conversation_dump
+        assert "dataBase64" not in conversation_dump
+        attachment = conversation_resp.json()["data"]["turns"][0]["attachments"][0]
+        assert attachment["url"] == f"/bff/management/ai/attachments/{stored_attachment['id']}"
+        assert "storageUrl" not in attachment
+
+        attachment_resp = client.get(attachment["url"], headers=_OPERATOR_HEADERS)
+        assert attachment_resp.status_code == 200, attachment_resp.text
+        assert attachment_resp.content == image_bytes
+        assert attachment_resp.headers["content-type"].startswith("image/png")
+
+        too_large_resp = client.post(
+            "/bff/management/nl/ask",
+            json={
+                "question": "This attachment is too large.",
+                "sessionId": "attach-006-too-large",
+                "attachments": [
+                    {
+                        "kind": "image",
+                        "mimeType": "image/png",
+                        "filename": "too-large.png",
+                        "dataBase64": base64.b64encode(b"x" * 33).decode("ascii"),
+                    }
+                ],
+            },
+            headers={**_OPERATOR_HEADERS, "Idempotency-Key": "attach-006-too-large"},
+        )
+        assert too_large_resp.status_code == 413, too_large_resp.text
+        too_large_body = too_large_resp.json()
+        assert too_large_body["error"]["code"] == "REQUEST_TOO_LARGE"
+        assert too_large_body["error"]["details"]["precondition_failed"] == "management_ai_attachment_size"
+
+        total_too_large_resp = client.post(
+            "/bff/management/nl/ask",
+            json={
+                "question": "These attachments are too large together.",
+                "sessionId": "attach-006-total-too-large",
+                "attachments": [
+                    {
+                        "kind": "image",
+                        "mimeType": "image/png",
+                        "filename": "a.png",
+                        "dataBase64": base64.b64encode(b"a" * 25).decode("ascii"),
+                    },
+                    {
+                        "kind": "image",
+                        "mimeType": "image/png",
+                        "filename": "b.png",
+                        "dataBase64": base64.b64encode(b"b" * 25).decode("ascii"),
+                    },
+                ],
+            },
+            headers={**_OPERATOR_HEADERS, "Idempotency-Key": "attach-006-total-too-large"},
+        )
+        assert total_too_large_resp.status_code == 413, total_too_large_resp.text
+        total_body = total_too_large_resp.json()
+        assert total_body["error"]["code"] == "REQUEST_TOO_LARGE"
+        assert (
+            total_body["error"]["details"]["precondition_failed"]
+            == "management_ai_attachment_total_size"
+        )
+
+        unsupported_mime_resp = client.post(
+            "/bff/management/nl/ask",
+            json={
+                "question": "This attachment has a disallowed MIME type.",
+                "sessionId": "attach-006-bad-mime",
+                "attachments": [
+                    {
+                        "kind": "file",
+                        "mimeType": "text/plain",
+                        "filename": "note.txt",
+                        "dataBase64": base64.b64encode(b"plain text").decode("ascii"),
+                    }
+                ],
+            },
+            headers={**_OPERATOR_HEADERS, "Idempotency-Key": "attach-006-bad-mime"},
+        )
+        assert unsupported_mime_resp.status_code == 422, unsupported_mime_resp.text
+        unsupported_mime_body = unsupported_mime_resp.json()
+        assert unsupported_mime_body["error"]["code"] == "VALIDATION_FAILED"
+        assert (
+            unsupported_mime_body["error"]["details"]["precondition_failed"]
+            == "management_ai_attachment_mime_type"
+        )
 
 
 def test_persist_turns(tmp_path: Path) -> None:

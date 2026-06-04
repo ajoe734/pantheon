@@ -31,6 +31,7 @@ def test_dev_compose_enables_codex_assistant_provider_for_bff() -> None:
         env["PANTHEON_MANAGEMENT_AI_ATTACHMENT_STORE_PATH"]
         == "${PANTHEON_MANAGEMENT_AI_ATTACHMENT_STORE_PATH:-/data/bff/management-ai-attachments}"
     )
+    assert env["PANTHEON_MGMT_AI_ATTACH_BUCKET"] == "${PANTHEON_MGMT_AI_ATTACH_BUCKET:-}"
     assert (
         env["PANTHEON_MANAGEMENT_AI_AUDIT_PATH"]
         == "${PANTHEON_MANAGEMENT_AI_AUDIT_PATH:-/data/bff/management-ai-audit.jsonl}"

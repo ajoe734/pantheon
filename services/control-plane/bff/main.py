@@ -97,7 +97,7 @@ from action_catalog import get_action_catalog, get_catalog_entry
 from command_queue import CommandStore
 from command_executor import execute_command_with_status
 from session_lifecycle_store import SessionLifecycleStore
-from management_ai_store import ManagementAiAttachmentStore, ManagementAiConversationStore
+from management_ai_store import ManagementAiAttachmentError, ManagementAiAttachmentStore, ManagementAiConversationStore
 from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 from source_search_ops_client import (
     SearchIndexCommandClient,
@@ -29865,6 +29865,21 @@ def _management_ai_store_attachments(
             attachments,
             session_id=session_id,
             turn_id=turn_id,
+        )
+    except ManagementAiAttachmentError as exc:
+        status_code = int(getattr(exc, "status_code", 422) or 422)
+        code = ErrorCode.REQUEST_TOO_LARGE if status_code == 413 else ErrorCode.VALIDATION_FAILED
+        raise _bff_error(
+            status_code,
+            code,
+            (
+                "Management AI attachment payload is too large"
+                if status_code == 413
+                else "Management AI attachment payload is invalid"
+            ),
+            str(exc),
+            precondition_failed=getattr(exc, "precondition_failed", "management_ai_attachment"),
+            details_extra=getattr(exc, "details", {}),
         )
     except ValueError as exc:
         raise _bff_error(
