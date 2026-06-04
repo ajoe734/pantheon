@@ -170,9 +170,7 @@ def test_nl_ask_idempotency_replay_returns_cached() -> None:
                 # Context collection should not have been called again on replay
                 assert call_count["n"] == first_count, "Management surfaces re-queried on replay"
 
-                # Both responses should have the same message_id
-                assert resp1.json()["data"]["message_id"] == resp2.json()["data"]["message_id"]
-                assert resp2.json()["meta"]["idempotency"]["replayed"] is True
+                assert resp2.json() == resp1.json()
             finally:
                 bff_main._mgmt_nl_collect_context = original_collect
         finally:
@@ -234,7 +232,7 @@ def test_nl_ask_idempotency_replay_does_not_duplicate_assistant_transcript() -> 
             resp2 = client.post("/bff/management/nl/ask", json=payload, headers=headers)
             assert resp1.status_code == 202, resp1.text
             assert resp2.status_code == 202, resp2.text
-            assert resp2.json()["meta"]["idempotency"]["replayed"] is True
+            assert resp2.json() == resp1.json()
 
             transcript_resp = client.get(
                 "/bff/assistant/sessions/mgmt-asst-idem-session/transcript",
@@ -252,7 +250,7 @@ def test_nl_ask_assistant_transcript_survives_conversation_store_reload() -> Non
     with tempfile.TemporaryDirectory() as td:
         original_read_store = bff_main.read_store
         original_conversation_store = bff_main._MGMT_AI_CONVERSATION_STORE
-        store_path = os.path.join(td, "management-ai.sqlite3")
+        store_path = os.path.join(td, "management-ai.json")
         try:
             bff_main.read_store = ReadSurfaceStore(
                 os.path.join(td, "read_surfaces.json"),

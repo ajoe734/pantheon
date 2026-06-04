@@ -295,6 +295,8 @@ services:
       PANTHEON_MEMORY_API_URL: http://memory:8086
       PANTHEON_REGISTRY_URL: http://registry:8087
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      MANAGEMENT_AI_STORE_BACKEND: ${MANAGEMENT_AI_STORE_BACKEND:-postgres}
+      MANAGEMENT_AI_STORE_SCHEMA: ${MANAGEMENT_AI_STORE_SCHEMA:-management_ai}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
     volumes: !override
       - bff-data:/data/bff

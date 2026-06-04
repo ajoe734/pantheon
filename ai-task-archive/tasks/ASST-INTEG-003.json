@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "ASST-INTEG-003",
+  "archived_at": "2026-06-03T15:44:31Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASST-INTEG-003",
+    "title": "Provider routing through existing OpenClaw adapter",
+    "summary_zh": "沿用 OpenClaw gateway adapter 的 readiness/provider invoke，不另建 gateway，並讓 dev 對 real provider 與 degraded 狀態誠實呈現。",
+    "phase": "Sprint ASST-INTEG / Provider routing",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "ASST-INTEG-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;services/control-plane/bff/openclaw_ops_client.py;services/openclaw-gateway-adapter/main.py;services/openclaw-gateway-adapter/assistant_command_policy.py;scripts/openclaw-assistant-provider-smoke.sh;services/control-plane/bff/tests/test_management_nl_assistant_provider.py"
+    ],
+    "acceptance": [
+      "BFF calls existing OpenClaw adapter provider readiness and invoke routes;Dev uses real provider when configured;Missing credentials return explicit degraded provider status;Mock fallback is labelled local_or_ci_fallback only;FE-visible payloads never include credentials or local session paths;Smoke script proves readiness plus degraded cases"
+    ],
+    "next": "PR #836 merged to dev at 2026-06-03T15:09:34Z (ccf20cd2); 26/26 BFF provider tests passed; Claude route through OpenClaw adapter verified. Local branch sync created diverged history; implementation commit 8e888a13 with proper trailers is in dev.",
+    "last_update": "2026-06-03T15:44:31Z",
+    "task_class": "assistant_integration",
+    "auto_created_by": "dispatch_assistant_existing_architecture_2026-06-03",
+    "auto_generated": true,
+    "dependency_note": "Provider routing composes with context mesh but can progress from the durable assistant surfaces delivered by ASST-INTEG-001.",
+    "review_notes_zh": [
+      "Clean review: ASST-INTEG-003 stays within existing OpenClaw adapter/BFF routing, supports Claude route without replacing Codex path, and local BFF provider tests passed (51 passed)."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-03T15:44:31Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/asst-integ-003",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/ASST-INTEG-003",
+      "git_clean_required": false,
+      "commit": "65e7a060ae0164518af5e22015d8fc68c8bd696e",
+      "commit_subject": "ASST-INTEG-003: finalize provider routing closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Result": "26 passed in 10.27s",
+        "LLM-Agent": "Claude",
+        "Task-ID": "ASST-INTEG-003",
+        "Reviewer": "Codex",
+        "Verified": "26/26 tests/test_management_nl_assistant_provider.py passed"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/ASST-INTEG-003",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASST-INTEG-003",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-06-03T14:26:58Z",
+      "resolved_at": "2026-06-03T14:27:08Z"
+    },
+    {
+      "task_id": "ASST-INTEG-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Provider routing for Claude/claude_cli provider complete. Changes: (1) openclaw_ops_client.invoke_assistant_provider now routes claude/claude_cli to /api/openclaw-adapter/assistant/claude/invoke (separate URL from codex path); (2) invoke_assistant applies same routing; (3) BFF _mgmt_nl_maybe_provider_answer expanded allowlist to include claude/claude_cli; (4) _mgmt_nl_extract_provider_answer handles Claude flat text response; (5) audit log records correct route per provider; (6) 4 new tests added: claude endpoint routing, unsupported provider error, claude BFF invocation, claude degraded fallback. All 26 existing tests + 4 new tests pass (51 total with delta routes). PR #836 open with auto-merge. Please review for acceptance.",
+      "status": "done",
+      "created_at": "2026-06-03T14:38:46Z",
+      "resolved_at": "2026-06-03T14:59:57Z"
+    },
+    {
+      "task_id": "ASST-INTEG-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Codex review complete; PR #836 checked green and local BFF provider tests passed. Owner should finalize after merge.",
+      "status": "done",
+      "created_at": "2026-06-03T14:59:57Z",
+      "resolved_at": "2026-06-03T15:44:31Z"
+    }
+  ],
+  "blockers": []
+}

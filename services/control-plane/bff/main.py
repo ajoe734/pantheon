@@ -97,7 +97,7 @@ from action_catalog import get_action_catalog, get_catalog_entry
 from command_queue import CommandStore
 from command_executor import execute_command_with_status
 from session_lifecycle_store import SessionLifecycleStore
-from management_ai_store import ManagementAiAttachmentStore, ManagementAiConversationStore
+from management_ai_store import ManagementAiAttachmentError, ManagementAiAttachmentStore, ManagementAiConversationStore
 from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 from source_search_ops_client import (
     SearchIndexCommandClient,
@@ -29274,6 +29274,8 @@ _MGMT_NL_FOCUS_ALIASES = {
 _MGMT_NL_MAX_QUESTION_BYTES = 2048
 _MGMT_AI_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60
 _MGMT_NL_MAX_RECENT_TURNS = 12
+_MGMT_NL_FE_RECENT_TURNS_CHAR_BUDGET = 32 * 1024
+_MGMT_NL_PROVIDER_HISTORY_CHAR_BUDGET = 64 * 1024
 _MGMT_NL_UI_ACTION_KINDS = {
     "navigate",
     "openDrawer",
@@ -29779,6 +29781,36 @@ def _management_ai_require_session_access(
     )
 
 
+def _management_ai_session_not_found(session_id: str) -> HTTPException:
+    clean_session_id = str(session_id or "").strip()
+    return _bff_error(
+        404,
+        ErrorCode.RESOURCE_NOT_FOUND,
+        f"Management AI session not found: {clean_session_id!r}",
+        "management_ai_session_not_found",
+        precondition_failed="management_ai_session",
+    )
+
+
+def _management_ai_get_visible_session_or_404(
+    session_id: str,
+    identity: OperatorIdentity,
+    *,
+    tenant_id: Optional[str],
+) -> Dict[str, Any]:
+    clean_session_id = str(session_id or "").strip()
+    session = _management_ai_conversation_store().get_session(clean_session_id)
+    if session is None:
+        raise _management_ai_session_not_found(clean_session_id)
+    try:
+        _management_ai_require_session_access(session, identity, tenant_id=tenant_id)
+    except HTTPException as exc:
+        if exc.status_code == 403:
+            raise _management_ai_session_not_found(clean_session_id) from exc
+        raise
+    return session
+
+
 def _management_ai_get_session_or_404(
     session_id: str,
     identity: OperatorIdentity,
@@ -29788,13 +29820,7 @@ def _management_ai_get_session_or_404(
     clean_session_id = str(session_id or "").strip()
     session = _management_ai_conversation_store().get_session(clean_session_id)
     if session is None:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            f"Management AI session not found: {clean_session_id!r}",
-            "management_ai_session_not_found",
-            precondition_failed="management_ai_session",
-        )
+        raise _management_ai_session_not_found(clean_session_id)
     _management_ai_require_session_access(session, identity, tenant_id=tenant_id)
     return session
 
@@ -29841,6 +29867,21 @@ def _management_ai_store_attachments(
             attachments,
             session_id=session_id,
             turn_id=turn_id,
+        )
+    except ManagementAiAttachmentError as exc:
+        status_code = int(getattr(exc, "status_code", 422) or 422)
+        code = ErrorCode.REQUEST_TOO_LARGE if status_code == 413 else ErrorCode.VALIDATION_FAILED
+        raise _bff_error(
+            status_code,
+            code,
+            (
+                "Management AI attachment payload is too large"
+                if status_code == 413
+                else "Management AI attachment payload is invalid"
+            ),
+            str(exc),
+            precondition_failed=getattr(exc, "precondition_failed", "management_ai_attachment"),
+            details_extra=getattr(exc, "details", {}),
         )
     except ValueError as exc:
         raise _bff_error(
@@ -29922,19 +29963,82 @@ def _management_ai_server_conversation_context(
                 "trace_id": api_turn.get("trace_id"),
             }
         )
+    provider_turns, history_budget = _management_ai_provider_history_window(turns)
     return {
-        "recentTurns": turns,
-        "recent_turns": turns,
-        "allTurns": turns,
-        "all_turns": turns,
-        "turnCount": len(turns),
-        "turn_count": len(turns),
+        "recentTurns": provider_turns,
+        "recent_turns": provider_turns,
+        "allTurns": provider_turns,
+        "all_turns": provider_turns,
+        "turnCount": len(provider_turns),
+        "turn_count": len(provider_turns),
+        "storedTurnCount": len(turns),
+        "stored_turn_count": len(turns),
         "source": "server",
+        "historySource": "management_ai_store",
+        "history_source": "management_ai_store",
+        "historyCharBudget": history_budget["historyCharBudget"],
+        "history_char_budget": history_budget["historyCharBudget"],
+        "historyEstimatedChars": history_budget["historyEstimatedChars"],
+        "history_estimated_chars": history_budget["historyEstimatedChars"],
+        "historyTruncated": history_budget["historyTruncated"],
+        "history_truncated": history_budget["historyTruncated"],
+        "historyOmittedTurnCount": history_budget["historyOmittedTurnCount"],
+        "history_omitted_turn_count": history_budget["historyOmittedTurnCount"],
         "summary": client_hint.get("summary") or "",
         "clientHint": client_hint,
         "client_hint": client_hint,
         "maxRecentTurns": None,
         "max_recent_turns": None,
+    }
+
+
+def _management_ai_provider_history_size(turns: List[Dict[str, Any]]) -> int:
+    return len(json.dumps(turns, sort_keys=True, ensure_ascii=True))
+
+
+def _management_ai_provider_history_window(
+    turns: List[Dict[str, Any]],
+    *,
+    char_budget: int = _MGMT_NL_PROVIDER_HISTORY_CHAR_BUDGET,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    if _management_ai_provider_history_size(turns) <= char_budget:
+        return list(turns), {
+            "historyCharBudget": char_budget,
+            "historyEstimatedChars": _management_ai_provider_history_size(turns),
+            "historyTruncated": False,
+            "historyOmittedTurnCount": 0,
+        }
+
+    selected: List[Dict[str, Any]] = []
+    for turn in reversed(turns):
+        candidate = [turn, *selected]
+        if _management_ai_provider_history_size(candidate) > char_budget:
+            if selected:
+                break
+            selected = [_management_ai_provider_history_minimal_turn(turn)]
+            break
+        selected = candidate
+
+    return selected, {
+        "historyCharBudget": char_budget,
+        "historyEstimatedChars": _management_ai_provider_history_size(selected),
+        "historyTruncated": True,
+        "historyOmittedTurnCount": max(0, len(turns) - len(selected)),
+    }
+
+
+def _management_ai_provider_history_minimal_turn(turn: Dict[str, Any]) -> Dict[str, Any]:
+    text = str(turn.get("content") or turn.get("text") or "")
+    trimmed_text = _mgmt_nl_trim_text(text, max_len=2048)
+    return {
+        "id": turn.get("id"),
+        "role": turn.get("role"),
+        "content": trimmed_text,
+        "text": trimmed_text,
+        "createdAt": turn.get("createdAt"),
+        "created_at": turn.get("created_at"),
+        "traceId": turn.get("traceId"),
+        "trace_id": turn.get("trace_id"),
     }
 
 
@@ -30749,7 +30853,7 @@ def _mgmt_nl_handle_control_command(
         provider_status=provider_status,
         ui_actions=[],
     )
-    _MGMT_NL_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    _mgmt_nl_idempotency_put(resolved_key, request_hash=request_hash, result=result)
     return JSONResponse(status_code=202, content=result)
 
 
@@ -30829,7 +30933,9 @@ def _mgmt_nl_record_high_risk_refusal(
 
 
 def _mgmt_nl_idempotency_check(resolved_key: str, request_hash: str) -> Optional[Dict[str, Any]]:
-    existing = _MGMT_NL_IDEMPOTENCY.get(resolved_key)
+    existing = _management_ai_conversation_store().get_idempotency(resolved_key)
+    if existing is None:
+        existing = _MGMT_NL_IDEMPOTENCY.get(resolved_key)
     if existing is None:
         return None
     if existing.get("request_hash") != request_hash:
@@ -30842,6 +30948,20 @@ def _mgmt_nl_idempotency_check(resolved_key: str, request_hash: str) -> Optional
             suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
         )
     return existing.get("result")
+
+
+def _mgmt_nl_idempotency_put(
+    resolved_key: str,
+    *,
+    request_hash: str,
+    result: Dict[str, Any],
+) -> None:
+    _management_ai_conversation_store().put_idempotency(
+        resolved_key,
+        request_hash=request_hash,
+        result=result,
+    )
+    _MGMT_NL_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
 
 
 def _mgmt_nl_surface_confidence(surfaces: Dict[str, Any]) -> str:
@@ -31395,6 +31515,26 @@ def _mgmt_nl_provider_prompt(
     focus: str,
     context_pack: Dict[str, Any],
 ) -> str:
+    management_context = (
+        ((context_pack.get("backend") or {}).get("management_nl") or {}).get("data") or {}
+        if isinstance(context_pack, dict)
+        else {}
+    )
+    conversation_context = (
+        management_context.get("conversation")
+        if isinstance(management_context.get("conversation"), dict)
+        else {}
+    )
+    server_history = {
+        "source": conversation_context.get("source"),
+        "historySource": conversation_context.get("historySource") or conversation_context.get("history_source"),
+        "historyCharBudget": conversation_context.get("historyCharBudget"),
+        "historyTruncated": conversation_context.get("historyTruncated"),
+        "historyOmittedTurnCount": conversation_context.get("historyOmittedTurnCount"),
+        "storedTurnCount": conversation_context.get("storedTurnCount"),
+        "turns": conversation_context.get("allTurns") or conversation_context.get("recentTurns") or [],
+    }
+    server_history_json = json.dumps(server_history, sort_keys=True, ensure_ascii=True)
     context_json = json.dumps(context_pack, sort_keys=True, ensure_ascii=True)
     return "\n".join(
         [
@@ -31408,6 +31548,11 @@ def _mgmt_nl_provider_prompt(
             "If evidence is missing or stale, say so and keep the answer concise.",
             f"Focus: {focus}",
             f"Question: {question}",
+            (
+                "Server-side conversation history JSON "
+                f"(ordered created_at ascending, budget {_MGMT_NL_PROVIDER_HISTORY_CHAR_BUDGET} chars, "
+                f"FE recentTurns budget {_MGMT_NL_FE_RECENT_TURNS_CHAR_BUDGET} chars): {server_history_json}"
+            ),
             f"Context pack JSON: {context_json}",
         ]
     )
@@ -31724,8 +31869,7 @@ async def bff_management_nl_ask(
                 "idempotency_key": resolved_key,
             }
         )
-        replayed = {**cached, "meta": {**cached.get("meta", {}), "idempotency": {**cached.get("meta", {}).get("idempotency", {}), "replayed": True}}}
-        return JSONResponse(status_code=202, content=replayed)
+        return JSONResponse(status_code=202, content=_management_json_clone(cached))
 
     now = utc_now()
     session_id = str(payload.get("sessionId") or payload.get("session_id") or f"mgmt-nl-{uuid.uuid4().hex[:10]}")
@@ -32030,7 +32174,7 @@ async def bff_management_nl_ask(
         provider_status=provider_status,
         ui_actions=actions,
     )
-    _MGMT_NL_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    _mgmt_nl_idempotency_put(resolved_key, request_hash=request_hash, result=result)
     return JSONResponse(status_code=202, content=result)
 
 
@@ -32151,26 +32295,15 @@ async def bff_management_ai_conversation(
         identity,
         requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant),
     )
-    session = _management_ai_conversation_store().get_session(clean_session_id)
-    local_only = session is None
-    if session is not None:
-        _management_ai_require_session_access(session, identity, tenant_id=caller_tenant_id)
-        turns = [
-            _management_ai_turn_api_payload(turn)
-            for turn in _management_ai_conversation_store().list_turns(clean_session_id)
-        ][:limit]
-    else:
-        turns = []
-        session = {
-            "ownerId": identity.operator_id,
-            "owner_id": identity.operator_id,
-            "tenantId": caller_tenant_id,
-            "tenant_id": caller_tenant_id,
-            "createdAt": None,
-            "created_at": None,
-            "updatedAt": None,
-            "updated_at": None,
-        }
+    session = _management_ai_get_visible_session_or_404(
+        clean_session_id,
+        identity,
+        tenant_id=caller_tenant_id,
+    )
+    turns = [
+        _management_ai_turn_api_payload(turn)
+        for turn in _management_ai_conversation_store().list_turns(clean_session_id)
+    ][:limit]
     audit_log = {
         "href": _management_ai_audit_href(session_id=clean_session_id, trace_id=trace_id),
         "traceId": trace_id,
@@ -32183,10 +32316,10 @@ async def bff_management_ai_conversation(
             "traceId": trace_id,
             "trace_id": trace_id,
             "turns": turns,
-            "localOnly": local_only,
-            "local_only": local_only,
-            "missingInStore": local_only,
-            "missing_in_store": local_only,
+            "localOnly": False,
+            "local_only": False,
+            "missingInStore": False,
+            "missing_in_store": False,
             "ownerId": session.get("ownerId") or session.get("owner_id"),
             "owner_id": session.get("owner_id") or session.get("ownerId"),
             "tenantId": session.get("tenantId") or session.get("tenant_id"),
@@ -32218,9 +32351,9 @@ async def bff_management_ai_conversation(
             },
             "surfaces": {
                 "management_ai_conversation": {
-                    "status": "local_only" if local_only else "ok",
-                    "source": "client_resync" if local_only else "management_ai_store",
-                    "reason": "session_missing_in_store" if local_only else None,
+                    "status": "ok",
+                    "source": "management_ai_store",
+                    "reason": None,
                 }
             },
         },
