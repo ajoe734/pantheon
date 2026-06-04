@@ -31282,6 +31282,7 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
             snippets["persona_fleet"] = {
                 "total": len(fleet_items),
                 "summary": fleet_summary,
+                "items": fleet_items,
             }
             surfaces["persona_fleet"] = {"status": "ok" if personas else "unavailable", "source": "bff_composed"}
         except Exception:
@@ -31572,7 +31573,7 @@ def _mgmt_nl_build_context_pack(
 
     request = AssistantContextPackRequest(
         mode=assistant_mode,
-        include=["ui", "management_nl"],
+        include=["ui", "management_nl", "persona_health"],
         question=question,
         route=frontend_route,
         frontend={
@@ -31592,8 +31593,35 @@ def _mgmt_nl_build_context_pack(
     )
 
     def collect_source(source_id: str, _request: Any, snapshot_at: str) -> Any:
+        if source_id == "persona_health":
+            persona_surface = _dataset_surface_status("personas", snapshot_at=snapshot_at)
+            scoped_personas = _mgmt_nl_filter_tenant_records(_list_persona_records(), caller_tenant_id)
+            return AssistantCollectedSource(
+                source_id="persona_health",
+                href="/bff/v5/execution/persona-health",
+                payload={
+                    "items": [
+                        {
+                            "id": persona.get("persona_id") or persona.get("id"),
+                            "persona_id": persona.get("persona_id") or persona.get("id"),
+                            "name": persona.get("name") or persona.get("persona_id"),
+                            "health": "healthy"
+                            if persona.get("lifecycle_state") == "active"
+                            else "degraded",
+                            "lifecycle_state": persona.get("lifecycle_state"),
+                        }
+                        for persona in scoped_personas
+                    ],
+                    "meta": {
+                        "snapshot_at": snapshot_at,
+                        "surfaces": {"persona_health": persona_surface},
+                    },
+                },
+                status=str(persona_surface.get("status") or "ok"),
+                source_kind="bff",
+            )
         if source_id != "management_nl":
-            return None
+            return _assistant_collect_source(source_id, _request, snapshot_at)
         return AssistantCollectedSource(
             source_id="management_nl",
             href="/bff/management/nl/ask",
