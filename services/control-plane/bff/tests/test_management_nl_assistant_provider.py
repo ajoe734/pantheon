@@ -1020,6 +1020,8 @@ def test_management_ai_persists_30_messages_as_60_ordered_turns(tmp_path, monkey
 
         last_management_context = fake.calls[-1]["context_pack"]["backend"]["management_nl"]["data"]
         assert last_management_context["conversation"]["source"] == "server"
+        assert last_management_context["conversation"]["historySource"] == "management_ai_store"
+        assert last_management_context["conversation"]["historyCharBudget"] > 32 * 1024
         assert len(last_management_context["conversation"]["recentTurns"]) == 59
         assert last_management_context["conversation"]["recentTurns"][0]["content"] == "Persistence question 1?"
     finally:
@@ -1070,6 +1072,14 @@ def test_management_ai_uses_server_history_when_fe_recent_turns_are_truncated(
             "Provider grounded management answer.",
             "Server history question 3?",
         ]
+        assert conversation["historySource"] == "management_ai_store"
+        assert conversation["storedTurnCount"] == 5
+        assert conversation["historyTruncated"] is False
+        assert conversation["historyCharBudget"] > 32 * 1024
+        prompt = fake.calls[-1]["prompt"]
+        assert "Server-side conversation history JSON" in prompt
+        assert "Server history question 1?" in prompt
+        assert "Only the latest FE-window hint remains." in prompt
         assert conversation["clientHint"]["recentTurns"] == [
             {
                 "role": "user",
@@ -1082,6 +1092,29 @@ def test_management_ai_uses_server_history_when_fe_recent_turns_are_truncated(
         bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
+
+
+def test_management_ai_provider_history_window_exceeds_fe_budget_and_truncates() -> None:
+    turns = [
+        {
+            "id": f"turn-{idx:02d}",
+            "role": "user" if idx % 2 == 0 else "assistant",
+            "content": f"large stored turn {idx:02d} " + ("x" * 4096),
+            "text": f"large stored turn {idx:02d} " + ("x" * 4096),
+            "createdAt": f"2026-06-03T00:{idx:02d}:00Z",
+            "created_at": f"2026-06-03T00:{idx:02d}:00Z",
+        }
+        for idx in range(40)
+    ]
+
+    windowed, budget = bff_main._management_ai_provider_history_window(turns)
+
+    assert budget["historyCharBudget"] > 32 * 1024
+    assert budget["historyTruncated"] is True
+    assert budget["historyOmittedTurnCount"] > 0
+    assert budget["historyEstimatedChars"] <= budget["historyCharBudget"]
+    assert windowed[-1]["id"] == "turn-39"
+    assert [turn["createdAt"] for turn in windowed] == sorted(turn["createdAt"] for turn in windowed)
 
 
 def test_management_ai_idempotency_replay_does_not_duplicate_persisted_turns(
