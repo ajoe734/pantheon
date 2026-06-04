@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "MGMT-AI-PERSIST-P1-ATTACH-007",
+  "archived_at": "2026-06-04T13:12:32Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-AI-PERSIST-P1-ATTACH-007",
+    "title": "Forward attachments to OpenClaw/Codex provider as multimodal payload",
+    "summary_zh": null,
+    "phase": "Sprint MGMT-AI-PERSIST / EPIC-MGMT-AI-PERSIST-P1-ATTACH",
+    "owner": "Codex2",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "MGMT-AI-PERSIST-P1-ATTACH-006"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_management_ai_persistence_2026-06-03/MANAGEMENT_AI_PERSISTENCE_GAP_SPEC.md;services/control-plane/bff/main.py;services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py"
+    ],
+    "acceptance": [
+      "When the provider is called and the latest user turn has image attachments include them in the provider request as a multimodal payload (image_url or base64 per provider requirement);Resolve attachment bytes/url from object storage not from the store row;Degrade gracefully: if the provider does not support multimodal record provider_status reason multimodal_unsupported and fall back to text-only without failing the request;pytest case multimodal_forward covers image present -> provider payload carries the image part plus unsupported-provider fallback"
+    ],
+    "next": "Done: implementation merged in PR #921 (178ebc6a); review/closeout records merged in PR #1014 (e86f4b69); final validation record merged in PR #1020 (fac5ad6e53882ba2cd4df8dcbd4855c2db3c2fd4). Local validation passed: compileall plus focused BFF/provider/OpenClaw adapter pytest suites.",
+    "last_update": "2026-06-04T13:12:32Z",
+    "review_notes_zh": [
+      "審查通過：multimodal附件轉發實作正確，測試覆蓋充分，符合GAP Spec §6規格",
+      "後續：owner Codex2 執行 closeout，確認 PR #921 已合併後標記 done"
+    ],
+    "review_file": ".orchestrator/reviews/mgmt_ai_persist_p1_attach_007_review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-04T13:12:32Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-ai-persist-p1-attach-007",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-AI-PERSIST-P1-ATTACH-007",
+      "git_clean_required": false,
+      "commit": "4bbc0697801ac687a38327d4a09986aeec42e24c",
+      "commit_subject": "MGMT-AI-PERSIST-P1-ATTACH-007: record final PR",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-AI-PERSIST-P1-ATTACH-007",
+        "Reviewer": "Claude2",
+        "Verified": "python3 -m compileall -q services/control-plane/bff/main.py services/control-plane/bff/openclaw_ops_client.py services/openclaw-gateway-adapter/main.py services/openclaw-gateway-adapter/assistant_provider_runtime.py services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py services/control-plane/bff/tests/test_management_nl_assistant_provider.py services/openclaw-gateway-adapter/test_main.py; python3 -m pytest services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py -q; python3 -m pytest services/control-plane/bff/tests/test_management_nl_assistant_provider.py -q; python3 -m pytest services/openclaw-gateway-adapter/test_main.py -q"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-AI-PERSIST-P1-ATTACH-007",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "7d7f19a27cddba0283230fce41c082172a6988a5",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-AI-PERSIST-P1-ATTACH-007",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Implementation merged in PR #921 (merge 178ebc6a12d0f18fbbac9aebe7dc36787cc892c7). Local validation: compileall plus focused BFF/provider/OpenClaw adapter pytest suites passed. Please review/approve for owner closeout.",
+      "status": "done",
+      "created_at": "2026-06-04T04:56:29Z",
+      "resolved_at": "2026-06-04T04:58:42Z"
+    },
+    {
+      "task_id": "MGMT-AI-PERSIST-P1-ATTACH-007",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Review approved: multimodal attachment forwarding is correct, secure, and well-tested. Returned to Codex2 for owner closeout.",
+      "status": "done",
+      "created_at": "2026-06-04T04:58:42Z",
+      "resolved_at": "2026-06-04T13:12:33Z"
+    }
+  ],
+  "blockers": []
+}
