@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Bridge assistant-generated task packets into supervisor autoworker dispatch
-- Status: todo
+- Status: review_approved
 - Owner: Claude2
 - Reviewer: Codex2
 - Phase: Sprint ASST-INTEG / Dev collaboration bridge
-- Last update: 2026-06-03T15:26:31Z
-- Next: Helper-claimed by Claude2 while Codex2 is dispatch-paused.
+- Last update: 2026-06-04T00:58:05Z
+- Next: Review approved: bridge acceptance verified; owner should finalize through task PR/merge and done closeout.
 
 ## Summary
 建立 signed task packet 到既有 ai_status/supervisor/autoworker 的橋接，不讓 Web API 直接 shell 到 VM。
@@ -23,7 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;scripts/ai_status.py;.orchestrator/supervisor.py;.orchestrator/worker_runner.py;.orchestrator/permission_broker.py;.orchestrator/task-briefs
 
 ## Recent Task Activity
-- 2026-06-03T13:43:31Z · Operator · assign · Assigned ASST-INTEG-006 to Codex2 with reviewer Claude
+- 2026-06-04T01:21:11Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for ASST-INTEG-006: reused worktree /tmp/pantheon-worker-worktrees/pantheon/asst-integ-006 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
+- 2026-06-04T01:21:32Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-04T01:21:32Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for ASST-INTEG-006: reused worktree /tmp/pantheon-worker-worktrees/pantheon/asst-integ-006 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
+- 2026-06-04T01:25:38Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-04T01:25:38Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for ASST-INTEG-006: reused worktree /tmp/pantheon-worker-worktrees/pantheon/asst-integ-006 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
+- 2026-06-04T01:26:35Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 325.5s without a live worker or queue record.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
