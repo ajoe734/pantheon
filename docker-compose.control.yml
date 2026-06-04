@@ -297,6 +297,9 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       MANAGEMENT_AI_STORE_BACKEND: ${MANAGEMENT_AI_STORE_BACKEND:-postgres}
       MANAGEMENT_AI_STORE_SCHEMA: ${MANAGEMENT_AI_STORE_SCHEMA:-management_ai}
+      MANAGEMENT_AI_STORE_DSN: ${MANAGEMENT_AI_STORE_DSN:-}
+      MANAGEMENT_AI_DATABASE_URL: ${MANAGEMENT_AI_DATABASE_URL:-}
+      PANTHEON_MGMT_AI_ATTACH_BUCKET: ${PANTHEON_MGMT_AI_ATTACH_BUCKET:-}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
     volumes: !override
       - bff-data:/data/bff

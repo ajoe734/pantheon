@@ -17,6 +17,14 @@ DEV_REMOTE_DIR="${DEV_REMOTE_DIR:-/home/edna/code/pantheon}"
 DEV_BFF_CORS_ORIGINS="${DEV_BFF_CORS_ORIGINS:-https://pantheon-ai-system-front-dev.lovable.app,https://pantheon-dev.lovable.app}"
 DEV_BFF_REQUIRED_CORS_ORIGINS="${DEV_BFF_REQUIRED_CORS_ORIGINS:-https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com}"
 DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-true}"
+DEV_MANAGEMENT_AI_STORE_BACKEND="${DEV_MANAGEMENT_AI_STORE_BACKEND:-postgres}"
+DEV_MANAGEMENT_AI_STORE_SCHEMA="${DEV_MANAGEMENT_AI_STORE_SCHEMA:-management_ai}"
+DEV_MANAGEMENT_AI_DB_USER="${DEV_MANAGEMENT_AI_DB_USER:-pantheon_management_ai}"
+DEV_MANAGEMENT_AI_DB_PASSWORD="${DEV_MANAGEMENT_AI_DB_PASSWORD:-pantheon_management_ai_dev}"
+DEV_MANAGEMENT_AI_DB_NAME="${DEV_MANAGEMENT_AI_DB_NAME:-pantheon}"
+DEV_MANAGEMENT_AI_DATABASE_URL="${DEV_MANAGEMENT_AI_DATABASE_URL:-}"
+DEV_MANAGEMENT_AI_ATTACH_BUCKET="${DEV_MANAGEMENT_AI_ATTACH_BUCKET:-}"
+DEV_MANAGEMENT_AI_ATTACH_LOCATION="${DEV_MANAGEMENT_AI_ATTACH_LOCATION:-asia-east1}"
 
 STAGING_CONTROL_VM="${STAGING_CONTROL_VM:-pantheon-taiwan}"
 STAGING_CONTROL_ZONE="${STAGING_CONTROL_ZONE:-asia-east1-b}"
@@ -57,6 +65,10 @@ Environment overrides:
   GITHUB_TOKEN
   DEV_VM DEV_ZONE DEV_REMOTE_DIR
   DEV_BFF_CORS_ORIGINS DEV_BFF_AUTH_STUB
+  DEV_MANAGEMENT_AI_STORE_BACKEND DEV_MANAGEMENT_AI_STORE_SCHEMA
+  DEV_MANAGEMENT_AI_DB_USER DEV_MANAGEMENT_AI_DB_PASSWORD DEV_MANAGEMENT_AI_DB_NAME
+  DEV_MANAGEMENT_AI_DATABASE_URL
+  DEV_MANAGEMENT_AI_ATTACH_BUCKET DEV_MANAGEMENT_AI_ATTACH_LOCATION
   STAGING_CONTROL_VM STAGING_CONTROL_ZONE STAGING_CONTROL_REMOTE_DIR
   STAGING_EXEC_VM STAGING_EXEC_ZONE STAGING_EXEC_REMOTE_DIR
   STAGING_EXEC_HEALTH_URL
@@ -99,6 +111,24 @@ append_csv_unique() {
   done
 
   printf "%s" "$merged"
+}
+
+configure_management_ai_dev_env() {
+  if [[ "$DEPLOY_ENV" != "dev" ]]; then
+    return
+  fi
+
+  if [[ -z "$DEV_MANAGEMENT_AI_ATTACH_BUCKET" ]]; then
+    DEV_MANAGEMENT_AI_ATTACH_BUCKET="${PROJECT_ID}-management-ai-attachments"
+  fi
+  if [[ -z "$DEV_MANAGEMENT_AI_DATABASE_URL" ]]; then
+    DEV_MANAGEMENT_AI_DATABASE_URL="postgresql://${DEV_MANAGEMENT_AI_DB_USER}:${DEV_MANAGEMENT_AI_DB_PASSWORD}@postgres:5432/${DEV_MANAGEMENT_AI_DB_NAME}"
+  fi
+
+  MANAGEMENT_AI_STORE_BACKEND="${MANAGEMENT_AI_STORE_BACKEND:-$DEV_MANAGEMENT_AI_STORE_BACKEND}"
+  MANAGEMENT_AI_STORE_SCHEMA="${MANAGEMENT_AI_STORE_SCHEMA:-$DEV_MANAGEMENT_AI_STORE_SCHEMA}"
+  MANAGEMENT_AI_DATABASE_URL="${MANAGEMENT_AI_DATABASE_URL:-$DEV_MANAGEMENT_AI_DATABASE_URL}"
+  PANTHEON_MGMT_AI_ATTACH_BUCKET="${PANTHEON_MGMT_AI_ATTACH_BUCKET:-$DEV_MANAGEMENT_AI_ATTACH_BUCKET}"
 }
 
 DEV_BFF_CORS_ORIGINS="$(append_csv_unique "$DEV_BFF_CORS_ORIGINS" "$DEV_BFF_REQUIRED_CORS_ORIGINS")"
@@ -164,6 +194,8 @@ case "$DEPLOY_ENV" in
     ;;
 esac
 
+configure_management_ai_dev_env
+
 if [[ "$DRY_RUN" == "true" ]]; then
   info "dry run"
   info "project=${PROJECT_ID}"
@@ -174,11 +206,35 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "allow_example_env=${ALLOW_EXAMPLE_ENV}"
   info "dev_bff_cors_origins=${DEV_BFF_CORS_ORIGINS}"
   info "dev_bff_auth_stub=${DEV_BFF_AUTH_STUB}"
+  info "management_ai_store_backend=${MANAGEMENT_AI_STORE_BACKEND:-}"
+  info "management_ai_store_schema=${MANAGEMENT_AI_STORE_SCHEMA:-}"
+  info "management_ai_database_user=${DEV_MANAGEMENT_AI_DB_USER}"
+  info "management_ai_database_url_configured=$([[ -n "${MANAGEMENT_AI_DATABASE_URL:-}" ]] && echo true || echo false)"
+  info "management_ai_attach_bucket=${PANTHEON_MGMT_AI_ATTACH_BUCKET:-}"
+  info "management_ai_attach_location=${DEV_MANAGEMENT_AI_ATTACH_LOCATION}"
   info "staging_exec_health_url=${STAGING_EXEC_HEALTH_URL}"
   exit 0
 fi
 
 require_cmd gcloud
+
+ensure_management_ai_bucket() {
+  if [[ "$DEPLOY_ENV" != "dev" ]]; then
+    return
+  fi
+
+  local bucket="${PANTHEON_MGMT_AI_ATTACH_BUCKET:-}"
+  [[ -n "$bucket" ]] || error "dev Management AI attachment bucket is required"
+
+  info "preflight Management AI attachment bucket: gs://${bucket}"
+  if gcloud storage buckets describe "gs://${bucket}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
+    info "bucket visible to deploy runner: gs://${bucket}"
+  else
+    info "bucket not visible to deploy runner; dev VM will attempt idempotent provisioning"
+  fi
+}
+
+ensure_management_ai_bucket
 
 ssh_bash() {
   local vm="$1"
@@ -190,6 +246,7 @@ ssh_bash() {
   command_prefix="PANTHEON_DEPLOY_ENV=$(shell_quote "$DEPLOY_ENV")"
   command_prefix+=" PANTHEON_DEPLOY_COMPONENT=$(shell_quote "$remote_component")"
   command_prefix+=" PANTHEON_DEPLOY_SHA=$(shell_quote "$DEPLOY_SHA")"
+  command_prefix+=" PANTHEON_DEPLOY_PROJECT_ID=$(shell_quote "$PROJECT_ID")"
   command_prefix+=" PANTHEON_REMOTE_DIR=$(shell_quote "$remote_dir")"
   command_prefix+=" PANTHEON_DEPLOY_WORKTREE_ROOT=$(shell_quote "${PANTHEON_DEPLOY_WORKTREE_ROOT:-}")"
   command_prefix+=" PANTHEON_GITHUB_TOKEN=$(shell_quote "${GITHUB_TOKEN:-}")"
@@ -197,6 +254,15 @@ ssh_bash() {
   command_prefix+=" PANTHEON_ALLOW_EXAMPLE_ENV=$(shell_quote "$ALLOW_EXAMPLE_ENV")"
   command_prefix+=" PANTHEON_DEV_BFF_CORS_ORIGINS=$(shell_quote "$DEV_BFF_CORS_ORIGINS")"
   command_prefix+=" PANTHEON_DEV_BFF_AUTH_STUB=$(shell_quote "$DEV_BFF_AUTH_STUB")"
+  command_prefix+=" MANAGEMENT_AI_STORE_BACKEND=$(shell_quote "${MANAGEMENT_AI_STORE_BACKEND:-}")"
+  command_prefix+=" MANAGEMENT_AI_STORE_SCHEMA=$(shell_quote "${MANAGEMENT_AI_STORE_SCHEMA:-}")"
+  command_prefix+=" MANAGEMENT_AI_STORE_DSN=$(shell_quote "${MANAGEMENT_AI_STORE_DSN:-}")"
+  command_prefix+=" MANAGEMENT_AI_DATABASE_URL=$(shell_quote "${MANAGEMENT_AI_DATABASE_URL:-}")"
+  command_prefix+=" PANTHEON_MGMT_AI_ATTACH_BUCKET=$(shell_quote "${PANTHEON_MGMT_AI_ATTACH_BUCKET:-}")"
+  command_prefix+=" PANTHEON_MGMT_AI_ATTACH_LOCATION=$(shell_quote "${DEV_MANAGEMENT_AI_ATTACH_LOCATION:-}")"
+  command_prefix+=" PANTHEON_MANAGEMENT_AI_DB_USER=$(shell_quote "${DEV_MANAGEMENT_AI_DB_USER:-}")"
+  command_prefix+=" PANTHEON_MANAGEMENT_AI_DB_PASSWORD=$(shell_quote "${DEV_MANAGEMENT_AI_DB_PASSWORD:-}")"
+  command_prefix+=" PANTHEON_MANAGEMENT_AI_DB_NAME=$(shell_quote "${DEV_MANAGEMENT_AI_DB_NAME:-}")"
   command_prefix+=" PANTHEON_STAGING_EXEC_HEALTH_URL=$(shell_quote "$STAGING_EXEC_HEALTH_URL")"
   command_prefix+=" bash -s"
 
@@ -338,6 +404,117 @@ real_env_or_example() {
   error "missing ${real_file}; pass --allow-example-env only for rehearsal"
 }
 
+ensure_dev_management_ai_bucket() {
+  if [[ "${PANTHEON_DEPLOY_ENV}" != "dev" ]]; then
+    return
+  fi
+
+  local bucket="${PANTHEON_MGMT_AI_ATTACH_BUCKET:-}"
+  [[ -n "$bucket" ]] || error "dev Management AI attachment bucket is required"
+  command -v curl >/dev/null 2>&1 || error "curl is required on the dev VM to provision ${bucket}"
+  command -v python3 >/dev/null 2>&1 || error "python3 is required on the dev VM to parse metadata token JSON"
+
+  local project="${PANTHEON_DEPLOY_PROJECT_ID:-}"
+  [[ -n "$project" ]] || error "PANTHEON_DEPLOY_PROJECT_ID is required for bucket provisioning"
+  local location="${PANTHEON_MGMT_AI_ATTACH_LOCATION:-asia-east1}"
+  local location_upper
+  location_upper="$(printf '%s' "$location" | tr '[:lower:]' '[:upper:]')"
+
+  case "$bucket" in
+    *[!a-z0-9.-]*)
+      error "invalid GCS bucket name for Management AI attachments: ${bucket}"
+      ;;
+  esac
+
+  local token_json
+  local access_token
+  token_json="$(
+    curl -fsS \
+      -H "Metadata-Flavor: Google" \
+      "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"
+  )"
+  access_token="$(printf '%s' "$token_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
+  [[ -n "$access_token" ]] || error "metadata service did not return an access token"
+
+  info "ensuring Management AI attachment bucket from dev VM metadata identity: gs://${bucket}"
+  if curl -fsS \
+    -H "Authorization: Bearer ${access_token}" \
+    "https://storage.googleapis.com/storage/v1/b/${bucket}" >/dev/null 2>&1; then
+    info "bucket exists: gs://${bucket}"
+  else
+    local create_payload
+    create_payload="$(
+      printf '{"name":"%s","location":"%s","iamConfiguration":{"uniformBucketLevelAccess":{"enabled":true}}}' \
+        "$bucket" "$location_upper"
+    )"
+    curl -fsS \
+      -X POST \
+      -H "Authorization: Bearer ${access_token}" \
+      -H "Content-Type: application/json" \
+      "https://storage.googleapis.com/storage/v1/b?project=${project}" \
+      -d "$create_payload" >/dev/null
+  fi
+}
+
+ensure_dev_management_ai_postgres_role() {
+  if [[ "${PANTHEON_DEPLOY_ENV}" != "dev" ]]; then
+    return
+  fi
+  if [[ "${MANAGEMENT_AI_STORE_BACKEND:-}" != "postgres" ]]; then
+    info "Management AI postgres bootstrap skipped: backend=${MANAGEMENT_AI_STORE_BACKEND:-}"
+    return
+  fi
+
+  local mgmt_user="${PANTHEON_MANAGEMENT_AI_DB_USER:-pantheon_management_ai}"
+  local mgmt_pass="${PANTHEON_MANAGEMENT_AI_DB_PASSWORD:-pantheon_management_ai_dev}"
+  local mgmt_db="${PANTHEON_MANAGEMENT_AI_DB_NAME:-pantheon}"
+  local mgmt_schema="${MANAGEMENT_AI_STORE_SCHEMA:-management_ai}"
+
+  info "ensuring Management AI postgres owner role/schema: user=${mgmt_user} schema=${mgmt_schema}"
+  COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-}" \
+    docker compose -p pantheon -f docker-compose.yml up -d postgres
+
+  local i
+  for ((i = 1; i <= 30; i++)); do
+    if docker compose -p pantheon -f docker-compose.yml exec -T postgres \
+      pg_isready -U "${POSTGRES_USER:-postgres}" -d "${mgmt_db}" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 2
+  done
+
+  docker compose -p pantheon -f docker-compose.yml exec -T \
+    -e MGMT_AI_DB_USER="${mgmt_user}" \
+    -e MGMT_AI_DB_PASSWORD="${mgmt_pass}" \
+    -e MGMT_AI_DB_NAME="${mgmt_db}" \
+    -e MGMT_AI_SCHEMA="${mgmt_schema}" \
+    postgres sh -s <<'REMOTE_DB'
+set -euo pipefail
+
+psql -v ON_ERROR_STOP=1 \
+  --username "${POSTGRES_USER:-postgres}" \
+  --dbname "${MGMT_AI_DB_NAME}" \
+  -v mgmt_user="${MGMT_AI_DB_USER}" \
+  -v mgmt_pass="${MGMT_AI_DB_PASSWORD}" \
+  -v mgmt_db="${MGMT_AI_DB_NAME}" \
+  -v mgmt_schema="${MGMT_AI_SCHEMA}" <<'SQL'
+SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'mgmt_user', :'mgmt_pass')
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'mgmt_user')
+\gexec
+
+ALTER ROLE :"mgmt_user" LOGIN PASSWORD :'mgmt_pass';
+GRANT CONNECT ON DATABASE :"mgmt_db" TO :"mgmt_user";
+CREATE SCHEMA IF NOT EXISTS :"mgmt_schema" AUTHORIZATION :"mgmt_user";
+ALTER SCHEMA :"mgmt_schema" OWNER TO :"mgmt_user";
+GRANT USAGE, CREATE ON SCHEMA :"mgmt_schema" TO :"mgmt_user";
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA :"mgmt_schema" TO :"mgmt_user";
+GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA :"mgmt_schema" TO :"mgmt_user";
+ALTER DEFAULT PRIVILEGES IN SCHEMA :"mgmt_schema" GRANT ALL PRIVILEGES ON TABLES TO :"mgmt_user";
+ALTER DEFAULT PRIVILEGES IN SCHEMA :"mgmt_schema" GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO :"mgmt_user";
+SQL
+REMOTE_DB
+}
+
 cd "${PANTHEON_REMOTE_DIR}"
 git rev-parse --is-inside-work-tree >/dev/null
 
@@ -362,6 +539,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     #
     # Operators can narrow scope via PANTHEON_DEV_COMPOSE_PROFILES.
     PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-activation-ready-smoke,dormant-smoke,openclaw,openclaw-activation-ready-e2e,search-index-scheduler,smoke,source-ingest-scheduler,source-search-bounded}"
+    ensure_dev_management_ai_bucket
+    ensure_dev_management_ai_postgres_role
     COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
       docker compose -p pantheon -f docker-compose.yml config --quiet
     COMPOSE_BAKE=false \

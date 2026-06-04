@@ -213,6 +213,21 @@ def test_tool_workflow_bridge_requires_openclaw_tool_allowlist(tmp_path: Path) -
     assert entries[0]["policy_class"] == "deny_all"
 
 
+def test_openclaw_tool_policy_uses_exact_allowlist_for_assistant_command() -> None:
+    policy = ToolPolicy(allowed_tools=[ASSISTANT_COMMAND_TOOL_NAME])
+
+    for injected_name in (
+        "assistant.command\nbroker_order",
+        "assistant.command,broker_order",
+        "assistant.command broker_order",
+        "Assistant.Command",
+        " assistant.command ",
+    ):
+        decision = policy.evaluate_tool(injected_name)
+        assert decision.allowed is False
+        assert decision.policy_class == "not_in_allowlist"
+
+
 def test_tool_workflow_bridge_allows_when_broker_tool_and_command_are_allowed(tmp_path: Path) -> None:
     audit = BridgeAuditLog(path=tmp_path / "bridge_audit.jsonl")
     bridge = ToolWorkflowBridge(

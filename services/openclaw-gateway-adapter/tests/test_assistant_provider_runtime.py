@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from assistant_provider_runtime import AssistantProviderRuntime
+from assistant_provider_runtime import AssistantProviderRuntime, ProviderInvocationRequest
 
 
 @pytest.fixture(autouse=True)
@@ -45,6 +45,49 @@ def test_readiness_probe_all_good():
         assert result["binary_path"] == "/usr/bin/codex"
         assert result["version"] == "1.0.0"
         assert result["mount_mode"] == "rw"
+
+
+def test_provider_runtime_redacts_credential_metadata_before_runner_and_transcript():
+    calls = []
+    transcripts = []
+
+    def runner(payload):
+        calls.append(payload)
+        return {"status": "ok", "metadata": payload["metadata"]}
+
+    runtime = AssistantProviderRuntime(runner, transcript_sink=transcripts.append)
+    result = runtime.invoke(
+        ProviderInvocationRequest(
+            provider="codex_cli",
+            mode="user",
+            prompt="Summarize without exposing provider credentials.",
+            context_pack={},
+            metadata={
+                "operator_id": "op-provider",
+                "codex_home": "/srv/pantheon-assistant/.codex/auth.json",
+                "provider_session": "/home/pantheon-assistant/.codex/auth.json",
+                "api_key": "sk-provider-secret-123456",
+                "Authorization": "Bearer provider-token-123456",
+            },
+        )
+    )
+
+    rendered_runner_payload = repr(calls[0])
+    rendered_transcript = repr(transcripts[0])
+    rendered_result = repr(result)
+    for secret in (
+        "/srv/pantheon-assistant/.codex",
+        "/home/pantheon-assistant/.codex",
+        "sk-provider-secret-123456",
+        "provider-token-123456",
+    ):
+        assert secret not in rendered_runner_payload
+        assert secret not in rendered_transcript
+        assert secret not in rendered_result
+    assert "[REDACTED_PROVIDER_SESSION_PATH]" in rendered_runner_payload
+    assert "[REDACTED_API_KEY]" in rendered_runner_payload
+    assert "Bearer [REDACTED_TOKEN]" in rendered_runner_payload
+    assert result.redaction["provider_invocation"]["redacted_fields"] >= 3
 
 
 @pytest.mark.parametrize("provider", ["claude", "claude_cli"])
