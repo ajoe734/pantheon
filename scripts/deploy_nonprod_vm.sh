@@ -405,6 +405,14 @@ real_env_or_example() {
   error "missing ${real_file}; pass --allow-example-env only for rehearsal"
 }
 
+use_local_management_ai_attachment_store() {
+  local reason="$1"
+
+  info "Management AI attachment bucket unavailable (${reason}); using local attachment store"
+  PANTHEON_MGMT_AI_ATTACH_BUCKET=""
+  export PANTHEON_MGMT_AI_ATTACH_BUCKET
+}
+
 ensure_dev_management_ai_bucket() {
   if [[ "${PANTHEON_DEPLOY_ENV}" != "dev" ]]; then
     return
@@ -483,19 +491,25 @@ ensure_dev_management_ai_bucket() {
     -H "Authorization: Bearer ${access_token}" \
     "https://storage.googleapis.com/storage/v1/b/${bucket}" >/dev/null 2>&1; then
     info "bucket exists: gs://${bucket}"
+    use_local_management_ai_attachment_store "object probe failed for gs://${bucket}"
+    return
   else
     local create_payload
     create_payload="$(
       printf '{"name":"%s","location":"%s","iamConfiguration":{"uniformBucketLevelAccess":{"enabled":true}}}' \
         "$bucket" "$location_upper"
     )"
-    curl -fsS \
+    if curl -fsS \
       -X POST \
       -H "Authorization: Bearer ${access_token}" \
       -H "Content-Type: application/json" \
       "https://storage.googleapis.com/storage/v1/b?project=${project}" \
-      -d "$create_payload" >/dev/null
-    info "bucket created: gs://${bucket}"
+      -d "$create_payload" >/dev/null; then
+      info "bucket created: gs://${bucket}"
+    else
+      use_local_management_ai_attachment_store "metadata/create bootstrap failed for gs://${bucket}"
+      return
+    fi
   fi
 }
 
