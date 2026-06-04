@@ -523,6 +523,47 @@ def test_tool_execute_route_integer_one_does_not_bypass_medium_risk_gate(tmp_pat
     assert resp.status_code == 422
 
 
+def test_execute_governed_tool_direct_string_false_does_not_bypass_medium_risk_gate() -> None:
+    """execute_governed_tool called directly with confirmed='false' must raise ToolValidationError.
+
+    bool('false') is True so `not confirmed` would silently pass; `confirmed is not True`
+    is required at the contract boundary, not just at the HTTP route layer.
+    """
+    import pytest
+    with pytest.raises(ToolValidationError) as exc_info:
+        execute_governed_tool(
+            action_id="PersonaAction",
+            entity_type="Persona",
+            entity_id="p-001",
+            params={},
+            actor_id="op-001",
+            actor_roles=["operator"],
+            reason="retire draft persona p-123",
+            confirmed="false",  # type: ignore[arg-type]
+        )
+    assert exc_info.value.field_name == "confirmed"
+
+
+def test_execute_governed_tool_direct_integer_one_does_not_bypass_medium_risk_gate() -> None:
+    """execute_governed_tool called directly with confirmed=1 must raise ToolValidationError.
+
+    bool(1) is True so `not confirmed` would silently pass; the gate requires the literal bool True.
+    """
+    import pytest
+    with pytest.raises(ToolValidationError) as exc_info:
+        execute_governed_tool(
+            action_id="PersonaAction",
+            entity_type="Persona",
+            entity_id="p-001",
+            params={},
+            actor_id="op-001",
+            actor_roles=["operator"],
+            reason="retire draft persona p-123",
+            confirmed=1,  # type: ignore[arg-type]
+        )
+    assert exc_info.value.field_name == "confirmed"
+
+
 def test_tool_execute_route_boolean_true_passes_medium_risk_gate(tmp_path) -> None:
     """Only the explicit JSON boolean true passes the medium-risk confirmation gate."""
     client = TestClient(bff_main.app)

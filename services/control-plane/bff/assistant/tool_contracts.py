@@ -307,7 +307,7 @@ def execute_governed_tool(
             f"Action {action_id!r} (risk={risk.value}) requires a non-empty reason.",
             field_name="reason",
         )
-    if risk in _RISK_REQUIRES_CONFIRMATION and not confirmed:
+    if risk in _RISK_REQUIRES_CONFIRMATION and confirmed is not True:
         raise ToolValidationError(
             f"Action {action_id!r} (risk={risk.value}) requires explicit operator confirmation.",
             field_name="confirmed",
@@ -367,7 +367,7 @@ def execute_governed_tool(
 
     audit_id = (result or {}).get("audit_id") or (error or {}).get("audit_id")
 
-    confirmation_marker = "operator_confirmed" if confirmed else None
+    confirmation_marker = "operator_confirmed" if confirmed is True else None
 
     return ToolReceipt(
         receipt_id=f"asst-receipt-{uuid.uuid4().hex[:12]}",
