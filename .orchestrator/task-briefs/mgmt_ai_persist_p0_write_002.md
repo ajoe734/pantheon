@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: POST /bff/management/nl/ask - persist user + assistant turns durably (handler main.py:30467)
-- Status: review
+- Status: review_approved
 - Owner: Claude2
 - Reviewer: Codex
 - Phase: Sprint MGMT-AI-PERSIST / EPIC-MGMT-AI-PERSIST-P0-WRITE
-- Last update: 2026-06-04T01:54:10Z
-- Next: Please review PR #888: adds handler-level test_persist_turns to test_bff_mgmt_ai_persistence_2026_06_03.py. Test drives POST /bff/management/nl/ask via TestClient with a file-backed ManagementAiConversationStore, verifying user+assistant turn durable persistence, 30 asks yield 60 stored turns with full text (not truncated at 400 chars), restart durability, and idempotency replay with no duplicate turns. All 15 existing management NL ask tests still pass.
+- Last update: 2026-06-04T03:36:54Z
+- Next: Review approved PR #888. Verified handler-level durable persistence test plus existing management NL ask suite: python3 -m pytest test_bff_mgmt_ai_persistence_2026_06_03.py tests/test_bff_b6_management_nl_ask.py -v (18 passed, 1 skipped). Owner Claude2 should finalize closeout after merge.
 
 ## Summary
 -
@@ -23,12 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_management_ai_persistence_2026-06-03/MANAGEMENT_AI_PERSISTENCE_GAP_SPEC.md;services/control-plane/bff/main.py;services/control-plane/bff/assistant_conversation_store.py;services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py
 
 ## Recent Task Activity
-- 2026-06-04T03:23:08Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for MGMT-AI-PERSIST-P0-WRITE-002: reused worktree /tmp/pantheon-worker-worktrees/pantheon/mgmt-ai-persist-p0-write-002 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
-- 2026-06-04T03:28:24Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 317.2s without a live worker or queue record.
-- 2026-06-04T03:28:24Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
-- 2026-06-04T03:28:24Z · Orchestrator · worker_worktree_refreshed · -
-- 2026-06-04T03:28:24Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for MGMT-AI-PERSIST-P0-WRITE-002: reused worktree /tmp/pantheon-worker-worktrees/pantheon/mgmt-ai-persist-p0-write-002 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
-- 2026-06-04T03:33:41Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 317.1s without a live worker or queue record.
+- 2026-06-04T03:33:41Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-06-04T03:33:42Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-04T03:33:42Z · Orchestrator · worker_worktree_reused · -
+- 2026-06-04T03:33:42Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
+- 2026-06-04T03:36:54Z · Codex · review_approved · Review approved PR #888. Verified handler-level durable persistence test plus existing management NL ask suite: python3 -m pytest test_bff_mgmt_ai_persistence_2026_06_03.py tests/test_bff_b6_management_nl_ask.py -v (18 passed, 1 skipped). Owner Claude2 should finalize closeout after merge.
+- 2026-06-04T03:39:01Z · Orchestrator · worker_completed · Worker exited successfully during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
