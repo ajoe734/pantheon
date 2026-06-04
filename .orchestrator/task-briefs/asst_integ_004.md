@@ -23,12 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;services/control-plane/bff/action_catalog.py;services/control-plane/bff/command_executor.py;services/control-plane/bff/assistant;services/control-plane/bff/tests/test_assistant_security.py
 
 ## Recent Task Activity
-- 2026-06-04T09:15:58Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for ASST-INTEG-004: reused worktree /tmp/pantheon-worker-worktrees/pantheon/asst-integ-004 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
-- 2026-06-04T09:21:13Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 317.7s without a live worker or queue record.
-- 2026-06-04T09:21:13Z · Orchestrator · wake_queued · Wake-up queued for supervisor: owned_finalize_dispatch
-- 2026-06-04T09:21:15Z · Orchestrator · worker_worktree_refreshed · -
 - 2026-06-04T09:21:15Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for ASST-INTEG-004: reused worktree /tmp/pantheon-worker-worktrees/pantheon/asst-integ-004 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
 - 2026-06-04T09:26:31Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 318.4s without a live worker or queue record.
+- 2026-06-04T09:26:31Z · Orchestrator · wake_queued · Wake-up queued for supervisor: owned_finalize_dispatch
+- 2026-06-04T09:26:32Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-04T09:26:32Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for ASST-INTEG-004: reused worktree /tmp/pantheon-worker-worktrees/pantheon/asst-integ-004 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
+- 2026-06-04T09:31:49Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 318.1s without a live worker or queue record.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
