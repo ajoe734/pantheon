@@ -23,12 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_management_ai_persistence_2026-06-03/MANAGEMENT_AI_PERSISTENCE_GAP_SPEC.md;docs/04/pantheon_management_ai_persistence_2026-06-03/CURRENT_STATE_AUDIT.md;services/control-plane/bff/main.py;services/control-plane/bff/assistant_conversation_store.py;services/foundation/postgres_json_store.py;services/foundation/persistence_posture.py;services/control-plane/bff/requirements.txt;services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py
 
 ## Recent Task Activity
-- 2026-06-04T01:10:40Z · Orchestrator · worker_worktree_refreshed · -
-- 2026-06-04T01:10:40Z · Orchestrator · worker_worktree_reused · -
-- 2026-06-04T01:10:40Z · Orchestrator · worker_started · Worker started via claude_cli: review_ready_dispatch
-- 2026-06-04T01:13:50Z · Claude · review_approved · Implementation reviewed and approved: AssistantConversationStore correctly builds on postgres_json_store foundation; env-gated MANAGEMENT_AI_STORE_BACKEND selector; Postgres bootstrap with management_ai schema, JSONB columns, FK ON DELETE CASCADE; full text storage with no truncation; multi-writer safe; surface-parameterized. JSON+memory tests pass; Postgres skips cleanly. Ready for owner closeout.
 - 2026-06-04T01:15:07Z · unknown · worker_commit · Worker commit 1bbb03d0ef5a recorded 1 staged file(s) for MGMT-AI-PERSIST-P0-STORE-001.
 - 2026-06-04T01:15:55Z · Orchestrator · worker_superseded · Worker superseded after task responsibility moved to another agent.
+- 2026-06-04T01:25:37Z · Orchestrator · wake_queued · Wake-up queued for supervisor: owned_finalize_dispatch
+- 2026-06-04T01:25:39Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-04T01:25:39Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for MGMT-AI-PERSIST-P0-STORE-001: reused worktree /tmp/pantheon-worker-worktrees/pantheon/mgmt-ai-persist-p0-store-001 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
+- 2026-06-04T01:26:35Z · Orchestrator · wake_skipped · Auto dispatch unavailable for codex: codex local CLI worker is not ready
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
