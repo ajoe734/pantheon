@@ -517,6 +517,18 @@ class ArchiveWorkflowTests(unittest.TestCase):
         self.assertEqual(archive_task["id"], "REG-100")
         rebuild_archive_index.assert_called_once()
 
+    def test_prune_archived_active_tasks_removes_duplicate_active_rows(self) -> None:
+        def fake_archived_snapshot(task_id: str):
+            return {"task_id": task_id} if task_id == "REG-100" else None
+
+        with mock.patch.object(ai_status, "archived_task_snapshot", side_effect=fake_archived_snapshot):
+            pruned = ai_status.prune_archived_active_tasks(self.state)
+
+        self.assertEqual(pruned, ["REG-100"])
+        self.assertEqual([task["id"] for task in self.state["tasks"]], ["REG-101"])
+        self.assertEqual(self.state["handoffs"], [])
+        self.assertEqual(self.state["blockers"], [])
+
     def test_reopen_rejects_archived_task(self) -> None:
         self.state["tasks"] = []
         with mock.patch.object(ai_status, "archived_task_snapshot", return_value={"task_id": "REG-100"}):

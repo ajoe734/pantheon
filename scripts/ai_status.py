@@ -930,6 +930,27 @@ def archive_terminal_tasks_in_state(state: dict[str, Any], *, archived_at: str |
     return [task_id for task_id in archived_ids if task_id]
 
 
+def prune_archived_active_tasks(state: dict[str, Any]) -> list[str]:
+    """Remove invalid active rows whose task id already has an archive snapshot."""
+
+    pruned_ids: list[str] = []
+    remaining_tasks: list[dict[str, Any]] = []
+    for task in state.get("tasks", []):
+        task_id = str(task.get("id") or "").strip()
+        if task_id and archived_task_snapshot(task_id):
+            pruned_ids.append(task_id)
+            continue
+        remaining_tasks.append(task)
+    if not pruned_ids:
+        return []
+
+    pruned = set(pruned_ids)
+    state["tasks"] = remaining_tasks
+    state["handoffs"] = [handoff for handoff in state.get("handoffs", []) if handoff.get("task_id") not in pruned]
+    state["blockers"] = [blocker for blocker in state.get("blockers", []) if blocker.get("task_id") not in pruned]
+    return pruned_ids
+
+
 def maybe_rotate_activity_log(path: Path | None = None) -> Path | None:
     """Archive + truncate ai-activity-log.jsonl when it exceeds LOG_ROTATE_MAX_BYTES.
 
@@ -3424,6 +3445,7 @@ def sync_docs_site(state: dict[str, Any]) -> None:
 def sync_all(state: dict[str, Any]) -> None:
     sync_canonical_document_metadata(state)
     normalize_state_agents(state)
+    prune_archived_active_tasks(state)
     validate_state(state)
     normalize_handoffs(state)
     recompute_agents(state)
