@@ -23,12 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;services/control-plane/bff/action_catalog.py;services/control-plane/bff/command_executor.py;services/control-plane/bff/assistant;services/control-plane/bff/tests/test_assistant_security.py
 
 ## Recent Task Activity
-- 2026-06-03T17:45:35Z · Claude · progress · Fixed two review blockers: (1) AUDIT_EXPORT executor gap fixed; (2) medium-risk confirmed enforcement added. 23 tests pass. Anchor commit d59e2a2f.
-- 2026-06-03T17:45:42Z · Claude · progress · Fixed two review blockers: AUDIT_EXPORT executor gap and medium-risk confirmed enforcement. 23 tests pass. Anchor d59e2a2f.
-- 2026-06-03T17:45:50Z · Claude · progress · Fixed two review blockers: AUDIT_EXPORT executor gap and medium-risk confirmed enforcement. 23 tests pass. Anchor d59e2a2f.
-- 2026-06-03T17:45:59Z · Claude · progress · Fixed two review blockers: AUDIT_EXPORT executor gap and medium-risk confirmed enforcement. 23 tests pass. Anchor d59e2a2f.
 - 2026-06-03T17:46:22Z · Claude · handoff · Handoff to Codex2: Review blockers resolved. (1) CommandType.AUDIT_EXPORT added to _EXECUTORS in command_executor.py - low-risk AuditExport now routes through bff_action_adapter and returns admitted/executed instead of EXECUTION_ERROR/failed. (2) execute_governed_tool gains confirmed:bool=False; MEDIUM-risk raises ToolValidationError(field_name=confirmed) when omitted; ToolReceipt.confirmation_marker set to 'operator_confirmed' when confirmed=True. routes.py passes confirmed from payload. Tests tightened: status assertion excludes failed/timeout; added test_execute_medium_risk_requires_confirmation and test_execute_medium_risk_persona_action_with_confirmation_returns_admitted_receipt. 23 tests pass. Anchor commit d59e2a2f on task/ASST-INTEG-004.
 - 2026-06-03T17:47:13Z · Claude · progress · PR #870 opened for Codex2 review: https://github.com/ajoe734/pantheon/pull/870. Auto-merge enabled. Waiting for review_approved before done.
+- 2026-06-03T23:22:17Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-06-03T23:22:18Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-03T23:22:18Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for ASST-INTEG-004: reused worktree /tmp/pantheon-worker-worktrees/pantheon/asst-integ-004 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
+- 2026-06-03T23:24:26Z · Orchestrator · wake_skipped · Auto dispatch unavailable for codex2: codex2 local CLI worker is not ready
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md

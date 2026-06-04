@@ -23,12 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;scripts/ai_status.py;.orchestrator/supervisor.py;.orchestrator/worker_runner.py;.orchestrator/permission_broker.py;.orchestrator/task-briefs
 
 ## Recent Task Activity
-- 2026-06-03T15:28:32Z · Claude2 · assign · Assigned ASST-INTEG-006 to Claude2 with reviewer Codex2
-- 2026-06-03T15:28:40Z · Claude2 · start · Helper-claimed by Claude2 while Codex2 is dispatch-paused. Implementing dev bridge: signed task packet models, signer with HMAC-SHA256 and replay protection, and dispatcher materializing tasks via scripts/ai_status.py.
-- 2026-06-03T15:31:58Z · unknown · worker_commit · Worker commit 921b80078f5f recorded 5 staged file(s) for ASST-INTEG-006.
-- 2026-06-03T15:32:05Z · Claude2 · progress · Implemented dev bridge (anchor commit 921b8007): dev_bridge_models.py (DevTaskPacket v1 + BridgeActor/Task/Constraints/Signature), dev_bridge_signer.py (HMAC-SHA256 sign/verify + file-backed replay protection), dev_bridge_dispatcher.py (verifies signature, enforces constraints, calls ai_status.py assign per task, marks packet seen, returns audit refs linking packet_id to conversation/docs/tasks). 26 tests pass, 94 total pass. Handing off to Codex2 for review.
 - 2026-06-03T15:32:15Z · Claude2 · handoff · Handoff to Codex2: Dev bridge implementation complete (anchor commit 921b8007). Deliverables: dev_bridge_models.py, dev_bridge_signer.py, dev_bridge_dispatcher.py, tests/test_dev_bridge.py. All acceptance criteria addressed: signed packet (actor/mode/sourceTurnIds/docs/tasks/constraints/signature), HMAC-SHA256 replay protection, dispatcher calls scripts/ai_status.py assign (never shells directly), audit refs link packet_id to conversation+docs+tasks. 26 new tests, 94 total green. Please review and approve.
 - 2026-06-03T15:35:06Z · Orchestrator · worker_completed · Worker exited successfully during supervisor boot reconciliation.
+- 2026-06-03T23:22:17Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-06-03T23:22:18Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-03T23:22:18Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for ASST-INTEG-006: reused worktree /tmp/pantheon-worker-worktrees/pantheon/asst-integ-006 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
+- 2026-06-03T23:24:26Z · Orchestrator · wake_skipped · Auto dispatch unavailable for codex2: codex2 local CLI worker is not ready
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
