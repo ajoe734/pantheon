@@ -145,10 +145,14 @@ class OrchestratorWorkerStatus(AssistantBaseModel):
     run_id: str = Field(alias="runId")
     task_id: Optional[str] = Field(default=None, alias="taskId")
     agent: str
+    provider: Optional[str] = None
     status: str
     started_at: Optional[str] = Field(default=None, alias="startedAt")
     last_event_at: Optional[str] = Field(default=None, alias="lastEventAt")
     last_error: Optional[str] = Field(default=None, alias="lastError")
+    queue_event_id: Optional[str] = Field(default=None, alias="queueEventId")
+    dispatch_reason: Optional[str] = Field(default=None, alias="dispatchReason")
+    delivery_mode: Optional[str] = Field(default=None, alias="deliveryMode")
 
 
 class OrchestratorTaskStatus(AssistantBaseModel):
@@ -166,6 +170,9 @@ class OrchestratorTaskStatus(AssistantBaseModel):
     summary_zh: Optional[str] = Field(default=None, alias="summaryZh")
     waiting_for: Optional[str] = Field(default=None, alias="waitingFor")
     brief_path: Optional[str] = Field(default=None, alias="briefPath")
+    blockers: List[Dict[str, Any]] = Field(default_factory=list)
+    github: Optional[Dict[str, Any]] = None
+    deployment: Optional[Dict[str, Any]] = None
     delivery: Optional[Dict[str, Any]] = None
 
 
@@ -177,7 +184,9 @@ class OrchestratorStatusResponse(AssistantBaseModel):
     source_refs: List[Dict[str, Any]] = Field(default_factory=list, alias="sourceRefs")
     tasks: List[OrchestratorTaskStatus]
     workers: List[OrchestratorWorkerStatus]
+    queue: List[Dict[str, Any]] = Field(default_factory=list)
     handoffs: List[Dict[str, Any]]
     blockers: List[Dict[str, Any]]
     supervisor: Dict[str, Any]
+    provider_guardrails: Dict[str, Any] = Field(default_factory=dict, alias="providerGuardrails")
     coordination: Optional[Dict[str, Any]] = None
