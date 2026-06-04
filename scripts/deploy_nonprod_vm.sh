@@ -118,9 +118,6 @@ configure_management_ai_dev_env() {
     return
   fi
 
-  if [[ -z "$DEV_MANAGEMENT_AI_ATTACH_BUCKET" ]]; then
-    DEV_MANAGEMENT_AI_ATTACH_BUCKET="${PROJECT_ID}-management-ai-attachments"
-  fi
   if [[ -z "$DEV_MANAGEMENT_AI_DATABASE_URL" ]]; then
     DEV_MANAGEMENT_AI_DATABASE_URL="postgresql://${DEV_MANAGEMENT_AI_DB_USER}:${DEV_MANAGEMENT_AI_DB_PASSWORD}@postgres:5432/${DEV_MANAGEMENT_AI_DB_NAME}"
   fi
@@ -128,6 +125,7 @@ configure_management_ai_dev_env() {
   MANAGEMENT_AI_STORE_BACKEND="${MANAGEMENT_AI_STORE_BACKEND:-$DEV_MANAGEMENT_AI_STORE_BACKEND}"
   MANAGEMENT_AI_STORE_SCHEMA="${MANAGEMENT_AI_STORE_SCHEMA:-$DEV_MANAGEMENT_AI_STORE_SCHEMA}"
   MANAGEMENT_AI_DATABASE_URL="${MANAGEMENT_AI_DATABASE_URL:-$DEV_MANAGEMENT_AI_DATABASE_URL}"
+  # Dev compose has a durable local attachment store; use GCS only when configured.
   PANTHEON_MGMT_AI_ATTACH_BUCKET="${PANTHEON_MGMT_AI_ATTACH_BUCKET:-$DEV_MANAGEMENT_AI_ATTACH_BUCKET}"
 }
 
@@ -224,7 +222,10 @@ ensure_management_ai_bucket() {
   fi
 
   local bucket="${PANTHEON_MGMT_AI_ATTACH_BUCKET:-}"
-  [[ -n "$bucket" ]] || error "dev Management AI attachment bucket is required"
+  if [[ -z "$bucket" ]]; then
+    info "dev Management AI attachment bucket not configured; using local attachment store"
+    return
+  fi
 
   info "preflight Management AI attachment bucket: gs://${bucket}"
   if gcloud storage buckets describe "gs://${bucket}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
@@ -410,7 +411,10 @@ ensure_dev_management_ai_bucket() {
   fi
 
   local bucket="${PANTHEON_MGMT_AI_ATTACH_BUCKET:-}"
-  [[ -n "$bucket" ]] || error "dev Management AI attachment bucket is required"
+  if [[ -z "$bucket" ]]; then
+    info "dev Management AI attachment bucket not configured; using local attachment store"
+    return
+  fi
   command -v curl >/dev/null 2>&1 || error "curl is required on the dev VM to provision ${bucket}"
   command -v python3 >/dev/null 2>&1 || error "python3 is required on the dev VM to parse metadata token JSON"
 
