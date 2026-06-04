@@ -1124,7 +1124,7 @@ def test_management_ai_idempotency_replay_does_not_duplicate_persisted_turns(
         bff_main._sse_buffers["ask"].clear()
 
 
-def test_management_ai_conversation_missing_session_returns_local_only_empty_transcript(
+def test_management_ai_conversation_missing_session_returns_404(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -1135,19 +1135,74 @@ def test_management_ai_conversation_missing_session_returns_local_only_empty_tra
             "/bff/management/ai/conversations/mgmt-missing-session",
             headers=OPERATOR_HEADERS,
         )
-        assert resp.status_code == 200, resp.text
+        assert resp.status_code == 404, resp.text
         body = resp.json()
-        assert body["data"]["sessionId"] == "mgmt-missing-session"
-        assert body["data"]["turns"] == []
-        assert body["items"] == []
-        assert body["data"]["localOnly"] is True
-        assert body["data"]["missingInStore"] is True
-        assert body["meta"]["count"] == 0
-        assert body["meta"]["surfaces"]["management_ai_conversation"] == {
-            "status": "local_only",
-            "source": "client_resync",
-            "reason": "session_missing_in_store",
-        }
+        assert body["error"]["code"] == "RESOURCE_NOT_FOUND"
+        assert body["error"]["details"]["precondition_failed"] == "management_ai_session"
+    finally:
+        bff_main.read_store = original_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+        bff_main._sse_buffers["ask"].clear()
+
+
+def test_management_ai_conversation_get_enforces_owner_or_tenant_scope(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    original_store = bff_main.read_store
+    try:
+        client = _seeded_client(tmp_path, monkeypatch)
+        store = bff_main._MGMT_AI_CONVERSATION_STORE
+        store.upsert_session(
+            session_id="mgmt-owned-session",
+            owner_id="asst-bff-002",
+            tenant_id="tenant-beta",
+            now="2026-06-03T00:00:00Z",
+            title="Owned session",
+        )
+        store.append_turn(
+            turn_id="owned-turn",
+            session_id="mgmt-owned-session",
+            role="user",
+            text="Owner-visible turn",
+            created_at="2026-06-03T00:00:01Z",
+        )
+        store.upsert_session(
+            session_id="mgmt-tenant-session",
+            owner_id="other-operator",
+            tenant_id="tenant-beta",
+            now="2026-06-03T00:00:00Z",
+            title="Tenant session",
+        )
+        store.append_turn(
+            turn_id="tenant-turn",
+            session_id="mgmt-tenant-session",
+            role="assistant",
+            text="Tenant-visible turn",
+            created_at="2026-06-03T00:00:01Z",
+        )
+
+        owned_resp = client.get(
+            "/bff/management/ai/conversations/mgmt-owned-session",
+            headers=OPERATOR_HEADERS,
+        )
+        assert owned_resp.status_code == 200, owned_resp.text
+        assert owned_resp.json()["data"]["turns"][0]["text"] == "Owner-visible turn"
+
+        tenant_resp = client.get(
+            "/bff/management/ai/conversations/mgmt-tenant-session",
+            headers={**OPERATOR_HEADERS, "X-Tenant-Id": "tenant-beta"},
+        )
+        assert tenant_resp.status_code == 200, tenant_resp.text
+        assert tenant_resp.json()["data"]["turns"][0]["text"] == "Tenant-visible turn"
+
+        scoped_resp = client.get(
+            "/bff/management/ai/conversations/mgmt-tenant-session",
+            headers=OPERATOR_HEADERS,
+        )
+        assert scoped_resp.status_code == 404, scoped_resp.text
+        assert scoped_resp.json()["error"]["details"]["precondition_failed"] == "management_ai_session"
     finally:
         bff_main.read_store = original_store
         bff_main._MGMT_NL_IDEMPOTENCY.clear()

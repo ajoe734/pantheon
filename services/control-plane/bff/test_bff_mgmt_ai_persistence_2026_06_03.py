@@ -8,8 +8,26 @@ from typing import Iterator
 from contextlib import contextmanager
 
 import pytest
+from fastapi.testclient import TestClient
 
 from assistant_conversation_store import AssistantConversationStore, PostgresAssistantConversationStore
+import main as bff_main
+
+
+OPERATOR_HEADERS = {"Authorization": "Bearer operator-alpha:operator"}
+
+
+def _management_ai_route_client(monkeypatch) -> TestClient:
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
+    monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-alpha,tenant-beta")
+    bff_main._MGMT_NL_IDEMPOTENCY.clear()
+    bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+    bff_main._sse_buffers["ask"].clear()
+    bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
+        storage_path="off",
+        attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
+    )
+    return TestClient(bff_main.app, raise_server_exceptions=False)
 
 # ---------------------------------------------------------------------------
 # Handler-level imports (used by the persist_turns handler tests below).
@@ -112,6 +130,137 @@ def test_json_assistant_conversation_store_can_run_in_memory() -> None:
         created_at="2026-06-03T00:00:01Z",
     )
     assert store.list_turns(session_id)[0]["text"] == "in memory"
+
+
+def test_bff_management_ai_read_conversations_store_backed_404_scope_and_full_turns(monkeypatch) -> None:
+    client = _management_ai_route_client(monkeypatch)
+    store = bff_main._MGMT_AI_CONVERSATION_STORE
+    store.upsert_session(
+        session_id="mgmt-store-backed-session",
+        owner_id="operator-alpha",
+        tenant_id="tenant-alpha",
+        now="2026-06-03T00:00:00Z",
+        title="Store backed readback",
+    )
+    for idx in reversed(range(60)):
+        store.append_turn(
+            turn_id=f"turn-{idx:02d}",
+            session_id="mgmt-store-backed-session",
+            role="assistant" if idx % 2 else "user",
+            text=f"Persisted turn {idx:02d}",
+            created_at=f"2026-06-03T00:00:{idx:02d}Z",
+            trace_id=f"trace-{idx:02d}",
+            attachments=[
+                {
+                    "id": f"att-{idx:02d}",
+                    "kind": "image",
+                    "mimeType": "image/png",
+                    "filename": f"screen-{idx:02d}.png",
+                    "sizeBytes": idx + 1,
+                    "storageUrl": f"local://att-{idx:02d}",
+                }
+            ],
+            provider_status={"provider": "codex_cli", "status": "completed", "idx": idx},
+        )
+    store.upsert_session(
+        session_id="mgmt-owned-foreign-tenant-session",
+        owner_id="operator-alpha",
+        tenant_id="tenant-beta",
+        now="2026-06-03T00:00:00Z",
+        title="Owner visible outside default tenant",
+    )
+    store.append_turn(
+        turn_id="owned-foreign-tenant-turn",
+        session_id="mgmt-owned-foreign-tenant-session",
+        role="user",
+        text="Owner can still read this session.",
+        created_at="2026-06-03T00:00:01Z",
+    )
+    store.upsert_session(
+        session_id="mgmt-tenant-beta-session",
+        owner_id="operator-beta",
+        tenant_id="tenant-beta",
+        now="2026-06-03T00:00:00Z",
+        title="Tenant beta readback",
+    )
+    store.append_turn(
+        turn_id="tenant-beta-turn",
+        session_id="mgmt-tenant-beta-session",
+        role="user",
+        text="Tenant beta question",
+        created_at="2026-06-03T00:00:01Z",
+    )
+
+    found = client.get(
+        "/bff/management/ai/conversations/mgmt-store-backed-session",
+        headers=OPERATOR_HEADERS,
+    )
+    assert found.status_code == 200, found.text
+    body = found.json()
+    assert body["data"]["sessionId"] == "mgmt-store-backed-session"
+    assert body["data"]["localOnly"] is False
+    assert body["data"]["missingInStore"] is False
+    turns = body["data"]["turns"]
+    assert len(turns) == 60
+    assert [turn["id"] for turn in turns[:3]] == ["turn-00", "turn-01", "turn-02"]
+    assert [turn["createdAt"] for turn in turns[:3]] == [
+        "2026-06-03T00:00:00Z",
+        "2026-06-03T00:00:01Z",
+        "2026-06-03T00:00:02Z",
+    ]
+    assert turns[17]["turn_id"] == "turn-17"
+    assert turns[17]["id"] == "turn-17"
+    assert turns[-1]["text"] == "Persisted turn 59"
+    assert turns[-1]["providerStatus"] == {"provider": "codex_cli", "status": "completed", "idx": 59}
+    assert turns[-1]["provider_status"] == turns[-1]["providerStatus"]
+    assert turns[-1]["attachments"] == [
+        {
+            "id": "att-59",
+            "attachmentId": "att-59",
+            "attachment_id": "att-59",
+            "kind": "image",
+            "mimeType": "image/png",
+            "mime_type": "image/png",
+            "filename": "screen-59.png",
+            "sizeBytes": 60,
+            "size_bytes": 60,
+            "url": "/bff/management/ai/attachments/att-59",
+        }
+    ]
+    assert turns[-1]["created_at"] == turns[-1]["createdAt"]
+    assert body["meta"]["surfaces"]["management_ai_conversation"] == {
+        "status": "ok",
+        "source": "management_ai_store",
+        "reason": None,
+    }
+
+    missing = client.get(
+        "/bff/management/ai/conversations/mgmt-missing-session",
+        headers=OPERATOR_HEADERS,
+    )
+    assert missing.status_code == 404, missing.text
+    assert missing.json()["error"]["details"]["precondition_failed"] == "management_ai_session"
+
+    owner_visible = client.get(
+        "/bff/management/ai/conversations/mgmt-owned-foreign-tenant-session",
+        headers=OPERATOR_HEADERS,
+    )
+    assert owner_visible.status_code == 200, owner_visible.text
+    assert owner_visible.json()["data"]["turns"][0]["turn_id"] == "owned-foreign-tenant-turn"
+
+    hidden = client.get(
+        "/bff/management/ai/conversations/mgmt-tenant-beta-session",
+        headers=OPERATOR_HEADERS,
+    )
+    assert hidden.status_code == 404, hidden.text
+    assert hidden.json()["error"]["details"]["precondition_failed"] == "management_ai_session"
+
+    tenant_visible = client.get(
+        "/bff/management/ai/conversations/mgmt-tenant-beta-session",
+        headers={**OPERATOR_HEADERS, "X-Tenant-Id": "tenant-beta"},
+    )
+    assert tenant_visible.status_code == 200, tenant_visible.text
+    assert tenant_visible.json()["data"]["turns"][0]["text"] == "Tenant beta question"
 
 
 def test_postgres_assistant_conversation_store_roundtrip_when_database_available() -> None:

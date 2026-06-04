@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Implement governed assistant operation tool contracts on existing BFF actions
-- Status: in_progress
+- Status: review
 - Owner: Claude
 - Reviewer: Codex2
 - Phase: Sprint ASST-INTEG / Governed operation tools
-- Last update: 2026-06-04T00:58:32Z
-- Next: Review changes requested on PR #870: confirmed must require explicit boolean true; current bool(payload.get(...)) lets confirmed="false" bypass the medium-risk gate. Awaiting Claude fix and focused regression.
+- Last update: 2026-06-04T03:37:27Z
+- Next: PR #870 re-review requested changes: HTTP confirmed gate is fixed, but direct execute_governed_tool still accepts confirmed='false' and returns executed operator_confirmed. Require confirmed is True inside the contract boundary and add a direct non-bool regression. Validation: assistant_security 26 passed; direct probe reproduced bypass. PR is also behind dev.
 
 ## Summary
 把小幫手的系統操作能力接到既有 action_catalog/command_executor/audit receipt，而不是直接操作 DOM 或 shell。
@@ -23,12 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;services/control-plane/bff/action_catalog.py;services/control-plane/bff/command_executor.py;services/control-plane/bff/assistant;services/control-plane/bff/tests/test_assistant_security.py
 
 ## Recent Task Activity
-- 2026-06-04T01:21:31Z · Orchestrator · wake_queued · Wake-up queued for supervisor: owned_in_progress_dispatch
-- 2026-06-04T01:21:33Z · Orchestrator · worker_worktree_refreshed · -
-- 2026-06-04T01:21:33Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for ASST-INTEG-004: reused worktree /tmp/pantheon-worker-worktrees/pantheon/asst-integ-004 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
-- 2026-06-04T01:25:39Z · Orchestrator · worker_worktree_refreshed · -
-- 2026-06-04T01:25:39Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for ASST-INTEG-004: reused worktree /tmp/pantheon-worker-worktrees/pantheon/asst-integ-004 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
-- 2026-06-04T01:26:35Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 304.5s without a live worker or queue record.
+- 2026-06-04T03:33:41Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-06-04T03:33:42Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-04T03:33:42Z · Orchestrator · worker_worktree_reused · -
+- 2026-06-04T03:33:42Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
+- 2026-06-04T03:37:27Z · Codex2 · note · PR #870 re-review requested changes: HTTP confirmed gate is fixed, but direct execute_governed_tool still accepts confirmed='false' and returns executed operator_confirmed. Require confirmed is True inside the contract boundary and add a direct non-bool regression. Validation: assistant_security 26 passed; direct probe reproduced bypass. PR is also behind dev.
+- 2026-06-04T03:39:01Z · Orchestrator · worker_completed · Worker exited successfully during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md

@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "task_id": "MGMT-AI-PERSIST-P0-STORE-001",
+  "archived_at": "2026-06-04T01:41:23Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-AI-PERSIST-P0-STORE-001",
+    "title": "Postgres AssistantConversationStore (shared substrate) replacing deque + /tmp jsonl",
+    "summary_zh": null,
+    "phase": "Sprint MGMT-AI-PERSIST / EPIC-MGMT-AI-PERSIST-P0-STORE",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_management_ai_persistence_2026-06-03/MANAGEMENT_AI_PERSISTENCE_GAP_SPEC.md;docs/04/pantheon_management_ai_persistence_2026-06-03/CURRENT_STATE_AUDIT.md;services/control-plane/bff/main.py;services/control-plane/bff/assistant_conversation_store.py;services/foundation/postgres_json_store.py;services/foundation/persistence_posture.py;services/control-plane/bff/requirements.txt;services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py"
+    ],
+    "acceptance": [
+      "REUSE the platform foundation - do NOT roll a new psycopg layer: build on services/foundation/postgres_json_store.py (quote_pg_identifier plus lazy import psycopg plus CREATE SCHEMA/TABLE IF NOT EXISTS plus service-owned-table plus read-only-role rule) and register the BFF in services/foundation/persistence_posture.py;Create services/control-plane/bff/assistant_conversation_store.py exposing an AssistantConversationStore interface with create_session get_session list_turns append_turn touch_session and idempotency get/put; reuse PostgresJsonOwnerStore directly where a KV record suffices (sessions) and add a small relational turns table where ordered listing plus session FK are needed;Add a backend selector MANAGEMENT_AI_STORE_BACKEND matching the other services: default json/in-memory for local-dev and enforce postgres in staging/prod via persistence_posture ENFORCED_MODES; ensure psycopg is available for the postgres backend;Bootstrap creates sessions plus turns plus idempotency from spec section 3 inside the management_ai schema with JSONB columns TIMESTAMPTZ defaults index on (session_id created_at) and FK ON DELETE CASCADE; the store is surface-parameterized (schema plus owner role) so the Agora helper reuses the same class against agora_ai - do NOT hardcode management_ai names in handler-facing methods;Turn text column stores FULL text with no 400-char truncation; attachments provider_status ui_snapshot are JSONB;Store is multi-writer safe (transactional append) so multiple BFF workers share one source of truth;Tests cover both backends: json backend runs unconditionally; postgres backend runs against env TEST_DATABASE_URL and skips with a clear message when unset;pytest in test_bff_mgmt_ai_persistence_2026_06_03.py covers create/get session round-trip plus append+list 60 turns in created_at order plus idempotency put/get plus unknown-session returns None plus durability across a fresh connection (simulated restart);Wire main.py to instantiate the store once at startup behind a module-level accessor so handlers use it"
+    ],
+    "next": "PR #884 merged into dev at bd2ec77f1fffec274210cda527378fb98dc35ea8; implementation PR #875 and review closeout PR #877 are merged, focused validation passed, and closeout evidence is published.",
+    "last_update": "2026-06-04T01:41:23Z",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-04T01:41:23Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-ai-persist-p0-store-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-AI-PERSIST-P0-STORE-001",
+      "git_clean_required": false,
+      "commit": "1cc1c7c2919570c7a9b87bdb02f5d711a2e33a95",
+      "commit_subject": "MGMT-AI-PERSIST-P0-STORE-001: refresh evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped Management AI persistence closeout evidence note.",
+        "Not changing": "runtime store code, BFF routes, persistence posture semantics, or global generated status mirrors.",
+        "Composes with": "PR #884 final evidence publication and owner done transition.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-AI-PERSIST-P0-STORE-001",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m py_compile services/control-plane/bff/assistant_conversation_store.py services/control-plane/bff/management_ai_store.py services/control-plane/bff/main.py; python3 -m pytest services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py services/control-plane/bff/tests/test_assistant_sessions.py::TestManagementAiBackedAssistantStores services/control-plane/bff/tests/test_assistant_dev_compose_flags.py services/foundation/tests/test_persistence_posture.py services/control-plane/bff/tests/test_management_nl_assistant_provider.py services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py -q -k \"conversation_store_persists or persists_30 or idempotency_replay or uses_server_history or missing_session or attachment or TestManagementAiBackedAssistantStores or dev_compose or staging_live_operator_bff or json_assistant_conversation_store or postgres_assistant_conversation_store\"; git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-AI-PERSIST-P0-STORE-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "bd2ec77f1fffec274210cda527378fb98dc35ea8",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-AI-PERSIST-P0-STORE-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implementation merged in PR #875 (merge 9ed9ebab0d6930d8429272518282f427c1c3150c; branch head 3324b95a15411bf448bea30757a60fa80ece3621). Focused validation passed; please review and approve for owner closeout.",
+      "status": "done",
+      "created_at": "2026-06-04T01:10:32Z",
+      "resolved_at": "2026-06-04T01:13:50Z"
+    },
+    {
+      "task_id": "MGMT-AI-PERSIST-P0-STORE-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation reviewed and approved: AssistantConversationStore correctly builds on postgres_json_store foundation; env-gated MANAGEMENT_AI_STORE_BACKEND selector; Postgres bootstrap with management_ai schema, JSONB columns, FK ON DELETE CASCADE; full text storage with no truncation; multi-writer safe; surface-parameterized. JSON+memory tests pass; Postgres skips cleanly. Ready for owner closeout.",
+      "status": "done",
+      "created_at": "2026-06-04T01:13:50Z",
+      "resolved_at": "2026-06-04T01:41:24Z"
+    }
+  ],
+  "blockers": []
+}

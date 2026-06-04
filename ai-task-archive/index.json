@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-06-04T01:32:52Z",
+  "updated_at": "2026-06-04T01:41:23Z",
   "counts": {
-    "total": 1398,
-    "completed": 1375,
+    "total": 1399,
+    "completed": 1376,
     "superseded": 23
   },
   "recent_terminal_ids": [
+    "MGMT-AI-PERSIST-P0-STORE-001",
     "ASST-INTEG-006",
     "ASST-INTEG-003",
     "ASST-INTEG-005",
@@ -25,7 +26,6 @@
     "ASST-OCGW-003",
     "ASST-OCGW-004",
     "ASST-OCGW-002",
-    "ASST-KERNEL-006",
-    "ASST-OCGW-001"
+    "ASST-KERNEL-006"
   ]
 }
