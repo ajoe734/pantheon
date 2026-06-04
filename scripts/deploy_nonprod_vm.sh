@@ -411,20 +411,48 @@ ensure_dev_management_ai_bucket() {
 
   local bucket="${PANTHEON_MGMT_AI_ATTACH_BUCKET:-}"
   [[ -n "$bucket" ]] || error "dev Management AI attachment bucket is required"
-  command -v gcloud >/dev/null 2>&1 || error "gcloud is required on the dev VM to provision ${bucket}"
+  command -v curl >/dev/null 2>&1 || error "curl is required on the dev VM to provision ${bucket}"
+  command -v python3 >/dev/null 2>&1 || error "python3 is required on the dev VM to parse metadata token JSON"
 
   local project="${PANTHEON_DEPLOY_PROJECT_ID:-}"
   [[ -n "$project" ]] || error "PANTHEON_DEPLOY_PROJECT_ID is required for bucket provisioning"
   local location="${PANTHEON_MGMT_AI_ATTACH_LOCATION:-asia-east1}"
+  local location_upper
+  location_upper="$(printf '%s' "$location" | tr '[:lower:]' '[:upper:]')"
 
-  info "ensuring Management AI attachment bucket from dev VM: gs://${bucket}"
-  if gcloud storage buckets describe "gs://${bucket}" --project="${project}" >/dev/null 2>&1; then
+  case "$bucket" in
+    *[!a-z0-9.-]*)
+      error "invalid GCS bucket name for Management AI attachments: ${bucket}"
+      ;;
+  esac
+
+  local token_json
+  local access_token
+  token_json="$(
+    curl -fsS \
+      -H "Metadata-Flavor: Google" \
+      "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"
+  )"
+  access_token="$(printf '%s' "$token_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
+  [[ -n "$access_token" ]] || error "metadata service did not return an access token"
+
+  info "ensuring Management AI attachment bucket from dev VM metadata identity: gs://${bucket}"
+  if curl -fsS \
+    -H "Authorization: Bearer ${access_token}" \
+    "https://storage.googleapis.com/storage/v1/b/${bucket}" >/dev/null 2>&1; then
     info "bucket exists: gs://${bucket}"
   else
-    gcloud storage buckets create "gs://${bucket}" \
-      --project="${project}" \
-      --location="${location}" \
-      --uniform-bucket-level-access
+    local create_payload
+    create_payload="$(
+      printf '{"name":"%s","location":"%s","iamConfiguration":{"uniformBucketLevelAccess":{"enabled":true}}}' \
+        "$bucket" "$location_upper"
+    )"
+    curl -fsS \
+      -X POST \
+      -H "Authorization: Bearer ${access_token}" \
+      -H "Content-Type: application/json" \
+      "https://storage.googleapis.com/storage/v1/b?project=${project}" \
+      -d "$create_payload" >/dev/null
   fi
 }
 
