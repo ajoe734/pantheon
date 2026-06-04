@@ -21,6 +21,8 @@ Closed on: 2026-06-04
 - Implementation PR: <https://github.com/ajoe734/pantheon/pull/917>
 - Implementation merge commit: `a46e161a2d580385f3d05204b62660746787a5a7`
 - Task implementation commit: `21beb1824346c41f0f4adb48d3897de2008d9664`
+- Owner closeout PR: <https://github.com/ajoe734/pantheon/pull/918>
+- Closeout branch refresh base: `d8e8abfb`
 
 ## Local Verification
 
