@@ -23,12 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;scripts/ai_status.py;.orchestrator/runtime_state.py;.orchestrator/supervisor.py;services/control-plane/bff/assistant
 
 ## Recent Task Activity
-- 2026-06-04T05:02:00Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for ASST-INTEG-007: reused worktree /tmp/pantheon-worker-worktrees/pantheon/asst-integ-007 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
-- 2026-06-04T05:07:17Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 318.4s without a live worker or queue record.
-- 2026-06-04T05:07:17Z · Orchestrator · wake_queued · Wake-up queued for supervisor: owned_finalize_dispatch
-- 2026-06-04T05:07:18Z · Orchestrator · worker_worktree_refreshed · -
 - 2026-06-04T05:07:18Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for ASST-INTEG-007: reused worktree /tmp/pantheon-worker-worktrees/pantheon/asst-integ-007 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
 - 2026-06-04T05:12:39Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 322.0s without a live worker or queue record.
+- 2026-06-04T05:12:39Z · Orchestrator · wake_queued · Wake-up queued for supervisor: owned_finalize_dispatch
+- 2026-06-04T05:12:40Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-04T05:12:40Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for ASST-INTEG-007: reused worktree /tmp/pantheon-worker-worktrees/pantheon/asst-integ-007 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
+- 2026-06-04T05:17:56Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 317.3s without a live worker or queue record.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
