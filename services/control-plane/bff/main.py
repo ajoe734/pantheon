@@ -29779,6 +29779,36 @@ def _management_ai_require_session_access(
     )
 
 
+def _management_ai_session_not_found(session_id: str) -> HTTPException:
+    clean_session_id = str(session_id or "").strip()
+    return _bff_error(
+        404,
+        ErrorCode.RESOURCE_NOT_FOUND,
+        f"Management AI session not found: {clean_session_id!r}",
+        "management_ai_session_not_found",
+        precondition_failed="management_ai_session",
+    )
+
+
+def _management_ai_get_visible_session_or_404(
+    session_id: str,
+    identity: OperatorIdentity,
+    *,
+    tenant_id: Optional[str],
+) -> Dict[str, Any]:
+    clean_session_id = str(session_id or "").strip()
+    session = _management_ai_conversation_store().get_session(clean_session_id)
+    if session is None:
+        raise _management_ai_session_not_found(clean_session_id)
+    try:
+        _management_ai_require_session_access(session, identity, tenant_id=tenant_id)
+    except HTTPException as exc:
+        if exc.status_code == 403:
+            raise _management_ai_session_not_found(clean_session_id) from exc
+        raise
+    return session
+
+
 def _management_ai_get_session_or_404(
     session_id: str,
     identity: OperatorIdentity,
@@ -29788,13 +29818,7 @@ def _management_ai_get_session_or_404(
     clean_session_id = str(session_id or "").strip()
     session = _management_ai_conversation_store().get_session(clean_session_id)
     if session is None:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            f"Management AI session not found: {clean_session_id!r}",
-            "management_ai_session_not_found",
-            precondition_failed="management_ai_session",
-        )
+        raise _management_ai_session_not_found(clean_session_id)
     _management_ai_require_session_access(session, identity, tenant_id=tenant_id)
     return session
 
@@ -32167,26 +32191,15 @@ async def bff_management_ai_conversation(
         identity,
         requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant),
     )
-    session = _management_ai_conversation_store().get_session(clean_session_id)
-    local_only = session is None
-    if session is not None:
-        _management_ai_require_session_access(session, identity, tenant_id=caller_tenant_id)
-        turns = [
-            _management_ai_turn_api_payload(turn)
-            for turn in _management_ai_conversation_store().list_turns(clean_session_id)
-        ][:limit]
-    else:
-        turns = []
-        session = {
-            "ownerId": identity.operator_id,
-            "owner_id": identity.operator_id,
-            "tenantId": caller_tenant_id,
-            "tenant_id": caller_tenant_id,
-            "createdAt": None,
-            "created_at": None,
-            "updatedAt": None,
-            "updated_at": None,
-        }
+    session = _management_ai_get_visible_session_or_404(
+        clean_session_id,
+        identity,
+        tenant_id=caller_tenant_id,
+    )
+    turns = [
+        _management_ai_turn_api_payload(turn)
+        for turn in _management_ai_conversation_store().list_turns(clean_session_id)
+    ][:limit]
     audit_log = {
         "href": _management_ai_audit_href(session_id=clean_session_id, trace_id=trace_id),
         "traceId": trace_id,
@@ -32199,10 +32212,10 @@ async def bff_management_ai_conversation(
             "traceId": trace_id,
             "trace_id": trace_id,
             "turns": turns,
-            "localOnly": local_only,
-            "local_only": local_only,
-            "missingInStore": local_only,
-            "missing_in_store": local_only,
+            "localOnly": False,
+            "local_only": False,
+            "missingInStore": False,
+            "missing_in_store": False,
             "ownerId": session.get("ownerId") or session.get("owner_id"),
             "owner_id": session.get("owner_id") or session.get("ownerId"),
             "tenantId": session.get("tenantId") or session.get("tenant_id"),
@@ -32234,9 +32247,9 @@ async def bff_management_ai_conversation(
             },
             "surfaces": {
                 "management_ai_conversation": {
-                    "status": "local_only" if local_only else "ok",
-                    "source": "client_resync" if local_only else "management_ai_store",
-                    "reason": "session_missing_in_store" if local_only else None,
+                    "status": "ok",
+                    "source": "management_ai_store",
+                    "reason": None,
                 }
             },
         },
