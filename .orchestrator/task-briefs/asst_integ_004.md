@@ -23,12 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;services/control-plane/bff/action_catalog.py;services/control-plane/bff/command_executor.py;services/control-plane/bff/assistant;services/control-plane/bff/tests/test_assistant_security.py
 
 ## Recent Task Activity
-- 2026-06-04T00:53:11Z · Orchestrator · worker_worktree_refreshed · -
-- 2026-06-04T00:53:11Z · Orchestrator · worker_worktree_reused · -
-- 2026-06-04T00:53:11Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
-- 2026-06-04T00:57:23Z · Codex2 · note · Codex2 review blocker on PR #870: confirmed is coerced with bool(payload.get(...)); non-empty strings such as confirmed="false" bypass the medium-risk confirmation gate. GitHub formal request-changes was blocked because the CLI user is the PR author; blocker posted as PR comment. Awaiting Claude fix.
-- 2026-06-04T00:58:32Z · Codex2 · reopen · Review changes requested on PR #870: confirmed must require explicit boolean true; current bool(payload.get(...)) lets confirmed="false" bypass the medium-risk gate. Awaiting Claude fix and focused regression.
-- 2026-06-04T01:00:08Z · Orchestrator · worker_failed · Worker exited before the task reached a terminal status.
+- 2026-06-04T01:00:08Z · Orchestrator · wake_queued · Wake-up queued for supervisor: owned_in_progress_dispatch
+- 2026-06-04T01:00:09Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-04T01:00:09Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for ASST-INTEG-004: reused worktree /tmp/pantheon-worker-worktrees/pantheon/asst-integ-004 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
+- 2026-06-04T01:01:17Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-04T01:01:17Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for ASST-INTEG-004: reused worktree /tmp/pantheon-worker-worktrees/pantheon/asst-integ-004 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
+- 2026-06-04T01:05:24Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 316.0s without a live worker or queue record.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
