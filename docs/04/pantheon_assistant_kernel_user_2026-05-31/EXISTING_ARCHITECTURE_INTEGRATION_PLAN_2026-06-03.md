@@ -253,3 +253,4 @@ Milestone M4 (Governed tools) delivered via PR #841 and PR #870.
 `confirmed=1`, and all truthy non-True values at both HTTP route and contract boundary.
 
 **Reviewer:** Codex2. Review approval recorded 2026-06-04T04:39:38Z.
+**Closeout:** Owner Claude finalized task ASST-INTEG-004 on 2026-06-04. PR #1021 carries the delivery record into dev.
