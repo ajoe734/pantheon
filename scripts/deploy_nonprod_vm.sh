@@ -226,31 +226,12 @@ ensure_management_ai_bucket() {
   local bucket="${PANTHEON_MGMT_AI_ATTACH_BUCKET:-}"
   [[ -n "$bucket" ]] || error "dev Management AI attachment bucket is required"
 
-  info "ensure Management AI attachment bucket: gs://${bucket}"
+  info "preflight Management AI attachment bucket: gs://${bucket}"
   if gcloud storage buckets describe "gs://${bucket}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
-    info "bucket exists: gs://${bucket}"
+    info "bucket visible to deploy runner: gs://${bucket}"
   else
-    gcloud storage buckets create "gs://${bucket}" \
-      --project="${PROJECT_ID}" \
-      --location="${DEV_MANAGEMENT_AI_ATTACH_LOCATION}" \
-      --uniform-bucket-level-access
+    info "bucket not visible to deploy runner; dev VM will attempt idempotent provisioning"
   fi
-
-  local vm_service_account
-  vm_service_account="$(
-    gcloud compute instances describe "${DEV_VM}" \
-      --project="${PROJECT_ID}" \
-      --zone="${DEV_ZONE}" \
-      --format='value(serviceAccounts[0].email)'
-  )"
-  [[ -n "$vm_service_account" ]] || error "could not resolve service account for ${DEV_VM}"
-
-  gcloud storage buckets add-iam-policy-binding "gs://${bucket}" \
-    --project="${PROJECT_ID}" \
-    --member="serviceAccount:${vm_service_account}" \
-    --role="roles/storage.objectAdmin" \
-    --quiet >/dev/null
-  info "bucket writer: ${vm_service_account}"
 }
 
 ensure_management_ai_bucket
@@ -265,6 +246,7 @@ ssh_bash() {
   command_prefix="PANTHEON_DEPLOY_ENV=$(shell_quote "$DEPLOY_ENV")"
   command_prefix+=" PANTHEON_DEPLOY_COMPONENT=$(shell_quote "$remote_component")"
   command_prefix+=" PANTHEON_DEPLOY_SHA=$(shell_quote "$DEPLOY_SHA")"
+  command_prefix+=" PANTHEON_DEPLOY_PROJECT_ID=$(shell_quote "$PROJECT_ID")"
   command_prefix+=" PANTHEON_REMOTE_DIR=$(shell_quote "$remote_dir")"
   command_prefix+=" PANTHEON_DEPLOY_WORKTREE_ROOT=$(shell_quote "${PANTHEON_DEPLOY_WORKTREE_ROOT:-}")"
   command_prefix+=" PANTHEON_GITHUB_TOKEN=$(shell_quote "${GITHUB_TOKEN:-}")"
@@ -277,6 +259,7 @@ ssh_bash() {
   command_prefix+=" MANAGEMENT_AI_STORE_DSN=$(shell_quote "${MANAGEMENT_AI_STORE_DSN:-}")"
   command_prefix+=" MANAGEMENT_AI_DATABASE_URL=$(shell_quote "${MANAGEMENT_AI_DATABASE_URL:-}")"
   command_prefix+=" PANTHEON_MGMT_AI_ATTACH_BUCKET=$(shell_quote "${PANTHEON_MGMT_AI_ATTACH_BUCKET:-}")"
+  command_prefix+=" PANTHEON_MGMT_AI_ATTACH_LOCATION=$(shell_quote "${DEV_MANAGEMENT_AI_ATTACH_LOCATION:-}")"
   command_prefix+=" PANTHEON_MANAGEMENT_AI_DB_USER=$(shell_quote "${DEV_MANAGEMENT_AI_DB_USER:-}")"
   command_prefix+=" PANTHEON_MANAGEMENT_AI_DB_PASSWORD=$(shell_quote "${DEV_MANAGEMENT_AI_DB_PASSWORD:-}")"
   command_prefix+=" PANTHEON_MANAGEMENT_AI_DB_NAME=$(shell_quote "${DEV_MANAGEMENT_AI_DB_NAME:-}")"
@@ -421,6 +404,30 @@ real_env_or_example() {
   error "missing ${real_file}; pass --allow-example-env only for rehearsal"
 }
 
+ensure_dev_management_ai_bucket() {
+  if [[ "${PANTHEON_DEPLOY_ENV}" != "dev" ]]; then
+    return
+  fi
+
+  local bucket="${PANTHEON_MGMT_AI_ATTACH_BUCKET:-}"
+  [[ -n "$bucket" ]] || error "dev Management AI attachment bucket is required"
+  command -v gcloud >/dev/null 2>&1 || error "gcloud is required on the dev VM to provision ${bucket}"
+
+  local project="${PANTHEON_DEPLOY_PROJECT_ID:-}"
+  [[ -n "$project" ]] || error "PANTHEON_DEPLOY_PROJECT_ID is required for bucket provisioning"
+  local location="${PANTHEON_MGMT_AI_ATTACH_LOCATION:-asia-east1}"
+
+  info "ensuring Management AI attachment bucket from dev VM: gs://${bucket}"
+  if gcloud storage buckets describe "gs://${bucket}" --project="${project}" >/dev/null 2>&1; then
+    info "bucket exists: gs://${bucket}"
+  else
+    gcloud storage buckets create "gs://${bucket}" \
+      --project="${project}" \
+      --location="${location}" \
+      --uniform-bucket-level-access
+  fi
+}
+
 ensure_dev_management_ai_postgres_role() {
   if [[ "${PANTHEON_DEPLOY_ENV}" != "dev" ]]; then
     return
@@ -504,6 +511,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     #
     # Operators can narrow scope via PANTHEON_DEV_COMPOSE_PROFILES.
     PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-activation-ready-smoke,dormant-smoke,openclaw,openclaw-activation-ready-e2e,search-index-scheduler,smoke,source-ingest-scheduler,source-search-bounded}"
+    ensure_dev_management_ai_bucket
     ensure_dev_management_ai_postgres_role
     COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
       docker compose -p pantheon -f docker-compose.yml config --quiet
