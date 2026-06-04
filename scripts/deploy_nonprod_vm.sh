@@ -561,6 +561,7 @@ WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'mgmt_user')
 
 ALTER ROLE :"mgmt_user" LOGIN PASSWORD :'mgmt_pass';
 GRANT CONNECT ON DATABASE :"mgmt_db" TO :"mgmt_user";
+GRANT CREATE ON DATABASE :"mgmt_db" TO :"mgmt_user";
 CREATE SCHEMA IF NOT EXISTS :"mgmt_schema" AUTHORIZATION :"mgmt_user";
 ALTER SCHEMA :"mgmt_schema" OWNER TO :"mgmt_user";
 GRANT USAGE, CREATE ON SCHEMA :"mgmt_schema" TO :"mgmt_user";
