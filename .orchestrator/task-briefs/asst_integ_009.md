@@ -6,26 +6,31 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Add security mode and tool-boundary regression suite for assistant integration
-- Status: todo
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Claude
 - Phase: Sprint ASST-INTEG / Security and mode regression
-- Last update: 2026-06-03T13:43:39Z
-- Next: Assignment created
+- Last update: 2026-06-04T13:36:45Z
+- Next: Review approved: all 81 tests pass (23 user-mode regression + 32 BFF security + 26 OpenClaw command/provider/injection). All acceptance criteria met — user-mode contraction, control-mode TTL/passphrase/idle gates, tool allowlist denial, OpenClaw deny-first policy, prompt injection redaction, CI-runnable suite. mode_policy.py gap fix (repo_write/docker/secret_store) and confirmed='false' string-bypass regression are sharp catches. Owner Codex to closeout.
 
 ## Summary
 補 user-mode contraction、control-mode TTL/passphrase、tool allowlist、redaction、provider credential non-exposure 的安全回歸。
 
 ## Dependencies
-- ASST-INTEG-003: todo · Route real assistant providers through existing OpenClaw adapter contracts
-- ASST-INTEG-004: todo · Implement governed assistant operation tool contracts on existing BFF actions
-- ASST-INTEG-006: todo · Bridge assistant-generated task packets into supervisor autoworker dispatch
+- ASST-INTEG-003: done · Provider routing through existing OpenClaw adapter
+- ASST-INTEG-004: done · Implement governed assistant operation tool contracts on existing BFF actions
+- ASST-INTEG-006: done · Bridge assistant-generated task packets into supervisor autoworker dispatch
 
 ## Artifacts
 - docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;services/control-plane/bff/tests/test_assistant_security.py;services/control-plane/bff/assistant/tests/test_user_mode_regression.py;services/openclaw-gateway-adapter;docs/04/pantheon_assistant_kernel_user_2026-05-31/ASST_KERNEL_007_REPAIR_WORKFLOW.md
 
 ## Recent Task Activity
-- 2026-06-03T13:43:39Z · Operator · assign · Assigned ASST-INTEG-009 to Codex with reviewer Claude
+- 2026-06-04T13:33:57Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-06-04T13:33:57Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-04T13:33:57Z · Orchestrator · worker_worktree_reused · -
+- 2026-06-04T13:33:57Z · Orchestrator · worker_started · Worker started via claude_cli: review_ready_dispatch
+- 2026-06-04T13:36:45Z · Claude · review_approved · Review approved: all 81 tests pass (23 user-mode regression + 32 BFF security + 26 OpenClaw command/provider/injection). All acceptance criteria met — user-mode contraction, control-mode TTL/passphrase/idle gates, tool allowlist denial, OpenClaw deny-first policy, prompt injection redaction, CI-runnable suite. mode_policy.py gap fix (repo_write/docker/secret_store) and confirmed='false' string-bypass regression are sharp catches. Owner Codex to closeout.
+- 2026-06-04T13:39:00Z · Orchestrator · worker_completed · Worker exited successfully during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
