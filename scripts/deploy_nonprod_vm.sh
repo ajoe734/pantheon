@@ -437,6 +437,44 @@ ensure_dev_management_ai_bucket() {
   [[ -n "$access_token" ]] || error "metadata service did not return an access token"
 
   info "ensuring Management AI attachment bucket from dev VM metadata identity: gs://${bucket}"
+  local probe_object
+  local probe_object_encoded
+  local probe_file
+  local probe_read_file
+  probe_object="management-ai-attachments/.deploy-probe-${PANTHEON_DEPLOY_ENV}-$(date -u +%Y%m%dT%H%M%SZ)-$$.txt"
+  probe_object_encoded="$(
+    python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$probe_object"
+  )"
+  probe_file="$(mktemp)"
+  probe_read_file="$(mktemp)"
+  printf 'pantheon management ai attachment bucket probe %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$probe_file"
+
+  if curl -fsS \
+    -X POST \
+    -H "Authorization: Bearer ${access_token}" \
+    -H "Content-Type: text/plain" \
+    "https://storage.googleapis.com/upload/storage/v1/b/${bucket}/o?uploadType=media&name=${probe_object_encoded}" \
+    --data-binary "@${probe_file}" >/dev/null 2>&1; then
+    if curl -fsS \
+      -H "Authorization: Bearer ${access_token}" \
+      "https://storage.googleapis.com/storage/v1/b/${bucket}/o/${probe_object_encoded}?alt=media" >"${probe_read_file}" \
+      && cmp -s "$probe_file" "$probe_read_file"; then
+      curl -fsS \
+        -X DELETE \
+        -H "Authorization: Bearer ${access_token}" \
+        "https://storage.googleapis.com/storage/v1/b/${bucket}/o/${probe_object_encoded}" >/dev/null 2>&1 || true
+      rm -f "$probe_file" "$probe_read_file"
+      info "bucket object read/write probe passed: gs://${bucket}/${probe_object}"
+      return
+    fi
+    curl -fsS \
+      -X DELETE \
+      -H "Authorization: Bearer ${access_token}" \
+      "https://storage.googleapis.com/storage/v1/b/${bucket}/o/${probe_object_encoded}" >/dev/null 2>&1 || true
+  fi
+  rm -f "$probe_file" "$probe_read_file"
+
+  info "bucket object read/write probe failed; attempting bucket metadata/create bootstrap"
   if curl -fsS \
     -H "Authorization: Bearer ${access_token}" \
     "https://storage.googleapis.com/storage/v1/b/${bucket}" >/dev/null 2>&1; then
@@ -453,6 +491,7 @@ ensure_dev_management_ai_bucket() {
       -H "Content-Type: application/json" \
       "https://storage.googleapis.com/storage/v1/b?project=${project}" \
       -d "$create_payload" >/dev/null
+    info "bucket created: gs://${bucket}"
   fi
 }
 
