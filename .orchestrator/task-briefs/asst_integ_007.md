@@ -32,6 +32,7 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Closeout Evidence
 - 2026-06-04T13:05:08Z · Codex2 · PR #914 merged at 6c3640b3f66676a0530c99f9c84db1b9435f5c2c; PR #1015 carries the task-scoped closeout commit required before `scripts/ai-status.sh done`.
+- 2026-06-04T13:07:52Z · Codex2 · Refreshed PR #1015 after dev advanced through PR #1014; latest task commit remains ASST-INTEG-007-scoped for closeout gating.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
