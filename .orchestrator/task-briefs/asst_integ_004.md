@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Implement governed assistant operation tool contracts on existing BFF actions
-- Status: in_progress
+- Status: review
 - Owner: Claude
 - Reviewer: Codex2
 - Phase: Sprint ASST-INTEG / Governed operation tools
-- Last update: 2026-06-04T00:58:32Z
-- Next: Review changes requested on PR #870: confirmed must require explicit boolean true; current bool(payload.get(...)) lets confirmed="false" bypass the medium-risk gate. Awaiting Claude fix and focused regression.
+- Last update: 2026-06-04T01:30:50Z
+- Next: Fixed PR #870 review change: routes.py line 478 changed from bool(payload.get('confirmed', False)) to payload.get('confirmed') is True. This closes the bypass where confirmed='false' (string) or confirmed=1 (int) would pass the medium-risk gate. Added 3 HTTP-layer regression tests covering string-false bypass, int-1 bypass, and boolean-true success path. All 26 security tests pass. CI running on PR #870 (commit trailers + runtime mirror guard SUCCESS; smoke acceptance IN_PROGRESS). Please re-review.
 
 ## Summary
 把小幫手的系統操作能力接到既有 action_catalog/command_executor/audit receipt，而不是直接操作 DOM 或 shell。
@@ -23,12 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;services/control-plane/bff/action_catalog.py;services/control-plane/bff/command_executor.py;services/control-plane/bff/assistant;services/control-plane/bff/tests/test_assistant_security.py
 
 ## Recent Task Activity
-- 2026-06-04T01:21:31Z · Orchestrator · wake_queued · Wake-up queued for supervisor: owned_in_progress_dispatch
-- 2026-06-04T01:21:33Z · Orchestrator · worker_worktree_refreshed · -
-- 2026-06-04T01:21:33Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for ASST-INTEG-004: reused worktree /tmp/pantheon-worker-worktrees/pantheon/asst-integ-004 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
-- 2026-06-04T01:25:39Z · Orchestrator · worker_worktree_refreshed · -
-- 2026-06-04T01:25:39Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for ASST-INTEG-004: reused worktree /tmp/pantheon-worker-worktrees/pantheon/asst-integ-004 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
-- 2026-06-04T01:26:35Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 304.5s without a live worker or queue record.
+- 2026-06-04T01:27:37Z · Orchestrator · task_dispatch_synced · Supervisor re-dispatched ASST-INTEG-004; task remains in progress.
+- 2026-06-04T01:29:41Z · unknown · worker_commit · Worker commit ff9f794fb774 recorded 2 staged file(s) for ASST-INTEG-004.
+- 2026-06-04T01:30:01Z · Claude · progress · Fixed PR #870 review: routes.py now uses payload.get('confirmed') is True to reject non-boolean truthy values (string 'false', int 1). Added 3 regression tests: string-false bypass, int-1 bypass, boolean-true success. All 26 security tests pass. Branch pushed; PR #870 updated.
+- 2026-06-04T01:30:09Z · Claude · progress · Fixed PR #870 review: routes.py uses payload.get('confirmed') is True instead of bool() to block non-boolean bypass. Added 3 HTTP-layer regression tests. 26 security tests pass. Branch pushed.
+- 2026-06-04T01:30:50Z · Claude · handoff · Handoff to Codex2: Fixed PR #870 review change: routes.py line 478 changed from bool(payload.get('confirmed', False)) to payload.get('confirmed') is True. This closes the bypass where confirmed='false' (string) or confirmed=1 (int) would pass the medium-risk gate. Added 3 HTTP-layer regression tests covering string-false bypass, int-1 bypass, and boolean-true success path. All 26 security tests pass. CI running on PR #870 (commit trailers + runtime mirror guard SUCCESS; smoke acceptance IN_PROGRESS). Please re-review.
+- 2026-06-04T01:31:39Z · Orchestrator · worker_completed · Worker exited successfully during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
