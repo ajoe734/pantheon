@@ -1256,6 +1256,60 @@ def _create_worker_worktree(repo_root: Path, path: Path, branch: str, base_ref: 
     return True, None
 
 
+# Orchestrator-managed per-task scratch that a worker routinely dirties inside its
+# own worktree (the task brief gets annotated, the review artifact rewritten). The
+# supervisor regenerates these on dispatch, so a reused worktree whose ONLY dirt is
+# here is safe to restore-and-reuse. Blocking dispatch on this churn is what jams
+# the whole fleet once worktrees are reused (every tick re-blocks, nothing runs).
+_REUSABLE_DIRTY_PREFIXES = (
+    ".orchestrator/task-briefs/",
+    ".orchestrator/reviews/",
+)
+
+
+def _classify_worktree_dirt(porcelain_status: str) -> tuple[str, list[str]]:
+    """Classify reused-worktree dirtiness from `git status --porcelain` output.
+
+    Returns (classification, paths):
+      'clean'        - no tracked/staged changes; paths is []
+      'scratch_only' - every change is orchestrator-managed scratch
+                       (see _REUSABLE_DIRTY_PREFIXES); paths lists them
+      'real'         - at least one change outside scratch -> must block dispatch
+    """
+    lines = [ln for ln in porcelain_status.splitlines() if ln.strip()]
+    if not lines:
+        return "clean", []
+    paths: list[str] = []
+    for ln in lines:
+        body = ln[3:] if len(ln) > 3 else ln.strip()
+        # rename/copy lines render as "old -> new"; the new path is what exists.
+        path = body.split(" -> ")[-1].strip().strip('"')
+        if path:
+            paths.append(path)
+    if any(not p.startswith(_REUSABLE_DIRTY_PREFIXES) for p in paths):
+        return "real", []
+    return "scratch_only", paths
+
+
+def _restore_reusable_scratch(worktree_path: Path, paths: list[str]) -> None:
+    """Restore orchestrator scratch paths to HEAD and drop untracked scratch."""
+    if paths:
+        subprocess.run(
+            ["git", "checkout", "-q", "HEAD", "--", *sorted(set(paths))],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    subprocess.run(
+        ["git", "clean", "-fq", "--", *_REUSABLE_DIRTY_PREFIXES],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
 def _refresh_reused_worker_worktree(repo_root: Path, worktree_path: Path, base_ref: str) -> tuple[bool, str]:
     """Fast-forward a reused worker worktree to the current base ref tip.
 
@@ -1289,8 +1343,24 @@ def _refresh_reused_worker_worktree(repo_root: Path, worktree_path: Path, base_r
         text=True,
         check=False,
     )
+    scratch_restored = False
     if status_proc.returncode == 0 and status_proc.stdout.strip():
-        return False, "skipped_dirty_worktree"
+        classification, scratch_paths = _classify_worktree_dirt(status_proc.stdout)
+        if classification == "real":
+            return False, "skipped_dirty_worktree"
+        # Only orchestrator-managed scratch is dirty: restore it and reuse the
+        # worktree instead of jamming dispatch on regenerable bookkeeping churn.
+        _restore_reusable_scratch(worktree_path, scratch_paths)
+        verify_proc = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if verify_proc.returncode == 0 and verify_proc.stdout.strip():
+            return False, "skipped_dirty_worktree"
+        scratch_restored = True
 
     merge_proc = subprocess.run(
         ["git", "merge", "--ff-only", f"origin/{base}"],
@@ -1308,7 +1378,8 @@ def _refresh_reused_worker_worktree(repo_root: Path, worktree_path: Path, base_r
             check=False,
         )
         head = (head_proc.stdout or "").strip()
-        return True, f"ff_to_{head}" if head else "ff_ok"
+        suffix = "+scratch_restored" if scratch_restored else ""
+        return True, (f"ff_to_{head}{suffix}" if head else f"ff_ok{suffix}")
     details = (merge_proc.stderr or merge_proc.stdout or "").strip().splitlines()[0] if (merge_proc.stderr or merge_proc.stdout) else "unknown"
     return False, f"non_fast_forward: {details}"
 

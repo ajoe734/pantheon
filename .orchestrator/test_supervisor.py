@@ -6606,6 +6606,42 @@ class SingleSupervisorGuardTests(unittest.TestCase):
                 regained.close()
 
 
+class WorktreeDirtClassificationTests(unittest.TestCase):
+    def test_clean_status(self) -> None:
+        self.assertEqual(supervisor._classify_worktree_dirt(""), ("clean", []))
+        self.assertEqual(supervisor._classify_worktree_dirt("\n  \n"), ("clean", []))
+
+    def test_scratch_only_is_reusable(self) -> None:
+        # Exactly the dirt that jammed the fleet: brief modified + review re-staged.
+        status = (
+            "MM .orchestrator/task-briefs/mgmt_ai_persist_p1_attach_007.md\n"
+            "D  .orchestrator/reviews/mgmt_ai_persist_p1_attach_007_review.md\n"
+        )
+        kind, paths = supervisor._classify_worktree_dirt(status)
+        self.assertEqual(kind, "scratch_only")
+        self.assertEqual(
+            set(paths),
+            {
+                ".orchestrator/task-briefs/mgmt_ai_persist_p1_attach_007.md",
+                ".orchestrator/reviews/mgmt_ai_persist_p1_attach_007_review.md",
+            },
+        )
+
+    def test_real_product_dirt_still_blocks(self) -> None:
+        status = (
+            " M .orchestrator/task-briefs/asst_integ_004.md\n"
+            " M services/control-plane/bff/main.py\n"
+        )
+        kind, paths = supervisor._classify_worktree_dirt(status)
+        self.assertEqual(kind, "real")
+        self.assertEqual(paths, [])
+
+    def test_rename_uses_new_path(self) -> None:
+        status = "R  old/file.py -> services/new/file.py\n"
+        kind, _ = supervisor._classify_worktree_dirt(status)
+        self.assertEqual(kind, "real")
+
+
 class WorkerReassignmentTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = {
