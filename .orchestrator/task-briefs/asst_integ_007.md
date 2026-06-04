@@ -30,6 +30,9 @@ Do not read `current-work.md` by default for implementation context.
 - 2026-06-04T12:52:51Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for ASST-INTEG-007: reused worktree /tmp/pantheon-worker-worktrees/pantheon/asst-integ-007 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
 - 2026-06-04T12:58:07Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 317.7s without a live worker or queue record.
 
+## Closeout Evidence
+- 2026-06-04T13:05:08Z · Codex2 · PR #914 merged at 6c3640b3f66676a0530c99f9c84db1b9435f5c2c; PR #1015 carries the task-scoped closeout commit required before `scripts/ai-status.sh done`.
+
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
 - ai-status.json
