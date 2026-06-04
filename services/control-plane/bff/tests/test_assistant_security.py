@@ -478,3 +478,66 @@ def test_tool_execute_route_requires_reason_for_medium_risk(tmp_path) -> None:
         headers=OPERATOR_TOOL_HEADERS,
     )
     assert resp.status_code == 422
+
+
+def test_tool_execute_route_string_false_does_not_bypass_medium_risk_gate(tmp_path) -> None:
+    """confirmed='false' (string) must not pass the medium-risk gate.
+
+    bool('false') == True in Python, so the route must use `is True` not
+    bool() when extracting confirmed from the JSON payload.
+    """
+    client = TestClient(bff_main.app)
+    resp = client.post(
+        "/bff/assistant/tools/execute",
+        json={
+            "action_id": "PersonaAction",
+            "entity_type": "Persona",
+            "entity_id": "p-001",
+            "params": {},
+            "reason": "retire draft persona p-123",
+            "confirmed": "false",
+        },
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert resp.status_code == 422
+
+
+def test_tool_execute_route_integer_one_does_not_bypass_medium_risk_gate(tmp_path) -> None:
+    """confirmed=1 (integer) must not pass the medium-risk gate.
+
+    bool(1) == True but the route requires the literal JSON boolean true.
+    """
+    client = TestClient(bff_main.app)
+    resp = client.post(
+        "/bff/assistant/tools/execute",
+        json={
+            "action_id": "PersonaAction",
+            "entity_type": "Persona",
+            "entity_id": "p-001",
+            "params": {},
+            "reason": "retire draft persona p-123",
+            "confirmed": 1,
+        },
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert resp.status_code == 422
+
+
+def test_tool_execute_route_boolean_true_passes_medium_risk_gate(tmp_path) -> None:
+    """Only the explicit JSON boolean true passes the medium-risk confirmation gate."""
+    client = TestClient(bff_main.app)
+    resp = client.post(
+        "/bff/assistant/tools/execute",
+        json={
+            "action_id": "PersonaAction",
+            "entity_type": "Persona",
+            "entity_id": "p-001",
+            "params": {},
+            "reason": "retire draft persona p-123",
+            "confirmed": True,
+        },
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert resp.status_code == 201
+    data = resp.json()["data"]
+    assert data["confirmation_marker"] == "operator_confirmed"
