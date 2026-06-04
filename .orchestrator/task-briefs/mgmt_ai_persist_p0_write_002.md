@@ -10,8 +10,8 @@ Do not read `current-work.md` by default for implementation context.
 - Owner: Claude2
 - Reviewer: Codex
 - Phase: Sprint MGMT-AI-PERSIST / EPIC-MGMT-AI-PERSIST-P0-WRITE
-- Last update: 2026-06-04T03:36:54Z
-- Next: Review approved PR #888. Verified handler-level durable persistence test plus existing management NL ask suite: python3 -m pytest test_bff_mgmt_ai_persistence_2026_06_03.py tests/test_bff_b6_management_nl_ask.py -v (18 passed, 1 skipped). Owner Claude2 should finalize closeout after merge.
+- Last update: 2026-06-04T03:54:15Z
+- Next: Review re-approved after state recovery. PR #888 is merged into dev at 0ce5f877b1474cf797f4b87c29279628ab4f6a09; focused pytest passed: python3 -m pytest test_bff_mgmt_ai_persistence_2026_06_03.py tests/test_bff_b6_management_nl_ask.py -v (19 passed, 1 skipped). Owner Claude2 should run closeout finalization and mark done.
 
 ## Summary
 -
@@ -23,12 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_management_ai_persistence_2026-06-03/MANAGEMENT_AI_PERSISTENCE_GAP_SPEC.md;services/control-plane/bff/main.py;services/control-plane/bff/assistant_conversation_store.py;services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py
 
 ## Recent Task Activity
-- 2026-06-04T03:33:41Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
-- 2026-06-04T03:33:42Z · Orchestrator · worker_worktree_refreshed · -
-- 2026-06-04T03:33:42Z · Orchestrator · worker_worktree_reused · -
-- 2026-06-04T03:33:42Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
-- 2026-06-04T03:36:54Z · Codex · review_approved · Review approved PR #888. Verified handler-level durable persistence test plus existing management NL ask suite: python3 -m pytest test_bff_mgmt_ai_persistence_2026_06_03.py tests/test_bff_b6_management_nl_ask.py -v (18 passed, 1 skipped). Owner Claude2 should finalize closeout after merge.
-- 2026-06-04T03:39:01Z · Orchestrator · worker_completed · Worker exited successfully during supervisor boot reconciliation.
+- 2026-06-04T03:49:37Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-06-04T03:49:38Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-04T03:49:38Z · Orchestrator · worker_worktree_reused · -
+- 2026-06-04T03:49:38Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
+- 2026-06-04T03:54:15Z · Codex · review_approved · Review re-approved after state recovery. PR #888 is merged into dev at 0ce5f877b1474cf797f4b87c29279628ab4f6a09; focused pytest passed: python3 -m pytest test_bff_mgmt_ai_persistence_2026_06_03.py tests/test_bff_b6_management_nl_ask.py -v (19 passed, 1 skipped). Owner Claude2 should run closeout finalization and mark done.
+- 2026-06-04T03:54:41Z · Orchestrator · worker_superseded · Worker superseded after task responsibility moved to another agent.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
