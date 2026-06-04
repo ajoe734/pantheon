@@ -31,7 +31,6 @@ Do not read `current-work.md` by default for implementation context.
 - 2026-06-04T13:33:57Z · Orchestrator · worker_started · Worker started via claude_cli: review_ready_dispatch
 - 2026-06-04T13:36:45Z · Claude · review_approved · Review approved: all 81 tests pass (23 user-mode regression + 32 BFF security + 26 OpenClaw command/provider/injection). All acceptance criteria met — user-mode contraction, control-mode TTL/passphrase/idle gates, tool allowlist denial, OpenClaw deny-first policy, prompt injection redaction, CI-runnable suite. mode_policy.py gap fix (repo_write/docker/secret_store) and confirmed='false' string-bypass regression are sharp catches. Owner Codex to closeout.
 - 2026-06-04T13:39:00Z · Orchestrator · worker_completed · Worker exited successfully during supervisor boot reconciliation.
-- 2026-06-04T13:47:34Z · GitHub · pr_merged · Closeout evidence PR #1028 merged; owner finalization proceeding with final task-head delivery commit.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
