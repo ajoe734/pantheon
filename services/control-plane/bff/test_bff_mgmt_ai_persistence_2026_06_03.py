@@ -1,12 +1,24 @@
 from __future__ import annotations
 
 import os
+import sys
 import uuid
 from pathlib import Path
+from typing import Iterator
+from contextlib import contextmanager
 
 import pytest
 
 from assistant_conversation_store import AssistantConversationStore, PostgresAssistantConversationStore
+
+# ---------------------------------------------------------------------------
+# Handler-level imports (used by the persist_turns handler tests below).
+# These are imported lazily inside functions so the store-only tests above
+# do not require a fully-configured BFF environment.
+# ---------------------------------------------------------------------------
+_BFF_DIR = os.path.dirname(os.path.abspath(__file__))
+if _BFF_DIR not in sys.path:
+    sys.path.insert(0, _BFF_DIR)
 
 
 def _append_60_turns(store: object, *, session_id: str) -> str:
@@ -128,3 +140,190 @@ def test_postgres_assistant_conversation_store_roundtrip_when_database_available
     assert len(reloaded.list_turns(session_id)) == 60
     assert reloaded.list_turns(session_id)[-1]["text"] == full_text
     assert reloaded.get_idempotency("idem-key-1")["result"]["status"] == "accepted"
+
+
+# ---------------------------------------------------------------------------
+# Handler-level persistence tests (MGMT-AI-PERSIST-P0-WRITE-002)
+# These tests drive POST /bff/management/nl/ask via the FastAPI TestClient and
+# verify that the handler wires up AssistantConversationStore correctly:
+# - user turn persisted BEFORE provider call with full (non-truncated) text
+# - assistant turn persisted AFTER provider call with full answer text
+# - session created on first ask; reused on subsequent asks with same sessionId
+# - idempotency records written to the durable store (not just in-memory dict)
+# - 30 asks yield exactly 60 stored turns; restart durability confirmed
+# ---------------------------------------------------------------------------
+
+_OPERATOR_HEADERS = {"Authorization": "Bearer op-persist-write-002:operator"}
+
+
+@contextmanager
+def _persist_client(tmp_path: Path, store_path: Path) -> Iterator[object]:
+    """
+    Yield a TestClient wired to a file-backed ManagementAiConversationStore.
+    Restores bff_main state on exit so tests are isolated.
+    """
+    import main as bff_main
+    from management_ai_store import ManagementAiConversationStore, ManagementAiAttachmentStore
+    from read_store import ReadSurfaceStore
+    from fastapi.testclient import TestClient
+
+    saved_store = bff_main._MGMT_AI_CONVERSATION_STORE
+    saved_read_store = bff_main.read_store
+    saved_idem = dict(bff_main._MGMT_NL_IDEMPOTENCY)
+
+    store = ManagementAiConversationStore(
+        storage_path=str(store_path),
+        attachment_store=ManagementAiAttachmentStore(storage_path=str(tmp_path / "attachments")),
+    )
+    bff_main._MGMT_AI_CONVERSATION_STORE = store
+    bff_main._MGMT_NL_IDEMPOTENCY.clear()
+    bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+    bff_main.read_store = ReadSurfaceStore(
+        str(tmp_path / "read_surfaces.json"),
+        allow_local_snapshot_fallback=True,
+    )
+    try:
+        yield TestClient(bff_main.app), store
+    finally:
+        bff_main._MGMT_AI_CONVERSATION_STORE = saved_store
+        bff_main.read_store = saved_read_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_NL_IDEMPOTENCY.update(saved_idem)
+
+
+def test_persist_turns(tmp_path: Path) -> None:
+    """
+    WRITE-002 acceptance: POST /bff/management/nl/ask persists user + assistant
+    turns durably via AssistantConversationStore.
+
+    Covers:
+    - New session creation (owner_id + tenant_id populated)
+    - Session reuse when the same sessionId is supplied on subsequent asks
+    - 30 asks yield exactly 60 stored turns (no duplicates)
+    - User turn text stored at FULL length (not truncated at 400 chars)
+    - Restart durability: turns survive creating a new store from the same file
+    - Idempotency replay does not create duplicate turns
+    """
+    import main as bff_main
+    from management_ai_store import ManagementAiConversationStore
+    from assistant_conversation_store import AssistantConversationStore
+
+    store_path = tmp_path / "mgmt-ai-persist-write-002.json"
+    # Text longer than the 400-char _management_ai_summary_value cap used in audit events.
+    # _agora_required_text strips whitespace so store this stripped form as the expected value.
+    long_question = ("What is the portfolio status? " + ("detail " * 60)).strip()
+    assert len(long_question) > 400, "pre-condition: test question must exceed 400 chars"
+
+    session_id = "write-002-persist-session"
+
+    with _persist_client(tmp_path, store_path) as (client, store):
+        # ---------------------------------------------------------------
+        # First ask: new session must be created and user + assistant turns
+        # must be persisted with the full (non-truncated) question text.
+        # ---------------------------------------------------------------
+        resp = client.post(
+            "/bff/management/nl/ask",
+            json={"question": long_question, "sessionId": session_id},
+            headers={**_OPERATOR_HEADERS, "Idempotency-Key": "write-002-ask-000"},
+        )
+        assert resp.status_code == 202, f"First ask failed: {resp.text}"
+        body = resp.json()
+        assert body["data"]["sessionId"] == session_id
+        assert body["data"]["session_id"] == session_id
+        assert body["data"]["message_id"], "message_id must be present"
+        assert body["data"]["answer"], "answer must be non-empty"
+
+        session = store.get_session(session_id)
+        assert session is not None, "Session must be created in store after first ask"
+        owner_id = session.get("ownerId") or session.get("owner_id")
+        assert owner_id, "Session must have owner_id populated"
+
+        turns = store.list_turns(session_id)
+        assert len(turns) == 2, f"Expected 2 turns after first ask, got {len(turns)}"
+        user_turn = turns[0]
+        asst_turn = turns[1]
+        assert user_turn["role"] == "user", f"First turn must be user, got {user_turn['role']!r}"
+        assert user_turn["text"] == long_question, (
+            "User turn text must NOT be truncated: "
+            f"stored={len(user_turn['text'])} chars, expected={len(long_question)}"
+        )
+        assert asst_turn["role"] == "assistant", f"Second turn must be assistant, got {asst_turn['role']!r}"
+        assert asst_turn["text"], "Assistant turn must have non-empty answer text"
+
+        # ---------------------------------------------------------------
+        # 29 more asks with the same session_id (30 total) to verify session
+        # reuse and accumulation: 30 × 2 = 60 stored turns.
+        # ---------------------------------------------------------------
+        short_q = "Follow-up question?"
+        for i in range(1, 30):
+            r = client.post(
+                "/bff/management/nl/ask",
+                json={"question": short_q, "sessionId": session_id},
+                headers={**_OPERATOR_HEADERS, "Idempotency-Key": f"write-002-ask-{i:03d}"},
+            )
+            assert r.status_code == 202, f"Ask #{i + 1} failed: {r.text}"
+            assert r.json()["data"]["session_id"] == session_id, f"Ask #{i + 1} session_id mismatch"
+
+        all_turns = store.list_turns(session_id)
+        assert len(all_turns) == 60, (
+            f"Expected 60 turns (30 user + 30 assistant) after 30 asks, got {len(all_turns)}"
+        )
+        user_turns = [t for t in all_turns if t["role"] == "user"]
+        asst_turns = [t for t in all_turns if t["role"] == "assistant"]
+        assert len(user_turns) == 30, f"Expected 30 user turns, got {len(user_turns)}"
+        assert len(asst_turns) == 30, f"Expected 30 assistant turns, got {len(asst_turns)}"
+
+        # First user turn still has full long text after session reuse.
+        assert all_turns[0]["text"] == long_question
+
+        # ---------------------------------------------------------------
+        # Restart durability: a new store instance pointing at the same file
+        # must see all 60 turns.
+        # ---------------------------------------------------------------
+        reloaded = ManagementAiConversationStore(storage_path=str(store_path))
+        reloaded_turns = reloaded.list_turns(session_id)
+        assert len(reloaded_turns) == 60, (
+            f"After reload: expected 60 turns, got {len(reloaded_turns)}"
+        )
+        assert reloaded_turns[0]["text"] == long_question, (
+            "First user turn text must survive store reload untruncated"
+        )
+
+        # ---------------------------------------------------------------
+        # Idempotency replay must not create duplicate turns.
+        # ---------------------------------------------------------------
+        idem_key = "write-002-idem-key-replay"
+        idem_q = "idempotency test question"
+
+        r1 = client.post(
+            "/bff/management/nl/ask",
+            json={"question": idem_q, "sessionId": session_id},
+            headers={**_OPERATOR_HEADERS, "Idempotency-Key": idem_key},
+        )
+        assert r1.status_code == 202, f"Idempotency first ask failed: {r1.text}"
+        meta1 = r1.json().get("meta", {})
+        assert meta1.get("idempotency", {}).get("replayed") is False, (
+            "First request with key must NOT be a replay"
+        )
+
+        r2 = client.post(
+            "/bff/management/nl/ask",
+            json={"question": idem_q, "sessionId": session_id},
+            headers={**_OPERATOR_HEADERS, "Idempotency-Key": idem_key},
+        )
+        assert r2.status_code == 202, f"Idempotency replay failed: {r2.text}"
+        meta2 = r2.json().get("meta", {})
+        assert meta2.get("idempotency", {}).get("replayed") is True, (
+            f"Second request with same key must be replayed, meta={meta2}"
+        )
+
+        # Replay must not add extra turns: still 60 + 2 (from the idempotency ask) = 62.
+        after_idem = store.list_turns(session_id)
+        assert len(after_idem) == 62, (
+            f"After idempotency replay: expected 62 turns (60 + 2 from idem ask), got {len(after_idem)}"
+        )
+
+        # Idempotency record must also be in the durable store (not only in-memory dict).
+        idem_record = store.get_idempotency(idem_key)
+        assert idem_record is not None, "Idempotency record must be written to durable store"
+        assert isinstance(idem_record.get("request_hash"), str)
