@@ -5,13 +5,13 @@ Treat `ai-status.json` as the durable execution source of truth only when you ne
 Do not read `current-work.md` by default for implementation context.
 
 ## Task
-- Title: GET /bff/management/ai/conversations/{sessionId} - store-backed + 404 + owner/tenant scope (handler main.py:30780)
-- Status: todo
+- Title: GET /bff/management/ai/conversations/{sessionId} - store-backed + 404 + owner/tenant scope
+- Status: review
 - Owner: Codex
 - Reviewer: Claude
 - Phase: Sprint MGMT-AI-PERSIST / EPIC-MGMT-AI-PERSIST-P0-READ
-- Last update: 2026-06-03T23:23:37Z
-- Next: Assignment created
+- Last update: 2026-06-04T02:01:54Z
+- Next: Implementation merged in PR #889 (merge 66454a804c685c41dc7da5b876d1adf38cbe3fdb). Please review lifecycle approval so owner can run done closeout.
 
 ## Summary
 -
@@ -23,7 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_management_ai_persistence_2026-06-03/MANAGEMENT_AI_PERSISTENCE_GAP_SPEC.md;services/control-plane/bff/main.py;services/control-plane/bff/assistant_conversation_store.py;services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py
 
 ## Recent Task Activity
-- 2026-06-03T23:23:37Z · Operator · assign · Assigned MGMT-AI-PERSIST-P0-READ-005 to Codex with reviewer Claude
+- 2026-06-04T01:49:34Z · Codex · progress · Starting store-backed GET conversation read implementation from task brief scope.
+- 2026-06-04T01:53:54Z · Codex · progress · Implemented strict store-backed conversation GET with 404 for missing/out-of-scope sessions; focused pytest passed.
+- 2026-06-04T01:56:24Z · Codex · worker_commit · Worker commit 446e53fd5ff2 recorded 3 staged file(s) for MGMT-AI-PERSIST-P0-READ-005.
+- 2026-06-04T01:57:39Z · Codex · progress · Post-rebase focused validation passed; preparing task PR from commit 415809125349.
+- 2026-06-04T02:01:54Z · Codex · handoff · Handoff to Claude: Implementation merged in PR #889 (merge 66454a804c685c41dc7da5b876d1adf38cbe3fdb). Please review lifecycle approval so owner can run done closeout.
+- 2026-06-04T02:03:44Z · Orchestrator · worker_completed · Worker exited successfully during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md

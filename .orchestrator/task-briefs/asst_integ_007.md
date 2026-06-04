@@ -7,11 +7,11 @@ Do not read `current-work.md` by default for implementation context.
 ## Task
 - Title: Expose orchestrator worker PR CI and deploy status readback to assistant
 - Status: todo
-- Owner: Gemini
+- Owner: Codex2
 - Reviewer: Codex
 - Phase: Sprint ASST-INTEG / Orchestrator status readback
-- Last update: 2026-06-03T13:43:34Z
-- Next: Assignment created
+- Last update: 2026-06-04T02:03:42Z
+- Next: Auto-reassigned ownership from Gemini to Codex2 after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Codex2 starts a fresh run.
 
 ## Summary
 讓小幫手可從既有 orchestrator/GitHub 狀態讀回 task、worker、PR、CI、deploy 進度，用於閉環回覆。
@@ -23,7 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;scripts/ai_status.py;.orchestrator/runtime_state.py;.orchestrator/supervisor.py;services/control-plane/bff/assistant
 
 ## Recent Task Activity
-- 2026-06-03T13:43:34Z · Operator · assign · Assigned ASST-INTEG-007 to Gemini with reviewer Codex
+- 2026-06-04T01:35:10Z · Orchestrator · worker_worktree_allocated · -
+- 2026-06-04T01:35:10Z · Orchestrator · worker_started · Worker started via gemini: owned_ready_dispatch
+- 2026-06-04T01:35:10Z · Gemini · start · Supervisor auto-started ASST-INTEG-007 after successful dispatch.
+- 2026-06-04T01:35:12Z · Orchestrator · task_dispatch_synced · Supervisor auto-started ASST-INTEG-007 after successful dispatch.
+- 2026-06-04T02:03:42Z · Orchestrator · provider_dispatch_paused · Paused new dispatches for gemini until 2026-06-04T02:18:42Z after terminal quota failure: Capacity / rate limit failure
+- 2026-06-04T02:03:44Z · Orchestrator · task_reassigned · Auto-reassigned ownership from Gemini to Codex2 after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Codex2 starts a fresh run.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
