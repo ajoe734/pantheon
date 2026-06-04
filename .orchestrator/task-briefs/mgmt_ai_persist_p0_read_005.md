@@ -23,12 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/04/pantheon_management_ai_persistence_2026-06-03/MANAGEMENT_AI_PERSISTENCE_GAP_SPEC.md;services/control-plane/bff/main.py;services/control-plane/bff/assistant_conversation_store.py;services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py
 
 ## Recent Task Activity
-- 2026-06-04T02:09:06Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for MGMT-AI-PERSIST-P0-READ-005: reused worktree /tmp/pantheon-worker-worktrees/pantheon/mgmt-ai-persist-p0-read-005 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
-- 2026-06-04T02:14:22Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 318.6s without a live worker or queue record.
-- 2026-06-04T02:14:22Z · Orchestrator · wake_queued · Wake-up queued for supervisor: owned_finalize_dispatch
-- 2026-06-04T02:14:24Z · Orchestrator · worker_worktree_refreshed · -
 - 2026-06-04T02:14:24Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for MGMT-AI-PERSIST-P0-READ-005: reused worktree /tmp/pantheon-worker-worktrees/pantheon/mgmt-ai-persist-p0-read-005 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
 - 2026-06-04T02:19:41Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 319.6s without a live worker or queue record.
+- 2026-06-04T02:19:41Z · Orchestrator · wake_queued · Wake-up queued for supervisor: owned_finalize_dispatch
+- 2026-06-04T02:19:43Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-04T02:19:43Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for MGMT-AI-PERSIST-P0-READ-005: reused worktree /tmp/pantheon-worker-worktrees/pantheon/mgmt-ai-persist-p0-read-005 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
+- 2026-06-04T02:24:58Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 317.2s without a live worker or queue record.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
