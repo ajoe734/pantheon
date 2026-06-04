@@ -17,7 +17,7 @@ Do not read `current-work.md` by default for implementation context.
 讓小幫手可從既有 orchestrator/GitHub 狀態讀回 task、worker、PR、CI、deploy 進度，用於閉環回覆。
 
 ## Dependencies
-- ASST-INTEG-006: todo · Bridge assistant-generated task packets into supervisor autoworker dispatch
+- ASST-INTEG-006: done · Bridge assistant-generated task packets into supervisor autoworker dispatch
 
 ## Artifacts
 - docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;scripts/ai_status.py;.orchestrator/runtime_state.py;.orchestrator/supervisor.py;services/control-plane/bff/assistant
