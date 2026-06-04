@@ -31,6 +31,7 @@ from assistant.context_composer import (  # noqa: E402
     AssistantContextPolicyError,
     KERNEL_ONLY_SOURCES,
     _enforce_mode_policy,
+    requested_source_ids,
 )
 
 
@@ -63,6 +64,9 @@ class TestUserModeCommandBroker:
         assert summary["command_broker"] is False
         assert summary["shell"] is False
         assert summary["repo"] is False
+        assert summary["repo_write"] is False
+        assert summary["docker"] is False
+        assert summary["secret_store"] is False
         assert summary["raw_logs"] is False
         assert summary["repair"] is False
         assert summary["provider_session_access"] is False
@@ -96,6 +100,22 @@ class TestUserModeContextPolicy:
     def test_user_mode_rejects_health_probes(self):
         with pytest.raises(AssistantContextPolicyError):
             _enforce_mode_policy(AssistantMode.USER, ["health_probes"])
+
+    def test_user_mode_rejects_kernel_only_source_aliases(self):
+        req = AssistantContextPackRequest(
+            include=["logs", "repo-status", "sanitized-logs", "health-probes"]
+        )
+        normalized = requested_source_ids(req)
+
+        assert set(normalized) == {
+            "job_logs",
+            "repo_status",
+            "sanitized_logs",
+            "health_probes",
+        }
+        with pytest.raises(AssistantContextPolicyError) as exc_info:
+            _enforce_mode_policy(AssistantMode.USER, normalized)
+        assert set(exc_info.value.denied_sources) == set(normalized)
 
     def test_kernel_debug_allows_kernel_only_sources(self):
         # kernel modes must NOT raise for kernel-only sources

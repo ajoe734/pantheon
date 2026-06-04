@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 import sys
+from datetime import timedelta
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 
@@ -12,6 +14,9 @@ if BFF_DIR not in sys.path:
 
 import main as bff_main  # noqa: E402
 from read_store import ReadSurfaceStore  # noqa: E402
+import assistant.control_mode as control_mode_module  # noqa: E402
+from assistant.control_mode import ControlModeStore  # noqa: E402
+from assistant.routes import create_assistant_router  # noqa: E402
 from assistant.tool_contracts import (  # noqa: E402
     ASSISTANT_TOOL_ALLOWLIST,
     ToolNotAllowedError,
@@ -24,6 +29,45 @@ from assistant.tool_contracts import (  # noqa: E402
 
 
 OPERATOR_HEADERS = {"Authorization": "Bearer asst-kernel:operator"}
+
+
+class _AssistantSecurityIdentity:
+    def __init__(
+        self,
+        *,
+        operator_id: str = "op-security",
+        roles: list[str] | None = None,
+        capabilities: list[str] | None = None,
+        mfa_verified: bool = False,
+    ) -> None:
+        self.operator_id = operator_id
+        self.roles = roles or ["operator"]
+        self.mfa_verified = mfa_verified
+        self.claims = {"capabilities": capabilities or []}
+
+
+def _control_mode_client(
+    store: ControlModeStore,
+    *,
+    roles: list[str] | None = None,
+    capabilities: list[str] | None = None,
+    mfa_verified: bool = False,
+) -> TestClient:
+    identity = _AssistantSecurityIdentity(
+        roles=roles,
+        capabilities=capabilities,
+        mfa_verified=mfa_verified,
+    )
+
+    router = create_assistant_router(
+        build_context_pack=lambda *args, **kwargs: (_ for _ in ()).throw(NotImplementedError),
+        extract_identity=lambda _authorization: identity,
+        require_read_role=lambda _identity: None,
+        control_mode_store=store,
+    )
+    app = FastAPI()
+    app.include_router(router)
+    return TestClient(app, raise_server_exceptions=True)
 
 
 def _seed_store(path: str) -> ReadSurfaceStore:
@@ -165,6 +209,131 @@ def test_context_pack_omits_env_and_provider_session_sources(tmp_path, monkeypat
         assert data["internal_debug"].get("repo_status") is None
     finally:
         bff_main.read_store = original
+
+
+def test_control_mode_activation_requires_kernel_capability(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+    store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
+    client = _control_mode_client(
+        store,
+        roles=["operator"],
+        capabilities=[],
+        mfa_verified=True,
+    )
+
+    resp = client.post(
+        "/bff/assistant/control-mode/activate",
+        json={"passphrase": "control phrase ok", "reason": "debug security regression"},
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["error"]["details"]["field"] == "capabilities"
+    assert store.status_for_actor("op-security")["active"] is False
+
+
+def test_control_mode_activation_rejects_invalid_ttl_and_idle_timeout(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+    store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
+    client = _control_mode_client(
+        store,
+        roles=["operator"],
+        capabilities=["assistant.kernel.debug"],
+        mfa_verified=True,
+    )
+
+    ttl_resp = client.post(
+        "/bff/assistant/control-mode/activate",
+        json={
+            "passphrase": "control phrase ok",
+            "reason": "debug security regression",
+            "ttlSeconds": 0,
+        },
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert ttl_resp.status_code == 422
+    assert ttl_resp.json()["detail"]["error"]["details"]["field"] == "ttlSeconds"
+
+    idle_resp = client.post(
+        "/bff/assistant/control-mode/activate",
+        json={
+            "passphrase": "control phrase ok",
+            "reason": "debug security regression",
+            "ttlSeconds": 10,
+            "idleTtlSeconds": 11,
+        },
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert idle_resp.status_code == 422
+    assert idle_resp.json()["detail"]["error"]["details"]["field"] == "idleTtlSeconds"
+    assert store.status_for_actor("op-security")["active"] is False
+
+
+def test_control_mode_idle_timeout_marks_activation_inactive(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+    store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
+    client = _control_mode_client(
+        store,
+        roles=["operator"],
+        capabilities=["assistant.kernel.debug"],
+        mfa_verified=True,
+    )
+
+    activate_resp = client.post(
+        "/bff/assistant/control-mode/activate",
+        json={
+            "passphrase": "control phrase ok",
+            "reason": "debug security regression",
+            "ttlSeconds": 10,
+            "idleTtlSeconds": 1,
+        },
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert activate_resp.status_code == 202, activate_resp.text
+    idle_expiry = control_mode_module.parse_iso_z(
+        activate_resp.json()["data"]["idleExpiresAt"]
+    )
+    monkeypatch.setattr(control_mode_module, "utc_now", lambda: idle_expiry + timedelta(seconds=1))
+
+    status_resp = client.get("/bff/assistant/control-mode", headers=OPERATOR_TOOL_HEADERS)
+
+    assert status_resp.status_code == 200
+    data = status_resp.json()["data"]
+    assert data["active"] is False
+    assert data["reason"] == "idle_expired"
+
+
+def test_control_mode_passphrase_change_requires_admin_plus_mfa() -> None:
+    store = ControlModeStore(storage_path="off")
+    operator_client = _control_mode_client(
+        store,
+        roles=["operator"],
+        capabilities=["assistant.kernel.debug"],
+        mfa_verified=True,
+    )
+    admin_without_mfa_client = _control_mode_client(
+        store,
+        roles=["admin"],
+        capabilities=["assistant.kernel.debug"],
+        mfa_verified=False,
+    )
+
+    operator_resp = operator_client.post(
+        "/bff/assistant/control-mode/passphrase",
+        json={"newPassphrase": "initial control phrase"},
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert operator_resp.status_code == 403
+    assert operator_resp.json()["detail"]["error"]["details"]["field"] == "roles"
+
+    mfa_resp = admin_without_mfa_client.post(
+        "/bff/assistant/control-mode/passphrase",
+        json={"newPassphrase": "initial control phrase"},
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert mfa_resp.status_code == 403
+    assert mfa_resp.json()["detail"]["error"]["details"]["field"] == "mfa"
+    assert store.configured() is False
 
 
 # ---------------------------------------------------------------------------
