@@ -3,7 +3,7 @@
   "sprint": "2026-06-03-pantheon-assistant-existing-architecture",
   "sprint_started_at": "2026-06-03T00:00:00Z",
   "objective": "Integrate Pantheon Management AI with existing BFF assistant surfaces plus OpenClaw adapter plus supervisor/autoworker orchestration. This wave explicitly reuses /bff/management/nl/ask durable conversation persistence plus /bff/assistant session/context/mode routes plus OpenClaw adapter provider/tool policy plus scripts/ai_status.py task dispatch. It must not create a second assistant gateway. It must not expose provider credentials to FE. It must not let Web API shell into the VM. Deliverables cover durable conversation truth alignment context mesh real provider routing governed operation tools SA/SD generator signed dev collaboration bridge orchestrator status readback FE follow-up brief and security/mode regression.",
-  "updated_at": "2026-06-04T15:06:34Z",
+  "updated_at": "2026-06-04T23:29:52Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -150,12 +150,10 @@
         "spec-review",
         "critique"
       ],
-      "status": "ready",
-      "current_task_ids": [
-        "ASST-INTEG-008"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/grok-research-critique",
-      "next": "Assignment created",
+      "next": "",
       "last_update": "2026-06-03T13:33:57Z"
     },
     {
@@ -201,32 +199,7 @@
       "last_update": "2026-06-01T02:42:08Z"
     }
   ],
-  "tasks": [
-    {
-      "id": "ASST-INTEG-008",
-      "title": "Prepare execution-plans FE context registry and stale-session UX follow-up",
-      "summary_zh": "產出跨 repo FE follow-up brief：assistant-readable form registry、BFF 404 stale session UX、SSE degraded 診斷；本任務不直接修改 FE。",
-      "phase": "Sprint ASST-INTEG / FE follow-up brief",
-      "owner": "Copilot",
-      "reviewer": "Claude2",
-      "status": "todo",
-      "depends_on": [
-        "ASST-INTEG-001",
-        "ASST-INTEG-002"
-      ],
-      "artifacts": [
-        "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;docs/05-ui;docs/pantheon-handoffs;.orchestrator/task-briefs"
-      ],
-      "acceptance": [
-        "FE brief specifies route form table filter selected-row and validator context;Brief preserves BFF conversation readback as source of truth;Brief covers BFF 404 stale local-only session recovery;Brief covers SSE failure diagnosis by auth network path or server stream;No execution-plans code is changed by this dispatch task"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-06-03T13:33:57Z",
-      "task_class": "assistant_integration",
-      "auto_created_by": "dispatch_assistant_existing_architecture_2026-06-03",
-      "auto_generated": true
-    }
-  ],
+  "tasks": [],
   "handoffs": [
     {
       "task_id": "LUV-REVIEW-007",
@@ -305,13 +278,13 @@
       "todo": 0
     },
     "Copilot": {
-      "total": 1,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Human/Ops": {
       "total": 0,
