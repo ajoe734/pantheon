@@ -68,6 +68,21 @@ def test_prod_posture_accepts_postgres_backends_and_object_store() -> None:
     assert check.database_backend == "postgres"
 
 
+def test_staging_live_operator_bff_requires_postgres_management_ai_store() -> None:
+    check = validate_persistence_posture(
+        "operator-bff",
+        env={
+            **BASE_PROD_ENV,
+            "PANTHEON_ENV": "staging-live",
+            "MANAGEMENT_AI_STORE_BACKEND": "json",
+        },
+        require_object_store=False,
+    )
+
+    assert check.status == "error"
+    assert "MANAGEMENT_AI_STORE_BACKEND must be postgres" in "; ".join(check.errors)
+
+
 def test_require_persistence_posture_fails_fast() -> None:
     with pytest.raises(RuntimeError, match="TRAINING_SESSION_EVENT_STORE_BACKEND must be postgres"):
         require_persistence_posture(

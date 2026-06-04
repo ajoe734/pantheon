@@ -266,7 +266,7 @@ class TestInMemoryTranscriptStore:
 
 class TestManagementAiBackedAssistantStores:
     def test_session_and_transcript_survive_store_reload(self, tmp_path):
-        store_path = str(tmp_path / "management-ai.sqlite3")
+        store_path = str(tmp_path / "management-ai.json")
         store = ManagementAiConversationStore(
             storage_path=store_path,
             attachment_store=ManagementAiAttachmentStore(storage_path="off"),

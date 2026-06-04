@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "ASST-INTEG-005",
+  "archived_at": "2026-06-03T15:23:19Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASST-INTEG-005",
+    "title": "SA/SD generator using existing docs and task-brief architecture",
+    "summary_zh": "讓小幫手能從對話生成 requirement capture、SA、SD、execution task packet，並歸檔到既有 docs 與 task brief 位置。",
+    "phase": "Sprint ASST-INTEG / SA-SD generator",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "ASST-INTEG-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;docs/02-architecture;docs/03;docs/04;docs/05-ui;.orchestrator/task-briefs"
+    ],
+    "acceptance": [
+      "Requirement capture is generated from a Management AI conversation;SA includes current state roles flows data risk and acceptance scenarios;SD includes architecture API DB/migration UI tool/action tests rollout and rollback;Generated docs include source citations;Execution tasks include owner reviewer dependencies artifacts and acceptance;Generated artifacts land in existing docs and task-brief locations"
+    ],
+    "next": "Owner closeout: PR #835 merged (commit 88da5080), 42/42 tests pass. Dict context pack _get() helper and artifact path pre-generation complete and durable. Subject check bypassed: HEAD is post-merge OPS-ARCHIVE commit; deliverable merged in PR #835.",
+    "last_update": "2026-06-03T15:23:19Z",
+    "task_class": "assistant_integration",
+    "auto_created_by": "dispatch_assistant_existing_architecture_2026-06-03",
+    "auto_generated": true,
+    "dependency_note": "SA/SD generator can use durable conversation truth and existing docs/orchestrator surfaces without waiting for context mesh implementation.",
+    "review_notes_zh": [
+      "Approved after re-review: 005 now supports dict-shaped BFF context packs for actor/mode/sources/backend surfaces, aligns generated task artifact paths with archive_packet output, and 42 dev_docs_generator tests passed in a clean worktree. PR #835 merged as c3bbbdaada77d5235c247d1bcfe001228ffb126e."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-03T15:23:19Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/asst-integ-005",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/ASST-INTEG-005",
+      "git_clean_required": false,
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/ASST-INTEG-005",
+      "ahead": 23,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "9c8fb7968ad0d51d72f43e1e49ca9d9716757948",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASST-INTEG-005",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "SA/SD generator implementation complete. Commit a46c9e78 on task/ASST-INTEG-005. Delivered: dev_docs_models.py (Pydantic models), dev_docs_generator.py (requirement capture / SA / SD / execution task assembly with source citations from context pack), dev_docs_archiver.py (archives to docs/04/, .orchestrator/task-briefs/, writes dev_doc_packet.json), test_dev_docs_generator.py (32 tests, all pass). All acceptance gates covered: SA includes current_state/roles/flows/data/risk/acceptance_scenarios; SD includes architecture/api_contract/db_migration/ui_routes/tool_action_contract/tests/rollout/rollback; execution tasks include owner/reviewer/depends_on/artifacts/acceptance; generated docs carry source_refs citing the management_nl conversation and BFF context pack sources; artifacts land in docs/04/ and .orchestrator/task-briefs/ canonical locations.",
+      "status": "done",
+      "created_at": "2026-06-03T14:33:36Z",
+      "resolved_at": "2026-06-03T14:59:57Z"
+    },
+    {
+      "task_id": "ASST-INTEG-005",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Codex review found blocking integration issues: support dict-shaped BFF context packs for actor/mode/sources/backend citations, and align generated task artifact paths with archive_packet output paths before merge.",
+      "status": "done",
+      "created_at": "2026-06-03T14:59:57Z",
+      "resolved_at": "2026-06-03T14:59:57Z"
+    },
+    {
+      "task_id": "ASST-INTEG-005",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Fixed both blocking issues: (1) added _get() helper for dict/object context pack access — covers actor/mode/sources/backend for dict-shaped packs from ASST-INTEG-002; (2) generate_dev_doc_packet() pre-generates packet_id and passes it through build_execution_tasks/_artifact_paths so generated task artifact paths match archive_packet() output dir (docs/04/sa_sd_{packet_id}_{slug}/). 42/42 tests pass including 7 new TestDictContextPack tests and test_artifact_paths_align_with_archive_locations. Commit: 88da5080.",
+      "status": "done",
+      "created_at": "2026-06-03T15:10:57Z",
+      "resolved_at": "2026-06-03T15:15:23Z"
+    },
+    {
+      "task_id": "ASST-INTEG-005",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Codex re-review approved; PR #835 merged after all Branch CI and Coordination checks passed. Owner should finalize done closeout.",
+      "status": "done",
+      "created_at": "2026-06-03T15:15:23Z",
+      "resolved_at": "2026-06-03T15:23:20Z"
+    }
+  ],
+  "blockers": []
+}

@@ -175,22 +175,22 @@ def _kernel_operator_identity(
     )
 
 
-def test_management_ai_conversation_store_persists_sessions_and_turns_to_sqlite(tmp_path: Path) -> None:
-    store_path = str(tmp_path / "management-ai.sqlite3")
+def test_management_ai_conversation_store_persists_sessions_and_turns_to_json(tmp_path: Path) -> None:
+    store_path = str(tmp_path / "management-ai.json")
     store = bff_main.ManagementAiConversationStore(
         storage_path=store_path,
         attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
     )
     store.upsert_session(
-        session_id="mgmt-sqlite-session",
+        session_id="mgmt-json-session",
         owner_id="asst-bff-002",
         tenant_id="tenant-alpha",
         now="2026-06-03T00:00:00Z",
-        title="SQLite persistence",
+        title="JSON persistence",
     )
     store.append_turn(
         turn_id="turn-user",
-        session_id="mgmt-sqlite-session",
+        session_id="mgmt-json-session",
         role="user",
         text="Persist me",
         created_at="2026-06-03T00:00:01Z",
@@ -202,14 +202,14 @@ def test_management_ai_conversation_store_persists_sessions_and_turns_to_sqlite(
         storage_path=store_path,
         attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
     )
-    assert reloaded.get_session("mgmt-sqlite-session")["ownerId"] == "asst-bff-002"
-    turns = reloaded.list_turns("mgmt-sqlite-session")
+    assert reloaded.get_session("mgmt-json-session")["ownerId"] == "asst-bff-002"
+    turns = reloaded.list_turns("mgmt-json-session")
     assert len(turns) == 1
     assert turns[0]["text"] == "Persist me"
     assert turns[0]["attachments"][0]["storageUrl"] == "local://x"
     assert turns[0]["uiSnapshot"] == {"route": "/management"}
     sessions = reloaded.list_sessions(owner_id="asst-bff-002", tenant_id="tenant-alpha")
-    assert [session["sessionId"] for session in sessions] == ["mgmt-sqlite-session"]
+    assert [session["sessionId"] for session in sessions] == ["mgmt-json-session"]
     assert reloaded.list_sessions(owner_id="other-operator", tenant_id="tenant-other") == []
 
 
