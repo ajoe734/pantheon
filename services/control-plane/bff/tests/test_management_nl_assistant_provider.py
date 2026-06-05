@@ -1474,6 +1474,50 @@ def test_provider_degraded_falls_back_to_deterministic_answer(tmp_path, monkeypa
         bff_main._sse_buffers["ask"].clear()
 
 
+def test_codex_auth_unavailable_status_has_operator_notice(tmp_path, monkeypatch) -> None:
+    original_store = bff_main.read_store
+    fake = FakeProviderClient(
+        exc=OpenClawOpsClientError(
+            "Codex service-user account session is unavailable or expired.",
+            status_code=503,
+            error_code="CODEX_AUTH_UNAVAILABLE",
+        )
+    )
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "codex_cli")
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        client = _seeded_client(tmp_path, monkeypatch)
+
+        resp = client.post(
+            "/bff/management/nl/ask",
+            json={"question": "What is the scoped portfolio?", "focus": "portfolio"},
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-codex-auth"},
+        )
+
+        assert resp.status_code == 202, resp.text
+        body = resp.json()
+        assert body["data"]["answer"].startswith("Management summary for question:")
+        provider_status = body["data"]["providerStatus"]
+        assert provider_status["status"] == "degraded"
+        assert provider_status["reason"] == "CODEX_AUTH_UNAVAILABLE"
+        assert provider_status["reasonCode"] == "CODEX_AUTH_UNAVAILABLE"
+        assert provider_status["reason_code"] == "CODEX_AUTH_UNAVAILABLE"
+        assert provider_status["severity"] == "warning"
+        assert "Codex service-user session expired" in provider_status["displayMessage"]
+        assert provider_status["display_message"] == provider_status["displayMessage"]
+        assert provider_status["operatorAction"] == "reauth_codex_service_user"
+        assert provider_status["operator_action"] == "reauth_codex_service_user"
+        assert provider_status["fallback"] == "deterministic_synthesis"
+        assert provider_status["used"] is False
+        assert len(fake.calls) == 1
+    finally:
+        bff_main.read_store = original_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._sse_buffers["ask"].clear()
+
+
 def test_provider_enabled_requires_read_role_before_invocation(tmp_path, monkeypatch) -> None:
     original_store = bff_main.read_store
     fake = FakeProviderClient()
