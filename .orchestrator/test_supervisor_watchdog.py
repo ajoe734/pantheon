@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import fcntl
 import json
 import tempfile
 import unittest
@@ -138,6 +139,62 @@ class SupervisorWatchdogTests(unittest.TestCase):
         self.assertEqual(result["reason"], "restart_budget_window_exhausted")
         watchdog_state = json.loads((self.root / "watchdog-state.json").read_text(encoding="utf-8"))
         self.assertTrue(watchdog_state["circuit"]["open"])
+
+    def hold_lock(self, pid: int = 999):
+        """Create supervisor.lock and hold an exclusive flock for the test's lifetime."""
+        lock_path = self.state_file.parent / "supervisor.lock"
+        lock_path.write_text(f"{pid}\n", encoding="utf-8")
+        handle = open(lock_path, "a+", encoding="utf-8")
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.addCleanup(handle.close)
+        return handle
+
+    def test_supervisor_lock_held_true_when_locked(self) -> None:
+        self.hold_lock()
+        self.assertTrue(supervisor_watchdog.supervisor_lock_held(self.config))
+
+    def test_supervisor_lock_held_false_when_absent_or_free(self) -> None:
+        # No lock file at all.
+        self.assertFalse(supervisor_watchdog.supervisor_lock_held(self.config))
+        # File present but nobody holds the flock.
+        (self.state_file.parent / "supervisor.lock").write_text("0\n", encoding="utf-8")
+        self.assertFalse(supervisor_watchdog.supervisor_lock_held(self.config))
+
+    def test_lock_held_with_missing_pid_observes_only(self) -> None:
+        """Regression: clean-restart seam (pid file gone) while the flock is held
+        must NOT trigger a missing_pid restart."""
+        now = datetime.now(timezone.utc)
+        self.hold_lock()
+        # Deliberately do NOT write supervisor.pid -> read_pid_file returns None.
+        self.write_state({"supervisor": {"last_heartbeat_at": supervisor_watchdog.isoformat_utc(now), "lifecycle": "running"}})
+
+        with (
+            mock.patch.object(supervisor_watchdog, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()),
+            mock.patch.object(supervisor_watchdog, "start_supervisor", return_value=(999, self.root / "r.log")),
+        ):
+            result = supervisor_watchdog.run_watchdog(self.config, restart=True)
+
+        self.assertEqual(result["decision"], "observe_only")
+        self.assertEqual(result["reason"], "supervisor_healthy")
+        self.assertTrue(result["lock_held"])
+
+    def test_no_lock_and_missing_pid_restarts(self) -> None:
+        """No flock held AND no pid file -> genuinely dead -> restart with missing_pid."""
+        now = datetime.now(timezone.utc)
+        # No lock file, no pid file.
+        self.write_state({"supervisor": {"last_heartbeat_at": supervisor_watchdog.isoformat_utc(now), "lifecycle": "running"}})
+
+        with (
+            mock.patch.object(supervisor_watchdog, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()),
+            mock.patch.object(supervisor_watchdog, "start_supervisor", return_value=(999, self.root / "r.log")),
+        ):
+            result = supervisor_watchdog.run_watchdog(self.config, restart=True)
+
+        self.assertEqual(result["decision"], "restart_supervisor")
+        self.assertEqual(result["reason"], "missing_pid")
+        self.assertFalse(result["lock_held"])
 
 
 if __name__ == "__main__":
