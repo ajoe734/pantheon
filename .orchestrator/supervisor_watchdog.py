@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import os
 import subprocess
 import sys
@@ -75,6 +76,42 @@ def watchdog_settings(config: dict[str, Any]) -> dict[str, Any]:
 
 def supervisor_pid_path(config: dict[str, Any]) -> Path:
     return config_path(config, "state_file").parent / "supervisor.pid"
+
+
+def supervisor_lock_path(config: dict[str, Any]) -> Path:
+    return config_path(config, "state_file").parent / "supervisor.lock"
+
+
+def supervisor_lock_held(config: dict[str, Any]) -> bool:
+    """Return True if a live supervisor holds the singleton flock.
+
+    This is the authoritative liveness signal: supervisor.py holds an exclusive
+    fcntl.flock on supervisor.lock for its whole lifetime and the kernel releases
+    it on death. Unlike supervisor.pid (which atexit clear_supervisor_pid unlinks,
+    so it is legitimately absent during every clean-restart seam), the flock never
+    spuriously reads as "missing" while a supervisor is alive. We probe by trying a
+    NON-BLOCKING exclusive lock: failure means someone else holds it (alive);
+    success means nobody holds it, so we release immediately and report dead.
+    """
+    path = supervisor_lock_path(config)
+    if not path.exists():
+        return False
+    try:
+        handle = open(path, "a+", encoding="utf-8")
+    except OSError:
+        # Cannot open the lock file; fall back to "not held" so the pid-based
+        # signal decides rather than masking a genuinely dead supervisor.
+        return False
+    try:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return True
+        # We acquired it -> nobody held it. Release so we never starve a relaunch.
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return False
+    finally:
+        handle.close()
 
 
 def watchdog_state_path(config: dict[str, Any], settings: dict[str, Any] | None = None) -> Path:
@@ -280,10 +317,17 @@ def evaluate_supervisor_health(runtime_state: dict[str, Any], pid: int | None, a
     supervisor_state = runtime_state.get("supervisor", {}) if isinstance(runtime_state.get("supervisor"), dict) else {}
     heartbeat_age = heartbeat_age_seconds(runtime_state, now)
     stale_after = float(settings.get("heartbeat_stale_seconds"))
-    if pid is None:
-        return {"healthy": False, "reason": "missing_pid", "heartbeat_age_seconds": heartbeat_age}
+    # Liveness is authoritative via the singleton flock (folded into `alive` by the
+    # caller as lock_held or pid_is_alive). The pid file is only a hint: it is
+    # legitimately gone during clean-restart seams, so a missing pid alone must NOT
+    # trigger a restart while the lock is still held. Only treat the supervisor as
+    # dead when nothing is alive; then label by whether a pid file remained.
     if not alive:
-        return {"healthy": False, "reason": "pid_not_alive", "heartbeat_age_seconds": heartbeat_age}
+        return {
+            "healthy": False,
+            "reason": "missing_pid" if pid is None else "pid_not_alive",
+            "heartbeat_age_seconds": heartbeat_age,
+        }
     if heartbeat_age is None:
         return {"healthy": False, "reason": "missing_heartbeat", "heartbeat_age_seconds": None}
     if heartbeat_age > stale_after:
@@ -354,7 +398,12 @@ def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool
     attempts = trim_restart_attempts(watchdog_state.setdefault("restart_attempts", []), now)
     watchdog_state["restart_attempts"] = attempts
     pid = read_pid_file(supervisor_pid_path(config))
-    alive = pid_is_alive(pid)
+    lock_held = supervisor_lock_held(config)
+    # The flock is the authoritative liveness signal; the pid file is a best-effort
+    # hint that is absent during clean-restart seams. Folding lock_held into `alive`
+    # stops the watchdog from restarting a live supervisor just because its pid file
+    # was momentarily unlinked.
+    alive = lock_held or pid_is_alive(pid)
     health = evaluate_supervisor_health(runtime_state, pid, alive, now, settings)
     resource = resource_snapshot(config, runtime_state, settings)
     pressure_reasons = resource_pressure_reasons(resource, settings, state_error)
@@ -414,6 +463,7 @@ def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool
         new_pid=new_pid,
         log_path=log_path,
     )
+    result["lock_held"] = lock_held
     watchdog_state["last_decision"] = result
     save_watchdog_state(config, watchdog_state, settings)
     append_watchdog_metric(
