@@ -31372,6 +31372,133 @@ def _mgmt_nl_provider_name() -> str:
     return (os.getenv("PANTHEON_ASSISTANT_PROVIDER", "codex_cli").strip().lower() or "codex_cli")
 
 
+_MGMT_NL_PROVIDER_REASON_MESSAGES = {
+    "CODEX_AUTH_UNAVAILABLE": (
+        "Codex service-user session expired. Re-login the dedicated Pantheon "
+        "assistant Codex account; Management AI is serving deterministic "
+        "fallback until the provider is healthy."
+    ),
+    "CLAUDE_AUTH_UNAVAILABLE": (
+        "Claude service-user session is unavailable. Re-login the dedicated "
+        "Pantheon assistant Claude account; Management AI is serving "
+        "deterministic fallback until the provider is healthy."
+    ),
+    "OPENCLAW_ADAPTER_UNREACHABLE": (
+        "OpenClaw adapter is unreachable. Management AI is serving "
+        "deterministic fallback until the adapter is healthy."
+    ),
+    "OPENCLAW_ADAPTER_REQUEST_FAILED": (
+        "OpenClaw adapter request failed. Management AI is serving "
+        "deterministic fallback until the adapter request path is healthy."
+    ),
+    "OPENCLAW_ADAPTER_HTTP_ERROR": (
+        "OpenClaw adapter returned an error. Management AI is serving "
+        "deterministic fallback until the provider path is healthy."
+    ),
+    "CLAUDE_BINARY_NOT_FOUND": (
+        "Claude CLI binary is unavailable in the assistant runtime. Management "
+        "AI is serving deterministic fallback until the runtime is repaired."
+    ),
+    "ASSISTANT_PROVIDER_NOT_SUPPORTED": (
+        "Configured assistant provider is not supported. Management AI is "
+        "serving deterministic fallback until the provider configuration is "
+        "updated."
+    ),
+    "PROVIDER_EMPTY_ANSWER": (
+        "Assistant provider returned no answer. Management AI is serving "
+        "deterministic fallback for this request."
+    ),
+    "UNSUPPORTED_PROVIDER": (
+        "Configured assistant provider is not supported. Management AI is "
+        "serving deterministic fallback until the provider configuration is "
+        "updated."
+    ),
+    "FEATURE_DISABLED": (
+        "Management AI provider is disabled by configuration. The response is "
+        "deterministic fallback."
+    ),
+    "PROVIDER_DISABLED": (
+        "Management AI provider is disabled by configuration. The response is "
+        "deterministic fallback."
+    ),
+}
+
+_MGMT_NL_PROVIDER_REASON_ACTIONS = {
+    "CODEX_AUTH_UNAVAILABLE": "reauth_codex_service_user",
+    "CLAUDE_AUTH_UNAVAILABLE": "reauth_claude_service_user",
+    "OPENCLAW_ADAPTER_UNREACHABLE": "restore_openclaw_adapter",
+    "OPENCLAW_ADAPTER_REQUEST_FAILED": "inspect_openclaw_adapter_request_path",
+    "OPENCLAW_ADAPTER_HTTP_ERROR": "inspect_openclaw_adapter_response",
+    "CLAUDE_BINARY_NOT_FOUND": "install_claude_cli",
+    "ASSISTANT_PROVIDER_NOT_SUPPORTED": "configure_supported_management_ai_provider",
+    "UNSUPPORTED_PROVIDER": "configure_supported_management_ai_provider",
+    "FEATURE_DISABLED": "enable_management_ai_provider",
+    "PROVIDER_DISABLED": "enable_management_ai_provider",
+    "PROVIDER_EMPTY_ANSWER": "inspect_management_ai_provider_output",
+}
+
+
+def _mgmt_nl_provider_reason_key(reason: Optional[str]) -> Optional[str]:
+    clean_reason = str(reason or "").strip()
+    if not clean_reason:
+        return None
+    return clean_reason.upper()
+
+
+def _mgmt_nl_provider_status_notice(
+    *,
+    provider: str,
+    status: str,
+    reason: Optional[str],
+    used: bool,
+) -> Dict[str, str]:
+    clean_status = str(status or "").strip().lower()
+    if used or clean_status in {"completed", "ok"}:
+        return {}
+
+    reason_key = _mgmt_nl_provider_reason_key(reason)
+    provider_key = str(provider or "").strip().lower()
+    message = (
+        _MGMT_NL_PROVIDER_REASON_MESSAGES.get(reason_key or "")
+        if reason_key
+        else None
+    )
+    action = (
+        _MGMT_NL_PROVIDER_REASON_ACTIONS.get(reason_key or "")
+        if reason_key
+        else None
+    )
+    if reason_key is None and clean_status == "degraded":
+        message = (
+            "Assistant provider is degraded. Management AI is serving "
+            "deterministic fallback until the provider is healthy."
+        )
+    if message is None and reason_key and "AUTH" in reason_key and "UNAVAILABLE" in reason_key:
+        provider_label = "Codex" if "codex" in provider_key else "assistant"
+        message = (
+            f"{provider_label} service-user session is unavailable. Re-login "
+            "the dedicated Pantheon assistant account; Management AI is "
+            "serving deterministic fallback until the provider is healthy."
+        )
+        action = action or (
+            "reauth_codex_service_user"
+            if "codex" in provider_key
+            else "reauth_assistant_service_user"
+        )
+    if message is None:
+        message = (
+            "Assistant provider is not available. Management AI is serving "
+            "deterministic fallback until the provider is healthy."
+        )
+    return {
+        "severity": "warning" if clean_status in {"degraded", "disabled"} else "info",
+        "displayMessage": message,
+        "display_message": message,
+        "operatorAction": action or "inspect_management_ai_provider_status",
+        "operator_action": action or "inspect_management_ai_provider_status",
+    }
+
+
 def _mgmt_nl_provider_status(
     *,
     provider: str,
@@ -31391,6 +31518,16 @@ def _mgmt_nl_provider_status(
     }
     if reason:
         payload["reason"] = reason
+        payload["reasonCode"] = reason
+        payload["reason_code"] = reason
+    payload.update(
+        _mgmt_nl_provider_status_notice(
+            provider=provider,
+            status=status,
+            reason=reason,
+            used=used,
+        )
+    )
     if run_id:
         payload["run_id"] = run_id
     return payload
