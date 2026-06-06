@@ -400,3 +400,109 @@ def test_audit_redaction_failure_suppresses_payload(tmp_path: Path) -> None:
     assert payload["event_type"] == "assistant.redaction.failed"
     assert payload["payload"] == "[REDACTION_FAILED_PAYLOAD_SUPPRESSED]"
     assert "secret" not in json.dumps(payload)
+
+
+def test_invoke_attaches_images_with_dash_i_flag(tmp_path: Path) -> None:
+    import base64 as _b64
+
+    raw = b"\x89PNG\r\n\x1a\nFAKE-IMAGE-BYTES"
+    data_url = "data:image/png;base64," + _b64.b64encode(raw).decode("ascii")
+    seen = {}
+
+    def fake_run(cmd, **kwargs):
+        imgs = [cmd[i + 1] for i, tok in enumerate(cmd) if tok == "-i"]
+        seen["cmd"] = cmd
+        seen["images"] = imgs
+        seen["bytes"] = [Path(p).read_bytes() for p in imgs]
+        seen["exists_during_run"] = all(Path(p).exists() for p in imgs)
+        seen["input"] = kwargs.get("input")
+        return subprocess.CompletedProcess(cmd, 0, stdout='{"final":"ok"}\n', stderr="")
+
+    provider = _provider(tmp_path, fake_run)
+    result = provider.invoke(
+        {
+            "mode": "user",
+            "prompt": "what colour is this?",
+            "metadata": {"operator_id": "op-1"},
+            "attachments": [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": data_url},
+                    "mimeType": "image/png",
+                    "filename": "x.png",
+                }
+            ],
+        }
+    )
+
+    assert result["status"] == "completed"
+    assert len(seen["images"]) == 1
+    assert seen["images"][0].endswith(".png")
+    assert seen["bytes"][0] == raw
+    assert seen["exists_during_run"] is True
+    # prompt still travels on stdin; command still ends with the "-" sentinel
+    assert seen["cmd"][-1] == "-"
+    assert seen["input"] == "what colour is this?"
+    # temp dir is cleaned up after the run completes
+    assert not Path(seen["images"][0]).exists()
+
+
+def test_invoke_reads_images_from_messages_content(tmp_path: Path) -> None:
+    import base64 as _b64
+
+    raw = b"JPEGFAKE"
+    data_url = "data:image/jpeg;base64," + _b64.b64encode(raw).decode("ascii")
+    seen = {}
+
+    def fake_run(cmd, **kwargs):
+        imgs = [cmd[i + 1] for i, tok in enumerate(cmd) if tok == "-i"]
+        seen["images"] = imgs
+        seen["bytes"] = [Path(p).read_bytes() for p in imgs]
+        return subprocess.CompletedProcess(cmd, 0, stdout='{"final":"ok"}\n', stderr="")
+
+    provider = _provider(tmp_path, fake_run)
+    result = provider.invoke(
+        {
+            "mode": "user",
+            "prompt": "describe",
+            "metadata": {"operator_id": "op-1"},
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "describe"},
+                        {"type": "image_url", "image_url": {"url": data_url}},
+                    ],
+                }
+            ],
+        }
+    )
+
+    assert result["status"] == "completed"
+    assert len(seen["images"]) == 1
+    assert seen["images"][0].endswith(".jpg")
+    assert seen["bytes"][0] == raw
+
+
+def test_invoke_degrades_to_text_only_on_bad_image_url(tmp_path: Path) -> None:
+    seen = {}
+
+    def fake_run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0, stdout='{"final":"ok"}\n', stderr="")
+
+    provider = _provider(tmp_path, fake_run)
+    result = provider.invoke(
+        {
+            "mode": "user",
+            "prompt": "hello",
+            "metadata": {"operator_id": "op-1"},
+            "attachments": [
+                {"type": "image_url", "image_url": {"url": "not-a-data-url"}, "mimeType": "image/png"}
+            ],
+        }
+    )
+
+    assert result["status"] == "completed"
+    assert "-i" not in seen["cmd"]
+    assert seen["cmd"][-1] == "-"
