@@ -10,8 +10,8 @@ Do not read `current-work.md` by default for implementation context.
 - Owner: Claude
 - Reviewer: Codex
 - Phase: Runtime Telemetry Hardening
-- Last update: 2026-06-06T11:56:40Z
-- Next: Review approved: binding-scoped Redis signal queue isolation verified; focused paper_fleet_reconciler suite passes 22/22. Owner must finalize via task PR because latest isolation commit is not merged to dev yet.
+- Last update: 2026-06-06T11:59:19Z
+- Next: Supervisor resumed OPS-RTEL-002 for finalize after successful dispatch.
 
 ## Summary
 新增 paper runtime fleet reconciler，從 active paper runtime bindings 自動維持一個 worker per binding，取代手動 docker run。
@@ -27,12 +27,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/deployment/runtime-telemetry-hardening-2026-06-06.md
 
 ## Recent Task Activity
-- 2026-06-06T11:54:03Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
-- 2026-06-06T11:54:05Z · Orchestrator · worker_worktree_refreshed · -
-- 2026-06-06T11:54:05Z · Orchestrator · worker_worktree_reused · -
-- 2026-06-06T11:54:05Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
-- 2026-06-06T11:56:40Z · Codex · review_approved · Review approved: binding-scoped Redis signal queue isolation verified; focused paper_fleet_reconciler suite passes 22/22. Owner must finalize via task PR because latest isolation commit is not merged to dev yet.
-- 2026-06-06T11:59:17Z · Orchestrator · worker_completed · Worker exited successfully during supervisor boot reconciliation.
+- 2026-06-06T11:59:19Z · Orchestrator · worker_worktree_reused · -
+- 2026-06-06T11:59:19Z · Orchestrator · worker_started · Worker started via claude_cli: owned_finalize_dispatch
+- 2026-06-06T11:59:19Z · Claude · note · Supervisor resumed OPS-RTEL-002 for finalize after successful dispatch.
+- 2026-06-06T11:59:21Z · Orchestrator · task_dispatch_synced · Supervisor resumed OPS-RTEL-002 for finalize after successful dispatch.
+- 2026-06-06T12:00:37Z · unknown · worker_commit · Worker commit 257320fc2de8 recorded 2 staged file(s) for OPS-RTEL-002.
+- 2026-06-06T12:04:34Z · Orchestrator · worker_completed · Worker exited successfully during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
