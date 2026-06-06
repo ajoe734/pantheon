@@ -1,0 +1,5 @@
+# Dependencies for worker subprocesses spawned by the paper fleet reconciler.
+# The reconciler itself uses only stdlib; these packages are needed by
+# paper_runtime.py workers launched inside the same container.
+redis>=5.0.4
+jsonschema>=4.21.0
