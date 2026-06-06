@@ -89,6 +89,7 @@ class WorkerEntry:
     last_exit_code: Optional[int] = None
     last_error: Optional[str] = None
     status: str = "running"  # running | dead | restarting | stopped
+    dead_at: Optional[float] = None  # time.monotonic() when process last exited
 
 
 # ---------------------------------------------------------------------------
@@ -177,12 +178,11 @@ class PaperFleetReconciler:
     def reconcile_once(self) -> Dict[str, Any]:
         """Run one reconcile cycle. Returns a snapshot of the fleet state."""
         bindings = self._fetch_active_paper_bindings()
-        desired: Dict[str, Dict[str, Any]] = {
-            b["binding_id"]: b for b in bindings
-        }
+        # bindings is None when the fetch failed — we must not evict existing workers
+        # in that case, since we have no reliable picture of desired state.
 
         with self._lock:
-            # Poll live processes for exit — do this first so restart logic below sees "dead"
+            # Poll live processes for exit — always run, even on fetch failure
             for binding_id, entry in list(self._workers.items()):
                 if entry.process is None or entry.status in ("stopped", "dead"):
                     continue
@@ -190,6 +190,7 @@ class PaperFleetReconciler:
                 if rc is not None:
                     entry.last_exit_code = rc
                     entry.status = "dead"
+                    entry.dead_at = time.monotonic()
                     # Free the port so the restart can allocate a clean one
                     self._free_port(entry.port)
                     entry.port = 0
@@ -200,29 +201,41 @@ class PaperFleetReconciler:
                         entry.restart_count,
                     )
 
-            # Start workers for new or dead-but-desired active bindings
-            for binding_id, binding in desired.items():
-                if binding_id not in self._workers:
-                    self._start_worker(binding)
-                elif self._workers[binding_id].status == "dead":
-                    entry = self._workers[binding_id]
-                    if entry.restart_count < self._max_restarts:
-                        self._start_worker(binding, restart_count=entry.restart_count + 1)
-                    else:
-                        log.warning(
-                            "binding %s: restart cap reached (%d), not restarting",
-                            binding_id,
-                            self._max_restarts,
-                        )
+            if bindings is not None:
+                desired: Dict[str, Dict[str, Any]] = {
+                    b["binding_id"]: b for b in bindings
+                }
 
-            # Stop workers for bindings that are no longer active
-            for binding_id in list(self._workers):
-                if binding_id not in desired:
-                    self._terminate_worker(binding_id, reason="binding no longer active")
+                # Start workers for new or dead-but-desired active bindings
+                for binding_id, binding in desired.items():
+                    if binding_id not in self._workers:
+                        self._start_worker(binding)
+                    elif self._workers[binding_id].status == "dead":
+                        entry = self._workers[binding_id]
+                        if entry.restart_count < self._max_restarts:
+                            backoff = entry.restart_count * self._restart_backoff
+                            ready = (
+                                entry.dead_at is None
+                                or time.monotonic() >= entry.dead_at + backoff
+                            )
+                            if ready:
+                                self._start_worker(binding, restart_count=entry.restart_count + 1)
+                        else:
+                            log.warning(
+                                "binding %s: restart cap reached (%d), not restarting",
+                                binding_id,
+                                self._max_restarts,
+                            )
+
+                # Stop workers for bindings that are no longer active
+                for binding_id in list(self._workers):
+                    if binding_id not in desired:
+                        self._terminate_worker(binding_id, reason="binding no longer active")
+
+                self._last_error = None
 
             self._cycle_count += 1
             self._last_reconcile_at = _iso_now()
-            self._last_error = None
             return self._snapshot()
 
     def _run_loop(self) -> None:
@@ -363,7 +376,14 @@ class PaperFleetReconciler:
     # Runtime-manager polling
     # ------------------------------------------------------------------
 
-    def _fetch_active_paper_bindings(self) -> List[Dict[str, Any]]:
+    def _fetch_active_paper_bindings(self) -> Optional[List[Dict[str, Any]]]:
+        """Return the active paper bindings, or None if the fetch failed.
+
+        Callers must treat None as "unknown desired state" and must not modify
+        the running fleet (no starts, no stops) when None is returned.
+        An empty list means the runtime-manager is reachable but has no active
+        paper bindings; in that case the fleet should be wound down normally.
+        """
         if not self._url:
             return []
         try:
@@ -390,7 +410,7 @@ class PaperFleetReconciler:
             with self._lock:
                 self._last_error = f"binding fetch failed: {type(exc).__name__}: {exc}"
             log.warning("could not fetch bindings from runtime-manager: %s", exc)
-            return []
+            return None
 
     # ------------------------------------------------------------------
     # State snapshot

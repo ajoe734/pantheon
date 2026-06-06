@@ -113,9 +113,14 @@ per active paper `RuntimeBinding`, replacing manual `docker run` for paper worke
 - `services/execution/runtime-manager/paper_fleet_reconciler.py` — reconciler
   implementation. Polls runtime-manager every `RECONCILER_POLL_INTERVAL_SECONDS`
   (default 15 s) for active paper bindings, starts/stops worker subprocesses,
-  and restarts dead workers up to `RECONCILER_MAX_RESTARTS` (default 5).
-- `services/execution/runtime-manager/test_paper_fleet_reconciler.py` — 15 unit
-  tests covering start, stop, restart, port allocation, env builder, and snapshot.
+  and restarts dead workers up to `RECONCILER_MAX_RESTARTS` (default 5) with
+  linear backoff of `restart_count * RECONCILER_RESTART_BACKOFF_SECONDS` (default 5 s).
+- `services/execution/runtime-manager/Dockerfile` — Python 3.11-slim image for
+  the reconciler container; installs `redis` and `jsonschema` for spawned workers.
+- `services/execution/runtime-manager/requirements.txt` — container dependencies.
+- `services/execution/runtime-manager/test_paper_fleet_reconciler.py` — 18 unit
+  tests covering start, stop, restart, port allocation, env builder, snapshot,
+  degraded-fetch safety, and restart backoff.
 - `docker-compose.yml` — adds `paper-fleet-reconciler` service under the
   `paper-fleet` profile. Activate with:
 
@@ -128,12 +133,18 @@ docker compose --profile paper-fleet up paper-fleet-reconciler
 Each reconcile cycle:
 
 1. `GET /api/runtime-bindings` on the runtime-manager (bearer-auth).
-2. Filter for `deployment_mode == "paper"` and `status == "active"`.
-3. For each desired binding with no live worker: spawn a subprocess running
+2. If the fetch fails (network error, timeout, non-200), the cycle preserves all
+   currently running workers unchanged and retains `last_error` in the snapshot.
+   No workers are started or stopped when desired state is unknown.
+3. Filter for `deployment_mode == "paper"` and `status == "active"`.
+4. For each desired binding with no live worker: spawn a subprocess running
    `paper_runtime.py` with binding context in env vars.
-4. For each running worker whose binding is no longer active: send SIGTERM,
+5. For each running worker whose binding is no longer active: send SIGTERM,
    wait `RECONCILER_DRAIN_TIMEOUT_SECONDS`, then SIGKILL if still running.
-5. Detect and log process exits; auto-restart up to the configured cap.
+6. Detect and log process exits; auto-restart up to the configured cap with
+   linear backoff: a worker that has restarted `N` times waits at least
+   `N × RECONCILER_RESTART_BACKOFF_SECONDS` (default 5 s) before the next
+   restart attempt.  The first restart (`N=0`) is always immediate.
 
 ## Health Surface
 
