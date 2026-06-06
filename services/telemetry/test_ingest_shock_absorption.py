@@ -236,6 +236,9 @@ class TestDeadLetterQueue(unittest.TestCase):
             self.assertEqual(count, 1)
             entries = dlq.get_entries()
             self.assertEqual(entries[0].event["event_id"], "loaded")
+            stats = dlq.stats()
+            self.assertEqual(stats["memory_entries"], 1)
+            self.assertEqual(stats["total_rejected"], 1)
         finally:
             os.unlink(spill_path)
 
@@ -709,6 +712,36 @@ class TestTelemetryIngestService(unittest.IsolatedAsyncioTestCase):
 
         await svc.stop(graceful=True)
 
+    async def test_start_loads_spill_and_replays_write_failures_when_enabled(self):
+        """Startup can load persisted DLQ spill entries and replay safe write failures."""
+        with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as f:
+            spill_path = f.name
+
+        try:
+            persisted = DeadLetterQueue(spill_path=spill_path)
+            persisted.reject(
+                _make_event(event_id="startup-replay-target"),
+                tags=[TAG_WRITER_ERROR],
+                reason="simulated pre-restart db outage",
+            )
+
+            svc = TelemetryIngestService(
+                dlq_spill_path=spill_path,
+                replay_dlq_on_start=True,
+                batch_size=10,
+                batch_interval=0.05,
+            )
+            await svc.start()
+            await asyncio.sleep(0.2)
+            await svc.stop(graceful=True)
+
+            stats = svc.stats()
+            self.assertEqual(stats["startup"]["dlq_loaded_from_spill"], 1)
+            self.assertEqual(stats["startup"]["dlq_replayed_on_start"], 1)
+            self.assertEqual(stats["writer"]["total_written"], 1)
+        finally:
+            os.unlink(spill_path)
+
     async def test_stats_comprehensive(self):
         """Stats should return all sections."""
         svc = TelemetryIngestService()
@@ -721,6 +754,7 @@ class TestTelemetryIngestService(unittest.IsolatedAsyncioTestCase):
         self.assertIn("writer", stats)
         self.assertIn("dead_letter_queue", stats)
         self.assertIn("backpressure", stats)
+        self.assertIn("startup", stats)
 
         await svc.stop(graceful=True)
 
