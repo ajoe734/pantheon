@@ -30,12 +30,28 @@ Do not read `current-work.md` by default for implementation context.
 - docs/deployment/runtime-telemetry-hardening-2026-06-06.md
 
 ## Recent Task Activity
+- 2026-06-06T14:04:47Z · Codex · worker_commit · Worker commit aac993cf2ed7 recorded 5 staged file(s) for OPS-RTEL-005.
+- 2026-06-06T14:05:40Z · Codex · progress · BFF truth split implemented; evidence artifact created; running final validation.
+- 2026-06-06T14:06:20Z · Codex · worker_commit · Worker commit 761b14725348 recorded 1 staged file(s) for OPS-RTEL-005.
+- 2026-06-06T14:07:03Z · Codex · progress · PR #1093 opened with auto-merge enabled; waiting for checks and merge before done.
+- 2026-06-06T14:09:59Z · Codex · handoff · Handoff to Claude: PR #1093 is merged into dev at dcfdfdc559509c319a009ca38644172a8e1aa24b; owner closeout evidence is present; please approve review so owner can run done.
 - 2026-06-06T14:13:59Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
 - 2026-06-06T14:14:00Z · Orchestrator · worker_worktree_refreshed · -
 - 2026-06-06T14:14:00Z · Orchestrator · worker_worktree_reused · -
 - 2026-06-06T14:14:00Z · Orchestrator · worker_started · Worker started via claude_cli: review_ready_dispatch
 - 2026-06-06T14:15:55Z · Claude · review_approved · Review approved: row_health truth split correct; 15-row test passes; all acceptance criteria verified. Returning to Codex for done.
 - 2026-06-06T14:19:13Z · Orchestrator · worker_completed · Worker exited successfully during supervisor boot reconciliation.
+
+## Closeout Finalization
+- PR #1093 merged into dev at dcfdfdc559509c319a009ca38644172a8e1aa24b.
+- Reviewer approval was recorded by Claude at 2026-06-06T14:15:55Z.
+- Owner final validation rerun at 2026-06-06T14:21:45Z:
+  `python3 -m pytest services/control-plane/bff/test_pkt010_runtime_state_board_contract.py -q` (5 passed),
+  `python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py -q` (25 passed),
+  `python3 -m pytest services/execution/lean_runtime/test_signal_consumer.py -q` (22 passed),
+  `python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/test_pkt010_runtime_state_board_contract.py`,
+  `python3 -m json.tool docs/examples/PKT-010-runtime-state-board.json`,
+  and `git diff --check`.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
