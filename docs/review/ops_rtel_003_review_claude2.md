@@ -111,3 +111,11 @@ from `ended_at == null`.
 **APPROVED.** All four acceptance criteria pass. Implementation is correct,
 test coverage is targeted and sufficient, BFF write boundary is upheld.
 No blocking issues.
+
+## Owner Finalization
+
+- Implementation merged in PR #1085 with merge commit `50ede211`.
+- Review approval artifacts merged in PR #1088 with merge commit `0e4e4ac`.
+- Owner verification rerun on 2026-06-06:
+  `python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py services/control-plane/bff/test_pkt010_runtime_state_board_contract.py`
+  (29 passed).
