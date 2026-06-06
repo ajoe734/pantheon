@@ -289,6 +289,11 @@ class PaperFleetReconciler:
             env["PANTHEON_TELEMETRY_URL"] = telemetry_url
         signal_store_url = os.getenv("SIGNAL_STORE_URL", "redis://signal-store:6379")
         env["SIGNAL_STORE_URL"] = signal_store_url
+        # Scope the Redis queue key to this binding so workers cannot consume
+        # signals belonging to a different binding via the shared default key.
+        binding_id = str(binding.get("binding_id") or "")
+        if binding_id:
+            env["PANTHEON_SIGNAL_QUEUE_KEY"] = f"pantheon:signals:pending:{binding_id}"
         return env
 
     def _start_worker(
