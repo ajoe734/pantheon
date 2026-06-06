@@ -14,6 +14,7 @@ import {
   agentLabel,
   buildCodexSlotRoster,
   buildDependencySchedule,
+  buildWorkerCapacity,
   buildWorkerHealth,
   dependencyBatchState,
   deriveAgentState,
@@ -162,7 +163,10 @@ export function renderSupervisorCockpit(status, orchState, approvalQueue, dashbo
   const supervisor = orchState?.supervisor || {};
   const attentionRows = activeWork.rows.filter((row) => row.state === "attention" || row.state === "blocked" || row.primaryQueueReason);
   const lead = attentionRows[0] || activeWork.rows[0] || null;
-  const runningWorkers = Number.isFinite(runtime.running_workers) ? runtime.running_workers : activeWork.truth.liveWorkers.filter((worker) => worker.bucket === "running").length;
+  const capacity = buildWorkerCapacity(status, orchState, dashboardBundle, approvalQueue);
+  const runningWorkers = Number.isFinite(runtime.running_workers) ? runtime.running_workers : capacity.totals.running;
+  const pendingWorkers = Number.isFinite(runtime.pending_workers) ? runtime.pending_workers : capacity.totals.pending;
+  const liveSlots = runningWorkers + pendingWorkers;
   const queueDepth = Number.isFinite(runtime.queue_depth) ? runtime.queue_depth : activeWork.queueEvents.length;
   const mismatchCount = Number.isFinite(runtime.mismatch_count) ? runtime.mismatch_count : activeWork.truth.counts.total;
 
@@ -170,7 +174,8 @@ export function renderSupervisorCockpit(status, orchState, approvalQueue, dashbo
     `<span class="chip ${activeWork.counts.attention ? "status-blocked" : "status-ready"}">Attention ${activeWork.counts.attention}</span>`,
     `<span class="chip">Open ${activeWork.counts.open}</span>`,
     `<span class="chip">Queue ${queueDepth}</span>`,
-    `<span class="chip">Workers ${runningWorkers}</span>`,
+    `<span class="chip">Live slots ${liveSlots}/${capacity.totals.capacity}</span>`,
+    `<span class="chip">Provider lanes ${capacity.totals.lanes}</span>`,
     `<span class="chip ${mismatchCount ? "status-blocked" : "status-ready"}">Mismatch ${mismatchCount}</span>`,
   ].join("");
 
@@ -235,10 +240,16 @@ export function renderSupervisorCockpit(status, orchState, approvalQueue, dashbo
       tone: queueDepth ? "status-review" : "status-ready",
     },
     {
-      label: "Workers",
-      value: `${runningWorkers}/${Number.isFinite(runtime.pending_workers) ? runtime.pending_workers : 0}`,
-      note: "running / pending live workers",
+      label: "Worker Slots",
+      value: `${liveSlots}/${capacity.totals.capacity}`,
+      note: `${runningWorkers} running · ${pendingWorkers} pending · ${capacity.totals.lanes} provider lanes`,
       tone: runningWorkers ? "status-active" : activeWork.counts.open ? "status-review" : "status-ready",
+    },
+    {
+      label: "Assigned",
+      value: capacity.totals.assigned,
+      note: "open task owners currently occupying logical lanes",
+      tone: capacity.totals.assigned ? "status-review" : "status-ready",
     },
     {
       label: "Truth",
@@ -384,14 +395,17 @@ export function renderWorkerHealthDigest(status, orchState, approvalQueue, dashb
           <span class="status-pill status-${row.health}">${healthLabel(row.health)}</span>
         </div>
         <div class="lane-meta">
+          <span class="chip">slots ${row.liveOccupied}/${row.capacity}</span>
           <span class="chip">running ${row.running}</span>
           <span class="chip">pending ${row.pending}</span>
           <span class="chip">queue ${row.queued}</span>
+          <span class="chip">idle ${row.idleCapacity}</span>
           ${row.queueBlocked ? `<span class="chip status-blocked">blocked ${row.queueBlocked}</span>` : ""}
           ${row.readyCount ? `<span class="chip status-ready">ready ${row.readyCount}</span>` : ""}
           ${row.waitingCount ? `<span class="chip">waiting ${row.waitingCount}</span>` : ""}
           ${row.attentionCount ? `<span class="chip status-blocked">attention ${row.attentionCount}</span>` : ""}
         </div>
+        <p class="dependency-copy">capacity source: ${escapeHtml(row.capacitySource)} · last ${formatTime(row.lastUpdate)}</p>
         ${row.activeTaskIds.length ? `<p class="dependency-copy">tasks: ${row.activeTaskIds.map((taskId) => escapeHtml(taskId)).join(", ")}</p>` : ""}
         ${pauseReason ? `<p class="queue-wait-reason">${shortText(pauseReason.summary, 170)}</p>` : ""}
       </article>

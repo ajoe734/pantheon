@@ -677,60 +677,170 @@ export function buildProviderPauses(orchState) {
     .sort((a, b) => String(b.blocked_until || b.paused_at || "").localeCompare(String(a.blocked_until || a.paused_at || "")));
 }
 
-export function buildWorkerHealth(status, orchState, dashboardBundle = null, approvalQueue = null) {
+function workerLaneKey(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return "";
+  const compact = raw.replace(/[\s/_-]+/g, "");
+  if (compact === "claude2") return "claude2";
+  if (compact === "gemini2") return "gemini2";
+  if (compact === "codex2") return "codex2";
+  if (compact === "claude") return "claude";
+  if (compact === "gemini") return "gemini";
+  if (compact === "codex") return "codex";
+  if (compact === "grok" || compact === "copilot") return "copilot";
+  if (compact === "humanops") return "human_ops";
+  return raw.replace(/[\s/-]+/g, "_");
+}
+
+function workerLaneLabel(key, fallback = null) {
+  if (key === "human_ops") return "Human/Ops";
+  return agentLabel(fallback || key);
+}
+
+function finiteCount(value, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function mergeDispatchTarget(targets, key, capacity, source) {
+  if (!key) return;
+  const current = targets.get(key);
+  const normalizedCapacity = Math.max(0, finiteCount(capacity, 0));
+  if (!current || normalizedCapacity > current.capacity) {
+    targets.set(key, { capacity: normalizedCapacity, source });
+  }
+}
+
+export function buildWorkerCapacity(status, orchState, dashboardBundle = null, approvalQueue = null) {
+  const runtime = dashboardBundle?.runtime_summary || {};
+  const dispatchTargets = new Map();
+
+  for (const [name, target] of Object.entries(runtime.dispatch_targets || {})) {
+    mergeDispatchTarget(dispatchTargets, workerLaneKey(name), target, "dispatch target");
+  }
+  for (const [name, target] of Object.entries(status?.workload || {})) {
+    mergeDispatchTarget(dispatchTargets, workerLaneKey(name), target, "workload target");
+  }
+
   const workers = normalizeWorkerRecords(orchState, status);
   const queueEvents = normalizeDispatchQueue(orchState, status);
-  const activeWork = buildActiveWorkRows(status, orchState, dashboardBundle, approvalQueue);
   const pauses = buildProviderPauses(orchState);
-  const agentIds = new Set([
-    ...(status?.agents || []).map((agent) => String(agent.name || "").toLowerCase()),
-    ...workers.map((worker) => String(worker.logical_agent_id || worker.provider || worker.agent_id || "").toLowerCase()),
-    ...queueEvents.map((event) => String(event.logical_agent_id || event.provider || event.agent_id || "").toLowerCase()),
-    ...pauses.map((pause) => String(pause.provider || "").toLowerCase()),
+  const activeWork = buildActiveWorkRows(status, orchState, dashboardBundle, approvalQueue);
+  const runtimeLanes = runtime.lanes || {};
+  const runtimeLaneKeys = Object.keys(runtimeLanes).map(workerLaneKey).filter(Boolean);
+
+  const laneKeys = new Set([
+    ...dispatchTargets.keys(),
+    ...(status?.agents || []).map((agent) => workerLaneKey(agent.name)),
+    ...workers.map((worker) => workerLaneKey(worker.logical_agent_id || worker.provider || worker.agent_id)),
+    ...queueEvents.map((event) => workerLaneKey(event.logical_agent_id || event.provider || event.agent_id)),
+    ...pauses.map((pause) => workerLaneKey(pause.provider)),
+    ...runtimeLaneKeys,
   ].filter(Boolean));
-  const rows = [...agentIds].map((agentId) => {
-    const agent = (status?.agents || []).find((item) => String(item.name || "").toLowerCase() === agentId) || null;
-    const agentWorkers = workers.filter((worker) => String(worker.logical_agent_id || "").toLowerCase() === agentId);
-    const agentQueue = queueEvents.filter((event) => String(event.logical_agent_id || event.provider || "").toLowerCase() === agentId);
-    const pause = pauses.find((item) => String(item.provider || "").toLowerCase() === agentId) || null;
-    const ownedRows = activeWork.rows.filter((row) => String(row.task.owner || "").toLowerCase() === agentId);
-    const running = agentWorkers.filter((worker) => worker.bucket === "running" && worker.is_live_runtime !== false).length;
-    const pending = agentWorkers.filter((worker) => worker.bucket === "pending" && worker.is_live_runtime !== false).length;
-    const stale = agentWorkers.filter((worker) => worker.bucket === "stale").length;
-    const failed = agentWorkers.filter((worker) => String(worker.status || "").toLowerCase() === "failed").length;
-    const queueBlocked = agentQueue.filter((event) => queueWaitReason(event)).length;
+
+  const runtimeLaneByKey = new Map(
+    Object.entries(runtimeLanes).map(([name, lane]) => [workerLaneKey(name), lane || {}])
+  );
+
+  const rows = [...laneKeys].map((key) => {
+    const agent = (status?.agents || []).find((item) => workerLaneKey(item.name) === key) || null;
+    const laneWorkers = workers.filter((worker) => workerLaneKey(worker.logical_agent_id || worker.provider || worker.agent_id) === key);
+    const laneQueue = queueEvents.filter((event) => workerLaneKey(event.logical_agent_id || event.provider || event.agent_id) === key);
+    const pause = pauses.find((item) => workerLaneKey(item.provider) === key) || null;
+    const ownedRows = activeWork.rows.filter((row) => workerLaneKey(row.task.owner) === key);
+    const target = dispatchTargets.get(key) || null;
+    const runtimeLane = runtimeLaneByKey.get(key) || {};
+    const workerRunning = laneWorkers.filter((worker) => worker.bucket === "running" && worker.is_live_runtime !== false).length;
+    const workerPending = laneWorkers.filter((worker) => worker.bucket === "pending" && worker.is_live_runtime !== false).length;
+    const running = Math.max(workerRunning, finiteCount(runtimeLane.running, 0));
+    const pending = Math.max(workerPending, finiteCount(runtimeLane.pending, 0));
+    const transition = Math.max(
+      laneWorkers.filter((worker) => worker.bucket === "transition").length,
+      finiteCount(runtimeLane.transition, 0)
+    );
+    const stale = laneWorkers.filter((worker) => worker.bucket === "stale").length;
+    const failed = Math.max(
+      laneWorkers.filter((worker) => String(worker.status || "").toLowerCase() === "failed").length,
+      finiteCount(runtimeLane.failed, 0)
+    );
+    const queued = Math.max(laneQueue.length, finiteCount(runtimeLane.queued, 0));
+    const capacity = target ? target.capacity : Math.max(running + pending + queued, ownedRows.length);
+    const liveOccupied = running + pending;
+    const queueBlocked = laneQueue.filter((event) => queueWaitReason(event)).length;
+    const activeTaskIds = ownedRows.map((row) => row.task.id);
+    const readyCount = ownedRows.filter((row) => row.state === "ready").length;
+    const waitingCount = ownedRows.filter((row) => row.state === "waiting").length;
+    const attentionCount = ownedRows.filter((row) => row.state === "attention").length;
     let health = "idle";
     if (pause) health = "paused";
     else if (failed || stale) health = "degraded";
     else if (running) health = "running";
-    else if (pending || agentQueue.length) health = queueBlocked ? "blocked" : "queued";
-    else if (ownedRows.some((row) => row.state === "ready")) health = "ready";
+    else if (pending || queued) health = queueBlocked ? "blocked" : "queued";
+    else if (attentionCount) health = "blocked";
+    else if (readyCount || activeTaskIds.length) health = "ready";
+
     return {
-      agentId,
-      label: agentLabel(agentId),
+      key,
+      label: workerLaneLabel(key, agent?.name || key),
       agent,
-      health,
+      capacity,
+      capacitySource: target?.source || "observed",
+      liveOccupied,
       running,
       pending,
+      transition,
       stale,
       failed,
-      queued: agentQueue.length,
+      queued,
       queueBlocked,
       pause,
-      activeTaskIds: ownedRows.map((row) => row.task.id),
-      readyCount: ownedRows.filter((row) => row.state === "ready").length,
-      waitingCount: ownedRows.filter((row) => row.state === "waiting").length,
-      attentionCount: ownedRows.filter((row) => row.state === "attention").length,
-      lastUpdate: agent?.last_update || agentWorkers[0]?.last_event_at || agentQueue[0]?.last_event_at || null,
+      health,
+      activeTaskIds,
+      readyCount,
+      waitingCount,
+      attentionCount,
+      idleCapacity: Math.max(0, capacity - liveOccupied),
+      lastUpdate: agent?.last_update || laneWorkers[0]?.last_event_at || laneQueue[0]?.last_event_at || null,
     };
+  }).filter((row) => {
+    if (row.key === "human_ops" && !row.capacity && !row.liveOccupied && !row.queued && !row.activeTaskIds.length && !row.pause) {
+      return false;
+    }
+    return row.capacity || row.liveOccupied || row.queued || row.activeTaskIds.length || row.pause || row.agent;
   });
+
   rows.sort((a, b) => {
     const order = { blocked: 0, degraded: 1, paused: 2, running: 3, queued: 4, ready: 5, idle: 6 };
     const rank = (order[a.health] ?? 9) - (order[b.health] ?? 9);
     if (rank) return rank;
+    if (b.activeTaskIds.length !== a.activeTaskIds.length) return b.activeTaskIds.length - a.activeTaskIds.length;
+    if (b.capacity !== a.capacity) return b.capacity - a.capacity;
     return a.label.localeCompare(b.label);
   });
-  return rows;
+
+  return {
+    rows,
+    totals: {
+      lanes: rows.filter((row) => row.capacity > 0).length,
+      capacity: rows.reduce((sum, row) => sum + row.capacity, 0),
+      liveOccupied: rows.reduce((sum, row) => sum + row.liveOccupied, 0),
+      running: rows.reduce((sum, row) => sum + row.running, 0),
+      pending: rows.reduce((sum, row) => sum + row.pending, 0),
+      queued: rows.reduce((sum, row) => sum + row.queued, 0),
+      assigned: rows.reduce((sum, row) => sum + row.activeTaskIds.length, 0),
+      attention: rows.reduce((sum, row) => sum + row.attentionCount, 0),
+      stale: rows.reduce((sum, row) => sum + row.stale, 0),
+      failed: rows.reduce((sum, row) => sum + row.failed, 0),
+      paused: rows.filter((row) => row.pause).length,
+    },
+  };
+}
+
+export function buildWorkerHealth(status, orchState, dashboardBundle = null, approvalQueue = null) {
+  return buildWorkerCapacity(status, orchState, dashboardBundle, approvalQueue).rows.map((row) => ({
+    ...row,
+    agentId: row.key,
+  }));
 }
 
 function normalizedActorName(value) {
