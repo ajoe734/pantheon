@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Paper runtime fleet reconciler
-- Status: in_progress
+- Status: review
 - Owner: Claude
 - Reviewer: Codex
 - Phase: Runtime Telemetry Hardening
-- Last update: 2026-06-06T11:45:36Z
-- Next: Review blocker: active acceptance still requires no worker consumes shared Redis signals before isolation. paper_fleet_reconciler spawns paper_runtime without a binding-scoped PANTHEON_SIGNAL_QUEUE_KEY, so workers default to pantheon:signals:pending and RedisPendingSignalStore lpop can remove signals for another binding. Add binding-scoped queue/consumer isolation or disable Redis consumption until isolation, with tests.
+- Last update: 2026-06-06T11:50:34Z
+- Next: Signal queue isolation fix complete. paper_fleet_reconciler._build_worker_env now sets PANTHEON_SIGNAL_QUEUE_KEY=pantheon:signals:pending:<binding_id> for each spawned worker, scoping Redis consumption to that binding only. 4 new isolation tests added to TestPaperFleetReconcilerSignalQueueIsolation; all 22 tests pass. Anchor commit eb95ea8e on task/OPS-RTEL-002. Ready for re-review.
 
 ## Summary
 新增 paper runtime fleet reconciler，從 active paper runtime bindings 自動維持一個 worker per binding，取代手動 docker run。
@@ -27,12 +27,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/deployment/runtime-telemetry-hardening-2026-06-06.md
 
 ## Recent Task Activity
-- 2026-06-06T11:41:20Z · Orchestrator · worker_worktree_refreshed · -
-- 2026-06-06T11:41:20Z · Orchestrator · worker_worktree_reused · -
-- 2026-06-06T11:41:20Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
-- 2026-06-06T11:44:39Z · Codex · review_approved · DRY-RUN-CHECK
-- 2026-06-06T11:45:36Z · Codex · reopen · Review blocker: active acceptance still requires no worker consumes shared Redis signals before isolation. paper_fleet_reconciler spawns paper_runtime without a binding-scoped PANTHEON_SIGNAL_QUEUE_KEY, so workers default to pantheon:signals:pending and RedisPendingSignalStore lpop can remove signals for another binding. Add binding-scoped queue/consumer isolation or disable Redis consumption until isolation, with tests.
-- 2026-06-06T11:48:46Z · Orchestrator · worker_failed · Worker exited before the task reached a terminal status.
+- 2026-06-06T11:48:48Z · Claude · progress · Supervisor re-dispatched OPS-RTEL-002; task remains in progress.
+- 2026-06-06T11:48:50Z · Orchestrator · task_dispatch_synced · Supervisor re-dispatched OPS-RTEL-002; task remains in progress.
+- 2026-06-06T11:50:03Z · Claude · progress · Fixed Redis signal queue isolation: _build_worker_env now sets PANTHEON_SIGNAL_QUEUE_KEY=pantheon:signals:pending:<binding_id> per worker. Added 4 isolation tests (TestPaperFleetReconcilerSignalQueueIsolation); all 22 tests pass.
+- 2026-06-06T11:50:27Z · unknown · worker_commit · Worker commit eb95ea8e01b2 recorded 3 staged file(s) for OPS-RTEL-002.
+- 2026-06-06T11:50:34Z · Claude · handoff · Handoff to Codex: Signal queue isolation fix complete. paper_fleet_reconciler._build_worker_env now sets PANTHEON_SIGNAL_QUEUE_KEY=pantheon:signals:pending:<binding_id> for each spawned worker, scoping Redis consumption to that binding only. 4 new isolation tests added to TestPaperFleetReconcilerSignalQueueIsolation; all 22 tests pass. Anchor commit eb95ea8e on task/OPS-RTEL-002. Ready for re-review.
+- 2026-06-06T11:54:03Z · Orchestrator · worker_completed · Worker exited successfully during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
