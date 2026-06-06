@@ -452,15 +452,285 @@ export function normalizeDispatchQueue(orchState, status) {
   const taskMap = new Map((status?.tasks || []).map((task) => [task.id, task]));
   return normalizeQueueEvents(orchState)
     .map((event) => {
-      const taskStatus = taskMap.get(event.task_id)?.status || null;
+      const inferredTaskId = event.task_id || inferTaskIdFromQueueEvent(event, taskMap);
+      const taskStatus = taskMap.get(inferredTaskId)?.status || null;
       return {
         ...event,
+        task_id: inferredTaskId,
         logical_agent_id: logicalWorkerAgentId(event),
         task_status: taskStatus,
         stale: terminalTaskStatus(taskStatus),
       };
     })
     .filter((event) => !["completed", "failed"].includes(event.status) && !event.stale);
+}
+
+function inferTaskIdFromQueueEvent(event, taskMap) {
+  const fields = [
+    event?.task_id,
+    event?.event_key,
+    event?.last_wait_reason,
+    event?.reason,
+    event?.message,
+  ].filter(Boolean);
+  for (const field of fields) {
+    const text = String(field);
+    for (const taskId of taskMap.keys()) {
+      if (text.includes(taskId)) return taskId;
+    }
+  }
+  return event?.task_id || null;
+}
+
+function queueWaitReason(event) {
+  return event?.last_wait_reason
+    || event?.wait_reason
+    || event?.blocked_reason
+    || event?.last_error
+    || event?.reason
+    || "";
+}
+
+function queueEventTime(event) {
+  return event?.last_event_at
+    || event?.worktree_lease_blocked_at
+    || event?.last_attempt_at
+    || event?.processed_at
+    || event?.created_at
+    || null;
+}
+
+function taskStatusRank(task, rowState) {
+  const status = String(task?.status || "").toLowerCase();
+  if (rowState === "attention") return 0;
+  if (status === "blocked") return 1;
+  if (status === "in_progress") return 2;
+  if (status === "review") return 3;
+  if (rowState === "queued") return 4;
+  if (rowState === "ready") return 5;
+  if (status === "review_approved") return 6;
+  return 7;
+}
+
+function dependencyLabel(depId, taskMap) {
+  const dep = taskMap.get(depId);
+  if (!dep) return `${depId}: done`;
+  return `${depId}: ${dep.status || "-"}`;
+}
+
+function taskUnresolvedDeps(task, taskMap) {
+  return (task?.depends_on || []).filter((depId) => {
+    const dep = taskMap.get(depId);
+    if (!dep) return false;
+    return String(dep.status || "").toLowerCase() !== "done";
+  });
+}
+
+function taskDependents(taskId, tasks) {
+  return (tasks || []).filter((task) => (task.depends_on || []).includes(taskId));
+}
+
+function activeRowState(task, liveWorkers, queueEvents, mismatches, unresolvedDeps) {
+  const status = String(task?.status || "").toLowerCase();
+  const hasRunning = liveWorkers.some((worker) => worker.bucket === "running" || worker.runtime_bucket === "running");
+  if (mismatches.length || (status === "in_progress" && !hasRunning)) return "attention";
+  if (status === "blocked") return "blocked";
+  if (status === "review") return "review";
+  if (status === "review_approved") return "approved";
+  if (hasRunning) return "running";
+  if (queueEvents.length) return "queued";
+  if (unresolvedDeps.length) return "waiting";
+  if (status === "todo") return "ready";
+  return status || "unknown";
+}
+
+export function buildActiveWorkRows(status, orchState, dashboardBundle = null, approvalQueue = null) {
+  const tasks = status?.tasks || [];
+  const taskMap = new Map(tasks.map((task) => [task.id, task]));
+  const truth = buildTruthMismatches(status, orchState, approvalQueue);
+  const queueEvents = normalizeDispatchQueue(orchState, status);
+  const bundleLinks = Array.isArray(dashboardBundle?.worker_task_links) ? dashboardBundle.worker_task_links : [];
+  const bundleMismatches = Array.isArray(dashboardBundle?.truth_mismatches) ? dashboardBundle.truth_mismatches : [];
+  const mismatchItems = truth.mismatches.length ? truth.mismatches : bundleMismatches;
+
+  const queueByTask = new Map();
+  for (const event of queueEvents) {
+    const taskId = event.task_id || inferTaskIdFromQueueEvent(event, taskMap);
+    if (!taskId) continue;
+    if (!queueByTask.has(taskId)) queueByTask.set(taskId, []);
+    queueByTask.get(taskId).push(event);
+  }
+
+  const linksByTask = new Map();
+  for (const link of bundleLinks) {
+    const taskId = String(link.task_id || "").trim();
+    if (!taskId) continue;
+    if (!linksByTask.has(taskId)) linksByTask.set(taskId, []);
+    linksByTask.get(taskId).push(link);
+  }
+
+  const mismatchesByTask = new Map();
+  for (const mismatch of mismatchItems) {
+    const taskId = String(mismatch.task_id || "").trim();
+    if (!taskId) continue;
+    if (!mismatchesByTask.has(taskId)) mismatchesByTask.set(taskId, []);
+    mismatchesByTask.get(taskId).push(mismatch);
+  }
+
+  const rows = tasks
+    .filter((task) => !terminalTaskStatus(task.status))
+    .map((task) => {
+      const liveWorkers = truth.liveWorkersByTask.get(task.id) || [];
+      const linkedWorkers = linksByTask.get(task.id) || [];
+      const runtimeWorkers = liveWorkers.length ? liveWorkers : linkedWorkers;
+      const taskQueueEvents = queueByTask.get(task.id) || [];
+      const mismatches = mismatchesByTask.get(task.id) || [];
+      const unresolvedDeps = taskUnresolvedDeps(task, taskMap);
+      const dependents = taskDependents(task.id, tasks).filter((item) => !terminalTaskStatus(item.status));
+      const state = activeRowState(task, runtimeWorkers, taskQueueEvents, mismatches, unresolvedDeps);
+      const queueReasons = taskQueueEvents.map(queueWaitReason).filter(Boolean);
+      const primaryMismatch = mismatches[0] || null;
+      const primaryQueue = taskQueueEvents[0] || null;
+      let nextAction = task.next || "尚未指定下一步。";
+      if (queueReasons.length) {
+        nextAction = queueReasons[0];
+      } else if (primaryMismatch) {
+        nextAction = primaryMismatch.resolution_hint || primaryMismatch.summary || nextAction;
+      } else if (unresolvedDeps.length) {
+        nextAction = `等待前置完成：${unresolvedDeps.map((depId) => dependencyLabel(depId, taskMap)).join("、")}`;
+      }
+      return {
+        task,
+        state,
+        expected_actor: expectedTaskActor(task),
+        runtimeWorkers,
+        queueEvents: taskQueueEvents,
+        mismatches,
+        unresolvedDeps,
+        dependencies: task.depends_on || [],
+        dependencyLabels: (task.depends_on || []).map((depId) => dependencyLabel(depId, taskMap)),
+        dependents,
+        primaryQueue,
+        primaryQueueReason: queueReasons[0] || "",
+        primaryQueueAt: primaryQueue ? queueEventTime(primaryQueue) : null,
+        nextAction,
+        rank: taskStatusRank(task, state),
+      };
+    });
+
+  rows.sort((a, b) => {
+    if (a.rank !== b.rank) return a.rank - b.rank;
+    return String(b.task.last_update || "").localeCompare(String(a.task.last_update || ""));
+  });
+
+  return {
+    rows,
+    truth,
+    queueEvents,
+    counts: {
+      open: rows.length,
+      attention: rows.filter((row) => row.state === "attention").length,
+      running: rows.filter((row) => row.state === "running").length,
+      queued: rows.filter((row) => row.state === "queued").length,
+      waiting: rows.filter((row) => row.state === "waiting").length,
+      ready: rows.filter((row) => row.state === "ready").length,
+      review: rows.filter((row) => row.state === "review").length,
+      blocked: rows.filter((row) => row.state === "blocked").length,
+    },
+  };
+}
+
+export function buildDependencyRunway(status) {
+  const tasks = status?.tasks || [];
+  const taskMap = new Map(tasks.map((task) => [task.id, task]));
+  const openTasks = tasks.filter((task) => !terminalTaskStatus(task.status));
+  return openTasks
+    .map((task) => {
+      const unresolvedDeps = taskUnresolvedDeps(task, taskMap);
+      const dependents = taskDependents(task.id, tasks).filter((item) => !terminalTaskStatus(item.status));
+      let state = "waiting";
+      if (String(task.status || "").toLowerCase() === "blocked") state = "blocked";
+      else if (activeTaskStatuses.has(String(task.status || "").toLowerCase())) state = "active";
+      else if (!unresolvedDeps.length) state = "ready";
+      return {
+        task,
+        state,
+        unresolvedDeps,
+        dependencyLabels: (task.depends_on || []).map((depId) => dependencyLabel(depId, taskMap)),
+        dependents,
+        unlocks: dependents.map((item) => item.id),
+      };
+    })
+    .sort((a, b) => {
+      const order = { active: 0, blocked: 1, ready: 2, waiting: 3 };
+      const rank = (order[a.state] ?? 9) - (order[b.state] ?? 9);
+      if (rank) return rank;
+      return a.task.id.localeCompare(b.task.id);
+    });
+}
+
+export function buildProviderPauses(orchState) {
+  const pauses = orchState?.provider_guardrails?.dispatch_pauses;
+  if (!pauses || typeof pauses !== "object") return [];
+  return Object.entries(pauses)
+    .map(([provider, info]) => ({ provider, ...(info || {}) }))
+    .sort((a, b) => String(b.blocked_until || b.paused_at || "").localeCompare(String(a.blocked_until || a.paused_at || "")));
+}
+
+export function buildWorkerHealth(status, orchState, dashboardBundle = null, approvalQueue = null) {
+  const workers = normalizeWorkerRecords(orchState, status);
+  const queueEvents = normalizeDispatchQueue(orchState, status);
+  const activeWork = buildActiveWorkRows(status, orchState, dashboardBundle, approvalQueue);
+  const pauses = buildProviderPauses(orchState);
+  const agentIds = new Set([
+    ...(status?.agents || []).map((agent) => String(agent.name || "").toLowerCase()),
+    ...workers.map((worker) => String(worker.logical_agent_id || worker.provider || worker.agent_id || "").toLowerCase()),
+    ...queueEvents.map((event) => String(event.logical_agent_id || event.provider || event.agent_id || "").toLowerCase()),
+    ...pauses.map((pause) => String(pause.provider || "").toLowerCase()),
+  ].filter(Boolean));
+  const rows = [...agentIds].map((agentId) => {
+    const agent = (status?.agents || []).find((item) => String(item.name || "").toLowerCase() === agentId) || null;
+    const agentWorkers = workers.filter((worker) => String(worker.logical_agent_id || "").toLowerCase() === agentId);
+    const agentQueue = queueEvents.filter((event) => String(event.logical_agent_id || event.provider || "").toLowerCase() === agentId);
+    const pause = pauses.find((item) => String(item.provider || "").toLowerCase() === agentId) || null;
+    const ownedRows = activeWork.rows.filter((row) => String(row.task.owner || "").toLowerCase() === agentId);
+    const running = agentWorkers.filter((worker) => worker.bucket === "running" && worker.is_live_runtime !== false).length;
+    const pending = agentWorkers.filter((worker) => worker.bucket === "pending" && worker.is_live_runtime !== false).length;
+    const stale = agentWorkers.filter((worker) => worker.bucket === "stale").length;
+    const failed = agentWorkers.filter((worker) => String(worker.status || "").toLowerCase() === "failed").length;
+    const queueBlocked = agentQueue.filter((event) => queueWaitReason(event)).length;
+    let health = "idle";
+    if (pause) health = "paused";
+    else if (failed || stale) health = "degraded";
+    else if (running) health = "running";
+    else if (pending || agentQueue.length) health = queueBlocked ? "blocked" : "queued";
+    else if (ownedRows.some((row) => row.state === "ready")) health = "ready";
+    return {
+      agentId,
+      label: agentLabel(agentId),
+      agent,
+      health,
+      running,
+      pending,
+      stale,
+      failed,
+      queued: agentQueue.length,
+      queueBlocked,
+      pause,
+      activeTaskIds: ownedRows.map((row) => row.task.id),
+      readyCount: ownedRows.filter((row) => row.state === "ready").length,
+      waitingCount: ownedRows.filter((row) => row.state === "waiting").length,
+      attentionCount: ownedRows.filter((row) => row.state === "attention").length,
+      lastUpdate: agent?.last_update || agentWorkers[0]?.last_event_at || agentQueue[0]?.last_event_at || null,
+    };
+  });
+  rows.sort((a, b) => {
+    const order = { blocked: 0, degraded: 1, paused: 2, running: 3, queued: 4, ready: 5, idle: 6 };
+    const rank = (order[a.health] ?? 9) - (order[b.health] ?? 9);
+    if (rank) return rank;
+    return a.label.localeCompare(b.label);
+  });
+  return rows;
 }
 
 function normalizedActorName(value) {
