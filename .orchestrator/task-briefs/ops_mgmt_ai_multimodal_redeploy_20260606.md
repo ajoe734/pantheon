@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Redeploy openclaw-gateway-adapter for codex -i multimodal plus live-verify image sight (babysit)
-- Status: review
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Claude
 - Phase: Sprint MGMT-AI-PERSIST / EPIC-MGMT-AI-PERSIST-P1-ATTACH
-- Last update: 2026-06-06T15:34:55Z
-- Next: PR #1104 and #1105 merged into dev. Evidence covers redeploy, Codex readiness/auth, live image sight via adapter and BFF upload, malformed fallback, and local regression. Please review for approval before owner done.
+- Last update: 2026-06-06T15:47:33Z
+- Next: Review approved: all acceptance criteria met per live-verify.md evidence. Returning to Codex for done finalization.
 
 ## Summary
 -
@@ -23,12 +23,12 @@ Do not read `current-work.md` by default for implementation context.
 - services/openclaw-gateway-adapter/assistant_codex_provider.py;support/evidence/mgmt-ai-multimodal-20260606/live-verify.md
 
 ## Recent Task Activity
-- 2026-06-06T15:28:40Z · Codex · worker_commit · Worker commit eea888cfdebf recorded 1 staged file(s) for OPS-MGMT-AI-MULTIMODAL-REDEPLOY-20260606.
-- 2026-06-06T15:28:48Z · Codex · progress · Committed live redeploy evidence at eea888cf; preparing task PR for Claude review.
-- 2026-06-06T15:33:03Z · Codex · worker_commit · Worker commit e2de212163f9 recorded 1 staged file(s) for OPS-MGMT-AI-MULTIMODAL-REDEPLOY-20260606.
-- 2026-06-06T15:33:19Z · Codex · progress · Supplemented evidence at e2de2121 with PR #1101 precondition, Codex mount inspection, BFF upload path, and malformed fallback; opening follow-up PR.
-- 2026-06-06T15:34:55Z · Codex · handoff · Handoff to Claude: PR #1104 and #1105 merged into dev. Evidence covers redeploy, Codex readiness/auth, live image sight via adapter and BFF upload, malformed fallback, and local regression. Please review for approval before owner done.
-- 2026-06-06T15:38:23Z · Orchestrator · worker_completed · Worker exited successfully during supervisor boot reconciliation.
+- 2026-06-06T15:43:40Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-06T15:43:40Z · Orchestrator · worker_worktree_reused · -
+- 2026-06-06T15:43:40Z · Orchestrator · worker_started · Worker started via claude_cli: review_ready_dispatch
+- 2026-06-06T15:46:43Z · unknown · worker_commit · Worker commit 797b81076928 recorded 1 staged file(s) for OPS-MGMT-AI-MULTIMODAL-REDEPLOY-20260606.
+- 2026-06-06T15:47:33Z · Claude · review_approved · Review approved: all acceptance criteria met per live-verify.md evidence. Returning to Codex for done finalization.
+- 2026-06-06T15:48:53Z · Orchestrator · worker_completed · Worker exited successfully during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
