@@ -32,6 +32,14 @@
       "type": "string",
       "description": "Optional ID to group signals into a single execution run or rebalance batch (e.g., FinRL)."
     },
+    "binding_id": {
+      "type": "string",
+      "description": "Optional routing field: the RuntimeBinding this signal was published for. Used by SignalConsumer for binding-level isolation when signals carry explicit routing metadata."
+    },
+    "runtime_id": {
+      "type": "string",
+      "description": "Optional routing field: the runtime_id this signal was published for. Complementary to binding_id for runtime-aware filtering."
+    },
     "timestamp": {
       "type": "string",
       "format": "date-time",

@@ -170,3 +170,80 @@ default queue.
 python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py -v
 # Expected: 22 passed
 ```
+
+---
+
+# Runtime-Aware Signal Isolation — OPS-RTEL-004
+
+Task: OPS-RTEL-004
+
+## Problem
+
+With a 15-runtime paper fleet, all workers sharing the bare Redis key
+`pantheon:signals:pending` race to consume signals. A signal published for
+binding `b-001` can be consumed by any other runtime before the intended
+worker drains it.
+
+## Solution: Two-Layer Isolation
+
+### Layer 1 — Binding-scoped queue key (queue-level isolation)
+
+Each runtime must use a per-binding Redis key:
+`pantheon:signals:pending:<binding_id>`.
+
+**Reconciler (OPS-RTEL-002, already done):** `PaperFleetReconciler` sets
+`PANTHEON_SIGNAL_QUEUE_KEY=pantheon:signals:pending:<binding_id>` in each
+spawned worker's environment.
+
+**Auto-derive (this task):** `build_pending_signal_store()` now resolves the
+queue key in priority order when the default bare key is used:
+1. `PANTHEON_SIGNAL_QUEUE_KEY` env var (set by reconciler)
+2. Binding-scoped key derived from `PANTHEON_RUNTIME_BINDING_ID` env var
+3. Bare default `pantheon:signals:pending` (standalone / test runs)
+
+`PaperRuntimeService` also performs explicit derivation for clarity:
+
+```python
+# Resolve queue key: explicit env > binding-scoped > default
+_explicit_key = os.getenv("PANTHEON_SIGNAL_QUEUE_KEY", "").strip()
+_binding_for_key = (self._identity.binding_id or "").strip()
+if _explicit_key:
+    _resolved_queue_key = _explicit_key
+elif _binding_for_key:
+    _resolved_queue_key = binding_queue_key(_binding_for_key)
+else:
+    _resolved_queue_key = BINDING_QUEUE_KEY_PREFIX
+```
+
+### Layer 2 — Signal-level binding filter (defense-in-depth)
+
+`SignalConsumer` now accepts a `binding_id` parameter. When set, signals
+whose `binding_id` field does not match are discarded with a warning before
+execution. Signals without a `binding_id` field are legacy/unrouted and
+always pass through.
+
+`PaperRuntimeService` passes `binding_id=self._identity.binding_id` to the
+consumer automatically.
+
+## Schema Change
+
+`services/research/schema.json` gains two optional routing fields:
+- `binding_id` — the RuntimeBinding this signal was published for
+- `runtime_id` — complementary runtime-level routing
+
+These fields are optional; existing signals without them are unaffected.
+
+## Artifacts Changed
+
+- `services/execution/lean_runtime/pending_signal_store.py` — `BINDING_QUEUE_KEY_PREFIX`, `binding_queue_key()`, auto-derive in `build_pending_signal_store()`
+- `services/execution/lean_runtime/signal_consumer.py` — `binding_id` param, `_is_wrong_binding()` defense
+- `services/execution/lean_runtime/paper_runtime.py` — explicit queue key derivation, passes `binding_id` to consumer
+- `services/research/schema.json` — optional `binding_id` and `runtime_id` routing fields
+- `services/execution/lean_runtime/test_signal_consumer.py` — 14 new tests (8 binding isolation + 6 store key resolution)
+
+## Validation
+
+```bash
+python3 -m pytest services/execution/lean_runtime/test_signal_consumer.py -v
+# Expected: 22 passed
+```
