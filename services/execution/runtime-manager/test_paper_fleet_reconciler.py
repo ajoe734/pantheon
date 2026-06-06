@@ -341,6 +341,87 @@ class TestPaperFleetReconcilerFiltersPaperOnly(unittest.TestCase):
         self.assertEqual(snap["workers"][0]["binding_id"], "b-paper")
 
 
+class TestPaperFleetReconcilerDegradedFetch(unittest.TestCase):
+    """Fetch-failure safety: a runtime-manager outage must not evict live workers."""
+
+    def _make_fail_reconciler(self):
+        from paper_fleet_reconciler import PaperFleetReconciler
+
+        state = {"bindings": [], "fail": False}
+        spawned = []
+        pid_counter = [300]
+
+        class _R(PaperFleetReconciler):
+            def _fetch_active_paper_bindings(inner_self):
+                if state["fail"]:
+                    with inner_self._lock:
+                        inner_self._last_error = "binding fetch failed: URLError: simulated"
+                    return None
+                return list(state["bindings"])
+
+            def _spawn(inner_self, binding_id, port, env):
+                pid = pid_counter[0]; pid_counter[0] += 1
+                proc = _FakeProcess(pid=pid)
+                spawned.append({"binding_id": binding_id, "pid": pid, "proc": proc})
+                return proc
+
+        recon = _R(
+            poll_interval_seconds=999,
+            worker_base_port=9800,
+            max_restarts=2,
+            restart_backoff_seconds=0,
+            drain_timeout_seconds=1,
+        )
+        return recon, state, spawned
+
+    def test_fetch_error_preserves_existing_workers(self) -> None:
+        recon, state, spawned = self._make_fail_reconciler()
+        state["bindings"] = [_make_binding("b-001")]
+        recon.reconcile_once()
+        self.assertEqual(recon.snapshot()["worker_count"], 1)
+
+        state["fail"] = True
+        recon.reconcile_once()
+
+        snap = recon.snapshot()
+        self.assertEqual(snap["worker_count"], 1, "fetch error must not evict live workers")
+        self.assertEqual(snap["running_count"], 1)
+
+    def test_fetch_error_preserves_last_error(self) -> None:
+        recon, state, _spawned = self._make_fail_reconciler()
+        state["fail"] = True
+        snap = recon.reconcile_once()
+        self.assertIsNotNone(snap["last_error"])
+        self.assertIn("binding fetch failed", snap["last_error"])
+
+
+class TestPaperFleetReconcilerRestartBackoff(unittest.TestCase):
+    def test_restart_backoff_delays_second_restart(self) -> None:
+        """restart_count=1 restart must not fire immediately when backoff>0."""
+        wrapper = _InstrumentedReconciler(
+            worker_base_port=9900,
+            max_restarts=3,
+            restart_backoff_seconds=60.0,  # large so the test window never crosses it
+            drain_timeout_seconds=1,
+            poll_interval_seconds=999,
+        )
+        wrapper.set_bindings([_make_binding("b-001")])
+
+        # Cycle 1: start worker (restart_count=0)
+        wrapper.recon.reconcile_once()
+        self.assertEqual(len(wrapper.spawned), 1)
+
+        # Kill first worker; restart_count=0 → backoff=0*60=0 → immediate restart
+        wrapper.spawned[0]["proc"]._returncode = 1
+        wrapper.recon.reconcile_once()
+        self.assertEqual(len(wrapper.spawned), 2, "first restart should be immediate (backoff=0*60=0)")
+
+        # Kill second worker; restart_count=1 → backoff=1*60=60s → must NOT restart yet
+        wrapper.spawned[1]["proc"]._returncode = 1
+        wrapper.recon.reconcile_once()
+        self.assertEqual(len(wrapper.spawned), 2, "second restart must wait for backoff to elapse")
+
+
 if __name__ == "__main__":
     import sys
     sys.path.insert(0, str(Path(__file__).parent))
