@@ -1310,6 +1310,72 @@ def _restore_reusable_scratch(worktree_path: Path, paths: list[str]) -> None:
     )
 
 
+def _staged_index_split_paths_matching_head(worktree_path: Path) -> list[str]:
+    """Return staged paths whose worktree bytes already match HEAD.
+
+    Worker worktrees can be left with a split index after a merge/review loop:
+    the index stages a reverse patch while the working tree contains the branch
+    HEAD content. In that case `git restore --staged` is safe because it only
+    repairs the index. Real staged additions/renames or content changes must
+    continue to block dispatch.
+    """
+    proc = subprocess.run(
+        ["git", "diff", "--cached", "--name-status"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return []
+    paths: list[str] = []
+    for line in proc.stdout.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split("\t")
+        if len(parts) < 2:
+            return []
+        status, path = parts[0], parts[-1]
+        if status not in {"M", "D"}:
+            return []
+        candidate = worktree_path / path
+        if not candidate.is_file():
+            return []
+        head_proc = subprocess.run(
+            ["git", "rev-parse", f"HEAD:{path}"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        worktree_proc = subprocess.run(
+            ["git", "hash-object", path],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if head_proc.returncode != 0 or worktree_proc.returncode != 0:
+            return []
+        if head_proc.stdout.strip() != worktree_proc.stdout.strip():
+            return []
+        paths.append(path)
+    return paths
+
+
+def _restore_reused_index_split(worktree_path: Path, paths: list[str]) -> bool:
+    if not paths:
+        return False
+    proc = subprocess.run(
+        ["git", "restore", "--staged", "--", *sorted(set(paths))],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return proc.returncode == 0
+
+
 def _refresh_reused_worker_worktree(repo_root: Path, worktree_path: Path, base_ref: str) -> tuple[bool, str]:
     """Fast-forward a reused worker worktree to the current base ref tip.
 
@@ -1344,23 +1410,43 @@ def _refresh_reused_worker_worktree(repo_root: Path, worktree_path: Path, base_r
         check=False,
     )
     scratch_restored = False
+    index_restored = False
     if status_proc.returncode == 0 and status_proc.stdout.strip():
         classification, scratch_paths = _classify_worktree_dirt(status_proc.stdout)
         if classification == "real":
-            return False, "skipped_dirty_worktree"
+            index_split_paths = _staged_index_split_paths_matching_head(worktree_path)
+            if not _restore_reused_index_split(worktree_path, index_split_paths):
+                return False, "skipped_dirty_worktree"
+            index_restored = True
+            status_proc = subprocess.run(
+                ["git", "status", "--porcelain", "--untracked-files=all"],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if status_proc.returncode != 0:
+                return False, "skipped_dirty_worktree"
+            classification, scratch_paths = _classify_worktree_dirt(status_proc.stdout)
+            if classification == "real":
+                return False, "skipped_dirty_worktree"
+            if classification == "clean":
+                scratch_paths = []
         # Only orchestrator-managed scratch is dirty: restore it and reuse the
         # worktree instead of jamming dispatch on regenerable bookkeeping churn.
-        _restore_reusable_scratch(worktree_path, scratch_paths)
-        verify_proc = subprocess.run(
-            ["git", "status", "--porcelain", "--untracked-files=no"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if verify_proc.returncode == 0 and verify_proc.stdout.strip():
-            return False, "skipped_dirty_worktree"
-        scratch_restored = True
+        if scratch_paths:
+            _restore_reusable_scratch(worktree_path, scratch_paths)
+            verify_untracked = "all" if index_restored else "no"
+            verify_proc = subprocess.run(
+                ["git", "status", "--porcelain", f"--untracked-files={verify_untracked}"],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if verify_proc.returncode == 0 and verify_proc.stdout.strip():
+                return False, "skipped_dirty_worktree"
+            scratch_restored = True
 
     merge_proc = subprocess.run(
         ["git", "merge", "--ff-only", f"origin/{base}"],
@@ -1378,7 +1464,12 @@ def _refresh_reused_worker_worktree(repo_root: Path, worktree_path: Path, base_r
             check=False,
         )
         head = (head_proc.stdout or "").strip()
-        suffix = "+scratch_restored" if scratch_restored else ""
+        status_suffixes = []
+        if scratch_restored:
+            status_suffixes.append("scratch_restored")
+        if index_restored:
+            status_suffixes.append("index_restored")
+        suffix = f"+{'+'.join(status_suffixes)}" if status_suffixes else ""
         return True, (f"ff_to_{head}{suffix}" if head else f"ff_ok{suffix}")
     details = (merge_proc.stderr or merge_proc.stdout or "").strip().splitlines()[0] if (merge_proc.stderr or merge_proc.stdout) else "unknown"
     return False, f"non_fast_forward: {details}"
