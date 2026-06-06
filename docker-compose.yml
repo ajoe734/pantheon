@@ -1082,6 +1082,37 @@ services:
       retries: 10
       start_period: 5s
 
+  paper-fleet-reconciler:
+    profiles: ["paper-fleet"]
+    build:
+      context: .
+      dockerfile: services/execution/runtime-manager/Dockerfile
+    command: ["python", "services/execution/runtime-manager/paper_fleet_reconciler.py"]
+    environment:
+      PORT: "8011"
+      PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
+      PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
+      RECONCILER_POLL_INTERVAL_SECONDS: ${RECONCILER_POLL_INTERVAL_SECONDS:-15}
+      RECONCILER_WORKER_BASE_PORT: ${RECONCILER_WORKER_BASE_PORT:-8020}
+      RECONCILER_MAX_RESTARTS: ${RECONCILER_MAX_RESTARTS:-5}
+      RECONCILER_RESTART_BACKOFF_SECONDS: ${RECONCILER_RESTART_BACKOFF_SECONDS:-5}
+      RECONCILER_DRAIN_TIMEOUT_SECONDS: ${RECONCILER_DRAIN_TIMEOUT_SECONDS:-10}
+      PANTHEON_TELEMETRY_URL: http://telemetry:8083
+      SIGNAL_STORE_URL: redis://signal-store:6379
+    depends_on:
+      runtime-manager:
+        condition: service_healthy
+      signal-store:
+        condition: service_healthy
+    ports:
+      - "${PAPER_FLEET_RECONCILER_PORT:-18011}:8011"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8011/readyz', timeout=5).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
   reconciliation-drift-svc:
     build:
       context: .

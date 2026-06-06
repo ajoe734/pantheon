@@ -98,3 +98,53 @@ Deployment script syntax check:
 bash -n scripts/bootstrap.sh
 bash -n scripts/db_migrate.sh
 ```
+
+---
+
+# Paper Runtime Fleet Reconciler — OPS-RTEL-002
+
+Task: OPS-RTEL-002
+
+## Scope
+
+Adds `PaperFleetReconciler` which automatically maintains one worker subprocess
+per active paper `RuntimeBinding`, replacing manual `docker run` for paper workers.
+
+- `services/execution/runtime-manager/paper_fleet_reconciler.py` — reconciler
+  implementation. Polls runtime-manager every `RECONCILER_POLL_INTERVAL_SECONDS`
+  (default 15 s) for active paper bindings, starts/stops worker subprocesses,
+  and restarts dead workers up to `RECONCILER_MAX_RESTARTS` (default 5).
+- `services/execution/runtime-manager/test_paper_fleet_reconciler.py` — 15 unit
+  tests covering start, stop, restart, port allocation, env builder, and snapshot.
+- `docker-compose.yml` — adds `paper-fleet-reconciler` service under the
+  `paper-fleet` profile. Activate with:
+
+```bash
+docker compose --profile paper-fleet up paper-fleet-reconciler
+```
+
+## Reconciler Behaviour
+
+Each reconcile cycle:
+
+1. `GET /api/runtime-bindings` on the runtime-manager (bearer-auth).
+2. Filter for `deployment_mode == "paper"` and `status == "active"`.
+3. For each desired binding with no live worker: spawn a subprocess running
+   `paper_runtime.py` with binding context in env vars.
+4. For each running worker whose binding is no longer active: send SIGTERM,
+   wait `RECONCILER_DRAIN_TIMEOUT_SECONDS`, then SIGKILL if still running.
+5. Detect and log process exits; auto-restart up to the configured cap.
+
+## Health Surface
+
+- `GET /healthz` — `200` once the first reconcile cycle completes without error.
+- `GET /readyz` — same semantics as `/healthz`.
+- `GET /livez` — always `200`.
+- `GET /api/fleet/state` — full reconciler snapshot including per-worker pid,
+  port, restart count, and status.
+
+## Validation
+
+```bash
+python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py -v
+```
