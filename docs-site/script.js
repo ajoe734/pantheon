@@ -21,7 +21,6 @@ import {
   renderAgentLanes,
   renderArchiveRecords,
   renderAuditStatus,
-  renderBffConsolidationTrack,
   renderBoardSummary,
   renderBridgeCard,
   renderControlPlaneStrip,
@@ -146,7 +145,6 @@ async function render({ syncFirst = false } = {}) {
     runRenderStep("active_work_matrix", renderFailures, () => renderActiveWorkMatrix(status, orchState, approvalQueue, dashboardBundle));
     runRenderStep("dependency_runway", renderFailures, () => renderDependencyRunway(status));
     runRenderStep("worker_health_digest", renderFailures, () => renderWorkerHealthDigest(status, orchState, approvalQueue, dashboardBundle));
-    runRenderStep("bff_consolidation_track", renderFailures, () => renderBffConsolidationTrack(status, dashboardBundle));
     runRenderStep("bridge_card", renderFailures, () => renderBridgeCard(status, planningState, dashboardBundle));
     runRenderStep("execution_section_summary", renderFailures, () => renderExecutionSectionSummary(status, orchState, planningState, dashboardBundle));
     runRenderStep("mode_visibility", renderFailures, () => applyModeVisibility(status, planningState));
