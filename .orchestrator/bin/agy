@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+host_home="${PANTHEON_HOST_HOME:-/home/lupin}"
+
+agy_bin="${AGY_BIN:-}"
+if [[ -z "${agy_bin}" ]]; then
+  for cand in "$host_home/.local/bin/agy" "$HOME/.local/bin/agy"; do
+    if [[ -x "$cand" ]]; then
+      agy_bin="$cand"
+      break
+    fi
+  done
+fi
+if [[ -z "${agy_bin}" ]]; then
+  agy_bin="$(command -v agy 2>/dev/null || true)"
+fi
+if [[ -z "${agy_bin}" ]]; then
+  echo "Antigravity CLI (agy) binary not found under ~/.local/bin or PATH." >&2
+  exit 1
+fi
+
+host_gh_config="${GH_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gh}"
+if [[ -d "$host_gh_config" ]]; then
+  export GH_CONFIG_DIR="$host_gh_config"
+fi
+
+if [[ -n "${ANTIGRAVITY_HOME:-}" ]]; then
+  mkdir -p "${ANTIGRAVITY_HOME}"
+  export HOME="${ANTIGRAVITY_HOME}"
+fi
+
+exec "${agy_bin}" "$@"

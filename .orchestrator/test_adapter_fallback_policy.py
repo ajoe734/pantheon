@@ -12,6 +12,7 @@ if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
 from adapters.base import DeliveryRequest
+from adapters.antigravity import AntigravityAdapter
 from adapters.claude_cli import ClaudeCLIAdapter
 from adapters.copilot_local import CopilotLocalAdapter
 from adapters.codex import CodexAdapter
@@ -352,6 +353,99 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         self.assertEqual(env["GOOGLE_CLOUD_PROJECT"], "gemini2-project")
         self.assertEqual(env["GEMINI_CLI_TRUST_WORKSPACE"], "true")
         self.assertEqual(env["ORCH_TASK_ID"], "T-GEMINI2")
+        self.assertEqual(env["ORCH_REASON"], "owned_ready_dispatch")
+        self.assertEqual(env["PANTHEON_STATUS_ROOT"], str(root / "supervisor-root"))
+
+    def test_antigravity_can_disable_inbox_fallback(self) -> None:
+        config = {
+            "agents": {"antigravity": {"id": "antigravity", "display_name": "Antigravity", "provider": "antigravity"}},
+            "providers": {
+                "antigravity": {
+                    "allow_inbox_fallback": False,
+                    "antigravity": {"cli": "agy"},
+                }
+            },
+        }
+        request = DeliveryRequest(agent_id="antigravity", provider="antigravity", delivery_mode="antigravity", message="wake")
+        adapter = AntigravityAdapter(config=config, provider_capabilities={})
+        with mock.patch("adapters.antigravity.command_exists", return_value=None):
+            result = adapter.deliver(request)
+        self.assertFalse(result.ok)
+        self.assertFalse(result.manual_confirmation_required)
+        self.assertEqual(result.mode, "antigravity")
+
+    def test_antigravity_alias_uses_provider_specific_home_and_identity_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            gh_config = root / ".config" / "gh"
+            gh_config.mkdir(parents=True)
+            config = {
+                "paths": {"status_file": str(root / "ai-status.json")},
+                "agents": {
+                    "antigravity2": {
+                        "id": "antigravity2",
+                        "display_name": "Antigravity2",
+                        "provider": "antigravity2",
+                        "adapter": "antigravity",
+                    }
+                },
+                "providers": {
+                    "antigravity2": {
+                        "delivery_mode": "antigravity",
+                        "allow_inbox_fallback": False,
+                        "antigravity": {
+                            "cli": "agy",
+                            "config_home": str(root / "agy2-home"),
+                            "include_directories": True,
+                            "model": "gemini-2.5-flash-lite",
+                            "print_timeout": "15m",
+                            "env": {"GEMINI_API_KEY": "agy-key"},
+                        },
+                        "approval": {"dangerously_skip_permissions": True},
+                    }
+                },
+            }
+            request = DeliveryRequest(
+                agent_id="antigravity2",
+                provider="antigravity2",
+                delivery_mode="antigravity",
+                message="wake",
+                task_id="T-AGY2",
+                reason="owned_ready_dispatch",
+                metadata={
+                    "workspace_path": str(root / "task-worktree"),
+                    "status_root": str(root / "supervisor-root"),
+                },
+            )
+            adapter = AntigravityAdapter(config=config, provider_capabilities={})
+            fake_process = mock.Mock(pid=1234)
+            with (
+                mock.patch.dict(os.environ, {"HOME": str(root)}, clear=False),
+                mock.patch("adapters.antigravity.command_exists", return_value="agy"),
+                mock.patch("adapters.antigravity._auth_ready", return_value=True),
+                mock.patch("adapters.antigravity.spawn_background_process", return_value=(fake_process, root / "agy2.log")) as spawn,
+            ):
+                result = adapter.deliver(request)
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.target, "Antigravity2")
+        self.assertIn("--model", result.command)
+        self.assertEqual(result.command[result.command.index("--model") + 1], "gemini-2.5-flash-lite")
+        self.assertIn("--print-timeout", result.command)
+        self.assertEqual(result.command[result.command.index("--print-timeout") + 1], "15m")
+        self.assertIn("--dangerously-skip-permissions", result.command)
+        self.assertIn("--add-dir", result.command)
+        self.assertEqual(result.command[result.command.index("--add-dir") + 1], str(root / "task-worktree"))
+        self.assertEqual(spawn.call_args.kwargs["cwd"], root / "task-worktree")
+        env = spawn.call_args.kwargs["env"]
+        self.assertEqual(env["AI_NAME"], "Antigravity2")
+        self.assertEqual(env["ORCH_AGENT_ID"], "antigravity2")
+        self.assertEqual(env["ORCH_PROVIDER"], "antigravity2")
+        self.assertEqual(env["ANTIGRAVITY_HOME"], str(root / "agy2-home"))
+        self.assertEqual(env["HOME"], str(root / "agy2-home"))
+        self.assertEqual(env["GH_CONFIG_DIR"], str(gh_config))
+        self.assertEqual(env["GEMINI_API_KEY"], "agy-key")
+        self.assertEqual(env["ORCH_TASK_ID"], "T-AGY2")
         self.assertEqual(env["ORCH_REASON"], "owned_ready_dispatch")
         self.assertEqual(env["PANTHEON_STATUS_ROOT"], str(root / "supervisor-root"))
 

@@ -48,6 +48,22 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Claude2"], 1)
         self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["claude2"], 1)
 
+    def test_antigravity_workers_are_in_dispatcher_pool(self) -> None:
+        config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
+
+        ready_dispatcher = config["ready_dispatcher"]
+
+        self.assertIn("antigravity", config["agents"])
+        self.assertIn("antigravity2", config["agents"])
+        self.assertEqual(config["providers"]["antigravity"]["delivery_mode"], "antigravity")
+        self.assertEqual(config["providers"]["antigravity2"]["delivery_mode"], "antigravity")
+        self.assertEqual(ready_dispatcher["target_workload"]["Antigravity"], 5)
+        self.assertEqual(ready_dispatcher["target_workload"]["Antigravity2"], 5)
+        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Antigravity"], 1)
+        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Antigravity2"], 1)
+        self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["antigravity"], 1)
+        self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["antigravity2"], 1)
+
 
 class DetectWorkerFailureTests(unittest.TestCase):
     def _worker_for_log(self, content: str) -> dict[str, str]:
@@ -676,6 +692,90 @@ class DetectWorkerFailureTests(unittest.TestCase):
         write_activity_log.assert_called_once()
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "provider_dispatch_resumed")
         self.assertEqual(write_activity_log.call_args.args[1]["provider"], "codex2")
+
+    def test_auth_recovery_clears_only_auth_guardrails_for_provider_group(self) -> None:
+        config = {
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+            "agents": {
+                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
+                "codex2_1": {
+                    "id": "codex2_1",
+                    "display_name": "Codex2",
+                    "provider": "codex2-1",
+                    "dispatch_slot_for": "codex2",
+                },
+                "codex2_2": {
+                    "id": "codex2_2",
+                    "display_name": "Codex2",
+                    "provider": "codex2-2",
+                    "dispatch_slot_for": "codex2",
+                },
+                "gemini": {"id": "gemini", "display_name": "Gemini", "provider": "gemini"},
+            },
+            "providers": {
+                "codex2": {"delivery_mode": "codex", "quota_group": "codex2"},
+                "codex2-1": {"delivery_mode": "codex", "quota_group": "codex2"},
+                "codex2-2": {"delivery_mode": "codex", "quota_group": "codex2"},
+                "gemini": {"delivery_mode": "gemini", "quota_group": "gemini"},
+            },
+        }
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex2": {"pause_kind": "auth", "task_id": "OPS-AUTH", "worker_run_id": "codex-run"},
+                    "gemini": {"pause_kind": "capacity_retryable", "task_id": "OPS-CAP", "worker_run_id": "gemini-run"},
+                },
+                "task_failure_streaks": {
+                    "OPS-AUTH:codex2_1": {
+                        "task_id": "OPS-AUTH",
+                        "provider": "codex2_1",
+                        "last_failure_kind": "auth",
+                        "last_reason": "token_invalidated",
+                    },
+                    "OPS-AUTH2:codex2": {
+                        "task_id": "OPS-AUTH2",
+                        "provider": "codex2",
+                        "last_failure_kind": "",
+                        "last_reason": "not authenticated",
+                    },
+                    "OPS-QUOTA:codex2_2": {
+                        "task_id": "OPS-QUOTA",
+                        "provider": "codex2_2",
+                        "last_failure_kind": "quota_terminal",
+                        "last_reason": "402 You have no quota",
+                    },
+                    "OPS-GEMINI:gemini": {
+                        "task_id": "OPS-GEMINI",
+                        "provider": "gemini",
+                        "last_failure_kind": "auth",
+                        "last_reason": "not authenticated",
+                    },
+                },
+            }
+        }
+        previous = {"providers": {"codex2-1": {"auth_ready": False}}}
+        current = {
+            "providers": {
+                "codex2-1": {
+                    "auth_ready": True,
+                    "last_auth_probe_at": "2026-06-06T12:00:00Z",
+                    "auth_method": "codex_exec_oauth",
+                }
+            }
+        }
+
+        with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
+            changed = supervisor.reconcile_provider_auth_recovery(config, state, previous, current)
+
+        self.assertTrue(changed)
+        self.assertNotIn("codex2", state["provider_guardrails"]["dispatch_pauses"])
+        self.assertIn("gemini", state["provider_guardrails"]["dispatch_pauses"])
+        streaks = state["provider_guardrails"]["task_failure_streaks"]
+        self.assertNotIn("OPS-AUTH:codex2_1", streaks)
+        self.assertNotIn("OPS-AUTH2:codex2", streaks)
+        self.assertIn("OPS-QUOTA:codex2_2", streaks)
+        self.assertIn("OPS-GEMINI:gemini", streaks)
+        self.assertGreaterEqual(write_activity_log.call_count, 2)
 
 
 class ProcessQueueDispatchGuardTests(unittest.TestCase):
