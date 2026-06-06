@@ -6,11 +6,13 @@ and transcript redaction to ``AssistantProviderRuntime``.
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -40,6 +42,15 @@ DEFAULT_CODEX_WORKSPACE = "/srv/pantheon-assistant/workspaces/read-only"
 DEFAULT_REPAIR_WORKTREE_ROOT = "/srv/pantheon-assistant/worktrees"
 DEFAULT_TIMEOUT_SECONDS = 60
 DEFAULT_AUDIT_PATH = "/tmp/openclaw-gateway-adapter/assistant_provider_audit.jsonl"
+MAX_CODEX_IMAGES = 8
+MAX_CODEX_IMAGE_TOTAL_BYTES = 16 * 1024 * 1024
+_CODEX_IMAGE_MIME_EXT = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
 _AUTH_FAILURE_RE = re.compile(
     r"(not\s+logged\s+in|login\s+required|sign\s+in|authentication|unauthorized|oauth|expired|token)",
     re.IGNORECASE,
@@ -246,7 +257,8 @@ class AssistantCodexProvider:
         context = self._command_context(mode, metadata)
         self._ensure_workspace_available(context)
         binary = self._require_binary()
-        cmd = self._build_command(binary=binary, context=context)
+        image_paths, image_tmpdir, image_bytes = self._materialize_request_images(payload)
+        cmd = self._build_command(binary=binary, context=context, image_paths=image_paths)
         env = self._build_env()
         timeout = self._timeout_seconds()
         started = time.monotonic()
@@ -263,6 +275,8 @@ class AssistantCodexProvider:
                 "workspace_class": context.workspace_class,
                 **({"repair_workflow": context.repair_workflow} if context.repair_workflow else {}),
                 "prompt_bytes": len(prompt.encode("utf-8")),
+                "image_count": len(image_paths),
+                "image_bytes": image_bytes,
                 "timeout_seconds": timeout,
             }
         )
@@ -338,6 +352,9 @@ class AssistantCodexProvider:
                     "errno": getattr(exc, "errno", None),
                 },
             ) from exc
+        finally:
+            if image_tmpdir is not None:
+                shutil.rmtree(image_tmpdir, ignore_errors=True)
 
         duration_ms = _duration_ms(started)
         if completed.returncode != 0:
@@ -397,8 +414,96 @@ class AssistantCodexProvider:
             "json_events": _parse_json_lines(completed.stdout),
         }
 
-    def _build_command(self, *, binary: str, context: _CommandContext) -> list[str]:
-        return [
+    def _materialize_request_images(
+        self, payload: Mapping[str, Any]
+    ) -> tuple[list[str], str | None, int]:
+        """Decode forwarded image attachments to temp files for ``codex exec -i``.
+
+        Images arrive as ``data:<mime>;base64,<...>`` URLs inside the request
+        ``attachments`` (or ``messages[].content``) the BFF forwards. The codex
+        CLI reads ``-i`` files itself, so we stage decoded bytes in a private
+        out-of-tree temp dir (never the read-only workspace or a worker
+        worktree). Returns (paths, tmpdir_or_None, total_bytes). Any decode/IO
+        problem degrades to text-only rather than failing the ask.
+        """
+        parts = self._collect_image_parts(payload)
+        if not parts:
+            return [], None, 0
+        try:
+            tmpdir = tempfile.mkdtemp(prefix="codex-img-")
+            os.chmod(tmpdir, 0o700)
+        except OSError:
+            return [], None, 0
+        paths: list[str] = []
+        total = 0
+        try:
+            for index, part in enumerate(parts):
+                if len(paths) >= MAX_CODEX_IMAGES:
+                    break
+                image_url = part.get("image_url")
+                url = str(image_url.get("url") or "") if isinstance(image_url, Mapping) else ""
+                if not url.startswith("data:") or "," not in url:
+                    continue
+                header, _, b64 = url.partition(",")
+                mime = header[5:].split(";")[0].strip().lower()
+                try:
+                    data = base64.b64decode(b64, validate=False)
+                except (ValueError, TypeError):
+                    continue
+                if not data:
+                    continue
+                if total + len(data) > MAX_CODEX_IMAGE_TOTAL_BYTES:
+                    break
+                total += len(data)
+                ext = _CODEX_IMAGE_MIME_EXT.get(mime) or self._image_ext_fallback(part.get("filename"))
+                path = os.path.join(tmpdir, f"image-{index}{ext}")
+                with open(path, "wb") as handle:
+                    handle.write(data)
+                paths.append(path)
+        except OSError:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            return [], None, 0
+        if not paths:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            return [], None, 0
+        return paths, tmpdir, total
+
+    @staticmethod
+    def _collect_image_parts(payload: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+        parts: list[Mapping[str, Any]] = []
+        attachments = payload.get("attachments")
+        if isinstance(attachments, list):
+            for item in attachments:
+                if isinstance(item, Mapping) and item.get("type") == "image_url":
+                    parts.append(item)
+        if parts:
+            return parts
+        messages = payload.get("messages")
+        if isinstance(messages, list):
+            for message in messages:
+                content = message.get("content") if isinstance(message, Mapping) else None
+                if isinstance(content, list):
+                    for chunk in content:
+                        if isinstance(chunk, Mapping) and chunk.get("type") == "image_url":
+                            parts.append(chunk)
+        return parts
+
+    @staticmethod
+    def _image_ext_fallback(filename: Any) -> str:
+        if isinstance(filename, str) and "." in filename:
+            ext = "." + filename.rsplit(".", 1)[1].strip().lower()
+            if 2 <= len(ext) <= 6 and ext[1:].isalnum():
+                return ext
+        return ".img"
+
+    def _build_command(
+        self,
+        *,
+        binary: str,
+        context: _CommandContext,
+        image_paths: list[str] | tuple[str, ...] = (),
+    ) -> list[str]:
+        cmd = [
             binary,
             "exec",
             "-C",
@@ -409,8 +514,12 @@ class AssistantCodexProvider:
             "-c",
             'ask_for_approval="never"',
             "--json",
-            "-",
         ]
+        for path in image_paths:
+            cmd.extend(["-i", path])
+        # Trailing "-" tells codex exec to read the prompt from stdin.
+        cmd.append("-")
+        return cmd
 
     def _command_context(self, mode: str, metadata: Mapping[str, Any]) -> _CommandContext:
         if mode == "kernel_repair":
