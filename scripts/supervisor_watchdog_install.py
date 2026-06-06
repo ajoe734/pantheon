@@ -70,7 +70,7 @@ def render_systemd_timer() -> str:
 def render_cron_line(repo_root: Path) -> str:
     repo = shlex.quote(str(repo_root))
     return (
-        f"* * * * cd {repo} && mkdir -p .orchestrator/logs && "
+        f"* * * * * cd {repo} && mkdir -p .orchestrator/logs && "
         "bash scripts/run-supervisor-watchdog.sh --restart "
         f">> .orchestrator/logs/supervisor-watchdog-cron.log 2>&1 {CRON_TAG}"
     )

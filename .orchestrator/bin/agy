@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Antigravity CLI (`agy`) launcher for orchestrator workers. `agy` is a
+# self-contained Go binary (successor to the Gemini CLI; legacy Gemini CLI is
+# retired for consumer tiers on 2026-06-18). This shim resolves the binary and
+# preserves host gh credentials so workers can still run task_finalize.sh after
+# any HOME override.
+
+host_home="${PANTHEON_HOST_HOME:-/home/lupin}"
+
+# Resolve the agy binary: explicit override, then the standard install path.
+agy_bin="${AGY_BIN:-}"
+if [[ -z "${agy_bin}" ]]; then
+  for cand in "$host_home/.local/bin/agy" "$HOME/.local/bin/agy"; do
+    if [[ -x "$cand" ]]; then agy_bin="$cand"; break; fi
+  done
+fi
+if [[ -z "${agy_bin}" ]]; then
+  agy_bin="$(command -v agy 2>/dev/null || true)"
+fi
+if [[ -z "${agy_bin}" ]]; then
+  echo "Antigravity CLI (agy) binary not found under ~/.local/bin or PATH." >&2
+  exit 1
+fi
+
+# Preserve host gh config so `gh` and `git push` keep credentials after the
+# HOME override below; otherwise antigravity workers with a custom HOME cannot
+# run task_finalize.sh.
+host_gh_config="${GH_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gh}"
+if [[ -d "$host_gh_config" ]]; then
+  export GH_CONFIG_DIR="$host_gh_config"
+fi
+
+# Optional HOME override (the OAuth token lives under $HOME/.gemini/antigravity-cli).
+if [[ -n "${ANTIGRAVITY_HOME:-}" ]]; then
+  mkdir -p "${ANTIGRAVITY_HOME}"
+  export HOME="${ANTIGRAVITY_HOME}"
+fi
+
+exec "${agy_bin}" "$@"
