@@ -28,7 +28,9 @@ if str(_RUNTIME_MANAGER_DIR) not in sys.path:
 
 from runtime_manager_client import RuntimeManagerClient
 from services.execution.lean_runtime.pending_signal_store import (
+    BINDING_QUEUE_KEY_PREFIX,
     PendingSignalStore,
+    binding_queue_key,
     build_pending_signal_store,
 )
 from services.execution.lean_runtime.runtime_context import PantheonRuntimeContext
@@ -649,9 +651,20 @@ class PaperRuntimeService:
             else None
         )
         self._identity = identity or RuntimeIdentity.from_env(identity_env)
+        # Resolve queue key: explicit env > binding-scoped > default.
+        # The reconciler sets PANTHEON_SIGNAL_QUEUE_KEY for each worker subprocess;
+        # direct invocations fall back to PANTHEON_RUNTIME_BINDING_ID if available.
+        _explicit_key = os.getenv("PANTHEON_SIGNAL_QUEUE_KEY", "").strip()
+        _binding_for_key = (self._identity.binding_id or "").strip()
+        if _explicit_key:
+            _resolved_queue_key = _explicit_key
+        elif _binding_for_key:
+            _resolved_queue_key = binding_queue_key(_binding_for_key)
+        else:
+            _resolved_queue_key = BINDING_QUEUE_KEY_PREFIX
         self._store = store or build_pending_signal_store(
             os.getenv("SIGNAL_STORE_URL", "redis://signal-store:6379"),
-            queue_key=os.getenv("PANTHEON_SIGNAL_QUEUE_KEY", "pantheon:signals:pending"),
+            queue_key=_resolved_queue_key,
             default_batch_size=int(os.getenv("PANTHEON_SIGNAL_BATCH_SIZE", "100")),
         )
         self._runtime_manager_client = runtime_manager_client or RuntimeManagerClient(
@@ -676,7 +689,10 @@ class PaperRuntimeService:
                 default=True,
             ),
         )
-        self._consumer = SignalConsumer(store_client=self._store)
+        self._consumer = SignalConsumer(
+            store_client=self._store,
+            binding_id=self._identity.binding_id or None,
+        )
         self._poll_interval_seconds = poll_interval_seconds or _as_float(
             os.getenv("PANTHEON_RUNTIME_POLL_INTERVAL_SECONDS"),
             1.0,
