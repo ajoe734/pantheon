@@ -351,6 +351,16 @@ class DetectWorkerFailureTests(unittest.TestCase):
             "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 7:00 PM.",
         )
 
+    def test_detects_codex_config_parse_failure_as_worker_failure(self) -> None:
+        worker = self._worker_for_log(
+            "Error loading config.toml: unknown variant `priority`, expected `fast` or `flex` in `service_tier`\n"
+        )
+
+        self.assertEqual(
+            supervisor.detect_worker_failure(worker),
+            "Error loading config.toml: unknown variant `priority`, expected `fast` or `flex` in `service_tier`",
+        )
+
     def test_classifies_gemini_auth_failure(self) -> None:
         config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
         worker = {"provider": "gemini"}
@@ -378,8 +388,24 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertEqual(result["kind"], "tool_auth")
         self.assertFalse(result["transient"])
 
+    def test_classifies_codex_config_parse_failure_as_provider_config(self) -> None:
+        config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
+        worker = {"provider": "codex1-1"}
+
+        result = supervisor.classify_worker_failure(
+            config,
+            worker,
+            "Error loading config.toml: unknown variant `priority`, expected `fast` or `flex` in `service_tier`",
+        )
+
+        self.assertEqual(result["kind"], "provider_config")
+        self.assertFalse(result["transient"])
+
     def test_auth_failures_pause_provider_dispatch(self) -> None:
         self.assertTrue(supervisor.should_pause_dispatch_for_failure_kind("auth"))
+
+    def test_provider_config_failures_pause_provider_dispatch(self) -> None:
+        self.assertTrue(supervisor.should_pause_dispatch_for_failure_kind("provider_config"))
 
     def test_tool_auth_failures_do_not_pause_provider_dispatch(self) -> None:
         self.assertFalse(supervisor.should_pause_dispatch_for_failure_kind("tool_auth"))
@@ -7101,6 +7127,56 @@ class WorkerOsDuplicateGuardTests(unittest.TestCase):
             )
         self.assertIsNone(reason)
         scan.assert_not_called()
+
+    def test_block_reason_rejects_invalid_codex_service_tier(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            codex_home = Path(tmpdir)
+            (codex_home / "config.toml").write_text('service_tier = "priority"\n', encoding="utf-8")
+            config = {
+                "agents": {"codex": {"provider": "codex"}},
+                "providers": {
+                    "codex": {
+                        "delivery_mode": "codex",
+                        "codex": {"codex_home": str(codex_home)},
+                    }
+                },
+                "ready_dispatcher": {"worker_os_duplicate_guard": False},
+            }
+            provider_report = {"providers": {"codex": {"local_cli_worker_supported": True, "supports_auto_approve": True}}}
+
+            reason = supervisor.agent_auto_dispatch_block_reason(config, {}, "codex", provider_report)
+
+        self.assertIsNotNone(reason)
+        assert reason is not None
+        self.assertIn("unsupported service_tier", reason)
+        self.assertIn("priority", reason)
+
+    def test_block_reason_uses_hyphenated_provider_key_for_codex_slot_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            codex_home = Path(tmpdir)
+            (codex_home / "config.toml").write_text('service_tier = "fast"\n', encoding="utf-8")
+            config = {
+                "agents": {
+                    "codex1_1": {
+                        "id": "codex1_1",
+                        "provider": "codex1-1",
+                        "display_name": "Codex",
+                        "dispatch_slot_for": "codex",
+                    }
+                },
+                "providers": {
+                    "codex1-1": {
+                        "delivery_mode": "codex",
+                        "codex": {"codex_home": str(codex_home)},
+                    }
+                },
+                "ready_dispatcher": {"worker_os_duplicate_guard": False},
+            }
+            provider_report = {"providers": {"codex1-1": {"local_cli_worker_supported": True, "supports_auto_approve": True}}}
+
+            reason = supervisor.agent_auto_dispatch_block_reason(config, {}, "codex1_1", provider_report)
+
+        self.assertIsNone(reason)
 
     def test_block_reason_ignores_other_agents_processes(self) -> None:
         config = {
