@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Paper monitoring session stale reaper
-- Status: todo
+- Status: in_progress
 - Owner: Codex2
 - Reviewer: Claude2
 - Phase: Runtime Telemetry Hardening
-- Last update: 2026-06-06T05:43:15Z
-- Next: Assignment created
+- Last update: 2026-06-06T12:15:01Z
+- Next: Supervisor auto-started OPS-RTEL-003 after successful dispatch.
 
 ## Summary
 讓 paper_runtime_monitoring session 不再只靠 ended_at=null 表示活著，heartbeat stale 時自動結束 zombie session 並在重啟時建立新 session。
@@ -26,7 +26,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/deployment/runtime-telemetry-hardening-2026-06-06.md
 
 ## Recent Task Activity
-- none
+- 2026-06-06T12:14:58Z · Orchestrator · wake_queued · Wake-up queued for supervisor: owned_ready_dispatch
+- 2026-06-06T12:15:00Z · Orchestrator · worker_worktree_allocated · -
+- 2026-06-06T12:15:00Z · Orchestrator · worker_started · Worker started via codex: owned_ready_dispatch
+- 2026-06-06T12:15:01Z · Codex2 · start · Supervisor auto-started OPS-RTEL-003 after successful dispatch.
+- 2026-06-06T12:15:04Z · Orchestrator · task_dispatch_synced · Supervisor auto-started OPS-RTEL-003 after successful dispatch.
+- 2026-06-06T12:20:21Z · Orchestrator · worker_failed · ERROR: Failed to refresh token: 400 Bad Request: Your session has ended. Please log in again.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
