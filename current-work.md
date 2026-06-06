@@ -4,18 +4,17 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-06-05 07:29:52
+Last updated: 2026-06-06 18:13:39
 
 ## Objective
 
-Integrate Pantheon Management AI with existing BFF assistant surfaces plus OpenClaw adapter plus supervisor/autoworker orchestration. This wave explicitly reuses /bff/management/nl/ask durable conversation persistence plus /bff/assistant session/context/mode routes plus OpenClaw adapter provider/tool policy plus scripts/ai_status.py task dispatch. It must not create a second assistant gateway. It must not expose provider credentials to FE. It must not let Web API shell into the VM. Deliverables cover durable conversation truth alignment context mesh real provider routing governed operation tools SA/SD generator signed dev collaboration bridge orchestrator status readback FE follow-up brief and security/mode regression.
+Make Pantheon Management AI control mode operational for authorized operators while keeping user mode safe by default, then add governed runtime repair actions for stale paper runtime, monitoring sessions, telemetry bridge, and telemetry ingest recovery. The passphrase remains an activation factor only and must not bypass RBAC, MFA, explicit capabilities, TTL, audit, redaction, or command policy.
 
 ## Current Sprint
 
-- Sprint: `2026-06-03-pantheon-assistant-existing-architecture`
+- Sprint: `2026-06-06-assistant-control-mode-runtime-repair`
 - Canonical files: `AI_COLLABORATION_GUIDE.md`, `ai-status.json`, `ai-activity-log.jsonl`, `current-work.md`, `TARGET_ARCHITECTURE.md`, `OPENCLAW_RUNTIME_CONTRACT.md`, `PERSONA_RUNTIME_MODEL.md`, `BINDING_AND_DEPLOYMENT_SEMANTICS.md`, `PAPER_CANARY_LIVE_POLICY.md`, `ROLLBACK_AND_POSITION_SEMANTICS.md`, `LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md`, `EVOLUTION_REVIEW_AND_THRESHOLDS.md`, `CROSS_SERVICE_CONSISTENCY_AND_SAGA_POLICY.md`, `KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md`, `MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md`, `TELEMETRY_INGEST_AND_STORAGE_ARCHITECTURE.md`, `DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md`, `EVENT_ORDERING_AND_DELIVERY_GUARANTEES.md`, `EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md`, `BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md`, `LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md`, `CANONICAL_DOCUMENT_MAP.md`, `DOCUMENT_AUTHORITY_AND_RECORD_BOUNDARY.md`, `ROADMAP.md`, `DEVELOPMENT_WORKBREAKDOWN.md`, `OSS_INTEGRATION_CHECKLIST.md`, `WORKBENCH_DELIVERY_BACKLOG.md`, `DELIVERY_CLOSURE_AND_LOOP_STATES.md`, `EXECUTION_PROOF_AND_MATURITY_LEVELS.md`, `CANONICAL_CONTRACT_MIGRATION_DECISION.md`, `WORK_REBASELINE.md`, `Pantheon_總索引版系統分析文件.md`, `Pantheon_資料表_Schema_設計版.md`, `Pantheon_API_Service_Contract_設計版.md`
 - Canonical tiers: `L0 Collaboration & State`, `L0.5 Derived Narrative`, `L1 Platform Architecture & Policy`, `L2 Planning & Execution`, `L3 Supporting Design & Migration`
-- Planning mode: `docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/README.md`
 - Canonical map: `CANONICAL_DOCUMENT_MAP.md`
 - Document boundary: `DOCUMENT_AUTHORITY_AND_RECORD_BOUNDARY.md`
 - Full backlog: `DEVELOPMENT_WORKBREAKDOWN.md`
@@ -24,25 +23,14 @@ Integrate Pantheon Management AI with existing BFF assistant surfaces plus OpenC
 - Execution proof: `EXECUTION_PROOF_AND_MATURITY_LEVELS.md`
 - Dashboard: `docs-site/index.html`
 
-## Discussion Planning
-
-- Session: `phase6-2026-05-01-pantheon-p0-paper-loop`
-- Status: `accepted`
-- Baton owner: `Codex`
-- Current round: `0`
-- Consensus: `accepted`
-- Human gate: `approved`
-- Ready for human: `True`
-- Ready to materialize execution: `True`
-
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: No active assignment
-- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: No active assignment
-- `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
+- `Claude`: execution, control-plane, governance-review; next: Assignment created
+- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: Assignment created
+- `Codex`: integration, status-system, schema, acceptance; next: Assignment created
+- `Codex2`: integration, status-system, schema, acceptance; next: Assignment created
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
-- `Claude2`: execution, control-plane, governance-review; next: No active assignment
+- `Claude2`: execution, control-plane, governance-review; next: Assignment created
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 - `Human/Ops`: human-gate, operations, signoff; next: No active assignment
 
@@ -52,7 +40,12 @@ Integrate Pantheon Management AI with existing BFF assistant surfaces plus OpenC
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| _(none)_ | - | - | - | - | - | - |
+| `ASST-CTRL-001` | Sprint ASST-CTRL / Control-mode deployability | Make assistant kernel control-mode deployable by configuration | Codex | todo | - | 補齊 operator-bff 的 kernel/control-mode env 與 passphrase store path，讓 dev/staging 能顯式啟用但預設仍安全關閉。 |
+| `ASST-CTRL-002` | Sprint ASST-CTRL / Activation authority | Add explicit assistant kernel activation capability plumbing | Codex2 | todo | `ASST-CTRL-001` | 新增 assistant.kernel.activate 權限與 dev/staging capability claims，讓 operator/admin 可啟動 control mode，同時保留 reviewer 預設拒絕。 |
+| `ASST-CTRL-003` | Sprint ASST-CTRL / Management AI control UX | Improve Management AI control-mode status and frontend-visible posture | Claude | todo | `ASST-CTRL-001`, `ASST-CTRL-002` | 讓 Management AI 與管理前端能清楚顯示 user/control/kernel 狀態、缺少哪個啟動條件，並確保暗語永不外洩。 |
+| `ASST-RUNTIME-001` | Sprint ASST-RUNTIME / Runtime repair action catalog | Define governed runtime recovery actions for paper runtime and telemetry | Gemini | todo | `ASST-CTRL-002` | 把 stale paper runtime、monitoring session、telemetry bridge/ingest recovery 變成 BFF/action catalog 可治理的 action，而不是靠口頭建議。 |
+| `ASST-RUNTIME-002` | Sprint ASST-RUNTIME / Runtime repair execution | Wire runtime recovery actions to audited runtime-manager or admin CLI execution | Codex | todo | `ASST-RUNTIME-001` | 把核准的 runtime recovery action 接到 runtime-manager protected API 或 admin CLI，補 audit receipt、idempotency 與 stale-session guard。 |
+| `ASST-SEC-002` | Sprint ASST-SEC / Security regression | Add focused security regression for control mode and runtime repair | Claude2 | todo | `ASST-CTRL-002`, `ASST-CTRL-003`, `ASST-RUNTIME-002` | 補 user-mode、control-mode、暗語 redaction、command broker denylist、runtime repair audit 的安全回歸。 |
 
 ### External / Upstream Integration Work
 
@@ -92,6 +85,12 @@ Integrate Pantheon Management AI with existing BFF assistant surfaces plus OpenC
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
+| `ASST-CTRL-001` | Sprint ASST-CTRL / Control-mode deployability | Make assistant kernel control-mode deployable by configuration | 補齊 operator-bff 的 kernel/control-mode env 與 passphrase store path，讓 dev/staging 能顯式啟用但預設仍安全關閉。 | Codex | Claude | todo | - | 2026-06-06 18:13:34 | Assignment created |
+| `ASST-CTRL-002` | Sprint ASST-CTRL / Activation authority | Add explicit assistant kernel activation capability plumbing | 新增 assistant.kernel.activate 權限與 dev/staging capability claims，讓 operator/admin 可啟動 control mode，同時保留 reviewer 預設拒絕。 | Codex2 | Claude | todo | `ASST-CTRL-001` | 2026-06-06 18:13:36 | Assignment created |
+| `ASST-CTRL-003` | Sprint ASST-CTRL / Management AI control UX | Improve Management AI control-mode status and frontend-visible posture | 讓 Management AI 與管理前端能清楚顯示 user/control/kernel 狀態、缺少哪個啟動條件，並確保暗語永不外洩。 | Claude | Codex2 | todo | `ASST-CTRL-001`, `ASST-CTRL-002` | 2026-06-06 18:13:37 | Assignment created |
+| `ASST-RUNTIME-001` | Sprint ASST-RUNTIME / Runtime repair action catalog | Define governed runtime recovery actions for paper runtime and telemetry | 把 stale paper runtime、monitoring session、telemetry bridge/ingest recovery 變成 BFF/action catalog 可治理的 action，而不是靠口頭建議。 | Gemini | Codex | todo | `ASST-CTRL-002` | 2026-06-06 18:13:37 | Assignment created |
+| `ASST-RUNTIME-002` | Sprint ASST-RUNTIME / Runtime repair execution | Wire runtime recovery actions to audited runtime-manager or admin CLI execution | 把核准的 runtime recovery action 接到 runtime-manager protected API 或 admin CLI，補 audit receipt、idempotency 與 stale-session guard。 | Codex | Claude | todo | `ASST-RUNTIME-001` | 2026-06-06 18:13:38 | Assignment created |
+| `ASST-SEC-002` | Sprint ASST-SEC / Security regression | Add focused security regression for control mode and runtime repair | 補 user-mode、control-mode、暗語 redaction、command broker denylist、runtime repair audit 的安全回歸。 | Claude2 | Codex | todo | `ASST-CTRL-002`, `ASST-CTRL-003`, `ASST-RUNTIME-002` | 2026-06-06 18:13:39 | Assignment created |
 
 ## Handoff Queue
 
@@ -113,79 +112,32 @@ Integrate Pantheon Management AI with existing BFF assistant surfaces plus OpenC
 
 ## Lovable Coordination
 
-- Last coordination scan: 2026-05-03 18:57:30
-- Tracked features: `46`
-- Lovable-ready packets: `45`
+- Last coordination scan: -
+- Tracked features: `0`
+- Lovable-ready packets: `0`
 - Waiting for Lovable/front-end: `0`
-- UI-done returned: `46`
-- Frontend feedback returned: `46`
+- UI-done returned: `0`
+- Frontend feedback returned: `0`
 - Open BFF gaps: `0`
-- Backend route live: `45`
-- Pantheon handoff published: `45`
-- Mirrored to front default branch: `45`
-- Dispatch recorded in coordinator state: `46`
-- Receiver-visible payload on front default branch: `45`
-- Lovable consumed packet: `46`
-- UI activated: `46`
-- Runtime verified: `46`
+- Backend route live: `0`
+- Pantheon handoff published: `0`
+- Mirrored to front default branch: `0`
+- Dispatch recorded in coordinator state: `0`
+- Receiver-visible payload on front default branch: `0`
+- Lovable consumed packet: `0`
+- UI activated: `0`
+- Runtime verified: `0`
 
 | Feature | Screen | Stage | Lovable Ready | Mirrored | UI Done | Feedback | Next Action |
 |---|---|---|---|---|---|---|---|
-| `CW-01-consult-request` | consult-request | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `CW-02-debate-transcript` | consultation-debate-transcript | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `CW-03-committee-board` | consultation-committee-board | `loop_complete` | no | no | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `CW-04-redteam-memo` | redteam-memo | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `EW-05-mutation-review` | mutation-review | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `F-042` | promotion-review | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `KW-01-institutional-memory` | institutional-memory | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `KW-02-research-notes` | knowledge-research-notes | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `KW-03-evidence-refs` | knowledge-evidence-refs | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `KW-04-insight-cards` | knowledge-insight-cards | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `KW-05-strategy-spec` | knowledge-strategy-spec | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-001-deployment-review` | deployment-review-console | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-001-governance-review-queue` | governance-review-queue | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-002-incident-action-drawer` | incident-action-drawer | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-002-incident-detail` | incident-detail | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-002-incident-home` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-003-evolution-center` | evolution-center | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-003-inspiration-graph` | inspiration-graph | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-003-lineage-view` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-003-post-incident-review` | post-incident-review-console | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-004-capital-binding-drilldowns` | capital-binding-drilldowns | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-004-deployment-approval-drilldowns` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-004-persona-drilldowns` | persona-drilldowns | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-004-persona-management` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-005-degradation-banner` | global-degradation-banner | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-005-sse-substrate` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-006-approval-queue` | governance-approval-queue | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-007-deployment-diff` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-008-rollback-review` | governance-rollback-review | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-009-governance-audit-rail` | governance-audit-rail | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-010-runtime-state-board` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-011-health-status-board` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-012-alerts-rail` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-013-operator-home` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-014-paper-live-drift` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-consultation-workbench` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `PKT-knowledge-workbench` | - | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `RW-01-research-ticket` | research-ticket | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `RW-02-search` | research-search | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `RW-03-analyze` | research-analyze | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `RW-04-experiment-launch` | experiment-launch | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `RW-05-artifact-compare` | artifact-compare | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `TW-01-teaching-dialog` | teaching-dialog | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `TW-02-parameter-controls` | parameter-controls | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `TW-03-before-after-compare` | before-after-compare | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
-| `TW-04-teaching-replay` | teaching-replay | `loop_complete` | yes | yes | yes | yes | Pantheon closeout record marks the current packet loop complete. |
+| _(none)_ | - | - | - | - | - | - | - |
+
+Tracked-feature note: the table above only lists modules that currently have coordination feature records.
+Archive-done route-live activation publication lanes that remain outside explicit feature rows: `CW-02`, `KW-04`, `KW-05`, `RW-02`, `RW-04`, `RW-05`, `KW-02`, `KW-03`, `TW-01`, `TW-02`, `TW-04`.
+Do not read those omitted modules as open Pantheon backlog purely because they are absent from the coordination feature table.
 
 ## Latest Checkpoints
 
-- 2026-05-16 01:52:26 Orchestrator: PreToolUse: Bash
-- 2026-05-16 01:52:26 Orchestrator: PostToolUse: Bash
-- 2026-05-16 01:52:28 Orchestrator: PreToolUse: Bash
-- 2026-05-16 01:52:31 Orchestrator: PreToolUse: Bash
-- 2026-05-16 01:52:32 Orchestrator: PostToolUse: Bash
-- 2026-05-16 01:52:37 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:52:38 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:52:42 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:52:43 Orchestrator: PostToolUse: Bash
@@ -200,3 +152,9 @@ Integrate Pantheon Management AI with existing BFF assistant surfaces plus OpenC
 - 2026-05-16 01:53:08 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:53:08 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:53:13 Orchestrator: PreToolUse: Bash
+- 2026-06-06 18:13:34 Operator: `ASST-CTRL-001` Assigned ASST-CTRL-001 to Codex with reviewer Claude
+- 2026-06-06 18:13:36 Operator: `ASST-CTRL-002` Assigned ASST-CTRL-002 to Codex2 with reviewer Claude
+- 2026-06-06 18:13:37 Operator: `ASST-CTRL-003` Assigned ASST-CTRL-003 to Claude with reviewer Codex2
+- 2026-06-06 18:13:37 Operator: `ASST-RUNTIME-001` Assigned ASST-RUNTIME-001 to Gemini with reviewer Codex
+- 2026-06-06 18:13:38 Operator: `ASST-RUNTIME-002` Assigned ASST-RUNTIME-002 to Codex with reviewer Claude
+- 2026-06-06 18:13:39 Operator: `ASST-SEC-002` Assigned ASST-SEC-002 to Claude2 with reviewer Codex
