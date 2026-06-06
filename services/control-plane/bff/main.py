@@ -5973,6 +5973,34 @@ def _project_runtime_state_telemetry_summary(summary: Optional[Dict[str, Any]]) 
     return projected
 
 
+def _project_runtime_state_monitoring_session(session: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not session:
+        return None
+    projected: Dict[str, Any] = {}
+    for key in (
+        "session_id",
+        "session_type",
+        "binding_id",
+        "runtime_binding_id",
+        "runtime_id",
+        "deployment_stage",
+        "status",
+        "active",
+        "started_at",
+        "ended_at",
+        "ended_reason",
+        "last_heartbeat_at",
+        "heartbeat_status",
+        "stale_after_seconds",
+        "restart_count",
+        "staleness",
+        "last_error",
+    ):
+        if key in session:
+            projected[key] = session.get(key)
+    return projected
+
+
 def _project_runtime_state_latest_rollback(rollbacks: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if not rollbacks:
         return None
@@ -6000,6 +6028,7 @@ def _derive_runtime_state_last_updated_at(
     binding: Dict[str, Any],
     telemetry_summary: Optional[Dict[str, Any]],
     latest_rollback: Optional[Dict[str, Any]],
+    monitoring_session: Optional[Dict[str, Any]],
 ) -> Optional[str]:
     candidates = [
         binding.get("last_updated_at"),
@@ -6011,6 +6040,9 @@ def _derive_runtime_state_last_updated_at(
         (telemetry_summary or {}).get("collected_at"),
         (latest_rollback or {}).get("completed_at"),
         (latest_rollback or {}).get("initiated_at"),
+        (monitoring_session or {}).get("last_heartbeat_at"),
+        (monitoring_session or {}).get("ended_at"),
+        (monitoring_session or {}).get("started_at"),
     ]
     values = [candidate for candidate in candidates if candidate]
     if not values:
@@ -6020,8 +6052,19 @@ def _derive_runtime_state_last_updated_at(
 
 def _project_operator_runtime_state_row(binding: Dict[str, Any]) -> Dict[str, Any]:
     runtime_id = str(binding.get("runtime_id") or binding.get("id") or "")
+    runtime_binding_id = (
+        binding.get("runtime_binding_id")
+        or binding.get("binding_id")
+        or binding.get("id")
+    )
     telemetry_summary = _project_runtime_state_telemetry_summary(
         read_store.get_telemetry_summary(runtime_id)
+    )
+    monitoring_session = _project_runtime_state_monitoring_session(
+        read_store.get_paper_runtime_monitoring_session(
+            runtime_id=runtime_id,
+            binding_id=str(runtime_binding_id or ""),
+        )
     )
     rollbacks = read_store.get_rollbacks(runtime_id)
     latest_rollback = _project_runtime_state_latest_rollback(rollbacks)
@@ -6031,11 +6074,7 @@ def _project_operator_runtime_state_row(binding: Dict[str, Any]) -> Dict[str, An
 
     return {
         "runtime_id": runtime_id,
-        "runtime_binding_id": (
-            binding.get("runtime_binding_id")
-            or binding.get("binding_id")
-            or binding.get("id")
-        ),
+        "runtime_binding_id": runtime_binding_id,
         "deployment_stage": binding.get("deployment_stage") or binding.get("deployment_mode"),
         "status": binding.get("status"),
         "capital_pool_id": binding.get("capital_pool_id"),
@@ -6056,6 +6095,7 @@ def _project_operator_runtime_state_row(binding: Dict[str, Any]) -> Dict[str, An
             else None
         ),
         "telemetry_summary": telemetry_summary,
+        "paper_runtime_monitoring": monitoring_session,
         "rollback_summary": {
             "count": len(rollbacks),
             "latest": latest_rollback,
@@ -6065,6 +6105,7 @@ def _project_operator_runtime_state_row(binding: Dict[str, Any]) -> Dict[str, An
             binding,
             telemetry_summary,
             latest_rollback,
+            monitoring_session,
         ),
     }
 
@@ -13873,6 +13914,29 @@ async def list_operator_runtime_state(
             {"served_from": "unverifiable", "last_known_at": snapshot_at},
         )
 
+    monitoring_surface = _dataset_surface_status(
+        "paper_runtime_monitoring_sessions",
+        snapshot_at=snapshot_at,
+    )
+    paper_runtime_rows = [
+        row for row in runtimes
+        if str(row.get("deployment_stage") or "").lower() == "paper"
+    ]
+    if paper_runtime_rows and any(
+        row.get("paper_runtime_monitoring") is None
+        for row in paper_runtime_rows
+    ):
+        if monitoring_surface.get("status") == "ok":
+            monitoring_surface["status"] = "degraded"
+        monitoring_surface.setdefault(
+            "message",
+            "Paper runtime monitoring session evidence is unavailable for one or more paper runtimes.",
+        )
+        monitoring_surface.setdefault(
+            "staleness",
+            {"served_from": "unverifiable", "last_known_at": snapshot_at},
+        )
+
     rollback_history_surface = _dataset_surface_status(
         "rollbacks",
         snapshot_at=snapshot_at,
@@ -13889,7 +13953,7 @@ async def list_operator_runtime_state(
         runtime_state_surface["status"] = "unavailable"
     elif any(
         surface.get("status") != "ok"
-        for surface in (telemetry_surface, rollback_history_surface)
+        for surface in (telemetry_surface, monitoring_surface, rollback_history_surface)
     ):
         runtime_state_surface["status"] = "degraded"
         runtime_state_surface.setdefault(
@@ -13918,6 +13982,7 @@ async def list_operator_runtime_state(
         "runtime_state": runtime_state_surface,
         "runtime_roster": runtime_roster_surface,
         "telemetry_summary": telemetry_surface,
+        "paper_runtime_monitoring": monitoring_surface,
         "rollback_history": rollback_history_surface,
     }
 

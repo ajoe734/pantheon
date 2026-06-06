@@ -59,10 +59,27 @@ def test_pkt010_runtime_state_board_returns_contract_payload() -> None:
             },
             "projection_source": "telemetry_ingest",
         } if runtime_id == "runtime-042" else None
+        store.get_paper_runtime_monitoring_session = lambda *, runtime_id=None, binding_id=None: {
+            "session_id": "prmon-rtb-042",
+            "session_type": "paper_runtime_monitoring",
+            "binding_id": "runtime-042",
+            "runtime_binding_id": "runtime-042",
+            "runtime_id": "runtime-042",
+            "deployment_stage": "paper",
+            "status": "running",
+            "active": True,
+            "started_at": "2026-04-10T14:55:00Z",
+            "ended_at": None,
+            "last_heartbeat_at": "2026-04-10T15:00:00Z",
+            "heartbeat_status": "active",
+            "stale_after_seconds": 90,
+            "restart_count": 0,
+        } if runtime_id == "runtime-042" else None
         store.get_rollbacks = lambda runtime_id: []
         store.dataset_source = lambda dataset: {
             "runtime_bindings": "local_snapshot",
             "telemetry_summaries": "local_snapshot",
+            "paper_runtime_monitoring_sessions": "local_snapshot",
             "rollbacks": "local_snapshot",
         }.get(dataset, "missing")
         bff_main.read_store = store
@@ -84,6 +101,7 @@ def test_pkt010_runtime_state_board_returns_contract_payload() -> None:
             assert payload["meta"]["surfaces"]["runtime_state"]["status"] == "degraded"
             assert payload["meta"]["surfaces"]["runtime_roster"]["source"] == "local_snapshot"
             assert payload["meta"]["surfaces"]["telemetry_summary"]["status"] == "degraded"
+            assert payload["meta"]["surfaces"]["paper_runtime_monitoring"]["status"] == "degraded"
             assert payload["meta"]["surfaces"]["rollback_history"]["status"] == "degraded"
 
             assert payload["runtimes"] == [
@@ -127,6 +145,22 @@ def test_pkt010_runtime_state_board_returns_contract_payload() -> None:
                         },
                         "projection_source": "telemetry_ingest",
                     },
+                    "paper_runtime_monitoring": {
+                        "session_id": "prmon-rtb-042",
+                        "session_type": "paper_runtime_monitoring",
+                        "binding_id": "runtime-042",
+                        "runtime_binding_id": "runtime-042",
+                        "runtime_id": "runtime-042",
+                        "deployment_stage": "paper",
+                        "status": "running",
+                        "active": True,
+                        "started_at": "2026-04-10T14:55:00Z",
+                        "ended_at": None,
+                        "last_heartbeat_at": "2026-04-10T15:00:00Z",
+                        "heartbeat_status": "active",
+                        "stale_after_seconds": 90,
+                        "restart_count": 0,
+                    },
                     "rollback_summary": {
                         "count": 0,
                         "latest": None,
@@ -167,6 +201,7 @@ def test_pkt010_runtime_state_board_honest_mode_returns_unavailable_surface() ->
             assert payload["meta"]["surfaces"]["runtime_roster"]["status"] == "unavailable"
             assert payload["meta"]["surfaces"]["runtime_roster"]["source"] == "missing"
             assert payload["meta"]["surfaces"]["telemetry_summary"]["status"] == "unavailable"
+            assert payload["meta"]["surfaces"]["paper_runtime_monitoring"]["status"] == "unavailable"
             assert payload["meta"]["surfaces"]["rollback_history"]["status"] == "unavailable"
         finally:
             bff_main.read_store = original_store
@@ -284,6 +319,7 @@ def test_pkt010_runtime_state_board_reads_runtime_summary_from_telemetry_service
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
         monkeypatch.setenv("PANTHEON_TELEMETRY_API_URL", "http://telemetry.test")
+        monkeypatch.setenv("PANTHEON_PAPER_FLEET_RECONCILER_URL", "http://paper-fleet.test")
 
         def fake_http_json_get(base_url, path, *, headers=None):
             if base_url == "http://telemetry.test" and path == "/api/telemetry/runtime-summaries":
@@ -309,6 +345,28 @@ def test_pkt010_runtime_state_board_reads_runtime_summary_from_telemetry_service
                         }
                     ]
                 }
+            if base_url == "http://paper-fleet.test" and path == "/api/fleet/state":
+                return True, {
+                    "monitoring_sessions": [
+                        {
+                            "session_id": "prmon-rtb-paper-001",
+                            "session_type": "paper_runtime_monitoring",
+                            "binding_id": "rtb-paper-001",
+                            "runtime_binding_id": "rtb-paper-001",
+                            "runtime_id": "runtime-paper-001",
+                            "deployment_stage": "paper",
+                            "status": "running",
+                            "active": True,
+                            "started_at": "2026-05-01T00:00:00Z",
+                            "ended_at": None,
+                            "last_heartbeat_at": "2026-05-01T00:00:30Z",
+                            "heartbeat_status": "active",
+                            "stale_after_seconds": 90,
+                            "restart_count": 0,
+                        }
+                    ],
+                    "monitoring_session_count": 1,
+                }
             return False, None
 
         monkeypatch.setattr(bff_read_store, "_http_json_get", fake_http_json_get)
@@ -331,6 +389,7 @@ def test_pkt010_runtime_state_board_reads_runtime_summary_from_telemetry_service
         store.dataset_source = lambda dataset: {
             "runtime_bindings": "canonical",
             "telemetry_summaries": "service_client",
+            "paper_runtime_monitoring_sessions": "service_client",
             "rollbacks": "local_snapshot",
         }.get(dataset, "missing")
         bff_main.read_store = store
@@ -349,5 +408,9 @@ def test_pkt010_runtime_state_board_reads_runtime_summary_from_telemetry_service
             assert runtime["telemetry_summary"]["runtime_binding_id"] == "rtb-paper-001"
             assert runtime["telemetry_summary"]["engine_bridge_repo"] == "ajoe734/pantheon-lean.git"
             assert runtime["telemetry_summary"]["engine_bridge_commit"] == "abc1234"
+            assert runtime["paper_runtime_monitoring"]["session_id"] == "prmon-rtb-paper-001"
+            assert runtime["paper_runtime_monitoring"]["active"] is True
+            assert runtime["paper_runtime_monitoring"]["last_heartbeat_at"] == "2026-05-01T00:00:30Z"
+            assert response.json()["meta"]["surfaces"]["paper_runtime_monitoring"]["source"] == "service_client"
         finally:
             bff_main.read_store = original_store

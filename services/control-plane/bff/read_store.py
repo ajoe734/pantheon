@@ -841,6 +841,13 @@ class CanonicalSnapshotAdapter:
             "keys": ["binding_id", "id"],
             "snapshot_key": "runtime_bindings",
         },
+        "paper_runtime_monitoring_sessions": {
+            "env": "PANTHEON_BFF_PAPER_RUNTIME_MONITORING_SESSION_STORE",
+            "dirs": ("PANTHEON_RUNTIME_DATA_DIR",),
+            "filenames": ("paper_runtime_monitoring_sessions.json",),
+            "keys": ["session_id", "id"],
+            "snapshot_key": "paper_runtime_monitoring_sessions",
+        },
         "registry_entries": {
             "env": "PANTHEON_BFF_REGISTRY_ENTRY_STORE",
             "dirs": ("PANTHEON_REGISTRY_DATA_DIR",),
@@ -876,6 +883,14 @@ class CanonicalSnapshotAdapter:
             "list_key": "bindings",
             "auth_token_env": "PANTHEON_RUNTIME_MANAGER_TOKEN",
             "default_token": "runtime-control-internal",
+        },
+        "paper_runtime_monitoring_sessions": {
+            "base_env": (
+                "PANTHEON_PAPER_FLEET_RECONCILER_URL",
+                "PANTHEON_PAPER_RUNTIME_MONITORING_URL",
+            ),
+            "list_path": "/api/fleet/state",
+            "list_key": "monitoring_sessions",
         },
     }
 
@@ -5444,6 +5459,7 @@ class ReadSurfaceStore:
         "telemetry_summaries": "telemetry_summaries",
         "telemetry_performance": "telemetry_performance",
         "paper_live_drift_reports": "paper_live_drift_reports",
+        "paper_runtime_monitoring_sessions": "paper_runtime_monitoring_sessions",
         "lineage_edges": "lineage_edges",
         "inspiration_graphs": "inspiration_graphs",
         "kill_switch": "kill_switch",
@@ -8944,6 +8960,87 @@ class ReadSurfaceStore:
                 if str(b.get("artifact_version") or b.get("version") or "") == version
             ]
         return sorted(bindings, key=lambda x: x.get("id", ""))
+
+    @staticmethod
+    def _paper_runtime_monitoring_session_active(session: Dict[str, Any]) -> bool:
+        if session.get("ended_at") not in (None, ""):
+            return False
+        explicit = session.get("active")
+        if explicit is not None:
+            return bool(explicit)
+        status = str(session.get("status") or "").strip().lower()
+        if status in {"ended", "stale", "failed"}:
+            return False
+        staleness = session.get("staleness")
+        return not isinstance(staleness, dict)
+
+    @staticmethod
+    def _paper_runtime_monitoring_sort_key(session: Dict[str, Any]) -> tuple[str, str, str]:
+        return (
+            str(
+                session.get("last_heartbeat_at")
+                or session.get("ended_at")
+                or session.get("started_at")
+                or ""
+            ),
+            str(session.get("started_at") or ""),
+            str(session.get("session_id") or session.get("id") or ""),
+        )
+
+    def list_paper_runtime_monitoring_sessions(self) -> List[Dict[str, Any]]:
+        local_sessions = self._local_overlay_records("paper_runtime_monitoring_sessions")
+        available, raw_sessions = self._canonical.list_records("paper_runtime_monitoring_sessions")
+        if available:
+            sessions_by_id = {
+                str(session.get("session_id") or session.get("id") or ""): session
+                for session in raw_sessions
+                if str(session.get("session_id") or session.get("id") or "").strip()
+            }
+            for session_id, session in local_sessions.items():
+                key = str(session.get("session_id") or session.get("id") or session_id)
+                if key:
+                    sessions_by_id[key] = session
+            sessions = [session for key, session in sessions_by_id.items() if key]
+        else:
+            sessions = list(local_sessions.values()) or list(
+                (self._local_fallback("paper_runtime_monitoring_sessions") or {}).values()
+            )
+        return sorted(
+            [json.loads(json.dumps(session)) for session in sessions],
+            key=self._paper_runtime_monitoring_sort_key,
+            reverse=True,
+        )
+
+    def get_paper_runtime_monitoring_session(
+        self,
+        *,
+        runtime_id: Optional[str] = None,
+        binding_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        runtime_id = str(runtime_id or "").strip()
+        binding_id = str(binding_id or "").strip()
+        if not runtime_id and not binding_id:
+            return None
+        matches = []
+        for session in self.list_paper_runtime_monitoring_sessions():
+            session_runtime_id = str(session.get("runtime_id") or "").strip()
+            session_binding_id = str(
+                session.get("binding_id") or session.get("runtime_binding_id") or ""
+            ).strip()
+            if binding_id and session_binding_id == binding_id:
+                matches.append(session)
+                continue
+            if runtime_id and session_runtime_id == runtime_id:
+                matches.append(session)
+        if not matches:
+            return None
+        active = [
+            session for session in matches
+            if self._paper_runtime_monitoring_session_active(session)
+        ]
+        selected = (active or matches)[0]
+        selected["active"] = self._paper_runtime_monitoring_session_active(selected)
+        return selected
 
     def list_registry_entries(self) -> List[Dict[str, Any]]:
         available, raw_entries = self._canonical.list_records("registry_entries")

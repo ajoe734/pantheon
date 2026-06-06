@@ -40,6 +40,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -57,6 +58,18 @@ log = logging.getLogger(__name__)
 
 def _iso_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _parse_rfc3339(value: Any) -> Optional[datetime]:
+    if value in (None, ""):
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _as_float(value: str | None, default: float) -> float:
@@ -85,11 +98,14 @@ class WorkerEntry:
     port: int
     process: Any  # subprocess.Popen | None
     started_at: str
+    monitoring_session_id: Optional[str] = None
     restart_count: int = 0
     last_exit_code: Optional[int] = None
     last_error: Optional[str] = None
     status: str = "running"  # running | dead | restarting | stopped
     dead_at: Optional[float] = None  # time.monotonic() when process last exited
+    last_heartbeat_at: Optional[str] = None
+    heartbeat_status: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +126,9 @@ class PaperFleetReconciler:
         restart_backoff_seconds: Optional[float] = None,
         drain_timeout_seconds: Optional[float] = None,
         worker_script_path: Optional[str] = None,
+        telemetry_api_url: Optional[str] = None,
+        monitoring_session_store_path: Optional[str] = None,
+        monitoring_heartbeat_stale_after_seconds: Optional[int] = None,
         extra_env: Optional[Dict[str, str]] = None,
     ) -> None:
         self._url = (
@@ -137,10 +156,32 @@ class PaperFleetReconciler:
         self._worker_script = worker_script_path or os.getenv(
             "WORKER_SCRIPT_PATH", _DEFAULT_WORKER_SCRIPT
         )
+        self._telemetry_url = (
+            telemetry_api_url
+            or os.getenv("PANTHEON_TELEMETRY_API_URL", "")
+            or os.getenv("PANTHEON_TELEMETRY_URL", "")
+        ).rstrip("/")
+        store_path = (
+            monitoring_session_store_path
+            or os.getenv("PANTHEON_PAPER_RUNTIME_MONITORING_SESSION_STORE", "")
+            or os.getenv("PAPER_RUNTIME_MONITORING_SESSION_STORE", "")
+        )
+        self._monitoring_session_store_path = Path(store_path) if store_path else None
+        stale_after = (
+            monitoring_heartbeat_stale_after_seconds
+            if monitoring_heartbeat_stale_after_seconds is not None
+            else _as_int(
+                os.getenv("RECONCILER_MONITORING_HEARTBEAT_STALE_SECONDS")
+                or os.getenv("TELEMETRY_RUNTIME_HEARTBEAT_STALE_SECONDS"),
+                90,
+            )
+        )
+        self._monitoring_heartbeat_stale_after = max(int(stale_after), 1)
         self._extra_env: Dict[str, str] = dict(extra_env or {})
 
         self._lock = threading.RLock()
         self._workers: Dict[str, WorkerEntry] = {}
+        self._monitoring_sessions: Dict[str, Dict[str, Any]] = {}
         self._used_ports: set[int] = set()
         self._reconcile_thread: Optional[threading.Thread] = None
         self._shutdown = threading.Event()
@@ -148,6 +189,8 @@ class PaperFleetReconciler:
         self._cycle_count = 0
         self._last_reconcile_at: Optional[str] = None
         self._last_error: Optional[str] = None
+        self._monitoring_last_error: Optional[str] = None
+        self._load_monitoring_sessions()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -178,6 +221,11 @@ class PaperFleetReconciler:
     def reconcile_once(self) -> Dict[str, Any]:
         """Run one reconcile cycle. Returns a snapshot of the fleet state."""
         bindings = self._fetch_active_paper_bindings()
+        runtime_summaries = (
+            self._fetch_runtime_summaries()
+            if bindings is not None
+            else None
+        )
         # bindings is None when the fetch failed — we must not evict existing workers
         # in that case, since we have no reliable picture of desired state.
 
@@ -194,6 +242,10 @@ class PaperFleetReconciler:
                     # Free the port so the restart can allocate a clean one
                     self._free_port(entry.port)
                     entry.port = 0
+                    self._end_monitoring_session(
+                        entry.monitoring_session_id,
+                        reason="worker_exit",
+                    )
                     log.warning(
                         "worker for binding %s exited with code %d (restarts=%d)",
                         binding_id,
@@ -205,6 +257,7 @@ class PaperFleetReconciler:
                 desired: Dict[str, Dict[str, Any]] = {
                     b["binding_id"]: b for b in bindings
                 }
+                self._reap_stale_monitoring_sessions(runtime_summaries)
 
                 # Start workers for new or dead-but-desired active bindings
                 for binding_id, binding in desired.items():
@@ -303,11 +356,20 @@ class PaperFleetReconciler:
         port = self._allocate_port()
         env = self._build_worker_env(binding)
         env["PORT"] = str(port)
+        monitoring_session_id = self._open_monitoring_session(
+            binding,
+            restart_count=restart_count,
+        )
 
         try:
             process = self._spawn(binding_id, port, env)
         except Exception as exc:  # noqa: BLE001
             self._free_port(port)
+            self._end_monitoring_session(
+                monitoring_session_id,
+                reason="spawn_failed",
+                error=str(exc),
+            )
             log.error("failed to start worker for binding %s: %s", binding_id, exc)
             self._workers[binding_id] = WorkerEntry(
                 binding_id=binding_id,
@@ -316,6 +378,7 @@ class PaperFleetReconciler:
                 port=port,
                 process=None,
                 started_at=_iso_now(),
+                monitoring_session_id=monitoring_session_id,
                 restart_count=restart_count,
                 last_error=str(exc),
                 status="dead",
@@ -329,6 +392,7 @@ class PaperFleetReconciler:
             port=port,
             process=process,
             started_at=_iso_now(),
+            monitoring_session_id=monitoring_session_id,
             restart_count=restart_count,
             status="running",
         )
@@ -373,9 +437,237 @@ class PaperFleetReconciler:
             except OSError:
                 pass
             entry.last_exit_code = proc.returncode
+        self._end_monitoring_session(
+            entry.monitoring_session_id,
+            reason=reason or "worker_stopped",
+        )
         entry.status = "stopped"
         self._free_port(entry.port)
         del self._workers[binding_id]
+
+    # ------------------------------------------------------------------
+    # Monitoring sessions
+    # ------------------------------------------------------------------
+
+    def _load_monitoring_sessions(self) -> None:
+        path = self._monitoring_session_store_path
+        if path is None or not path.exists():
+            return
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8").strip() or "{}")
+        except (OSError, json.JSONDecodeError) as exc:
+            self._monitoring_last_error = f"monitoring session load failed: {type(exc).__name__}: {exc}"
+            return
+        records = payload.get("monitoring_sessions") if isinstance(payload, dict) else payload
+        if isinstance(records, dict):
+            iterable = records.values()
+        elif isinstance(records, list):
+            iterable = records
+        else:
+            iterable = []
+        normalized: Dict[str, Dict[str, Any]] = {}
+        for item in iterable:
+            if not isinstance(item, dict):
+                continue
+            session_id = str(item.get("session_id") or item.get("id") or "").strip()
+            if session_id:
+                normalized[session_id] = dict(item)
+        self._monitoring_sessions = normalized
+
+    def _persist_monitoring_sessions(self) -> None:
+        path = self._monitoring_session_store_path
+        if path is None:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        records = sorted(
+            self._monitoring_sessions.values(),
+            key=lambda item: (
+                str(item.get("started_at") or ""),
+                str(item.get("session_id") or ""),
+            ),
+        )
+        payload = {"monitoring_sessions": records}
+        tmp_path = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
+        tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        os.replace(tmp_path, path)
+
+    @staticmethod
+    def _monitoring_session_open(session: Dict[str, Any]) -> bool:
+        if session.get("ended_at") not in (None, ""):
+            return False
+        status = str(session.get("status") or "").strip().lower()
+        return status not in {"ended", "stale", "failed"}
+
+    def _open_monitoring_session(
+        self,
+        binding: Dict[str, Any],
+        *,
+        restart_count: int,
+    ) -> str:
+        binding_id = str(binding.get("binding_id") or "")
+        now = _iso_now()
+        for session_id, session in list(self._monitoring_sessions.items()):
+            if (
+                str(session.get("binding_id") or session.get("runtime_binding_id") or "") == binding_id
+                and self._monitoring_session_open(session)
+            ):
+                self._end_monitoring_session(
+                    session_id,
+                    reason="superseded_by_restart",
+                    ended_at=now,
+                )
+        session_id = f"prmon-{binding_id}-{uuid.uuid4().hex[:8]}"
+        session = {
+            "id": session_id,
+            "session_id": session_id,
+            "session_type": "paper_runtime_monitoring",
+            "binding_id": binding_id,
+            "runtime_binding_id": binding_id,
+            "runtime_id": str(binding.get("runtime_id") or ""),
+            "capital_pool_id": str(binding.get("capital_pool_id") or ""),
+            "deployment_stage": "paper",
+            "status": "running",
+            "started_at": now,
+            "ended_at": None,
+            "restart_count": restart_count,
+            "stale_after_seconds": self._monitoring_heartbeat_stale_after,
+            "last_heartbeat_at": None,
+            "ended_reason": None,
+        }
+        self._monitoring_sessions[session_id] = session
+        self._persist_monitoring_sessions()
+        return session_id
+
+    def _end_monitoring_session(
+        self,
+        session_id: Optional[str],
+        *,
+        reason: str,
+        ended_at: Optional[str] = None,
+        staleness: Optional[Dict[str, Any]] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        if not session_id:
+            return
+        session = self._monitoring_sessions.get(session_id)
+        if not session or not self._monitoring_session_open(session):
+            return
+        session["ended_at"] = ended_at or _iso_now()
+        session["status"] = "ended"
+        session["ended_reason"] = reason
+        if staleness is not None:
+            session["staleness"] = dict(staleness)
+        if error:
+            session["last_error"] = error
+        self._persist_monitoring_sessions()
+
+    def _monitoring_staleness(
+        self,
+        session: Dict[str, Any],
+        summary: Optional[Dict[str, Any]],
+        *,
+        now: datetime,
+    ) -> Optional[Dict[str, Any]]:
+        heartbeat_at_raw = None
+        if summary:
+            heartbeat_at_raw = summary.get("last_heartbeat_at")
+        heartbeat_at_raw = heartbeat_at_raw or session.get("last_heartbeat_at")
+        heartbeat_at = _parse_rfc3339(heartbeat_at_raw)
+        if heartbeat_at is None:
+            started_at = _parse_rfc3339(session.get("started_at"))
+            if started_at is None:
+                return None
+            age_seconds = (now - started_at).total_seconds()
+            if age_seconds <= self._monitoring_heartbeat_stale_after:
+                return None
+            return {
+                "status": "stale",
+                "reason": "missing_heartbeat",
+                "last_known_at": session.get("started_at"),
+                "age_seconds": int(age_seconds),
+                "threshold_seconds": self._monitoring_heartbeat_stale_after,
+            }
+
+        age_seconds = (now - heartbeat_at).total_seconds()
+        if age_seconds <= self._monitoring_heartbeat_stale_after:
+            return None
+        return {
+            "status": "stale",
+            "reason": "stale_heartbeat",
+            "last_known_at": str(heartbeat_at_raw),
+            "age_seconds": int(age_seconds),
+            "threshold_seconds": self._monitoring_heartbeat_stale_after,
+        }
+
+    def _reap_stale_monitoring_sessions(
+        self,
+        summaries: Optional[Dict[str, Dict[str, Any]]],
+    ) -> None:
+        if summaries is None:
+            return
+        now = datetime.now(timezone.utc)
+        stale_binding_ids: List[str] = []
+        changed = False
+        for session_id, session in list(self._monitoring_sessions.items()):
+            if not self._monitoring_session_open(session):
+                continue
+            runtime_id = str(session.get("runtime_id") or "")
+            summary = summaries.get(runtime_id)
+            if summary and summary.get("last_heartbeat_at"):
+                session["last_heartbeat_at"] = summary.get("last_heartbeat_at")
+                session["heartbeat_status"] = summary.get("state") or summary.get("connectivity_status") or "active"
+                binding_id = str(session.get("binding_id") or session.get("runtime_binding_id") or "")
+                entry = self._workers.get(binding_id)
+                if entry is not None:
+                    entry.last_heartbeat_at = str(summary.get("last_heartbeat_at"))
+                    entry.heartbeat_status = str(session["heartbeat_status"])
+                changed = True
+            staleness = self._monitoring_staleness(session, summary, now=now)
+            if staleness is None:
+                continue
+            self._end_monitoring_session(
+                session_id,
+                reason=staleness["reason"],
+                staleness=staleness,
+            )
+            changed = False
+            binding_id = str(session.get("binding_id") or session.get("runtime_binding_id") or "")
+            if binding_id:
+                stale_binding_ids.append(binding_id)
+        if changed:
+            self._persist_monitoring_sessions()
+        for binding_id in stale_binding_ids:
+            if binding_id in self._workers:
+                self._terminate_worker(
+                    binding_id,
+                    reason="monitoring heartbeat stale",
+                )
+
+    def _fetch_runtime_summaries(self) -> Optional[Dict[str, Dict[str, Any]]]:
+        if not self._telemetry_url:
+            return None
+        try:
+            import urllib.request
+
+            req = urllib.request.Request(
+                f"{self._telemetry_url}/api/telemetry/runtime-summaries",
+                headers={"Accept": "application/json"},
+                method="GET",
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+            summaries = payload.get("summaries", []) if isinstance(payload, dict) else []
+            normalized = {
+                str(item.get("runtime_id") or item.get("id") or ""): item
+                for item in summaries
+                if isinstance(item, dict) and str(item.get("runtime_id") or item.get("id") or "").strip()
+            }
+            self._monitoring_last_error = None
+            return normalized
+        except Exception as exc:  # noqa: BLE001
+            self._monitoring_last_error = f"runtime summary fetch failed: {type(exc).__name__}: {exc}"
+            log.warning("could not fetch runtime summaries from telemetry: %s", exc)
+            return None
 
     # ------------------------------------------------------------------
     # Runtime-manager polling
@@ -438,23 +730,52 @@ class PaperFleetReconciler:
                     "pid": pid,
                     "status": entry.status,
                     "started_at": entry.started_at,
+                    "monitoring_session_id": entry.monitoring_session_id,
                     "restart_count": entry.restart_count,
                     "last_exit_code": entry.last_exit_code,
                     "last_error": entry.last_error,
+                    "last_heartbeat_at": entry.last_heartbeat_at,
+                    "heartbeat_status": entry.heartbeat_status,
                 }
             )
         running = sum(1 for w in workers if w["status"] == "running")
+        monitoring_sessions = [
+            {
+                **session,
+                "active": self._monitoring_session_open(session),
+            }
+            for session in sorted(
+                self._monitoring_sessions.values(),
+                key=lambda item: (
+                    str(item.get("started_at") or ""),
+                    str(item.get("session_id") or ""),
+                ),
+            )
+        ]
         return {
             "reconciler": "paper_fleet_reconciler",
             "started_at": self._started_at,
             "last_reconcile_at": self._last_reconcile_at,
             "cycle_count": self._cycle_count,
             "last_error": self._last_error,
+            "monitoring_last_error": self._monitoring_last_error,
             "poll_interval_seconds": self._poll_interval,
             "runtime_manager_url": self._url or None,
+            "telemetry_api_url": self._telemetry_url or None,
+            "monitoring_heartbeat_stale_after_seconds": self._monitoring_heartbeat_stale_after,
+            "monitoring_session_store_path": (
+                str(self._monitoring_session_store_path)
+                if self._monitoring_session_store_path
+                else None
+            ),
             "worker_count": len(workers),
             "running_count": running,
             "workers": workers,
+            "monitoring_session_count": len(monitoring_sessions),
+            "active_monitoring_session_count": len([
+                session for session in monitoring_sessions if session.get("active")
+            ]),
+            "monitoring_sessions": monitoring_sessions,
         }
 
     def is_ready(self) -> bool:
