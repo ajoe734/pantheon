@@ -1,7 +1,7 @@
 :root {
-  --bg: #f5f1e8;
-  --paper: rgba(255, 251, 243, 0.94);
-  --paper-strong: #fffaf2;
+  --bg: #eef2f4;
+  --paper: rgba(255, 255, 255, 0.96);
+  --paper-strong: #f8faf9;
   --ink: #162220;
   --muted: #5f6f6c;
   --line: rgba(22, 34, 32, 0.1);
@@ -19,7 +19,7 @@
   --radius-lg: 22px;
   --radius-md: 16px;
   --radius-sm: 12px;
-  --shadow: 0 22px 60px rgba(22, 34, 32, 0.1);
+  --shadow: 0 14px 36px rgba(22, 34, 32, 0.08);
 }
 
 * { box-sizing: border-box; }
@@ -29,10 +29,7 @@ body {
   min-height: 100vh;
   font-family: "IBM Plex Sans", "Noto Sans TC", sans-serif;
   color: var(--ink);
-  background:
-    radial-gradient(circle at top left, rgba(20, 104, 94, 0.08), transparent 35%),
-    radial-gradient(circle at top right, rgba(212, 109, 56, 0.08), transparent 35%),
-    var(--bg);
+  background: var(--bg);
 }
 
 h1, h2, h3, p { margin: 0; }
@@ -44,6 +41,12 @@ h1, h2, h3, p { margin: 0; }
   display: grid;
   gap: 18px;
 }
+
+.hero { order: 0; }
+.supervisor-cockpit-panel { order: 1; }
+.overview-strip { order: 2; }
+.alert-section { order: 3; }
+.shell > :not(.hero):not(.supervisor-cockpit-panel):not(.overview-strip):not(.alert-section) { order: 4; }
 
 .hero,
 .panel,
@@ -153,7 +156,7 @@ h1 {
   border: 0;
   border-radius: 999px;
   background: var(--ink);
-  color: #fffaf2;
+  color: #fff;
   padding: 12px 18px;
   font-size: 0.95rem;
   cursor: pointer;
@@ -500,6 +503,170 @@ details[open].cockpit-details .cockpit-details-summary::before {
   overflow-wrap: anywhere;
 }
 
+.supervisor-cockpit-panel {
+  border-color: rgba(20, 104, 94, 0.22);
+}
+
+.supervisor-cockpit-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
+  gap: 14px;
+}
+
+.supervisor-span-2 {
+  grid-column: 1 / -1;
+}
+
+.supervisor-next-panel {
+  background: linear-gradient(180deg, rgba(20, 104, 94, 0.07), rgba(255, 255, 255, 0.55));
+}
+
+.operator-next-action,
+.runtime-health-strip,
+.active-work-matrix,
+.dependency-runway,
+.worker-health-digest {
+  min-width: 0;
+}
+
+.operator-card,
+.runtime-health-card,
+.runway-card,
+.worker-health-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.72);
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.operator-attention,
+.state-attention,
+.health-blocked,
+.runway-blocked {
+  border-color: rgba(196, 75, 63, 0.3);
+  background: rgba(196, 75, 63, 0.06);
+}
+
+.operator-queued,
+.state-queued,
+.health-queued {
+  border-color: rgba(166, 117, 28, 0.3);
+  background: rgba(166, 117, 28, 0.06);
+}
+
+.operator-running,
+.state-running,
+.health-running,
+.runway-active {
+  border-color: rgba(20, 104, 94, 0.24);
+  background: rgba(20, 104, 94, 0.06);
+}
+
+.health-paused,
+.health-degraded {
+  border-color: rgba(212, 109, 56, 0.3);
+  background: rgba(212, 109, 56, 0.06);
+}
+
+.runtime-health-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.runtime-health-card {
+  box-shadow: none;
+}
+
+.runtime-health-card .metric-value {
+  margin: 0;
+  font-size: 1.35rem;
+}
+
+.active-work-table {
+  display: grid;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.active-work-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.95fr) minmax(160px, 0.8fr) minmax(210px, 1fr) minmax(220px, 1.1fr) minmax(260px, 1.25fr);
+  gap: 0;
+  border-top: 1px solid var(--line);
+}
+
+.active-work-row:first-child {
+  border-top: 0;
+}
+
+.active-work-row > div {
+  padding: 12px;
+  border-left: 1px solid var(--line);
+  min-width: 0;
+}
+
+.active-work-row > div:first-child {
+  border-left: 0;
+}
+
+.active-work-head {
+  background: rgba(22, 34, 32, 0.055);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.active-work-task {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.queue-reason-chip,
+.queue-wait-reason {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.queue-wait-reason {
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.5;
+  border-left: 3px solid rgba(166, 117, 28, 0.36);
+  padding-left: 10px;
+}
+
+.dependency-runway,
+.worker-health-digest {
+  display: grid;
+  gap: 10px;
+}
+
+.runway-card,
+.worker-health-card {
+  box-shadow: none;
+}
+
+.dashboard-secondary-panel {
+  opacity: 0.9;
+}
+
 .bridge-grid {
   grid-template-columns: minmax(0, 1.6fr) repeat(4, minmax(170px, 1fr));
 }
@@ -712,6 +879,8 @@ details[open].cockpit-details .cockpit-details-summary::before {
 .status-review,
 .status-reviewing,
 .status-review_approved,
+.status-approved,
+.status-queued,
 .status-waiting_approval {
   color: var(--amber);
   background: var(--amber-soft);
@@ -739,6 +908,9 @@ details[open].cockpit-details .cockpit-details-summary::before {
 }
 
 .status-blocked,
+.status-attention,
+.status-degraded,
+.status-paused,
 .status-failed,
 .status-stalled {
   color: var(--red);
@@ -1446,6 +1618,8 @@ details[open].cockpit-details .cockpit-details-summary::before {
 @media (max-width: 1440px) {
   .mode-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .bridge-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .supervisor-cockpit-grid { grid-template-columns: 1fr; }
+  .supervisor-runtime-panel { grid-column: auto; }
   .dashboard-grid { grid-template-columns: 1fr; }
   .planning-grid { grid-template-columns: 1fr; }
   .execution-overview-grid { grid-template-columns: 1fr; }
@@ -1466,6 +1640,23 @@ details[open].cockpit-details .cockpit-details-summary::before {
   .mode-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cockpit-focus-row { grid-template-columns: 1fr; }
   .bridge-grid { grid-template-columns: 1fr; }
+  .runtime-health-strip { grid-template-columns: 1fr; }
+  .active-work-table { border: 0; background: transparent; gap: 10px; }
+  .active-work-head { display: none; }
+  .active-work-row {
+    grid-template-columns: 1fr;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.72);
+  }
+  .active-work-row > div {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+  .active-work-row > div:first-child {
+    border-top: 0;
+  }
   .board { grid-template-columns: repeat(6, minmax(220px, 1fr)); }
 }
 
@@ -1539,6 +1730,10 @@ details[open].cockpit-details .cockpit-details-summary::before {
 
 @media (max-width: 640px) {
   .mode-grid { grid-template-columns: 1fr; }
+  .overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .overview-grid .metric-card { padding: 10px 12px; }
+  .overview-grid .metric-value { font-size: 1.45rem; }
+  .overview-grid .metric-label { font-size: 0.68rem; }
   .hero-actions { flex-direction: column; align-items: stretch; }
   .subpanel-head,
   .mode-panel-head,
