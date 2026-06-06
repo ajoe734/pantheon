@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Pantheon control-plane bootstrap: start the selected compose stack, run DB
-# migrations, and verify control-plane services are healthy.
+# migrations, replay telemetry DLQ write-failures, and verify control-plane
+# services are healthy.
 #
 # Usage:
-#   bash scripts/bootstrap.sh [--compose-file <file>] [--env-file <file>] [--skip-migration]
+#   bash scripts/bootstrap.sh [--compose-file <file>] [--env-file <file>] [--skip-migration] [--skip-telemetry-replay]
 #
 #   Default compose file : docker-compose.control.yml
 #   Default env file     : .env (auto-loaded when present)
@@ -20,12 +21,16 @@
 #
 #   # Skip DB migration (e.g. already applied)
 #   bash scripts/bootstrap.sh --skip-migration
+#
+#   # Skip the deployment DLQ replay pass
+#   bash scripts/bootstrap.sh --skip-telemetry-replay
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_FILE="${ROOT_DIR}/docker-compose.control.yml"
 ENV_FILE=""
 SKIP_MIGRATION=false
+SKIP_TELEMETRY_REPLAY=false
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -33,6 +38,7 @@ while [[ $# -gt 0 ]]; do
     --compose-file) COMPOSE_FILE="$2"; shift 2 ;;
     --env-file)     ENV_FILE="$2";     shift 2 ;;
     --skip-migration) SKIP_MIGRATION=true; shift ;;
+    --skip-telemetry-replay) SKIP_TELEMETRY_REPLAY=true; shift ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
@@ -58,7 +64,7 @@ fi
 # Step 1: Start infra services and wait for them to be healthy
 # ---------------------------------------------------------------------------
 INFRA_SERVICES=(postgres minio nats)
-echo "==> [1/4] Starting infra services: ${INFRA_SERVICES[*]}"
+echo "==> [1/5] Starting infra services: ${INFRA_SERVICES[*]}"
 docker compose "${COMPOSE_ARGS[@]}" up -d "${INFRA_SERVICES[@]}"
 
 _wait_healthy() {
@@ -108,16 +114,16 @@ for svc in "${INFRA_SERVICES[@]}"; do
 done
 
 # Bootstrap MinIO bucket
-echo "==> [1/4] Creating MinIO bucket via minio-init..."
+echo "==> [1/5] Creating MinIO bucket via minio-init..."
 docker compose "${COMPOSE_ARGS[@]}" run --rm minio-init
 
 # ---------------------------------------------------------------------------
 # Step 2: Run DB migrations
 # ---------------------------------------------------------------------------
 if [[ "$SKIP_MIGRATION" == "true" ]]; then
-  echo "==> [2/4] Skipping DB migrations (--skip-migration flag set)"
+  echo "==> [2/5] Skipping DB migrations (--skip-migration flag set)"
 else
-  echo "==> [2/4] Running DB migrations..."
+  echo "==> [2/5] Running DB migrations..."
   # Run inside the postgres container where psql is available; Python migration
   # runs from host using the published port.
   POSTGRES_PORT="${POSTGRES_PORT:-15432}"
@@ -193,13 +199,25 @@ CREATE INDEX IF NOT EXISTS idx_telemetry_events_created_at
 
 CREATE INDEX IF NOT EXISTS idx_telemetry_events_event_type
     ON telemetry_events (event_type);
+
+CREATE INDEX IF NOT EXISTS idx_telemetry_events_binding_id
+    ON telemetry_events ((payload->>'binding_id'));
+
+CREATE INDEX IF NOT EXISTS idx_telemetry_events_runtime_id
+    ON telemetry_events ((payload->>'runtime_id'));
+
+CREATE INDEX IF NOT EXISTS idx_telemetry_events_deployment_stage
+    ON telemetry_events ((payload->>'deployment_stage'));
+
+CREATE INDEX IF NOT EXISTS idx_telemetry_events_payload_gin
+    ON telemetry_events USING GIN (payload);
 SQL
 fi
 
 # ---------------------------------------------------------------------------
 # Step 3: Start all application services
 # ---------------------------------------------------------------------------
-echo "==> [3/4] Starting all application services..."
+echo "==> [3/5] Starting all application services..."
 docker compose "${COMPOSE_ARGS[@]}" up -d
 
 APP_SERVICES=(
@@ -213,10 +231,41 @@ for svc in "${APP_SERVICES[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
-# Step 4: Health summary
+# Step 4: Replay telemetry DLQ write-failure entries
+# ---------------------------------------------------------------------------
+if [[ "$SKIP_TELEMETRY_REPLAY" == "true" ]]; then
+  echo "==> [4/5] Skipping telemetry DLQ replay (--skip-telemetry-replay flag set)"
+else
+  echo "==> [4/5] Replaying telemetry DLQ write-failure entries..."
+  docker compose "${COMPOSE_ARGS[@]}" exec -T telemetry python - <<'PY'
+import json
+import sys
+import urllib.error
+import urllib.request
+
+url = "http://127.0.0.1:8083/api/telemetry/replay"
+req = urllib.request.Request(url, data=b"", method="POST")
+try:
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        body = resp.read().decode()
+        payload = json.loads(body) if body else {}
+except urllib.error.HTTPError as exc:
+    detail = exc.read().decode(errors="replace")
+    print(f"    telemetry DLQ replay failed: HTTP {exc.code} {detail}", file=sys.stderr)
+    sys.exit(1)
+except Exception as exc:
+    print(f"    telemetry DLQ replay failed: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+print(f"    telemetry DLQ replay: replayed={payload.get('replayed', 0)}")
+PY
+fi
+
+# ---------------------------------------------------------------------------
+# Step 5: Health summary
 # ---------------------------------------------------------------------------
 echo ""
-echo "==> [4/4] Final service status:"
+echo "==> [5/5] Final service status:"
 docker compose "${COMPOSE_ARGS[@]}" ps
 
 UNHEALTHY=$(docker compose "${COMPOSE_ARGS[@]}" ps --format json 2>/dev/null \

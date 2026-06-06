@@ -27,6 +27,7 @@ import services.telemetry.main as _main
 from services.telemetry.ingest_svc import TelemetryIngestService
 from services.telemetry.lineage_read import LineageReadService
 from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+from services.telemetry.dead_letter import TAG_WRITER_ERROR
 
 # ---------------------------------------------------------------------------
 # Stubs
@@ -220,6 +221,9 @@ class TestMainRoutes(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        cls._old_runtime_manager_url = os.environ.get("PANTHEON_RUNTIME_MANAGER_URL")
+        os.environ["PANTHEON_RUNTIME_MANAGER_URL"] = "http://runtime-manager.test"
+
         # Start a dedicated asyncio event loop in a daemon thread so the
         # TelemetryIngestService batch writer can run during the test.
         loop = asyncio.new_event_loop()
@@ -263,6 +267,10 @@ class TestMainRoutes(unittest.TestCase):
         if cls._loop and cls._loop.is_running():
             cls._loop.call_soon_threadsafe(cls._loop.stop)
         _main._loop = None
+        if cls._old_runtime_manager_url is None:
+            os.environ.pop("PANTHEON_RUNTIME_MANAGER_URL", None)
+        else:
+            os.environ["PANTHEON_RUNTIME_MANAGER_URL"] = cls._old_runtime_manager_url
 
     # --- health ---
 
@@ -282,6 +290,32 @@ class TestMainRoutes(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 202)
         self.assertEqual(resp.get_json()["status"], "accepted")
+
+    def test_readyz_exposes_writer_and_dlq_metrics(self):
+        resp = self.client.get("/readyz")
+        self.assertEqual(resp.status_code, 200)
+        payload = resp.get_json()
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["dependencies"]["telemetry_writer"]["status"], "ok")
+        self.assertTrue(payload["dependencies"]["telemetry_writer"]["running"])
+        self.assertEqual(payload["dependencies"]["dead_letter_queue"]["status"], "ok")
+        self.assertIn("writer_total_written", payload["metrics"])
+        self.assertIn("dlq_memory_entries", payload["metrics"])
+        self.assertIn("startup_dlq_loaded", payload["metrics"])
+
+    def test_replay_route_replays_write_failure_entry(self):
+        _main._svc._dlq.reject(
+            _make_event(
+                binding_id=_KNOWN_BINDING_ID,
+                event_id="route-dlq-replay-001",
+            ),
+            tags=[TAG_WRITER_ERROR],
+            reason="simulated transient write outage",
+        )
+
+        resp = self.client.post("/api/telemetry/replay")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json()["replayed"], 1)
 
     def test_paper_heartbeat_updates_runtime_summary_route(self):
         resp = self.client.post(

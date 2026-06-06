@@ -17,7 +17,8 @@ The ingest service provides:
 3. Durable buffering (bounded, with overflow protection)
 4. Async batch writing (micro-batching, retry, partition routing)
 5. Backpressure management (adaptive concurrency, delay non-critical events)
-6. Dead-letter handling (diagnostic tags, JSONL spill, replay support)
+6. Dead-letter handling (diagnostic tags, JSONL spill, startup loading,
+   and replay support)
 7. Idempotent deduplication by event_id (service layer + ON CONFLICT at write layer)
 
 Replay policy
@@ -221,6 +222,8 @@ class TelemetryIngestService:
         binding_store: Optional[RuntimeBindingProtocol] = None,
         runtime_summary_store: Optional[RuntimeSummaryProjectionStore] = None,
         dedup_max_size: int = 500_000,
+        replay_dlq_on_start: bool = False,
+        dlq_replay_tag_filter: Optional[str] = None,
     ):
         """
         Parameters
@@ -261,6 +264,13 @@ class TelemetryIngestService:
         dedup_max_size : int
             Maximum number of event_ids tracked for idempotent deduplication.
             When exceeded, the oldest half of tracked IDs are evicted.
+        replay_dlq_on_start : bool
+            If True, load persisted DLQ spill entries and replay safe write
+            failures after the writer starts. Validation-failure entries remain
+            blocked by replay_dlq() policy.
+        dlq_replay_tag_filter : str, optional
+            Optional explicit tag filter for startup replay. When None, startup
+            replay uses the safe default write-failure tag set.
         """
         # Schema
         self._schema: Optional[dict[str, Any]] = schema
@@ -321,6 +331,11 @@ class TelemetryIngestService:
         self._total_rejected = 0
         self._total_duplicates = 0
         self._start_time: Optional[float] = None
+        self._dlq_loaded_from_spill = False
+        self._dlq_loaded_from_spill_count = 0
+        self._replay_dlq_on_start = replay_dlq_on_start
+        self._dlq_replay_tag_filter = dlq_replay_tag_filter
+        self._startup_dlq_replay_count = 0
 
     def _load_schema(self) -> None:
         """Load JSON schema from file."""
@@ -559,10 +574,32 @@ class TelemetryIngestService:
         """Start the ingest service (buffer + batch writer)."""
         if self._started:
             return
+        self._load_dlq_from_spill_once()
         self._started = True
         self._start_time = time.monotonic()
         await self._writer.start()
+        if self._replay_dlq_on_start:
+            self._startup_dlq_replay_count = await self.replay_dlq(
+                tag_filter=self._dlq_replay_tag_filter
+            )
+            log.info(
+                "TelemetryIngestService startup DLQ replay complete: replayed=%s",
+                self._startup_dlq_replay_count,
+            )
         log.info("TelemetryIngestService started")
+
+    def _load_dlq_from_spill_once(self) -> int:
+        """Load persisted DLQ spill entries once per service instance."""
+        if self._dlq_loaded_from_spill:
+            return 0
+        self._dlq_loaded_from_spill = True
+        self._dlq_loaded_from_spill_count = self._dlq.load_from_spill()
+        if self._dlq_loaded_from_spill_count:
+            log.info(
+                "TelemetryIngestService loaded %s DLQ entries from spill",
+                self._dlq_loaded_from_spill_count,
+            )
+        return self._dlq_loaded_from_spill_count
 
     async def stop(self, graceful: bool = True) -> None:
         """Stop the ingest service."""
@@ -611,6 +648,12 @@ class TelemetryIngestService:
                 if self._runtime_summary_store is not None
                 else {"summary_count": 0, "path": None}
             ),
+            "startup": {
+                "dlq_loaded_from_spill": self._dlq_loaded_from_spill_count,
+                "dlq_replay_on_start": self._replay_dlq_on_start,
+                "dlq_replay_tag_filter": self._dlq_replay_tag_filter,
+                "dlq_replayed_on_start": self._startup_dlq_replay_count,
+            },
         }
 
     def get_runtime_summary(self, runtime_id: str) -> Optional[dict[str, Any]]:
