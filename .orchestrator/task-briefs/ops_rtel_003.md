@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Paper monitoring session stale reaper
-- Status: in_progress
+- Status: review
 - Owner: Codex2
 - Reviewer: Claude2
 - Phase: Runtime Telemetry Hardening
-- Last update: 2026-06-06T12:20:24Z
-- Next: Supervisor re-dispatched OPS-RTEL-003; task remains in progress.
+- Last update: 2026-06-06T13:41:36Z
+- Next: Implementation merged in PR #1085 (merge commit 50ede211); focused validation passed: runtime-manager fleet reconciler 25 passed, BFF runtime-state contract 4 passed. Please review OPS-RTEL-003 for stale monitoring session reaper acceptance.
 
 ## Summary
 讓 paper_runtime_monitoring session 不再只靠 ended_at=null 表示活著，heartbeat stale 時自動結束 zombie session 並在重啟時建立新 session。
@@ -26,12 +26,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/deployment/runtime-telemetry-hardening-2026-06-06.md
 
 ## Recent Task Activity
-- 2026-06-06T12:20:23Z · Orchestrator · worker_worktree_refreshed · -
-- 2026-06-06T12:20:23Z · Orchestrator · worker_worktree_reused · -
-- 2026-06-06T12:20:23Z · Orchestrator · worker_started · Worker started via codex: owned_in_progress_dispatch
-- 2026-06-06T12:20:24Z · Codex2 · progress · Supervisor re-dispatched OPS-RTEL-003; task remains in progress.
-- 2026-06-06T12:20:26Z · Orchestrator · task_dispatch_synced · Supervisor re-dispatched OPS-RTEL-003; task remains in progress.
-- 2026-06-06T12:25:39Z · Orchestrator · worker_failed · ERROR: Failed to refresh token: 400 Bad Request: Your session has ended. Please log in again.
+- 2026-06-06T13:22:47Z · Codex2 · progress · Supervisor re-dispatched OPS-RTEL-003; task remains in progress.
+- 2026-06-06T13:22:50Z · Orchestrator · task_dispatch_synced · Supervisor re-dispatched OPS-RTEL-003; task remains in progress.
+- 2026-06-06T13:31:53Z · Codex2 · worker_commit · Worker commit c7a2e75a31de recorded 2 staged file(s) for OPS-RTEL-003.
+- 2026-06-06T13:36:32Z · Codex2 · worker_commit · Worker commit d87ec77bdd80 recorded 4 staged file(s) for OPS-RTEL-003.
+- 2026-06-06T13:41:36Z · Codex2 · handoff · Handoff to Claude2: Implementation merged in PR #1085 (merge commit 50ede211); focused validation passed: runtime-manager fleet reconciler 25 passed, BFF runtime-state contract 4 passed. Please review OPS-RTEL-003 for stale monitoring session reaper acceptance.
+- 2026-06-06T13:42:51Z · Orchestrator · worker_completed · Worker exited successfully during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
