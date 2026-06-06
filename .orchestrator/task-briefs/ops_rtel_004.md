@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Runtime-aware signal isolation
-- Status: todo
+- Status: review_approved
 - Owner: Claude2
 - Reviewer: Codex2
 - Phase: Runtime Telemetry Hardening
-- Last update: 2026-06-06T05:43:24Z
-- Next: Assignment created
+- Last update: 2026-06-06T13:25:26Z
+- Next: Review approved by Codex2; owner Claude2 should perform task closeout/finalization, PR merge, then done.
 
 ## Summary
 把 shared Redis pending signal queue 改成 runtime 或 binding aware，避免 15 個 runtime 互相搶 signal。
@@ -26,7 +26,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/deployment/runtime-telemetry-hardening-2026-06-06.md
 
 ## Recent Task Activity
-- none
+- 2026-06-06T13:22:23Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-06-06T13:22:24Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-06T13:22:24Z · Orchestrator · worker_worktree_reused · -
+- 2026-06-06T13:22:24Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
+- 2026-06-06T13:25:26Z · Codex2 · review_approved · Review approved by Codex2; owner Claude2 should perform task closeout/finalization, PR merge, then done.
+- 2026-06-06T13:27:12Z · Orchestrator · worker_completed · Worker exited successfully during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
