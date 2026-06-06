@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Paper runtime fleet reconciler
-- Status: review
+- Status: in_progress
 - Owner: Claude
 - Reviewer: Codex
 - Phase: Runtime Telemetry Hardening
-- Last update: 2026-06-06T11:39:16Z
-- Next: Paper fleet reconciler implementation complete. PR #1056 merged. Deliverables: paper_fleet_reconciler.py, 18 unit tests all passing, docker-compose paper-fleet profile, and OPS-RTEL-002 section in runtime-telemetry-hardening doc. Please verify acceptance criteria: (1) workers start for all active paper bindings, (2) dead worker triggers restart with backoff, (3) retired binding terminates worker, (4) fetch failure preserves running workers. Branch: task/OPS-RTEL-002.
+- Last update: 2026-06-06T11:45:36Z
+- Next: Review blocker: active acceptance still requires no worker consumes shared Redis signals before isolation. paper_fleet_reconciler spawns paper_runtime without a binding-scoped PANTHEON_SIGNAL_QUEUE_KEY, so workers default to pantheon:signals:pending and RedisPendingSignalStore lpop can remove signals for another binding. Add binding-scoped queue/consumer isolation or disable Redis consumption until isolation, with tests.
 
 ## Summary
 新增 paper runtime fleet reconciler，從 active paper runtime bindings 自動維持一個 worker per binding，取代手動 docker run。
@@ -27,12 +27,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/deployment/runtime-telemetry-hardening-2026-06-06.md
 
 ## Recent Task Activity
-- 2026-06-06T11:33:10Z · Claude · progress · Supervisor re-dispatched OPS-RTEL-002; task remains in progress.
-- 2026-06-06T11:33:13Z · Orchestrator · task_dispatch_synced · Supervisor re-dispatched OPS-RTEL-002; task remains in progress.
-- 2026-06-06T11:39:01Z · Claude · worker_commit · Worker commit ffb52f987a03 recorded 1 staged file(s) for OPS-RTEL-002.
-- 2026-06-06T11:39:08Z · Claude · progress · PR #1056 merged into dev at 2026-06-06T11:32:28Z; 18/18 unit tests pass (reconciler start/stop/restart/port/env/snapshot/degraded-fetch/backoff); docker-compose paper-fleet profile entry confirmed; docs/deployment/runtime-telemetry-hardening-2026-06-06.md §OPS-RTEL-002 complete. Ready for Codex review.
-- 2026-06-06T11:39:16Z · Claude · handoff · Handoff to Codex: Paper fleet reconciler implementation complete. PR #1056 merged. Deliverables: paper_fleet_reconciler.py, 18 unit tests all passing, docker-compose paper-fleet profile, and OPS-RTEL-002 section in runtime-telemetry-hardening doc. Please verify acceptance criteria: (1) workers start for all active paper bindings, (2) dead worker triggers restart with backoff, (3) retired binding terminates worker, (4) fetch failure preserves running workers. Branch: task/OPS-RTEL-002.
-- 2026-06-06T11:41:11Z · Orchestrator · worker_self_claim_released · Claude released completed worker slot before self-claim.
+- 2026-06-06T11:41:20Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-06T11:41:20Z · Orchestrator · worker_worktree_reused · -
+- 2026-06-06T11:41:20Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
+- 2026-06-06T11:44:39Z · Codex · review_approved · DRY-RUN-CHECK
+- 2026-06-06T11:45:36Z · Codex · reopen · Review blocker: active acceptance still requires no worker consumes shared Redis signals before isolation. paper_fleet_reconciler spawns paper_runtime without a binding-scoped PANTHEON_SIGNAL_QUEUE_KEY, so workers default to pantheon:signals:pending and RedisPendingSignalStore lpop can remove signals for another binding. Add binding-scoped queue/consumer isolation or disable Redis consumption until isolation, with tests.
+- 2026-06-06T11:48:46Z · Orchestrator · worker_failed · Worker exited before the task reached a terminal status.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
