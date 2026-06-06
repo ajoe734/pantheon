@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from adapters.base import BaseAdapter
+from adapters.antigravity import AntigravityAdapter
 from adapters.claude_cli import ClaudeCLIAdapter
 from adapters.claude_code import ClaudeCodeAdapter
 from adapters.copilot_cloud import CopilotCloudAdapter
@@ -20,6 +21,7 @@ ADAPTERS: dict[str, type[BaseAdapter]] = {
     "claude_code": ClaudeCodeAdapter,
     "copilot_local": CopilotLocalAdapter,
     "copilot_cloud": CopilotCloudAdapter,
+    "antigravity": AntigravityAdapter,
     "gemini": GeminiAdapter,
     "codex": CodexAdapter,
 }

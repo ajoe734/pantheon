@@ -4738,6 +4738,135 @@ def clear_task_failure_streaks_for_task(state: dict[str, Any], task_id: str | No
         bucket.pop(key, None)
 
 
+def _provider_report_entry(provider_report: dict[str, Any] | None, provider: str | None) -> dict[str, Any]:
+    providers = (provider_report or {}).get("providers") or {}
+    raw = str(provider or "").strip()
+    normalized = normalize_agent_id(raw)
+    candidates = [raw, normalized, raw.replace("_", "-"), raw.replace("-", "_")]
+    for candidate in candidates:
+        entry = providers.get(candidate)
+        if isinstance(entry, dict):
+            return entry
+    for provider_id, entry in providers.items():
+        if normalize_agent_id(str(provider_id)) == normalized and isinstance(entry, dict):
+            return entry
+    return {}
+
+
+def _provider_auth_identity_ids(config: dict[str, Any], provider: str | None) -> set[str]:
+    provider_id = normalize_agent_id(provider or "")
+    if not provider_id:
+        return set()
+    ids = {provider_id}
+    group_id = provider_dispatch_group_id(config, provider_id)
+    if group_id:
+        ids.add(group_id)
+    for configured_provider in (config.get("providers", {}) or {}):
+        configured_id = normalize_agent_id(str(configured_provider))
+        configured_group = provider_dispatch_group_id(config, configured_provider)
+        if configured_id in ids or (group_id and configured_group == group_id):
+            ids.add(configured_id)
+            if configured_group:
+                ids.add(configured_group)
+    for agent_id, agent in (config.get("agents", {}) or {}).items():
+        normalized_agent = normalize_agent_id(str(agent_id))
+        agent_provider = normalize_agent_id(str((agent or {}).get("provider") or normalized_agent))
+        agent_group = provider_dispatch_group_id(config, agent_provider)
+        dispatch_parent = normalize_agent_id(str((agent or {}).get("dispatch_slot_for") or ""))
+        if agent_provider in ids or normalized_agent in ids or dispatch_parent in ids or (group_id and agent_group == group_id):
+            ids.update(value for value in (normalized_agent, agent_provider, agent_group, dispatch_parent) if value)
+    return ids
+
+
+def _is_auth_failure_streak(config: dict[str, Any], record: dict[str, Any]) -> bool:
+    if is_auth_failure_kind(str(record.get("last_failure_kind") or "")):
+        return True
+    reason = str(record.get("last_reason") or "")
+    if not reason:
+        return False
+    provider = str(record.get("provider") or "")
+    return classify_worker_failure(config, {"provider": provider}, reason).get("kind") == "auth"
+
+
+def clear_auth_failure_streaks_for_provider(config: dict[str, Any], state: dict[str, Any], provider: str | None) -> list[str]:
+    ids = _provider_auth_identity_ids(config, provider)
+    if not ids:
+        return []
+    bucket = _task_failure_streak_bucket(state)
+    removed: list[str] = []
+    for key, record in list(bucket.items()):
+        key_provider = key.rsplit(":", 1)[-1] if ":" in key else ""
+        record_provider = normalize_agent_id(str((record if isinstance(record, dict) else {}).get("provider") or key_provider))
+        if record_provider not in ids:
+            continue
+        if isinstance(record, dict) and _is_auth_failure_streak(config, record):
+            bucket.pop(key, None)
+            removed.append(key)
+    return removed
+
+
+def clear_auth_dispatch_pauses_for_provider(config: dict[str, Any], state: dict[str, Any], provider: str | None) -> list[str]:
+    ids = _provider_auth_identity_ids(config, provider)
+    if not ids:
+        return []
+    bucket = _dispatch_pause_bucket(state)
+    removed: list[str] = []
+    for pause_id, entry in list(bucket.items()):
+        if normalize_agent_id(str(pause_id)) not in ids or not isinstance(entry, dict):
+            continue
+        pause_kind = str(entry.get("pause_kind") or entry.get("failure_kind") or "").strip().lower()
+        if pause_kind != "auth":
+            continue
+        bucket.pop(pause_id, None)
+        removed.append(str(pause_id))
+        write_activity_log(
+            config,
+            {
+                "type": "provider_dispatch_resumed",
+                "provider": pause_id,
+                "task_id": entry.get("task_id"),
+                "worker_run_id": entry.get("worker_run_id"),
+                "message": f"Cleared authentication dispatch pause for {pause_id}; provider auth probe is healthy again.",
+                "raw_ref": entry.get("raw_ref"),
+                "cleared_pause": entry,
+            },
+        )
+    return removed
+
+
+def reconcile_provider_auth_recovery(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    previous_report: dict[str, Any] | None,
+    current_report: dict[str, Any] | None,
+) -> bool:
+    changed = False
+    for provider_id, current in ((current_report or {}).get("providers") or {}).items():
+        if not isinstance(current, dict) or current.get("auth_ready") is not True:
+            continue
+        previous = _provider_report_entry(previous_report, str(provider_id))
+        if previous.get("auth_ready") is not False:
+            continue
+        cleared_streaks = clear_auth_failure_streaks_for_provider(config, state, str(provider_id))
+        cleared_pauses = clear_auth_dispatch_pauses_for_provider(config, state, str(provider_id))
+        if not cleared_streaks and not cleared_pauses:
+            continue
+        changed = True
+        write_activity_log(
+            config,
+            {
+                "type": "provider_auth_recovered",
+                "provider": str(provider_id),
+                "message": f"Provider {provider_id} authentication recovered; cleared stale auth guardrails.",
+                "cleared_task_failure_streaks": cleared_streaks,
+                "cleared_dispatch_pauses": cleared_pauses,
+                "last_auth_probe_at": current.get("last_auth_probe_at"),
+                "auth_method": current.get("auth_method"),
+            },
+        )
+    return changed
+
+
 def worker_retry_settings(config: dict[str, Any], provider: str | None) -> dict[str, Any]:
     retry = dict(config.get("worker_retry", {}) or {})
     if provider:
@@ -9047,7 +9176,12 @@ def run_once(
         pruned = prune_stale_approvals(config)
         if pruned:
             changed = True
+        try:
+            previous_provider_report = load_json(config_path(config, "provider_capabilities"), default={}) or {}
+        except KeyError:
+            previous_provider_report = {}
         provider_report = load_provider_report(config)
+        changed = reconcile_provider_auth_recovery(config, state, previous_provider_report, provider_report) or changed
         if watch:
             changed = run_scan(config, state, replay=replay, provider_capabilities=provider_report) or changed
             state = load_runtime_state(config)

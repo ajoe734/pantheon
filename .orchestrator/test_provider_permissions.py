@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -565,6 +567,134 @@ EOF
         self.assertEqual(report["providers"]["gemini2"]["selected_model"], "gemini-2.5-flash-lite")
         self.assertEqual(report["providers"]["gemini2"]["settings"]["gemini.model"], "gemini-2.5-flash-lite")
         self.assertEqual(report["providers"]["gemini2"]["settings"]["env.GOOGLE_CLOUD_PROJECT"], "gemini2-project")
+
+    def test_claude_auth_probe_refreshes_oauth_when_needed(self) -> None:
+        with mock.patch.object(provider_permissions, "claude_auth_ready", return_value=True) as claude_auth_ready:
+            probe = provider_permissions._claude_auth_probe({}, "claude2", "/usr/bin/claude", {"HOME": "/tmp/claude2"})
+
+        self.assertTrue(probe["ready"])
+        self.assertEqual(probe["method"], "claude_auth_status_refresh")
+        claude_auth_ready.assert_called_once()
+        self.assertTrue(claude_auth_ready.call_args.kwargs["refresh_if_needed"])
+
+    def test_codex_auth_probe_runs_exec_with_provider_home(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir) / "codex2"
+            home.mkdir()
+            (home / "auth.json").write_text('{"tokens":{"access_token":"redacted","refresh_token":"redacted"}}', encoding="utf-8")
+            config = {
+                "providers": {
+                    "codex2": {
+                        "codex": {
+                            "codex_home": str(home),
+                            "api_key_env": "OPENAI_API_KEY_CODEX2",
+                        }
+                    }
+                }
+            }
+            completed = subprocess.CompletedProcess(["codex"], 0, "OK\n", "")
+            with (
+                mock.patch.dict(os.environ, {"CODEX_SESSION_ID": "parent-session"}, clear=False),
+                mock.patch.object(provider_permissions, "run_command", return_value=completed) as run_command,
+            ):
+                probe = provider_permissions._codex_auth_probe(config, "codex2", "/usr/bin/codex")
+
+        self.assertTrue(probe["ready"])
+        self.assertEqual(probe["method"], "codex_exec_oauth")
+        command = run_command.call_args.args[0]
+        self.assertEqual(command[:2], ["/usr/bin/codex", "exec"])
+        self.assertIn("--skip-git-repo-check", command)
+        env = run_command.call_args.kwargs["env"]
+        self.assertEqual(env["CODEX_HOME"], str(home))
+        self.assertNotIn("CODEX_SESSION_ID", env)
+
+    def test_provider_capabilities_include_custom_antigravity_provider(self) -> None:
+        config = {
+            "paths": {
+                "status_file": ".orchestrator/ai-status.json",
+                "activity_log": "ai-activity-log.jsonl",
+                "current_work": "current-work.md",
+                "dashboard": "dashboard-bundle.json",
+                "claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
+            },
+            "agents": {},
+            "providers": {
+                "antigravity": {
+                    "delivery_mode": "antigravity",
+                    "antigravity": {"cli": "agy"},
+                },
+                "antigravity2": {
+                    "delivery_mode": "antigravity",
+                    "antigravity": {
+                        "cli": "agy",
+                        "config_home": "~/.gemini-agy2",
+                        "print_timeout": "15m",
+                    },
+                },
+                "claude": {},
+                "gemini": {},
+                "codex": {},
+                "copilot": {},
+            },
+        }
+
+        def fake_antigravity_probe(config: dict, provider_id: str, binary: str | None) -> dict:
+            return {
+                "provider": provider_id,
+                "kind": "antigravity",
+                "ready": provider_id == "antigravity2",
+                "method": "agy_prompt_oauth",
+                "error": None if provider_id == "antigravity2" else "missing",
+                "checked_at": "2026-06-06T12:00:00Z",
+                "last_auth_probe_at": "2026-06-06T12:00:00Z",
+            }
+
+        with (
+            mock.patch.object(provider_permissions, "_code_cli_info", return_value={}),
+            mock.patch.object(provider_permissions, "_workspace_settings", return_value={}),
+            mock.patch.object(provider_permissions, "_find_extension", return_value=(None, None)),
+            mock.patch.object(provider_permissions, "_claude_local_settings", return_value={"permissions": {}}),
+            mock.patch.object(provider_permissions, "_gemini_settings", return_value={}),
+            mock.patch.object(provider_permissions, "_gemini_auth_ready", return_value=False),
+            mock.patch.object(provider_permissions, "_custom_agents_info", return_value={}),
+            mock.patch.object(provider_permissions, "_relevant_extensions", return_value=[]),
+            mock.patch.object(
+                provider_permissions,
+                "desired_workspace_settings",
+                return_value={
+                    "claudeCode.initialPermissionMode": "acceptEdits",
+                    "claudeCode.allowDangerouslySkipPermissions": False,
+                    "geminicodeassist.agentYoloMode": False,
+                    "github.copilot.chat.backgroundAgent.enabled": False,
+                    "github.copilot.chat.cloudAgent.enabled": False,
+                    "github.copilot.chat.claudeAgent.enabled": False,
+                },
+            ),
+            mock.patch.object(provider_permissions, "desired_claude_local_settings", return_value={"permissions": {"defaultMode": "acceptEdits"}}),
+            mock.patch.object(
+                provider_permissions,
+                "desired_gemini_settings",
+                return_value={
+                    "general": {"defaultApprovalMode": "auto_edit"},
+                    "security": {
+                        "enablePermanentToolApproval": True,
+                        "autoAddToPolicyByDefault": True,
+                        "disableYoloMode": False,
+                    },
+                },
+            ),
+            mock.patch.object(provider_permissions, "command_exists", side_effect=lambda cmd: "/usr/bin/agy" if cmd == "agy" else None),
+            mock.patch.object(provider_permissions, "claude_auth_ready", return_value=False),
+            mock.patch.object(provider_permissions, "_antigravity_auth_probe", side_effect=fake_antigravity_probe),
+        ):
+            report = provider_permissions.provider_capabilities(config)
+
+        self.assertIn("antigravity2", report["providers"])
+        self.assertTrue(report["providers"]["antigravity2"]["auth_ready"])
+        self.assertTrue(report["providers"]["antigravity2"]["supports_auto_approve"])
+        self.assertEqual(report["providers"]["antigravity2"]["paths"]["binary"], "/usr/bin/agy")
+        self.assertEqual(report["providers"]["antigravity2"]["paths"]["home"], os.path.expanduser("~/.gemini-agy2"))
+        self.assertEqual(report["providers"]["antigravity2"]["settings"]["antigravity.print_timeout"], "15m")
 
     def test_force_push_is_denied(self) -> None:
         command = "git push --force origin HEAD"
