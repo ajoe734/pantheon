@@ -301,3 +301,36 @@ python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler
 python3 -m pytest services/control-plane/bff/test_pkt010_runtime_state_board_contract.py -q
 # Expected: 4 passed
 ```
+
+---
+
+# BFF Runtime-State Truth Split and Closeout — OPS-RTEL-005
+
+Task: OPS-RTEL-005
+
+## Scope
+
+The BFF runtime-state board now separates row-local runtime evidence from
+board-level support surface health:
+
+- Each runtime row includes `row_health`, covering only the runtime binding,
+  telemetry summary row, and paper runtime monitoring row.
+- `rollback_history` remains a board support surface under
+  `meta.surfaces.rollback_history`; it does not make telemetry rows unhealthy
+  when rollback history is degraded or unavailable.
+- `meta.surfaces.runtime_state.support_surface_status` records the status of
+  each support surface.
+- `meta.surfaces.runtime_state.degraded_support_surfaces` names the surfaces
+  causing the composed board to be degraded.
+
+This lets operators see a healthy 15-runtime telemetry fleet while still
+getting an explicit degraded banner for unavailable rollback history or other
+supporting reads.
+
+## Evidence
+
+Closeout evidence is recorded in:
+
+```text
+support/evidence/OPS-RTEL-005/owner-closeout.md
+```
