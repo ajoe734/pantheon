@@ -6024,6 +6024,106 @@ def _project_runtime_state_latest_rollback(rollbacks: List[Dict[str, Any]]) -> O
     }
 
 
+def _runtime_state_row_health_check(
+    status: str,
+    *,
+    source: str,
+    message: Optional[str] = None,
+    applies: bool = True,
+) -> Dict[str, Any]:
+    check: Dict[str, Any] = {
+        "status": status,
+        "source": source,
+        "applies": applies,
+    }
+    if message:
+        check["message"] = message
+    return check
+
+
+def _derive_runtime_state_row_health(
+    *,
+    binding: Dict[str, Any],
+    telemetry_summary: Optional[Dict[str, Any]],
+    monitoring_session: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    deployment_stage = str(
+        binding.get("deployment_stage") or binding.get("deployment_mode") or ""
+    ).lower()
+    checks: Dict[str, Dict[str, Any]] = {
+        "runtime_binding": _runtime_state_row_health_check(
+            "ok",
+            source="runtime_bindings",
+        ),
+        "telemetry_summary": (
+            _runtime_state_row_health_check("ok", source="telemetry_summaries")
+            if telemetry_summary is not None
+            else _runtime_state_row_health_check(
+                "unavailable",
+                source="telemetry_summaries",
+                message="Telemetry summary row is unavailable for this runtime.",
+            )
+        ),
+    }
+    if deployment_stage == "paper":
+        checks["paper_runtime_monitoring"] = (
+            _runtime_state_row_health_check(
+                "ok",
+                source="paper_runtime_monitoring_sessions",
+            )
+            if monitoring_session is not None
+            else _runtime_state_row_health_check(
+                "unavailable",
+                source="paper_runtime_monitoring_sessions",
+                message="Paper runtime monitoring session is unavailable for this runtime.",
+            )
+        )
+    else:
+        checks["paper_runtime_monitoring"] = _runtime_state_row_health_check(
+            "ok",
+            source="not_applicable",
+            applies=False,
+            message="Paper runtime monitoring applies only to paper runtimes.",
+        )
+
+    degraded_checks = [
+        key
+        for key, check in checks.items()
+        if check.get("applies", True) and check.get("status") != "ok"
+    ]
+    return {
+        "status": "degraded" if degraded_checks else "ok",
+        "checks": checks,
+        "degraded_checks": degraded_checks,
+    }
+
+
+def _runtime_state_support_surface_ref(
+    surface_key: str,
+    surface: Dict[str, Any],
+) -> Dict[str, Any]:
+    ref = {
+        "surface_key": surface_key,
+        "status": surface.get("status"),
+        "source": surface.get("source"),
+    }
+    for key in ("message", "note", "staleness"):
+        if key in surface:
+            ref[key] = surface.get(key)
+    return ref
+
+
+def _runtime_state_degraded_support_surfaces(
+    surfaces: Dict[str, Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    refs: List[Dict[str, Any]] = []
+    for surface_key, surface in surfaces.items():
+        if surface.get("status") == "ok":
+            continue
+        refs.append(_runtime_state_support_surface_ref(surface_key, surface))
+    return refs
+
+
 def _derive_runtime_state_last_updated_at(
     binding: Dict[str, Any],
     telemetry_summary: Optional[Dict[str, Any]],
@@ -6096,6 +6196,11 @@ def _project_operator_runtime_state_row(binding: Dict[str, Any]) -> Dict[str, An
         ),
         "telemetry_summary": telemetry_summary,
         "paper_runtime_monitoring": monitoring_session,
+        "row_health": _derive_runtime_state_row_health(
+            binding=binding,
+            telemetry_summary=telemetry_summary,
+            monitoring_session=monitoring_session,
+        ),
         "rollback_summary": {
             "count": len(rollbacks),
             "latest": latest_rollback,
@@ -13941,6 +14046,13 @@ async def list_operator_runtime_state(
         "rollbacks",
         snapshot_at=snapshot_at,
     )
+    support_surfaces = {
+        "runtime_roster": runtime_roster_surface,
+        "telemetry_summary": telemetry_surface,
+        "paper_runtime_monitoring": monitoring_surface,
+        "rollback_history": rollback_history_surface,
+    }
+    degraded_support_surfaces = _runtime_state_degraded_support_surfaces(support_surfaces)
 
     runtime_state_surface = _composed_surface_status(
         snapshot_at=snapshot_at,
@@ -13964,6 +14076,11 @@ async def list_operator_runtime_state(
             "staleness",
             {"served_from": "unverifiable", "last_known_at": snapshot_at},
         )
+    runtime_state_surface["support_surface_status"] = {
+        key: surface.get("status") for key, surface in support_surfaces.items()
+    }
+    if degraded_support_surfaces:
+        runtime_state_surface["degraded_support_surfaces"] = degraded_support_surfaces
 
     total = len(runtimes)
     if runtime_state_surface.get("status") == "unavailable":
