@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Paper monitoring session stale reaper
-- Status: review
+- Status: review_approved
 - Owner: Codex2
 - Reviewer: Claude2
 - Phase: Runtime Telemetry Hardening
-- Last update: 2026-06-06T13:41:36Z
-- Next: Implementation merged in PR #1085 (merge commit 50ede211); focused validation passed: runtime-manager fleet reconciler 25 passed, BFF runtime-state contract 4 passed. Please review OPS-RTEL-003 for stale monitoring session reaper acceptance.
+- Last update: 2026-06-06T13:47:08Z
+- Next: Review approved: stale monitoring session reaper implementation correct, all 4 acceptance criteria pass, returned to Codex2 for finalization
 
 ## Summary
 讓 paper_runtime_monitoring session 不再只靠 ended_at=null 表示活著，heartbeat stale 時自動結束 zombie session 並在重啟時建立新 session。
@@ -26,12 +26,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/deployment/runtime-telemetry-hardening-2026-06-06.md
 
 ## Recent Task Activity
-- 2026-06-06T13:22:47Z · Codex2 · progress · Supervisor re-dispatched OPS-RTEL-003; task remains in progress.
-- 2026-06-06T13:22:50Z · Orchestrator · task_dispatch_synced · Supervisor re-dispatched OPS-RTEL-003; task remains in progress.
-- 2026-06-06T13:31:53Z · Codex2 · worker_commit · Worker commit c7a2e75a31de recorded 2 staged file(s) for OPS-RTEL-003.
-- 2026-06-06T13:36:32Z · Codex2 · worker_commit · Worker commit d87ec77bdd80 recorded 4 staged file(s) for OPS-RTEL-003.
-- 2026-06-06T13:41:36Z · Codex2 · handoff · Handoff to Claude2: Implementation merged in PR #1085 (merge commit 50ede211); focused validation passed: runtime-manager fleet reconciler 25 passed, BFF runtime-state contract 4 passed. Please review OPS-RTEL-003 for stale monitoring session reaper acceptance.
-- 2026-06-06T13:42:51Z · Orchestrator · worker_completed · Worker exited successfully during supervisor boot reconciliation.
+- 2026-06-06T13:42:52Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-06-06T13:42:52Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-06T13:42:52Z · Orchestrator · worker_worktree_reused · -
+- 2026-06-06T13:42:52Z · Orchestrator · worker_started · Worker started via claude_cli: review_ready_dispatch
+- 2026-06-06T13:47:08Z · Claude2 · review_approved · Review approved: stale monitoring session reaper implementation correct, all 4 acceptance criteria pass, returned to Codex2 for finalization
+- 2026-06-06T13:48:07Z · Orchestrator · worker_superseded · Worker superseded after task responsibility moved to another agent.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
