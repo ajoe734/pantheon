@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "task_id": "OPS-RTEL-004",
+  "archived_at": "2026-06-06T13:36:35Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OPS-RTEL-004",
+    "title": "Runtime-aware signal isolation",
+    "summary_zh": "把 shared Redis pending signal queue 改成 runtime 或 binding aware，避免 15 個 runtime 互相搶 signal。",
+    "phase": "Runtime Telemetry Hardening",
+    "owner": "Claude2",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "OPS-RTEL-002"
+    ],
+    "artifacts": [
+      "services/execution/lean_runtime/signal_consumer.py",
+      "services/execution/lean_runtime/",
+      "services/research/schema.json",
+      "docs/deployment/runtime-telemetry-hardening-2026-06-06.md"
+    ],
+    "acceptance": [
+      "multiple runtime consumers cannot consume each others signals",
+      "mismatched signals are rejected or dead-lettered with reason",
+      "claim or queue path is runtime aware",
+      "real paper signal consumption remains disabled until this passes"
+    ],
+    "next": "Two-layer binding-scoped signal isolation delivered: queue-key isolation via PANTHEON_SIGNAL_QUEUE_KEY env auto-derivation (pending_signal_store.py) and consumer-level defense-in-depth via _is_wrong_binding() in signal_consumer.py. schema.json gains optional binding_id/runtime_id routing fields. 22 tests pass. PR #1083 merged into dev (347565ef).",
+    "last_update": "2026-06-06T13:36:35Z",
+    "source_ref": {
+      "archive": "docs/deployment/runtime-telemetry-hardening-2026-06-06.md",
+      "execution_plan": "docs/deployment/runtime-telemetry-execution-tasks-2026-06-06.md",
+      "repair_pr": 1047,
+      "section": "Workstream D"
+    },
+    "task_class": "execution",
+    "auto_created_by": "codex-runtime-telemetry-hardening-20260606",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：確認 commit 3835a575 的 two-layer binding isolation 實作符合 OPS-RTEL-004 acceptance；PANTHEON_SIGNAL_QUEUE_KEY/PANTHEON_RUNTIME_BINDING_ID queue key priority 正確，SignalConsumer binding_id mismatch 會 discard，legacy unrouted signals 保持相容。",
+      "已驗證：python3 -m pytest services/execution/lean_runtime/test_signal_consumer.py -v；python3 -m pytest services/execution/lean_runtime/test_paper_runtime.py services/execution/runtime-manager/test_paper_fleet_reconciler.py -q。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-06T13:36:35Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-rtel-004",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-RTEL-004",
+      "git_clean_required": false,
+      "commit": "17846581dc087a03e4e159972dc075b6a9157cc3",
+      "commit_subject": "OPS-RTEL-004: finalize closeout — record PR #1083 merge in task brief",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Records delivery completion in task brief": "PR #1083 merged into dev",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "OPS-RTEL-004",
+        "Reviewer": "Codex2",
+        "Verified": "python3 -m pytest services/execution/lean_runtime/test_signal_consumer.py -v — 22 passed; PR #1083 merged into dev"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OPS-RTEL-004",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OPS-RTEL-004",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Implementation ready for review. Two-layer binding isolation: (1) build_pending_signal_store() auto-derives binding-scoped queue key from PANTHEON_SIGNAL_QUEUE_KEY > PANTHEON_RUNTIME_BINDING_ID > default; (2) SignalConsumer.binding_id filter discards misrouted signals as defense-in-depth. schema.json adds optional binding_id/runtime_id routing fields. paper_runtime.py wires both layers. 22 tests pass (commit 3835a575).",
+      "status": "done",
+      "created_at": "2026-06-06T12:23:25Z",
+      "resolved_at": "2026-06-06T13:25:26Z"
+    },
+    {
+      "task_id": "OPS-RTEL-004",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Review approved by Codex2; owner Claude2 should perform task closeout/finalization, PR merge, then done.",
+      "status": "done",
+      "created_at": "2026-06-06T13:25:26Z",
+      "resolved_at": "2026-06-06T13:36:35Z"
+    }
+  ],
+  "blockers": []
+}
