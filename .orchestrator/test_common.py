@@ -95,6 +95,15 @@ class FailureSummaryTests(unittest.TestCase):
         self.assertEqual(result["kind"], "quota")
         self.assertEqual(result["summary"], "Codex usage limit reached")
 
+    def test_summarize_failure_reason_treats_codex_config_parse_as_provider_config(self) -> None:
+        result = common.summarize_failure_reason(
+            "Error loading config.toml: unknown variant `priority`, expected `fast` or `flex` in `service_tier`",
+            "Codex",
+        )
+
+        self.assertEqual(result["kind"], "provider_config")
+        self.assertEqual(result["summary"], "Provider config invalid")
+
 
 class GithubCliEnvTests(unittest.TestCase):
     def test_preserve_github_cli_auth_env_keeps_source_config_when_home_changes(self) -> None:

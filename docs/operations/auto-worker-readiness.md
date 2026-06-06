@@ -37,12 +37,19 @@ Mainline execution should only use workers where the latest doctor report shows:
 ```text
 local_cli_worker_supported=true
 supports_auto_approve=true
+config_valid=true or config_valid is absent for that adapter
 auth_ready=true or auth_ready is not required by that adapter
 ```
 
 When a provider is installed but not auto-ready, keep it out of mainline owner
 and reviewer fallbacks. It may remain documented as a future lane, but the
 supervisor should not assign production tasks to it.
+
+The supervisor also performs a provider config preflight before spawning local
+CLI workers. For Codex adapters, it reads the provider's configured
+`codex_home/config.toml` and fails closed when the installed CLI would reject
+the profile. A bad profile is a provider readiness failure, not a persona or
+task-assignment failure.
 
 ## Recovery Checklist
 
@@ -79,6 +86,18 @@ Copilot:
 5. Verify the desired model route; the current verified supported model is
    `claude`.
 
+Codex:
+
+1. Confirm the provider's configured `codex_home` exists. The main Codex lane
+   uses `/home/lupin/.codex`; Codex2 lanes use `/home/lupin/.codex2`.
+2. If `config.toml` sets `service_tier`, it must be one of `fast` or `flex`
+   for the currently installed Codex CLI. `priority` is rejected by
+   `codex-cli 0.130.0` and will stop auto workers before task execution.
+3. Run `python3 .orchestrator/doctor.py --json --no-write` and verify each
+   Codex provider reports `config_valid=true`.
+4. If a worker log contains `Error loading config.toml`, repair the profile
+   first; do not reassign the task or edit persona settings.
+
 Codex2:
 
 1. Confirm the isolated `CODEX_HOME` is intentional.
@@ -103,6 +122,7 @@ correct fail-closed behavior.
 python3 .orchestrator/doctor.py --json --no-write
 python3 .orchestrator/doctor.py
 python3 scripts/supervisor_runtime_health.py --require-watchdog --json
+rg -n '^service_tier' /home/lupin/.codex/config.toml /home/lupin/.codex2/config.toml 2>/dev/null || true
 rg -n '"disabled_agents"|"sidecar_only_agents"' .orchestrator/config.json .orchestrator/config.local.json
 tmux ls | rg 'pantheon-(dashboard|dashboard-tunnel|supervisor)' || true
 ```

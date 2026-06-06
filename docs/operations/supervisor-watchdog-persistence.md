@@ -98,10 +98,15 @@ Supervisor/auto-worker readiness is not satisfied until all of these are true:
 
 1. Persistent watchdog is installed through systemd timer or cron.
 2. `scripts/supervisor_runtime_health.py --require-watchdog` exits 0.
-3. `ai-status.json` contains at least one dependency-ready task, and the
+3. `python3 .orchestrator/doctor.py --json --no-write` reports each eligible
+   local CLI provider as auto-deliverable and, for Codex providers,
+   `config_valid=true`.
+4. `ai-status.json` contains at least one dependency-ready task, and the
    supervisor creates or reconciles queue/worker state on the next cycle.
-4. Worker starts are visible in `.orchestrator/state.json` or logs, unless all
+5. Worker starts are visible in `.orchestrator/state.json` or logs, unless all
    eligible providers are intentionally paused by guardrails.
+6. Worker logs do not contain startup-only provider config failures such as
+   `Error loading config.toml`.
 
 ## Incident Repair Boundary
 

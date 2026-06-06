@@ -7,6 +7,11 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback.
+    tomllib = None  # type: ignore[assignment]
+
 from common import (
     ROOT,
     apply_claude_oauth_token_file,
@@ -28,6 +33,7 @@ CLAUDE_LOCAL_EXAMPLE_PATH = ROOT / ".claude" / "settings.local.example.json"
 GEMINI_SETTINGS_PATH = Path.home() / ".gemini" / "settings.json"
 GEMINI_OAUTH_CREDS_PATH = Path.home() / ".gemini" / "oauth_creds.json"
 CODEX_CONFIG_PATH = Path.home() / ".codex" / "config.toml"
+CODEX_ALLOWED_SERVICE_TIERS = ("fast", "flex")
 EXTENSIONS_DIR = Path.home() / ".vscode-server" / "extensions"
 COPILOT_CONFIG_DIR = Path.home() / ".copilot"
 COPILOT_CONFIG_PATH = COPILOT_CONFIG_DIR / "config.json"
@@ -90,6 +96,61 @@ def _codex_home(config: dict[str, Any] | None = None, provider_id: str = "codex"
 
 def _codex_config_path(config: dict[str, Any] | None = None, provider_id: str = "codex") -> Path:
     return _codex_home(config, provider_id) / "config.toml"
+
+
+def codex_config_health(config: dict[str, Any] | None = None, provider_id: str = "codex") -> dict[str, Any]:
+    path = _codex_config_path(config, provider_id)
+    result: dict[str, Any] = {
+        "valid": True,
+        "path": str(path),
+        "checks": {"service_tier": None},
+        "allowed_service_tiers": list(CODEX_ALLOWED_SERVICE_TIERS),
+    }
+    if not path.exists():
+        result["notes"] = "Codex config file is absent; CLI defaults apply."
+        return result
+    if tomllib is None:
+        result["notes"] = "Python tomllib is unavailable; Codex config schema preflight skipped."
+        return result
+
+    try:
+        payload = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        result.update(
+            {
+                "valid": False,
+                "error": f"Codex config {path} cannot be parsed: {exc}",
+            }
+        )
+        return result
+
+    service_tier = payload.get("service_tier")
+    result["checks"]["service_tier"] = service_tier
+    if service_tier in (None, ""):
+        return result
+    if not isinstance(service_tier, str):
+        result.update(
+            {
+                "valid": False,
+                "error": (
+                    f"Codex config {path} has non-string service_tier={service_tier!r}; "
+                    f"installed Codex CLI accepts {', '.join(CODEX_ALLOWED_SERVICE_TIERS)}."
+                ),
+            }
+        )
+        return result
+    normalized = service_tier.strip().lower()
+    if normalized not in CODEX_ALLOWED_SERVICE_TIERS:
+        result.update(
+            {
+                "valid": False,
+                "error": (
+                    f"Codex config {path} has unsupported service_tier={service_tier!r}; "
+                    f"installed Codex CLI accepts {', '.join(CODEX_ALLOWED_SERVICE_TIERS)}."
+                ),
+            }
+        )
+    return result
 
 
 def _gemini_settings(config: dict[str, Any] | None = None, provider_id: str = "gemini") -> dict[str, Any]:
@@ -753,10 +814,17 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
         provider_settings = config.get("providers", {}).get(provider_id, {}) or {}
         profile = provider_settings.get("codex", {}) or codex_profile
         config_path_for_provider = _codex_config_path(config, provider_id)
+        config_health = codex_config_health(config, provider_id)
         applied = (
             profile.get("ask_for_approval", "never") == "never"
             and profile.get("sandbox_mode", "workspace-write") == "workspace-write"
         )
+        notes = [
+            "Verified CLI flags from the locally installed Codex CLI help output.",
+            "No verified persistent approval config keys were found in local extension metadata, so auto-approve is applied per orchestrated run rather than globally.",
+        ]
+        if not config_health.get("valid", True):
+            notes.insert(0, str(config_health.get("error") or "Codex config is invalid."))
         return {
             "installed": codex_installed,
             "host_layer": "CLI + VS Code extension" if openai_path and codex_binary else ("CLI" if codex_binary else "VS Code extension"),
@@ -775,7 +843,10 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
             "supported_models": [],
             "selected_model": None,
             "applied": applied,
-            "verified": "partial" if codex_installed else "unavailable",
+            "config_valid": bool(config_health.get("valid", True)),
+            "config_error": config_health.get("error"),
+            "config_checks": config_health.get("checks") or {},
+            "verified": "blocked" if not config_health.get("valid", True) else ("partial" if codex_installed else "unavailable"),
             "version": openai_version,
             "paths": {
                 "extension": str(openai_path) if openai_path else None,
@@ -789,10 +860,7 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
                 "dangerously_bypass": profile.get("dangerously_bypass", False),
                 "codex.codex_home": profile.get("codex_home"),
             },
-            "notes": [
-                "Verified CLI flags from the locally installed Codex CLI help output.",
-                "No verified persistent approval config keys were found in local extension metadata, so auto-approve is applied per orchestrated run rather than globally.",
-            ],
+            "notes": notes,
         }
 
     report = {

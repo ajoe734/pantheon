@@ -66,7 +66,11 @@ from dispatch_policy import (
     ready_dispatch_settings,
 )
 from github_bus import sync_github_bus
-from provider_permissions import provider_capabilities as build_provider_capabilities, write_provider_capabilities
+from provider_permissions import (
+    codex_config_health,
+    provider_capabilities as build_provider_capabilities,
+    write_provider_capabilities,
+)
 from rebase_helper import continue_or_skip_empty
 from runtime_state import load_approval_state, load_event_queue, load_runtime_state, prune_worker_records, queue_event_record, save_runtime_state
 from runtime_state import enqueue_event
@@ -115,6 +119,7 @@ WORKER_FAILURE_PATTERNS = (
     ),
     re.compile(r"^status:\s*(401|429)\b", re.IGNORECASE),
     re.compile(r"^(?:you(?:'ve| have)\s+)?hit your(?:\s+\w+)?\s+limit\b", re.IGNORECASE),
+    re.compile(r"^Error loading config\.toml\b", re.IGNORECASE),
     re.compile(r"^An unexpected critical error occurred", re.IGNORECASE),
     re.compile(r"^(?:Error|error|fatal):", re.IGNORECASE),
 )
@@ -773,17 +778,31 @@ def resolve_agent_model_preference(config: dict[str, Any], agent: dict[str, Any]
     return None
 
 
-def provider_config_for(config: dict[str, Any], provider: str | None) -> dict[str, Any]:
+def provider_config_entry_for(config: dict[str, Any], provider: str | None) -> tuple[str, dict[str, Any]]:
     providers = config.get("providers", {}) or {}
     raw = str(provider or "").strip()
     if not raw:
-        return {}
+        return "", {}
     normalized = normalize_agent_id(raw)
     candidates = [raw, normalized, raw.replace("_", "-"), raw.replace("-", "_")]
     for candidate in candidates:
         if candidate in providers and isinstance(providers[candidate], dict):
-            return providers[candidate]
-    return {}
+            return candidate, providers[candidate]
+    return normalized, {}
+
+
+def provider_config_for(config: dict[str, Any], provider: str | None) -> dict[str, Any]:
+    return provider_config_entry_for(config, provider)[1]
+
+
+def provider_runtime_config_block_reason(config: dict[str, Any], provider: str | None) -> str | None:
+    provider_key, provider_cfg = provider_config_entry_for(config, provider)
+    if str(provider_cfg.get("delivery_mode") or "").strip().lower() != "codex":
+        return None
+    health = codex_config_health(config, provider_key or str(provider or "codex"))
+    if health.get("valid", True):
+        return None
+    return str(health.get("error") or f"{provider_key or provider} provider config is invalid.")
 
 
 def provider_dispatch_group_id(config: dict[str, Any], provider: str | None) -> str:
@@ -4033,9 +4052,18 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         "an unexpected critical error occurred",
         "[object object]",
     }
+    provider_config_markers = {
+        "error loading config.toml",
+        "config.toml cannot be parsed",
+        "unsupported service_tier",
+        "unknown variant",
+        "service_tier",
+    }
 
     if is_github_cli_auth_failure(reason):
         return {"kind": "tool_auth", "transient": False, "label": "tool auth"}
+    if "config.toml" in normalized and any(marker in normalized for marker in provider_config_markers):
+        return {"kind": "provider_config", "transient": False, "label": "provider config"}
     if any(marker in normalized for marker in auth_markers):
         return {"kind": "auth", "transient": False, "label": "auth"}
     if any(marker in normalized for marker in terminal_quota_markers):
@@ -4354,6 +4382,7 @@ def provider_guardrail_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("pause_on_auth_failure", True)
     settings.setdefault("capacity_pause_seconds", 900)
     settings.setdefault("auth_pause_seconds", int(settings.get("capacity_pause_seconds", 900)))
+    settings.setdefault("provider_config_pause_seconds", int(settings.get("auth_pause_seconds", 900)))
     settings.setdefault("quota_terminal_pause_seconds", int(settings.get("capacity_pause_seconds", 900)))
     settings.setdefault("generic_exit_reassign_after", int(worker_reassignment_settings(config).get("after_attempts", 2)))
     return settings
@@ -4427,11 +4456,16 @@ def is_auth_failure_kind(kind: str | None) -> bool:
     return str(kind or "").strip().lower() == "auth"
 
 
+def is_provider_config_failure_kind(kind: str | None) -> bool:
+    return str(kind or "").strip().lower() == "provider_config"
+
+
 def should_pause_dispatch_for_failure_kind(kind: str | None) -> bool:
     return (
         is_terminal_quota_failure_kind(kind)
         or is_retryable_capacity_failure_kind(kind)
         or is_auth_failure_kind(kind)
+        or is_provider_config_failure_kind(kind)
     )
 
 
@@ -4454,10 +4488,14 @@ def mark_provider_dispatch_paused(
     pause_provider_id = provider_dispatch_group_id(config, provider) or provider_id
     now = datetime.now(timezone.utc)
     effective_pause_kind = str(pause_kind or failure_kind or "").strip().lower()
-    if effective_pause_kind == "auth":
+    if effective_pause_kind in {"auth", "provider_config"}:
         if not settings.get("pause_on_auth_failure", True):
             return False
-        pause_seconds_key = "auth_pause_seconds"
+        pause_seconds_key = (
+            "provider_config_pause_seconds"
+            if effective_pause_kind == "provider_config"
+            else "auth_pause_seconds"
+        )
     else:
         if not settings.get("pause_on_capacity_failure", True):
             return False
@@ -4835,15 +4873,22 @@ def agent_auto_dispatch_block_reason(
                 f"quota group {quota_group} already has {active_count}/{quota_limit} "
                 "active worker(s)"
             )
+    agent = (config.get("agents", {}) or {}).get(normalized_agent)
+    provider_key = str((agent or {}).get("provider") or normalized_agent)
+    config_block_reason = provider_runtime_config_block_reason(config, provider_key)
+    if config_block_reason:
+        return config_block_reason
     if not provider_report:
         return None
 
-    agent = (config.get("agents", {}) or {}).get(normalized_agent)
     provider_id = normalize_agent_id(
-        str((agent or {}).get("provider") or normalized_agent)
+        provider_key
     )
     agent_capability = ((provider_report.get("agent_adapters") or {}).get(normalized_agent) or {})
-    provider_capability = ((provider_report.get("providers") or {}).get(provider_id) or {})
+    provider_capability = (
+        ((provider_report.get("providers") or {}).get(provider_key) or {})
+        or ((provider_report.get("providers") or {}).get(provider_id) or {})
+    )
 
     if agent_capability:
         if not agent_capability.get("supported", True):
@@ -4858,6 +4903,8 @@ def agent_auto_dispatch_block_reason(
             return f"{provider_id} local CLI worker is not ready"
         if provider_capability.get("supports_auto_approve") is False:
             return f"{provider_id} does not currently support auto-approved dispatch"
+        if provider_capability.get("config_valid") is False:
+            return str(provider_capability.get("config_error") or f"{provider_id} provider config is invalid")
         if provider_capability.get("auth_ready") is False:
             return f"{provider_id} authentication is not ready"
 

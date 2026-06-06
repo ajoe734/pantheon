@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -11,6 +12,103 @@ from provider_permissions import ROOT, _verified_claude_hooks
 
 
 class ProviderPermissionsTest(unittest.TestCase):
+    def test_codex_config_health_rejects_invalid_service_tier(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            codex_home = Path(tmpdir)
+            (codex_home / "config.toml").write_text('service_tier = "priority"\n', encoding="utf-8")
+            config = {
+                "providers": {
+                    "codex": {
+                        "delivery_mode": "codex",
+                        "codex": {"codex_home": str(codex_home)},
+                    }
+                }
+            }
+
+            health = provider_permissions.codex_config_health(config, "codex")
+
+        self.assertFalse(health["valid"])
+        self.assertIn("unsupported service_tier", health["error"])
+        self.assertEqual(health["checks"]["service_tier"], "priority")
+
+    def test_provider_capabilities_marks_invalid_codex_config_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            codex_home = Path(tmpdir)
+            (codex_home / "config.toml").write_text('service_tier = "priority"\n', encoding="utf-8")
+            config = {
+                "paths": {
+                    "status_file": ".orchestrator/ai-status.json",
+                    "activity_log": "ai-activity-log.jsonl",
+                    "current_work": "current-work.md",
+                    "dashboard": "dashboard-bundle.json",
+                    "claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
+                },
+                "agents": {},
+                "providers": {
+                    "claude": {},
+                    "gemini": {},
+                    "codex": {
+                        "delivery_mode": "codex",
+                        "codex": {"codex_home": str(codex_home)},
+                    },
+                    "copilot": {},
+                },
+            }
+
+            with (
+                mock.patch.object(provider_permissions, "_code_cli_info", return_value={}),
+                mock.patch.object(provider_permissions, "_workspace_settings", return_value={}),
+                mock.patch.object(provider_permissions, "_find_extension", return_value=(None, None)),
+                mock.patch.object(provider_permissions, "_claude_local_settings", return_value={"permissions": {}}),
+                mock.patch.object(provider_permissions, "_gemini_settings", return_value={}),
+                mock.patch.object(provider_permissions, "_gemini_auth_ready", return_value=False),
+                mock.patch.object(provider_permissions, "_gemini_selected_auth_type", return_value=None),
+                mock.patch.object(provider_permissions, "_custom_agents_info", return_value={}),
+                mock.patch.object(provider_permissions, "_relevant_extensions", return_value=[]),
+                mock.patch.object(
+                    provider_permissions,
+                    "desired_workspace_settings",
+                    return_value={
+                        "claudeCode.initialPermissionMode": "acceptEdits",
+                        "claudeCode.allowDangerouslySkipPermissions": False,
+                        "geminicodeassist.agentYoloMode": False,
+                        "github.copilot.chat.backgroundAgent.enabled": False,
+                        "github.copilot.chat.cloudAgent.enabled": False,
+                        "github.copilot.chat.claudeAgent.enabled": False,
+                    },
+                ),
+                mock.patch.object(
+                    provider_permissions,
+                    "desired_claude_local_settings",
+                    return_value={"permissions": {"defaultMode": "acceptEdits"}},
+                ),
+                mock.patch.object(
+                    provider_permissions,
+                    "desired_gemini_settings",
+                    return_value={
+                        "general": {"defaultApprovalMode": "auto_edit"},
+                        "security": {
+                            "enablePermanentToolApproval": True,
+                            "autoAddToPolicyByDefault": True,
+                            "disableYoloMode": False,
+                        },
+                    },
+                ),
+                mock.patch.object(
+                    provider_permissions,
+                    "command_exists",
+                    side_effect=lambda cmd: "/usr/bin/codex" if cmd == "codex" else None,
+                ),
+                mock.patch.object(provider_permissions, "claude_auth_ready", return_value=False),
+            ):
+                report = provider_permissions.provider_capabilities(config)
+
+        codex_report = report["providers"]["codex"]
+        self.assertFalse(codex_report["config_valid"])
+        self.assertEqual(codex_report["verified"], "blocked")
+        self.assertIn("unsupported service_tier", codex_report["config_error"])
+        self.assertEqual(codex_report["config_checks"]["service_tier"], "priority")
+
     def test_verified_claude_hooks_use_absolute_broker_path(self) -> None:
         expected = str(Path(ROOT) / ".orchestrator" / "permission_broker.py")
         hooks = _verified_claude_hooks()
