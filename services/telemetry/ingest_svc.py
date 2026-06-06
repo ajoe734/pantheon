@@ -71,6 +71,26 @@ except ImportError:
 
 log = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Canonical Postgres value normalization
+# ---------------------------------------------------------------------------
+
+def _coerce_postgres_created_at(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("telemetry event missing created_at")
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError(f"invalid telemetry created_at: {value!r}") from exc
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
 # ---------------------------------------------------------------------------
 # Replay policy constants
 # ---------------------------------------------------------------------------
@@ -158,7 +178,7 @@ def build_postgres_write_fn(
                     (
                         ev.get("event_id"),
                         ev.get("event_type"),
-                        ev.get("created_at"),
+                        _coerce_postgres_created_at(ev.get("created_at")),
                         _json.dumps(ev),
                     )
                     for ev in batch
