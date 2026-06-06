@@ -43,8 +43,8 @@ h1, h2, h3, p { margin: 0; }
 }
 
 .hero { order: 0; }
-.supervisor-cockpit-panel { order: 1; }
-.overview-strip { order: 2; }
+.overview-strip { order: 1; }
+.supervisor-cockpit-panel { order: 2; }
 .alert-section { order: 3; }
 .shell > :not(.hero):not(.supervisor-cockpit-panel):not(.overview-strip):not(.alert-section) { order: 4; }
 
