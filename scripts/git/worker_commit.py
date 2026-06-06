@@ -85,6 +85,31 @@ def _build_env(index_file: str | None) -> dict[str, str]:
     return env
 
 
+def _default_index_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.pop("GIT_INDEX_FILE", None)
+    return env
+
+
+def _should_refresh_default_index(index_file: str | None) -> bool:
+    if not index_file:
+        return False
+    try:
+        return STATUS_ROOT.resolve() != ROOT.resolve()
+    except OSError:
+        return False
+
+
+def _refresh_default_index_after_private_commit(index_file: str | None) -> str | None:
+    """Sync an isolated worker worktree's normal index after a private-index commit."""
+    if not _should_refresh_default_index(index_file):
+        return None
+    proc = _git("read-tree", "HEAD", env=_default_index_env(), check=False)
+    if proc.returncode != 0:
+        return (proc.stderr or proc.stdout or "git read-tree HEAD failed").strip()
+    return None
+
+
 def _normalize_paths(paths: list[str]) -> list[str]:
     normalized: list[str] = []
     for raw in paths:
@@ -265,6 +290,9 @@ def main() -> int:
         return commit_proc.returncode
     sys.stdout.write(commit_proc.stdout)
     sys.stderr.write(commit_proc.stderr)
+    refresh_error = _refresh_default_index_after_private_commit(args.index_file)
+    if refresh_error:
+        print(f"warning: could not refresh default index after private-index commit: {refresh_error}", file=sys.stderr)
 
     # Step 5: record audit entry.
     head_sha = _git("rev-parse", "HEAD", env=env).stdout.strip()
@@ -278,6 +306,8 @@ def main() -> int:
         "scope": scope,
         "staged": staged,
         "index_file": args.index_file or None,
+        "default_index_refreshed": bool(args.index_file and not refresh_error and _should_refresh_default_index(args.index_file)),
+        "default_index_refresh_error": refresh_error,
     }
     _append_audit(audit)
     return 0

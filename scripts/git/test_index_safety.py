@@ -316,6 +316,30 @@ class WorkerCommitWrapperTests(unittest.TestCase):
         finally:
             import shutil; shutil.rmtree(root)
 
+    def test_private_index_refreshes_default_index_in_isolated_worker_worktree(self) -> None:
+        root = self._setup_repo()
+        status_root = Path(tempfile.mkdtemp())
+        try:
+            (root / "from_worker.py").write_text("worker\n")
+            msg = root / "msg.txt"
+            msg.write_text("BAR-005: isolated worker\n\nLLM-Agent: B\nTask-ID: BAR-005\nReviewer: A\n")
+            proc = self._wrapper(
+                root,
+                "--task-id", "BAR-005",
+                "--message-file", str(msg),
+                "--scope", "from_worker.py",
+                "--index-file", str(root / ".git" / "index-worker"),
+                env_extra={"PANTHEON_STATUS_ROOT": str(status_root)},
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stderr + proc.stdout)
+            tracked_status = _git(root, "status", "--porcelain", "--untracked-files=no").stdout.strip()
+            self.assertEqual(tracked_status, "")
+            audit = json.loads((status_root / "ai-activity-log.jsonl").read_text().splitlines()[-1])
+            self.assertTrue(audit["default_index_refreshed"])
+            self.assertIsNone(audit["default_index_refresh_error"])
+        finally:
+            import shutil; shutil.rmtree(root); shutil.rmtree(status_root)
+
     def test_directory_scope_does_not_force_add_ignored_children(self) -> None:
         root = self._setup_repo()
         try:
