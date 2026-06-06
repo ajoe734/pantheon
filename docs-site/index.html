@@ -32,7 +32,53 @@
         <div id="alert-strip" class="alert-grid"></div>
       </section>
 
-      <section id="bff-consol-section" class="panel bff-consol-panel" hidden>
+      <section class="panel supervisor-cockpit-panel">
+        <div class="panel-head">
+          <div>
+            <p class="panel-kicker">Supervisor</p>
+            <h2>Execution Cockpit</h2>
+          </div>
+          <div id="supervisor-cockpit-summary" class="inline-summary panel-summary"></div>
+        </div>
+        <div class="panel-body supervisor-cockpit-grid">
+          <section class="subpanel supervisor-next-panel">
+            <div class="subpanel-head">
+              <h3>Operator Next Action</h3>
+            </div>
+            <div id="operator-next-action" class="operator-next-action"></div>
+          </section>
+
+          <section class="subpanel supervisor-runtime-panel">
+            <div class="subpanel-head">
+              <h3>Runtime Health</h3>
+            </div>
+            <div id="runtime-health-strip" class="runtime-health-strip"></div>
+          </section>
+
+          <section class="subpanel supervisor-span-2">
+            <div class="subpanel-head">
+              <h3>Active Work Matrix</h3>
+            </div>
+            <div id="active-work-matrix" class="active-work-matrix"></div>
+          </section>
+
+          <section class="subpanel">
+            <div class="subpanel-head">
+              <h3>Dependency Runway</h3>
+            </div>
+            <div id="dependency-runway" class="dependency-runway"></div>
+          </section>
+
+          <section class="subpanel">
+            <div class="subpanel-head">
+              <h3>Autoworker Health</h3>
+            </div>
+            <div id="worker-health-digest" class="worker-health-digest"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="bff-consol-section" class="panel bff-consol-panel dashboard-secondary-panel" hidden>
         <div class="panel-head">
           <div>
             <p class="panel-kicker">Track D</p>
