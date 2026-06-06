@@ -422,6 +422,64 @@ class TestPaperFleetReconcilerRestartBackoff(unittest.TestCase):
         self.assertEqual(len(wrapper.spawned), 2, "second restart must wait for backoff to elapse")
 
 
+class TestPaperFleetReconcilerSignalQueueIsolation(unittest.TestCase):
+    """Each spawned worker must receive a binding-scoped PANTHEON_SIGNAL_QUEUE_KEY."""
+
+    def _make_recon(self) -> "PaperFleetReconciler":
+        from paper_fleet_reconciler import PaperFleetReconciler
+        return PaperFleetReconciler(
+            runtime_manager_url="http://rm:8081",
+            runtime_manager_token="tok",
+            poll_interval_seconds=999,
+        )
+
+    def test_env_contains_binding_scoped_queue_key(self) -> None:
+        recon = self._make_recon()
+        binding = _make_binding("b-iso-001")
+        env = recon._build_worker_env(binding)
+        self.assertIn("PANTHEON_SIGNAL_QUEUE_KEY", env)
+        self.assertEqual(env["PANTHEON_SIGNAL_QUEUE_KEY"], "pantheon:signals:pending:b-iso-001")
+
+    def test_two_bindings_get_different_queue_keys(self) -> None:
+        recon = self._make_recon()
+        env_a = recon._build_worker_env(_make_binding("b-alpha"))
+        env_b = recon._build_worker_env(_make_binding("b-beta"))
+        self.assertNotEqual(
+            env_a["PANTHEON_SIGNAL_QUEUE_KEY"],
+            env_b["PANTHEON_SIGNAL_QUEUE_KEY"],
+        )
+
+    def test_queue_key_embeds_binding_id(self) -> None:
+        recon = self._make_recon()
+        env = recon._build_worker_env(_make_binding("binding-xyz-99"))
+        self.assertIn("binding-xyz-99", env["PANTHEON_SIGNAL_QUEUE_KEY"])
+
+    def test_spawned_workers_receive_distinct_queue_keys(self) -> None:
+        """Integration: reconcile with two bindings, confirm each spawn got a unique key."""
+        from paper_fleet_reconciler import PaperFleetReconciler
+
+        captured_envs: dict[str, str] = {}
+
+        class _R(PaperFleetReconciler):
+            def _fetch_active_paper_bindings(self):
+                return [
+                    _make_binding("b-iso-a", runtime_id="rt-a"),
+                    _make_binding("b-iso-b", runtime_id="rt-b"),
+                ]
+
+            def _spawn(self, binding_id, port, env):
+                captured_envs[binding_id] = env.get("PANTHEON_SIGNAL_QUEUE_KEY", "")
+                return _FakeProcess()
+
+        recon = _R(worker_base_port=9950, poll_interval_seconds=999)
+        recon.reconcile_once()
+
+        self.assertEqual(len(captured_envs), 2)
+        self.assertEqual(captured_envs["b-iso-a"], "pantheon:signals:pending:b-iso-a")
+        self.assertEqual(captured_envs["b-iso-b"], "pantheon:signals:pending:b-iso-b")
+        self.assertNotEqual(captured_envs["b-iso-a"], captured_envs["b-iso-b"])
+
+
 if __name__ == "__main__":
     import sys
     sys.path.insert(0, str(Path(__file__).parent))

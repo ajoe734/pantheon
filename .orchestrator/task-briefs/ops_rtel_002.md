@@ -10,8 +10,8 @@ Do not read `current-work.md` by default for implementation context.
 - Owner: Claude
 - Reviewer: Codex
 - Phase: Runtime Telemetry Hardening
-- Last update: 2026-06-06T10:08:28Z
-- Next: All three reviewer blockers fixed; PR #1056 open with auto-merge enabled, waiting for CI (Smoke acceptance in progress)
+- Last update: 2026-06-06T11:45:36Z
+- Next: Review blocker: active acceptance still requires no worker consumes shared Redis signals before isolation. paper_fleet_reconciler spawns paper_runtime without a binding-scoped PANTHEON_SIGNAL_QUEUE_KEY, so workers default to pantheon:signals:pending and RedisPendingSignalStore lpop can remove signals for another binding. Add binding-scoped queue/consumer isolation or disable Redis consumption until isolation, with tests.
 
 ## Summary
 新增 paper runtime fleet reconciler，從 active paper runtime bindings 自動維持一個 worker per binding，取代手動 docker run。
@@ -27,12 +27,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/deployment/runtime-telemetry-hardening-2026-06-06.md
 
 ## Recent Task Activity
-- 2026-06-06T11:22:39Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for OPS-RTEL-002: reused worktree /tmp/pantheon-worker-worktrees/pantheon/ops-rtel-002 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
-- 2026-06-06T11:27:53Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 315.4s without a live worker or queue record.
-- 2026-06-06T11:27:53Z · Orchestrator · wake_queued · Wake-up queued for supervisor: owned_in_progress_dispatch
-- 2026-06-06T11:27:54Z · Orchestrator · worker_worktree_refreshed · -
-- 2026-06-06T11:27:54Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for OPS-RTEL-002: reused worktree /tmp/pantheon-worker-worktrees/pantheon/ops-rtel-002 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
-- 2026-06-06T11:33:08Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 315.8s without a live worker or queue record.
+- 2026-06-06T11:41:20Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-06T11:41:20Z · Orchestrator · worker_worktree_reused · -
+- 2026-06-06T11:41:20Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
+- 2026-06-06T11:44:39Z · Codex · review_approved · DRY-RUN-CHECK
+- 2026-06-06T11:45:36Z · Codex · reopen · Review blocker: active acceptance still requires no worker consumes shared Redis signals before isolation. paper_fleet_reconciler spawns paper_runtime without a binding-scoped PANTHEON_SIGNAL_QUEUE_KEY, so workers default to pantheon:signals:pending and RedisPendingSignalStore lpop can remove signals for another binding. Add binding-scoped queue/consumer isolation or disable Redis consumption until isolation, with tests.
+- 2026-06-06T11:48:46Z · Orchestrator · worker_failed · Worker exited before the task reached a terminal status.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
