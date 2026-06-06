@@ -358,19 +358,19 @@
       "wake_template": ".orchestrator/templates/wakeup.txt",
       "file_inbox_path": ".llm-inbox/claude2.md"
     },
-    "gemini": {
-      "display_name": "Gemini",
-      "provider": "gemini",
-      "adapter": "gemini",
+    "antigravity": {
+      "display_name": "Antigravity",
+      "provider": "antigravity",
+      "adapter": "antigravity",
       "wake_template": ".orchestrator/templates/wakeup.txt",
-      "file_inbox_path": ".llm-inbox/gemini.md"
+      "file_inbox_path": ".llm-inbox/antigravity.md"
     },
-    "gemini2": {
-      "display_name": "Gemini2",
-      "provider": "gemini2",
-      "adapter": "gemini",
+    "antigravity2": {
+      "display_name": "Antigravity2",
+      "provider": "antigravity2",
+      "adapter": "antigravity",
       "wake_template": ".orchestrator/templates/wakeup.txt",
-      "file_inbox_path": ".llm-inbox/gemini2.md"
+      "file_inbox_path": ".llm-inbox/antigravity2.md"
     },
     "codex": {
       "display_name": "Codex",
@@ -615,6 +615,48 @@
         "auto_add_to_policy_by_default": true,
         "disable_yolo_mode": false,
         "disable_always_allow": false
+      },
+      "retry": {
+        "max_attempts": 5,
+        "fallback_mode": null
+      }
+    },
+    "antigravity": {
+      "delivery_mode": "antigravity",
+      "allow_inbox_fallback": false,
+      "file_inbox": {
+        "path": ".llm-inbox/antigravity.md",
+        "open_in_vscode": false
+      },
+      "antigravity": {
+        "cli": ".orchestrator/bin/agy",
+        "include_directories": true,
+        "print_timeout": "15m"
+      },
+      "approval": {
+        "dangerously_skip_permissions": true
+      },
+      "retry": {
+        "max_attempts": 5,
+        "fallback_mode": null
+      }
+    },
+    "antigravity2": {
+      "delivery_mode": "antigravity",
+      "allow_inbox_fallback": false,
+      "file_inbox": {
+        "path": ".llm-inbox/antigravity2.md",
+        "open_in_vscode": false
+      },
+      "antigravity": {
+        "cli": ".orchestrator/bin/agy",
+        "config_home": "/home/lupin/.gemini-agy2",
+        "home": "/home/lupin/.gemini-agy2",
+        "include_directories": true,
+        "print_timeout": "15m"
+      },
+      "approval": {
+        "dangerously_skip_permissions": true
       },
       "retry": {
         "max_attempts": 5,
