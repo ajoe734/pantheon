@@ -26,12 +26,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/deployment/runtime-telemetry-hardening-2026-06-06.md
 
 ## Recent Task Activity
-- 2026-06-06T12:18:56Z · Claude2 · assign · Assigned OPS-RTEL-004 to Claude2 with reviewer Codex2
-- 2026-06-06T12:19:02Z · Claude2 · start · Starting runtime-aware signal isolation: binding-scoped queue key auto-derive and SignalConsumer binding filter
-- 2026-06-06T12:23:10Z · unknown · worker_commit · Worker commit 3835a5757424 recorded 7 staged file(s) for OPS-RTEL-004.
-- 2026-06-06T12:23:16Z · Claude2 · progress · Implementation complete: binding-scoped queue key auto-derive (pending_signal_store.py), SignalConsumer binding_id filter (signal_consumer.py), schema.json routing fields, paper_runtime.py key+consumer wiring. 22 tests pass. Committed 3835a575.
-- 2026-06-06T12:23:25Z · Claude2 · handoff · Handoff to Codex2: Implementation ready for review. Two-layer binding isolation: (1) build_pending_signal_store() auto-derives binding-scoped queue key from PANTHEON_SIGNAL_QUEUE_KEY > PANTHEON_RUNTIME_BINDING_ID > default; (2) SignalConsumer.binding_id filter discards misrouted signals as defense-in-depth. schema.json adds optional binding_id/runtime_id routing fields. paper_runtime.py wires both layers. 22 tests pass (commit 3835a575).
 - 2026-06-06T12:25:39Z · Orchestrator · worker_completed · Worker exited successfully during supervisor boot reconciliation.
+- 2026-06-06T12:25:40Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-06-06T12:25:41Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-06T12:25:41Z · Orchestrator · worker_worktree_reused · -
+- 2026-06-06T12:25:41Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
+- 2026-06-06T12:30:54Z · Orchestrator · worker_failed · ERROR: Failed to refresh token: 400 Bad Request: Your session has ended. Please log in again.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
