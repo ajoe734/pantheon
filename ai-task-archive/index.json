@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-06-06T13:58:14Z",
+  "updated_at": "2026-06-06T14:27:55Z",
   "counts": {
-    "total": 1413,
-    "completed": 1390,
+    "total": 1414,
+    "completed": 1391,
     "superseded": 23
   },
   "recent_terminal_ids": [
+    "OPS-RTEL-005",
     "OPS-RTEL-003",
     "OPS-RTEL-004",
     "OPS-RTEL-002",
@@ -25,7 +26,6 @@
     "ASST-INTEG-006",
     "ASST-INTEG-003",
     "ASST-INTEG-005",
-    "ASST-INTEG-002",
-    "ASST-INTEG-001"
+    "ASST-INTEG-002"
   ]
 }
