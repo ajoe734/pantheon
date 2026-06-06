@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "task_id": "OPS-RTEL-001",
+  "archived_at": "2026-06-06T06:42:06Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OPS-RTEL-001",
+    "title": "Telemetry durability bootstrap",
+    "summary_zh": "讓 telemetry schema bootstrap readiness writer metrics 與 DLQ replay 成為部署流程的一部分，不再靠手動補表或人工重送。",
+    "phase": "Runtime Telemetry Hardening",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "scripts/db_migrate.sh",
+      "scripts/bootstrap.sh",
+      "services/telemetry/main.py",
+      "services/telemetry/ingest_svc.py",
+      "services/telemetry/test_ingest_shock_absorption.py",
+      "services/telemetry/test_main_routes.py",
+      "docs/deployment/runtime-telemetry-hardening-2026-06-06.md"
+    ],
+    "acceptance": [
+      "fresh Postgres creates telemetry_events before telemetry ready",
+      "readyz fails when canonical table is missing",
+      "heartbeat ingest persists with zero writer failures",
+      "writer-failure DLQ replay is idempotent"
+    ],
+    "next": "Merged runtime telemetry hardening via PR #1051 (eef5c9a9) and archived review approval via PR #1052 (56fb1877). Validation: bash -n scripts/bootstrap.sh; bash -n scripts/db_migrate.sh; /tmp/ops-rtel-001-venv/bin/python -m unittest services.telemetry.test_ingest_shock_absorption services.telemetry.test_main_routes.",
+    "last_update": "2026-06-06T06:42:06Z",
+    "source_ref": {
+      "archive": "docs/deployment/runtime-telemetry-hardening-2026-06-06.md",
+      "execution_plan": "docs/deployment/runtime-telemetry-execution-tasks-2026-06-06.md",
+      "repair_pr": 1047,
+      "section": "Workstream A"
+    },
+    "task_class": "execution",
+    "auto_created_by": "codex-runtime-telemetry-hardening-20260606",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：全部驗收標準達成（telemetry_events 建表於服務啟動前、readyz writer 狀態、心跳寫入、DLQ replay 冪等）。部署流程完整，測試覆蓋充分。",
+      "非阻斷備註：bootstrap.sh 與 db_migrate.sh 均有建表步驟（均為 IF NOT EXISTS，冗餘但安全）。readyz 依賴 writer 首次寫入失敗反映資料表缺失，在正常 bootstrap 流程下可接受。"
+    ],
+    "review_file": "docs/deployment/ops-rtel-001-review-2026-06-06.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-06T06:42:06Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-rtel-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-RTEL-001",
+      "git_clean_required": false,
+      "commit": "b4f0917d39bbce458d5fb47f3d29ca094b5b88ad",
+      "commit_subject": "OPS-RTEL-001: archive review approval",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "OPS-RTEL-001 reviewer approval artifact.",
+        "Not changing": "telemetry runtime implementation, bootstrap flow, or canonical architecture policy.",
+        "Composes with": "merged PR #1051 / eef5c9a9 runtime telemetry hardening and task closeout done state.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "OPS-RTEL-001",
+        "Reviewer": "Claude",
+        "Verified": "bash -n scripts/bootstrap.sh; bash -n scripts/db_migrate.sh; /tmp/ops-rtel-001-venv/bin/python -m unittest services.telemetry.test_ingest_shock_absorption services.telemetry.test_main_routes"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OPS-RTEL-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "56fb1877c52c82d7ef78d97a6165e5b99c7336fb",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OPS-RTEL-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented and merged via PR #1051 (task commit 2a7b87cbf64c9084b447bb4c565a845205217a35, merge eef5c9a9ae22d89886202c5634b2973bd084d5e2). Checks passed: Commit trailers, Runtime mirror guard, Smoke acceptance, Forward to orchestrator. Local validation passed: bash -n scripts/bootstrap.sh; bash -n scripts/db_migrate.sh; /tmp/ops-rtel-001-venv/bin/python -m unittest services.telemetry.test_ingest_shock_absorption services.telemetry.test_main_routes. Please review for approval before owner done closeout.",
+      "status": "done",
+      "created_at": "2026-06-06T06:32:12Z",
+      "resolved_at": "2026-06-06T06:37:51Z"
+    },
+    {
+      "task_id": "OPS-RTEL-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved — all acceptance criteria pass. Telemetry schema bootstrap, readyz writer gate, heartbeat ingest, and DLQ replay idempotency are all correctly implemented. Review artifact at docs/deployment/ops-rtel-001-review-2026-06-06.md. Returned to Codex for owner finalization.",
+      "status": "done",
+      "created_at": "2026-06-06T06:37:51Z",
+      "resolved_at": "2026-06-06T06:42:07Z"
+    }
+  ],
+  "blockers": []
+}
