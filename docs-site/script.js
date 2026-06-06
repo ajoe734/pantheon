@@ -44,9 +44,7 @@ import {
   renderSnapshot,
   renderStackList,
   renderSupervisorCockpit,
-  renderSystemStatus,
   renderTaskBoard,
-  renderTruthMismatches,
   renderWorkerHealthDigest,
   renderWorkload,
   renderDependencyRunway,
@@ -154,8 +152,6 @@ async function render({ syncFirst = false } = {}) {
     runRenderStep("planning_gate", renderFailures, () => renderPlanningGate(planningState, status));
     runRenderStep("planning_issues", renderFailures, () => renderPlanningIssues(planningState));
     runRenderStep("planning_proposals", renderFailures, () => renderPlanningProposals(planningState, status, dashboardBundle));
-    runRenderStep("system_status", renderFailures, () => renderSystemStatus(status, orchState, approvalQueue, agentStates, dashboardBundle));
-    runRenderStep("truth_mismatches", renderFailures, () => renderTruthMismatches(status, orchState, approvalQueue, dashboardBundle));
     runRenderStep("workload", renderFailures, () => renderWorkload(status, orchState));
     runRenderStep("delivery_layers", renderFailures, () => renderDeliveryLayers(status, planningState, dashboardBundle));
     runRenderStep("agent_lanes", renderFailures, () => renderAgentLanes(status, agentStates));
