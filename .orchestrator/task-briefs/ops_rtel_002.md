@@ -27,12 +27,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/deployment/runtime-telemetry-hardening-2026-06-06.md
 
 ## Recent Task Activity
-- 2026-06-06T10:56:27Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for OPS-RTEL-002: reused worktree /tmp/pantheon-worker-worktrees/pantheon/ops-rtel-002 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
-- 2026-06-06T11:01:40Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 314.8s without a live worker or queue record.
-- 2026-06-06T11:01:40Z · Orchestrator · wake_queued · Wake-up queued for supervisor: owned_in_progress_dispatch
-- 2026-06-06T11:01:41Z · Orchestrator · worker_worktree_refreshed · -
 - 2026-06-06T11:01:41Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for OPS-RTEL-002: reused worktree /tmp/pantheon-worker-worktrees/pantheon/ops-rtel-002 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
 - 2026-06-06T11:06:55Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 315.2s without a live worker or queue record.
+- 2026-06-06T11:06:55Z · Orchestrator · wake_queued · Wake-up queued for supervisor: owned_in_progress_dispatch
+- 2026-06-06T11:06:56Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-06T11:06:56Z · Orchestrator · dispatch_blocked_worktree_lease · Cannot lease isolated worker worktree for OPS-RTEL-002: reused worktree /tmp/pantheon-worker-worktrees/pantheon/ops-rtel-002 has dirty tracked or staged changes. Clean or remove that worktree before dispatch.
+- 2026-06-06T11:12:09Z · Orchestrator · queue_event_pruned · Pruned orphaned queue event after 314.7s without a live worker or queue record.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
