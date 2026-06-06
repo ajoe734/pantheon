@@ -6607,6 +6607,18 @@ class SingleSupervisorGuardTests(unittest.TestCase):
 
 
 class WorktreeDirtClassificationTests(unittest.TestCase):
+    def _init_git_repo(self, tmpdir: str) -> Path:
+        repo = Path(tmpdir) / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+        return repo
+
+    def _commit_all(self, repo: Path, message: str) -> None:
+        subprocess.run(["git", "add", "."], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", message], cwd=repo, check=True)
+
     def test_clean_status(self) -> None:
         self.assertEqual(supervisor._classify_worktree_dirt(""), ("clean", []))
         self.assertEqual(supervisor._classify_worktree_dirt("\n  \n"), ("clean", []))
@@ -6640,6 +6652,59 @@ class WorktreeDirtClassificationTests(unittest.TestCase):
         status = "R  old/file.py -> services/new/file.py\n"
         kind, _ = supervisor._classify_worktree_dirt(status)
         self.assertEqual(kind, "real")
+
+    def test_index_split_matching_head_is_restorable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = self._init_git_repo(tmpdir)
+            tracked = repo / "tracked.txt"
+            created = repo / "created.txt"
+
+            tracked.write_text("old\n", encoding="utf-8")
+            self._commit_all(repo, "initial")
+            tracked.write_text("new\n", encoding="utf-8")
+            created.write_text("created\n", encoding="utf-8")
+            self._commit_all(repo, "head content")
+
+            # Simulate the stale reused-worker split: index stages reverse dirt,
+            # while the worktree already contains the HEAD bytes.
+            tracked.write_text("old\n", encoding="utf-8")
+            subprocess.run(["git", "add", "tracked.txt"], cwd=repo, check=True)
+            tracked.write_text("new\n", encoding="utf-8")
+            subprocess.run(["git", "rm", "--cached", "-q", "created.txt"], cwd=repo, check=True)
+
+            paths = supervisor._staged_index_split_paths_matching_head(repo)
+            self.assertEqual(set(paths), {"tracked.txt", "created.txt"})
+            self.assertTrue(supervisor._restore_reused_index_split(repo, paths))
+
+            status = subprocess.run(
+                ["git", "status", "--porcelain", "--untracked-files=no"],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertEqual(status.stdout, "")
+
+    def test_index_split_helper_rejects_real_staged_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = self._init_git_repo(tmpdir)
+            tracked = repo / "tracked.txt"
+            tracked.write_text("base\n", encoding="utf-8")
+            self._commit_all(repo, "initial")
+
+            tracked.write_text("changed\n", encoding="utf-8")
+            subprocess.run(["git", "add", "tracked.txt"], cwd=repo, check=True)
+            self.assertEqual(supervisor._staged_index_split_paths_matching_head(repo), [])
+
+    def test_index_split_helper_rejects_staged_additions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = self._init_git_repo(tmpdir)
+            (repo / "tracked.txt").write_text("base\n", encoding="utf-8")
+            self._commit_all(repo, "initial")
+
+            (repo / "new.txt").write_text("new\n", encoding="utf-8")
+            subprocess.run(["git", "add", "new.txt"], cwd=repo, check=True)
+            self.assertEqual(supervisor._staged_index_split_paths_matching_head(repo), [])
 
 
 class WorkerReassignmentTests(unittest.TestCase):
