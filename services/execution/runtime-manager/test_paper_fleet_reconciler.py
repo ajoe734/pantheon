@@ -1,9 +1,12 @@
 """Tests for PaperFleetReconciler."""
 from __future__ import annotations
 
+import json
 import subprocess
+import tempfile
 import threading
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock, patch
@@ -478,6 +481,153 @@ class TestPaperFleetReconcilerSignalQueueIsolation(unittest.TestCase):
         self.assertEqual(captured_envs["b-iso-a"], "pantheon:signals:pending:b-iso-a")
         self.assertEqual(captured_envs["b-iso-b"], "pantheon:signals:pending:b-iso-b")
         self.assertNotEqual(captured_envs["b-iso-a"], captured_envs["b-iso-b"])
+
+
+class TestPaperFleetReconcilerMonitoringSessions(unittest.TestCase):
+    def test_worker_start_opens_monitoring_session(self) -> None:
+        wrapper = _InstrumentedReconciler(
+            worker_base_port=9960,
+            poll_interval_seconds=999,
+            drain_timeout_seconds=1,
+        )
+        wrapper.set_bindings([_make_binding("b-mon-001", runtime_id="rt-mon-001")])
+
+        snap = wrapper.recon.reconcile_once()
+
+        self.assertEqual(snap["monitoring_session_count"], 1)
+        self.assertEqual(snap["active_monitoring_session_count"], 1)
+        session = snap["monitoring_sessions"][0]
+        worker = snap["workers"][0]
+        self.assertEqual(session["session_type"], "paper_runtime_monitoring")
+        self.assertEqual(session["binding_id"], "b-mon-001")
+        self.assertEqual(session["runtime_id"], "rt-mon-001")
+        self.assertIsNone(session["ended_at"])
+        self.assertTrue(session["active"])
+        self.assertEqual(worker["monitoring_session_id"], session["session_id"])
+
+    def test_stale_heartbeat_ends_session_and_restarts_worker(self) -> None:
+        from paper_fleet_reconciler import PaperFleetReconciler
+
+        spawned: List[Dict[str, Any]] = []
+
+        class _R(PaperFleetReconciler):
+            def _fetch_active_paper_bindings(self):
+                return [_make_binding("b-stale-001", runtime_id="rt-stale-001")]
+
+            def _fetch_runtime_summaries(self):
+                return {
+                    "rt-stale-001": {
+                        "runtime_id": "rt-stale-001",
+                        "runtime_binding_id": "b-stale-001",
+                        "last_heartbeat_at": "2000-01-01T00:00:00Z",
+                        "state": "active",
+                    }
+                }
+
+            def _spawn(self, binding_id, port, env):  # noqa: ANN001
+                proc = _FakeProcess(pid=700 + len(spawned))
+                spawned.append({"binding_id": binding_id, "proc": proc})
+                return proc
+
+        recon = _R(
+            worker_base_port=9970,
+            poll_interval_seconds=999,
+            restart_backoff_seconds=0,
+            monitoring_heartbeat_stale_after_seconds=1,
+            drain_timeout_seconds=1,
+        )
+
+        first = recon.reconcile_once()
+        self.assertEqual(first["active_monitoring_session_count"], 1)
+        self.assertEqual(len(spawned), 1)
+
+        second = recon.reconcile_once()
+        self.assertEqual(len(spawned), 2)
+        self.assertTrue(spawned[0]["proc"].terminated or spawned[0]["proc"].killed)
+        ended = [
+            session
+            for session in second["monitoring_sessions"]
+            if session.get("ended_reason") == "stale_heartbeat"
+        ]
+        active = [session for session in second["monitoring_sessions"] if session.get("active")]
+        self.assertEqual(len(ended), 1)
+        self.assertEqual(len(active), 1)
+        self.assertIsNotNone(ended[0]["ended_at"])
+        self.assertEqual(ended[0]["staleness"]["reason"], "stale_heartbeat")
+        self.assertNotEqual(ended[0]["session_id"], active[0]["session_id"])
+
+    def test_stale_persisted_zombie_session_is_closed_on_restart(self) -> None:
+        from paper_fleet_reconciler import PaperFleetReconciler
+
+        with tempfile.TemporaryDirectory() as td:
+            store_path = Path(td) / "paper_runtime_monitoring_sessions.json"
+            store_path.write_text(
+                json.dumps(
+                    {
+                        "monitoring_sessions": [
+                            {
+                                "session_id": "prmon-old",
+                                "id": "prmon-old",
+                                "session_type": "paper_runtime_monitoring",
+                                "binding_id": "b-zombie-001",
+                                "runtime_binding_id": "b-zombie-001",
+                                "runtime_id": "rt-zombie-001",
+                                "deployment_stage": "paper",
+                                "status": "running",
+                                "started_at": "2000-01-01T00:00:00Z",
+                                "ended_at": None,
+                                "last_heartbeat_at": "2000-01-01T00:00:00Z",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            spawned: List[Dict[str, Any]] = []
+
+            class _R(PaperFleetReconciler):
+                def _fetch_active_paper_bindings(self):
+                    return [_make_binding("b-zombie-001", runtime_id="rt-zombie-001")]
+
+                def _fetch_runtime_summaries(self):
+                    return {
+                        "rt-zombie-001": {
+                            "runtime_id": "rt-zombie-001",
+                            "runtime_binding_id": "b-zombie-001",
+                            "last_heartbeat_at": "2000-01-01T00:00:00Z",
+                            "state": "active",
+                        }
+                    }
+
+                def _spawn(self, binding_id, port, env):  # noqa: ANN001
+                    proc = _FakeProcess(pid=800 + len(spawned))
+                    spawned.append({"binding_id": binding_id, "proc": proc})
+                    return proc
+
+            recon = _R(
+                worker_base_port=9980,
+                poll_interval_seconds=999,
+                monitoring_session_store_path=str(store_path),
+                monitoring_heartbeat_stale_after_seconds=1,
+                drain_timeout_seconds=1,
+            )
+
+            snap = recon.reconcile_once()
+
+            old = next(session for session in snap["monitoring_sessions"] if session["session_id"] == "prmon-old")
+            active = [session for session in snap["monitoring_sessions"] if session.get("active")]
+            self.assertEqual(old["ended_reason"], "stale_heartbeat")
+            self.assertIsNotNone(old["ended_at"])
+            self.assertEqual(len(active), 1)
+            self.assertNotEqual(active[0]["session_id"], "prmon-old")
+            persisted = json.loads(store_path.read_text(encoding="utf-8"))
+            persisted_old = next(
+                session
+                for session in persisted["monitoring_sessions"]
+                if session["session_id"] == "prmon-old"
+            )
+            self.assertIsNotNone(persisted_old["ended_at"])
 
 
 if __name__ == "__main__":
