@@ -118,9 +118,10 @@ per active paper `RuntimeBinding`, replacing manual `docker run` for paper worke
 - `services/execution/runtime-manager/Dockerfile` — Python 3.11-slim image for
   the reconciler container; installs `redis` and `jsonschema` for spawned workers.
 - `services/execution/runtime-manager/requirements.txt` — container dependencies.
-- `services/execution/runtime-manager/test_paper_fleet_reconciler.py` — 18 unit
+- `services/execution/runtime-manager/test_paper_fleet_reconciler.py` — 22 unit
   tests covering start, stop, restart, port allocation, env builder, snapshot,
-  degraded-fetch safety, and restart backoff.
+  degraded-fetch safety, restart backoff, and binding-scoped signal queue
+  isolation (4 tests added in anchor eb95ea8e).
 - `docker-compose.yml` — adds `paper-fleet-reconciler` service under the
   `paper-fleet` profile. Activate with:
 
@@ -154,8 +155,18 @@ Each reconcile cycle:
 - `GET /api/fleet/state` — full reconciler snapshot including per-worker pid,
   port, restart count, and status.
 
+## Signal Queue Isolation
+
+Each spawned worker receives a binding-scoped Redis signal queue key via
+`PANTHEON_SIGNAL_QUEUE_KEY=pantheon:signals:pending:<binding_id>`. The
+`RedisPendingSignalStore` inside `paper_runtime.py` reads this env var so
+it only consumes signals for its own binding. Without this isolation, all
+workers sharing the same Redis host would race to consume from the shared
+default queue.
+
 ## Validation
 
 ```bash
 python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py -v
+# Expected: 22 passed
 ```

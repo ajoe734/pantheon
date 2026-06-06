@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Paper runtime fleet reconciler
-- Status: in_progress
+- Status: review_approved
 - Owner: Claude
 - Reviewer: Codex
 - Phase: Runtime Telemetry Hardening
-- Last update: 2026-06-06T11:45:36Z
-- Next: Review blocker: active acceptance still requires no worker consumes shared Redis signals before isolation. paper_fleet_reconciler spawns paper_runtime without a binding-scoped PANTHEON_SIGNAL_QUEUE_KEY, so workers default to pantheon:signals:pending and RedisPendingSignalStore lpop can remove signals for another binding. Add binding-scoped queue/consumer isolation or disable Redis consumption until isolation, with tests.
+- Last update: 2026-06-06T11:56:40Z
+- Next: Review approved: binding-scoped Redis signal queue isolation verified; focused paper_fleet_reconciler suite passes 22/22. Owner must finalize via task PR because latest isolation commit is not merged to dev yet.
 
 ## Summary
 新增 paper runtime fleet reconciler，從 active paper runtime bindings 自動維持一個 worker per binding，取代手動 docker run。
@@ -27,12 +27,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/deployment/runtime-telemetry-hardening-2026-06-06.md
 
 ## Recent Task Activity
-- 2026-06-06T11:41:20Z · Orchestrator · worker_worktree_refreshed · -
-- 2026-06-06T11:41:20Z · Orchestrator · worker_worktree_reused · -
-- 2026-06-06T11:41:20Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
-- 2026-06-06T11:44:39Z · Codex · review_approved · DRY-RUN-CHECK
-- 2026-06-06T11:45:36Z · Codex · reopen · Review blocker: active acceptance still requires no worker consumes shared Redis signals before isolation. paper_fleet_reconciler spawns paper_runtime without a binding-scoped PANTHEON_SIGNAL_QUEUE_KEY, so workers default to pantheon:signals:pending and RedisPendingSignalStore lpop can remove signals for another binding. Add binding-scoped queue/consumer isolation or disable Redis consumption until isolation, with tests.
-- 2026-06-06T11:48:46Z · Orchestrator · worker_failed · Worker exited before the task reached a terminal status.
+- 2026-06-06T11:54:03Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-06-06T11:54:05Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-06T11:54:05Z · Orchestrator · worker_worktree_reused · -
+- 2026-06-06T11:54:05Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
+- 2026-06-06T11:56:40Z · Codex · review_approved · Review approved: binding-scoped Redis signal queue isolation verified; focused paper_fleet_reconciler suite passes 22/22. Owner must finalize via task PR because latest isolation commit is not merged to dev yet.
+- 2026-06-06T11:59:17Z · Orchestrator · worker_completed · Worker exited successfully during supervisor boot reconciliation.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md
