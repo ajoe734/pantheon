@@ -12,7 +12,6 @@ import {
   buildTruthMismatches,
   actorLabel,
   agentLabel,
-  buildCodexSlotRoster,
   buildDependencySchedule,
   buildWorkerCapacity,
   buildWorkerHealth,
@@ -2844,42 +2843,6 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
     </div>
   `;
   statusEl.appendChild(dispatchCard);
-
-  const codexSlots = buildCodexSlotRoster(orchState, status);
-  const codexActiveCount = codexSlots.filter((slot) => slot.status === "running").length;
-  const codexPendingCount = codexSlots.filter((slot) => slot.status === "pending").length;
-  const codexIdleCount = codexSlots.filter((slot) => slot.status === "idle").length;
-  const codexSlotCard = document.createElement("article");
-  codexSlotCard.className = "sys-card codex-slot-card";
-  codexSlotCard.innerHTML = `
-    <div class="sys-card-head">
-      <span class="sys-icon">▦</span>
-      <strong>Codex Autoworker Slots</strong>
-      <span class="chip">active ${codexActiveCount}</span>
-      <span class="chip">pending ${codexPendingCount}</span>
-      <span class="chip">idle ${codexIdleCount}</span>
-      <span class="chip">total ${codexSlots.length}</span>
-    </div>
-    <div class="codex-slot-grid">
-      ${codexSlots.map((slot) => `
-        <div class="codex-slot-row codex-slot-${slot.status}">
-          <div class="codex-slot-name">
-            <strong>${escapeHtml(slot.label)}</strong>
-            <span class="chip">${escapeHtml(slot.quota_group)}</span>
-          </div>
-          <div class="codex-slot-meta">
-            <span class="status-pill ${slot.status === "running" ? "status-working" : slot.status === "pending" ? "status-review" : "status-idle"}">${slot.status === "idle" ? "idle" : slot.worker_status || slot.status}</span>
-            <span class="chip">${escapeHtml(slot.id)}</span>
-            ${slot.worker?.provider ? `<span class="chip">${escapeHtml(slot.worker.provider)}</span>` : ""}
-            ${slot.task_id ? `<span class="chip">${escapeHtml(slot.task_id)}</span>` : `<span class="chip">空 slot</span>`}
-            ${slot.worker?.reason ? `<span class="chip">${escapeHtml(slot.worker.reason)}</span>` : ""}
-            ${slot.last_event_at ? `<span class="chip">${escapeHtml(timeAgo(slot.last_event_at))}</span>` : ""}
-          </div>
-        </div>
-      `).join("")}
-    </div>
-  `;
-  statusEl.appendChild(codexSlotCard);
 
   const approvalCard = document.createElement("article");
   approvalCard.className = "sys-card";
