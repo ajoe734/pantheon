@@ -25,6 +25,7 @@ DEV_MANAGEMENT_AI_DB_NAME="${DEV_MANAGEMENT_AI_DB_NAME:-pantheon}"
 DEV_MANAGEMENT_AI_DATABASE_URL="${DEV_MANAGEMENT_AI_DATABASE_URL:-}"
 DEV_MANAGEMENT_AI_ATTACH_BUCKET="${DEV_MANAGEMENT_AI_ATTACH_BUCKET:-}"
 DEV_MANAGEMENT_AI_ATTACH_LOCATION="${DEV_MANAGEMENT_AI_ATTACH_LOCATION:-asia-east1}"
+DEV_APP_DB_USER="${DEV_APP_DB_USER:-${PANTHEON_APP_DB_USER:-pantheon_app}}"
 
 STAGING_CONTROL_VM="${STAGING_CONTROL_VM:-pantheon-taiwan}"
 STAGING_CONTROL_ZONE="${STAGING_CONTROL_ZONE:-asia-east1-b}"
@@ -69,6 +70,7 @@ Environment overrides:
   DEV_MANAGEMENT_AI_DB_USER DEV_MANAGEMENT_AI_DB_PASSWORD DEV_MANAGEMENT_AI_DB_NAME
   DEV_MANAGEMENT_AI_DATABASE_URL
   DEV_MANAGEMENT_AI_ATTACH_BUCKET DEV_MANAGEMENT_AI_ATTACH_LOCATION
+  DEV_APP_DB_USER PANTHEON_APP_DB_USER
   STAGING_CONTROL_VM STAGING_CONTROL_ZONE STAGING_CONTROL_REMOTE_DIR
   STAGING_EXEC_VM STAGING_EXEC_ZONE STAGING_EXEC_REMOTE_DIR
   STAGING_EXEC_HEALTH_URL
@@ -264,6 +266,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_MANAGEMENT_AI_DB_USER=$(shell_quote "${DEV_MANAGEMENT_AI_DB_USER:-}")"
   command_prefix+=" PANTHEON_MANAGEMENT_AI_DB_PASSWORD=$(shell_quote "${DEV_MANAGEMENT_AI_DB_PASSWORD:-}")"
   command_prefix+=" PANTHEON_MANAGEMENT_AI_DB_NAME=$(shell_quote "${DEV_MANAGEMENT_AI_DB_NAME:-}")"
+  command_prefix+=" PANTHEON_MANAGEMENT_AI_APP_DB_USER=$(shell_quote "${DEV_APP_DB_USER:-pantheon_app}")"
   command_prefix+=" PANTHEON_STAGING_EXEC_HEALTH_URL=$(shell_quote "$STAGING_EXEC_HEALTH_URL")"
   command_prefix+=" bash -s"
 
@@ -526,8 +529,9 @@ ensure_dev_management_ai_postgres_role() {
   local mgmt_pass="${PANTHEON_MANAGEMENT_AI_DB_PASSWORD:-pantheon_management_ai_dev}"
   local mgmt_db="${PANTHEON_MANAGEMENT_AI_DB_NAME:-pantheon}"
   local mgmt_schema="${MANAGEMENT_AI_STORE_SCHEMA:-management_ai}"
+  local app_user="${PANTHEON_MANAGEMENT_AI_APP_DB_USER:-${PANTHEON_APP_DB_USER:-pantheon_app}}"
 
-  info "ensuring Management AI postgres owner role/schema: user=${mgmt_user} schema=${mgmt_schema}"
+  info "ensuring Management AI postgres owner role/schema: user=${mgmt_user} schema=${mgmt_schema} app_user=${app_user}"
   COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-}" \
     docker compose -p pantheon -f docker-compose.yml up -d postgres
 
@@ -545,6 +549,7 @@ ensure_dev_management_ai_postgres_role() {
     -e MGMT_AI_DB_PASSWORD="${mgmt_pass}" \
     -e MGMT_AI_DB_NAME="${mgmt_db}" \
     -e MGMT_AI_SCHEMA="${mgmt_schema}" \
+    -e MGMT_AI_APP_USER="${app_user}" \
     postgres sh -s <<'REMOTE_DB'
 set -euo pipefail
 
@@ -554,7 +559,8 @@ psql -v ON_ERROR_STOP=1 \
   -v mgmt_user="${MGMT_AI_DB_USER}" \
   -v mgmt_pass="${MGMT_AI_DB_PASSWORD}" \
   -v mgmt_db="${MGMT_AI_DB_NAME}" \
-  -v mgmt_schema="${MGMT_AI_SCHEMA}" <<'SQL'
+  -v mgmt_schema="${MGMT_AI_SCHEMA}" \
+  -v app_user="${MGMT_AI_APP_USER}" <<'SQL'
 SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'mgmt_user', :'mgmt_pass')
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'mgmt_user')
 \gexec
@@ -567,8 +573,59 @@ ALTER SCHEMA :"mgmt_schema" OWNER TO :"mgmt_user";
 GRANT USAGE, CREATE ON SCHEMA :"mgmt_schema" TO :"mgmt_user";
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA :"mgmt_schema" TO :"mgmt_user";
 GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA :"mgmt_schema" TO :"mgmt_user";
-ALTER DEFAULT PRIVILEGES IN SCHEMA :"mgmt_schema" GRANT ALL PRIVILEGES ON TABLES TO :"mgmt_user";
-ALTER DEFAULT PRIVILEGES IN SCHEMA :"mgmt_schema" GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO :"mgmt_user";
+ALTER DEFAULT PRIVILEGES FOR ROLE :"mgmt_user" IN SCHEMA :"mgmt_schema" GRANT ALL PRIVILEGES ON TABLES TO :"mgmt_user";
+ALTER DEFAULT PRIVILEGES FOR ROLE :"mgmt_user" IN SCHEMA :"mgmt_schema" GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO :"mgmt_user";
+
+SELECT set_config('pantheon.mgmt_ai_schema', :'mgmt_schema', false);
+SELECT set_config('pantheon.mgmt_ai_owner', :'mgmt_user', false);
+SELECT set_config('pantheon.mgmt_ai_app_user', :'app_user', false);
+
+DO $repair$
+DECLARE
+  mgmt_schema text := current_setting('pantheon.mgmt_ai_schema');
+  owner_user text := current_setting('pantheon.mgmt_ai_owner');
+  app_user text := current_setting('pantheon.mgmt_ai_app_user');
+  item record;
+BEGIN
+  FOR item IN
+    SELECT format('%I.%I', n.nspname, c.relname) AS qualified_name
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = mgmt_schema
+      AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+  LOOP
+    EXECUTE format('ALTER TABLE %s OWNER TO %I', item.qualified_name, owner_user);
+  END LOOP;
+
+  FOR item IN
+    SELECT format('%I.%I', n.nspname, c.relname) AS qualified_name
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = mgmt_schema
+      AND c.relkind = 'S'
+  LOOP
+    EXECUTE format('ALTER SEQUENCE %s OWNER TO %I', item.qualified_name, owner_user);
+  END LOOP;
+
+  IF app_user <> owner_user AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = app_user) THEN
+    EXECUTE format('GRANT USAGE ON SCHEMA %I TO %I', mgmt_schema, app_user);
+    EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %I TO %I', mgmt_schema, app_user);
+    EXECUTE format('GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA %I TO %I', mgmt_schema, app_user);
+    EXECUTE format(
+      'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA %I GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %I',
+      owner_user,
+      mgmt_schema,
+      app_user
+    );
+    EXECUTE format(
+      'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA %I GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO %I',
+      owner_user,
+      mgmt_schema,
+      app_user
+    );
+  END IF;
+END
+$repair$;
 SQL
 REMOTE_DB
 }

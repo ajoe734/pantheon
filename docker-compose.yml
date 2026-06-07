@@ -16,6 +16,10 @@ services:
       PANTHEON_APP_DB_USER: ${PANTHEON_APP_DB_USER:-pantheon_app}
       PANTHEON_APP_DB_PASSWORD: ${PANTHEON_APP_DB_PASSWORD:-pantheon_app}
       PANTHEON_APP_DB_NAME: ${PANTHEON_APP_DB_NAME:-pantheon}
+      PANTHEON_MANAGEMENT_AI_DB_USER: ${PANTHEON_MANAGEMENT_AI_DB_USER:-pantheon_management_ai}
+      PANTHEON_MANAGEMENT_AI_DB_PASSWORD: ${PANTHEON_MANAGEMENT_AI_DB_PASSWORD:-pantheon_management_ai_dev}
+      PANTHEON_MANAGEMENT_AI_DB_NAME: ${PANTHEON_MANAGEMENT_AI_DB_NAME:-pantheon}
+      MANAGEMENT_AI_STORE_SCHEMA: ${MANAGEMENT_AI_STORE_SCHEMA:-management_ai}
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/01-init-db.sh:ro
@@ -645,7 +649,7 @@ services:
       MANAGEMENT_AI_STORE_BACKEND: ${MANAGEMENT_AI_STORE_BACKEND:-postgres}
       MANAGEMENT_AI_STORE_SCHEMA: ${MANAGEMENT_AI_STORE_SCHEMA:-management_ai}
       MANAGEMENT_AI_STORE_DSN: ${MANAGEMENT_AI_STORE_DSN:-}
-      MANAGEMENT_AI_DATABASE_URL: ${MANAGEMENT_AI_DATABASE_URL:-}
+      MANAGEMENT_AI_DATABASE_URL: ${MANAGEMENT_AI_DATABASE_URL:-postgresql://pantheon_management_ai:pantheon_management_ai_dev@postgres:5432/pantheon}
       PANTHEON_MANAGEMENT_AI_STORE_PATH: ${PANTHEON_MANAGEMENT_AI_STORE_PATH:-/data/bff/management-ai-conversations.json}
       PANTHEON_MANAGEMENT_AI_ATTACHMENT_STORE_PATH: ${PANTHEON_MANAGEMENT_AI_ATTACHMENT_STORE_PATH:-/data/bff/management-ai-attachments}
       PANTHEON_MGMT_AI_ATTACH_BUCKET: ${PANTHEON_MGMT_AI_ATTACH_BUCKET:-}
