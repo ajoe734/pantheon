@@ -38,7 +38,8 @@ def test_render_cron_line_is_idempotently_tagged() -> None:
 
     line = render_cron_line(repo)
 
-    assert line.startswith("* * * * cd /home/lupin/code/pantheon")
+    assert line.startswith("* * * * * cd /home/lupin/code/pantheon")
+    assert line.split("cd ", 1)[0].split() == ["*", "*", "*", "*", "*"]
     assert "scripts/run-supervisor-watchdog.sh --restart" in line
     assert ".orchestrator/logs/supervisor-watchdog-cron.log" in line
     assert line.endswith(CRON_TAG)
