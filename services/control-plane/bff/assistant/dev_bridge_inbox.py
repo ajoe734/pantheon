@@ -92,6 +92,7 @@ def queue_task_packet(
     *,
     repo_root: Optional[str] = None,
     inbox_dir: Optional[str] = None,
+    key_store: Optional[Dict[str, bytes]] = None,
     source: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Verify and queue *packet* for supervisor pickup.
@@ -101,7 +102,7 @@ def queue_task_packet(
     """
     root = _repo_root(repo_root)
     inbox = _inbox_root(str(root), inbox_dir)
-    verify_packet(packet)
+    verify_packet(packet, key_store=key_store)
     if has_seen_packet(packet.packet_id, repo_root=str(root)):
         return {
             "status": "replay_rejected",
@@ -150,12 +151,14 @@ def queue_payload(
     *,
     repo_root: Optional[str] = None,
     inbox_dir: Optional[str] = None,
+    key_store: Optional[Dict[str, bytes]] = None,
     source: Optional[str] = None,
 ) -> Dict[str, Any]:
     return queue_task_packet(
         packet_from_payload(payload),
         repo_root=repo_root,
         inbox_dir=inbox_dir,
+        key_store=key_store,
         source=source,
     )
 
