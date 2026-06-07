@@ -360,6 +360,57 @@ function taskPacketId(value: unknown): string | null {
   return firstString(taskPacket.packetId, taskPacket.packet_id, data.packetId, data.packet_id);
 }
 
+function taskPacketRecord(value: unknown): JsonRecord | null {
+  const root = recordFrom(value);
+  const meta = recordFrom(root.meta);
+  const direct = recordFrom(meta.taskPacket ?? meta.task_packet);
+  if (Object.keys(direct).length > 0) return direct;
+  const data = recordFrom(root.data ?? root);
+  const packet = recordFrom(data.taskPacket ?? data.task_packet ?? root.taskPacket ?? root.task_packet);
+  return Object.keys(packet).length > 0 ? packet : null;
+}
+
+function devBridgeRecord(value: unknown): JsonRecord {
+  const root = recordFrom(value);
+  const meta = recordFrom(root.meta);
+  return recordFrom(meta.devBridge ?? meta.dev_bridge);
+}
+
+function packetTasks(value: unknown): JsonRecord[] {
+  const packet = taskPacketRecord(value);
+  if (!packet) return [];
+  return arrayFrom(packet.tasks).map(recordFrom).filter((task) => Object.keys(task).length > 0);
+}
+
+function devDocTaskCount(value: unknown): number {
+  const root = recordFrom(value);
+  const data = recordFrom(root.data ?? root);
+  const tasks = arrayFrom(data.executionTasks ?? data.execution_tasks ?? data.tasks);
+  return tasks.length || packetTasks(value).length;
+}
+
+function devDocArtifactPaths(value: unknown): string[] {
+  const root = recordFrom(value);
+  const data = recordFrom(root.data ?? root);
+  const tasks = [
+    ...arrayFrom(data.executionTasks ?? data.execution_tasks ?? data.tasks).map(recordFrom),
+    ...packetTasks(value),
+  ];
+  return uniqueStrings(tasks.flatMap((task) => arrayFrom(task.artifacts ?? task.artifactPaths ?? task.artifact_paths)));
+}
+
+function firstPacketTaskId(value: unknown): string | null {
+  const firstTask = packetTasks(value)[0];
+  return firstString(firstTask?.id, firstTask?.taskId, firstTask?.task_id);
+}
+
+function buildAssistantDevDispatchCommand(value: unknown): string | null {
+  const packet = taskPacketRecord(value);
+  if (!packet) return null;
+  const payload = JSON.stringify({ taskPacket: packet }, null, 2);
+  return `python3 scripts/dispatch_assistant_dev_task_packet.py <<'JSON'\n${payload}\nJSON`;
+}
+
 export default function AskPersonas(): JSX.Element {
   const [prompt, setPrompt] = useState("");
   const [messages, setMessages] = useState<Array<{ role: string; content: string }>>([]);
@@ -375,6 +426,7 @@ export default function AskPersonas(): JSX.Element {
   const [repairTaskId, setRepairTaskId] = useState("");
   const [repairWorktree, setRepairWorktree] = useState("");
   const [repairScope, setRepairScope] = useState("");
+  const [handoffCopied, setHandoffCopied] = useState<string | null>(null);
   const esRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
@@ -611,6 +663,7 @@ export default function AskPersonas(): JSX.Element {
     setStatus("management_ai_sending");
     setWorkflowError(null);
     setDevDocResult(null);
+    setHandoffCopied(null);
     setSourceCitations([]);
 
     try {
@@ -705,12 +758,36 @@ export default function AskPersonas(): JSX.Element {
         },
       });
       setDevDocResult(res);
+      setHandoffCopied(null);
+      const generatedTaskId = firstPacketTaskId(res);
+      if (generatedTaskId && !repairTaskId.trim()) {
+        setRepairTaskId(generatedTaskId);
+      }
+      const generatedScope = devDocArtifactPaths(res);
+      if (generatedScope.length > 0 && !repairScope.trim()) {
+        setRepairScope(generatedScope.join("\n"));
+      }
       setStatus("sa_sd_ready");
     } catch (err) {
       const message = `SA/SD generation failed: ${String(err)}`;
       setStatus("error");
       setWorkflowError(message);
       appendDelta(message, "assistant");
+    }
+  };
+
+  const handleCopyDispatchCommand = async () => {
+    const command = buildAssistantDevDispatchCommand(devDocResult);
+    if (!command) return;
+    if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+      setWorkflowError("Clipboard unavailable; dispatch command is visible below.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(command);
+      setHandoffCopied("dispatch_command");
+    } catch (err) {
+      setWorkflowError(`Copy failed: ${String(err)}`);
     }
   };
 
@@ -738,6 +815,10 @@ export default function AskPersonas(): JSX.Element {
       appendDelta(`Resync failed: ${String(e)}`, "assistant");
     }
   };
+
+  const devBridge = devDocResult ? devBridgeRecord(devDocResult) : {};
+  const devArtifactPaths = devDocResult ? devDocArtifactPaths(devDocResult) : [];
+  const devDispatchCommand = devDocResult ? buildAssistantDevDispatchCommand(devDocResult) : null;
 
   return (
     <div>
@@ -807,9 +888,32 @@ export default function AskPersonas(): JSX.Element {
         </div>
       )}
       {devDocResult && (
-        <div style={{ border: "1px solid #ddd", marginTop: 8, padding: 8 }}>
+        <div data-testid="assistant-dev-handoff" style={{ border: "1px solid #ddd", marginTop: 8, padding: 8 }}>
           <strong>SA/SD:</strong> {packetId(devDocResult) ?? "packet pending"}
           {taskPacketId(devDocResult) ? ` - task packet ${taskPacketId(devDocResult)}` : ""}
+          <div>
+            <strong>Tasks:</strong> {devDocTaskCount(devDocResult)}
+            {devArtifactPaths.length > 0
+              ? ` - ${devArtifactPaths.length} scoped artifacts`
+              : ""}
+          </div>
+          <div>
+            <strong>Bridge:</strong>{" "}
+            {firstString(devBridge.dispatchMode, devBridge.dispatch_mode)
+              ?? "repo_local_required"}
+            {firstBoolean(devBridge.noDirectShellFromWeb, devBridge.no_direct_shell_from_web)
+              ? " - web shell disabled"
+              : ""}
+          </div>
+          {devDispatchCommand && (
+            <div style={{ marginTop: 8 }}>
+              <button onClick={handleCopyDispatchCommand}>Copy Dispatch Command</button>
+              {handoffCopied === "dispatch_command" && <span style={{ marginLeft: 8 }}>Copied</span>}
+              <pre style={{ whiteSpace: "pre-wrap", maxHeight: 260, overflow: "auto", marginTop: 8 }}>
+                {devDispatchCommand}
+              </pre>
+            </div>
+          )}
         </div>
       )}
       <div>
