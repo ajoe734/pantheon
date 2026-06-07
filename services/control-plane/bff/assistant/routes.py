@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -32,6 +33,7 @@ from .mode_policy import (
     user_mode_capability_summary,
     PRODUCT_DEFAULT_MODE,
 )
+from .dev_bridge_inbox import queue_task_packet
 from .dev_bridge_models import BridgeActor, BridgeDocument, BridgeTask, DevTaskPacket
 from .dev_bridge_signer import sign_packet
 from .dev_docs_archiver import archive_packet, infer_repo_root
@@ -427,7 +429,8 @@ def create_assistant_router(
         """Generate SA/SD artifacts from a Management AI conversation.
 
         Requires active control mode because archive=true writes repo docs and
-        task briefs. BFF may emit a signed packet but never dispatches it.
+        task briefs. BFF may emit or queue a signed packet but never dispatches
+        it or shells into the VM.
         """
         identity = extract_identity(authorization)
         require_read_role(identity)
@@ -470,22 +473,31 @@ def create_assistant_router(
             "devBridge": _dev_bridge_meta(),
         }
 
-        if _truthy(
-            payload.get(
-                "emitTaskPacket",
-                payload.get(
-                    "emit_task_packet",
-                    payload.get("signTaskPacket", payload.get("sign_task_packet")),
-                ),
-            )
-        ):
+        task_packet: Optional[DevTaskPacket] = None
+        should_emit_task_packet = _should_emit_task_packet(payload)
+        should_queue_task_packet = _should_queue_task_packet(payload)
+        if should_emit_task_packet or should_queue_task_packet:
             task_packet = _signed_dev_task_packet(
                 packet,
                 identity,
                 mode=str(control_status.get("mode") or AssistantMode.KERNEL_DEBUG.value),
                 key_store=bridge_key_store,
             )
+
+        if task_packet is not None and should_emit_task_packet:
             meta["taskPacket"] = task_packet.model_dump(mode="json", by_alias=True)
+
+        if task_packet is not None and should_queue_task_packet:
+            queue_receipt = queue_task_packet(
+                task_packet,
+                repo_root=_dev_bridge_queue_repo_root(dev_docs_repo_root),
+                key_store=bridge_key_store,
+                source="bff_assistant_dev_docs_generate",
+            )
+            meta["taskPacketQueued"] = bool(queue_receipt.get("queued"))
+            meta["taskPacketQueueReceipt"] = queue_receipt
+            if "taskPacket" not in meta:
+                meta["taskPacket"] = task_packet.model_dump(mode="json", by_alias=True)
 
         response = DevDocGenerateResponse(data=packet, meta=meta)
         return response.model_dump(mode="json", by_alias=True)
@@ -511,10 +523,11 @@ def create_assistant_router(
         payload: dict = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
     ) -> dict[str, Any]:
-        """Sign a DevTaskPacket for repo-local dispatch.
+        """Sign or queue a DevTaskPacket for repo-local dispatch.
 
-        This route intentionally does not call the dispatcher. Trusted
-        repo-local automation verifies and materialises the packet.
+        This route intentionally does not call the dispatcher. If queueing is
+        requested, it writes the signed packet into the supervisor inbox for
+        repo-local automation to verify and materialise later.
         """
         identity = extract_identity(authorization)
         require_read_role(identity)
@@ -531,9 +544,19 @@ def create_assistant_router(
             mode=str(payload.get("mode") or control_status.get("mode") or AssistantMode.KERNEL_DEBUG.value),
             key_store=bridge_key_store,
         )
+        meta = _dev_bridge_meta()
+        if _should_queue_task_packet(payload):
+            queue_receipt = queue_task_packet(
+                task_packet,
+                repo_root=_dev_bridge_queue_repo_root(dev_docs_repo_root),
+                key_store=bridge_key_store,
+                source="bff_assistant_dev_bridge_route",
+            )
+            meta["taskPacketQueued"] = bool(queue_receipt.get("queued"))
+            meta["taskPacketQueueReceipt"] = queue_receipt
         return {
             "data": task_packet.model_dump(mode="json", by_alias=True),
-            "meta": _dev_bridge_meta(),
+            "meta": meta,
         }
 
     # ------------------------------------------------------------------
@@ -789,10 +812,43 @@ def _truthy(value: Any) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _should_emit_task_packet(payload: dict) -> bool:
+    return _truthy(
+        payload.get(
+            "emitTaskPacket",
+            payload.get(
+                "emit_task_packet",
+                payload.get("signTaskPacket", payload.get("sign_task_packet")),
+            ),
+        )
+    )
+
+
+def _should_queue_task_packet(payload: dict) -> bool:
+    return _truthy(
+        payload.get(
+            "queueTaskPacket",
+            payload.get(
+                "queue_task_packet",
+                payload.get("queueDevTaskPacket", payload.get("queue_dev_task_packet")),
+            ),
+        )
+    )
+
+
 def _dev_docs_repo_root(configured_root: Optional[str]) -> str:
     if configured_root:
         return str(configured_root)
     return infer_repo_root()
+
+
+def _dev_bridge_queue_repo_root(configured_root: Optional[str]) -> Optional[str]:
+    status_root = str(os.environ.get("PANTHEON_STATUS_ROOT") or "").strip()
+    if status_root and Path(status_root, "ai-status.json").exists():
+        return status_root
+    if configured_root:
+        return str(configured_root)
+    return None
 
 
 def _require_active_control_mode(
@@ -1123,6 +1179,8 @@ def _dev_bridge_meta() -> Dict[str, Any]:
         "noDirectShellFromWeb": True,
         "dispatcher": "assistant.dev_bridge_dispatcher.dispatch_task_packet",
         "queueCommand": "python3 scripts/queue_assistant_dev_task_packet.py",
+        "queueEndpoint": "/bff/assistant/dev-bridge/task-packet",
+        "queueTaskPacketField": "queueTaskPacket",
         "drainCommand": "python3 scripts/drain_assistant_dev_task_packet_inbox.py",
         "supervisorInboxPath": ".orchestrator/assistant-dev-packets",
         "orchestratorStatusHref": "/bff/assistant/orchestrator/status",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 from typing import Any
@@ -162,6 +163,8 @@ def test_dev_docs_generate_archives_and_emits_signed_task_packet(tmp_path, monke
     assert meta["devBridge"]["noDirectShellFromWeb"] is True
     assert meta["devBridge"]["handoffMode"] == "repo_local_supervisor_inbox"
     assert meta["devBridge"]["queueCommand"] == "python3 scripts/queue_assistant_dev_task_packet.py"
+    assert meta["devBridge"]["queueEndpoint"] == "/bff/assistant/dev-bridge/task-packet"
+    assert meta["devBridge"]["queueTaskPacketField"] == "queueTaskPacket"
     assert meta["devBridge"]["drainCommand"] == "python3 scripts/drain_assistant_dev_task_packet_inbox.py"
     assert meta["devBridge"]["supervisorInboxPath"] == ".orchestrator/assistant-dev-packets"
 
@@ -190,3 +193,87 @@ def test_dev_docs_generate_archives_and_emits_signed_task_packet(tmp_path, monke
     )
     assert bridge_response.status_code == 201, bridge_response.text
     assert bridge_response.json()["data"]["packetId"] == f"bridge_{packet['packetId']}"
+
+
+def test_dev_docs_generate_can_queue_signed_task_packet_for_supervisor_inbox(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+    monkeypatch.delenv("PANTHEON_STATUS_ROOT", raising=False)
+    client, transcript_store = _make_client(tmp_path, active_control=True)
+    _seed_turns(transcript_store, "conv-dev-docs-queue")
+
+    response = client.post(
+        "/bff/assistant/dev-docs/generate",
+        json={
+            "conversationId": "conv-dev-docs-queue",
+            "featureSummary": "Queue Management AI SA/SD work for supervisor pickup",
+            "affectedModules": ["assistant", "management_ai", "supervisor"],
+            "proposedOwner": "Codex",
+            "queueTaskPacket": True,
+        },
+        headers=HEADERS,
+    )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    packet = body["data"]
+    meta = body["meta"]
+    task_packet = meta["taskPacket"]
+    receipt = meta["taskPacketQueueReceipt"]
+
+    assert task_packet["packetId"] == f"bridge_{packet['packetId']}"
+    assert task_packet["signature"]["algorithm"] == "HMAC-SHA256"
+    assert meta["taskPacketQueued"] is True
+    assert receipt["status"] == "queued"
+    assert receipt["packetId"] == task_packet["packetId"]
+
+    queued_path = tmp_path / ".orchestrator" / "assistant-dev-packets" / "pending" / f"{task_packet['packetId']}.json"
+    assert queued_path.exists()
+    queued = json.loads(queued_path.read_text(encoding="utf-8"))
+    assert queued["source"] == "bff_assistant_dev_docs_generate"
+    assert queued["taskPacket"]["packetId"] == task_packet["packetId"]
+    assert queued["taskPacket"]["signature"] == task_packet["signature"]
+
+
+def test_dev_bridge_task_packet_route_can_queue_signed_packet(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+    monkeypatch.delenv("PANTHEON_STATUS_ROOT", raising=False)
+    client, transcript_store = _make_client(tmp_path, active_control=True)
+    _seed_turns(transcript_store, "conv-dev-bridge-queue")
+
+    generate_response = client.post(
+        "/bff/assistant/dev-docs/generate",
+        json={
+            "conversationId": "conv-dev-bridge-queue",
+            "featureSummary": "Create a task packet then queue it through the bridge route",
+            "affectedModules": ["assistant", "supervisor"],
+            "proposedOwner": "Codex",
+        },
+        headers=HEADERS,
+    )
+    assert generate_response.status_code == 201, generate_response.text
+    packet = generate_response.json()["data"]
+
+    bridge_response = client.post(
+        "/bff/assistant/dev-bridge/task-packet",
+        json={"devDocPacket": packet, "queueTaskPacket": True},
+        headers=HEADERS,
+    )
+
+    assert bridge_response.status_code == 201, bridge_response.text
+    body = bridge_response.json()
+    task_packet = body["data"]
+    meta = body["meta"]
+    receipt = meta["taskPacketQueueReceipt"]
+
+    assert task_packet["packetId"] == f"bridge_{packet['packetId']}"
+    assert meta["taskPacketQueued"] is True
+    assert receipt["status"] == "queued"
+    assert receipt["packetId"] == task_packet["packetId"]
+    queued_path = (
+        tmp_path
+        / ".orchestrator"
+        / "assistant-dev-packets"
+        / "pending"
+        / f"{task_packet['packetId']}.json"
+    )
+    assert queued_path.exists()
