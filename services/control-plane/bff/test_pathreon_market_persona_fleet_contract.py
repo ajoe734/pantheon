@@ -1,0 +1,163 @@
+from __future__ import annotations
+
+import os
+import sys
+import tempfile
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Iterator
+
+from fastapi.testclient import TestClient
+
+sys.path.insert(0, os.path.dirname(__file__))
+
+import main as bff_main
+from read_store import ReadSurfaceStore
+
+
+HEADERS = {"Authorization": "Bearer op-pathreon-fleet:operator,reviewer,admin:mfa"}
+MARKET_PERSONAS = {
+    "US": "persona-us-equity",
+    "TW": "persona-tw-equity",
+    "CRYPTO": "persona-crypto",
+}
+
+
+@contextmanager
+def _fleet_client() -> Iterator[TestClient]:
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        original_env = os.environ.get("PANTHEON_OODA_PACKET_ENABLED")
+        os.environ.pop("PANTHEON_OODA_PACKET_ENABLED", None)
+        bff_main.read_store = ReadSurfaceStore(
+            str(Path(td) / "read_surfaces.json"),
+            allow_local_snapshot_fallback=True,
+        )
+        try:
+            yield TestClient(bff_main.app, raise_server_exceptions=False)
+        finally:
+            bff_main.read_store = original_store
+            if original_env is None:
+                os.environ.pop("PANTHEON_OODA_PACKET_ENABLED", None)
+            else:
+                os.environ["PANTHEON_OODA_PACKET_ENABLED"] = original_env
+
+
+def test_default_read_store_has_us_tw_crypto_persona_execution_chain() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        store = ReadSurfaceStore(
+            str(Path(td) / "read_surfaces.json"),
+            allow_local_snapshot_fallback=True,
+        )
+
+        for market, persona_id in MARKET_PERSONAS.items():
+            persona = store.get_persona(persona_id)
+            assert persona is not None
+            assert persona["metadata"]["market_scope"] == [market]
+
+            bindings = store.get_bindings_for_persona(persona_id)
+            assert bindings
+            pool_id = bindings[0]["capital_pool_id"]
+            pool = store.get_capital_pool(pool_id)
+            assert pool is not None
+            assert pool["pool_id"] == pool_id
+            assert pool["live_capital_enabled"] is False
+
+            runtime = store.get_runtime_binding_by_runtime_id(f"runtime-{market.lower()}-equity-paper")
+            if market == "CRYPTO":
+                runtime = store.get_runtime_binding_by_runtime_id("runtime-crypto-paper")
+            assert runtime is not None
+            assert runtime["deployment_stage"] == "paper"
+            assert runtime["metadata"]["live_write_enabled"] is False
+
+            capabilities = store.get_capability_snapshot_for_persona(persona_id)
+            assert capabilities is not None
+            assert "governance_handoff" in capabilities["effective_tools"]
+            assert "no_live_trade_without_approval" in capabilities["restrictions"]
+
+
+def test_persona_catalog_and_health_expose_market_fields() -> None:
+    with _fleet_client() as client:
+        personas = client.get("/bff/personas", headers=HEADERS)
+        health = client.get("/bff/v5/execution/persona-health", headers=HEADERS)
+
+    assert personas.status_code == 200, personas.text
+    catalog = {item["id"]: item for item in personas.json()["items"]}
+    for market, persona_id in MARKET_PERSONAS.items():
+        assert catalog[persona_id]["marketScope"] == [market]
+        assert catalog[persona_id]["governanceRequired"] is True
+        assert catalog[persona_id]["deploymentStage"] == "paper"
+
+    assert health.status_code == 200, health.text
+    health_by_id = {item["persona_id"]: item for item in health.json()["items"]}
+    for market, persona_id in MARKET_PERSONAS.items():
+        row = health_by_id[persona_id]
+        assert row["market_scope"] == [market]
+        assert row["mode"] == "paper"
+        assert isinstance(row["score"], (int, float))
+        assert row["routed_strategies"] >= 1
+        assert row["metrics"]["violation_count"] == 0
+
+
+def test_persona_league_filters_and_requires_governance_for_rank_actions() -> None:
+    with _fleet_client() as client:
+        all_rows = client.get("/bff/persona-league", headers=HEADERS)
+        tw_rows = client.get("/bff/persona-league?market_scope=TW", headers=HEADERS)
+        detail = client.get("/bff/persona-league/persona-crypto", headers=HEADERS)
+
+    assert all_rows.status_code == 200, all_rows.text
+    rows = all_rows.json()["items"]
+    assert [row["persona_id"] for row in rows[:3]] == [
+        "persona-crypto",
+        "persona-us-equity",
+        "persona-tw-equity",
+    ]
+    assert all(row["governance_required"] is True for row in rows[:3])
+
+    assert tw_rows.status_code == 200, tw_rows.text
+    assert [row["persona_id"] for row in tw_rows.json()["items"]] == ["persona-tw-equity"]
+
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["data"]["recommendation"] == "prepare_canary_packet"
+
+
+def test_management_fleet_composes_personas_ooda_capital_runtime_and_human_gate() -> None:
+    with _fleet_client() as client:
+        response = client.get("/bff/management/fleet", headers=HEADERS)
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    fleet_ids = {item["persona_id"] for item in data["persona_fleet"]}
+    assert set(MARKET_PERSONAS.values()).issubset(fleet_ids)
+    assert data["capital_totals"]["total_nav"] > 0
+    assert data["human_inbox"]["pending_count"] >= 3
+    assert data["ooda_status"]["enabled"] is True
+    assert data["execution_boundary"] == {
+        "approved_artifacts_only": True,
+        "live_capital_side_effects": False,
+        "human_gate_required_for_capital_changes": True,
+    }
+
+
+def test_agora_and_ooda_routes_surface_market_persona_work() -> None:
+    with _fleet_client() as client:
+        signals = client.get("/bff/agora/signals", headers=HEADERS)
+        packets = client.get("/bff/ooda/packets", headers=HEADERS)
+        crypto_packets = client.get("/bff/runtimes/runtime-crypto-paper/ooda", headers=HEADERS)
+
+    assert signals.status_code == 200, signals.text
+    signal_personas = {item.get("persona_id") for item in signals.json()["items"]}
+    assert set(MARKET_PERSONAS.values()).issubset(signal_personas)
+
+    assert packets.status_code == 200, packets.text
+    packet_ids = {item["packet_id"] for item in packets.json()["items"]}
+    assert {
+        "ooda-us-equity-paper-001",
+        "ooda-tw-equity-paper-001",
+        "ooda-crypto-paper-001",
+    }.issubset(packet_ids)
+
+    assert crypto_packets.status_code == 200, crypto_packets.text
+    assert [item["packet_id"] for item in crypto_packets.json()["items"]] == [
+        "ooda-crypto-paper-001"
+    ]

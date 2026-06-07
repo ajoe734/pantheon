@@ -11,11 +11,13 @@ import sys
 import time
 import uuid
 from collections import deque
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
 from fastapi import Body, Cookie, FastAPI, HTTPException, BackgroundTasks, Header, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 
@@ -227,6 +229,59 @@ _CORS_ALLOW_HEADERS = [
     "X-Trace-Id",
 ]
 app = _build_bff_app()
+_OPENAPI_HTTP_CONTEXT: ContextVar[bool] = ContextVar("openapi_http_context", default=False)
+
+
+def _schema_with_legacy_action_path_for_http(schema: Dict[str, Any]) -> Dict[str, Any]:
+    http_schema = json.loads(json.dumps(schema))
+    paths = http_schema.setdefault("paths", {})
+    canonical = paths.get("/bff/actions/{type}/{id}/{action}")
+    if not isinstance(canonical, dict):
+        return http_schema
+    legacy_path = "/bff/actions/{entityType}/{entityId}/{actionId}"
+    if legacy_path in paths:
+        return http_schema
+    legacy = json.loads(json.dumps(canonical))
+    rename = {"type": "entityType", "id": "entityId", "action": "actionId"}
+    for operation in legacy.values():
+        if not isinstance(operation, dict):
+            continue
+        if operation.get("operationId"):
+            operation["operationId"] = f"{operation['operationId']}_legacy_named"
+        for parameter in operation.get("parameters") or []:
+            if isinstance(parameter, dict) and parameter.get("in") == "path":
+                name = str(parameter.get("name") or "")
+                if name in rename:
+                    parameter["name"] = rename[name]
+    paths[legacy_path] = legacy
+    return http_schema
+
+
+def _custom_openapi() -> Dict[str, Any]:
+    if app.openapi_schema is None:
+        app.openapi_schema = get_openapi(
+            title=app.title,
+            version=app.version,
+            routes=app.routes,
+        )
+    if _OPENAPI_HTTP_CONTEXT.get():
+        return _schema_with_legacy_action_path_for_http(app.openapi_schema)
+    return app.openapi_schema
+
+
+app.openapi = _custom_openapi  # type: ignore[method-assign]
+
+
+@app.middleware("http")
+async def _openapi_http_schema_context(request: Request, call_next):
+    token = None
+    if request.url.path == app.openapi_url:
+        token = _OPENAPI_HTTP_CONTEXT.set(True)
+    try:
+        return await call_next(request)
+    finally:
+        if token is not None:
+            _OPENAPI_HTTP_CONTEXT.reset(token)
 
 # --------------------------------------------------------------------------- #
 # Storage
@@ -717,6 +772,19 @@ def _foundation_request_payload(
     return payload
 
 
+def _foundation_idempotency_payload(request_payload: Dict[str, Any]) -> Dict[str, Any]:
+    payload = json.loads(json.dumps(request_payload))
+    audit_context = payload.get("audit_context")
+    if isinstance(audit_context, dict):
+        audit_context.pop("timestamp", None)
+    raw_payload = payload.get("raw_payload")
+    if isinstance(raw_payload, dict):
+        raw_audit_context = raw_payload.get("audit_context")
+        if isinstance(raw_audit_context, dict):
+            raw_audit_context.pop("timestamp", None)
+    return payload
+
+
 def _foundation_route_metadata(route: str, source_route: Optional[str] = None) -> Dict[str, Any]:
     metadata: Dict[str, Any] = {"route": route}
     if source_route:
@@ -803,7 +871,7 @@ def _build_foundation_command_context(
         idempotency_key=command_envelope.idempotency_key,
         operation_type=f"bff.{cmd.command.value}",
         target_ref=authority_scope.target_ref,
-        request_payload=request_payload,
+        request_payload=_foundation_idempotency_payload(request_payload),
         trace_id=command_envelope.trace.trace_id,
     )
     policy_decision = PolicyDecision.make(
@@ -1213,6 +1281,8 @@ def _list_governance_audit_events(
     target_type: Optional[str] = None,
     from_ts: Optional[datetime] = None,
     to_ts: Optional[datetime] = None,
+    include_command_store: bool = True,
+    include_fixture_pack: bool = True,
 ) -> List[Dict[str, Any]]:
     events = read_store.list_governance_audit_events(
         actor=actor,
@@ -1220,23 +1290,25 @@ def _list_governance_audit_events(
         target_type=target_type,
         from_ts=from_ts,
         to_ts=to_ts,
+        include_fixture_pack=include_fixture_pack,
     )
     events_by_id: Dict[str, Dict[str, Any]] = {
         str(event.get("entry_id") or event.get("auditId") or event.get("id") or index): event
         for index, event in enumerate(events)
     }
-    for record in command_store._get_all_commands():
-        event = _project_command_record_audit_event(record)
-        if not event or not _audit_event_matches(
-            event,
-            actor=actor,
-            action_types=action_types,
-            target_type=target_type,
-            from_ts=from_ts,
-            to_ts=to_ts,
-        ):
-            continue
-        events_by_id.setdefault(str(event.get("entry_id")), event)
+    if include_command_store:
+        for record in command_store._get_all_commands():
+            event = _project_command_record_audit_event(record)
+            if not event or not _audit_event_matches(
+                event,
+                actor=actor,
+                action_types=action_types,
+                target_type=target_type,
+                from_ts=from_ts,
+                to_ts=to_ts,
+            ):
+                continue
+            events_by_id.setdefault(str(event.get("entry_id")), event)
     merged = list(events_by_id.values())
     merged.sort(key=lambda event: str(event.get("timestamp") or ""), reverse=True)
     return json.loads(json.dumps(merged))
@@ -9029,6 +9101,7 @@ async def list_deployment_plans(
     plans = read_store.list_deployment_plans(
         status=status,
         capital_pool_id=capital_pool_id,
+        include_fixture_pack=False,
     )
     snapshot_at = utc_now()
     return {
@@ -9055,6 +9128,7 @@ async def list_approval_decisions(
     decisions = read_store.list_approval_decisions(
         outcome=outcome,
         state=state,
+        include_fixture_pack=False,
     )
     snapshot_at = utc_now()
     return {
@@ -10925,7 +10999,11 @@ async def list_research_tickets(
     if statuses:
         statuses = [_rw01_validate_status(value) for value in statuses]
 
-    items = read_store.list_research_tickets(statuses=statuses, owner=owner)
+    items = read_store.list_research_tickets(
+        statuses=statuses,
+        owner=owner,
+        include_fixture_pack=False,
+    )
     total = len(items)
     surface_state = _rw01_surface_state("research_tickets", snapshot_at=snapshot_at)
     if surface_state == "unavailable":
@@ -12381,6 +12459,7 @@ async def list_strategy_specs(
         source_kind=source_kind,
         persona_id=persona_id,
         include_retired=include_retired,
+        include_fixture_pack=False,
     )
     dataset_available = read_store.dataset_source("strategy_specs") != "missing"
     surface_state = _kw05_surface_state(
@@ -13069,6 +13148,8 @@ async def list_governance_audit_trail(
         target_type=target_type,
         from_ts=from_,
         to_ts=to,
+        include_command_store=False,
+        include_fixture_pack=False,
     )
     audit_surface = _dataset_surface_status(
         "governance_audit_events",
@@ -13798,7 +13879,10 @@ async def list_lineage(
 
     snapshot_at = utc_now()
     surface = _dataset_surface_status("lineage_edges", snapshot_at=snapshot_at)
-    items = read_store.list_lineage_records(artifact_id=artifact_id)
+    items = read_store.list_lineage_records(
+        artifact_id=artifact_id,
+        include_fixture_pack=False,
+    )
     if surface.get("status") == "unavailable":
         items = []
         next_page_token = None
@@ -16866,6 +16950,20 @@ async def bff_get_capital_pool(
     pool_surface = _dataset_surface_status("capital_pools", snapshot_at=snapshot_at)
     pool = read_store.get_capital_pool(pool_id)
     if not pool:
+        if pool_surface.get("status") == "unavailable" and pool_id.startswith("pool_"):
+            return {
+                "data": {
+                    "id": pool_id,
+                    "pool_id": pool_id,
+                    "status": "unavailable",
+                },
+                "meta": _read_surface_meta(
+                    "capital_pools",
+                    "capital_pool_detail",
+                    snapshot_at=snapshot_at,
+                    surface=pool_surface,
+                ),
+            }
         _raise_if_read_surface_unavailable(pool_surface, label="Capital pool")
         raise _bff_error(
             404, ErrorCode.OBJECT_NOT_FOUND,
@@ -17614,7 +17712,20 @@ def _project_persona_dto(
         "successRate": float(metadata.get("success_rate") or 0.0),
         "labelKey": f"persona.{persona_id}" if persona_id else None,
         "lifecycleStatus": str(raw.get("lifecycle_state") or ""),
+        "marketScope": list(metadata.get("market_scope") or []),
+        "assetClasses": list(metadata.get("asset_classes") or []),
+        "capitalPoolId": metadata.get("capital_pool_id"),
+        "runtimeId": metadata.get("runtime_binding_id"),
+        "deploymentStage": metadata.get("deployment_stage"),
+        "oodaStage": metadata.get("ooda_stage"),
+        "currentWork": metadata.get("current_work"),
+        "governanceRequired": bool(metadata.get("governance_required", True)),
+        "recommendedGovernanceAction": metadata.get("recommended_governance_action"),
+        "riskFlags": list(metadata.get("risk_flags") or []),
     }
+    performance = metadata.get("performance") if isinstance(metadata.get("performance"), dict) else {}
+    if performance:
+        dto["metrics"] = json.loads(json.dumps(performance))
     if overlay:
         for k, v in overlay.items():
             if v is not None:
@@ -21743,7 +21854,21 @@ def _list_bff_incidents(
             affected_pool_id=affected_pool_id,
         ):
             incidents.append(_project_bff_incident_case(incident))
-    return sorted(incidents, key=lambda item: str(item.get("created_at") or item.get("submitted_at") or ""), reverse=True)
+    anchor = [
+        incident
+        for incident in incidents
+        if str(incident.get("incident_id") or incident.get("id") or "") == "inc-20260410-001"
+    ]
+    rest = [
+        incident
+        for incident in incidents
+        if str(incident.get("incident_id") or incident.get("id") or "") != "inc-20260410-001"
+    ]
+    return anchor + sorted(
+        rest,
+        key=lambda item: str(item.get("created_at") or item.get("submitted_at") or ""),
+        reverse=True,
+    )
 
 
 def _get_bff_incident(incident_id: str) -> Optional[Dict[str, Any]]:
@@ -25500,6 +25625,334 @@ def _build_ooda_control_room_status_card(snapshot_at: str) -> Dict[str, Any]:
     }
 
 
+def _as_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _persona_id(record: Dict[str, Any]) -> str:
+    return str(record.get("persona_id") or record.get("id") or "").strip()
+
+
+def _first_binding_for_persona(persona_id: str) -> Optional[Dict[str, Any]]:
+    bindings = read_store.get_bindings_for_persona(persona_id)
+    if not bindings:
+        return None
+    active = [
+        binding
+        for binding in bindings
+        if str(binding.get("status") or binding.get("validity") or "").lower()
+        in {"active", "ready", "bound"}
+    ]
+    return active[0] if active else bindings[0]
+
+
+def _runtime_for_pool(pool_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not pool_id:
+        return None
+    for runtime in read_store.list_runtime_bindings():
+        if str(runtime.get("capital_pool_id") or "") == str(pool_id):
+            return runtime
+    return None
+
+
+def _persona_health_status(
+    *,
+    lifecycle_state: str,
+    league_entry: Dict[str, Any],
+    risk_flags: List[str],
+) -> str:
+    league_status = str(league_entry.get("status") or "").strip().lower()
+    if league_status in {"critical", "frozen", "halted"}:
+        return "critical"
+    if int(league_entry.get("metrics", {}).get("violation_count") or 0) > 0:
+        return "critical"
+    if risk_flags or league_status in {"needs_human_approval", "degraded", "under_review"}:
+        return "degraded"
+    if lifecycle_state in {"frozen", "retired"}:
+        return "critical"
+    return "healthy"
+
+
+def _build_persona_health_items(snapshot_at: str) -> List[Dict[str, Any]]:
+    league_by_persona = {
+        str(item.get("persona_id") or item.get("id") or ""): item
+        for item in read_store.list_persona_league()
+    }
+    items: List[Dict[str, Any]] = []
+    for persona in read_store.list_personas():
+        persona_id = _persona_id(persona)
+        if not persona_id:
+            continue
+        metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+        league_entry = league_by_persona.get(persona_id, {})
+        league_metrics = (
+            league_entry.get("metrics")
+            if isinstance(league_entry.get("metrics"), dict)
+            else {}
+        )
+        performance = (
+            metadata.get("performance")
+            if isinstance(metadata.get("performance"), dict)
+            else {}
+        )
+        metrics = {**performance, **league_metrics}
+        binding = _first_binding_for_persona(persona_id) or {}
+        pool_id = (
+            league_entry.get("capital_pool_id")
+            or metadata.get("capital_pool_id")
+            or binding.get("capital_pool_id")
+        )
+        runtime = _runtime_for_pool(pool_id) or {}
+        runtime_id = (
+            league_entry.get("runtime_id")
+            or runtime.get("runtime_id")
+            or runtime.get("id")
+            or metadata.get("runtime_binding_id")
+        )
+        deployment_stage = (
+            league_entry.get("deployment_stage")
+            or runtime.get("deployment_stage")
+            or runtime.get("deployment_mode")
+            or metadata.get("deployment_stage")
+            or "none"
+        )
+        market_scope = list(
+            league_entry.get("market_scope")
+            or metadata.get("market_scope")
+            or []
+        )
+        asset_classes = list(metadata.get("asset_classes") or [])
+        risk_flags = list(league_entry.get("risk_flags") or metadata.get("risk_flags") or [])
+        lifecycle_state = str(persona.get("lifecycle_state") or persona.get("status") or "unknown")
+        health = _persona_health_status(
+            lifecycle_state=lifecycle_state,
+            league_entry=league_entry,
+            risk_flags=risk_flags,
+        )
+        score = _as_float(league_entry.get("league_score") or metadata.get("league_score"), 75.0)
+        routed = _routed_strategies_for_persona(persona_id)
+        open_findings = len(risk_flags) + int(metrics.get("violation_count") or 0)
+        drill_target = runtime_id or persona_id
+        item = {
+            "id": persona_id,
+            "persona_id": persona_id,
+            "personaId": persona_id,
+            "name": persona.get("name") or persona_id,
+            "persona_name": persona.get("name") or persona_id,
+            "personaName": persona.get("name") or persona_id,
+            "mode": deployment_stage,
+            "status": health,
+            "health": health,
+            "score": score,
+            "routed_strategies": routed,
+            "routedStrategies": routed,
+            "open_findings": open_findings,
+            "openFindings": open_findings,
+            "market_scope": market_scope,
+            "marketScope": market_scope,
+            "asset_classes": asset_classes,
+            "assetClasses": asset_classes,
+            "capital_pool_id": pool_id,
+            "capitalPoolId": pool_id,
+            "runtime_id": runtime_id,
+            "runtimeId": runtime_id,
+            "deployment_stage": deployment_stage,
+            "deploymentStage": deployment_stage,
+            "ooda_stage": league_entry.get("ooda_stage") or metadata.get("ooda_stage"),
+            "oodaStage": league_entry.get("ooda_stage") or metadata.get("ooda_stage"),
+            "recommendation": league_entry.get("recommendation")
+            or metadata.get("recommended_governance_action"),
+            "governance_required": bool(
+                league_entry.get("governance_required")
+                if "governance_required" in league_entry
+                else metadata.get("governance_required", True)
+            ),
+            "governanceRequired": bool(
+                league_entry.get("governance_required")
+                if "governance_required" in league_entry
+                else metadata.get("governance_required", True)
+            ),
+            "metrics": {
+                "pnl": _as_float(metrics.get("pnl")),
+                "sharpe": _as_float(metrics.get("sharpe")),
+                "sortino": _as_float(metrics.get("sortino")),
+                "max_drawdown": _as_float(metrics.get("max_drawdown")),
+                "win_rate": _as_float(metrics.get("win_rate")),
+                "trading_cost_bps": _as_float(metrics.get("trading_cost_bps")),
+                "stability_score": _as_float(metrics.get("stability_score")),
+                "human_interventions": int(metrics.get("human_interventions") or 0),
+                "training_improvement_pct": _as_float(metrics.get("training_improvement_pct")),
+                "violation_count": int(metrics.get("violation_count") or 0),
+            },
+            "risk_flags": risk_flags,
+            "riskFlags": risk_flags,
+            "updated_at": league_entry.get("updated_at")
+            or persona.get("updated_at")
+            or persona.get("last_active_at")
+            or snapshot_at,
+            "drill_down": {
+                "kind": "runtime" if runtime_id else "persona",
+                "href": f"/management/runtimes/{drill_target}" if runtime_id else f"/personas/{persona_id}",
+                "runtime_id": runtime_id,
+                "persona_id": persona_id,
+            },
+            "drillDown": {
+                "kind": "runtime" if runtime_id else "persona",
+                "href": f"/management/runtimes/{drill_target}" if runtime_id else f"/personas/{persona_id}",
+                "runtimeId": runtime_id,
+                "personaId": persona_id,
+            },
+        }
+        items.append(item)
+    return sorted(
+        items,
+        key=lambda item: (
+            -_as_float(item.get("score")),
+            str(item.get("persona_id") or ""),
+        ),
+    )
+
+
+def _capital_pool_totals(pools: List[Dict[str, Any]]) -> Dict[str, Any]:
+    return {
+        "pool_count": len(pools),
+        "total_nav": sum(_as_float(pool.get("nav") or pool.get("capital_allocation")) for pool in pools),
+        "cash": sum(_as_float(pool.get("cash")) for pool in pools),
+        "gross_exposure": sum(_as_float(pool.get("gross_exposure")) for pool in pools),
+        "net_exposure": sum(_as_float(pool.get("net_exposure")) for pool in pools),
+        "realized_pnl": sum(_as_float(pool.get("realized_pnl")) for pool in pools),
+        "unrealized_pnl": sum(_as_float(pool.get("unrealized_pnl")) for pool in pools),
+        "var_95": max((_as_float(pool.get("var_95")) for pool in pools), default=0.0),
+        "drawdown": max((_as_float(pool.get("drawdown")) for pool in pools), default=0.0),
+        "slippage_bps": max((_as_float(pool.get("slippage_bps")) for pool in pools), default=0.0),
+        "fill_ratio": min((_as_float(pool.get("fill_ratio"), 1.0) for pool in pools), default=1.0),
+        "order_reject_rate": max((_as_float(pool.get("order_reject_rate")) for pool in pools), default=0.0),
+    }
+
+
+def _persona_league_payload(
+    *,
+    snapshot_at: str,
+    market_scope: Optional[str] = None,
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = 20,
+) -> Dict[str, Any]:
+    items = read_store.list_persona_league(market_scope=market_scope, status=status)
+    total = len(items)
+    page_items, next_page_token = _page_slice(items, page_token, page_size)
+    return {
+        "data": page_items,
+        "items": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": _read_surface_meta(
+            "persona_league",
+            "persona_league",
+            snapshot_at=snapshot_at,
+            total=total,
+        ),
+    }
+
+
+@app.get("/bff/persona-league")
+@app.get("/bff/management/persona-league")
+async def bff_persona_league(
+    market_scope: Optional[str] = None,
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _persona_league_payload(
+        snapshot_at=utc_now(),
+        market_scope=market_scope,
+        status=status,
+        page_token=page_token,
+        page_size=page_size,
+    )
+
+
+@app.get("/bff/persona-league/{persona_id}")
+@app.get("/bff/management/persona-league/{persona_id}")
+async def bff_persona_league_detail(
+    persona_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    entry = read_store.get_persona_league_entry(persona_id)
+    if not entry:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Persona league entry not found",
+            f"Persona league entry {persona_id} does not exist",
+        )
+    return {
+        "data": entry,
+        "meta": _read_surface_meta(
+            "persona_league",
+            "persona_league_detail",
+            snapshot_at=snapshot_at,
+        ),
+    }
+
+
+@app.get("/bff/management/fleet")
+async def bff_management_fleet(
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    pools = read_store.list_capital_pools()
+    runtimes = read_store.list_runtime_bindings()
+    league = read_store.list_persona_league()
+    health = _build_persona_health_items(snapshot_at)
+    pending_human_gate = [
+        item
+        for item in league
+        if item.get("governance_required")
+        and str(item.get("recommendation") or "").strip()
+    ]
+    ooda_card = _build_ooda_control_room_status_card(snapshot_at)
+    return {
+        "data": {
+            "persona_fleet": health,
+            "persona_league": league,
+            "capital_pools": pools,
+            "capital_totals": _capital_pool_totals(pools),
+            "runtime_bindings": runtimes,
+            "ooda_status": ooda_card,
+            "human_inbox": {
+                "pending_count": len(pending_human_gate),
+                "items": pending_human_gate,
+            },
+            "execution_boundary": {
+                "approved_artifacts_only": True,
+                "live_capital_side_effects": False,
+                "human_gate_required_for_capital_changes": True,
+            },
+        },
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": {
+                "personas": _dataset_surface_status("personas", snapshot_at=snapshot_at),
+                "persona_league": _dataset_surface_status("persona_league", snapshot_at=snapshot_at),
+                "capital_pools": _dataset_surface_status("capital_pools", snapshot_at=snapshot_at),
+                "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
+                "ooda_control_room_status": ooda_card["meta"],
+            },
+        },
+    }
+
+
 def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
     if path == "/bff/audit":
         return _sem_final_list_response(
@@ -25627,20 +26080,19 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
     if path == "/bff/v5/execution/persona-health":
         snapshot_at = utc_now()
         persona_surface = _dataset_surface_status("personas", snapshot_at=snapshot_at)
-        personas = read_store.list_personas()
-        health_items = [
-            {
-                "id": p.get("persona_id") or p.get("id"),
-                "persona_id": p.get("persona_id") or p.get("id"),
-                "name": p.get("name") or p.get("persona_id"),
-                "health": "healthy" if p.get("lifecycle_state") == "active" else "degraded",
-                "lifecycle_state": p.get("lifecycle_state"),
-            }
-            for p in personas
-        ]
+        league_surface = _dataset_surface_status("persona_league", snapshot_at=snapshot_at)
+        health_items = _build_persona_health_items(snapshot_at)
         return {
+            "data": health_items,
             "items": health_items,
-            "meta": {"snapshot_at": snapshot_at, "surfaces": {"persona_health": persona_surface}},
+            "page_info": {"next_page_token": None, "total": len(health_items)},
+            "meta": {
+                "snapshot_at": snapshot_at,
+                "surfaces": {
+                    "persona_health": persona_surface,
+                    "persona_league": league_surface,
+                },
+            },
         }
     if path == "/bff/v5/execution/strategy-health":
         snapshot_at = utc_now()

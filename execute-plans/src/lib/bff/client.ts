@@ -159,6 +159,22 @@ export type OodaPacketListQuery = {
   page_size?: number;
 };
 
+export type PersonaLeagueEntry = Record<string, unknown> & {
+  id?: string;
+  persona_id?: string;
+  name?: string;
+  market_scope?: string[];
+  rank?: number;
+  league_score?: number;
+};
+
+export type ManagementFleetProjection = Record<string, unknown> & {
+  persona_fleet?: PersonaLeagueEntry[];
+  persona_league?: PersonaLeagueEntry[];
+  capital_pools?: Array<Record<string, unknown>>;
+  runtime_bindings?: Array<Record<string, unknown>>;
+};
+
 export interface EvolutionReviewProjection {
   decision_id: string;
   target_type: string;
@@ -252,6 +268,46 @@ function oodaPacketDetail(id: string): Promise<OodaPacketDetail | undefined> {
     async () => undefined,
     adaptOodaPacketDetail,
     strictNotFoundAsUndefined,
+  );
+}
+
+function personaLeagueList(): Promise<ListEnvelope<PersonaLeagueEntry>> {
+  return withStrictLiveOrMock<ListEnvelope<PersonaLeagueEntry>, unknown>(
+    { method: "GET", path: paths.personaLeague() },
+    async () => ({
+      items: [],
+      cursor: {},
+      pageSize: 0,
+      totalCountExact: true,
+      estimatedTotal: 0,
+      meta: {
+        surfaces: {
+          persona_league: {
+            status: "unavailable",
+            source: "mock",
+            reason: "Persona League is served by the Pantheon management BFF.",
+          },
+        },
+      },
+    }),
+    (data) => normalizeLiveListResponse<PersonaLeagueEntry>(data, "personaLeague"),
+  );
+}
+
+function personaLeagueDetail(id: string): Promise<PersonaLeagueEntry | undefined> {
+  return withStrictLiveOrMock<PersonaLeagueEntry | undefined, unknown>(
+    { method: "GET", path: paths.personaLeagueEntry(id) },
+    async () => undefined,
+    (data) => strictDataFrom(data) as PersonaLeagueEntry | undefined,
+    strictNotFoundAsUndefined,
+  );
+}
+
+function managementFleetDetail(): Promise<ManagementFleetProjection | undefined> {
+  return withStrictLiveOrMock<ManagementFleetProjection | undefined, unknown>(
+    { method: "GET", path: paths.managementFleet() },
+    async () => undefined,
+    (data) => strictDataFrom(data) as ManagementFleetProjection | undefined,
   );
 }
 
@@ -409,6 +465,15 @@ const oodaPackets = {
     oodaPacketList(paths.evolutionProgramOodaPackets(id), query),
 };
 
+const personaLeague = {
+  list: personaLeagueList,
+  get: personaLeagueDetail,
+};
+
+const managementFleet = {
+  get: managementFleetDetail,
+};
+
 const evolutionReviews = {
   get: evolutionReviewDetail,
 };
@@ -439,6 +504,8 @@ export const managementClient = {
   approvals,
   audit,
   oodaPackets,
+  personaLeague,
+  managementFleet,
   evolutionReviews,
 } as const;
 
@@ -450,7 +517,7 @@ export const MANAGEMENT_FAMILIES: readonly ManagementFamily[] = [
   "rebalances", "deployments", "evolution", "research", "artifacts",
   "tools", "mcpServers", "mcpTools", "skills", "channels",
   "jobs", "runtimes", "alerts", "incidents", "approvals", "audit",
-  "oodaPackets",
+  "oodaPackets", "personaLeague",
 ] as const;
 
 /** Snapshot of the current live-status, useful for UI banners that show
