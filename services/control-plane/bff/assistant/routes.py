@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from typing import Any, Callable, List, Optional
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Header, HTTPException
+from pydantic import ValidationError
 
 from models import ErrorCode
 
@@ -28,7 +32,18 @@ from .mode_policy import (
     user_mode_capability_summary,
     PRODUCT_DEFAULT_MODE,
 )
-from .models import AssistantContextPack, AssistantContextPackRequest, AssistantContextPackResponse, AssistantMode, OrchestratorStatusResponse
+from .dev_bridge_models import BridgeActor, BridgeDocument, BridgeTask, DevTaskPacket
+from .dev_bridge_signer import sign_packet
+from .dev_docs_archiver import archive_packet, infer_repo_root
+from .dev_docs_generator import generate_dev_doc_packet
+from .dev_docs_models import DevDocGenerateRequest, DevDocGenerateResponse, DevDocPacket
+from .models import (
+    AssistantContextPack,
+    AssistantContextPackRequest,
+    AssistantContextPackResponse,
+    AssistantMode,
+    OrchestratorStatusResponse,
+)
 from .orchestrator_status import read_orchestrator_status
 from .tool_contracts import (
     ASSISTANT_TOOL_ALLOWLIST,
@@ -55,6 +70,20 @@ ExtractIdentity = Callable[[Optional[str]], Any]
 RequireReadRole = Callable[[Any], None]
 BffErrorFactory = Callable[..., HTTPException]
 
+DEFAULT_DEV_DOC_CONTEXT_SOURCES = [
+    "ui",
+    "control_room",
+    "jobs",
+    "alerts",
+    "audit",
+    "recent_sse",
+    "persona_health",
+    "strategy_health",
+    "management_nl",
+    "docs_rag",
+    "repo_status",
+]
+
 
 def create_assistant_router(
     *,
@@ -65,6 +94,8 @@ def create_assistant_router(
     session_store: Optional[Any] = None,
     transcript_store: Optional[Any] = None,
     control_mode_store: Optional[ControlModeStore] = None,
+    dev_docs_repo_root: Optional[str] = None,
+    bridge_key_store: Optional[Dict[str, bytes]] = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/bff/assistant", tags=["assistant"])
 
@@ -383,6 +414,127 @@ def create_assistant_router(
         return {"data": status.model_dump(mode="json", by_alias=True)}
 
     # ------------------------------------------------------------------
+    # SA/SD generation and signed dev task packet bridge
+    # ------------------------------------------------------------------
+
+    @router.post("/dev-docs/generate", status_code=201)
+    async def generate_assistant_dev_docs(
+        payload: dict = Body(default_factory=dict),
+        authorization: Optional[str] = Header(default=None),
+    ) -> dict[str, Any]:
+        """Generate SA/SD artifacts from a Management AI conversation.
+
+        Requires active control mode because archive=true writes repo docs and
+        task briefs. BFF may emit a signed packet but never dispatches it.
+        """
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+        control_status = _require_active_control_mode(
+            identity,
+            _control_mode_store,
+            bff_error=bff_error,
+        )
+
+        request = _parse_dev_doc_request(payload, bff_error=bff_error)
+        turns = _conversation_turns_for_request(_transcript_store, request)
+        context_pack = _context_pack_for_dev_docs(
+            payload,
+            request,
+            identity,
+            control_status=control_status,
+            build_context_pack=build_context_pack,
+            bff_error=bff_error,
+        )
+
+        packet = generate_dev_doc_packet(
+            request=request,
+            turns=turns,
+            context_pack=context_pack,
+        )
+
+        archive_locations = None
+        if request.archive:
+            archive_locations = archive_packet(
+                packet,
+                repo_root=_dev_docs_repo_root(dev_docs_repo_root),
+            )
+            packet = packet.model_copy(update={"archive_locations": archive_locations})
+
+        meta: Dict[str, Any] = {
+            "archived": archive_locations is not None,
+            "archiveLocations": archive_locations.model_dump(mode="json", by_alias=True)
+            if archive_locations is not None
+            else None,
+            "devBridge": _dev_bridge_meta(),
+        }
+
+        if _truthy(
+            payload.get(
+                "emitTaskPacket",
+                payload.get(
+                    "emit_task_packet",
+                    payload.get("signTaskPacket", payload.get("sign_task_packet")),
+                ),
+            )
+        ):
+            task_packet = _signed_dev_task_packet(
+                packet,
+                identity,
+                mode=str(control_status.get("mode") or AssistantMode.KERNEL_DEBUG.value),
+                key_store=bridge_key_store,
+            )
+            meta["taskPacket"] = task_packet.model_dump(mode="json", by_alias=True)
+
+        response = DevDocGenerateResponse(data=packet, meta=meta)
+        return response.model_dump(mode="json", by_alias=True)
+
+    @router.get("/dev-docs/{packet_id}")
+    async def get_assistant_dev_doc_packet(
+        packet_id: str,
+        authorization: Optional[str] = Header(default=None),
+    ) -> dict[str, Any]:
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+        _require_active_control_mode(identity, _control_mode_store, bff_error=bff_error)
+
+        packet = _load_archived_dev_doc_packet(
+            packet_id,
+            repo_root=_dev_docs_repo_root(dev_docs_repo_root),
+            bff_error=bff_error,
+        )
+        return {"data": packet.model_dump(mode="json", by_alias=True)}
+
+    @router.post("/dev-bridge/task-packet", status_code=201)
+    async def create_assistant_dev_task_packet(
+        payload: dict = Body(default_factory=dict),
+        authorization: Optional[str] = Header(default=None),
+    ) -> dict[str, Any]:
+        """Sign a DevTaskPacket for repo-local dispatch.
+
+        This route intentionally does not call the dispatcher. Trusted
+        repo-local automation verifies and materialises the packet.
+        """
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+        control_status = _require_active_control_mode(
+            identity,
+            _control_mode_store,
+            bff_error=bff_error,
+        )
+
+        packet = _parse_dev_doc_packet(payload, bff_error=bff_error)
+        task_packet = _signed_dev_task_packet(
+            packet,
+            identity,
+            mode=str(payload.get("mode") or control_status.get("mode") or AssistantMode.KERNEL_DEBUG.value),
+            key_store=bridge_key_store,
+        )
+        return {
+            "data": task_packet.model_dump(mode="json", by_alias=True),
+            "meta": _dev_bridge_meta(),
+        }
+
+    # ------------------------------------------------------------------
     # Governed tool contract routes (ASST-INTEG-004)
     # preview → validate → execute → receipt
     # All mutations route through action_catalog + command_executor.
@@ -625,6 +777,354 @@ def _positive_int(value: Any, fallback: int) -> int:
     except (TypeError, ValueError):
         return fallback
     return parsed
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _dev_docs_repo_root(configured_root: Optional[str]) -> str:
+    if configured_root:
+        return str(configured_root)
+    return infer_repo_root()
+
+
+def _require_active_control_mode(
+    identity: Any,
+    control_mode_store: ControlModeStore,
+    *,
+    bff_error: Optional[BffErrorFactory],
+) -> Dict[str, Any]:
+    _require_control_mode_actor(identity, bff_error=bff_error)
+    actor_id = str(getattr(identity, "operator_id", None) or "")
+    status = control_mode_store.status_for_actor(actor_id, touch=True)
+    if not status.get("active"):
+        _raise_error(
+            bff_error,
+            409,
+            ErrorCode.PRECONDITION_FAILED,
+            "Assistant dev workflow requires active control mode",
+            "Activate assistant control mode before generating SA/SD or task packets",
+            field="control_mode",
+            reason=status.get("reason") or status.get("state") or "inactive",
+        )
+    return status
+
+
+def _parse_dev_doc_request(
+    payload: dict,
+    *,
+    bff_error: Optional[BffErrorFactory],
+) -> DevDocGenerateRequest:
+    try:
+        return DevDocGenerateRequest(**payload)
+    except ValidationError as exc:
+        _raise_error(
+            bff_error,
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Invalid assistant dev docs request",
+            str(exc),
+            field="payload",
+            errors=exc.errors(),
+        )
+    raise AssertionError("unreachable")
+
+
+def _parse_dev_doc_packet(
+    payload: dict,
+    *,
+    bff_error: Optional[BffErrorFactory],
+) -> DevDocPacket:
+    raw_packet = (
+        payload.get("devDocPacket")
+        or payload.get("dev_doc_packet")
+        or payload.get("packet")
+        or payload
+    )
+    if isinstance(raw_packet, dict) and isinstance(raw_packet.get("data"), dict):
+        raw_packet = raw_packet["data"]
+    if not isinstance(raw_packet, dict):
+        _raise_error(
+            bff_error,
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "devDocPacket must be an object",
+            field="devDocPacket",
+        )
+    try:
+        return DevDocPacket(**raw_packet)
+    except ValidationError as exc:
+        _raise_error(
+            bff_error,
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Invalid assistant dev doc packet",
+            str(exc),
+            field="devDocPacket",
+            errors=exc.errors(),
+        )
+    raise AssertionError("unreachable")
+
+
+def _conversation_turns_for_request(
+    transcript_store: Any,
+    request: DevDocGenerateRequest,
+) -> List[Dict[str, Any]]:
+    turns = [turn_to_dict(turn) for turn in transcript_store.list_turns(request.conversation_id)]
+    if not request.turn_ids:
+        return turns
+    wanted = {str(turn_id) for turn_id in request.turn_ids}
+    return [turn for turn in turns if str(turn.get("turn_id")) in wanted]
+
+
+def _context_pack_for_dev_docs(
+    payload: dict,
+    request: DevDocGenerateRequest,
+    identity: Any,
+    *,
+    control_status: Dict[str, Any],
+    build_context_pack: BuildContextPack,
+    bff_error: Optional[BffErrorFactory],
+) -> Any:
+    explicit_pack = payload.get("contextPack")
+    if explicit_pack is None:
+        explicit_pack = payload.get("context_pack")
+    if explicit_pack is not None:
+        return explicit_pack
+
+    raw_request = payload.get("contextPackRequest")
+    if raw_request is None:
+        raw_request = payload.get("context_pack_request")
+    if raw_request is None:
+        raw_request = {
+            "mode": payload.get("mode") or control_status.get("mode") or AssistantMode.KERNEL_DEBUG.value,
+            "include": payload.get("include") or DEFAULT_DEV_DOC_CONTEXT_SOURCES,
+            "question": request.feature_summary,
+        }
+    if not isinstance(raw_request, dict):
+        _raise_error(
+            bff_error,
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "contextPackRequest must be an object",
+            field="contextPackRequest",
+        )
+
+    try:
+        context_request = AssistantContextPackRequest(**raw_request)
+    except ValidationError as exc:
+        _raise_error(
+            bff_error,
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Invalid assistant context pack request",
+            str(exc),
+            field="contextPackRequest",
+            errors=exc.errors(),
+        )
+        raise AssertionError("unreachable")
+
+    try:
+        assert_kernel_allowed(context_request.mode)
+    except ModePolicyViolation as exc:
+        _raise_error(
+            bff_error,
+            403,
+            ErrorCode.FORBIDDEN,
+            f"Mode policy violation: {exc}",
+            str(exc),
+            field=exc.field,
+        )
+
+    try:
+        return build_context_pack(request.conversation_id, context_request, identity)
+    except AssistantContextPolicyError as exc:
+        _raise_error(
+            bff_error,
+            403,
+            ErrorCode.FORBIDDEN,
+            "Assistant context source is not allowed for this mode",
+            str(exc),
+            precondition_failed="assistant_context_mode_policy",
+            denied_sources=exc.denied_sources,
+        )
+    raise AssertionError("unreachable")
+
+
+def _load_archived_dev_doc_packet(
+    packet_id: str,
+    *,
+    repo_root: str,
+    bff_error: Optional[BffErrorFactory],
+) -> DevDocPacket:
+    clean_packet_id = str(packet_id or "").strip()
+    if not clean_packet_id or any(not (ch.isalnum() or ch in {"_", "-"}) for ch in clean_packet_id):
+        _raise_error(
+            bff_error,
+            400,
+            ErrorCode.VALIDATION_FAILED,
+            "Invalid packet_id",
+            field="packet_id",
+        )
+
+    root = Path(repo_root)
+    matches = sorted(root.glob(f"docs/04/sa_sd_{clean_packet_id}_*/dev_doc_packet.json"))
+    if not matches:
+        _raise_error(
+            bff_error,
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            f"Archived dev doc packet not found: {clean_packet_id!r}",
+            field="packet_id",
+        )
+    try:
+        raw = json.loads(matches[0].read_text(encoding="utf-8"))
+        return DevDocPacket(**raw)
+    except (OSError, json.JSONDecodeError, ValidationError) as exc:
+        _raise_error(
+            bff_error,
+            500,
+            ErrorCode.INTERNAL_ERROR,
+            f"Archived dev doc packet is unreadable: {clean_packet_id!r}",
+            str(exc),
+            field="packet_id",
+        )
+    raise AssertionError("unreachable")
+
+
+def _signed_dev_task_packet(
+    packet: DevDocPacket,
+    identity: Any,
+    *,
+    mode: str,
+    key_store: Optional[Dict[str, bytes]],
+) -> DevTaskPacket:
+    task_packet = DevTaskPacket(
+        packetId=f"bridge_{packet.packet_id}",
+        emittedAt=_utc_now_z(),
+        actor=BridgeActor(
+            id=str(getattr(identity, "operator_id", None) or packet.actor_id or "unknown"),
+            roles=[str(role) for role in (getattr(identity, "roles", []) or [])],
+            capabilities=actor_capabilities(identity),
+        ),
+        mode=mode,
+        sourceConversationId=packet.conversation_id,
+        sourceTurnIds=[
+            ref.turn_id for ref in (packet.requirement_capture.source_turn_refs or [])
+        ],
+        documents=_bridge_documents(packet),
+        tasks=_bridge_tasks(packet),
+        auditConversationHref=f"/bff/assistant/sessions/{packet.conversation_id}/transcript",
+    )
+    return sign_packet(task_packet, key_store=key_store)
+
+
+def _bridge_documents(packet: DevDocPacket) -> List[BridgeDocument]:
+    locations = packet.archive_locations
+    docs: List[BridgeDocument] = []
+    if locations is not None:
+        doc_specs = [
+            (
+                locations.requirement_capture,
+                "REQUIREMENT_CAPTURE",
+                packet.requirement_capture.source_refs,
+            ),
+            (
+                locations.system_analysis,
+                "SYSTEM_ANALYSIS",
+                packet.system_analysis.source_refs,
+            ),
+            (
+                locations.system_design,
+                "SYSTEM_DESIGN",
+                packet.system_design.source_refs,
+            ),
+        ]
+        for path, kind, refs in doc_specs:
+            if path:
+                docs.append(
+                    BridgeDocument(
+                        path=path,
+                        kind=kind,
+                        sourceRefs=_source_ref_ids(refs),
+                    )
+                )
+        for path in locations.task_briefs or []:
+            docs.append(
+                BridgeDocument(
+                    path=path,
+                    kind="TASK_BRIEF",
+                    sourceRefs=_source_ref_ids(packet.source_refs),
+                )
+            )
+        return docs
+
+    seen_paths = set()
+    for task in packet.execution_tasks:
+        for path in task.artifacts or []:
+            clean_path = str(path or "").strip()
+            if not clean_path or clean_path in seen_paths:
+                continue
+            if clean_path.startswith("docs/") or clean_path.startswith(".orchestrator/task-briefs/"):
+                seen_paths.add(clean_path)
+                docs.append(
+                    BridgeDocument(
+                        path=clean_path,
+                        kind="PLANNED_ARTIFACT",
+                        sourceRefs=_source_ref_ids(task.source_refs or packet.source_refs),
+                    )
+                )
+    return docs
+
+
+def _bridge_tasks(packet: DevDocPacket) -> List[BridgeTask]:
+    return [
+        BridgeTask(
+            id=task.task_id,
+            title=task.title,
+            owner=task.owner,
+            reviewer=task.reviewer,
+            phase=task.phase,
+            dependsOn=list(task.depends_on or []),
+            artifacts=list(task.artifacts or []),
+            acceptance=list(task.acceptance or []),
+            summary=task.summary,
+        )
+        for task in packet.execution_tasks
+    ]
+
+
+def _source_ref_ids(refs: List[Any]) -> List[str]:
+    result: List[str] = []
+    seen = set()
+    for ref in refs or []:
+        if isinstance(ref, dict):
+            source_id = ref.get("source_id") or ref.get("sourceId")
+        else:
+            source_id = getattr(ref, "source_id", None)
+        clean = str(source_id or "").strip()
+        if clean and clean not in seen:
+            seen.add(clean)
+            result.append(clean)
+    return result
+
+
+def _dev_bridge_meta() -> Dict[str, Any]:
+    return {
+        "dispatchMode": "repo_local_required",
+        "noDirectShellFromWeb": True,
+        "dispatcher": "assistant.dev_bridge_dispatcher.dispatch_task_packet",
+        "orchestratorStatusHref": "/bff/assistant/orchestrator/status",
+    }
+
+
+def _utc_now_z() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _require_control_mode_actor(
