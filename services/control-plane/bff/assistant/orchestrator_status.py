@@ -24,6 +24,7 @@ ASSISTANT_COMMAND_TOOL = "assistant.command"
 FAILURE_CHECK_STATES = {"ACTION_REQUIRED", "CANCELLED", "ERROR", "FAILURE", "FAILED", "STALE", "TIMED_OUT"}
 PENDING_CHECK_STATES = {"EXPECTED", "IN_PROGRESS", "PENDING", "QUEUED", "REQUESTED", "WAITING"}
 SUCCESS_CHECK_STATES = {"COMPLETED", "NEUTRAL", "SKIPPED", "SUCCESS"}
+TERMINAL_TASK_STATUSES = {"done", "superseded", "cancelled"}
 DEPLOY_CHECK_MARKERS = (
     "deploy",
     "deployment",
@@ -137,7 +138,88 @@ def _first_mapping(*values: Any) -> Mapping[str, Any]:
     return {}
 
 
-def _task_blockers(blockers: Iterable[Any], task_id: str) -> List[Dict[str, Any]]:
+def _iso_at_or_after(value: Any, baseline: Any) -> bool:
+    if not baseline:
+        return True
+    if not value:
+        return False
+    try:
+        value_dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        baseline_dt = datetime.fromisoformat(str(baseline).replace("Z", "+00:00"))
+    except ValueError:
+        return str(value) >= str(baseline)
+    return value_dt >= baseline_dt
+
+
+def _failure_summary_text(value: Any) -> Optional[str]:
+    if value in (None, ""):
+        return None
+    raw = str(value)
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return _safe_text(raw)
+
+    parts: List[str] = []
+    error = payload.get("error") if isinstance(payload, Mapping) else None
+    if error:
+        parts.append(str(error))
+    message = _as_mapping(payload.get("message")) if isinstance(payload, Mapping) else {}
+    for content in message.get("content") or []:
+        item = _as_mapping(content)
+        text = item.get("text")
+        if text:
+            parts.append(str(text))
+            break
+    if not parts and message.get("stop_reason"):
+        parts.append(str(message.get("stop_reason")))
+    if not parts:
+        return _safe_text(raw)
+    return _safe_text(": ".join(parts))
+
+
+def _task_failure_streaks(state: Mapping[str, Any], task: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    task_id = str(task.get("id") or "")
+    if not task_id:
+        return []
+    task_status = str(task.get("status") or "").lower()
+    if task_status in TERMINAL_TASK_STATUSES:
+        return []
+
+    guardrails = _as_mapping(state.get("provider_guardrails"))
+    failure_streaks = _as_mapping(guardrails.get("task_failure_streaks"))
+    task_failures: List[Dict[str, Any]] = []
+    for key, raw_streak in sorted(failure_streaks.items()):
+        streak = _as_mapping(raw_streak)
+        streak_task_id = str(streak.get("task_id") or streak.get("taskId") or key).split(":", 1)[0]
+        if streak_task_id != task_id:
+            continue
+        if not _iso_at_or_after(streak.get("last_failure_at") or streak.get("lastFailureAt"), task.get("last_update")):
+            continue
+        count = streak.get("count")
+        try:
+            count_value = int(count)
+        except (TypeError, ValueError):
+            count_value = 1
+        task_failures.append(
+            _safe(
+                {
+                    "type": "worker_failure_streak",
+                    "status": "attention",
+                    "source": "provider_guardrails.task_failure_streaks",
+                    "waitingFor": streak.get("provider"),
+                    "provider": streak.get("provider"),
+                    "count": count_value,
+                    "failureKind": streak.get("last_failure_kind") or streak.get("lastFailureKind"),
+                    "lastFailureAt": streak.get("last_failure_at") or streak.get("lastFailureAt"),
+                    "message": _failure_summary_text(streak.get("last_reason") or streak.get("message") or streak.get("reason")),
+                }
+            )
+        )
+    return task_failures[:5]
+
+
+def _task_blockers(blockers: Iterable[Any], task_id: str, *, state: Mapping[str, Any], task: Mapping[str, Any]) -> List[Dict[str, Any]]:
     task_blockers: List[Dict[str, Any]] = []
     for blocker in blockers:
         item = _as_mapping(blocker)
@@ -163,6 +245,7 @@ def _task_blockers(blockers: Iterable[Any], task_id: str) -> List[Dict[str, Any]
                 }
             )
         )
+    task_blockers.extend(_task_failure_streaks(state, task))
     return task_blockers
 
 
@@ -488,7 +571,28 @@ def _normalize_provider_guardrails(state: Mapping[str, Any]) -> Dict[str, Any]:
             )
         )
     failure_streaks = _as_mapping(guardrails.get("task_failure_streaks"))
-    return {"dispatchPauses": normalized_pauses, "taskFailureStreakCount": len(failure_streaks)}
+    normalized_streaks = []
+    for key, raw_streak in sorted(failure_streaks.items()):
+        streak = _as_mapping(raw_streak)
+        normalized_streaks.append(
+            _safe(
+                {
+                    "key": key,
+                    "taskId": streak.get("task_id") or streak.get("taskId") or str(key).split(":", 1)[0],
+                    "provider": streak.get("provider"),
+                    "count": streak.get("count"),
+                    "lastFailureAt": streak.get("last_failure_at") or streak.get("lastFailureAt"),
+                    "failureKind": streak.get("last_failure_kind") or streak.get("lastFailureKind"),
+                    "reason": _failure_summary_text(streak.get("last_reason") or streak.get("reason")),
+                }
+            )
+        )
+    normalized_streaks.sort(key=lambda item: str(item.get("lastFailureAt") or ""), reverse=True)
+    return {
+        "dispatchPauses": normalized_pauses,
+        "taskFailureStreakCount": len(failure_streaks),
+        "taskFailureStreaks": normalized_streaks[:20],
+    }
 
 
 def _assistant_inbox_root(root: Path) -> Path:
@@ -811,7 +915,7 @@ def read_orchestrator_status(
             summary_zh=t.get("summary_zh"),
             waiting_for=t.get("waiting_for"),
             brief_path=brief_path,
-            blockers=_task_blockers(blockers, task_id),
+            blockers=_task_blockers(blockers, task_id, state=state, task=t),
             github=github_status,
             deployment=deployment_status,
             delivery=delivery,

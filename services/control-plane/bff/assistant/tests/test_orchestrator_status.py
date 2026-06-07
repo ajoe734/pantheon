@@ -84,7 +84,17 @@ class TestOrchestratorStatus(unittest.TestCase):
                         "detail": "ANTHROPIC_API_KEY=secret",
                         "blocked_until": "2026-06-03T12:30:00Z",
                     }
-                }
+                },
+                "task_failure_streaks": {
+                    "TASK-1:claude": {
+                        "task_id": "TASK-1",
+                        "provider": "claude",
+                        "count": 2,
+                        "last_reason": "You've hit your weekly limit token=hidden",
+                        "last_failure_at": "2026-06-03T12:10:00Z",
+                        "last_failure_kind": "terminal",
+                    }
+                },
             },
             "assistant_dev_bridge": {
                 "last_drain_at": "2026-06-03T12:12:00Z",
@@ -217,6 +227,10 @@ class TestOrchestratorStatus(unittest.TestCase):
         self.assertEqual(status.tasks[0].status, "in_progress")
         self.assertEqual(status.tasks[0].waiting_for, "CI")
         self.assertEqual(status.tasks[0].blockers[0]["waitingFor"], "CI")
+        self.assertEqual(status.tasks[0].blockers[1]["type"], "worker_failure_streak")
+        self.assertEqual(status.tasks[0].blockers[1]["provider"], "claude")
+        self.assertEqual(status.tasks[0].blockers[1]["count"], 2)
+        self.assertNotIn("hidden", json.dumps(status.tasks[0].blockers[1]))
 
         # Verify GitHub bus info is preserved and normalized for assistant readback.
         self.assertIsNotNone(status.tasks[0].delivery)
@@ -240,6 +254,10 @@ class TestOrchestratorStatus(unittest.TestCase):
         self.assertEqual(status.supervisor["lifecycle"], "idle")
         self.assertNotIn("super-secret", status.supervisor["lastLoopError"])
         self.assertNotIn("secret", status.provider_guardrails["dispatchPauses"][0]["detail"])
+        self.assertEqual(status.provider_guardrails["taskFailureStreakCount"], 1)
+        self.assertEqual(status.provider_guardrails["taskFailureStreaks"][0]["taskId"], "TASK-1")
+        self.assertEqual(status.provider_guardrails["taskFailureStreaks"][0]["provider"], "claude")
+        self.assertNotIn("hidden", json.dumps(status.provider_guardrails["taskFailureStreaks"][0]))
         self.assertEqual(status.provider_readiness["status"], "ready")
         self.assertTrue(status.provider_readiness["ready"])
         self.assertEqual(status.provider_readiness["authStatus"], "ready")
