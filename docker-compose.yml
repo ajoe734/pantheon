@@ -398,6 +398,11 @@ services:
     build:
       context: .
       dockerfile: services/openclaw-gateway-adapter/Dockerfile
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined
     environment:
       PORT: "8104"
       OPENCLAW_GATEWAY_URL: http://openclaw-gateway:18789

@@ -377,6 +377,54 @@ def test_repair_mode_uses_workspace_write_for_task_worktree(tmp_path: Path) -> N
     assert result["repair_workflow"]["merge_target"] == "dev"
 
 
+def test_successful_returncode_with_bwrap_namespace_error_fails_closed(tmp_path: Path) -> None:
+    task_id = "ASST-OCGW-004"
+    root, worktree = _init_task_worktree(tmp_path, task_id)
+    stdout = "\n".join(
+        [
+            '{"type":"thread.started","thread_id":"thread-1"}',
+            '{"type":"turn.started"}',
+            (
+                '{"type":"item.completed","item":{"type":"command_execution",'
+                '"aggregated_output":"bwrap: No permissions to create a new namespace\\n",'
+                '"exit_code":1,"status":"failed"}}'
+            ),
+            '{"type":"turn.completed"}',
+        ]
+    )
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
+
+    provider = _provider(
+        tmp_path,
+        fake_run,
+        env={"PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT": str(root)},
+    )
+
+    with pytest.raises(CodexProviderError) as exc_info:
+        provider.invoke(
+            {
+                "mode": "kernel_repair",
+                "prompt": "fix it",
+                "metadata": {
+                    "operator_id": "op-1",
+                    "task_id": task_id,
+                    "task_worktree": str(worktree),
+                    "declared_scope": ["services/openclaw-gateway-adapter"],
+                },
+            }
+        )
+
+    assert exc_info.value.code == "CODEX_SANDBOX_UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.retryable is False
+    audit_text = (tmp_path / "provider-audit.jsonl").read_text(encoding="utf-8")
+    assert "assistant.provider.failed" in audit_text
+    assert "CODEX_SANDBOX_UNAVAILABLE" in audit_text
+    assert "assistant.provider.completed" not in audit_text
+
+
 def test_timeout_records_redacted_audit_fallback(tmp_path: Path) -> None:
     def fake_run(cmd, **kwargs):
         raise subprocess.TimeoutExpired(cmd, kwargs["timeout"], output="ACCESS_TOKEN=abc123", stderr="oauth expired")

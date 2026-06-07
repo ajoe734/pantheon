@@ -55,6 +55,12 @@ _AUTH_FAILURE_RE = re.compile(
     r"(not\s+logged\s+in|login\s+required|sign\s+in|authentication|unauthorized|oauth|expired|token)",
     re.IGNORECASE,
 )
+_SANDBOX_NAMESPACE_FAILURE_RE = re.compile(
+    r"(bwrap:\s*No permissions to create a new namespace|"
+    r"fs sandbox helper failed|"
+    r"kernel\.unprivileged_userns_clone)",
+    re.IGNORECASE,
+)
 
 
 RunFunc = Callable[..., subprocess.CompletedProcess[str]]
@@ -394,6 +400,34 @@ class AssistantCodexProvider:
                 details={"returncode": completed.returncode, "duration_ms": duration_ms},
             )
 
+        sandbox_error = _sandbox_namespace_failure(completed.stdout, completed.stderr)
+        if sandbox_error:
+            code = "CODEX_SANDBOX_UNAVAILABLE"
+            self._audit.record(
+                {
+                    "event_type": "assistant.provider.failed",
+                    "provider": CODEX_PROVIDER_ID,
+                    "runtime": PROVIDER_RUNTIME,
+                    **audit_context,
+                    "mode": mode,
+                    "sandbox": context.sandbox,
+                    "workspace_class": context.workspace_class,
+                    **({"repair_workflow": context.repair_workflow} if context.repair_workflow else {}),
+                    "duration_ms": duration_ms,
+                    "returncode": completed.returncode,
+                    "stdout": completed.stdout,
+                    "stderr": completed.stderr,
+                    "error_code": code,
+                }
+            )
+            raise CodexProviderError(
+                code,
+                _failure_message(code),
+                status_code=503,
+                retryable=False,
+                details={"returncode": completed.returncode, "duration_ms": duration_ms},
+            )
+
         self._audit.record(
             {
                 "event_type": "assistant.provider.completed",
@@ -684,6 +718,8 @@ class AssistantCodexProvider:
 
 def _classify_failure(stdout: str, stderr: str) -> tuple[str, int, bool]:
     combined = f"{stdout}\n{stderr}"
+    if _SANDBOX_NAMESPACE_FAILURE_RE.search(combined):
+        return "CODEX_SANDBOX_UNAVAILABLE", 503, False
     if _AUTH_FAILURE_RE.search(combined):
         return "CODEX_AUTH_UNAVAILABLE", 503, False
     return "CODEX_EXEC_FAILED", 502, True
@@ -692,7 +728,13 @@ def _classify_failure(stdout: str, stderr: str) -> tuple[str, int, bool]:
 def _failure_message(code: str) -> str:
     if code == "CODEX_AUTH_UNAVAILABLE":
         return "Codex service-user account session is unavailable or expired."
+    if code == "CODEX_SANDBOX_UNAVAILABLE":
+        return "Codex workspace-write sandbox is unavailable in the OpenClaw adapter container."
     return "Codex provider invocation failed."
+
+
+def _sandbox_namespace_failure(stdout: str, stderr: str) -> bool:
+    return bool(_SANDBOX_NAMESPACE_FAILURE_RE.search(f"{stdout}\n{stderr}"))
 
 
 def _repair_workspace_metadata(root_value: str) -> dict[str, Any]:
