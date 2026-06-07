@@ -1117,8 +1117,12 @@ def _source_ref_ids(refs: List[Any]) -> List[str]:
 def _dev_bridge_meta() -> Dict[str, Any]:
     return {
         "dispatchMode": "repo_local_required",
+        "handoffMode": "repo_local_supervisor_inbox",
         "noDirectShellFromWeb": True,
         "dispatcher": "assistant.dev_bridge_dispatcher.dispatch_task_packet",
+        "queueCommand": "python3 scripts/queue_assistant_dev_task_packet.py",
+        "drainCommand": "python3 scripts/drain_assistant_dev_task_packet_inbox.py",
+        "supervisorInboxPath": ".orchestrator/assistant-dev-packets",
         "orchestratorStatusHref": "/bff/assistant/orchestrator/status",
     }
 

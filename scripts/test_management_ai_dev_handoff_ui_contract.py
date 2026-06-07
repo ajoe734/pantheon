@@ -15,10 +15,12 @@ def test_sa_sd_result_exposes_repo_local_dispatch_handoff() -> None:
     source = _source()
 
     assert "function buildAssistantDevDispatchCommand" in source
-    assert "python3 scripts/dispatch_assistant_dev_task_packet.py <<'JSON'" in source
+    assert "devBridgeRecord(value).queueCommand" in source
+    assert "python3 scripts/queue_assistant_dev_task_packet.py" in source
+    assert "<<'JSON'" in source
     assert "JSON.stringify({ taskPacket: packet }, null, 2)" in source
     assert 'data-testid="assistant-dev-handoff"' in source
-    assert "Copy Dispatch Command" in source
+    assert "Copy Supervisor Queue Command" in source
 
 
 def test_handoff_surfaces_bridge_policy_and_task_scope() -> None:
@@ -27,6 +29,7 @@ def test_handoff_surfaces_bridge_policy_and_task_scope() -> None:
     assert "repo_local_required" in source
     assert "noDirectShellFromWeb" in source
     assert "web shell disabled" in source
+    assert "supervisor pickup" in source
     assert "scoped artifacts" in source
     assert "devDocArtifactPaths" in source
 

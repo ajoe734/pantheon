@@ -408,7 +408,10 @@ function buildAssistantDevDispatchCommand(value: unknown): string | null {
   const packet = taskPacketRecord(value);
   if (!packet) return null;
   const payload = JSON.stringify({ taskPacket: packet }, null, 2);
-  return `python3 scripts/dispatch_assistant_dev_task_packet.py <<'JSON'\n${payload}\nJSON`;
+  const queueCommand =
+    firstString(devBridgeRecord(value).queueCommand, devBridgeRecord(value).queue_command)
+    ?? "python3 scripts/queue_assistant_dev_task_packet.py";
+  return `${queueCommand} <<'JSON'\n${payload}\nJSON`;
 }
 
 export default function AskPersonas(): JSX.Element {
@@ -904,10 +907,11 @@ export default function AskPersonas(): JSX.Element {
             {firstBoolean(devBridge.noDirectShellFromWeb, devBridge.no_direct_shell_from_web)
               ? " - web shell disabled"
               : ""}
+            {" - supervisor pickup"}
           </div>
           {devDispatchCommand && (
             <div style={{ marginTop: 8 }}>
-              <button onClick={handleCopyDispatchCommand}>Copy Dispatch Command</button>
+              <button onClick={handleCopyDispatchCommand}>Copy Supervisor Queue Command</button>
               {handoffCopied === "dispatch_command" && <span style={{ marginLeft: 8 }}>Copied</span>}
               <pre style={{ whiteSpace: "pre-wrap", maxHeight: 260, overflow: "auto", marginTop: 8 }}>
                 {devDispatchCommand}

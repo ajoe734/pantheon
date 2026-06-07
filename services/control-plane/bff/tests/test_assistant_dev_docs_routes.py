@@ -160,6 +160,10 @@ def test_dev_docs_generate_archives_and_emits_signed_task_packet(tmp_path, monke
     assert packet["archiveLocations"]["systemDesign"].endswith("system_design.md")
     assert meta["archived"] is True
     assert meta["devBridge"]["noDirectShellFromWeb"] is True
+    assert meta["devBridge"]["handoffMode"] == "repo_local_supervisor_inbox"
+    assert meta["devBridge"]["queueCommand"] == "python3 scripts/queue_assistant_dev_task_packet.py"
+    assert meta["devBridge"]["drainCommand"] == "python3 scripts/drain_assistant_dev_task_packet_inbox.py"
+    assert meta["devBridge"]["supervisorInboxPath"] == ".orchestrator/assistant-dev-packets"
 
     task_packet = meta["taskPacket"]
     assert task_packet["packetId"] == f"bridge_{packet['packetId']}"

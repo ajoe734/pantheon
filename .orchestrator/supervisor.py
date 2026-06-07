@@ -489,6 +489,75 @@ def refresh_dashboard_runtime_artifacts(config: dict[str, Any]) -> None:
         )
 
 
+def drain_assistant_dev_packet_inbox(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    settings = config.get("assistant_dev_bridge") if isinstance(config.get("assistant_dev_bridge"), dict) else {}
+    if settings.get("enabled") is False:
+        return False
+
+    try:
+        repo_root = config_path(config, "status_file").parent
+    except KeyError:
+        repo_root = THIS_DIR.parent
+    bff_dir = repo_root / "services" / "control-plane" / "bff"
+    if str(bff_dir) not in sys.path:
+        sys.path.insert(0, str(bff_dir))
+
+    try:
+        from assistant.dev_bridge_inbox import drain_task_packet_inbox
+    except Exception as exc:
+        write_activity_log(
+            config,
+            {
+                "type": "assistant_dev_packet_drain_unavailable",
+                "message": f"Assistant dev packet inbox drain unavailable: {type(exc).__name__}: {exc}",
+            },
+        )
+        bridge_state = state.setdefault("assistant_dev_bridge", {})
+        bridge_state["last_drain_at"] = utc_now()
+        bridge_state["last_result"] = {
+            "status": "unavailable",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+        return True
+
+    limit_value = settings.get("max_packets_per_tick", settings.get("limit", 4))
+    try:
+        limit = max(0, int(limit_value))
+    except (TypeError, ValueError):
+        limit = 4
+    result = drain_task_packet_inbox(
+        repo_root=str(repo_root),
+        inbox_dir=settings.get("inbox_path") or settings.get("inbox_dir"),
+        limit=limit,
+    )
+    processed_count = int(result.get("processedCount") or 0)
+    error_count = int(result.get("errorCount") or 0)
+    if processed_count == 0 and error_count == 0:
+        return False
+
+    bridge_state = state.setdefault("assistant_dev_bridge", {})
+    bridge_state["last_drain_at"] = utc_now()
+    bridge_state["last_result"] = result
+    write_activity_log(
+        config,
+        {
+            "type": "assistant_dev_packet_inbox_drained",
+            "message": (
+                "Drained assistant dev packet inbox: "
+                f"processed={processed_count} errors={error_count}"
+            ),
+            "processed_count": processed_count,
+            "error_count": error_count,
+            "packet_ids": [
+                item.get("packetId")
+                for item in result.get("packets", [])
+                if isinstance(item, dict) and item.get("packetId")
+            ],
+        },
+    )
+    return True
+
+
 def safe_load_approval_state(config: dict[str, Any]) -> dict[str, Any]:
     try:
         return load_approval_state(config)
@@ -9182,6 +9251,7 @@ def run_once(
             previous_provider_report = {}
         provider_report = load_provider_report(config)
         changed = reconcile_provider_auth_recovery(config, state, previous_provider_report, provider_report) or changed
+        changed = drain_assistant_dev_packet_inbox(config, state) or changed
         if watch:
             changed = run_scan(config, state, replay=replay, provider_capabilities=provider_report) or changed
             state = load_runtime_state(config)
