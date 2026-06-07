@@ -177,6 +177,14 @@ class TestOrchestratorStatus(unittest.TestCase):
                 "auth_status": "ready",
                 "binary_path": "/usr/local/bin/codex",
                 "checked_at": "2026-06-03T12:14:00Z",
+                "repair_workspace": {
+                    "ready": True,
+                    "status": "ready",
+                    "root": "/srv/pantheon-assistant/worktrees",
+                    "writable": True,
+                    "worktreeCount": 2,
+                },
+                "capabilities": {"read": True, "repairWrite": True},
             },
         )
 
@@ -218,6 +226,12 @@ class TestOrchestratorStatus(unittest.TestCase):
         self.assertEqual(status.provider_readiness["status"], "ready")
         self.assertTrue(status.provider_readiness["ready"])
         self.assertEqual(status.provider_readiness["authStatus"], "ready")
+        self.assertTrue(status.provider_readiness["repairWorkspace"]["ready"])
+        self.assertEqual(
+            status.provider_readiness["repairWorkspace"]["root"],
+            "/srv/pantheon-assistant/worktrees",
+        )
+        self.assertTrue(status.provider_readiness["capabilities"]["repairWrite"])
         self.assertEqual(status.assistant_dev_bridge["status"], "attention")
         self.assertEqual(status.assistant_dev_bridge["inbox"]["pendingCount"], 1)
         self.assertEqual(status.assistant_dev_bridge["inbox"]["processedCount"], 1)

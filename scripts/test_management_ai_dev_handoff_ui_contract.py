@@ -47,8 +47,10 @@ def test_system_status_surfaces_provider_and_dev_inbox_readback() -> None:
     source = _source()
 
     assert "function providerReadinessLine" in source
+    assert "function repairWorkspaceLine" in source
     assert "function assistantDevBridgeLine" in source
     assert "data.providerReadiness ?? data.provider_readiness" in source
     assert "data.assistantDevBridge ?? data.assistant_dev_bridge" in source
     assert "<strong>Provider:</strong>" in source
+    assert "<strong>Repair workspace:</strong>" in source
     assert "<strong>Dev inbox:</strong>" in source
