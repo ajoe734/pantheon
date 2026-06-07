@@ -186,6 +186,23 @@ class TestOrchestratorStatus(unittest.TestCase):
                 },
                 "capabilities": {"read": True, "repairWrite": True},
             },
+            openclaw_tool_policy=lambda: {
+                "allowed_tools": ["assistant.command"],
+                "allowed_workflows": [],
+                "assistant_command_tool": "assistant.command",
+                "default_posture": "deny_all",
+                "always_blocked_tools": ["broker_order", "live_order"],
+                "always_blocked_tool_prefixes": ["broker.", "live.", "paper.", "capital."],
+                "always_blocked_workflow_prefixes": ["broker.", "live.", "paper.", "capital."],
+            },
+            openclaw_effective_tools=lambda: {
+                "status": "degraded",
+                "upstream_status": "degraded",
+                "agent_id": "management-ai",
+                "policy_allowed_tools": ["assistant.command"],
+                "effective_tools": [],
+                "note": "upstream unavailable; policy allowlist visible",
+            },
         )
 
         self.assertEqual(status.project, "test-project")
@@ -232,6 +249,12 @@ class TestOrchestratorStatus(unittest.TestCase):
             "/srv/pantheon-assistant/worktrees",
         )
         self.assertTrue(status.provider_readiness["capabilities"]["repairWrite"])
+        self.assertEqual(status.openclaw_tool_policy["status"], "ready")
+        self.assertTrue(status.openclaw_tool_policy["assistantCommandAllowed"])
+        self.assertEqual(status.openclaw_tool_policy["allowedTools"], ["assistant.command"])
+        self.assertEqual(status.openclaw_tool_policy["effectiveStatus"], "degraded")
+        self.assertEqual(status.openclaw_tool_policy["policyAllowedTools"], ["assistant.command"])
+        self.assertIn("broker_order", status.openclaw_tool_policy["alwaysBlockedTools"])
         self.assertEqual(status.assistant_dev_bridge["status"], "attention")
         self.assertEqual(status.assistant_dev_bridge["inbox"]["pendingCount"], 1)
         self.assertEqual(status.assistant_dev_bridge["inbox"]["processedCount"], 1)
@@ -253,6 +276,21 @@ class TestOrchestratorStatus(unittest.TestCase):
         self.assertEqual(status.provider_readiness["status"], "unavailable")
         self.assertEqual(status.provider_readiness["reason"], "RuntimeError")
         self.assertNotIn("hidden", status.provider_readiness["message"])
+
+    def test_read_orchestrator_status_tool_policy_failure_degrades(self):
+        def failing_tool_policy():
+            raise RuntimeError("tool policy unavailable token=hidden")
+
+        status = read_orchestrator_status(
+            str(self.repo_root),
+            openclaw_tool_policy=failing_tool_policy,
+        )
+
+        self.assertFalse(status.openclaw_tool_policy["available"])
+        self.assertEqual(status.openclaw_tool_policy["status"], "unavailable")
+        self.assertEqual(status.openclaw_tool_policy["reason"], "RuntimeError")
+        self.assertFalse(status.openclaw_tool_policy["assistantCommandAllowed"])
+        self.assertNotIn("hidden", status.openclaw_tool_policy["message"])
 
     def test_read_orchestrator_status_missing_files(self):
         # Test with empty dir

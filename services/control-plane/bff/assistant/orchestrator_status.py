@@ -20,6 +20,7 @@ from .redaction import redact_payload, redact_text
 GITHUB_BUS_SOURCE = ".orchestrator/github-bus-state.json"
 DEFAULT_ASSISTANT_DEV_PACKET_INBOX = ".orchestrator/assistant-dev-packets"
 ASSISTANT_DEV_PACKET_INBOX_ENV = "PANTHEON_ASSISTANT_DEV_PACKET_INBOX"
+ASSISTANT_COMMAND_TOOL = "assistant.command"
 FAILURE_CHECK_STATES = {"ACTION_REQUIRED", "CANCELLED", "ERROR", "FAILURE", "FAILED", "STALE", "TIMED_OUT"}
 PENDING_CHECK_STATES = {"EXPECTED", "IN_PROGRESS", "PENDING", "QUEUED", "REQUESTED", "WAITING"}
 SUCCESS_CHECK_STATES = {"COMPLETED", "NEUTRAL", "SKIPPED", "SUCCESS"}
@@ -646,10 +647,121 @@ def _normalize_provider_readiness(
     )
 
 
+def _normalize_openclaw_tool_policy(
+    tool_policy: Optional[Callable[[], Mapping[str, Any]]],
+    effective_tools: Optional[Callable[[], Mapping[str, Any]]],
+    snapshot_at: str,
+) -> Dict[str, Any]:
+    if tool_policy is None:
+        return {
+            "available": False,
+            "status": "not_configured",
+            "source": "not_configured",
+            "assistantCommandTool": ASSISTANT_COMMAND_TOOL,
+            "assistantCommandAllowed": False,
+            "checkedAt": snapshot_at,
+        }
+
+    try:
+        raw_policy = tool_policy()
+    except Exception as exc:  # noqa: BLE001 - status readback must fail soft
+        return _safe(
+            {
+                "available": False,
+                "status": "unavailable",
+                "source": "openclaw_gateway_adapter",
+                "reason": type(exc).__name__,
+                "message": str(exc),
+                "assistantCommandTool": ASSISTANT_COMMAND_TOOL,
+                "assistantCommandAllowed": False,
+                "checkedAt": snapshot_at,
+            }
+        )
+
+    policy = (
+        _as_mapping(raw_policy.get("data"))
+        if isinstance(raw_policy, Mapping) and isinstance(raw_policy.get("data"), Mapping)
+        else _as_mapping(raw_policy)
+    )
+    allowed_tools = [
+        str(tool)
+        for tool in (policy.get("allowed_tools") or policy.get("allowedTools") or [])
+        if str(tool).strip()
+    ]
+    if str(policy.get("status") or "").strip().lower() == "unavailable" and not allowed_tools:
+        return _safe(
+            {
+                "available": False,
+                "status": "unavailable",
+                "source": "openclaw_gateway_adapter",
+                "reason": policy.get("reason"),
+                "message": policy.get("message"),
+                "httpStatus": policy.get("httpStatus") or policy.get("http_status"),
+                "assistantCommandTool": ASSISTANT_COMMAND_TOOL,
+                "assistantCommandAllowed": False,
+                "checkedAt": snapshot_at,
+            }
+        )
+
+    assistant_allowed = ASSISTANT_COMMAND_TOOL in allowed_tools
+
+    effective_payload: Dict[str, Any] = {}
+    effective_status = "not_configured"
+    if effective_tools is not None:
+        try:
+            raw_effective = effective_tools()
+            effective_payload = (
+                _as_mapping(raw_effective.get("data"))
+                if isinstance(raw_effective, Mapping) and isinstance(raw_effective.get("data"), Mapping)
+                else dict(_as_mapping(raw_effective))
+            )
+            effective_status = str(effective_payload.get("status") or "available")
+        except Exception as exc:  # noqa: BLE001 - status readback must fail soft
+            effective_payload = _safe(
+                {
+                    "status": "unavailable",
+                    "reason": type(exc).__name__,
+                    "message": str(exc),
+                }
+            )
+            effective_status = "unavailable"
+
+    effective_tool_names = [
+        str(tool)
+        for tool in (effective_payload.get("effective_tools") or effective_payload.get("effectiveTools") or [])
+        if str(tool).strip()
+    ]
+
+    return _safe(
+        {
+            "available": True,
+            "status": "ready" if assistant_allowed else "degraded",
+            "source": "openclaw_gateway_adapter",
+            "assistantCommandTool": ASSISTANT_COMMAND_TOOL,
+            "assistantCommandAllowed": assistant_allowed,
+            "allowedTools": allowed_tools,
+            "allowedWorkflows": policy.get("allowed_workflows") or policy.get("allowedWorkflows") or [],
+            "defaultPosture": policy.get("default_posture") or policy.get("defaultPosture"),
+            "alwaysBlockedTools": policy.get("always_blocked_tools") or policy.get("alwaysBlockedTools") or [],
+            "alwaysBlockedToolPrefixes": policy.get("always_blocked_tool_prefixes") or policy.get("alwaysBlockedToolPrefixes") or [],
+            "alwaysBlockedWorkflowPrefixes": policy.get("always_blocked_workflow_prefixes") or policy.get("alwaysBlockedWorkflowPrefixes") or [],
+            "effectiveStatus": effective_status,
+            "effectiveTools": effective_tool_names,
+            "policyAllowedTools": effective_payload.get("policy_allowed_tools") or effective_payload.get("policyAllowedTools"),
+            "upstreamStatus": effective_payload.get("upstream_status") or effective_payload.get("upstreamStatus"),
+            "agentId": effective_payload.get("agent_id") or effective_payload.get("agentId"),
+            "note": policy.get("note") or effective_payload.get("note"),
+            "checkedAt": snapshot_at,
+        }
+    )
+
+
 def read_orchestrator_status(
     repo_root: Optional[str] = None,
     *,
     provider_readiness: Optional[Callable[[], Mapping[str, Any]]] = None,
+    openclaw_tool_policy: Optional[Callable[[], Mapping[str, Any]]] = None,
+    openclaw_effective_tools: Optional[Callable[[], Mapping[str, Any]]] = None,
 ) -> OrchestratorStatusResponse:
     root = _find_repo_root(repo_root)
     snapshot_at = _now()
@@ -719,6 +831,11 @@ def read_orchestrator_status(
         supervisor=_normalize_supervisor(state),
         providerGuardrails=_normalize_provider_guardrails(state),
         providerReadiness=_normalize_provider_readiness(provider_readiness, snapshot_at),
+        openclawToolPolicy=_normalize_openclaw_tool_policy(
+            openclaw_tool_policy,
+            openclaw_effective_tools,
+            snapshot_at,
+        ),
         assistantDevBridge=_normalize_assistant_dev_bridge(root, state),
         coordination=_normalize_coordination(state),
     )

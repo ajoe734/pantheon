@@ -43,6 +43,35 @@ class FakeProviderClient:
             raise self.exc
         return self.result
 
+    def get_assistant_readiness(self, **_kwargs: Any) -> dict[str, Any]:
+        return {
+            "provider": "codex_cli",
+            "runtime": "openclaw_gateway_cli_mount",
+            "ready": True,
+            "status": "ready",
+            "capabilities": {"read": True, "repairWrite": True},
+        }
+
+    def get_tool_policy(self) -> dict[str, Any]:
+        return {
+            "allowed_tools": ["assistant.command"],
+            "allowed_workflows": [],
+            "assistant_command_tool": "assistant.command",
+            "default_posture": "deny_all",
+            "always_blocked_tools": ["broker_order", "live_order", "paper_order"],
+            "always_blocked_tool_prefixes": ["broker.", "live.", "paper.", "capital."],
+            "always_blocked_workflow_prefixes": ["broker.", "live.", "paper.", "capital."],
+        }
+
+    def list_effective_tools(self, **kwargs: Any) -> dict[str, Any]:
+        return {
+            "status": "degraded",
+            "upstream_status": "degraded",
+            "agent_id": kwargs.get("agent_id") or "management-ai",
+            "policy_allowed_tools": ["assistant.command"],
+            "effective_tools": [],
+        }
+
 
 class FakeHttpResponse:
     def __init__(self, payload: dict[str, Any], status_code: int = 200) -> None:
@@ -696,6 +725,11 @@ def test_management_nl_context_pack_includes_orchestrator_status_for_system_ques
         assert orchestrator_context["supervisor"]["lifecycle"] == "running"
         assert orchestrator_context["supervisor"]["pid"] == 4242
         assert orchestrator_context["assistantDevBridge"]["lastDrainAt"] == "2026-06-07T09:01:00Z"
+        assert orchestrator_context["providerReadiness"]["status"] == "ready"
+        assert orchestrator_context["openclawToolPolicy"]["status"] == "ready"
+        assert orchestrator_context["openclawToolPolicy"]["assistantCommandAllowed"] is True
+        assert orchestrator_context["openclawToolPolicy"]["allowedTools"] == ["assistant.command"]
+        assert orchestrator_context["openclawToolPolicy"]["effectiveStatus"] == "degraded"
         assert {ref["path"] for ref in orchestrator_context["sourceRefs"]} == {
             "ai-status.json",
             ".orchestrator/state.json",

@@ -72,6 +72,8 @@ ExtractIdentity = Callable[[Optional[str]], Any]
 RequireReadRole = Callable[[Any], None]
 BffErrorFactory = Callable[..., HTTPException]
 ProviderReadiness = Callable[[], Dict[str, Any]]
+OpenClawToolPolicy = Callable[[], Dict[str, Any]]
+OpenClawEffectiveTools = Callable[[str], Dict[str, Any]]
 
 DEFAULT_DEV_DOC_CONTEXT_SOURCES = [
     "ui",
@@ -100,6 +102,8 @@ def create_assistant_router(
     dev_docs_repo_root: Optional[str] = None,
     bridge_key_store: Optional[Dict[str, bytes]] = None,
     provider_readiness: Optional[ProviderReadiness] = None,
+    openclaw_tool_policy: Optional[OpenClawToolPolicy] = None,
+    openclaw_effective_tools: Optional[OpenClawEffectiveTools] = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/bff/assistant", tags=["assistant"])
 
@@ -414,7 +418,13 @@ def create_assistant_router(
         identity = extract_identity(authorization)
         require_read_role(identity)
 
-        status = read_orchestrator_status(provider_readiness=provider_readiness)
+        operator_id = str(getattr(identity, "operator_id", "management-ai"))
+        effective_tools = (lambda: openclaw_effective_tools(operator_id)) if openclaw_effective_tools else None
+        status = read_orchestrator_status(
+            provider_readiness=provider_readiness,
+            openclaw_tool_policy=openclaw_tool_policy,
+            openclaw_effective_tools=effective_tools,
+        )
         return {"data": status.model_dump(mode="json", by_alias=True)}
 
     # ------------------------------------------------------------------
