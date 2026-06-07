@@ -80,6 +80,50 @@ Result:
 14 passed in 3.42s
 ```
 
+## Reviewer Approval
+
+Codex2 approved this evidence-only smoke after confirming:
+
+- PR #1126 merged the task evidence into `dev`.
+- Live readback still exposed packet `bridge_smoke_20260607101732` with
+  `processedCount=1`, `errorCount=0`, and bridge status `idle`.
+- Focused bridge regression rerun passed with `16 passed in 3.63s`.
+
+## Owner Closeout Verification
+
+Command:
+
+```bash
+PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon PYTHONPATH=services/control-plane/bff python3 -c 'import json, os; from assistant.orchestrator_status import read_orchestrator_status; s=read_orchestrator_status(os.environ["PANTHEON_STATUS_ROOT"]); b=s.assistant_dev_bridge; print(json.dumps({"status": b.get("status"), "lastDrainAt": b.get("lastDrainAt"), "lastPacketId": (((b.get("lastResult") or {}).get("packets") or [{}])[0].get("packetId")), "processedCount": (b.get("lastResult") or {}).get("processedCount"), "errorCount": (b.get("lastResult") or {}).get("errorCount"), "recentReceiptIds": [r.get("packetId") for r in (b.get("recentReceipts") or [])[:3]]}, indent=2, sort_keys=True))'
+```
+
+Output:
+
+```json
+{
+  "errorCount": 0,
+  "lastDrainAt": "2026-06-07T10:17:46Z",
+  "lastPacketId": "bridge_smoke_20260607101732",
+  "processedCount": 1,
+  "recentReceiptIds": [
+    "bridge_smoke_20260607101732"
+  ],
+  "status": "idle"
+}
+```
+
+Command:
+
+```bash
+pytest -q scripts/test_assistant_dev_packet_inbox_supervisor_contract.py services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py services/control-plane/bff/assistant/tests/test_dev_bridge_inbox_cli.py services/control-plane/bff/assistant/tests/test_dev_bridge_dispatch_cli.py services/control-plane/bff/assistant/tests/test_orchestrator_status.py
+```
+
+Result:
+
+```text
+16 passed in 3.94s
+```
+
 ## Conclusion
 
 PASS. The signed Management AI DevTaskPacket reached the repo-local supervisor
