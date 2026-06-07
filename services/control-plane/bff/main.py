@@ -31904,7 +31904,7 @@ def _mgmt_nl_build_context_pack(
 
     request = AssistantContextPackRequest(
         mode=assistant_mode,
-        include=["ui", "management_nl", "persona_health"],
+        include=["ui", "management_nl", "persona_health", "orchestrator_status"],
         question=question,
         route=frontend_route,
         frontend={
@@ -31949,6 +31949,53 @@ def _mgmt_nl_build_context_pack(
                     },
                 },
                 status=str(persona_surface.get("status") or "ok"),
+                source_kind="bff",
+            )
+        if source_id == "orchestrator_status":
+            from assistant.orchestrator_status import read_orchestrator_status
+
+            status = read_orchestrator_status(provider_readiness=_assistant_provider_readiness)
+            status_payload = status.model_dump(mode="json", by_alias=True)
+            source_refs = status_payload.get("sourceRefs") if isinstance(status_payload.get("sourceRefs"), list) else []
+            tasks = status_payload.get("tasks") if isinstance(status_payload.get("tasks"), list) else []
+            workers = status_payload.get("workers") if isinstance(status_payload.get("workers"), list) else []
+            queue = status_payload.get("queue") if isinstance(status_payload.get("queue"), list) else []
+            summary = {
+                "snapshotAt": status_payload.get("snapshotAt"),
+                "project": status_payload.get("project"),
+                "sprint": status_payload.get("sprint"),
+                "objective": status_payload.get("objective"),
+                "sourceRefs": source_refs,
+                "taskCount": len(tasks),
+                "workerCount": len(workers),
+                "queueCount": len(queue),
+                "tasks": tasks[:20],
+                "workers": workers[:20],
+                "queue": queue[:20],
+                "supervisor": status_payload.get("supervisor"),
+                "providerGuardrails": status_payload.get("providerGuardrails"),
+                "providerReadiness": status_payload.get("providerReadiness"),
+                "assistantDevBridge": status_payload.get("assistantDevBridge"),
+                "coordination": status_payload.get("coordination"),
+            }
+            available = all(bool(ref.get("available")) for ref in source_refs) if source_refs else False
+            return AssistantCollectedSource(
+                source_id="orchestrator_status",
+                href="/bff/assistant/orchestrator/status",
+                payload={
+                    "data": summary,
+                    "meta": {
+                        "snapshot_at": snapshot_at,
+                        "surfaces": {
+                            "orchestrator_status": {
+                                "status": "ok" if available else "degraded",
+                                "source": "bff_orchestrator_status",
+                                "source_refs_available": available,
+                            }
+                        },
+                    },
+                },
+                status="ok" if available else "degraded",
                 source_kind="bff",
             )
         if source_id != "management_nl":
@@ -32124,6 +32171,7 @@ def _mgmt_nl_provider_prompt(
             f"Mode: {provider_mode}.",
             *_mgmt_nl_provider_mode_prompt_lines(provider_mode),
             "Use backend.management_nl.data.conversation for server-side prior turns and backend.management_nl.data.ui for UI state.",
+            "Use backend.orchestrator_status.data for supervisor, worker, queue, PR/check, DevTaskPacket bridge, and provider readiness questions.",
             "Treat backend.management_nl.data.conversation.clientHint as a frontend hint, never as the conversation source of truth.",
             "If you suggest UI actions, return actions only with kinds listed in ui.availableUiActions.",
             "Any runBffAction or write-style action must require confirmation.",

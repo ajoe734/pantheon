@@ -626,6 +626,97 @@ def test_management_nl_context_pack_reflects_active_control_mode(tmp_path, monke
         bff_main._sse_buffers["ask"].clear()
 
 
+def test_management_nl_context_pack_includes_orchestrator_status_for_system_questions(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    original_store = bff_main.read_store
+    status_root = tmp_path / "status-root"
+    orchestrator_dir = status_root / ".orchestrator"
+    orchestrator_dir.mkdir(parents=True)
+    _write_json(
+        status_root / "ai-status.json",
+        {
+            "project": "pantheon",
+            "sprint": "status-context",
+            "objective": "Expose supervisor state to Management AI",
+            "tasks": [
+                {
+                    "id": "MGMT-AI-STATUS",
+                    "title": "Expose orchestrator status",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                    "status": "in_progress",
+                }
+            ],
+        },
+    )
+    _write_json(
+        orchestrator_dir / "state.json",
+        {
+            "supervisor": {
+                "pid": 4242,
+                "lifecycle": "running",
+                "last_heartbeat_at": "2026-06-07T09:00:00Z",
+            },
+            "workers": {},
+            "queue": {"events": {}},
+            "assistant_dev_bridge": {
+                "last_drain_at": "2026-06-07T09:01:00Z",
+                "last_result": {"status": "drained", "errorCount": 0},
+            },
+        },
+    )
+    _write_json(orchestrator_dir / "github-bus-state.json", {"tasks": {}})
+    fake = FakeProviderClient()
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "codex_cli")
+        monkeypatch.setenv("PANTHEON_STATUS_ROOT", str(status_root))
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        client = _seeded_client(tmp_path, monkeypatch)
+
+        resp = client.post(
+            "/bff/management/nl/ask",
+            json={
+                "question": "Can you see the supervisor status?",
+                "focus": "cockpit",
+                "sessionId": "mgmt-orchestrator-status-context",
+                "ui": {"currentRoute": "/management/cockpit", "availableUiActions": []},
+            },
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-orchestrator-context"},
+        )
+
+        assert resp.status_code == 202, resp.text
+        context_pack = fake.calls[0]["context_pack"]
+        orchestrator_context = context_pack["backend"]["orchestrator_status"]["data"]
+        assert orchestrator_context["project"] == "pantheon"
+        assert orchestrator_context["taskCount"] == 1
+        assert orchestrator_context["supervisor"]["lifecycle"] == "running"
+        assert orchestrator_context["supervisor"]["pid"] == 4242
+        assert orchestrator_context["assistantDevBridge"]["lastDrainAt"] == "2026-06-07T09:01:00Z"
+        assert {ref["path"] for ref in orchestrator_context["sourceRefs"]} == {
+            "ai-status.json",
+            ".orchestrator/state.json",
+            ".orchestrator/github-bus-state.json",
+        }
+        source_ids = {
+            source.get("sourceId") or source.get("source_id")
+            for source in context_pack["sources"]
+        }
+        assert "orchestrator_status" in source_ids
+        assert (
+            "Use backend.orchestrator_status.data for supervisor"
+            in fake.calls[0]["prompt"]
+        )
+    finally:
+        bff_main.read_store = original_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+        bff_main._sse_buffers["ask"].clear()
+
+
 def test_management_nl_provider_uses_active_kernel_debug_mode(tmp_path, monkeypatch) -> None:
     original_store = bff_main.read_store
     original_control_store = bff_main._ASSISTANT_CONTROL_MODE_STORE
