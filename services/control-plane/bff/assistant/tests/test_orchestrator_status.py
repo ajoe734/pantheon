@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,6 +15,7 @@ class TestOrchestratorStatus(unittest.TestCase):
     def setUp(self):
         self._tmpdir = tempfile.TemporaryDirectory()
         self.repo_root = Path(self._tmpdir.name)
+        self._old_inbox_env = os.environ.pop("PANTHEON_ASSISTANT_DEV_PACKET_INBOX", None)
 
         # Create ai-status.json
         self.ai_status_data = {
@@ -84,8 +86,45 @@ class TestOrchestratorStatus(unittest.TestCase):
                     }
                 }
             },
+            "assistant_dev_bridge": {
+                "last_drain_at": "2026-06-03T12:12:00Z",
+                "last_result": {
+                    "status": "drained",
+                    "processedCount": 1,
+                    "errorCount": 0,
+                    "inbox": "token=do-not-expose",
+                },
+            },
         }
         (orchestrator_dir / "state.json").write_text(json.dumps(self.state_data), encoding="utf-8")
+
+        # Create assistant DevTaskPacket inbox readback fixtures.
+        inbox = orchestrator_dir / "assistant-dev-packets"
+        for name in ("pending", "processed", "failed", "receipts"):
+            (inbox / name).mkdir(parents=True)
+        (inbox / "pending" / "pkt-pending.json").write_text(
+            json.dumps({"taskPacket": {"packetId": "pkt-pending"}}),
+            encoding="utf-8",
+        )
+        (inbox / "processed" / "pkt-processed.json").write_text(
+            json.dumps({"taskPacket": {"packetId": "pkt-processed"}}),
+            encoding="utf-8",
+        )
+        (inbox / "failed" / "pkt-failed.json").write_text(
+            json.dumps({"taskPacket": {"packetId": "pkt-failed"}}),
+            encoding="utf-8",
+        )
+        (inbox / "receipts" / "pkt-processed.json").write_text(
+            json.dumps(
+                {
+                    "packetId": "pkt-processed",
+                    "status": "processed",
+                    "drainedAt": "2026-06-03T12:13:00Z",
+                    "result": {"processedTaskCount": 1, "errors": []},
+                }
+            ),
+            encoding="utf-8",
+        )
 
         # Create .orchestrator/github-bus-state.json
         self.bus_data = {
@@ -119,10 +158,27 @@ class TestOrchestratorStatus(unittest.TestCase):
         (orchestrator_dir / "github-bus-state.json").write_text(json.dumps(self.bus_data), encoding="utf-8")
 
     def tearDown(self):
+        if self._old_inbox_env is None:
+            os.environ.pop("PANTHEON_ASSISTANT_DEV_PACKET_INBOX", None)
+        else:
+            os.environ["PANTHEON_ASSISTANT_DEV_PACKET_INBOX"] = self._old_inbox_env
         self._tmpdir.cleanup()
 
     def test_read_orchestrator_status_success(self):
-        status = read_orchestrator_status(str(self.repo_root))
+        status = read_orchestrator_status(
+            str(self.repo_root),
+            provider_readiness=lambda: {
+                "provider": "codex_cli",
+                "provider_name": "codex",
+                "runtime": "openclaw_gateway_cli_mount",
+                "ready": True,
+                "status": "ready",
+                "auth": "account_session",
+                "auth_status": "ready",
+                "binary_path": "/usr/local/bin/codex",
+                "checked_at": "2026-06-03T12:14:00Z",
+            },
+        )
 
         self.assertEqual(status.project, "test-project")
         self.assertEqual(status.sprint, "test-sprint")
@@ -159,6 +215,30 @@ class TestOrchestratorStatus(unittest.TestCase):
         self.assertEqual(status.supervisor["lifecycle"], "idle")
         self.assertNotIn("super-secret", status.supervisor["lastLoopError"])
         self.assertNotIn("secret", status.provider_guardrails["dispatchPauses"][0]["detail"])
+        self.assertEqual(status.provider_readiness["status"], "ready")
+        self.assertTrue(status.provider_readiness["ready"])
+        self.assertEqual(status.provider_readiness["authStatus"], "ready")
+        self.assertEqual(status.assistant_dev_bridge["status"], "attention")
+        self.assertEqual(status.assistant_dev_bridge["inbox"]["pendingCount"], 1)
+        self.assertEqual(status.assistant_dev_bridge["inbox"]["processedCount"], 1)
+        self.assertEqual(status.assistant_dev_bridge["inbox"]["failedCount"], 1)
+        self.assertEqual(status.assistant_dev_bridge["inbox"]["receiptCount"], 1)
+        self.assertEqual(status.assistant_dev_bridge["recentReceipts"][0]["packetId"], "pkt-processed")
+        self.assertNotIn("do-not-expose", json.dumps(status.assistant_dev_bridge))
+
+    def test_read_orchestrator_status_provider_readiness_failure_degrades(self):
+        def failing_provider_readiness():
+            raise RuntimeError("gateway unavailable token=hidden")
+
+        status = read_orchestrator_status(
+            str(self.repo_root),
+            provider_readiness=failing_provider_readiness,
+        )
+
+        self.assertFalse(status.provider_readiness["available"])
+        self.assertEqual(status.provider_readiness["status"], "unavailable")
+        self.assertEqual(status.provider_readiness["reason"], "RuntimeError")
+        self.assertNotIn("hidden", status.provider_readiness["message"])
 
     def test_read_orchestrator_status_missing_files(self):
         # Test with empty dir

@@ -189,4 +189,6 @@ class OrchestratorStatusResponse(AssistantBaseModel):
     blockers: List[Dict[str, Any]]
     supervisor: Dict[str, Any]
     provider_guardrails: Dict[str, Any] = Field(default_factory=dict, alias="providerGuardrails")
+    provider_readiness: Dict[str, Any] = Field(default_factory=dict, alias="providerReadiness")
+    assistant_dev_bridge: Dict[str, Any] = Field(default_factory=dict, alias="assistantDevBridge")
     coordination: Optional[Dict[str, Any]] = None

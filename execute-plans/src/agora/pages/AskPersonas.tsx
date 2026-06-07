@@ -123,7 +123,14 @@ function normalizeProvider(...values: unknown[]): AssistantProviderSignal {
       ...records.map((record) => record.runtime),
       ...records.map((record) => record.provider_runtime),
     ),
-    checkedAt: firstString(...records.map((record) => record.checked_at), ...records.map((record) => record.checkedAt)),
+    checkedAt: firstString(
+      ...records.map((record) => record.checked_at),
+      ...records.map((record) => record.checkedAt),
+      ...records.map((record) => record.snapshot_at),
+      ...records.map((record) => record.snapshotAt),
+      ...records.map((record) => record.created_at),
+      ...records.map((record) => record.createdAt),
+    ),
   };
 }
 
@@ -149,6 +156,8 @@ function normalizeAssistantSignals(value: unknown, fallbackSessionId?: string | 
     data.providerStatus,
     assistantMeta.provider,
     assistantMeta.provider_status,
+    meta.provider_status,
+    meta.providerStatus,
     meta.provider,
     session.provider,
   );
@@ -344,6 +353,58 @@ function workerCount(value: unknown): number {
   const root = recordFrom(value);
   const data = recordFrom(root.data ?? root);
   return arrayFrom(data.workers).length;
+}
+
+function systemStatusData(value: unknown): JsonRecord {
+  const root = recordFrom(value);
+  return recordFrom(root.data ?? root);
+}
+
+function systemProviderReadiness(value: unknown): JsonRecord {
+  const data = systemStatusData(value);
+  return recordFrom(data.providerReadiness ?? data.provider_readiness);
+}
+
+function providerReadinessLine(value: unknown): string {
+  const provider = systemProviderReadiness(value);
+  const providerName = firstString(provider.providerName, provider.provider_name, provider.provider, provider.name) ?? "provider";
+  const status = firstString(provider.status) ?? "unknown";
+  const ready = firstBoolean(provider.ready);
+  const readyText = ready === true ? "ready" : ready === false ? "not ready" : null;
+  const auth = firstString(provider.authStatus, provider.auth_status, provider.auth);
+  const checkedAt = firstString(provider.checkedAt, provider.checked_at);
+  const reason = firstString(provider.degradedReason, provider.degraded_reason, provider.reason);
+  return [
+    `${providerName}: ${status}`,
+    readyText,
+    auth ? `auth ${auth}` : null,
+    checkedAt ? `checked ${checkedAt}` : null,
+    reason ? `reason ${reason}` : null,
+  ].filter(Boolean).join(" - ");
+}
+
+function assistantDevBridgeStatus(value: unknown): JsonRecord {
+  const data = systemStatusData(value);
+  return recordFrom(data.assistantDevBridge ?? data.assistant_dev_bridge);
+}
+
+function assistantDevBridgeLine(value: unknown): string {
+  const bridge = assistantDevBridgeStatus(value);
+  const inbox = recordFrom(bridge.inbox);
+  const status = firstString(bridge.status) ?? "unknown";
+  const pending = firstNumber(inbox.pendingCount, inbox.pending_count) ?? 0;
+  const processed = firstNumber(inbox.processedCount, inbox.processed_count) ?? 0;
+  const failed = firstNumber(inbox.failedCount, inbox.failed_count) ?? 0;
+  const receipts = firstNumber(inbox.receiptCount, inbox.receipt_count) ?? 0;
+  const lastDrain = firstString(bridge.lastDrainAt, bridge.last_drain_at);
+  return [
+    `status ${status}`,
+    `pending ${pending}`,
+    `processed ${processed}`,
+    `failed ${failed}`,
+    `receipts ${receipts}`,
+    lastDrain ? `last drain ${lastDrain}` : null,
+  ].filter(Boolean).join(" - ");
 }
 
 function packetId(value: unknown): string | null {
@@ -888,6 +949,12 @@ export default function AskPersonas(): JSX.Element {
       {systemStatus && (
         <div style={{ border: "1px solid #ddd", marginTop: 8, padding: 8 }}>
           <strong>System:</strong> {taskCount(systemStatus)} tasks, {workerCount(systemStatus)} workers
+          <div>
+            <strong>Provider:</strong> {providerReadinessLine(systemStatus)}
+          </div>
+          <div>
+            <strong>Dev inbox:</strong> {assistantDevBridgeLine(systemStatus)}
+          </div>
         </div>
       )}
       {devDocResult && (

@@ -290,9 +290,10 @@ class OpenClawOpsClient:
     # Assistant provider surfaces
     # ------------------------------------------------------------------
 
-    def get_assistant_readiness(self, provider: str = "codex") -> Dict[str, Any]:
+    def get_assistant_readiness(self, provider: str = "codex", *, auth_probe: bool = False) -> Dict[str, Any]:
         """Return readiness metadata for an assistant provider."""
-        return self._request("GET", f"/api/openclaw-adapter/assistant/readiness/{provider}")
+        query = {"auth_probe": "true"} if auth_probe else None
+        return self._request("GET", f"/api/openclaw-adapter/assistant/readiness/{provider}", query=query)
 
     def invoke_assistant(
         self,

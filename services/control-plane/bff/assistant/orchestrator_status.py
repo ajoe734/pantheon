@@ -11,13 +11,15 @@ from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from .models import OrchestratorStatusResponse, OrchestratorTaskStatus, OrchestratorWorkerStatus
 from .redaction import redact_payload, redact_text
 
 
 GITHUB_BUS_SOURCE = ".orchestrator/github-bus-state.json"
+DEFAULT_ASSISTANT_DEV_PACKET_INBOX = ".orchestrator/assistant-dev-packets"
+ASSISTANT_DEV_PACKET_INBOX_ENV = "PANTHEON_ASSISTANT_DEV_PACKET_INBOX"
 FAILURE_CHECK_STATES = {"ACTION_REQUIRED", "CANCELLED", "ERROR", "FAILURE", "FAILED", "STALE", "TIMED_OUT"}
 PENDING_CHECK_STATES = {"EXPECTED", "IN_PROGRESS", "PENDING", "QUEUED", "REQUESTED", "WAITING"}
 SUCCESS_CHECK_STATES = {"COMPLETED", "NEUTRAL", "SKIPPED", "SUCCESS"}
@@ -488,7 +490,165 @@ def _normalize_provider_guardrails(state: Mapping[str, Any]) -> Dict[str, Any]:
     return {"dispatchPauses": normalized_pauses, "taskFailureStreakCount": len(failure_streaks)}
 
 
-def read_orchestrator_status(repo_root: Optional[str] = None) -> OrchestratorStatusResponse:
+def _assistant_inbox_root(root: Path) -> Path:
+    configured = os.environ.get(ASSISTANT_DEV_PACKET_INBOX_ENV, "").strip() or DEFAULT_ASSISTANT_DEV_PACKET_INBOX
+    path = Path(configured)
+    if not path.is_absolute():
+        path = root / path
+    return path
+
+
+def _count_json_files(path: Path) -> int:
+    try:
+        if not path.exists():
+            return 0
+        return sum(1 for item in path.glob("*.json") if item.is_file())
+    except OSError:
+        return 0
+
+
+def _read_json_file(path: Path) -> Dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _recent_receipts(path: Path, *, limit: int = 5) -> List[Dict[str, Any]]:
+    try:
+        files = sorted(
+            (item for item in path.glob("*.json") if item.is_file()),
+            key=lambda item: item.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return []
+    receipts: List[Dict[str, Any]] = []
+    for receipt_path in files[:limit]:
+        receipt = _read_json_file(receipt_path)
+        result = _as_mapping(receipt.get("result"))
+        receipts.append(
+            _safe(
+                {
+                    "packetId": receipt.get("packetId") or receipt_path.stem,
+                    "status": receipt.get("status"),
+                    "drainedAt": receipt.get("drainedAt"),
+                    "dryRun": receipt.get("dryRun"),
+                    "processedTaskCount": result.get("processedTaskCount") or result.get("processed_task_count"),
+                    "errorCount": len(result.get("errors") or []) if isinstance(result.get("errors"), list) else None,
+                    "archivedPath": receipt.get("archivedPath"),
+                    "error": receipt.get("error"),
+                }
+            )
+        )
+    return receipts
+
+
+def _normalize_assistant_dev_bridge(root: Path, state: Mapping[str, Any]) -> Dict[str, Any]:
+    bridge = _as_mapping(state.get("assistant_dev_bridge") or state.get("assistantDevBridge"))
+    inbox = _assistant_inbox_root(root)
+    last_result = _as_mapping(bridge.get("last_result") or bridge.get("lastResult"))
+    counts = {
+        "pending": _count_json_files(inbox / "pending"),
+        "processed": _count_json_files(inbox / "processed"),
+        "failed": _count_json_files(inbox / "failed"),
+        "receipts": _count_json_files(inbox / "receipts"),
+    }
+    status = "idle"
+    if counts["pending"] > 0:
+        status = "pending"
+    if counts["failed"] > 0 or int(last_result.get("errorCount") or last_result.get("error_count") or 0) > 0:
+        status = "attention"
+
+    return _safe(
+        {
+            "status": status,
+            "inbox": {
+                "path": str(inbox),
+                "exists": inbox.exists(),
+                "pendingCount": counts["pending"],
+                "processedCount": counts["processed"],
+                "failedCount": counts["failed"],
+                "receiptCount": counts["receipts"],
+            },
+            "lastDrainAt": bridge.get("last_drain_at") or bridge.get("lastDrainAt"),
+            "lastResult": last_result,
+            "recentReceipts": _recent_receipts(inbox / "receipts"),
+        }
+    )
+
+
+def _provider_status_from_ready(ready: Optional[bool], fallback: str = "unavailable") -> str:
+    if ready is True:
+        return "ready"
+    if ready is False:
+        return "degraded"
+    return fallback
+
+
+def _normalize_provider_readiness(
+    provider_readiness: Optional[Callable[[], Mapping[str, Any]]],
+    snapshot_at: str,
+) -> Dict[str, Any]:
+    if provider_readiness is None:
+        return {
+            "available": False,
+            "provider": "codex_cli",
+            "runtime": "openclaw_gateway_cli_mount",
+            "ready": None,
+            "status": "not_configured",
+            "checkedAt": snapshot_at,
+            "source": "not_configured",
+        }
+    try:
+        raw = provider_readiness()
+    except Exception as exc:  # noqa: BLE001 - status readback must fail soft
+        return _safe(
+            {
+                "available": False,
+                "provider": "codex_cli",
+                "runtime": "openclaw_gateway_cli_mount",
+                "ready": False,
+                "status": "unavailable",
+                "reason": type(exc).__name__,
+                "message": str(exc),
+                "checkedAt": snapshot_at,
+                "source": "openclaw_gateway_adapter",
+            }
+        )
+
+    value = _as_mapping(raw.get("data")) if isinstance(raw, Mapping) and isinstance(raw.get("data"), Mapping) else _as_mapping(raw)
+    ready_value = value.get("ready")
+    ready = ready_value if isinstance(ready_value, bool) else None
+    status = str(value.get("status") or _provider_status_from_ready(ready)).strip() or "unknown"
+    return _safe(
+        {
+            "available": True,
+            "provider": value.get("provider") or value.get("provider_name") or "codex_cli",
+            "providerName": value.get("provider_name") or value.get("provider") or "codex_cli",
+            "runtime": value.get("runtime") or "openclaw_gateway_cli_mount",
+            "ready": ready,
+            "status": status,
+            "reason": value.get("reason") or value.get("degraded_reason"),
+            "degradedReason": value.get("degraded_reason") or value.get("reason"),
+            "auth": value.get("auth"),
+            "authStatus": value.get("auth_status") or value.get("authStatus"),
+            "binaryPath": value.get("binary_path") or value.get("binaryPath"),
+            "version": value.get("version"),
+            "credentialMount": value.get("credential_mount") or value.get("credentialMount"),
+            "mountMode": value.get("mount_mode") or value.get("mountMode"),
+            "checkedAt": value.get("checked_at") or value.get("checkedAt") or snapshot_at,
+            "source": "openclaw_gateway_adapter",
+        }
+    )
+
+
+def read_orchestrator_status(
+    repo_root: Optional[str] = None,
+    *,
+    provider_readiness: Optional[Callable[[], Mapping[str, Any]]] = None,
+) -> OrchestratorStatusResponse:
     root = _find_repo_root(repo_root)
     snapshot_at = _now()
 
@@ -556,5 +716,7 @@ def read_orchestrator_status(repo_root: Optional[str] = None) -> OrchestratorSta
         blockers=_safe(blockers),
         supervisor=_normalize_supervisor(state),
         providerGuardrails=_normalize_provider_guardrails(state),
+        providerReadiness=_normalize_provider_readiness(provider_readiness, snapshot_at),
+        assistantDevBridge=_normalize_assistant_dev_bridge(root, state),
         coordination=_normalize_coordination(state),
     )

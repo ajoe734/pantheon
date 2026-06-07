@@ -69,6 +69,7 @@ BuildContextPack = Callable[[str, AssistantContextPackRequest, Any], AssistantCo
 ExtractIdentity = Callable[[Optional[str]], Any]
 RequireReadRole = Callable[[Any], None]
 BffErrorFactory = Callable[..., HTTPException]
+ProviderReadiness = Callable[[], Dict[str, Any]]
 
 DEFAULT_DEV_DOC_CONTEXT_SOURCES = [
     "ui",
@@ -96,6 +97,7 @@ def create_assistant_router(
     control_mode_store: Optional[ControlModeStore] = None,
     dev_docs_repo_root: Optional[str] = None,
     bridge_key_store: Optional[Dict[str, bytes]] = None,
+    provider_readiness: Optional[ProviderReadiness] = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/bff/assistant", tags=["assistant"])
 
@@ -410,7 +412,7 @@ def create_assistant_router(
         identity = extract_identity(authorization)
         require_read_role(identity)
 
-        status = read_orchestrator_status()
+        status = read_orchestrator_status(provider_readiness=provider_readiness)
         return {"data": status.model_dump(mode="json", by_alias=True)}
 
     # ------------------------------------------------------------------
