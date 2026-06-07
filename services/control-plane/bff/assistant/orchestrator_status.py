@@ -835,6 +835,13 @@ def _normalize_openclaw_tool_policy(
         for tool in (effective_payload.get("effective_tools") or effective_payload.get("effectiveTools") or [])
         if str(tool).strip()
     ]
+    assistant_effective = ASSISTANT_COMMAND_TOOL in effective_tool_names
+    if assistant_effective:
+        assistant_status = "usable"
+    elif assistant_allowed:
+        assistant_status = "policy_allowed_not_effective"
+    else:
+        assistant_status = "blocked"
 
     return _safe(
         {
@@ -843,6 +850,9 @@ def _normalize_openclaw_tool_policy(
             "source": "openclaw_gateway_adapter",
             "assistantCommandTool": ASSISTANT_COMMAND_TOOL,
             "assistantCommandAllowed": assistant_allowed,
+            "assistantCommandEffective": assistant_effective,
+            "assistantCommandUsable": assistant_allowed and assistant_effective,
+            "assistantCommandStatus": assistant_status,
             "allowedTools": allowed_tools,
             "allowedWorkflows": policy.get("allowed_workflows") or policy.get("allowedWorkflows") or [],
             "defaultPosture": policy.get("default_posture") or policy.get("defaultPosture"),

@@ -210,7 +210,7 @@ class TestOrchestratorStatus(unittest.TestCase):
                 "upstream_status": "degraded",
                 "agent_id": "management-ai",
                 "policy_allowed_tools": ["assistant.command"],
-                "effective_tools": [],
+                "effective_tools": ["assistant.command"],
                 "note": "upstream unavailable; policy allowlist visible",
             },
         )
@@ -269,8 +269,12 @@ class TestOrchestratorStatus(unittest.TestCase):
         self.assertTrue(status.provider_readiness["capabilities"]["repairWrite"])
         self.assertEqual(status.openclaw_tool_policy["status"], "ready")
         self.assertTrue(status.openclaw_tool_policy["assistantCommandAllowed"])
+        self.assertTrue(status.openclaw_tool_policy["assistantCommandEffective"])
+        self.assertTrue(status.openclaw_tool_policy["assistantCommandUsable"])
+        self.assertEqual(status.openclaw_tool_policy["assistantCommandStatus"], "usable")
         self.assertEqual(status.openclaw_tool_policy["allowedTools"], ["assistant.command"])
         self.assertEqual(status.openclaw_tool_policy["effectiveStatus"], "degraded")
+        self.assertEqual(status.openclaw_tool_policy["effectiveTools"], ["assistant.command"])
         self.assertEqual(status.openclaw_tool_policy["policyAllowedTools"], ["assistant.command"])
         self.assertIn("broker_order", status.openclaw_tool_policy["alwaysBlockedTools"])
         self.assertEqual(status.assistant_dev_bridge["status"], "attention")
@@ -309,6 +313,32 @@ class TestOrchestratorStatus(unittest.TestCase):
         self.assertEqual(status.openclaw_tool_policy["reason"], "RuntimeError")
         self.assertFalse(status.openclaw_tool_policy["assistantCommandAllowed"])
         self.assertNotIn("hidden", status.openclaw_tool_policy["message"])
+
+    def test_read_orchestrator_status_tool_policy_allowed_but_not_effective(self):
+        status = read_orchestrator_status(
+            str(self.repo_root),
+            openclaw_tool_policy=lambda: {
+                "allowed_tools": ["assistant.command"],
+                "allowed_workflows": [],
+                "assistant_command_tool": "assistant.command",
+                "default_posture": "deny_all",
+            },
+            openclaw_effective_tools=lambda: {
+                "status": "degraded",
+                "upstream_status": "degraded",
+                "agent_id": "management-ai",
+                "policy_allowed_tools": ["assistant.command"],
+                "effective_tools": [],
+            },
+        )
+
+        self.assertTrue(status.openclaw_tool_policy["assistantCommandAllowed"])
+        self.assertFalse(status.openclaw_tool_policy["assistantCommandEffective"])
+        self.assertFalse(status.openclaw_tool_policy["assistantCommandUsable"])
+        self.assertEqual(
+            status.openclaw_tool_policy["assistantCommandStatus"],
+            "policy_allowed_not_effective",
+        )
 
     def test_read_orchestrator_status_missing_files(self):
         # Test with empty dir
