@@ -622,14 +622,8 @@ services:
       # Dev tier defaults to strict JWT auth. CI/Lovable dev can exchange
       # dev-only client credentials for a short-lived JWT through
       # POST /bff/auth/dev-login.
-      #
-      # Dev tier defaults: permissive + colon-format stub bearer so the
-      # browser-side dev token (VITE_BFF_DEV_BEARER_TOKEN=pantheon-dev-browser:reviewer)
-      # is accepted by BFF-CONSOL-022 strict cutover preview. Staging/prod
-      # compose files must explicitly export PANTHEON_BFF_AUTH_STUB=false
-      # and PANTHEON_BFF_AUTH_MODE=strict.
-      PANTHEON_BFF_AUTH_STUB: ${PANTHEON_BFF_AUTH_STUB:-true}
-      PANTHEON_BFF_AUTH_MODE: ${PANTHEON_BFF_AUTH_MODE:-permissive}
+      PANTHEON_BFF_AUTH_STUB: ${PANTHEON_BFF_AUTH_STUB:-false}
+      PANTHEON_BFF_AUTH_MODE: ${PANTHEON_BFF_AUTH_MODE:-strict}
       PANTHEON_BFF_JWT_SECRET: ${PANTHEON_BFF_JWT_SECRET:-}
       PANTHEON_BFF_JWT_ISSUER: ${PANTHEON_BFF_JWT_ISSUER:-}
       PANTHEON_BFF_JWT_AUDIENCE: ${PANTHEON_BFF_JWT_AUDIENCE:-}

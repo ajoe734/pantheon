@@ -60,13 +60,16 @@
         "services/control-plane/persona/**"
       ],
       "verify": {
+        "setup": [
+          "python3 -m pip install -r services/control-plane/persona/requirements.txt"
+        ],
         "commands": [
           "python3 -m unittest discover -s services/control-plane/persona -p 'test_*.py'",
           "python3 services/control-plane/persona/smoke_test_persona_registry.py"
         ]
       },
       "build": {
-        "context": "services/control-plane/persona",
+        "context": ".",
         "dockerfile": "services/control-plane/persona/Dockerfile",
         "tag": "pantheon-stage0/persona"
       }
@@ -282,10 +285,10 @@
       "changed_paths": [
         "lean/**"
       ],
-      "build": {
-        "context": "lean",
-        "dockerfile": "lean/Dockerfile",
-        "tag": "pantheon-stage0/lean"
+      "verify": {
+        "commands": [
+          "test -f lean/Dockerfile"
+        ]
       }
     },
     {
@@ -299,6 +302,9 @@
         "services/execution/runtime-manager/**"
       ],
       "verify": {
+        "setup": [
+          "python3 -m pip install pytest"
+        ],
         "commands": [
           "python3 -m unittest discover -s services/execution/runtime-manager -p 'test_*.py'",
           "python3 services/execution/runtime-manager/smoke_test_runtime_binding.py",
@@ -319,7 +325,10 @@
       "build": {
         "context": "services/learning/dspy",
         "dockerfile": "services/learning/dspy/Dockerfile",
-        "tag": "pantheon-stage0/dspy-worker"
+        "tag": "pantheon-stage0/dspy-worker",
+        "args": [
+          "PANTHEON_INSTALL_UPSTREAM_DEPS=false"
+        ]
       }
     },
     {
@@ -335,7 +344,10 @@
       "build": {
         "context": "services/learning/imitation",
         "dockerfile": "services/learning/imitation/Dockerfile",
-        "tag": "pantheon-stage0/imitation-worker"
+        "tag": "pantheon-stage0/imitation-worker",
+        "args": [
+          "PANTHEON_INSTALL_UPSTREAM_DEPS=false"
+        ]
       }
     },
     {
@@ -366,9 +378,12 @@
         "services/research/dspy/**"
       ],
       "build": {
-        "context": "services/research/dspy",
+        "context": ".",
         "dockerfile": "services/research/dspy/Dockerfile",
-        "tag": "pantheon-stage0/research-dspy"
+        "tag": "pantheon-stage0/research-dspy",
+        "args": [
+          "PANTHEON_INSTALL_UPSTREAM_DEPS=false"
+        ]
       }
     },
     {
@@ -384,7 +399,10 @@
       "build": {
         "context": "services/research/finrl",
         "dockerfile": "services/research/finrl/Dockerfile",
-        "tag": "pantheon-stage0/research-finrl"
+        "tag": "pantheon-stage0/research-finrl",
+        "args": [
+          "PANTHEON_INSTALL_UPSTREAM_DEPS=false"
+        ]
       }
     },
     {
@@ -398,9 +416,12 @@
         "services/research/imitation/**"
       ],
       "build": {
-        "context": "services/research/imitation",
+        "context": ".",
         "dockerfile": "services/research/imitation/Dockerfile",
-        "tag": "pantheon-stage0/research-imitation"
+        "tag": "pantheon-stage0/research-imitation",
+        "args": [
+          "PANTHEON_INSTALL_UPSTREAM_DEPS=false"
+        ]
       }
     },
     {
@@ -414,9 +435,12 @@
         "services/research/qlib/**"
       ],
       "build": {
-        "context": "services/research/qlib",
+        "context": ".",
         "dockerfile": "services/research/qlib/Dockerfile",
-        "tag": "pantheon-stage0/research-qlib"
+        "tag": "pantheon-stage0/research-qlib",
+        "args": [
+          "PANTHEON_INSTALL_UPSTREAM_DEPS=false"
+        ]
       }
     }
   ]

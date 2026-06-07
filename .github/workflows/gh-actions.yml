@@ -17,7 +17,31 @@ jobs:
         with:
           fetch-depth: 0  # Ensures we fetch all history
 
+      - name: Detect Lean changes
+        id: lean_changes
+        run: |
+          if [[ "${{ github.event_name }}" != "pull_request" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.ref }}"
+          if git diff --name-only FETCH_HEAD HEAD | grep -qE '^lean($|/)'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No lean/ changes detected; skipping Lean workflow body for this Pantheon PR."
+          fi
+
+      - name: Skip Lean workflow body
+        if: steps.lean_changes.outputs.changed != 'true'
+        run: echo "No lean/ changes detected; Lean workflow body skipped."
+
+      - name: Initialize Lean submodule
+        if: steps.lean_changes.outputs.changed == 'true'
+        run: git submodule update --init --depth=1 lean
+
       - name: Liberate disk space
+        if: steps.lean_changes.outputs.changed == 'true'
         uses: jlumbroso/free-disk-space@main
         with:
           tool-cache: true
@@ -26,14 +50,16 @@ jobs:
           swap-storage: false
 
       - name: Define docker helper
+        if: steps.lean_changes.outputs.changed == 'true'
         run: |
           echo -e 'runInContainer() { docker exec test-container "$@"; }\n' > "$HOME/ci_functions.sh"
           echo "BASH_ENV=$HOME/ci_functions.sh" >> $GITHUB_ENV
 
       - name: Start container
+        if: steps.lean_changes.outputs.changed == 'true'
         run: |
           docker run -d \
-            --workdir /__w/Lean/Lean \
+            --workdir /__w/pantheon/pantheon/lean \
             -v /home/runner/work:/__w \
             -e GITHUB_REF="${{ github.ref }}" \
             -e PYPI_API_TOKEN="${{ secrets.PYPI_API_TOKEN }}" \
@@ -44,9 +70,11 @@ jobs:
             tail -f /dev/null
 
       - name: Run build and tests
+        if: steps.lean_changes.outputs.changed == 'true'
         run: |
           # Add exception
-          runInContainer git config --global --add safe.directory /__w/Lean/Lean
+          runInContainer git config --global --add safe.directory /__w/pantheon/pantheon/lean
+          runInContainer git fetch --no-tags --depth=1 origin master
 
           # Get Last Commit of the Current Tag
           TAG_COMMIT=$(runInContainer git rev-parse HEAD) && echo "CURRENT BRANCH LAST COMMIT $TAG_COMMIT"
