@@ -378,6 +378,34 @@ def test_openclaw_client_uses_assistant_provider_timeout_by_default(monkeypatch)
     assert recorded["timeout"] == 75.0
 
 
+def test_openclaw_client_reads_assistant_provider_readiness_with_auth_probe(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
+    recorded: dict[str, Any] = {}
+
+    def fake_urlopen(request, timeout):
+        recorded["url"] = request.full_url
+        recorded["timeout"] = timeout
+        return FakeHttpResponse(
+            {
+                "provider": "codex_cli",
+                "ready": True,
+                "status": "ready",
+            }
+        )
+
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen", fake_urlopen):
+        result = OpenClawOpsClient(timeout_seconds=1.5).get_assistant_readiness(
+            provider="codex_cli",
+            auth_probe=True,
+        )
+
+    assert result["status"] == "ready"
+    assert recorded["url"] == (
+        "http://openclaw-adapter:8104/api/openclaw-adapter/assistant/readiness/codex_cli?auth_probe=true"
+    )
+    assert recorded["timeout"] == 1.5
+
+
 def test_provider_disabled_returns_deterministic_answer_and_context_pack(tmp_path, monkeypatch) -> None:
     original_store = bff_main.read_store
     fake = FakeProviderClient()

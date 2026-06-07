@@ -47771,6 +47771,22 @@ def _agora_ask_deterministic_fallback(prompt: str) -> str:
     )
 
 
+def _assistant_provider_readiness() -> Dict[str, Any]:
+    provider = _mgmt_nl_provider_name()
+    try:
+        return OpenClawOpsClient().get_assistant_readiness(provider=provider)
+    except OpenClawOpsClientError as exc:
+        return {
+            "provider": provider,
+            "runtime": "openclaw_gateway_cli_mount",
+            "ready": False,
+            "status": "unavailable",
+            "reason": exc.error_code,
+            "message": exc.message,
+            "httpStatus": exc.status_code,
+        }
+
+
 def _include_assistant_routes() -> None:
     global _ASSISTANT_SESSION_STORE, _ASSISTANT_TRANSCRIPT_STORE, _ASSISTANT_CONTROL_MODE_STORE
     from assistant.control_mode import ControlModeStore
@@ -47796,6 +47812,7 @@ def _include_assistant_routes() -> None:
             session_store=_ASSISTANT_SESSION_STORE,
             transcript_store=_ASSISTANT_TRANSCRIPT_STORE,
             control_mode_store=_ASSISTANT_CONTROL_MODE_STORE,
+            provider_readiness=_assistant_provider_readiness,
         )
     )
 
