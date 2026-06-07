@@ -191,5 +191,6 @@ class OrchestratorStatusResponse(AssistantBaseModel):
     supervisor: Dict[str, Any]
     provider_guardrails: Dict[str, Any] = Field(default_factory=dict, alias="providerGuardrails")
     provider_readiness: Dict[str, Any] = Field(default_factory=dict, alias="providerReadiness")
+    openclaw_tool_policy: Dict[str, Any] = Field(default_factory=dict, alias="openclawToolPolicy")
     assistant_dev_bridge: Dict[str, Any] = Field(default_factory=dict, alias="assistantDevBridge")
     coordination: Optional[Dict[str, Any]] = None

@@ -31954,7 +31954,11 @@ def _mgmt_nl_build_context_pack(
         if source_id == "orchestrator_status":
             from assistant.orchestrator_status import read_orchestrator_status
 
-            status = read_orchestrator_status(provider_readiness=_assistant_provider_readiness)
+            status = read_orchestrator_status(
+                provider_readiness=_assistant_provider_readiness,
+                openclaw_tool_policy=_assistant_openclaw_tool_policy,
+                openclaw_effective_tools=lambda: _assistant_openclaw_effective_tools(identity.operator_id),
+            )
             status_payload = status.model_dump(mode="json", by_alias=True)
             source_refs = status_payload.get("sourceRefs") if isinstance(status_payload.get("sourceRefs"), list) else []
             tasks = status_payload.get("tasks") if isinstance(status_payload.get("tasks"), list) else []
@@ -31975,6 +31979,7 @@ def _mgmt_nl_build_context_pack(
                 "supervisor": status_payload.get("supervisor"),
                 "providerGuardrails": status_payload.get("providerGuardrails"),
                 "providerReadiness": status_payload.get("providerReadiness"),
+                "openclawToolPolicy": status_payload.get("openclawToolPolicy"),
                 "assistantDevBridge": status_payload.get("assistantDevBridge"),
                 "coordination": status_payload.get("coordination"),
             }
@@ -47847,6 +47852,33 @@ def _assistant_provider_readiness() -> Dict[str, Any]:
         }
 
 
+def _assistant_openclaw_tool_policy() -> Dict[str, Any]:
+    try:
+        return OpenClawOpsClient().get_tool_policy()
+    except OpenClawOpsClientError as exc:
+        return {
+            "status": "unavailable",
+            "reason": exc.error_code,
+            "message": exc.message,
+            "httpStatus": exc.status_code,
+        }
+
+
+def _assistant_openclaw_effective_tools(operator_id: str) -> Dict[str, Any]:
+    try:
+        return OpenClawOpsClient().list_effective_tools(
+            agent_id="management-ai",
+            operator_id=operator_id or "management-ai",
+        )
+    except OpenClawOpsClientError as exc:
+        return {
+            "status": "unavailable",
+            "reason": exc.error_code,
+            "message": exc.message,
+            "httpStatus": exc.status_code,
+        }
+
+
 def _include_assistant_routes() -> None:
     global _ASSISTANT_SESSION_STORE, _ASSISTANT_TRANSCRIPT_STORE, _ASSISTANT_CONTROL_MODE_STORE
     from assistant.control_mode import ControlModeStore
@@ -47873,6 +47905,8 @@ def _include_assistant_routes() -> None:
             transcript_store=_ASSISTANT_TRANSCRIPT_STORE,
             control_mode_store=_ASSISTANT_CONTROL_MODE_STORE,
             provider_readiness=_assistant_provider_readiness,
+            openclaw_tool_policy=_assistant_openclaw_tool_policy,
+            openclaw_effective_tools=_assistant_openclaw_effective_tools,
         )
     )
 
