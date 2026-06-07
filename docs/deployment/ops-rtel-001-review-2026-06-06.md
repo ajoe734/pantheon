@@ -70,3 +70,22 @@
 
 All acceptance criteria pass. Code is clean, tests are targeted, deployment flow
 is complete and safe. Approved for owner finalization.
+
+## Restored Lifecycle Closeout
+
+The implementation commit from PR #1051 (`eef5c9a9`) and the original review
+artifact commit from PR #1052 (`56fb1877`) are merged into `dev`. On
+2026-06-07, the central lifecycle row was restored to `review_approved` with
+Codex2 as reviewer after the status root briefly lost the review/archive
+metadata.
+
+Codex2 revalidated the restored lifecycle with:
+
+- `bash -n scripts/bootstrap.sh`
+- `bash -n scripts/db_migrate.sh`
+- `/tmp/ops-rtel-001-venv/bin/python -m unittest services.telemetry.test_ingest_shock_absorption services.telemetry.test_main_routes`
+
+Owner closeout re-ran the same focused checks on 2026-06-07; the unittest suite
+reported 68 tests OK. This finalization note exists only to align the final
+task-scoped commit metadata with the restored central reviewer metadata before
+moving `OPS-RTEL-001` to `done`.
