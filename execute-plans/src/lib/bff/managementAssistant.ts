@@ -6,6 +6,24 @@ export interface ManagementAssistantAskRequest {
   sessionId?: string;
   focus?: string;
   context?: string;
+  controlMode?: {
+    mode?: "user" | "kernel_observe" | "kernel_debug" | "kernel_repair";
+    reason?: string;
+    ttlSeconds?: number;
+    idleTtlSeconds?: number;
+  };
+  openclaw?: {
+    repair?: {
+      taskId?: string;
+      taskWorktree?: string;
+      declaredScope?: string[];
+      expectedBranch?: string;
+      remote?: string;
+      mergeTarget?: string;
+      requireClean?: boolean;
+      requirePr?: boolean;
+    };
+  };
   ui?: AssistantUiContextV1;
   conversation?: {
     source?: "client_hint" | "server_readback";

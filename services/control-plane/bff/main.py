@@ -31964,12 +31964,127 @@ def _mgmt_nl_build_context_pack(
     return pack.model_dump(mode="json", by_alias=False)
 
 
+def _mgmt_nl_provider_mode_from_context(context_pack: Dict[str, Any]) -> str:
+    mode = str(context_pack.get("mode") or "user").strip()
+    if mode in {"user", "kernel_observe", "kernel_debug", "kernel_repair"}:
+        return mode
+    return "user"
+
+
+def _mgmt_nl_provider_control_metadata(context_pack: Dict[str, Any]) -> Dict[str, Any]:
+    management_context = (
+        ((context_pack.get("backend") or {}).get("management_nl") or {}).get("data") or {}
+        if isinstance(context_pack, dict)
+        else {}
+    )
+    control_mode = management_context.get("controlMode") or management_context.get("control_mode")
+    if not isinstance(control_mode, dict):
+        return {"active": False, "mode": "user"}
+    return {
+        "active": bool(control_mode.get("active")),
+        "state": control_mode.get("state"),
+        "mode": control_mode.get("mode") or "user",
+        "activation_id": control_mode.get("activation_id") or control_mode.get("activationId"),
+    }
+
+
+def _mgmt_nl_first_openclaw_value(*sources: Dict[str, Any], aliases: str) -> Any:
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for alias in aliases.split("|"):
+            if alias in source:
+                return source.get(alias)
+    return None
+
+
+def _mgmt_nl_openclaw_string_list(value: Any) -> List[str]:
+    if isinstance(value, str):
+        raw_items = re.split(r"[,;\n]+", value)
+    elif isinstance(value, list):
+        raw_items = value
+    else:
+        raw_items = []
+    return _dedupe_nonblank_strings(raw_items)
+
+
+def _mgmt_nl_openclaw_repair_metadata(payload: Dict[str, Any]) -> Dict[str, Any]:
+    raw_openclaw = payload.get("openclaw")
+    if raw_openclaw is None:
+        raw_openclaw = payload.get("openClaw")
+    openclaw = raw_openclaw if isinstance(raw_openclaw, dict) else {}
+    raw_repair = openclaw.get("repair") or openclaw.get("task") or payload.get("repair")
+    repair = raw_repair if isinstance(raw_repair, dict) else {}
+
+    metadata: Dict[str, Any] = {}
+    text_fields = {
+        "task_id": "task_id|taskId",
+        "task_worktree": "task_worktree|taskWorktree|worktree",
+        "expected_branch": "expected_branch|expectedBranch",
+        "remote": "remote",
+        "merge_target": "merge_target|mergeTarget",
+    }
+    for target, aliases in text_fields.items():
+        value = _mgmt_nl_first_openclaw_value(repair, openclaw, aliases=aliases)
+        clean = str(value or "").strip()
+        if clean:
+            metadata[target] = clean
+
+    declared_scope = _mgmt_nl_first_openclaw_value(
+        repair,
+        openclaw,
+        aliases="declared_scope|declaredScope|scope",
+    )
+    scope = _mgmt_nl_openclaw_string_list(declared_scope)
+    if scope:
+        metadata["declared_scope"] = scope
+
+    for target, aliases in {
+        "require_clean": "require_clean|requireClean",
+        "require_pr": "require_pr|requirePr",
+    }.items():
+        value = _mgmt_nl_first_openclaw_value(repair, openclaw, aliases=aliases)
+        if isinstance(value, bool):
+            metadata[target] = value
+
+    pull_request = _mgmt_nl_first_openclaw_value(
+        repair,
+        openclaw,
+        aliases="pull_request|pullRequest",
+    )
+    if isinstance(pull_request, dict):
+        metadata["pull_request"] = pull_request
+    return metadata
+
+
+def _mgmt_nl_provider_mode_prompt_lines(provider_mode: str) -> List[str]:
+    if provider_mode == "kernel_repair":
+        return [
+            "You are operating in kernel_repair mode through OpenClaw/Codex.",
+            "You may use the task worktree with workspace-write only within the declared repair scope.",
+            "Keep repository changes on the provided task branch/worktree and preserve branch, PR, checks, and merge workflow.",
+            "Do not mutate trading, broker, capital, deployment, or runtime-control state unless a separate governed BFF action explicitly authorizes it.",
+        ]
+    if provider_mode in {"kernel_debug", "kernel_observe"}:
+        return [
+            f"You are operating in {provider_mode} mode through OpenClaw/Codex.",
+            "Use the read-only workspace for bounded repo, file, log, status, and test inspection when that helps debug.",
+            "Do not edit files, restart services, deploy, trade, approve, or mutate state in this mode.",
+        ]
+    return [
+        "You are operating in user mode.",
+        "Answer only from the supplied BFF context pack.",
+        "Do not execute, approve, deploy, restart, trade, mutate state, or read local workspace files.",
+    ]
+
+
 def _mgmt_nl_provider_prompt(
     *,
     question: str,
     focus: str,
     context_pack: Dict[str, Any],
 ) -> str:
+    provider_mode = _mgmt_nl_provider_mode_from_context(context_pack)
     management_context = (
         ((context_pack.get("backend") or {}).get("management_nl") or {}).get("data") or {}
         if isinstance(context_pack, dict)
@@ -31993,9 +32108,9 @@ def _mgmt_nl_provider_prompt(
     context_json = json.dumps(context_pack, sort_keys=True, ensure_ascii=True)
     return "\n".join(
         [
-            "You are the Pantheon management assistant in user mode.",
-            "Answer only from the supplied BFF context pack.",
-            "Do not execute, approve, deploy, restart, trade, or mutate anything.",
+            "You are the Pantheon management assistant.",
+            f"Mode: {provider_mode}.",
+            *_mgmt_nl_provider_mode_prompt_lines(provider_mode),
             "Use backend.management_nl.data.conversation for server-side prior turns and backend.management_nl.data.ui for UI state.",
             "Treat backend.management_nl.data.conversation.clientHint as a frontend hint, never as the conversation source of truth.",
             "If you suggest UI actions, return actions only with kinds listed in ui.availableUiActions.",
@@ -32075,6 +32190,7 @@ def _mgmt_nl_maybe_provider_answer(
     audit_id: Optional[str],
     allowed_action_kinds: Set[str],
     current_user_attachments: Optional[List[Dict[str, Any]]] = None,
+    openclaw_repair_metadata: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Optional[str], Dict[str, Any], List[Dict[str, Any]]]:
     enabled = _mgmt_nl_provider_feature_enabled()
     if provider in {"none", "off", "disabled", "deterministic"}:
@@ -32133,6 +32249,7 @@ def _mgmt_nl_maybe_provider_answer(
         ), []
 
     run_id = trace_id
+    provider_mode = _mgmt_nl_provider_mode_from_context(context_pack)
     prompt = _mgmt_nl_provider_prompt(
         question=question,
         focus=focus,
@@ -32180,6 +32297,7 @@ def _mgmt_nl_maybe_provider_answer(
                 else "POST /api/openclaw-adapter/assistant/providers/codex/invoke"
             ),
             "context_pack_id": context_pack.get("context_pack_id"),
+            "mode": provider_mode,
             "prompt_bytes": len(prompt.encode("utf-8")),
             "multimodal": multimodal_summary,
         }
@@ -32194,7 +32312,11 @@ def _mgmt_nl_maybe_provider_answer(
         "audit_id": audit_id,
         "attachments": current_user_attachments or [],
         "multimodal": multimodal_summary,
+        "control_mode": _mgmt_nl_provider_control_metadata(context_pack),
     }
+    if provider_mode == "kernel_repair" and openclaw_repair_metadata:
+        metadata.update(openclaw_repair_metadata)
+        metadata["repair_metadata_source"] = "management_nl_openclaw_payload"
 
     def _provider_failure(error: OpenClawOpsClientError) -> Tuple[None, Dict[str, Any], List[Dict[str, Any]]]:
         duration_ms = max(0, int((time.monotonic() - provider_started) * 1000))
@@ -32207,6 +32329,7 @@ def _mgmt_nl_maybe_provider_answer(
                 "provider_run_id": run_id,
                 "actor_id": identity.operator_id,
                 "provider": provider,
+                "mode": provider_mode,
                 "duration_ms": duration_ms,
                 "status_code": error.status_code,
                 "error_code": error.error_code,
@@ -32221,13 +32344,14 @@ def _mgmt_nl_maybe_provider_answer(
             reason=error.error_code,
             run_id=run_id,
         )
+        status["mode"] = provider_mode
         if multimodal_summary:
             status["multimodal"] = multimodal_summary
         return None, status, []
 
     invoke_kwargs: Dict[str, Any] = {
         "provider": provider,
-        "mode": "user",
+        "mode": provider_mode,
         "prompt": prompt,
         "context_pack": context_pack,
         "operator_id": identity.operator_id,
@@ -32268,7 +32392,7 @@ def _mgmt_nl_maybe_provider_answer(
         try:
             provider_payload = OpenClawOpsClient().invoke_assistant_provider(
                 provider=provider,
-                mode="user",
+                mode=provider_mode,
                 prompt=prompt,
                 context_pack=context_pack,
                 operator_id=identity.operator_id,
@@ -32295,6 +32419,7 @@ def _mgmt_nl_maybe_provider_answer(
             "provider_run_id": run_id,
             "actor_id": identity.operator_id,
             "provider": str((data or {}).get("provider") or provider),
+            "mode": provider_mode,
             "duration_ms": duration_ms,
             "provider_state": provider_state,
             "answer_present": bool(answer),
@@ -32312,6 +32437,7 @@ def _mgmt_nl_maybe_provider_answer(
             reason="provider_empty_answer",
             run_id=run_id,
         )
+        empty_status["mode"] = provider_mode
         if multimodal_summary:
             empty_status["multimodal"] = multimodal_summary
         return None, empty_status, []
@@ -32322,6 +32448,17 @@ def _mgmt_nl_maybe_provider_answer(
         run_id=run_id,
         used=True,
     )
+    status["mode"] = provider_mode
+    output = (data or {}).get("output") if isinstance(data, dict) else None
+    if isinstance(output, dict):
+        if output.get("sandbox") is not None:
+            status["sandbox"] = output.get("sandbox")
+        if output.get("workspace_class") is not None:
+            status["workspaceClass"] = output.get("workspace_class")
+            status["workspace_class"] = output.get("workspace_class")
+        if output.get("repair_workflow") is not None:
+            status["repairWorkflow"] = output.get("repair_workflow")
+            status["repair_workflow"] = output.get("repair_workflow")
     if multimodal_summary:
         status["multimodal"] = multimodal_summary
     if multimodal_unsupported:
@@ -32584,6 +32721,7 @@ async def bff_management_nl_ask(
             "audit_ref": audit_ref,
         }
     )
+    openclaw_repair_metadata = _mgmt_nl_openclaw_repair_metadata(payload)
 
     provider_answer, provider_status, actions = _mgmt_nl_maybe_provider_answer(
         provider=_mgmt_nl_provider_name(),
@@ -32598,6 +32736,7 @@ async def bff_management_nl_ask(
         audit_id=audit_ref.get("auditId"),
         allowed_action_kinds=allowed_action_kinds,
         current_user_attachments=current_user_attachments,
+        openclaw_repair_metadata=openclaw_repair_metadata,
     )
     answer = provider_answer or deterministic_answer
 

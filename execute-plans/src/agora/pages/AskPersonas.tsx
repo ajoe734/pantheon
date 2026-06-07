@@ -5,6 +5,7 @@ import {
   getAssistantOrchestratorStatus,
   getAssistantTranscript,
   postManagementAssistantAsk,
+  type ManagementAssistantAskRequest,
 } from "@/lib/bff/managementAssistant";
 import {
   assistantUiContextMetadata,
@@ -19,6 +20,9 @@ import AssistantModeBadge, {
 } from "@/platform/components/AssistantModeBadge";
 
 type JsonRecord = Record<string, unknown>;
+type ManagementAskControlMode = NonNullable<ManagementAssistantAskRequest["controlMode"]>;
+type ManagementAskOpenClaw = NonNullable<ManagementAssistantAskRequest["openclaw"]>;
+type ManagementAskRepair = NonNullable<ManagementAskOpenClaw["repair"]>;
 
 interface SourceCitation {
   source_id: string;
@@ -367,6 +371,10 @@ export default function AskPersonas(): JSX.Element {
   const [systemStatus, setSystemStatus] = useState<JsonRecord | null>(null);
   const [devDocResult, setDevDocResult] = useState<JsonRecord | null>(null);
   const [workflowError, setWorkflowError] = useState<string | null>(null);
+  const [openClawMode, setOpenClawMode] = useState<AssistantMode>("kernel_debug");
+  const [repairTaskId, setRepairTaskId] = useState("");
+  const [repairWorktree, setRepairWorktree] = useState("");
+  const [repairScope, setRepairScope] = useState("");
   const esRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
@@ -408,6 +416,38 @@ export default function AskPersonas(): JSX.Element {
             required: true,
             validatorRefs: [{ type: "required", message: "Prompt is required before ask." }],
           },
+          {
+            name: "openclawMode",
+            label: "OpenClaw mode",
+            value: openClawMode ?? "user",
+            valueState: openClawMode ? "present" : "empty",
+            dirty: openClawMode !== "kernel_debug",
+            required: false,
+          },
+          {
+            name: "repairTaskId",
+            label: "Repair task",
+            value: repairTaskId,
+            valueState: repairTaskId.trim() ? "present" : "empty",
+            dirty: Boolean(repairTaskId.trim()),
+            required: openClawMode === "kernel_repair",
+          },
+          {
+            name: "repairWorktree",
+            label: "Repair worktree",
+            value: repairWorktree,
+            valueState: repairWorktree.trim() ? "present" : "empty",
+            dirty: Boolean(repairWorktree.trim()),
+            required: openClawMode === "kernel_repair",
+          },
+          {
+            name: "repairScope",
+            label: "Repair scope",
+            value: repairScope,
+            valueState: repairScope.trim() ? "present" : "empty",
+            dirty: Boolean(repairScope.trim()),
+            required: openClawMode === "kernel_repair",
+          },
         ],
         dirty: Boolean(prompt.trim()),
         errors: prompt.trim() ? [] : [{ field: "prompt", message: "Prompt is empty.", code: "required" }],
@@ -423,6 +463,36 @@ export default function AskPersonas(): JSX.Element {
           ]
         : [],
     });
+
+  const repairScopeItems = (): string[] =>
+    repairScope
+      .split(/[\n,;]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+  const openClawRepairPayload = (): ManagementAskOpenClaw | undefined => {
+    if (openClawMode !== "kernel_repair") return undefined;
+    const repair: ManagementAskRepair = {};
+    if (repairTaskId.trim()) {
+      repair.taskId = repairTaskId.trim();
+      repair.expectedBranch = `task/${repairTaskId.trim()}`;
+    }
+    if (repairWorktree.trim()) repair.taskWorktree = repairWorktree.trim();
+    const scope = repairScopeItems();
+    if (scope.length > 0) repair.declaredScope = scope;
+    repair.mergeTarget = "dev";
+    repair.requireClean = true;
+    return Object.keys(repair).length > 0 ? { repair } : undefined;
+  };
+
+  const controlModePayload = (): ManagementAskControlMode | undefined => {
+    if (!openClawMode || openClawMode === "user") return undefined;
+    return {
+      mode: openClawMode,
+      reason: "management_ai_frontend_openclaw_mode",
+      ttlSeconds: 1800,
+    };
+  };
 
   const handleSend = async () => {
     if (!prompt.trim()) return;
@@ -545,10 +615,14 @@ export default function AskPersonas(): JSX.Element {
 
     try {
       const uiContext = currentUiContext();
+      const openclaw = openClawRepairPayload();
+      const controlMode = controlModePayload();
       const res = await postManagementAssistantAsk({
         question: prompt,
         ...(sessionId ? { sessionId } : {}),
         focus: "all",
+        ...(controlMode ? { controlMode } : {}),
+        ...(openclaw ? { openclaw } : {}),
         ui: uiContext,
         conversation: {
           source: "client_hint",
@@ -669,6 +743,36 @@ export default function AskPersonas(): JSX.Element {
     <div>
       <h2>Ask Personas</h2>
       <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={6} cols={80} />
+      <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", marginTop: 8 }}>
+        <label>
+          <span>OpenClaw mode</span>
+          <select
+            value={openClawMode ?? "kernel_debug"}
+            onChange={(event) => setOpenClawMode(normalizeMode(event.target.value) ?? "kernel_debug")}
+          >
+            <option value="user">User</option>
+            <option value="kernel_observe">Kernel observe</option>
+            <option value="kernel_debug">Kernel debug</option>
+            <option value="kernel_repair">Kernel repair</option>
+          </select>
+        </label>
+        {openClawMode === "kernel_repair" && (
+          <>
+            <label>
+              <span>Task ID</span>
+              <input value={repairTaskId} onChange={(event) => setRepairTaskId(event.target.value)} />
+            </label>
+            <label>
+              <span>Task worktree</span>
+              <input value={repairWorktree} onChange={(event) => setRepairWorktree(event.target.value)} />
+            </label>
+            <label>
+              <span>Declared scope</span>
+              <textarea value={repairScope} onChange={(event) => setRepairScope(event.target.value)} rows={3} />
+            </label>
+          </>
+        )}
+      </div>
       <div>
         <button onClick={handleSend} disabled={status === "sending" || !prompt.trim()}>
           Ask
