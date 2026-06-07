@@ -75,6 +75,10 @@ def default_state() -> dict[str, Any]:
             "files": {},
             "features": {},
         },
+        "assistant_dev_bridge": {
+            "last_drain_at": None,
+            "last_result": None,
+        },
         "supervisor": {
             "pid": None,
             "started_at": None,
@@ -103,7 +107,7 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state = deepcopy(default_state())
     if not raw:
         return state
-    state.update({k: v for k, v in raw.items() if k in state or k in {"queue", "workers", "approvals", "supervisor", "coordination", "watchdog"}})
+    state.update({k: v for k, v in raw.items() if k in state or k in {"queue", "workers", "approvals", "supervisor", "coordination", "watchdog", "assistant_dev_bridge"}})
     state.setdefault("tasks", {})
     recent_terminal_tasks = state.get("recent_terminal_tasks")
     state["recent_terminal_tasks"] = recent_terminal_tasks if isinstance(recent_terminal_tasks, list) else []
@@ -149,6 +153,9 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state["coordination"].setdefault("last_scan_at", None)
     state["coordination"].setdefault("files", {})
     state["coordination"].setdefault("features", {})
+    state.setdefault("assistant_dev_bridge", {})
+    state["assistant_dev_bridge"].setdefault("last_drain_at", None)
+    state["assistant_dev_bridge"].setdefault("last_result", None)
     state.setdefault("supervisor", {})
     state["supervisor"].setdefault("pid", None)
     state["supervisor"].setdefault("started_at", None)
