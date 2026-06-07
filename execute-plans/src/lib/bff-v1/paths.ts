@@ -172,6 +172,11 @@ export const paths = {
   assistantSessionRevoke: (id: string) => `${BASE}/assistant/sessions/${enc(id)}/revoke`,
   assistantProviders: () => `${BASE}/assistant/providers`,
   assistantMode: () => `${BASE}/assistant/mode`,
+  assistantControlMode: () => `${BASE}/assistant/control-mode`,
+  assistantOrchestratorStatus: () => `${BASE}/assistant/orchestrator/status`,
+  assistantDevDocsGenerate: () => `${BASE}/assistant/dev-docs/generate`,
+  assistantDevDoc: (packetId: string) => `${BASE}/assistant/dev-docs/${enc(packetId)}`,
+  assistantDevBridgeTaskPacket: () => `${BASE}/assistant/dev-bridge/task-packet`,
 
   // ---- Agora ----
   agoraSignals: () => `${BASE}/agora/signals`,
@@ -181,6 +186,8 @@ export const paths = {
   agoraAsk: () => `${BASE}/agora/ask`,
   agoraAskSessions: () => `${BASE}/agora/ask/sessions`,
   agoraAskSession: (id: string) => `${BASE}/agora/ask/sessions/${enc(id)}`,
+  managementNlAsk: () => `${BASE}/management/nl/ask`,
+  managementAiConversation: (id: string) => `${BASE}/management/ai/conversations/${enc(id)}`,
 
   // ---- v5 closed-loop ----
   v5LoopRuns: () => `${BASE}/v5/loop-runs`,
