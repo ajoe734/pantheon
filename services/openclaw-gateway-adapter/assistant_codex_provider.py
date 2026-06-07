@@ -185,6 +185,9 @@ class AssistantCodexProvider:
         checked_at = self._clock().isoformat().replace("+00:00", "Z")
         binary = self._resolve_binary()
         mount_validation = self._mounts.validate_mounts().get(CODEX_PROVIDER)
+        repair_workspace = _repair_workspace_metadata(
+            self._environ.get("PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT", DEFAULT_REPAIR_WORKTREE_ROOT)
+        )
         base = {
             "provider": CODEX_PROVIDER_ID,
             "provider_name": CODEX_PROVIDER,
@@ -196,6 +199,13 @@ class AssistantCodexProvider:
             "auth_status": "not_checked",
             "credential_mount": _mount_metadata(mount_validation),
             "mount_mode": getattr(mount_validation, "mount_mode", "unknown"),
+            "repair_workspace": repair_workspace,
+            "repairWorkspace": repair_workspace,
+            "capabilities": {
+                "read": True,
+                "repairWrite": bool(repair_workspace.get("ready")),
+                "repair_write": bool(repair_workspace.get("ready")),
+            },
             "last_refresh_check_time": None,
             "ready": False,
             "status": "degraded",
@@ -683,6 +693,89 @@ def _failure_message(code: str) -> str:
     if code == "CODEX_AUTH_UNAVAILABLE":
         return "Codex service-user account session is unavailable or expired."
     return "Codex provider invocation failed."
+
+
+def _repair_workspace_metadata(root_value: str) -> dict[str, Any]:
+    root = Path(_norm_path(root_value or DEFAULT_REPAIR_WORKTREE_ROOT))
+    exists = _path_exists(root)
+    is_dir = _path_is_dir(root)
+    base: dict[str, Any] = {
+        "root": root.as_posix(),
+        "exists": exists,
+        "isDir": is_dir,
+        "is_dir": is_dir,
+        "writable": os.access(root, os.W_OK) if exists else False,
+        "ready": False,
+        "status": "missing",
+        "worktreeCount": 0,
+        "worktree_count": 0,
+        "recentWorktrees": [],
+        "recent_worktrees": [],
+    }
+    if not exists:
+        return base
+    if not is_dir:
+        return {**base, "status": "not_directory"}
+    if not os.access(root, os.W_OK):
+        return {**base, "status": "not_writable"}
+
+    worktrees = _recent_worktree_dirs(root)
+    recent = [
+        {
+            "name": item.name,
+            "path": item.as_posix(),
+            "lastModifiedAt": _mtime_z(item),
+            "last_modified_at": _mtime_z(item),
+            "gitRepo": (item / ".git").exists(),
+            "git_repo": (item / ".git").exists(),
+        }
+        for item in worktrees[:8]
+    ]
+    return {
+        **base,
+        "ready": True,
+        "status": "ready",
+        "worktreeCount": len(worktrees),
+        "worktree_count": len(worktrees),
+        "recentWorktrees": recent,
+        "recent_worktrees": recent,
+    }
+
+
+def _recent_worktree_dirs(root: Path) -> list[Path]:
+    try:
+        dirs = [item for item in root.iterdir() if _path_is_dir(item)]
+    except OSError:
+        return []
+    return sorted(dirs, key=lambda item: _safe_mtime(item), reverse=True)
+
+
+def _path_exists(path: Path) -> bool:
+    try:
+        return path.exists()
+    except OSError:
+        return False
+
+
+def _path_is_dir(path: Path) -> bool:
+    try:
+        return path.is_dir()
+    except OSError:
+        return False
+
+
+def _safe_mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def _mtime_z(path: Path) -> str | None:
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat().replace("+00:00", "Z")
+    except OSError:
+        return None
 
 
 def _mount_metadata(validation: Any) -> dict[str, Any]:

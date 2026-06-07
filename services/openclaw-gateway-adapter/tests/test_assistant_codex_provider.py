@@ -115,11 +115,24 @@ def test_readiness_ready_with_auth_probe(tmp_path: Path) -> None:
             return subprocess.CompletedProcess(cmd, 0, stdout="codex 1.2.3\n", stderr="")
         return subprocess.CompletedProcess(cmd, 0, stdout='{"type":"message","content":"ok"}\n', stderr="")
 
-    provider = _provider(tmp_path, fake_run)
+    worktree_root = tmp_path / "worktrees"
+    worktree_root.mkdir()
+    (worktree_root / "task-demo").mkdir()
+    provider = _provider(
+        tmp_path,
+        fake_run,
+        env={"PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT": worktree_root.as_posix()},
+    )
     result = provider.readiness(auth_probe=True)
 
     assert result["ready"] is True
     assert result["status"] == "ready"
+    assert result["capabilities"]["read"] is True
+    assert result["capabilities"]["repairWrite"] is True
+    assert result["repair_workspace"]["ready"] is True
+    assert result["repair_workspace"]["status"] == "ready"
+    assert result["repair_workspace"]["root"] == worktree_root.as_posix()
+    assert result["repair_workspace"]["worktreeCount"] == 1
     assert result["auth_status"] == "ready"
     assert result["binary_path"] == "/usr/bin/codex"
     assert result["version"] == "codex 1.2.3"
@@ -138,6 +151,27 @@ def test_readiness_ready_with_auth_probe(tmp_path: Path) -> None:
     assert auth_cmd[-1] == "-"
     assert calls[1][1]["input"] == "Reply with exactly: ok"
     assert calls[1][1]["env"]["CODEX_HOME"] == "/home/pantheon-assistant/.codex"
+
+
+def test_readiness_reports_repair_workspace_missing_without_degrading_read_provider(tmp_path: Path) -> None:
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 0, stdout="codex 1.2.3\n", stderr="")
+
+    missing_root = tmp_path / "missing-worktrees"
+    provider = _provider(
+        tmp_path,
+        fake_run,
+        env={"PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT": missing_root.as_posix()},
+    )
+    result = provider.readiness()
+
+    assert result["ready"] is True
+    assert result["status"] == "ready"
+    assert result["capabilities"]["read"] is True
+    assert result["capabilities"]["repairWrite"] is False
+    assert result["repair_workspace"]["ready"] is False
+    assert result["repair_workspace"]["status"] == "missing"
+    assert result["repair_workspace"]["root"] == missing_root.as_posix()
 
 
 def test_readiness_degraded_when_mount_fails(tmp_path: Path) -> None:

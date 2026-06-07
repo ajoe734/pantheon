@@ -383,6 +383,24 @@ function providerReadinessLine(value: unknown): string {
   ].filter(Boolean).join(" - ");
 }
 
+function repairWorkspaceLine(value: unknown): string {
+  const provider = systemProviderReadiness(value);
+  const workspace = recordFrom(provider.repairWorkspace ?? provider.repair_workspace);
+  const status = firstString(workspace.status) ?? "unknown";
+  const ready = firstBoolean(workspace.ready);
+  const readyText = ready === true ? "ready" : ready === false ? "not ready" : null;
+  const root = firstString(workspace.root);
+  const writable = firstBoolean(workspace.writable);
+  const count = firstNumber(workspace.worktreeCount, workspace.worktree_count) ?? 0;
+  return [
+    `status ${status}`,
+    readyText,
+    writable === true ? "writable" : writable === false ? "not writable" : null,
+    `worktrees ${count}`,
+    root ? `root ${root}` : null,
+  ].filter(Boolean).join(" - ");
+}
+
 function assistantDevBridgeStatus(value: unknown): JsonRecord {
   const data = systemStatusData(value);
   return recordFrom(data.assistantDevBridge ?? data.assistant_dev_bridge);
@@ -951,6 +969,9 @@ export default function AskPersonas(): JSX.Element {
           <strong>System:</strong> {taskCount(systemStatus)} tasks, {workerCount(systemStatus)} workers
           <div>
             <strong>Provider:</strong> {providerReadinessLine(systemStatus)}
+          </div>
+          <div>
+            <strong>Repair workspace:</strong> {repairWorkspaceLine(systemStatus)}
           </div>
           <div>
             <strong>Dev inbox:</strong> {assistantDevBridgeLine(systemStatus)}

@@ -638,6 +638,8 @@ def _normalize_provider_readiness(
             "version": value.get("version"),
             "credentialMount": value.get("credential_mount") or value.get("credentialMount"),
             "mountMode": value.get("mount_mode") or value.get("mountMode"),
+            "repairWorkspace": value.get("repair_workspace") or value.get("repairWorkspace"),
+            "capabilities": value.get("capabilities"),
             "checkedAt": value.get("checked_at") or value.get("checkedAt") or snapshot_at,
             "source": "openclaw_gateway_adapter",
         }
