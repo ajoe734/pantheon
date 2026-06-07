@@ -489,6 +489,16 @@ def refresh_dashboard_runtime_artifacts(config: dict[str, Any]) -> None:
         )
 
 
+def assistant_dev_bridge_bff_dirs(repo_root: Path) -> list[Path]:
+    code_bff_dir = THIS_DIR.parent / "services" / "control-plane" / "bff"
+    repo_bff_dir = repo_root / "services" / "control-plane" / "bff"
+    dirs: list[Path] = []
+    for candidate in (code_bff_dir, repo_bff_dir):
+        if candidate not in dirs:
+            dirs.append(candidate)
+    return dirs
+
+
 def drain_assistant_dev_packet_inbox(config: dict[str, Any], state: dict[str, Any]) -> bool:
     settings = config.get("assistant_dev_bridge") if isinstance(config.get("assistant_dev_bridge"), dict) else {}
     if settings.get("enabled") is False:
@@ -498,9 +508,10 @@ def drain_assistant_dev_packet_inbox(config: dict[str, Any], state: dict[str, An
         repo_root = config_path(config, "status_file").parent
     except KeyError:
         repo_root = THIS_DIR.parent
-    bff_dir = repo_root / "services" / "control-plane" / "bff"
-    if str(bff_dir) not in sys.path:
-        sys.path.insert(0, str(bff_dir))
+    bff_dirs = assistant_dev_bridge_bff_dirs(repo_root)
+    for bff_dir in reversed(bff_dirs):
+        if str(bff_dir) not in sys.path:
+            sys.path.insert(0, str(bff_dir))
 
     try:
         from assistant.dev_bridge_inbox import drain_task_packet_inbox
@@ -510,6 +521,7 @@ def drain_assistant_dev_packet_inbox(config: dict[str, Any], state: dict[str, An
             {
                 "type": "assistant_dev_packet_drain_unavailable",
                 "message": f"Assistant dev packet inbox drain unavailable: {type(exc).__name__}: {exc}",
+                "searched_bff_dirs": [str(path) for path in bff_dirs],
             },
         )
         bridge_state = state.setdefault("assistant_dev_bridge", {})
