@@ -66,6 +66,7 @@ class AssistantBackendContext(AssistantBaseModel):
     persona_health: Optional[Dict[str, Any]] = None
     strategy_health: Optional[Dict[str, Any]] = None
     management_nl: Optional[Dict[str, Any]] = None
+    orchestrator_status: Optional[Dict[str, Any]] = None
     recent_sse: List[Dict[str, Any]] = Field(default_factory=list)
 
 
