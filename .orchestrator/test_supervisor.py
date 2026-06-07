@@ -357,6 +357,19 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertEqual(result["kind"], "quota_terminal")
         self.assertFalse(result["transient"])
 
+    def test_classifies_claude_weekly_rate_limit_as_terminal_quota(self) -> None:
+        config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
+        worker = {"provider": "claude"}
+
+        result = supervisor.classify_worker_failure(
+            config,
+            worker,
+            "rate_limit: You've hit your weekly limit · resets Jun 8, 12pm (UTC)",
+        )
+
+        self.assertEqual(result["kind"], "quota_terminal")
+        self.assertFalse(result["transient"])
+
     def test_detects_codex_usage_limit_line_as_worker_failure(self) -> None:
         worker = self._worker_for_log(
             "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 7:00 PM.\n"
@@ -365,6 +378,14 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertEqual(
             supervisor.detect_worker_failure(worker),
             "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 7:00 PM.",
+        )
+
+    def test_detects_claude_weekly_rate_limit_line_as_worker_failure(self) -> None:
+        worker = self._worker_for_log("rate_limit: You've hit your weekly limit · resets Jun 8, 12pm (UTC)\n")
+
+        self.assertEqual(
+            supervisor.detect_worker_failure(worker),
+            "rate_limit: You've hit your weekly limit · resets Jun 8, 12pm (UTC)",
         )
 
     def test_classifies_gemini_auth_failure(self) -> None:
@@ -457,6 +478,17 @@ class DetectWorkerFailureTests(unittest.TestCase):
         )
 
         self.assertEqual(hint, datetime(2026, 5, 8, 20, 40, 0, tzinfo=timezone.utc))
+
+    def test_parse_quota_retry_hint_claude_month_day_utc(self) -> None:
+        from datetime import datetime, timezone
+
+        now = datetime(2026, 6, 7, 14, 11, 0, tzinfo=timezone.utc)
+        hint = supervisor.parse_quota_retry_hint(
+            "rate_limit: You've hit your weekly limit · resets Jun 8, 12pm (UTC)",
+            now=now,
+        )
+
+        self.assertEqual(hint, datetime(2026, 6, 8, 12, 0, 0, tzinfo=timezone.utc))
 
     def test_parse_quota_retry_hint_codex_full_date(self) -> None:
         from datetime import datetime, timezone
@@ -6979,6 +7011,85 @@ class WorkerReassignmentTests(unittest.TestCase):
 
         self.assertEqual(reassigned_to, "Codex2")
         self.assertEqual(persist.call_args.kwargs["new_reviewer"], "Codex2")
+
+    def test_failure_streak_sweep_reassigns_claude_weekly_limit_review(self) -> None:
+        config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "after_attempts": 2,
+                "reviewer_fallbacks": {
+                    "Claude": ["Codex", "Codex2"],
+                },
+            },
+            "agents": {
+                "claude": {"display_name": "Claude", "provider": "claude"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+                "codex2": {"display_name": "Codex2", "provider": "codex2"},
+            },
+        }
+        state = {
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    "MGMT-AI-LIVE-BRIDGE-SMOKE-20260607101732:claude": {
+                        "task_id": "MGMT-AI-LIVE-BRIDGE-SMOKE-20260607101732",
+                        "provider": "claude",
+                        "count": 2,
+                        "last_failure_kind": "terminal",
+                        "last_reason": "rate_limit: You've hit your weekly limit · resets Jun 8, 12pm (UTC)",
+                    }
+                }
+            }
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "MGMT-AI-LIVE-BRIDGE-SMOKE-20260607101732",
+                    "status": "review",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.maybe_reassign_tasks_from_failure_streaks(config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(persist.call_args.kwargs["new_owner"], "Codex")
+        self.assertEqual(persist.call_args.kwargs["new_reviewer"], "Codex2")
+        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
+
+    def test_failure_streak_sweep_waits_for_threshold(self) -> None:
+        config = {
+            "worker_reassignment": {"enabled": True, "after_attempts": 2},
+            "agents": {
+                "claude": {"display_name": "Claude", "provider": "claude"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+            },
+        }
+        state = {
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    "P3-004:claude": {
+                        "task_id": "P3-004",
+                        "provider": "claude",
+                        "count": 1,
+                        "last_failure_kind": "terminal",
+                        "last_reason": "rate_limit: You've hit your weekly limit · resets Jun 8, 12pm (UTC)",
+                    }
+                }
+            }
+        }
+
+        with mock.patch.object(supervisor, "persist_task_reassignment") as persist:
+            changed = supervisor.maybe_reassign_tasks_from_failure_streaks(config, state)
+
+        self.assertFalse(changed)
+        persist.assert_not_called()
 
     def test_reassigns_owned_task_to_new_owner_after_repeated_failure(self) -> None:
         worker = {
