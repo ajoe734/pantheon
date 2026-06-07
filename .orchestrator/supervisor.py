@@ -115,6 +115,7 @@ WORKER_FAILURE_PATTERNS = (
     ),
     re.compile(r"^status:\s*(401|429)\b", re.IGNORECASE),
     re.compile(r"^(?:you(?:'ve| have)\s+)?hit your(?:\s+\w+)?\s+limit\b", re.IGNORECASE),
+    re.compile(r"^rate_limit\s*:\s*.*\b(?:limit|quota|reset|resets)\b", re.IGNORECASE),
     re.compile(r"^An unexpected critical error occurred", re.IGNORECASE),
     re.compile(r"^(?:Error|error|fatal):", re.IGNORECASE),
 )
@@ -4210,6 +4211,8 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         return {"kind": "tool_auth", "transient": False, "label": "tool auth"}
     if any(marker in normalized for marker in auth_markers):
         return {"kind": "auth", "transient": False, "label": "auth"}
+    if re.search(r"\b(?:you(?:'ve| have)\s+)?hit your(?:\s+\w+){0,3}\s+limit\b", normalized):
+        return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}
     if any(marker in normalized for marker in terminal_quota_markers):
         return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}
     if any(marker in normalized for marker in retryable_capacity_markers):
@@ -4437,6 +4440,14 @@ _QUOTA_RESETS_AT_PATTERN = re.compile(
     r"\bresets\s+(?:at\s+)?(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<meridiem>[ap]\.?m\.?)?",
     re.IGNORECASE,
 )
+_QUOTA_RESETS_AT_DATE_PATTERN = re.compile(
+    r"\bresets\s+(?:at\s+)?"
+    r"(?P<month>jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|"
+    r"sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+"
+    r"(?P<day>\d{1,2})(?:st|nd|rd|th)?(?:,\s*|\s+)"
+    r"(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<meridiem>[ap]\.?m\.?)?",
+    re.IGNORECASE,
+)
 _MONTH_NAME_TO_NUMBER = {
     "jan": 1,
     "january": 1,
@@ -4475,6 +4486,7 @@ def parse_quota_retry_hint(reason: str | None, *, now: datetime | None = None) -
     if not reason:
         return None
     hint_tz = timezone.utc if re.search(r"\(\s*UTC\s*\)|\bUTC\b", reason, re.IGNORECASE) else LOCAL_TZ
+    now_dt = now or datetime.now(timezone.utc)
     date_match = _QUOTA_RETRY_AT_DATE_PATTERN.search(reason)
     if date_match:
         month = _MONTH_NAME_TO_NUMBER.get(date_match.group("month").lower())
@@ -4501,6 +4513,39 @@ def parse_quota_retry_hint(reason: str | None, *, now: datetime | None = None) -
         except ValueError:
             return None
 
+    reset_date_match = _QUOTA_RESETS_AT_DATE_PATTERN.search(reason)
+    if reset_date_match:
+        month = _MONTH_NAME_TO_NUMBER.get(reset_date_match.group("month").lower())
+        if not month:
+            return None
+        hour = int(reset_date_match.group("hour"))
+        minute = int(reset_date_match.group("minute") or 0)
+        meridiem = (reset_date_match.group("meridiem") or "").replace(".", "").lower()
+        if meridiem == "pm" and hour < 12:
+            hour += 12
+        elif meridiem == "am" and hour == 12:
+            hour = 0
+        if not (0 <= hour < 24 and 0 <= minute < 60):
+            return None
+        base = now_dt.astimezone(hint_tz)
+        try:
+            candidate = datetime(
+                base.year,
+                month,
+                int(reset_date_match.group("day")),
+                hour,
+                minute,
+                tzinfo=hint_tz,
+            )
+        except ValueError:
+            return None
+        if candidate <= base:
+            try:
+                candidate = candidate.replace(year=candidate.year + 1)
+            except ValueError:
+                return None
+        return candidate.astimezone(timezone.utc)
+
     match = _QUOTA_RETRY_AT_PATTERN.search(reason) or _QUOTA_RESETS_AT_PATTERN.search(reason)
     if not match:
         return None
@@ -4513,7 +4558,7 @@ def parse_quota_retry_hint(reason: str | None, *, now: datetime | None = None) -
         hour = 0
     if not (0 <= hour < 24 and 0 <= minute < 60):
         return None
-    base = (now.astimezone(hint_tz) if now else datetime.now(hint_tz))
+    base = now_dt.astimezone(hint_tz)
     candidate = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if candidate <= base:
         candidate += timedelta(days=1)
@@ -5587,6 +5632,49 @@ def maybe_reassign_task_after_worker_failure(
         return new_owner
 
     return None
+
+
+def maybe_reassign_tasks_from_failure_streaks(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    settings = worker_reassignment_settings(config)
+    if not settings.get("enabled", True):
+        return False
+    threshold = max(1, int(settings.get("after_attempts", 2)))
+    max_reassignments = max(1, int(settings.get("max_failure_streak_reassignments_per_cycle", 4)))
+    changed = False
+    applied = 0
+    streaks = list((_task_failure_streak_bucket(state) or {}).items())
+    for _key, record in streaks:
+        if applied >= max_reassignments:
+            break
+        if not isinstance(record, dict):
+            continue
+        task_id = str(record.get("task_id") or "").strip()
+        provider = str(record.get("provider") or "").strip()
+        count = int(record.get("count") or 0)
+        if not task_id or not provider or count < threshold:
+            continue
+        reason = str(record.get("last_reason") or GENERIC_WORKER_EXIT_REASON)
+        failure_kind = str(record.get("last_failure_kind") or "")
+        worker = {
+            "task_id": task_id,
+            "provider": provider,
+            "agent_id": provider,
+            "run_id": record.get("worker_run_id"),
+            "retry_count": max(0, count - 1),
+        }
+        reassigned_to = maybe_reassign_task_after_worker_failure(
+            config,
+            state,
+            worker,
+            reason,
+            terminal=True,
+            force=is_terminal_quota_failure_kind(failure_kind),
+            failure_count=count,
+        )
+        if reassigned_to:
+            applied += 1
+            changed = True
+    return changed
 
 
 def is_transient_worker_failure(config: dict[str, Any], worker: dict[str, Any], reason: str | None) -> bool:
@@ -9277,6 +9365,7 @@ def run_once(
             )
         changed = sync_coordination_files(config, state) or changed
         changed = poll_workers(config, state, provider_report=provider_report) or changed
+        changed = maybe_reassign_tasks_from_failure_streaks(config, state) or changed
         changed = reconcile_queue_records(config, state) or changed
         changed = prune_event_queue(config, state) or changed
         changed = refresh_chair_review_state(config, state) or changed
