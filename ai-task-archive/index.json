@@ -1,18 +1,14 @@
 {
   "version": 1,
-  "updated_at": "2026-06-06T15:57:16Z",
+  "updated_at": "2026-06-07T14:42:02Z",
   "counts": {
-    "total": 1415,
-    "completed": 1392,
+    "total": 1411,
+    "completed": 1388,
     "superseded": 23
   },
   "recent_terminal_ids": [
-    "OPS-MGMT-AI-MULTIMODAL-REDEPLOY-20260606",
-    "OPS-RTEL-005",
-    "OPS-RTEL-003",
-    "OPS-RTEL-004",
-    "OPS-RTEL-002",
     "OPS-RTEL-001",
+    "MGMT-AI-LIVE-BRIDGE-SMOKE-20260607101732",
     "ASST-INTEG-008",
     "ASST-INTEG-009",
     "ASST-INTEG-004",
@@ -26,6 +22,10 @@
     "MGMT-AI-PERSIST-P0-STORE-001",
     "ASST-INTEG-006",
     "ASST-INTEG-003",
-    "ASST-INTEG-005"
+    "ASST-INTEG-005",
+    "ASST-INTEG-002",
+    "ASST-INTEG-001",
+    "PROD-WRITES-001-V2",
+    "LIVE-SCALE-001-V2"
   ]
 }
