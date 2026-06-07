@@ -1,0 +1,112 @@
+# Management AI Dev Kernel Control Mode
+
+Status date: 2026-06-07
+
+## Purpose
+
+Management AI can answer read-only questions in user mode, but SA/SD generation,
+DevTaskPacket queueing, and repair handoff require a short-lived kernel control
+mode session. The product default is intentionally fail-closed:
+
+```env
+PANTHEON_ASSISTANT_KERNEL_ENABLED=false
+```
+
+Use this runbook only on an internal dev VM. Do not use it for staging-live,
+canary, live, or production.
+
+## Enable Dev Control Mode
+
+Preferred command from the Pantheon repo root:
+
+```bash
+scripts/enable_management_ai_dev_kernel.sh
+```
+
+The script defaults to the live dev compose project name:
+
+```env
+COMPOSE_PROJECT_NAME=pantheon
+COMPOSE_FILE=docker-compose.yml
+BFF_BASE_URL=http://127.0.0.1:18001
+PANTHEON_ASSISTANT_KERNEL_ENABLED=true
+PANTHEON_BFF_STUB_CAPABILITIES=assistant.kernel.debug,assistant.kernel.repair
+```
+
+Manual equivalent:
+
+```bash
+PANTHEON_ASSISTANT_KERNEL_ENABLED=true \
+PANTHEON_BFF_STUB_CAPABILITIES=assistant.kernel.debug,assistant.kernel.repair \
+docker compose -p pantheon up -d --no-deps --force-recreate operator-bff
+```
+
+The `-p pantheon` flag matters on the shared dev VM. Running compose without the
+project name can create a second empty project and fail on the already-bound BFF
+port.
+
+## Verify
+
+Kernel flag and control-mode posture:
+
+```bash
+curl -fsS http://127.0.0.1:18001/bff/assistant/mode | jq .
+```
+
+Expected:
+
+- `data.kernel_enabled=true`
+- `data.control_mode.configured=true`
+- `data.control_mode.active=false` until an operator activates it
+
+Wrong-passphrase probe:
+
+```bash
+curl -fsS -i \
+  -H 'Authorization: Bearer pantheon-dev-browser:admin:mfa:assistant.kernel.debug,assistant.kernel.repair' \
+  -H 'Content-Type: application/json' \
+  --data '{"passphrase":"wrong phrase for precondition probe","mode":"kernel_repair","reason":"probe control-mode preconditions only"}' \
+  http://127.0.0.1:18001/bff/assistant/control-mode/activate
+```
+
+Expected failure after the dev flag is enabled:
+
+- HTTP `403`
+- `invalid_passphrase`
+
+If the failure says kernel sessions are disabled, the BFF was recreated without
+`PANTHEON_ASSISTANT_KERNEL_ENABLED=true`.
+
+Provider smoke:
+
+```bash
+curl -fsS \
+  -H 'Authorization: Bearer pantheon-dev-browser:admin:mfa:assistant.kernel.debug,assistant.kernel.repair' \
+  -H 'Idempotency-Key: mgmt-ai-dev-kernel-smoke' \
+  -H 'Content-Type: application/json' \
+  --data '{"question":"Report Management AI OpenClaw provider readiness only.","conversationId":"mgmt-ai-dev-kernel-smoke","useAssistantProvider":true}' \
+  http://127.0.0.1:18001/bff/management/nl/ask | jq '.data.providerStatus'
+```
+
+Expected:
+
+- `status=completed`
+- `used=true`
+- `fallback=null`
+
+## Frontend Activation Preconditions
+
+The passphrase is only one activation factor. Control mode also requires:
+
+- `PANTHEON_ASSISTANT_KERNEL_ENABLED=true`
+- role `admin` or `operator`
+- MFA on the bearer identity
+- a capability beginning with `assistant.kernel`
+- a configured control-mode passphrase
+
+For dev stub auth, `env/dev-management-ai-kernel.env.example` and the enable
+script add `assistant.kernel.debug` and `assistant.kernel.repair` to stub
+tokens. A browser operator still needs an admin/operator identity with MFA.
+
+Never put the control-mode passphrase, broker credentials, API tokens, private
+keys, or other secrets in Lovable frontend environment variables.
