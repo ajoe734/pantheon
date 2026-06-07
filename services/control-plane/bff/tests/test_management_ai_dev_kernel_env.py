@@ -29,6 +29,8 @@ def test_dev_management_ai_kernel_overlay_is_explicitly_dev_only() -> None:
     assert env["PANTHEON_ASSISTANT_KERNEL_ENABLED"] == "true"
     assert env["PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH"] == "/data/bff/assistant-control-mode.json"
     assert env["PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS"] == "300"
+    assert env["PANTHEON_STATUS_ROOT_HOST"] == "/home/lupin/code/pantheon"
+    assert env["PANTHEON_STATUS_ROOT_CONTAINER"] == "/workspace/status-root"
     assert set(env["PANTHEON_BFF_STUB_CAPABILITIES"].split(",")) == {
         "assistant.kernel.debug",
         "assistant.kernel.repair",
@@ -45,6 +47,10 @@ def test_enable_management_ai_dev_kernel_script_targets_only_operator_bff() -> N
 
     assert 'COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-pantheon}"' in script
     assert 'COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"' in script
+    assert "PANTHEON_SUPERVISOR_CONFIG" in script
+    assert "resolve_status_root_host" in script
+    assert 'PANTHEON_STATUS_ROOT_HOST="$(resolve_status_root_host)"' in script
+    assert 'PANTHEON_STATUS_ROOT_CONTAINER="${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}"' in script
     assert 'PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED:-true}"' in script
     assert "--no-deps --force-recreate operator-bff" in script
     assert "/bff/assistant/mode" in script

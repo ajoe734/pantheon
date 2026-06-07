@@ -29,13 +29,21 @@ The script defaults to the live dev compose project name:
 COMPOSE_PROJECT_NAME=pantheon
 COMPOSE_FILE=docker-compose.yml
 BFF_BASE_URL=http://127.0.0.1:18001
+PANTHEON_STATUS_ROOT_HOST=/home/lupin/code/pantheon
+PANTHEON_STATUS_ROOT_CONTAINER=/workspace/status-root
 PANTHEON_ASSISTANT_KERNEL_ENABLED=true
 PANTHEON_BFF_STUB_CAPABILITIES=assistant.kernel.debug,assistant.kernel.repair
 ```
 
+When `PANTHEON_STATUS_ROOT_HOST` is not supplied, the script first tries to read
+the supervisor status root from
+`/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json`.
+If that file is absent, it falls back to the repo root where the script is run.
+
 Manual equivalent:
 
 ```bash
+PANTHEON_STATUS_ROOT_HOST=/home/lupin/code/pantheon \
 PANTHEON_ASSISTANT_KERNEL_ENABLED=true \
 PANTHEON_BFF_STUB_CAPABILITIES=assistant.kernel.debug,assistant.kernel.repair \
 docker compose -p pantheon up -d --no-deps --force-recreate operator-bff
@@ -44,6 +52,12 @@ docker compose -p pantheon up -d --no-deps --force-recreate operator-bff
 The `-p pantheon` flag matters on the shared dev VM. Running compose without the
 project name can create a second empty project and fail on the already-bound BFF
 port.
+
+The status-root host path also matters. It must be the same root used by the
+supervisor config's `paths.status_file`. If BFF mounts a deploy checkout while
+the supervisor drains from the main runtime checkout, Management AI can answer
+provider questions but `queueTaskPacket` and assistant dev-bridge readback will
+point at the wrong `.orchestrator/assistant-dev-packets` directory.
 
 ## Verify
 
@@ -58,6 +72,19 @@ Expected:
 - `data.kernel_enabled=true`
 - `data.control_mode.configured=true`
 - `data.control_mode.active=false` until an operator activates it
+
+Supervisor and dev bridge alignment:
+
+```bash
+curl -fsS http://127.0.0.1:18001/bff/assistant/orchestrator/status \
+  | jq '{supervisor:.data.supervisor, assistantDevBridge:.data.assistantDevBridge}'
+```
+
+Expected:
+
+- `data.supervisor.lifecycle=running`
+- `data.assistantDevBridge.inbox.exists=true`
+- the inbox readback points at the same root as the supervisor drain path
 
 Wrong-passphrase probe:
 

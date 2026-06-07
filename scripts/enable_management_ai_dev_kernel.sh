@@ -7,11 +7,46 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-pantheon}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
 BFF_BASE_URL="${BFF_BASE_URL:-http://127.0.0.1:18001}"
+PANTHEON_SUPERVISOR_CONFIG="${PANTHEON_SUPERVISOR_CONFIG:-/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json}"
+
+resolve_status_root_host() {
+  if [ -n "${PANTHEON_STATUS_ROOT_HOST:-}" ]; then
+    printf '%s\n' "${PANTHEON_STATUS_ROOT_HOST}"
+    return
+  fi
+
+  if [ -f "${PANTHEON_SUPERVISOR_CONFIG}" ] && command -v python3 >/dev/null 2>&1; then
+    local resolved
+    resolved="$(
+      python3 - "${PANTHEON_SUPERVISOR_CONFIG}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    config = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    status_file = (config.get("paths") or {}).get("status_file")
+    if status_file:
+        print(Path(status_file).resolve().parent)
+except Exception:
+    pass
+PY
+    )"
+    if [ -n "${resolved}" ]; then
+      printf '%s\n' "${resolved}"
+      return
+    fi
+  fi
+
+  printf '%s\n' "${REPO_ROOT}"
+}
 
 export PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED:-true}"
 export PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH="${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-/data/bff/assistant-control-mode.json}"
 export PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-300}"
 export PANTHEON_BFF_STUB_CAPABILITIES="${PANTHEON_BFF_STUB_CAPABILITIES-assistant.kernel.debug,assistant.kernel.repair}"
+export PANTHEON_STATUS_ROOT_HOST="$(resolve_status_root_host)"
+export PANTHEON_STATUS_ROOT_CONTAINER="${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}"
 
 cd "${REPO_ROOT}"
 
@@ -19,6 +54,8 @@ echo "Enabling Management AI dev kernel control mode for operator-bff"
 echo "compose_project=${COMPOSE_PROJECT_NAME}"
 echo "compose_file=${COMPOSE_FILE}"
 echo "bff_base_url=${BFF_BASE_URL}"
+echo "status_root_host=${PANTHEON_STATUS_ROOT_HOST}"
+echo "status_root_container=${PANTHEON_STATUS_ROOT_CONTAINER}"
 echo "kernel_enabled=${PANTHEON_ASSISTANT_KERNEL_ENABLED}"
 if [ -n "${PANTHEON_BFF_STUB_CAPABILITIES}" ]; then
   echo "stub_capabilities=configured"
