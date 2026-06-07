@@ -869,23 +869,35 @@ def _extract_identity_stub(authorization: Optional[str]) -> OperatorIdentity:
             inferred_roles = ["analyst"]
         elif lowered.startswith("viewer_"):
             inferred_roles = ["viewer"]
+        capabilities = _stub_identity_capabilities([])
         return OperatorIdentity(
             operator_id=token,
             roles=inferred_roles,
             mfa_verified="mfa" in lowered,
-            claims={"sub": token, "roles": inferred_roles},
+            claims={"sub": token, "roles": inferred_roles, "capabilities": capabilities},
             token_kind="stub",
         )
     parts = token.split(":")
     operator_id = parts[0] if parts else "unknown"
     roles = parts[1].split(",") if len(parts) > 1 else ["operator"]
     mfa_verified = len(parts) > 2 and parts[2] == "mfa"
+    token_capabilities = parts[3].split(",") if len(parts) > 3 else []
+    capabilities = _stub_identity_capabilities(token_capabilities)
     return OperatorIdentity(
         operator_id=operator_id,
         roles=roles,
         mfa_verified=mfa_verified,
-        claims={"sub": operator_id, "roles": roles},
+        claims={"sub": operator_id, "roles": roles, "capabilities": capabilities},
         token_kind="stub",
+    )
+
+
+def _stub_identity_capabilities(token_capabilities: List[str]) -> List[str]:
+    return _dedupe_nonblank_strings(
+        [
+            *token_capabilities,
+            *_env_csv("PANTHEON_BFF_STUB_CAPABILITIES"),
+        ]
     )
 
 
