@@ -121,6 +121,41 @@ Expected:
 - `used=true`
 - `fallback=null`
 
+## Positive SA/SD Queue Smoke
+
+The full SA/SD queue smoke requires the existing control-mode passphrase. Do
+not rotate or print the passphrase for a smoke run.
+
+```bash
+PANTHEON_ASSISTANT_CONTROL_PASSPHRASE='<existing control-mode passphrase>' \
+scripts/smoke_management_ai_control_mode_queue.sh
+```
+
+Optional overrides:
+
+```env
+BFF_BASE_URL=https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io
+BFF_AUTH_TOKEN=pantheon-dev-browser:admin:mfa
+SESSION_ID=mgmt-ai-control-mode-smoke-manual
+TASK_OWNER=assistant-supervisor
+```
+
+The smoke verifies:
+
+- BFF health is reachable.
+- `kernel_enabled=true` and control passphrase is configured.
+- control mode activates as `kernel_repair`.
+- `/bff/assistant/dev-docs/generate` returns HTTP `201`.
+- generated SA/SD artifacts are archived.
+- a signed DevTaskPacket is queued into the supervisor inbox.
+- `/bff/assistant/orchestrator/status` reports supervisor/provider/dev-bridge
+  readback after queueing.
+
+If the script fails with `invalid_passphrase`, the runtime is healthy but the
+operator did not provide the current passphrase. If it fails with
+`not_active`, activation did not complete and `/dev-docs/generate` is correctly
+failing closed.
+
 ## Frontend Activation Preconditions
 
 The passphrase is only one activation factor. Control mode also requires:
