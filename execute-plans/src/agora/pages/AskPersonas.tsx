@@ -1,5 +1,16 @@
 import React, { useEffect, useRef, useState } from "react";
 import { postAsk, openAskSse, getAskSession } from "@/lib/bff/agora";
+import {
+  generateAssistantDevDocs,
+  getAssistantOrchestratorStatus,
+  getAssistantTranscript,
+  postManagementAssistantAsk,
+} from "@/lib/bff/managementAssistant";
+import {
+  assistantUiContextMetadata,
+  buildAssistantUiContext,
+  type AssistantUiContextV1,
+} from "@/lib/assistant/uiContextRegistry";
 import AssistantModeBadge, {
   isKernelMode,
   type AssistantMode,
@@ -104,7 +115,10 @@ function normalizeProvider(...values: unknown[]): AssistantProviderSignal {
     reason: firstString(...records.map((record) => record.reason), ...records.map((record) => record.degraded_reason)),
     fallback: firstString(...records.map((record) => record.fallback)),
     runId: firstString(...records.map((record) => record.run_id), ...records.map((record) => record.runId)),
-    runtime: firstString(...records.map((record) => record.runtime), ...records.map((record) => record.provider_runtime)),
+    runtime: firstString(
+      ...records.map((record) => record.runtime),
+      ...records.map((record) => record.provider_runtime),
+    ),
     checkedAt: firstString(...records.map((record) => record.checked_at), ...records.map((record) => record.checkedAt)),
   };
 }
@@ -117,6 +131,14 @@ function normalizeAssistantSignals(value: unknown, fallbackSessionId?: string | 
   const assistantMeta = recordFrom(meta.assistant ?? data.assistant);
   const context = recordFrom(data.context ?? data.context_pack ?? session.context ?? session.context_pack);
   const commandState = recordFrom(data.command_state ?? data.commandState ?? assistantMeta.command_state);
+  const controlMode = recordFrom(
+    data.control_mode ??
+    data.controlMode ??
+    meta.control_mode ??
+    meta.controlMode ??
+    assistantMeta.control_mode ??
+    assistantMeta.controlMode,
+  );
   const provider = normalizeProvider(
     data.provider,
     data.provider_status,
@@ -134,6 +156,7 @@ function normalizeAssistantSignals(value: unknown, fallbackSessionId?: string | 
     session.assistant_mode,
     session.assistantMode,
     assistantMeta.mode,
+    controlMode.mode,
   );
   const commandMeta = recordFrom(meta.command);
   const explicitKernelVisibility = firstBoolean(
@@ -164,6 +187,8 @@ function normalizeAssistantSignals(value: unknown, fallbackSessionId?: string | 
       session.expiresAt,
       assistantMeta.expires_at,
       assistantMeta.expiresAt,
+      controlMode.expires_at,
+      controlMode.expiresAt,
     ),
     ttlSeconds: firstNumber(
       data.ttl_seconds,
@@ -172,6 +197,8 @@ function normalizeAssistantSignals(value: unknown, fallbackSessionId?: string | 
       session.ttlSeconds,
       assistantMeta.ttl_seconds,
       assistantMeta.ttlSeconds,
+      controlMode.ttl_seconds,
+      controlMode.ttlSeconds,
     ),
     provider,
     commandsEnabled: firstBoolean(
@@ -183,8 +210,14 @@ function normalizeAssistantSignals(value: unknown, fallbackSessionId?: string | 
       commandState.commands_enabled,
       assistantMeta.commands_enabled,
       assistantMeta.commandsEnabled,
+      controlMode.active,
     ),
-    commandRef: firstString(commandState.command_id, commandState.commandId, commandMeta.commandId, commandMeta.command_id),
+    commandRef: firstString(
+      commandState.command_id,
+      commandState.commandId,
+      commandMeta.commandId,
+      commandMeta.command_id,
+    ),
     contextSnapshotAt: firstString(
       context.snapshot_at,
       context.snapshotAt,
@@ -266,9 +299,12 @@ function normalizeSourceCitations(value: unknown): SourceCitation[] {
 
 function transcriptMessages(value: unknown): Array<{ role: string; content: string }> {
   const root = recordFrom(value);
-  const data = recordFrom(root.data ?? root);
+  const dataValue = root.data ?? root;
+  const data = recordFrom(dataValue);
   const session = recordFrom(data.session ?? root.session);
-  const raw = arrayFrom(data.transcript ?? data.messages ?? session.transcript ?? session.messages);
+  const raw = Array.isArray(dataValue)
+    ? dataValue
+    : arrayFrom(data.transcript ?? data.messages ?? session.transcript ?? session.messages);
   return raw.map((it) => {
     const record = recordFrom(it);
     return {
@@ -287,6 +323,39 @@ function eventPayload(raw: unknown): { type: string | null; data: JsonRecord } {
   };
 }
 
+function recentTurns(messages: Array<{ role: string; content: string }>): Array<Record<string, unknown>> {
+  return messages.slice(-8).map((message) => ({
+    role: message.role,
+    content: message.content.slice(0, 1200),
+  }));
+}
+
+function taskCount(value: unknown): number {
+  const root = recordFrom(value);
+  const data = recordFrom(root.data ?? root);
+  return arrayFrom(data.tasks).length;
+}
+
+function workerCount(value: unknown): number {
+  const root = recordFrom(value);
+  const data = recordFrom(root.data ?? root);
+  return arrayFrom(data.workers).length;
+}
+
+function packetId(value: unknown): string | null {
+  const root = recordFrom(value);
+  const data = recordFrom(root.data ?? root);
+  return firstString(data.packetId, data.packet_id);
+}
+
+function taskPacketId(value: unknown): string | null {
+  const root = recordFrom(value);
+  const meta = recordFrom(root.meta);
+  const taskPacket = recordFrom(meta.taskPacket ?? meta.task_packet);
+  const data = recordFrom(root.data ?? root);
+  return firstString(taskPacket.packetId, taskPacket.packet_id, data.packetId, data.packet_id);
+}
+
 export default function AskPersonas(): JSX.Element {
   const [prompt, setPrompt] = useState("");
   const [messages, setMessages] = useState<Array<{ role: string; content: string }>>([]);
@@ -295,6 +364,9 @@ export default function AskPersonas(): JSX.Element {
   const [mode, setMode] = useState<AssistantMode | null>(null);
   const [assistantSignals, setAssistantSignals] = useState<AssistantModeSignals>({});
   const [sourceCitations, setSourceCitations] = useState<SourceCitation[]>([]);
+  const [systemStatus, setSystemStatus] = useState<JsonRecord | null>(null);
+  const [devDocResult, setDevDocResult] = useState<JsonRecord | null>(null);
+  const [workflowError, setWorkflowError] = useState<string | null>(null);
   const esRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
@@ -309,6 +381,49 @@ export default function AskPersonas(): JSX.Element {
     setMessages((m) => [...m, { role, content: delta }]);
   };
 
+  const currentUiContext = (): AssistantUiContextV1 =>
+    buildAssistantUiContext({
+      visibleSurface: {
+        workbench: "Platform Admin / Agora",
+        screenId: "screen-agora-ask-personas",
+        componentId: "surface-management-assistant-panel",
+        heading: "Ask Personas",
+      },
+      formRegistry: {
+        formId: "ask-personas-prompt",
+        action: {
+          kind: "bff_route",
+          method: "POST",
+          href: "/bff/management/nl/ask",
+          idempotencyRequired: true,
+          submitAuthority: "bff",
+        },
+        fields: [
+          {
+            name: "prompt",
+            label: "Prompt",
+            value: prompt,
+            valueState: prompt.trim() ? "present" : "empty",
+            dirty: Boolean(prompt.trim()),
+            required: true,
+            validatorRefs: [{ type: "required", message: "Prompt is required before ask." }],
+          },
+        ],
+        dirty: Boolean(prompt.trim()),
+        errors: prompt.trim() ? [] : [{ field: "prompt", message: "Prompt is empty.", code: "required" }],
+      },
+      visibleErrors: workflowError ? [{ message: workflowError, source: "assistant-workflow" }] : [],
+      contextRefs: sessionId
+        ? [
+            {
+              sourceId: "assistant_transcript",
+              href: `/bff/assistant/sessions/${sessionId}/transcript`,
+              label: "Assistant transcript",
+            },
+          ]
+        : [],
+    });
+
   const handleSend = async () => {
     if (!prompt.trim()) return;
     setMessages([{ role: "operator", content: prompt }]);
@@ -316,18 +431,35 @@ export default function AskPersonas(): JSX.Element {
     setMode(null);
     setAssistantSignals({});
     setSourceCitations([]);
+    setWorkflowError(null);
 
     try {
+      const uiContext = currentUiContext();
       const body = {
         prompt,
         persona_ids: [],
-        metadata: { source: "ask-personas-ui" },
+        frontend: {
+          route: uiContext.route.path,
+          visibleErrors: uiContext.visibleErrors,
+          contextRefs: uiContext.contextRefs,
+        },
+        metadata: assistantUiContextMetadata(uiContext, { source: "ask-personas-ui" }),
+        conversation: {
+          source: "client_hint",
+          recentTurns: recentTurns(messages),
+        },
       };
       const res = await postAsk(body);
       // res may be assistant envelope or Agora compatibility envelope.
       const data = res?.data ?? res;
       const sessionRecord = recordFrom(data?.session);
-      const id = firstString(data?.session_id, res?.session_id, sessionRecord.sessionId, sessionRecord.session_id, sessionRecord.id);
+      const id = firstString(
+        data?.session_id,
+        res?.session_id,
+        sessionRecord.sessionId,
+        sessionRecord.session_id,
+        sessionRecord.id,
+      );
       if (!id) throw new Error("no session id returned");
       setSessionId(id);
       const sessionSignals = normalizeAssistantSignals(res, id);
@@ -381,7 +513,7 @@ export default function AskPersonas(): JSX.Element {
                   ...updatedSignals,
                   mode: updatedSignals.mode ?? signals.mode,
                 }));
-                setMode(updatedSignals.mode ?? sessionMode);
+                setMode(normalizeMode(updatedSignals.mode) ?? sessionMode);
                 // also pick up source citations from transcript response
                 const fetchedCitations = normalizeSourceCitations(s);
                 if (fetchedCitations.length > 0) {
@@ -403,16 +535,126 @@ export default function AskPersonas(): JSX.Element {
     }
   };
 
+  const handleManagementAsk = async () => {
+    if (!prompt.trim()) return;
+    setMessages([{ role: "operator", content: prompt }]);
+    setStatus("management_ai_sending");
+    setWorkflowError(null);
+    setDevDocResult(null);
+    setSourceCitations([]);
+
+    try {
+      const uiContext = currentUiContext();
+      const res = await postManagementAssistantAsk({
+        question: prompt,
+        ...(sessionId ? { sessionId } : {}),
+        focus: "all",
+        ui: uiContext,
+        conversation: {
+          source: "client_hint",
+          recentTurns: recentTurns(messages),
+        },
+        metadata: assistantUiContextMetadata(uiContext, { source: "ask-personas-ui" }),
+      });
+      const data = recordFrom(res.data ?? res);
+      const id = firstString(data.sessionId, data.session_id, data.session);
+      if (id) setSessionId(id);
+      const answer = firstString(data.answer);
+      if (answer) {
+        setMessages([{ role: "operator", content: prompt }, { role: "assistant", content: answer }]);
+      }
+      const signals = normalizeAssistantSignals(res, id);
+      setAssistantSignals(signals);
+      setMode(normalizeMode(signals.mode));
+      setStatus(
+        firstString(recordFrom(data.providerStatus ?? data.provider_status).status, data.status) ?? "completed",
+      );
+      const citations = normalizeSourceCitations(res);
+      if (citations.length > 0) setSourceCitations(citations);
+    } catch (err) {
+      const message = `Management AI failed: ${String(err)}`;
+      setStatus("error");
+      setWorkflowError(message);
+      appendDelta(message, "assistant");
+    }
+  };
+
+  const handleSystemStatus = async () => {
+    setWorkflowError(null);
+    try {
+      const res = await getAssistantOrchestratorStatus();
+      setSystemStatus(res);
+      setStatus("system_status_loaded");
+    } catch (err) {
+      const message = `System status failed: ${String(err)}`;
+      setWorkflowError(message);
+      appendDelta(message, "assistant");
+    }
+  };
+
+  const handleGenerateDevDocs = async () => {
+    if (!sessionId) {
+      setWorkflowError("Generate SA/SD requires a server-backed assistant session.");
+      return;
+    }
+    setWorkflowError(null);
+    setStatus("generating_sa_sd");
+    try {
+      const uiContext = currentUiContext();
+      const res = await generateAssistantDevDocs({
+        conversationId: sessionId,
+        featureSummary: prompt.trim() || `Assistant follow-up for ${sessionId}`,
+        affectedModules: ["execute-plans", "assistant", "management_ai"],
+        archive: true,
+        emitTaskPacket: true,
+        contextPackRequest: {
+          mode: "kernel_debug",
+          include: [
+            "ui",
+            "control_room",
+            "jobs",
+            "alerts",
+            "audit",
+            "recent_sse",
+            "persona_health",
+            "strategy_health",
+            "management_nl",
+            "docs_rag",
+            "repo_status",
+          ],
+          question: prompt,
+          frontend: {
+            route: uiContext.route.path,
+            visibleErrors: uiContext.visibleErrors,
+            contextRefs: uiContext.contextRefs,
+          },
+        },
+      });
+      setDevDocResult(res);
+      setStatus("sa_sd_ready");
+    } catch (err) {
+      const message = `SA/SD generation failed: ${String(err)}`;
+      setStatus("error");
+      setWorkflowError(message);
+      appendDelta(message, "assistant");
+    }
+  };
+
   const handleResync = async () => {
     if (!sessionId) return;
     try {
-      const s = await getAskSession(sessionId);
+      let s: unknown;
+      try {
+        s = await getAskSession(sessionId);
+      } catch (_agoraError) {
+        s = await getAssistantTranscript(sessionId);
+      }
       const final = transcriptMessages(s);
       setMessages(final);
       const record = recordFrom(s);
       setStatus(firstString(record.status) ?? null);
       const updatedSignals = normalizeAssistantSignals(s, sessionId);
-      setMode(updatedSignals.mode ?? null);
+      setMode(normalizeMode(updatedSignals.mode));
       setAssistantSignals(updatedSignals);
       const citations = normalizeSourceCitations(s);
       if (citations.length > 0) {
@@ -431,15 +673,40 @@ export default function AskPersonas(): JSX.Element {
         <button onClick={handleSend} disabled={status === "sending" || !prompt.trim()}>
           Ask
         </button>
+        <button onClick={handleManagementAsk} disabled={status === "management_ai_sending" || !prompt.trim()}>
+          Ask Management AI
+        </button>
         <button onClick={handleResync} disabled={!sessionId}>
           Resync Transcript
+        </button>
+        <button onClick={handleSystemStatus}>
+          System Status
+        </button>
+        <button onClick={handleGenerateDevDocs} disabled={!sessionId || status === "generating_sa_sd"}>
+          Generate SA/SD
         </button>
       </div>
       <div>
         <strong>Status:</strong> {status ?? "idle"} {sessionId ? `(session ${sessionId})` : null}
       </div>
+      {workflowError && (
+        <div role="alert" style={{ border: "1px solid #fca5a5", color: "#991b1b", marginTop: 8, padding: 8 }}>
+          {workflowError}
+        </div>
+      )}
       {!isUserMode(mode) && isKernelMode(mode) && (
         <AssistantModeBadge signals={{ ...assistantSignals, mode, sessionId }} />
+      )}
+      {systemStatus && (
+        <div style={{ border: "1px solid #ddd", marginTop: 8, padding: 8 }}>
+          <strong>System:</strong> {taskCount(systemStatus)} tasks, {workerCount(systemStatus)} workers
+        </div>
+      )}
+      {devDocResult && (
+        <div style={{ border: "1px solid #ddd", marginTop: 8, padding: 8 }}>
+          <strong>SA/SD:</strong> {packetId(devDocResult) ?? "packet pending"}
+          {taskPacketId(devDocResult) ? ` - task packet ${taskPacketId(devDocResult)}` : ""}
+        </div>
       )}
       <div>
         <h3>Messages</h3>
