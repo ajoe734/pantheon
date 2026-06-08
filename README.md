@@ -47,3 +47,19 @@ updated_entry = gate.promote(entry, PromotionState.LIVE, approver="human-trader-
 ## Workspace Cutover
 
 Operate Pantheon from this repo. Use `scripts/launch-docs-site.sh`, `scripts/ai-status.sh`, and `.orchestrator/` here. The sibling `Lean` checkout is execution-side only and should no longer host Pantheon collaboration state or dashboard processes.
+
+## Frontend Cutover
+
+Current frontend work targets `ajoe734/execute-plans`
+(`/home/lupin/code/execute-plans`), not `front-ai-trading-system`.
+
+Pantheon dev frontend hosting is no longer Lovable-first. Dev delivery should
+build and serve `execute-plans` from the Pantheon dev environment, with a
+Pantheon-owned FE URL such as
+`https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io` talking to
+`https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io`. Lovable publish state
+is historical/reference evidence only and must not be used as the dev frontend
+source of truth.
+
+See `docs/frontend/execute-plans-dev-hosting.md` before assigning frontend
+tasks or deploying the dev FE.
