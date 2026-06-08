@@ -35,6 +35,49 @@ The frontend SA/SD action should call `/bff/assistant/dev-docs/generate` with
 archive enabled and task-packet emission enabled when the operator asks for a
 downstream implementation packet.
 
+The `/bff/assistant/tools/*` route family is not the OpenClaw VM file-system
+tool surface. It is the governed Pantheon action surface for BFF-owned preview,
+validation, and execution contracts. Do not use it as proof that Management AI
+can read, write, search, or debug VM files.
+
+## OpenClaw File Access Boundary
+
+Management AI reaches OpenClaw through Pantheon BFF conversation routes,
+primarily `POST /bff/management/nl/ask`. The BFF forwards the request to the
+OpenClaw gateway adapter/Codex provider when the assistant provider is healthy.
+
+The two control-mode behaviors are intentionally different:
+
+- `kernel_debug`: read-only provider execution for status, logs, repository
+  context, and debugging assistance.
+- `kernel_repair`: write-capable provider execution, but only inside a clean
+  repair task worktree.
+
+Do not expose direct browser-to-OpenClaw calls. Do not mount or write to the
+shared live checkout for repair work. Do not treat the status-root read mount as
+a repair workspace.
+
+For `kernel_repair`, the request must include `openclaw.repair` metadata that
+matches the provider contract:
+
+- `task_id`
+- `task_worktree`
+- `declared_scope`
+- `expected_branch`
+- `remote`
+- `merge_target`
+
+The worktree must already exist under `PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT`
+and must be the git repo root. Before provider execution it must be clean, on
+`expected_branch`, and limited to repo-relative `declared_scope` entries.
+`declared_scope` must not be empty and must not be `.`.
+
+As of 2026-06-08, dev BFF control mode can be configured independently from
+repair-worktree provisioning. If Management AI chat does not send
+`openclaw.repair` metadata, or if no governed endpoint prepares the repair
+worktree, VM write capability is not complete. Add that preparation path first;
+do not tell downstream agents to implement code through Management AI yet.
+
 ## Readiness Criteria
 
 A route returning `200` or provider readiness alone does not prove the system is
@@ -50,8 +93,13 @@ ready. Check all of these before telling another agent or operator it is done:
   approved.
 - The browser-loaded bundle contains the current dev BFF URL and does not
   contain obsolete BFF URLs.
+- `/bff/assistant/tools/*` is understood as governed BFF action tooling, not VM
+  file tooling.
 - `POST /bff/assistant/dev-docs/generate` is not `404`; unauthenticated probes
   should fail closed with `401` or `403`.
+- For repair/write claims, a clean task worktree exists under the configured
+  repair root and Management AI sends valid `openclaw.repair` metadata to
+  `/bff/management/nl/ask`.
 - A generated task packet reaches `.orchestrator/assistant-dev-packets/pending/`
   or is otherwise handed to the configured bridge inbox.
 - The supervisor drains the packet into
@@ -104,6 +152,9 @@ an `ai-task-archive/tasks/*.json` task record.
 - Do not claim completion from a Lovable publish.
 - Do not claim completion from provider readiness if kernel/control mode is
   disabled.
+- Do not claim VM write capability from `/bff/assistant/tools/*`.
+- Do not claim repair capability unless the request includes valid
+  `openclaw.repair` metadata and the repair worktree is clean.
 - Do not commit runtime state from the live worktree.
 - Do not change broker, paper, canary, live, or capital-binding behavior while
   repairing Management AI dev file access.

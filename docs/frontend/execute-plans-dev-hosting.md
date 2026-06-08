@@ -110,6 +110,13 @@ operator/admin session before claiming that Management AI can read/write VM
 files or coordinate debugging through OpenClaw. See
 `docs/operations/management-ai-openclaw-dev-bridge.md`.
 
+Do not use `/bff/assistant/tools/*` as the VM file access proof. That route
+family is for governed Pantheon action preview/validation/execute contracts.
+OpenClaw VM inspection goes through Management AI conversation routes such as
+`POST /bff/management/nl/ask`; write-capable repair also requires valid
+`openclaw.repair` metadata and a clean repair task worktree under the configured
+repair root.
+
 ## CI Rule
 
 Pull-request CI may run Playwright against a local PR frontend so stale external
