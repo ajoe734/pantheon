@@ -310,6 +310,23 @@ def _market_persona_data_truth(item: Dict[str, Any]) -> Dict[str, Any]:
     if market == "TW":
         sources = [
             _provider_truth(
+                provider_key="shioaji",
+                provider="Shioaji quote",
+                market="TW",
+                source_class="broker_execution",
+                status="read_ok",
+                evidence_ref=f"{_QUOTE_READBACK_EVIDENCE_BASE}/shioaji.json",
+                order_capable_provider=True,
+                order_path="disabled_for_marketdata_smoke",
+                read_intent={
+                    "symbol": "2330",
+                    "exchange": "TSE",
+                    "quote_type": "tick",
+                    "version": "v1",
+                    "bind": True,
+                },
+            ),
+            _provider_truth(
                 provider_key="twse",
                 provider="TWSE OpenAPI",
                 market="TW",
@@ -352,23 +369,6 @@ def _market_persona_data_truth(item: Dict[str, Any]) -> Dict[str, Any]:
                 order_capable_provider=False,
                 order_path="not_applicable",
                 reason="required repo-local TEJ credential env var is absent",
-            ),
-            _provider_truth(
-                provider_key="shioaji",
-                provider="Shioaji quote",
-                market="TW",
-                source_class="broker_execution",
-                status="read_ok",
-                evidence_ref=f"{_QUOTE_READBACK_EVIDENCE_BASE}/shioaji.json",
-                order_capable_provider=True,
-                order_path="disabled_for_marketdata_smoke",
-                read_intent={
-                    "symbol": "2330",
-                    "exchange": "TSE",
-                    "quote_type": "tick",
-                    "version": "v1",
-                    "bind": True,
-                },
             ),
         ]
         provider_statuses = {source["provider_key"]: source["status"] for source in sources}

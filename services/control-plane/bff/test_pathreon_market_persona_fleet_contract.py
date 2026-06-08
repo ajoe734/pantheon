@@ -207,6 +207,12 @@ def test_management_persona_fleet_alias_returns_ui_safe_rows() -> None:
         "twse": "read_unavailable",
     }
     data_sources = {source["provider_key"]: source for source in tw["dataSources"]}
+    assert [source["provider_key"] for source in tw["dataSources"][:4]] == [
+        "shioaji",
+        "twse",
+        "tpex",
+        "mops",
+    ]
     assert data_sources["shioaji"]["status"] == "read_ok"
     assert data_sources["shioaji"]["order_path"] == "disabled_for_marketdata_smoke"
     assert data_sources["shioaji"]["order_side_effects_allowed"] is False
