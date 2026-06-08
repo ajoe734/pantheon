@@ -1,19 +1,37 @@
 # Lovable Dev/Staging Operating Rules
 
-Status date: 2026-04-27
+Status date: 2026-06-08
+
+## Current Dev Override
+
+This file is superseded for Pantheon dev frontend hosting.
+
+For current dev frontend work, use
+`docs/frontend/execute-plans-dev-hosting.md`. The active frontend repository is
+`ajoe734/execute-plans`, and the Pantheon-owned dev FE host is:
+
+```text
+https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io
+```
+
+Do not use Lovable publish state, `https://pantheon-dev.lovable.app`, or
+`front-ai-trading-system` as the dev frontend host or acceptance source.
+
+This document remains as historical/staging-live Lovable context only.
 
 ## Purpose
 
-This is the authoritative rulebook for using Lovable as the hosted frontend for
-Pantheon non-prod environments.
+This is the legacy rulebook for Lovable-hosted Pantheon non-prod environments.
+It is not authoritative for current Pantheon dev frontend hosting.
 
-The goal is to preserve Lovable's development speed while preventing dev UI
-work from accidentally reaching the staging-live broker rehearsal path.
+The remaining goal is to preserve staging-live Lovable context while preventing
+agents from routing current dev UI work through Lovable.
 
 ## Source Of Truth
 
 Authoritative topology docs:
 
+- `docs/frontend/execute-plans-dev-hosting.md`
 - `docs/deployment/nonprod-development-workflow.md`
 - `docs/deployment/staging-live-topology.md`
 - `docs/deployment/frontend-lovable-environments.md`
@@ -33,13 +51,16 @@ References:
 - `https://docs.lovable.dev/features/publish`
 - `https://docs.lovable.dev/tips-tricks/external-deployment-hosting`
 
-## Required Model
+## Legacy Lovable Model
+
+Use this section only when the operator explicitly asks for Lovable or
+staging-live Lovable work. Do not use it for Pantheon dev frontend hosting.
 
 Use two Lovable projects:
 
 | Environment | Lovable project | Lovable frontend URL | Purpose | Publish policy |
 | --- | --- | --- | --- | --- |
-| dev | `pantheon-ui-dev` | `https://pantheon-dev.lovable.app` | daily UI iteration | may publish frequently after basic smoke |
+| legacy dev | `pantheon-ui-dev` | `https://pantheon-dev.lovable.app` | historical/external Lovable reference | operator-approved only |
 | staging-live | `pantheon-ui-staging-live` | `https://pantheon-ai-system-front-staging-live.lovable.app` | EP5-002/live broker rehearsal frontend | publish only from a verified promotion |
 
 Do not use one Lovable project as both dev and staging-live.
@@ -50,13 +71,17 @@ per-project branch binding.
 
 ## Project Creation
 
-Dev project:
+Legacy dev Lovable project:
 
-- Use the existing Lovable project unless the operator explicitly replaces it.
+- Do not use this as the current Pantheon dev frontend host.
+- Keep it only as historical evidence or an explicit external reference unless
+  the operator asks for Lovable-specific work.
+- Use the existing Lovable project only if the operator explicitly replaces the
+  current Pantheon-owned dev FE flow for a task.
 - Rename/display-name it as `pantheon-ui-dev`.
 - Current subdomain: `pantheon-dev`.
-- Current frontend URL: `https://pantheon-dev.lovable.app`.
-- Legacy frontend URL: `https://pantheon-ai-system-front-dev.lovable.app`.
+- Legacy frontend URL: `https://pantheon-dev.lovable.app`.
+- Older legacy frontend URL: `https://pantheon-ai-system-front-dev.lovable.app`.
 - Keep it connected to the dev BFF only.
 
 Staging-live project:
@@ -72,12 +97,12 @@ Staging-live project:
 
 ## Environment Variables
 
-Dev Lovable project:
+Legacy dev Lovable project:
 
 ```env
 VITE_PANTHEON_ENV=dev
 VITE_BFF_MODE=live
-VITE_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io
+VITE_BFF_BASE_URL=https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io
 VITE_BFF_DEV_LOGIN_PATH=/bff/auth/dev-login
 VITE_BFF_OIDC_CLIENT_ID=<dev-client-id>
 VITE_BFF_OIDC_CLIENT_SECRET=<dev-client-secret>
@@ -107,10 +132,12 @@ Rules:
 - `VITE_PANTHEON_LIVE_BROKER_ENABLED` is a UI hint only. The BFF/backend owns
   the real enforcement.
 - Changing these values requires rebuilding and republishing the Lovable app.
+  That rebuild is not Pantheon dev deployment unless the operator explicitly
+  asks for Lovable-hosted dev work.
 
 ## BFF URL And CORS
 
-Lovable-hosted frontend must call browser-reachable HTTPS BFF endpoints.
+Any browser-hosted frontend must call browser-reachable HTTPS BFF endpoints.
 
 Do not use:
 
@@ -123,15 +150,21 @@ http://<external-ip>:<port>
 Current BFF HTTPS URLs:
 
 ```text
-https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io
+https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io
 https://pantheon-staging-bff.34.81.225.122.sslip.io
+```
+
+Current Pantheon-owned dev FE URL:
+
+```text
+https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io
 ```
 
 BFF CORS must be one-to-one:
 
 ```env
 # dev BFF on pantheon-dev-vm1
-PANTHEON_BFF_CORS_ORIGINS=https://pantheon-ai-system-front-dev.lovable.app,https://pantheon-dev.lovable.app
+PANTHEON_BFF_CORS_ORIGINS=https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io
 PANTHEON_BFF_AUTH_STUB=false
 PANTHEON_BFF_AUTH_MODE=strict
 PANTHEON_BFF_JWT_SECRET=<dev-jwt-signing-secret>
@@ -146,9 +179,8 @@ PANTHEON_BFF_CORS_ORIGINS=https://pantheon-ai-system-front-staging-live.lovable.
 PANTHEON_BFF_AUTH_STUB=false
 ```
 
-The dev BFF keeps the legacy dev Lovable origin while execute-plans completes
-its domain/repo cutover. Remove the legacy origin once no active dev traffic
-uses it.
+The dev BFF may temporarily keep legacy Lovable origins during migration, but
+they are not the acceptance origin for current dev work.
 
 Do not allow both dev and staging Lovable origins on the same BFF unless the
 operator has explicitly approved a temporary migration window.
@@ -186,9 +218,11 @@ Every promotion must record:
 
 Dev:
 
-1. Make changes in `pantheon-ui-dev` or locally.
+1. Make changes in `execute-plans` unless the operator explicitly asks for
+   Lovable-hosted dev work.
 2. Verify the UI builds.
-3. Publish dev if needed.
+3. Deploy to the Pantheon-owned dev FE host unless Lovable-hosted dev is
+   explicitly requested.
 4. Smoke test against the dev BFF.
 5. Confirm the header shows `DEV`.
 6. Confirm live broker command scope is unavailable/rejected.
@@ -214,15 +248,16 @@ Staging-live:
 
 Before touching Lovable, frontend env, BFF URL, CORS, or publish behavior:
 
-1. Read this file.
-2. Read `docs/deployment/nonprod-development-workflow.md`.
-3. State whether the requested work affects dev, staging-live, or both.
-4. Do not claim Lovable supports same-repo different-branch project binding.
-5. Do not create a staging-live prompt that says "sync latest dev draft".
-6. Do not publish or update staging-live unless the user explicitly asks.
-7. Do not put secrets in frontend env.
-8. Do not point Lovable at internal IPs or non-HTTPS BFF URLs.
-9. If the BFF HTTPS endpoint does not exist yet, say staging Lovable cannot be
+1. Read `docs/frontend/execute-plans-dev-hosting.md`.
+2. Read this file only if the work explicitly involves Lovable or staging-live.
+3. Read `docs/deployment/nonprod-development-workflow.md`.
+4. State whether the requested work affects dev, staging-live, or both.
+5. Do not claim Lovable supports same-repo different-branch project binding.
+6. Do not create a staging-live prompt that says "sync latest dev draft".
+7. Do not publish or update staging-live unless the user explicitly asks.
+8. Do not put secrets in frontend env.
+9. Do not point Lovable at internal IPs or non-HTTPS BFF URLs.
+10. If the BFF HTTPS endpoint does not exist yet, say staging Lovable cannot be
    fully wired.
 
 ## Staging-Live Publish Gate

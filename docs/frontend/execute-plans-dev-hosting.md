@@ -4,6 +4,17 @@ Date: 2026-06-08
 
 This is the canonical frontend hosting rule for Pantheon dev.
 
+This document supersedes the dev-hosting portions of these legacy Lovable
+runbooks:
+
+- `docs/deployment/lovable-dev-staging-operating-rules.md`
+- `docs/deployment/frontend-lovable-environments.md`
+- `docs/deployment/bff-https-ingress.md`
+- `docs/deployment/nonprod-development-workflow.md`
+
+Those files may still be useful as staging-live or historical Lovable context,
+but they are not the dev frontend hosting source of truth.
+
 ## Source Repository
 
 - Active frontend repo: `ajoe734/execute-plans`
