@@ -1305,6 +1305,12 @@ def _merge_market_persona_fleet(
     return changed
 
 
+def _market_persona_read_model_data() -> Dict[str, Any]:
+    data: Dict[str, Any] = {}
+    _merge_market_persona_fleet(data)
+    return data
+
+
 # Evidence redaction support
 from models import (
     EvidenceKind,
@@ -6590,6 +6596,20 @@ class ReadSurfaceStore:
         "rankings": "rankings",
         "persona_league": "persona_league",
     }
+    _MARKET_PERSONA_RECORD_KEYS = {
+        "personas": ["persona_id", "id"],
+        "capital_pools": ["pool_id", "id"],
+        "persona_bindings": ["binding_id", "id"],
+        "bindings": ["binding_id", "id"],
+        "runtime_bindings": ["runtime_id", "runtime_binding_id", "binding_id", "id"],
+        "sessions": ["session_id", "id"],
+        "capability_snapshots": ["snapshot_id", "id"],
+        "teaching_sessions": ["session_id", "id"],
+        "strategy_specs": ["strategy_id", "id"],
+        "telemetry_summaries": ["runtime_id", "id"],
+        "ooda_packets": ["packet_id", "id"],
+        "persona_league": ["persona_id", "id"],
+    }
 
     def __init__(
         self,
@@ -8400,6 +8420,59 @@ class ReadSurfaceStore:
                 local_personas[persona_id] = record
         return local_personas
 
+    def _market_persona_records(
+        self,
+        dataset: str,
+        key_candidates: Optional[List[str]] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        data_key = self._LOCAL_DATA_KEYS.get(dataset, dataset)
+        records = _market_persona_read_model_data().get(data_key)
+        keys = key_candidates or self._MARKET_PERSONA_RECORD_KEYS.get(dataset, ["id"])
+        return json.loads(json.dumps(_normalize_records(records, keys)))
+
+    def _merge_market_persona_records(
+        self,
+        dataset: str,
+        records_by_id: Dict[str, Dict[str, Any]],
+        key_candidates: Optional[List[str]] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        merged = {
+            str(key): json.loads(json.dumps(record))
+            for key, record in records_by_id.items()
+            if str(key).strip() and isinstance(record, dict)
+        }
+        for key, default_record in self._market_persona_records(dataset, key_candidates).items():
+            existing = merged.get(key)
+            if isinstance(existing, dict):
+                _merge_missing_default_values(existing, default_record)
+                continue
+            merged[key] = default_record
+        return merged
+
+    def _merge_market_persona_record_list(
+        self,
+        dataset: str,
+        records: List[Dict[str, Any]],
+        key_candidates: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        keys = key_candidates or self._MARKET_PERSONA_RECORD_KEYS.get(dataset)
+        if not keys:
+            return records
+        records_by_id = {
+            str(key): record
+            for record in records
+            if isinstance(record, dict)
+            for key in [_record_key(record, keys)]
+            if key
+        }
+        return list(
+            self._merge_market_persona_records(
+                dataset,
+                records_by_id,
+                keys,
+            ).values()
+        )
+
     def _ensure_local_overlay_records(self, dataset: str) -> Dict[str, Dict[str, Any]]:
         self._local_overlay_write_datasets.add(dataset)
         key = self._LOCAL_DATA_KEYS.get(dataset, dataset)
@@ -9677,6 +9750,7 @@ class ReadSurfaceStore:
         lifecycle_state: Optional[str] = None,
         mandate: Optional[str] = None,
         strategy_family: Optional[str] = None,
+        include_market_persona_defaults: bool = False,
     ) -> List[Dict[str, Any]]:
         local_personas = self._local_bff_persona_records()
         available, raw_personas = self._service.list_records("personas")
@@ -9687,7 +9761,6 @@ class ReadSurfaceStore:
                 if str(projected.get("persona_id") or projected.get("id") or "").strip()
             }
             personas_by_id.update(local_personas)
-            personas = list(personas_by_id.values())
         else:
             personas_by_id = {}
             local_fallback = self._local_fallback("personas")
@@ -9698,7 +9771,13 @@ class ReadSurfaceStore:
                     if isinstance(persona, dict)
                 })
             personas_by_id.update(local_personas)
-            personas = [persona for key, persona in personas_by_id.items() if key]
+        if include_market_persona_defaults:
+            personas_by_id = self._merge_market_persona_records(
+                "personas",
+                personas_by_id,
+                ["persona_id", "id"],
+            )
+        personas = [persona for key, persona in personas_by_id.items() if key]
         if lifecycle_state:
             personas = [p for p in personas if p.get("lifecycle_state") == lifecycle_state]
         if mandate:
@@ -9832,6 +9911,7 @@ class ReadSurfaceStore:
         self,
         status: Optional[str] = None,
         risk_policy_ref: Optional[str] = None,
+        include_market_persona_defaults: bool = False,
     ) -> List[Dict[str, Any]]:
         local_pools = self._local_overlay_records("capital_pools")
         available, raw_pools = self._canonical.list_records("capital_pools")
@@ -9842,9 +9922,19 @@ class ReadSurfaceStore:
             }
             for pool_id, pool in local_pools.items():
                 pools_by_id[str(pool.get("pool_id") or pool.get("id") or pool_id)] = pool
-            pools = [pool for key, pool in pools_by_id.items() if key]
         else:
-            pools = list(local_pools.values())
+            pools_by_id = {
+                str(pool.get("pool_id") or pool.get("id") or pool_id): pool
+                for pool_id, pool in local_pools.items()
+                if isinstance(pool, dict)
+            }
+        if include_market_persona_defaults:
+            pools_by_id = self._merge_market_persona_records(
+                "capital_pools",
+                pools_by_id,
+                ["pool_id", "id"],
+            )
+        pools = [pool for key, pool in pools_by_id.items() if key]
         if status:
             pools = [p for p in pools if p.get("status") == status]
         if risk_policy_ref:
@@ -9863,12 +9953,27 @@ class ReadSurfaceStore:
         capital_pool_id: Optional[str] = None,
         role: Optional[str] = None,
         validity: Optional[str] = None,
+        include_market_persona_defaults: bool = False,
     ) -> List[Dict[str, Any]]:
         available, raw_bindings = self._canonical.list_records("persona_bindings")
         if available:
-            bindings = [self._project_canonical_binding(binding) for binding in raw_bindings]
+            bindings_by_id = {
+                str(binding.get("binding_id") or binding.get("id") or ""): binding
+                for binding in (self._project_canonical_binding(binding) for binding in raw_bindings)
+            }
         else:
-            bindings = list((self._local_fallback("persona_bindings") or {}).values())
+            bindings_by_id = {
+                str(binding.get("binding_id") or binding.get("id") or binding_id): binding
+                for binding_id, binding in (self._local_fallback("persona_bindings") or {}).items()
+                if isinstance(binding, dict)
+            }
+        if include_market_persona_defaults:
+            bindings_by_id = self._merge_market_persona_records(
+                "persona_bindings",
+                bindings_by_id,
+                ["binding_id", "id"],
+            )
+        bindings = [binding for key, binding in bindings_by_id.items() if key]
         if persona_id:
             bindings = [b for b in bindings if b.get("persona_id") == persona_id]
         if capital_pool_id:
@@ -9954,12 +10059,39 @@ class ReadSurfaceStore:
         self,
         deployment_mode: Optional[str] = None,
         version: Optional[str] = None,
+        include_market_persona_defaults: bool = False,
     ) -> List[Dict[str, Any]]:
         available, raw_bindings = self._canonical.list_records("runtime_bindings")
         if available:
-            bindings = [self._project_canonical_runtime_binding(binding) for binding in raw_bindings]
+            bindings_by_id = {
+                str(
+                    binding.get("runtime_id")
+                    or binding.get("runtime_binding_id")
+                    or binding.get("binding_id")
+                    or binding.get("id")
+                    or ""
+                ): binding
+                for binding in (self._project_canonical_runtime_binding(binding) for binding in raw_bindings)
+            }
         else:
-            bindings = list((self._local_fallback("runtime_bindings") or {}).values())
+            bindings_by_id = {
+                str(
+                    binding.get("runtime_id")
+                    or binding.get("runtime_binding_id")
+                    or binding.get("binding_id")
+                    or binding.get("id")
+                    or binding_id
+                ): binding
+                for binding_id, binding in (self._local_fallback("runtime_bindings") or {}).items()
+                if isinstance(binding, dict)
+            }
+        if include_market_persona_defaults:
+            bindings_by_id = self._merge_market_persona_records(
+                "runtime_bindings",
+                bindings_by_id,
+                ["runtime_id", "runtime_binding_id", "binding_id", "id"],
+            )
+        bindings = [binding for key, binding in bindings_by_id.items() if key]
         if deployment_mode:
             bindings = [
                 b for b in bindings
@@ -10065,22 +10197,15 @@ class ReadSurfaceStore:
     def get_binding(self, binding_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not binding_id:
             return None
-        available, raw = self._canonical.binding(binding_id)
-        if available:
-            return self._project_canonical_binding(raw) if raw else None
-        return (self._local_fallback("persona_bindings") or {}).get(binding_id)
+        for binding in self.list_bindings():
+            if str(binding.get("binding_id") or binding.get("id") or "") == str(binding_id):
+                return json.loads(json.dumps(binding))
+        return None
 
     def get_bindings_for_pool(self, pool_id: Optional[str]) -> List[Dict[str, Any]]:
         if not pool_id:
             return []
-        available, bindings = self._canonical.bindings_for_pool(pool_id)
-        if available:
-            return [self._project_canonical_binding(binding) for binding in bindings]
-        return [
-            binding
-            for binding in (self._local_fallback("persona_bindings") or {}).values()
-            if binding.get("capital_pool_id") == pool_id
-        ]
+        return self.list_bindings(capital_pool_id=pool_id)
 
     def get_bindings_for_persona(self, persona_id: Optional[str]) -> Optional[List[Dict[str, Any]]]:
         """Return all bindings where the given persona_id is the owner.
@@ -10091,18 +10216,7 @@ class ReadSurfaceStore:
             return None
         if self.get_persona(persona_id) is None:
             return None
-        available, raw_bindings = self._canonical.list_records("persona_bindings")
-        if available:
-            return [
-                self._project_canonical_binding(binding)
-                for binding in raw_bindings
-                if binding.get("persona_id") == persona_id
-            ]
-        return [
-            binding
-            for binding in (self._local_fallback("persona_bindings") or {}).values()
-            if binding.get("persona_id") == persona_id
-        ]
+        return self.list_bindings(persona_id=persona_id)
 
     # ------------------------------------------------------------------ #
     # Ranking formulas
@@ -10265,8 +10379,15 @@ class ReadSurfaceStore:
         *,
         market_scope: Optional[str] = None,
         status: Optional[str] = None,
+        include_market_persona_defaults: bool = False,
     ) -> List[Dict[str, Any]]:
         items = [json.loads(json.dumps(item)) for item in self._read_dataset_records("persona_league")]
+        if include_market_persona_defaults:
+            items = self._merge_market_persona_record_list(
+                "persona_league",
+                items,
+                ["persona_id", "id"],
+            )
         if market_scope:
             requested = {item.strip().upper() for item in market_scope.split(",") if item.strip()}
             items = [
@@ -10890,24 +11011,17 @@ class ReadSurfaceStore:
     def get_runtime_binding(self, binding_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not binding_id:
             return None
-        available, raw = self._canonical.runtime_binding(binding_id)
-        if available:
-            return self._project_canonical_runtime_binding(raw) if raw else None
-        return (self._local_fallback("runtime_bindings") or {}).get(binding_id)
+        for binding in self.list_runtime_bindings():
+            if str(binding.get("binding_id") or binding.get("id") or "") == str(binding_id):
+                return json.loads(json.dumps(binding))
+        return None
 
     def get_runtime_binding_by_runtime_id(self, runtime_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not runtime_id:
             return None
-        available, raw_bindings = self._canonical.list_records("runtime_bindings")
-        if available:
-            for raw in raw_bindings:
-                raw_runtime_id = str(raw.get("runtime_id") or raw.get("binding_id") or raw.get("id") or "")
-                if raw_runtime_id == runtime_id:
-                    return self._project_canonical_runtime_binding(raw)
-            return None
-        for binding in (self._local_fallback("runtime_bindings") or {}).values():
+        for binding in self.list_runtime_bindings():
             if str(binding.get("runtime_id") or binding.get("id") or "") == runtime_id:
-                return binding
+                return json.loads(json.dumps(binding))
         return None
 
     def get_rollbacks(self, runtime_id: Optional[str]) -> List[Dict[str, Any]]:

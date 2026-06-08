@@ -43,6 +43,22 @@ def _fleet_client() -> Iterator[TestClient]:
                 os.environ["PANTHEON_OODA_PACKET_ENABLED"] = original_env
 
 
+@contextmanager
+def _client_with_store(store: ReadSurfaceStore) -> Iterator[TestClient]:
+    original_store = bff_main.read_store
+    original_env = os.environ.get("PANTHEON_OODA_PACKET_ENABLED")
+    os.environ.pop("PANTHEON_OODA_PACKET_ENABLED", None)
+    bff_main.read_store = store
+    try:
+        yield TestClient(bff_main.app, raise_server_exceptions=False)
+    finally:
+        bff_main.read_store = original_store
+        if original_env is None:
+            os.environ.pop("PANTHEON_OODA_PACKET_ENABLED", None)
+        else:
+            os.environ["PANTHEON_OODA_PACKET_ENABLED"] = original_env
+
+
 def test_default_read_store_has_us_tw_crypto_persona_execution_chain() -> None:
     with tempfile.TemporaryDirectory() as td:
         store = ReadSurfaceStore(
@@ -206,6 +222,48 @@ def test_management_persona_fleet_alias_returns_ui_safe_rows() -> None:
     assert "support/evidence/MGMT-QLIB-006/management_linkage_packet.json" in {
         ref.get("ref") for ref in tw["researchRefs"]
     }
+
+
+def test_management_fleet_keeps_market_personas_with_live_dev_overlay_only() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        store = ReadSurfaceStore(
+            str(Path(td) / "read_surfaces.json"),
+            allow_local_snapshot_fallback=False,
+        )
+        store._data["personas"] = {
+            "persona-dev-probe": {
+                "id": "persona-dev-probe",
+                "persona_id": "persona-dev-probe",
+                "name": "dev-probe",
+                "lifecycle_state": "paper",
+                "status": "healthy",
+                "created_at": "2026-06-03T08:27:44Z",
+                "updated_at": "2026-06-03T08:27:44Z",
+                "metadata": {"owner": "pantheon-dev-browser"},
+                "canonicalWriteAuthority": "persona_registry_service",
+                "persistenceMode": "bff_local_dev_store",
+            }
+        }
+
+        with _client_with_store(store) as client:
+            response = client.get("/bff/management/fleet", headers=HEADERS)
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    rows = {item["persona_id"]: item for item in data["items"]}
+    assert "persona-dev-probe" in rows
+    assert set(MARKET_PERSONAS.values()).issubset(rows)
+    assert {pool["pool_id"] for pool in data["capital_pools"]}.issuperset(
+        {"pool-us-equity-paper", "pool-tw-equity-paper", "pool-crypto-paper"}
+    )
+    assert {item["persona_id"] for item in data["persona_league"]}.issuperset(
+        set(MARKET_PERSONAS.values())
+    )
+
+    tw = rows["persona-tw-equity"]
+    assert tw["dataSourceStatus"]["state"] == "partial_readback"
+    assert tw["researchStatus"]["stage"] == "management_review_linked"
+    assert tw["currentResearchProjects"][0]["project_id"] == "MGMT-QLIB-006"
 
 
 def test_agora_and_ooda_routes_surface_market_persona_work() -> None:
