@@ -460,6 +460,68 @@ class TestCapabilities(unittest.TestCase):
         self.assertEqual(body["error_code"], "CODEX_TIMEOUT")
         self.assertTrue(body["retryable"])
 
+    def test_assistant_repair_worktree_prepare_requires_operator(self):
+        resp = client.post(
+            "/api/openclaw-adapter/assistant/repair-worktrees/prepare",
+            json={"taskId": "MGMT-AI-REPAIR-1", "declaredScope": ["services/control-plane/bff"]},
+        )
+
+        self.assertEqual(resp.status_code, 401)
+        self.assertEqual(resp.json()["error_code"], "OPERATOR_REQUIRED")
+
+    def test_assistant_repair_worktree_prepare_returns_metadata(self):
+        fake_preparation = types.SimpleNamespace(
+            to_dict=lambda: {
+                "created": True,
+                "repair": {
+                    "task_id": "MGMT-AI-REPAIR-1",
+                    "task_worktree": "/srv/pantheon-assistant/worktrees/mgmt-ai-repair-1",
+                    "declared_scope": ["services/control-plane/bff"],
+                    "expected_branch": "task/MGMT-AI-REPAIR-1",
+                    "remote": "origin",
+                    "merge_target": "dev",
+                    "require_clean": True,
+                },
+            }
+        )
+        with patch.object(adapter_main._REPAIR_WORKFLOW, "prepare", return_value=fake_preparation) as prepare:
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/repair-worktrees/prepare",
+                json={"taskId": "MGMT-AI-REPAIR-1", "declaredScope": ["services/control-plane/bff"]},
+                headers={"X-Operator-Id": "op-1", "X-Trace-Id": "trace-1"},
+            )
+
+        self.assertEqual(resp.status_code, 201)
+        body = resp.json()
+        self.assertEqual(body["status"], "ok")
+        self.assertEqual(body["data"]["repair"]["task_id"], "MGMT-AI-REPAIR-1")
+        metadata = prepare.call_args.args[0]
+        self.assertEqual(metadata["taskId"], "MGMT-AI-REPAIR-1")
+        self.assertEqual(metadata["declaredScope"], ["services/control-plane/bff"])
+        self.assertEqual(metadata["operator_id"], "op-1")
+        self.assertEqual(metadata["trace_id"], "trace-1")
+
+    def test_assistant_repair_worktree_prepare_maps_workflow_error(self):
+        with patch.object(
+            adapter_main._REPAIR_WORKFLOW,
+            "prepare",
+            side_effect=adapter_main.AssistantRepairWorkflowError(
+                "REPAIR_REPO_URL_NOT_CONFIGURED",
+                "Repair repo source missing.",
+                status_code=503,
+            ),
+        ):
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/repair-worktrees/prepare",
+                json={"taskId": "MGMT-AI-REPAIR-1", "declaredScope": ["services/control-plane/bff"]},
+                headers={"X-Operator-Id": "op-1"},
+            )
+
+        self.assertEqual(resp.status_code, 503)
+        body = resp.json()
+        self.assertEqual(body["status"], "repair_workflow_error")
+        self.assertEqual(body["error_code"], "REPAIR_REPO_URL_NOT_CONFIGURED")
+
 
 # ---------------------------------------------------------------------------
 # Session stubs

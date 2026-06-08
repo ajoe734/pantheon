@@ -32,6 +32,10 @@ def test_dev_management_ai_kernel_overlay_is_explicitly_dev_only() -> None:
     assert env["PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS"] == "300"
     assert env["PANTHEON_STATUS_ROOT_HOST"] == "/home/lupin/code/pantheon"
     assert env["PANTHEON_STATUS_ROOT_CONTAINER"] == "/workspace/status-root"
+    assert env["PANTHEON_ASSISTANT_REPAIR_REPO_URL"] == "/workspace/status-root"
+    assert env["PANTHEON_ASSISTANT_REPAIR_REMOTE_URL"] == "https://github.com/ajoe734/pantheon.git"
+    assert env["PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS"] == "https://github.com/ajoe734/execute-plans.git"
+    assert env["PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS"] == "https://github.com/ajoe734/execute-plans.git"
     assert set(env["PANTHEON_BFF_STUB_CAPABILITIES"].split(",")) == {
         "assistant.kernel.debug",
         "assistant.kernel.repair",
@@ -69,6 +73,19 @@ def test_nonprod_dev_deploy_exports_management_ai_kernel_overlay() -> None:
         in script
     )
     assert 'DEV_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="${DEV_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-300}"' in script
+    assert 'DEV_ASSISTANT_REPAIR_REPO_URL="${DEV_ASSISTANT_REPAIR_REPO_URL:-/workspace/status-root}"' in script
+    assert (
+        'DEV_ASSISTANT_REPAIR_REMOTE_URL="${DEV_ASSISTANT_REPAIR_REMOTE_URL:-https://github.com/ajoe734/pantheon.git}"'
+        in script
+    )
+    assert (
+        'DEV_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS="${DEV_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS:-https://github.com/ajoe734/execute-plans.git}"'
+        in script
+    )
+    assert (
+        'DEV_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS="${DEV_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS:-https://github.com/ajoe734/execute-plans.git}"'
+        in script
+    )
     assert (
         'DEV_BFF_STUB_CAPABILITIES="${DEV_BFF_STUB_CAPABILITIES:-assistant.kernel.debug,assistant.kernel.repair}"'
         in script
@@ -79,8 +96,32 @@ def test_nonprod_dev_deploy_exports_management_ai_kernel_overlay() -> None:
         'PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED:-$DEV_ASSISTANT_KERNEL_ENABLED}"'
         in script
     )
+    assert (
+        'PANTHEON_ASSISTANT_REPAIR_REPO_URL="${PANTHEON_ASSISTANT_REPAIR_REPO_URL:-$DEV_ASSISTANT_REPAIR_REPO_URL}"'
+        in script
+    )
+    assert (
+        'PANTHEON_ASSISTANT_REPAIR_REMOTE_URL="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL:-$DEV_ASSISTANT_REPAIR_REMOTE_URL}"'
+        in script
+    )
+    assert (
+        'PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS:-$DEV_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS}"'
+        in script
+    )
+    assert (
+        'PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS:-$DEV_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS}"'
+        in script
+    )
     assert 'PANTHEON_STATUS_ROOT_HOST="${PANTHEON_STATUS_ROOT_HOST:-${DEV_STATUS_ROOT_HOST:-$DEV_REMOTE_DIR}}"' in script
     assert 'command_prefix+=" PANTHEON_ASSISTANT_KERNEL_ENABLED=' in script
+    assert 'command_prefix+=" PANTHEON_ASSISTANT_REPAIR_REPO_URL=' in script
+    assert 'command_prefix+=" PANTHEON_ASSISTANT_REPAIR_REMOTE_URL=' in script
+    assert 'command_prefix+=" PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS=' in script
+    assert 'command_prefix+=" PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS=' in script
     assert 'command_prefix+=" PANTHEON_STATUS_ROOT_HOST=' in script
     assert 'PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED}" \\' in script
+    assert 'PANTHEON_ASSISTANT_REPAIR_REPO_URL="${PANTHEON_ASSISTANT_REPAIR_REPO_URL}" \\' in script
+    assert 'PANTHEON_ASSISTANT_REPAIR_REMOTE_URL="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL}" \\' in script
+    assert 'PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS}" \\' in script
+    assert 'PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS}" \\' in script
     assert 'PANTHEON_STATUS_ROOT_HOST="${PANTHEON_STATUS_ROOT_HOST}" \\' in script

@@ -54,3 +54,36 @@ def test_dev_compose_enables_codex_assistant_provider_for_bff() -> None:
         "${PANTHEON_STATUS_ROOT_HOST:-.}:${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}:ro"
         in service["volumes"]
     )
+
+
+def test_openclaw_adapter_can_prepare_repair_worktrees_from_status_root() -> None:
+    compose = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    service = compose["services"]["openclaw-gateway-adapter"]
+    env = service["environment"]
+
+    assert (
+        env["PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT"]
+        == "${PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT:-/srv/pantheon-assistant/worktrees}"
+    )
+    assert env["PANTHEON_STATUS_ROOT_CONTAINER"] == "${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}"
+    assert env["PANTHEON_ASSISTANT_REPAIR_REPO_URL"] == "${PANTHEON_ASSISTANT_REPAIR_REPO_URL:-/workspace/status-root}"
+    assert (
+        env["PANTHEON_ASSISTANT_REPAIR_REMOTE_URL"]
+        == "${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL:-https://github.com/ajoe734/pantheon.git}"
+    )
+    assert (
+        env["PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS"]
+        == "${PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS:-https://github.com/ajoe734/execute-plans.git}"
+    )
+    assert (
+        env["PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS"]
+        == "${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS:-https://github.com/ajoe734/execute-plans.git}"
+    )
+    assert (
+        "${PANTHEON_STATUS_ROOT_HOST:-.}:${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}:ro"
+        in service["volumes"]
+    )
+    assert (
+        "${PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT:-/srv/pantheon-assistant/worktrees}:${PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT:-/srv/pantheon-assistant/worktrees}:rw"
+        in service["volumes"]
+    )

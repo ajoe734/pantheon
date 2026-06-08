@@ -49,6 +49,48 @@ def _init_task_worktree(tmp_path: Path, *, task_id: str = TASK_ID) -> tuple[Path
     return worktree_root, worktree
 
 
+def _init_source_repo(tmp_path: Path) -> Path:
+    source = tmp_path / "source"
+    source.mkdir()
+    _git(source, "init")
+    _git(source, "config", "user.email", "assistant@example.invalid")
+    _git(source, "config", "user.name", "Assistant Test")
+    (source / "README.md").write_text("# source\n", encoding="utf-8")
+    (source / "services" / "control-plane" / "bff").mkdir(parents=True)
+    (source / "services" / "control-plane" / "bff" / "main.py").write_text("# bff\n", encoding="utf-8")
+    _git(source, "add", ".")
+    _git(source, "commit", "-m", "initial")
+    _git(source, "branch", "-M", "dev")
+    _git(source, "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git")
+    return source
+
+
+def _init_canonical_remote_with_status_source(tmp_path: Path) -> tuple[Path, Path]:
+    remote = tmp_path / "canonical.git"
+    canonical = tmp_path / "canonical-work"
+    source = tmp_path / "status-root"
+    _git(tmp_path, "init", "--bare", remote.as_posix())
+    canonical.mkdir()
+    _git(canonical, "init")
+    _git(canonical, "config", "user.email", "assistant@example.invalid")
+    _git(canonical, "config", "user.name", "Assistant Test")
+    (canonical / "README.md").write_text("# canonical-dev\n", encoding="utf-8")
+    _git(canonical, "add", "README.md")
+    _git(canonical, "commit", "-m", "canonical dev")
+    _git(canonical, "branch", "-M", "dev")
+    _git(canonical, "remote", "add", "origin", remote.as_posix())
+    _git(canonical, "push", "-u", "origin", "dev")
+
+    _git(tmp_path, "clone", remote.as_posix(), source.as_posix())
+    _git(source, "config", "user.email", "assistant@example.invalid")
+    _git(source, "config", "user.name", "Assistant Test")
+    _git(source, "checkout", "-b", "task/live-status")
+    (source / "README.md").write_text("# live-status-branch\n", encoding="utf-8")
+    _git(source, "add", "README.md")
+    _git(source, "commit", "-m", "live status branch")
+    return source, remote
+
+
 def _workflow(worktree_root: Path) -> AssistantRepairWorkflow:
     return AssistantRepairWorkflow(
         {
@@ -231,3 +273,134 @@ def test_repair_mode_still_denies_destructive_git() -> None:
 
     assert decision.allowed is False
     assert decision.policy_class == "denylist"
+
+
+def test_prepare_creates_clean_task_worktree_from_configured_source(tmp_path: Path) -> None:
+    source = _init_source_repo(tmp_path)
+    worktree_root = tmp_path / "prepared-worktrees"
+    workflow = AssistantRepairWorkflow(
+        {
+            "PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT": worktree_root.as_posix(),
+            "PANTHEON_ASSISTANT_REPAIR_REPO_URL": source.as_posix(),
+        },
+        pr_lookup=lambda _worktree, _branch: None,
+    )
+
+    prepared = workflow.prepare(
+        {
+            "task_id": "MGMT-AI-REPAIR-123",
+            "declared_scope": ["services/control-plane/bff"],
+        }
+    )
+
+    payload = prepared.to_dict()
+    worktree = Path(payload["repair"]["task_worktree"])
+    assert payload["created"] is True
+    assert worktree.is_dir()
+    assert _git(worktree, "rev-parse", "--abbrev-ref", "HEAD") == "task/MGMT-AI-REPAIR-123"
+    assert _git(worktree, "remote", "get-url", "origin") == "https://github.com/ajoe734/pantheon.git"
+    assert payload["repair"]["declared_scope"] == ["services/control-plane/bff"]
+    assert payload["workflow"]["clean"] is True
+    assert payload["workflow"]["merge_target"] == "dev"
+
+
+def test_prepare_existing_worktree_is_idempotent(tmp_path: Path) -> None:
+    source = _init_source_repo(tmp_path)
+    worktree_root = tmp_path / "prepared-worktrees"
+    workflow = AssistantRepairWorkflow(
+        {
+            "PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT": worktree_root.as_posix(),
+            "PANTHEON_ASSISTANT_REPAIR_REPO_URL": source.as_posix(),
+        },
+        pr_lookup=lambda _worktree, _branch: None,
+    )
+
+    first = workflow.prepare(
+        {
+            "task_id": "MGMT-AI-REPAIR-456",
+            "declared_scope": ["services/control-plane/bff"],
+        }
+    )
+    second = workflow.prepare(
+        {
+            "task_id": "MGMT-AI-REPAIR-456",
+            "declared_scope": ["services/control-plane/bff"],
+        }
+    )
+
+    assert first.created is True
+    assert second.created is False
+    assert second.workflow.clean is True
+    assert second.repair_metadata["task_worktree"] == first.repair_metadata["task_worktree"]
+
+
+def test_prepare_uses_repo_key_specific_source_env(tmp_path: Path) -> None:
+    source = _init_source_repo(tmp_path)
+    worktree_root = tmp_path / "prepared-worktrees"
+    workflow = AssistantRepairWorkflow(
+        {
+            "PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT": worktree_root.as_posix(),
+            "PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS": source.as_posix(),
+            "PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS": "https://github.com/ajoe734/execute-plans.git",
+        },
+        pr_lookup=lambda _worktree, _branch: None,
+    )
+
+    prepared = workflow.prepare(
+        {
+            "task_id": "MGMT-AI-REPAIR-FE",
+            "repoKey": "execute-plans",
+            "declared_scope": ["src/lib/bff-v1"],
+        }
+    )
+
+    payload = prepared.to_dict()
+    worktree = Path(payload["repair"]["task_worktree"])
+    assert payload["repair"]["repo_key"] == "execute-plans"
+    assert worktree.parent.name == "execute-plans"
+    assert _git(worktree, "remote", "get-url", "origin") == "https://github.com/ajoe734/execute-plans.git"
+
+
+def test_prepare_fetches_merge_target_from_canonical_remote_not_status_head(tmp_path: Path) -> None:
+    source, canonical_remote = _init_canonical_remote_with_status_source(tmp_path)
+    worktree_root = tmp_path / "prepared-worktrees"
+    workflow = AssistantRepairWorkflow(
+        {
+            "PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT": worktree_root.as_posix(),
+            "PANTHEON_ASSISTANT_REPAIR_REPO_URL": source.as_posix(),
+            "PANTHEON_ASSISTANT_REPAIR_REMOTE_URL": canonical_remote.as_posix(),
+        },
+        pr_lookup=lambda _worktree, _branch: None,
+    )
+
+    prepared = workflow.prepare(
+        {
+            "task_id": "MGMT-AI-REPAIR-CANONICAL",
+            "declared_scope": ["README.md"],
+        }
+    )
+
+    worktree = Path(prepared.repair_metadata["task_worktree"])
+    assert _git(worktree, "remote", "get-url", "origin") == canonical_remote.as_posix()
+    assert (worktree / "README.md").read_text(encoding="utf-8") == "# canonical-dev\n"
+    assert prepared.workflow.branch == "task/MGMT-AI-REPAIR-CANONICAL"
+
+
+def test_prepare_requires_configured_repo_source(tmp_path: Path) -> None:
+    workflow = AssistantRepairWorkflow(
+        {
+            "PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT": (tmp_path / "prepared-worktrees").as_posix(),
+        },
+        pr_lookup=lambda _worktree, _branch: None,
+    )
+
+    with pytest.raises(AssistantRepairWorkflowError) as exc_info:
+        workflow.prepare(
+            {
+                "task_id": "MGMT-AI-REPAIR-789",
+                "declared_scope": ["services/control-plane/bff"],
+            }
+        )
+
+    assert exc_info.value.code == "REPAIR_REPO_URL_NOT_CONFIGURED"
+    assert exc_info.value.status_code == 503
