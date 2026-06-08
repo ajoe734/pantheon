@@ -203,6 +203,8 @@ def test_ooda_status_card_surface_meta_in_control_room_meta(monkeypatch) -> None
     ooda_surface_meta = meta_surfaces["ooda_control_room_status"]
     assert "snapshot_at" in ooda_surface_meta
     assert ooda_surface_meta["surface_key"] == "ooda_control_room_status"
+    assert ooda_surface_meta["status"] == "ok"
+    assert ooda_surface_meta["source"] == "service_store"
 
 
 def test_ooda_status_card_no_source_returns_unavailable(monkeypatch) -> None:

@@ -13,7 +13,7 @@ import uuid
 from collections import deque
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
-from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Sequence
 
 from fastapi import Body, Cookie, FastAPI, HTTPException, BackgroundTasks, Header, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -4044,6 +4044,23 @@ def _dataset_surface_status(
             {"served_from": "unverifiable", "last_known_at": snapshot_at or utc_now()},
         )
 
+    return surface
+
+
+def _composed_dataset_surface_status(
+    dataset: str,
+    records: Sequence[Any],
+    *,
+    snapshot_at: str,
+    source: str,
+) -> Dict[str, Any]:
+    surface = _dataset_surface_status(dataset, snapshot_at=snapshot_at)
+    if records and surface.get("source") == "missing":
+        return {
+            "status": "ok",
+            "source": source,
+            "note": "Composed from governed market-persona read-model defaults.",
+        }
     return surface
 
 
@@ -25606,6 +25623,8 @@ def _build_ooda_control_room_status_card(snapshot_at: str) -> Dict[str, Any]:
         if str(p.get("environment") or "").lower() != "live"
     )
 
+    if ooda_src in (None, "missing") and packets:
+        ooda_src = "composed_market_persona_defaults"
     surface_status = "ok" if ooda_src not in (None, "missing") else "unavailable"
 
     return {
@@ -26098,7 +26117,12 @@ async def bff_management_fleet(
             "snapshot_at": snapshot_at,
             "surfaces": {
                 "personas": _dataset_surface_status("personas", snapshot_at=snapshot_at),
-                "persona_league": _dataset_surface_status("persona_league", snapshot_at=snapshot_at),
+                "persona_league": _composed_dataset_surface_status(
+                    "persona_league",
+                    league,
+                    snapshot_at=snapshot_at,
+                    source="composed_market_persona_defaults",
+                ),
                 "capital_pools": _dataset_surface_status("capital_pools", snapshot_at=snapshot_at),
                 "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
                 "ooda_control_room_status": ooda_card["meta"],
