@@ -18,6 +18,7 @@ from .base import (
 )
 from .paper import OpenAlexPaperIngestAdapter
 from .repo_allowlist import RepoAllowlistProvider
+from .taiwan_market import MopsSourceIngestAdapter, TejSourceIngestAdapter
 
 
 @dataclass(frozen=True)
@@ -247,6 +248,25 @@ def example_provider_catalog() -> tuple[SourceConnectorProvider, ...]:
                 docs_url="https://docs.github.com/rest",
                 owner="pantheon-source-ingest",
                 tags=("example", "repo", "allowlist"),
+            ),
+        ),
+        MopsSourceIngestAdapter(
+            connector_id="example-tw-mops-official-disclosures",
+            source_metadata=SourceMetadata(
+                display_name="MOPS official Taiwan disclosures",
+                homepage_url="https://mops.twse.com.tw/mops/",
+                owner="Taiwan Stock Exchange",
+                tags=("example", "taiwan", "mops", "official_reference", "filing"),
+            ),
+        ),
+        TejSourceIngestAdapter(
+            connector_id="example-tw-tej-research-datasets",
+            source_metadata=SourceMetadata(
+                display_name="TEJ API Taiwan research datasets",
+                homepage_url="https://api.tej.com.tw",
+                docs_url="https://api.tej.com.tw/document_rest.html",
+                owner="TEJ",
+                tags=("example", "taiwan", "tej", "research_grade", "market"),
             ),
         ),
     )

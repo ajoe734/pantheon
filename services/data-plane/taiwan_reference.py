@@ -175,6 +175,70 @@ def build_shioaji_raw_dataset(
     )
 
 
+def build_mops_raw_dataset(
+    *,
+    dataset_id: str,
+    instrument_scope: list[str],
+    coverage_start: str,
+    coverage_end: str,
+    ingest_time: str,
+    storage_ref: str,
+    checksum: str,
+    route_ids: list[str],
+) -> RawDataset:
+    return RawDataset(
+        dataset_id=dataset_id,
+        source_class="official_reference",
+        market="TW",
+        instrument_scope=list(instrument_scope),
+        coverage_start=coverage_start,
+        coverage_end=coverage_end,
+        ingest_time=ingest_time,
+        storage_ref=storage_ref,
+        checksum=checksum,
+        metadata_json={
+            "provider": "MOPS",
+            "dataset_type": "official_disclosure",
+            "frequency": "event",
+            "route_ids": list(route_ids),
+            "governed_role": "tw_official_disclosure_truth",
+        },
+    )
+
+
+def build_tej_raw_dataset(
+    *,
+    dataset_id: str,
+    instrument_scope: list[str],
+    coverage_start: str,
+    coverage_end: str,
+    ingest_time: str,
+    storage_ref: str,
+    checksum: str,
+    dataset_codes: list[str],
+    frequency: str = "daily",
+) -> RawDataset:
+    return RawDataset(
+        dataset_id=dataset_id,
+        source_class="research_grade",
+        market="TW",
+        instrument_scope=list(instrument_scope),
+        coverage_start=coverage_start,
+        coverage_end=coverage_end,
+        ingest_time=ingest_time,
+        storage_ref=storage_ref,
+        checksum=checksum,
+        metadata_json={
+            "provider": "TEJ API",
+            "dataset_type": "vendor_research_dataset",
+            "frequency": frequency,
+            "dataset_codes": list(dataset_codes),
+            "governed_role": "tw_research_grade_fundamentals_ownership_market_data",
+            "does_not_replace_official_disclosure_truth": True,
+        },
+    )
+
+
 def build_tw_normalized_dataset(
     *,
     dataset_id: str,

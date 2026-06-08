@@ -55,6 +55,8 @@ build_tw_calendar_session = taiwan_reference_mod.build_tw_calendar_session
 build_tw_dataset_lineage_source = taiwan_reference_mod.build_tw_dataset_lineage_source
 build_tw_symbol_mapping_record = taiwan_reference_mod.build_tw_symbol_mapping_record
 build_shioaji_raw_dataset = taiwan_reference_mod.build_shioaji_raw_dataset
+build_mops_raw_dataset = taiwan_reference_mod.build_mops_raw_dataset
+build_tej_raw_dataset = taiwan_reference_mod.build_tej_raw_dataset
 build_tw_normalized_dataset = taiwan_reference_mod.build_tw_normalized_dataset
 join_tw_quote_with_reference = taiwan_reference_mod.join_tw_quote_with_reference
 build_us_security_master = us_reference_mod.build_us_security_master
@@ -399,6 +401,37 @@ class TestTaiwanReferenceHelpers(unittest.TestCase):
         self.assertTrue(valid, errors)
         self.assertEqual(raw.source_class, "broker_execution")
         self.assertEqual(raw.metadata_json["provider"], "Shioaji")
+
+        mops_raw = build_mops_raw_dataset(
+            dataset_id="RAW-TW-MOPS-DISCLOSURES-20260424",
+            instrument_scope=["SEC-TW-2330-TWSE"],
+            coverage_start="2026-04-24",
+            coverage_end="2026-04-24",
+            ingest_time="2026-04-24T13:00:00Z",
+            storage_ref="gs://pantheon-data/raw/tw/mops/disclosures-20260424.jsonl",
+            checksum="sha256:ccc333",
+            route_ids=["t05st02", "t05st03", "t163sb01"],
+        )
+        valid, errors = RawDataset.validate(mops_raw)
+        self.assertTrue(valid, errors)
+        self.assertEqual(mops_raw.source_class, "official_reference")
+        self.assertEqual(mops_raw.metadata_json["provider"], "MOPS")
+        self.assertEqual(mops_raw.metadata_json["governed_role"], "tw_official_disclosure_truth")
+
+        tej_raw = build_tej_raw_dataset(
+            dataset_id="RAW-TW-TEJ-TRAIL-20260424",
+            instrument_scope=["SEC-TW-2330-TWSE"],
+            coverage_start="2026-04-24",
+            coverage_end="2026-04-24",
+            ingest_time="2026-04-24T13:05:00Z",
+            storage_ref="gs://pantheon-data/raw/tw/tej/trail-20260424.parquet",
+            checksum="sha256:ddd444",
+            dataset_codes=["TRAIL/TAPRCD", "TRAIL/TATINST1", "TRAIL/TAIM1A"],
+        )
+        valid, errors = RawDataset.validate(tej_raw)
+        self.assertTrue(valid, errors)
+        self.assertEqual(tej_raw.source_class, "research_grade")
+        self.assertTrue(tej_raw.metadata_json["does_not_replace_official_disclosure_truth"])
 
         norm = build_tw_normalized_dataset(
             dataset_id="NORM-TW-SHIOAJI-TICK-20260424-v1",

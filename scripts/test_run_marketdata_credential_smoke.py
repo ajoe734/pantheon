@@ -104,6 +104,27 @@ class MarketDataCredentialSmokeTest(unittest.TestCase):
         self.assertEqual(packet["session_provenance"]["status"], "observed")
         self.assertEqual(packet["session_provenance"]["session_type"], "stateless_http_get")
 
+    def test_mops_uses_default_official_post_probe_without_smoke_url(self) -> None:
+        with mock.patch.object(smoke, "urlopen", return_value=_FakeResponse()) as opened:
+            packet = smoke.run_provider("mops", {}, allow_network=True)
+
+        request = opened.call_args.args[0]
+        self.assertEqual(packet["status"], "read_ok")
+        self.assertEqual(packet["request"]["method"], "POST")
+        self.assertEqual(packet["request"]["url"], "https://mops.twse.com.tw/mops/api/home_page/t05sr01_1")
+        self.assertEqual(packet["request"]["body_keys"], ["count", "marketKind"])
+        self.assertEqual(request.get_method(), "POST")
+        self.assertEqual(packet["session_provenance"]["session_type"], "stateless_http_post")
+
+    def test_tej_default_probe_targets_trial_database_and_redacts_key(self) -> None:
+        packet = smoke.run_provider("tej", {"TEJ_API_KEY": "raw-tej-key-123"}, allow_network=False)
+
+        self.assertEqual(packet["status"], "read_unavailable")
+        self.assertIn("/api/datatables/TRAIL/TAPRCD.json?", packet["request"]["url"])
+        self.assertIn("opts.columns=coid%2Cmdate%2Cclose_d", packet["request"]["url"])
+        self.assertNotIn("raw-tej-key-123", json.dumps(packet))
+        self.assertIn("<redacted>", packet["request"]["url"])
+
     def test_order_capable_providers_disable_order_path(self) -> None:
         for provider in ("ibkr", "shioaji", "kraken"):
             with self.subTest(provider=provider):
