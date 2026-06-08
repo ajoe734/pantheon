@@ -149,6 +149,13 @@ def _incident_command_payload(command: str, params: dict) -> dict:
     }
 
 
+def _command_headers(auth: str, key: str) -> dict:
+    return {
+        "Authorization": auth,
+        "X-Idempotency-Key": key,
+    }
+
+
 def test_in01_incident_list():
     resp = client.get("/api/v1/incidents", headers={"Authorization": AUTH})
     assert resp.status_code == 200, f"IN-01 failed: {resp.status_code} {resp.text}"
@@ -337,7 +344,7 @@ def test_in05_pause_execution_command_schema():
             "PauseExecution",
             {"pause_new_entries": True, "cancel_open_orders": False},
         ),
-        headers={"Authorization": AUTH},
+        headers=_command_headers(AUTH, "smoke-in05-pause-execution"),
     )
     assert resp.status_code == 202, f"PauseExecution rejected: {resp.status_code} {resp.text}"
     body = resp.json()
@@ -352,7 +359,7 @@ def test_in05_issue_risk_off_command_schema():
             "IssueRiskOff",
             {"reduce_exposure_pct": 100},
         ),
-        headers={"Authorization": AUTH},
+        headers=_command_headers(AUTH, "smoke-in05-risk-off"),
     )
     assert resp.status_code == 202, f"IssueRiskOff rejected: {resp.status_code} {resp.text}"
     body = resp.json()
@@ -364,7 +371,7 @@ def test_in05_liquidate_all_command_schema():
     resp = client.post(
         "/api/v1/operator/commands",
         json=_incident_command_payload("LiquidateAll", {}),
-        headers={"Authorization": ADMIN_MFA_AUTH},
+        headers=_command_headers(ADMIN_MFA_AUTH, "smoke-in05-liquidate-all"),
     )
     assert resp.status_code == 202, f"LiquidateAll rejected: {resp.status_code} {resp.text}"
     body = resp.json()
@@ -379,7 +386,7 @@ def test_in05_hard_rollback_command_schema():
             "HardRollback",
             {"target_artifact_id": "artifact-fallback-001"},
         ),
-        headers={"Authorization": AUTH},
+        headers=_command_headers(AUTH, "smoke-in05-hard-rollback"),
     )
     assert resp.status_code == 202, f"HardRollback rejected: {resp.status_code} {resp.text}"
     body = resp.json()
@@ -394,7 +401,7 @@ def test_in05_issue_safe_mode_command_schema():
             "IssueSafeMode",
             {"safe_mode_level": "soft"},
         ),
-        headers={"Authorization": ADMIN_MFA_AUTH},
+        headers=_command_headers(ADMIN_MFA_AUTH, "smoke-in05-safe-mode"),
     )
     assert resp.status_code == 202, f"IssueSafeMode rejected: {resp.status_code} {resp.text}"
     body = resp.json()

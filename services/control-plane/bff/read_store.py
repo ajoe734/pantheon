@@ -3,12 +3,17 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import urllib.error
 import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from services.consultation.models import (
     ActorRef as ConsultationActorRef,
@@ -190,11 +195,1326 @@ def _merge_default_fixture_pack(target: Dict[str, Any], fixture: Dict[str, Any])
     return changed
 
 
+def _is_fixture_pack_record(record: Dict[str, Any]) -> bool:
+    if not isinstance(record, dict):
+        return False
+    for key in (
+        "id",
+        "plan_id",
+        "decision_id",
+        "approval_decision_id",
+        "strategy_id",
+        "persona_id",
+        "pool_id",
+        "binding_id",
+        "runtime_id",
+        "incident_id",
+        "edge_id",
+        "entry_id",
+        "ticket_id",
+        "result_id",
+        "artifact_id",
+        "from_artifact_id",
+        "to_artifact_id",
+    ):
+        value = str(record.get(key) or "")
+        if "-pack-" in value:
+            return True
+    return False
+
+
 def _load_default_fixture_pack_datasets() -> Dict[str, Any]:
     merged: Dict[str, Any] = {}
     for path in _FIXTURE_PACK_PATHS:
         _merge_default_fixture_pack(merged, _load_fixture_pack_datasets(path))
     return merged
+
+
+def _put_default_record(
+    target: Dict[str, Any],
+    dataset: str,
+    key: str,
+    record: Dict[str, Any],
+    *,
+    skip_datasets: Optional[set[str]] = None,
+) -> bool:
+    if skip_datasets and dataset in skip_datasets:
+        return False
+    records = target.setdefault(dataset, {})
+    if not isinstance(records, dict):
+        return False
+    if key not in records:
+        records[key] = json.loads(json.dumps(record))
+        return True
+    existing = records.get(key)
+    if not isinstance(existing, dict):
+        return False
+    return _merge_missing_default_values(existing, record)
+
+
+def _merge_missing_default_values(existing: Dict[str, Any], defaults: Dict[str, Any]) -> bool:
+    changed = False
+    for field, value in defaults.items():
+        if value is None:
+            continue
+        if field not in existing or existing.get(field) is None:
+            existing[field] = json.loads(json.dumps(value))
+            changed = True
+            continue
+        existing_value = existing.get(field)
+        if isinstance(existing_value, dict) and isinstance(value, dict):
+            changed |= _merge_missing_default_values(existing_value, value)
+    return changed
+
+
+_MARKETDATA_EVIDENCE_BASE = (
+    "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001"
+)
+_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE = (
+    f"{_MARKETDATA_EVIDENCE_BASE}/repo-local-uncredentialed"
+)
+_QUOTE_READBACK_EVIDENCE_BASE = (
+    f"{_MARKETDATA_EVIDENCE_BASE}/repo-local-quote-readback"
+)
+_BROKER_006_DATASOURCE_SMOKE_REF = (
+    "support/evidence/MGMT-BROKER-006/datasource-smoke/datasource-smoke.json"
+)
+_TW_QLIB_DATASET_MANIFEST_REF = "support/evidence/MGMT-QLIB-001/dataset_manifest.json"
+_TW_QLIB_LINKAGE_PACKET_REF = (
+    "support/evidence/MGMT-QLIB-006/management_linkage_packet.json"
+)
+_TW_QLIB_EXPERIMENT_ID = "exp-mgmt-qlib-006"
+_TW_QLIB_STRATEGY_ID = "tw-cross-sectional-equity-alpha"
+_TW_QLIB_STRATEGY_SPEC_ID = "qlib-tw-cross-sectional-alpha-spec-v1"
+_TW_QLIB_ARTIFACT_ID = "qlib-tw-cross-sectional-alpha-model-draft-v1"
+_TW_QLIB_DATASET_REF = "dataset:tw-equity-ohlcv-top50-2024-daily"
+_TW_QLIB_DATASET_MANIFEST_ID = (
+    "qlib-dataset-manifest:dataset-tw-equity-ohlcv-top50-2024-daily"
+)
+
+
+def _read_only_side_effect_guard() -> Dict[str, Any]:
+    return {
+        "read_only": True,
+        "order_side_effects_allowed": False,
+        "capital_side_effects_allowed": False,
+        "live_ingestion_enabled": False,
+    }
+
+
+def _tw_qlib_evidence_refs() -> List[Dict[str, Any]]:
+    return [
+        {
+            "ref_type": "management_linkage_packet",
+            "ref_id": "mgmt-qlib-006-management-linkage-v1",
+            "ref": _TW_QLIB_LINKAGE_PACKET_REF,
+        },
+        {
+            "ref_type": "dataset_manifest",
+            "ref_id": _TW_QLIB_DATASET_MANIFEST_ID,
+            "ref": _TW_QLIB_DATASET_MANIFEST_REF,
+        },
+        {
+            "ref_type": "research_experiment",
+            "ref_id": _TW_QLIB_EXPERIMENT_ID,
+            "route": f"/bff/research-experiments/{_TW_QLIB_EXPERIMENT_ID}",
+        },
+        {
+            "ref_type": "strategy_artifacts",
+            "ref_id": _TW_QLIB_STRATEGY_ID,
+            "route": f"/bff/strategies/{_TW_QLIB_STRATEGY_ID}/artifacts",
+        },
+    ]
+
+
+def _tw_qlib_safety_assertions() -> Dict[str, Any]:
+    return {
+        "registry_write_performed": False,
+        "registry_write_authority": "registry_service_only",
+        "broker_session_opened": False,
+        "order_route": "none",
+        "deployment_stage": "none",
+        "live_capital_side_effects": False,
+    }
+
+
+def _tw_qlib_research_linkage() -> Dict[str, Any]:
+    return {
+        "kind": "qlib_admission_research_linkage",
+        "framework": "qlib",
+        "admission_stage": "management_review_linked",
+        "strategy_id": _TW_QLIB_STRATEGY_ID,
+        "strategy_spec_id": _TW_QLIB_STRATEGY_SPEC_ID,
+        "dataset_manifest_id": _TW_QLIB_DATASET_MANIFEST_ID,
+        "source_task_ids": [
+            "MGMT-QLIB-001",
+            "MGMT-QLIB-002",
+            "MGMT-QLIB-004",
+            "MGMT-QLIB-006",
+        ],
+        "pending_task_ids": ["MGMT-QLIB-003", "MGMT-QLIB-005"],
+        "evidence_refs": [
+            {
+                "ref_type": "dataset_manifest",
+                "task_id": "MGMT-QLIB-001",
+                "ref": _TW_QLIB_DATASET_MANIFEST_REF,
+            },
+            {
+                "ref_type": "strategy_spec_packet",
+                "task_id": "MGMT-QLIB-002",
+                "ref": "support/evidence/MGMT-QLIB-002/strategy_spec_packet.json",
+            },
+            {
+                "ref_type": "model_eval_artifact_review",
+                "task_id": "MGMT-QLIB-004",
+                "ref": "support/reviews/MGMT-QLIB-004-review-codex2.md",
+            },
+        ],
+        "expected_evidence_refs": [
+            {
+                "ref_type": "registry_admission_packet",
+                "task_id": "MGMT-QLIB-005",
+                "ref": "support/evidence/MGMT-QLIB-005/registry_admission_packet.json",
+                "status": "pending_upstream_task",
+            },
+        ],
+        "artifact_refs": [
+            {
+                "artifact_name": "model_artifact",
+                "artifact_type": "model_artifact",
+                "artifact_ref": f"{_TW_QLIB_ARTIFACT_ID}@1.0.0",
+                "artifact_state": "draft",
+                "deployment_stage": "none",
+                "registry_id": _TW_QLIB_ARTIFACT_ID,
+            },
+            {
+                "artifact_name": "evaluation_report",
+                "artifact_type": "evaluation_result",
+                "artifact_ref": f"eval-{_TW_QLIB_ARTIFACT_ID}@1.0.0",
+                "target_artifact_ref": f"{_TW_QLIB_ARTIFACT_ID}@1.0.0",
+                "artifact_state": "draft",
+                "deployment_stage": "none",
+            },
+            {
+                "artifact_name": "registry_entry_projection",
+                "artifact_type": "registry_entry_projection",
+                "artifact_ref": f"artifact://qlib/{_TW_QLIB_ARTIFACT_ID}/1.0.0/registry_entry",
+                "artifact_state": "draft",
+                "deployment_stage": "none",
+            },
+            {
+                "artifact_name": "candidate_packet",
+                "artifact_type": "registry_candidate_handoff",
+                "artifact_ref": f"artifact://qlib/{_TW_QLIB_ARTIFACT_ID}/1.0.0/candidate_packet",
+                "artifact_state": "draft",
+                "deployment_stage": "none",
+            },
+        ],
+        "ooda_refs": [
+            {
+                "stage": "observe",
+                "ref_type": "dataset_manifest",
+                "ref": _TW_QLIB_DATASET_MANIFEST_REF,
+            },
+            {
+                "stage": "orient",
+                "ref_type": "strategy_spec_packet",
+                "ref": "support/evidence/MGMT-QLIB-002/strategy_spec_packet.json",
+            },
+            {
+                "stage": "decide",
+                "ref_type": "registry_admission_packet",
+                "ref": "support/evidence/MGMT-QLIB-005/registry_admission_packet.json",
+                "status": "pending_upstream_task",
+            },
+        ],
+        "management_routes": {
+            "artifact_detail": f"/bff/artifacts/{_TW_QLIB_ARTIFACT_ID}",
+            "api_artifact_detail": f"/api/v1/artifacts/{_TW_QLIB_ARTIFACT_ID}",
+            "research_experiment_detail": f"/bff/research-experiments/{_TW_QLIB_EXPERIMENT_ID}",
+            "strategy_artifacts": f"/bff/strategies/{_TW_QLIB_STRATEGY_ID}/artifacts",
+        },
+        "safety_assertions": _tw_qlib_safety_assertions(),
+    }
+
+
+def _tw_qlib_research_experiment_default() -> Dict[str, Any]:
+    linkage = _tw_qlib_research_linkage()
+    return {
+        "experiment_id": _TW_QLIB_EXPERIMENT_ID,
+        "ticket_id": "rt-mgmt-qlib-006",
+        "experiment_name": "MGMT-QLIB-006 Qlib TW admission linkage",
+        "status": "completed",
+        "stage": "management_review_linked",
+        "queued_at": "2026-05-15T17:25:00Z",
+        "started_at": "2026-05-15T17:26:00Z",
+        "completed_at": "2026-05-15T17:30:00Z",
+        "progress": {
+            "percent": 100,
+            "phase": "management_review_linked",
+            "message": "Management linkage packet is ready; registry admission remains gated.",
+        },
+        "strategy_selector": {"strategy_id": _TW_QLIB_STRATEGY_ID, "variant_id": None},
+        "linked_strategy_id": _TW_QLIB_STRATEGY_ID,
+        "parameter_set": {
+            "framework": "qlib",
+            "model_family": "lightgbm",
+            "market": "TW",
+            "universe": "tw-equity-top50",
+        },
+        "run_config": {
+            "backend": "qlib",
+            "dataset_ref": _TW_QLIB_DATASET_REF,
+            "dataset_manifest_id": _TW_QLIB_DATASET_MANIFEST_ID,
+            "time_range": {
+                "start_at": "2024-01-02T00:00:00Z",
+                "end_at": "2026-01-05T00:00:00Z",
+            },
+            "execution_mode": "offline_admission_review",
+            "priority": "normal",
+            "requested_by": "pathreon-management",
+        },
+        "launch_context": {
+            "task_id": "MGMT-QLIB-006",
+            "analysis_refs": None,
+            "source_task_ids": linkage["source_task_ids"],
+            "pending_task_ids": linkage["pending_task_ids"],
+        },
+        "validation_warnings": [
+            {
+                "code": "REGISTRY_ADMISSION_PENDING",
+                "message": "MGMT-QLIB-005 registry admission evidence is pending; deployment is blocked.",
+            }
+        ],
+        "artifact_ids": [_TW_QLIB_ARTIFACT_ID],
+        "artifact_refs": linkage["artifact_refs"],
+        "framework": "qlib",
+        "dataset_ref": _TW_QLIB_DATASET_REF,
+        "dataset_manifest_id": _TW_QLIB_DATASET_MANIFEST_ID,
+        "research_linkage": linkage,
+        "evidence_refs": _tw_qlib_evidence_refs(),
+        "safety_assertions": _tw_qlib_safety_assertions(),
+        "registry_admission_status": "pending_upstream_task",
+        "can_deploy": False,
+        "deployment_stage": "none",
+        "failure": {"reason_code": None, "message": None},
+        "governed_default_source": "composed_market_persona_defaults",
+    }
+
+
+def _governed_research_experiment_defaults() -> Dict[str, Dict[str, Any]]:
+    return {
+        _TW_QLIB_EXPERIMENT_ID: _tw_qlib_research_experiment_default(),
+    }
+
+
+def _provider_truth(
+    *,
+    provider_key: str,
+    provider: str,
+    market: str,
+    source_class: str,
+    status: str,
+    evidence_ref: str,
+    order_capable_provider: bool,
+    order_path: str,
+    read_intent: Optional[Dict[str, Any]] = None,
+    reason: Optional[str] = None,
+) -> Dict[str, Any]:
+    return {
+        "provider_key": provider_key,
+        "provider": provider,
+        "market": market,
+        "source_class": source_class,
+        "status": status,
+        "evidence_ref": evidence_ref,
+        "order_capable_provider": order_capable_provider,
+        "order_path": order_path,
+        "read_intent": json.loads(json.dumps(read_intent)) if read_intent else None,
+        "reason": reason,
+        **_read_only_side_effect_guard(),
+    }
+
+
+def _market_persona_data_truth(item: Dict[str, Any]) -> Dict[str, Any]:
+    market = str(item.get("market") or "").upper()
+    watch_symbol = str(item.get("watch_symbol") or "")
+    if market == "TW":
+        sources = [
+            _provider_truth(
+                provider_key="shioaji",
+                provider="Shioaji quote",
+                market="TW",
+                source_class="broker_execution",
+                status="read_ok",
+                evidence_ref=f"{_QUOTE_READBACK_EVIDENCE_BASE}/shioaji.json",
+                order_capable_provider=True,
+                order_path="disabled_for_marketdata_smoke",
+                read_intent={
+                    "symbol": "2330",
+                    "exchange": "TSE",
+                    "quote_type": "tick",
+                    "version": "v1",
+                    "bind": True,
+                },
+            ),
+            _provider_truth(
+                provider_key="twse",
+                provider="TWSE OpenAPI",
+                market="TW",
+                source_class="official_reference",
+                status="read_unavailable",
+                evidence_ref=f"{_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE}/twse.json",
+                order_capable_provider=False,
+                order_path="not_applicable",
+                reason="repo-local smoke did not open a TWSE network session",
+            ),
+            _provider_truth(
+                provider_key="tpex",
+                provider="TPEx E-Data",
+                market="TW",
+                source_class="official_reference",
+                status="read_unavailable",
+                evidence_ref=f"{_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE}/tpex.json",
+                order_capable_provider=False,
+                order_path="not_applicable",
+                reason="repo-local smoke did not open a TPEx network session",
+            ),
+            _provider_truth(
+                provider_key="mops",
+                provider="MOPS",
+                market="TW",
+                source_class="official_reference",
+                status="public_reference_unavailable",
+                evidence_ref=f"{_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE}/mops.json",
+                order_capable_provider=False,
+                order_path="not_applicable",
+                reason="repo-local smoke has no public-reference readback",
+            ),
+            _provider_truth(
+                provider_key="tej",
+                provider="TEJ API",
+                market="TW",
+                source_class="research_grade",
+                status="credential_unavailable",
+                evidence_ref=f"{_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE}/tej.json",
+                order_capable_provider=False,
+                order_path="not_applicable",
+                reason="required repo-local TEJ credential env var is absent",
+            ),
+        ]
+        provider_statuses = {source["provider_key"]: source["status"] for source in sources}
+        readback_refs = [
+            source["evidence_ref"]
+            for source in sources
+            if source.get("status") == "read_ok"
+        ]
+        unavailable_refs = [
+            source["evidence_ref"]
+            for source in sources
+            if source.get("status") != "read_ok"
+        ]
+        data_source_status = {
+            "state": "partial_readback",
+            "summary": (
+                "Shioaji quote readback is present; TWSE, TPEx, MOPS, and TEJ "
+                "are explicit unavailable/credential-unavailable repo-local smoke evidence."
+            ),
+            "provider_statuses": provider_statuses,
+            "readback_refs": readback_refs,
+            "unavailable_refs": unavailable_refs,
+            "research_dataset_ref": "dataset:tw-equity-ohlcv-top50-2024-daily",
+            "research_dataset_manifest_ref": _TW_QLIB_DATASET_MANIFEST_REF,
+            "research_dataset_as_of": "2026-01-05T00:00:00Z",
+            "readback_captured_at": "2026-05-01T17:20:00Z",
+            **_read_only_side_effect_guard(),
+        }
+        return {
+            "data_source_status": data_source_status,
+            "data_sources": sources,
+            "data_source_refs": [*readback_refs, *unavailable_refs],
+        }
+
+    if market == "US":
+        sources = [
+            _provider_truth(
+                provider_key="ibkr",
+                provider="IBKR market data",
+                market="US",
+                source_class="broker_execution",
+                status="read_ok",
+                evidence_ref=f"{_QUOTE_READBACK_EVIDENCE_BASE}/ibkr.json",
+                order_capable_provider=True,
+                order_path="disabled_for_marketdata_smoke",
+                read_intent={
+                    "contract": {
+                        "symbol": watch_symbol,
+                        "exchange": "SMART",
+                        "currency": "USD",
+                        "secType": "STK",
+                    },
+                    "snapshot": True,
+                    "readonly": True,
+                },
+            )
+        ]
+        data_source_status = {
+            "state": "quote_readback_ok",
+            "summary": "IBKR quote readback is present; order path is disabled for marketdata smoke.",
+            "provider_statuses": {"ibkr": "read_ok"},
+            "readback_refs": [sources[0]["evidence_ref"]],
+            "unavailable_refs": [],
+            "readback_captured_at": "2026-05-01T17:20:00Z",
+            **_read_only_side_effect_guard(),
+        }
+        return {
+            "data_source_status": data_source_status,
+            "data_sources": sources,
+            "data_source_refs": [sources[0]["evidence_ref"]],
+        }
+
+    if market == "CRYPTO":
+        sources = [
+            _provider_truth(
+                provider_key="kraken",
+                provider="Kraken market data",
+                market="CRYPTO",
+                source_class="broker_execution",
+                status="datasource_smoke_ok",
+                evidence_ref=_BROKER_006_DATASOURCE_SMOKE_REF,
+                order_capable_provider=True,
+                order_path="validate_only",
+                read_intent={
+                    "pair": watch_symbol,
+                    "interval": 1,
+                    "venue": "KRAKEN",
+                },
+            ),
+            _provider_truth(
+                provider_key="coingecko",
+                provider="CoinGecko",
+                market="CRYPTO",
+                source_class="research_grade",
+                status="read_unavailable",
+                evidence_ref=f"{_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE}/coingecko.json",
+                order_capable_provider=False,
+                order_path="not_applicable",
+                reason="repo-local smoke did not open a CoinGecko network session",
+            ),
+        ]
+        data_source_status = {
+            "state": "datasource_smoke_ok",
+            "summary": (
+                "Kraken datasource smoke has a normalized quote projection; "
+                "repo-local network readback remains disabled."
+            ),
+            "provider_statuses": {
+                "kraken": "datasource_smoke_ok",
+                "coingecko": "read_unavailable",
+            },
+            "readback_refs": [_BROKER_006_DATASOURCE_SMOKE_REF],
+            "unavailable_refs": [sources[1]["evidence_ref"]],
+            "readback_captured_at": "2026-05-15T17:34:44Z",
+            **_read_only_side_effect_guard(),
+        }
+        return {
+            "data_source_status": data_source_status,
+            "data_sources": sources,
+            "data_source_refs": [source["evidence_ref"] for source in sources],
+        }
+
+    data_source_status = {
+        "state": "not_declared",
+        "summary": "No governed data source readback is declared for this persona.",
+        "provider_statuses": {},
+        "readback_refs": [],
+        "unavailable_refs": [],
+        **_read_only_side_effect_guard(),
+    }
+    return {
+        "data_source_status": data_source_status,
+        "data_sources": [],
+        "data_source_refs": [],
+    }
+
+
+def _market_persona_research_truth(item: Dict[str, Any]) -> Dict[str, Any]:
+    market = str(item.get("market") or "").upper()
+    if market == "TW":
+        research_refs = _tw_qlib_evidence_refs()
+        research_status = {
+            "stage": "management_review_linked",
+            "framework": "qlib",
+            "frameworks": ["qlib", "vectorbt", "statsmodels"],
+            "experiment_id": _TW_QLIB_EXPERIMENT_ID,
+            "strategy_id": _TW_QLIB_STRATEGY_ID,
+            "strategy_spec_id": _TW_QLIB_STRATEGY_SPEC_ID,
+            "artifact_id": _TW_QLIB_ARTIFACT_ID,
+            "artifact_state": "draft",
+            "deployment_stage": "none",
+            "dataset_ref": _TW_QLIB_DATASET_REF,
+            "dataset_manifest_id": _TW_QLIB_DATASET_MANIFEST_ID,
+            "registry_admission_status": "pending_upstream_task",
+            "pending_task_ids": ["MGMT-QLIB-003", "MGMT-QLIB-005"],
+            "can_deploy": False,
+            "summary": (
+                "Qlib TW cross-sectional alpha draft is linked for Management review; "
+                "registry admission and deployment are still pending upstream evidence."
+            ),
+            "safety_assertions": _tw_qlib_safety_assertions(),
+        }
+        return {
+            "research_status": research_status,
+            "research_refs": research_refs,
+            "current_research_projects": [
+                {
+                    "project_id": "MGMT-QLIB-006",
+                    "title": "Qlib TW cross-sectional equity alpha admission linkage",
+                    "stage": research_status["stage"],
+                    "status": "needs_human_approval",
+                    "frameworks": research_status["frameworks"],
+                    "dataset_ref": research_status["dataset_ref"],
+                    "artifact_id": research_status["artifact_id"],
+                    "experiment_id": research_status["experiment_id"],
+                    "blocked_by_task_ids": research_status["pending_task_ids"],
+                    "evidence_refs": research_refs,
+                    "can_deploy": False,
+                }
+            ],
+        }
+
+    frameworks = ["vectorbt", "statsmodels", "quantlib"]
+    if market == "CRYPTO":
+        frameworks = ["vectorbt", "statsmodels", "finrl-rllib"]
+    research_status = {
+        "stage": str(item.get("ooda_stage") or "observe"),
+        "frameworks": frameworks,
+        "strategy_id": item.get("strategy_id"),
+        "artifact_id": item.get("artifact_id"),
+        "deployment_stage": item.get("deployment_stage"),
+        "registry_admission_status": "not_requested",
+        "can_deploy": False,
+        "summary": str(item.get("current_work") or ""),
+        "safety_assertions": {
+            "registry_write_performed": False,
+            "broker_session_opened": False,
+            "order_route": "none",
+            "live_capital_side_effects": False,
+        },
+    }
+    return {
+        "research_status": research_status,
+        "research_refs": [],
+        "current_research_projects": [
+            {
+                "project_id": f"research-{market.lower()}-paper-001",
+                "title": str(item.get("current_work") or f"{market} paper research loop"),
+                "stage": research_status["stage"],
+                "status": item.get("persona_status"),
+                "frameworks": frameworks,
+                "artifact_id": item.get("artifact_id"),
+                "strategy_id": item.get("strategy_id"),
+                "can_deploy": False,
+            }
+        ],
+    }
+
+
+def _ref_values(refs: List[Any]) -> List[str]:
+    values: List[str] = []
+    for ref in refs:
+        if isinstance(ref, str) and ref:
+            values.append(ref)
+            continue
+        if not isinstance(ref, dict):
+            continue
+        value = ref.get("ref") or ref.get("route") or ref.get("ref_id")
+        if value:
+            values.append(str(value))
+    return values
+
+
+def _merge_market_persona_fleet(
+    target: Dict[str, Any],
+    *,
+    preserve_explicit_agora: bool = False,
+) -> bool:
+    """Seed the canonical US/TW/CRYPTO persona fleet read model.
+
+    The records are deliberately read-model only: they prove the Agora,
+    Management, and Execution Plane wiring without granting live capital
+    authority. Promotion suggestions stay in governance metadata.
+    """
+    skip_datasets: set[str] = set()
+    if preserve_explicit_agora:
+        for dataset in ("agora_signals", "agora_sessions", "agora_watchlist"):
+            if dataset in target:
+                skip_datasets.add(dataset)
+
+    changed = False
+    fleet = [
+        {
+            "market": "US",
+            "persona_id": "persona-us-equity",
+            "name": "US Equity Persona",
+            "mandate": "us_equity_alpha_research_and_paper_execution",
+            "strategy_family": "cross_sectional_momentum",
+            "asset_classes": ["equity", "etf", "option"],
+            "timezone": "America/New_York",
+            "broker_adapter": "ibkr-paper",
+            "pool_id": "pool-us-equity-paper",
+            "binding_id": "binding-us-equity-paper",
+            "runtime_id": "runtime-us-equity-paper",
+            "plan_id": "plan-us-equity-paper",
+            "approval_id": "approval-us-equity-paper",
+            "artifact_id": "artifact-us-equity-momentum-v1",
+            "strategy_id": "strategy-us-equity-momentum",
+            "session_id": "agora-us-equity-session",
+            "teaching_id": "trn-us-equity-20260607",
+            "capability_id": "cap-us-equity",
+            "signal_id": "sig-us-equity-001",
+            "watch_symbol": "AAPL",
+            "ooda_id": "ooda-us-equity-paper-001",
+            "ooda_status": "oriented",
+            "ooda_stage": "orient",
+            "persona_status": "researching",
+            "deployment_stage": "paper",
+            "nav": 2_500_000.0,
+            "cash": 2_180_000.0,
+            "gross_exposure": 0.31,
+            "net_exposure": 0.18,
+            "leverage": 0.34,
+            "realized_pnl": 18_420.0,
+            "unrealized_pnl": 6_140.0,
+            "var_95": 0.018,
+            "drawdown": 0.021,
+            "slippage_bps": 2.7,
+            "fill_ratio": 0.982,
+            "order_reject_rate": 0.001,
+            "pnl": 24_560.0,
+            "sharpe": 1.41,
+            "sortino": 2.03,
+            "max_drawdown": 0.057,
+            "win_rate": 0.56,
+            "trading_cost_bps": 4.2,
+            "stability_score": 0.87,
+            "human_interventions": 1,
+            "training_improvement_pct": 14.0,
+            "violation_count": 0,
+            "league_rank": 2,
+            "league_score": 87.4,
+            "recommendation": "promote_canary_review",
+            "current_work": "paper observation and OOS cost review",
+            "risk_flags": [],
+        },
+        {
+            "market": "TW",
+            "persona_id": "persona-tw-equity",
+            "name": "Taiwan Equity Persona",
+            "mandate": "taiwan_equity_session_research_and_paper_execution",
+            "strategy_family": "tw_session_momentum",
+            "asset_classes": ["equity", "etf", "future", "option"],
+            "timezone": "Asia/Taipei",
+            "broker_adapter": "shioaji-sandbox",
+            "pool_id": "pool-tw-equity-paper",
+            "binding_id": "binding-tw-equity-paper",
+            "runtime_id": "runtime-tw-equity-paper",
+            "plan_id": "plan-tw-equity-paper",
+            "approval_id": "approval-tw-equity-paper",
+            "artifact_id": "artifact-tw-equity-session-v1",
+            "strategy_id": "strategy-tw-equity-session",
+            "session_id": "agora-tw-equity-session",
+            "teaching_id": "trn-tw-equity-20260607",
+            "capability_id": "cap-tw-equity",
+            "signal_id": "sig-tw-equity-001",
+            "watch_symbol": "2330.TW",
+            "ooda_id": "ooda-tw-equity-paper-001",
+            "ooda_status": "decided",
+            "ooda_stage": "decide",
+            "persona_status": "needs_human_approval",
+            "deployment_stage": "paper",
+            "nav": 90_000_000.0,
+            "cash": 82_400_000.0,
+            "gross_exposure": 0.24,
+            "net_exposure": 0.11,
+            "leverage": 0.28,
+            "realized_pnl": 512_000.0,
+            "unrealized_pnl": -86_000.0,
+            "var_95": 0.021,
+            "drawdown": 0.033,
+            "slippage_bps": 5.9,
+            "fill_ratio": 0.951,
+            "order_reject_rate": 0.004,
+            "pnl": 426_000.0,
+            "sharpe": 1.08,
+            "sortino": 1.62,
+            "max_drawdown": 0.071,
+            "win_rate": 0.53,
+            "trading_cost_bps": 7.6,
+            "stability_score": 0.78,
+            "human_interventions": 3,
+            "training_improvement_pct": 9.5,
+            "violation_count": 0,
+            "league_rank": 3,
+            "league_score": 79.1,
+            "recommendation": "hold_for_risk_owner_review",
+            "current_work": "TW corporate-action and session-boundary evidence review",
+            "risk_flags": ["slippage_watch"],
+        },
+        {
+            "market": "CRYPTO",
+            "persona_id": "persona-crypto",
+            "name": "Crypto Persona",
+            "mandate": "crypto_24x7_alpha_research_and_paper_execution",
+            "strategy_family": "crypto_trend_carry",
+            "asset_classes": ["crypto", "perpetual_future", "dated_future"],
+            "timezone": "UTC",
+            "broker_adapter": "kraken-sandbox",
+            "pool_id": "pool-crypto-paper",
+            "binding_id": "binding-crypto-paper",
+            "runtime_id": "runtime-crypto-paper",
+            "plan_id": "plan-crypto-paper",
+            "approval_id": "approval-crypto-paper",
+            "artifact_id": "artifact-crypto-trend-carry-v1",
+            "strategy_id": "strategy-crypto-trend-carry",
+            "session_id": "agora-crypto-session",
+            "teaching_id": "trn-crypto-20260607",
+            "capability_id": "cap-crypto",
+            "signal_id": "sig-crypto-001",
+            "watch_symbol": "BTC/USD",
+            "ooda_id": "ooda-crypto-paper-001",
+            "ooda_status": "acted",
+            "ooda_stage": "act",
+            "persona_status": "paper_running",
+            "deployment_stage": "paper",
+            "nav": 1_200_000.0,
+            "cash": 1_015_000.0,
+            "gross_exposure": 0.37,
+            "net_exposure": 0.22,
+            "leverage": 0.42,
+            "realized_pnl": 36_200.0,
+            "unrealized_pnl": 11_800.0,
+            "var_95": 0.029,
+            "drawdown": 0.044,
+            "slippage_bps": 4.8,
+            "fill_ratio": 0.974,
+            "order_reject_rate": 0.002,
+            "pnl": 48_000.0,
+            "sharpe": 1.76,
+            "sortino": 2.31,
+            "max_drawdown": 0.064,
+            "win_rate": 0.59,
+            "trading_cost_bps": 6.1,
+            "stability_score": 0.91,
+            "human_interventions": 1,
+            "training_improvement_pct": 18.2,
+            "violation_count": 0,
+            "league_rank": 1,
+            "league_score": 91.8,
+            "recommendation": "prepare_canary_packet",
+            "current_work": "paper broker sandbox readback and funding-rate stress review",
+            "risk_flags": [],
+        },
+    ]
+
+    for item in fleet:
+        persona_id = item["persona_id"]
+        market = item["market"]
+        pool_id = item["pool_id"]
+        runtime_id = item["runtime_id"]
+        plan_id = item["plan_id"]
+        approval_id = item["approval_id"]
+        strategy_id = item["strategy_id"]
+        artifact_id = item["artifact_id"]
+        binding_id = item["binding_id"]
+        capability_id = item["capability_id"]
+        session_id = item["session_id"]
+        teaching_id = item["teaching_id"]
+        signal_id = item["signal_id"]
+        ooda_id = item["ooda_id"]
+
+        common_metrics = {
+            "pnl": item["pnl"],
+            "sharpe": item["sharpe"],
+            "sortino": item["sortino"],
+            "max_drawdown": item["max_drawdown"],
+            "win_rate": item["win_rate"],
+            "trading_cost_bps": item["trading_cost_bps"],
+            "stability_score": item["stability_score"],
+            "human_interventions": item["human_interventions"],
+            "training_improvement_pct": item["training_improvement_pct"],
+            "violation_count": item["violation_count"],
+        }
+        data_truth = _market_persona_data_truth(item)
+        research_truth = _market_persona_research_truth(item)
+        data_source_refs = list(data_truth.get("data_source_refs") or [])
+        research_ref_values = _ref_values(list(research_truth.get("research_refs") or []))
+        metadata = {
+            "market_scope": [market],
+            "asset_classes": list(item["asset_classes"]),
+            "timezone": item["timezone"],
+            "broker_adapter": item["broker_adapter"],
+            "persona_status": item["persona_status"],
+            "current_work": item["current_work"],
+            "ooda_stage": item["ooda_stage"],
+            "capital_pool_id": pool_id,
+            "runtime_binding_id": runtime_id,
+            "deployment_stage": item["deployment_stage"],
+            "league_score": item["league_score"],
+            "league_rank": item["league_rank"],
+            "recommended_governance_action": item["recommendation"],
+            "governance_required": True,
+            "risk_flags": list(item["risk_flags"]),
+            "success_rate": item["win_rate"],
+            "risk_level": "medium" if item["risk_flags"] else "low",
+            "performance": common_metrics,
+            "data_source_status": data_truth["data_source_status"],
+            "data_sources": data_truth["data_sources"],
+            "data_source_refs": data_source_refs,
+            "research_status": research_truth["research_status"],
+            "research_refs": research_truth["research_refs"],
+            "current_research_projects": research_truth["current_research_projects"],
+        }
+        changed |= _put_default_record(
+            target,
+            "personas",
+            persona_id,
+            {
+                "id": persona_id,
+                "persona_id": persona_id,
+                "name": item["name"],
+                "lifecycle_state": "paper_owner",
+                "status": item["persona_status"],
+                "mandate": item["mandate"],
+                "strategy_family": item["strategy_family"],
+                "created_at": "2026-02-01T00:00:00Z",
+                "updated_at": "2026-06-07T13:00:00Z",
+                "last_active_at": "2026-06-07T13:00:00Z",
+                "metadata": metadata,
+            },
+        )
+        changed |= _put_default_record(
+            target,
+            "capital_pools",
+            pool_id,
+            {
+                "id": pool_id,
+                "pool_id": pool_id,
+                "name": f"{market} Paper Capital Pool",
+                "status": "ready",
+                "owner_id": "pathreon-management",
+                "owner_type": "control-plane",
+                "risk_policy_ref": f"risk-policy-{market.lower()}-paper",
+                "single_runtime_enforced": True,
+                "currency": "TWD" if market == "TW" else "USD",
+                "nav": item["nav"],
+                "cash": item["cash"],
+                "gross_exposure": item["gross_exposure"],
+                "net_exposure": item["net_exposure"],
+                "leverage": item["leverage"],
+                "realized_pnl": item["realized_pnl"],
+                "unrealized_pnl": item["unrealized_pnl"],
+                "var_95": item["var_95"],
+                "drawdown": item["drawdown"],
+                "slippage_bps": item["slippage_bps"],
+                "fill_ratio": item["fill_ratio"],
+                "order_reject_rate": item["order_reject_rate"],
+                "market_scope": [market],
+                "live_capital_enabled": False,
+            },
+        )
+        changed |= _put_default_record(
+            target,
+            "bindings",
+            binding_id,
+            {
+                "id": binding_id,
+                "binding_id": binding_id,
+                "persona_id": persona_id,
+                "capital_pool_id": pool_id,
+                "role": "paper_owner",
+                "validity": "active",
+                "status": "active",
+                "allowed_deployment_scope": "paper",
+                "approval_decision_id": approval_id,
+            },
+        )
+        changed |= _put_default_record(
+            target,
+            "runtime_bindings",
+            runtime_id,
+            {
+                "id": runtime_id,
+                "binding_id": runtime_id,
+                "runtime_binding_id": runtime_id,
+                "runtime_id": runtime_id,
+                "deployment_mode": item["deployment_stage"],
+                "deployment_stage": item["deployment_stage"],
+                "status": "active",
+                "plan_id": plan_id,
+                "artifact_id": artifact_id,
+                "artifact_version": "v1.0.0",
+                "capital_pool_id": pool_id,
+                "persona_capital_binding_id": binding_id,
+                "effective_at": "2026-06-07T12:00:00Z",
+                "metadata": {
+                    "market_scope": [market],
+                    "broker_adapter": item["broker_adapter"],
+                    "runtime_kind": "lean",
+                    "artifact_loader": "approved_artifact_loader",
+                    "live_write_enabled": False,
+                    "fail_closed": True,
+                },
+            },
+        )
+        changed |= _put_default_record(
+            target,
+            "sessions",
+            session_id,
+            {
+                "id": session_id,
+                "session_id": session_id,
+                "persona_id": persona_id,
+                "session_type": "interactive",
+                "status": "active",
+                "started_at": "2026-06-07T12:05:00Z",
+                "capability_snapshot_id": capability_id,
+                "trace_id": f"trace-{session_id}",
+                "request_id": f"req-{session_id}",
+                "runtime_binding_id": runtime_id,
+                "deployment_stage": item["deployment_stage"],
+                "capital_pool_id": pool_id,
+                "last_heartbeat_at": "2026-06-07T13:00:00Z",
+                "tools_enabled": ["market_data_read", "strategy_research", "telemetry_query"],
+                "pool_scope": pool_id,
+            },
+        )
+        changed |= _put_default_record(
+            target,
+            "capability_snapshots",
+            capability_id,
+            {
+                "snapshot_id": capability_id,
+                "persona_id": persona_id,
+                "effective_tools": [
+                    "market_data_read",
+                    "research_backend_run",
+                    "strategy_spec_write",
+                    "telemetry_query",
+                    "governance_handoff",
+                ],
+                "effective_skills": [
+                    "qlib_research",
+                    "vectorbt_backtest",
+                    "statsmodels_analysis",
+                    "quantlib_risk",
+                    "finrl_rllib_simulation",
+                ],
+                "effective_workflows": [
+                    "observe_market",
+                    "orient_research",
+                    "submit_governance_candidate",
+                    "paper_runtime_monitor",
+                    "learn_from_postmortem",
+                ],
+                "restrictions": [
+                    "no_live_trade_without_approval",
+                    "approved_artifact_only_for_execution",
+                    "human_gate_required_for_capital_changes",
+                ],
+                "generated_at": "2026-06-07T12:00:00Z",
+                "source_refs": [f"persona:{persona_id}", f"policy:risk-policy-{market.lower()}-paper"],
+            },
+        )
+        changed |= _put_default_record(
+            target,
+            "teaching_sessions",
+            teaching_id,
+            {
+                "id": teaching_id,
+                "session_id": teaching_id,
+                "persona_id": persona_id,
+                "session_type": "trainer",
+                "opened_by": "operator-desk",
+                "status": "completed",
+                "started_at": "2026-06-07T10:00:00Z",
+                "ended_at": "2026-06-07T10:35:00Z",
+                "topic": f"{market} trader preference alignment",
+                "objective": f"Align {item['name']} to trader questions while preserving governance boundaries.",
+                "outcomes": ["training-example-created", "risk-boundary-preserved"],
+                "context_refs": [{"type": "persona", "id": persona_id}],
+                "actor_context": {
+                    "persona_display_name": item["name"],
+                    "persona_role_context": item["mandate"],
+                },
+            },
+        )
+        changed |= _put_default_record(
+            target,
+            "strategy_specs",
+            strategy_id,
+            {
+                "id": strategy_id,
+                "strategy_id": strategy_id,
+                "current_spec_version_id": f"specver-{strategy_id}-v1",
+                "current_spec_version": "v1",
+                "title": f"{market} governed alpha strategy",
+                "source_kind": "workflow",
+                "status": "active",
+                "lifecycle_state": "approved",
+                "persona_ids": [persona_id],
+                "capital_pool_id": pool_id,
+                "artifact_id": artifact_id,
+                "created_at": "2026-04-01T11:30:00Z",
+                "updated_at": "2026-04-01T12:00:00Z",
+                "hypothesis": f"{market} persona can operate a paper-only governed {item['strategy_family']} loop.",
+                "objective": "Validate OOS evidence, trading costs, and runtime isolation before any canary request.",
+                "market_scope": {
+                    "symbols": [item["watch_symbol"]],
+                    "frequency": "daily" if market != "CRYPTO" else "hourly",
+                    "asset_classes": list(item["asset_classes"]),
+                    "venues": [item["broker_adapter"]],
+                },
+                "execution_profile": {
+                    "signal_schema_version": "1.0",
+                    "quantity_type": "PERCENT_PORTFOLIO",
+                    "rebalance_cadence": "daily" if market != "CRYPTO" else "4h",
+                    "execution_mode_hint": item["deployment_stage"],
+                    "runtime_id": runtime_id,
+                    "approved_artifact_only": True,
+                },
+                "evaluation_plan": {
+                    "metrics": ["sharpe_ratio", "max_drawdown", "slippage_bps", "fill_ratio"],
+                    "candidate_gate": "Evidence packet must include OOS, cost model, and risk owner review.",
+                    "paper_gate": "Paper runtime must stay fail-closed with approved artifacts only.",
+                    "live_gate": "Live capital remains disabled until a separate human-gated promotion.",
+                },
+                "governance": {
+                    "approval_required": True,
+                    "human_gate_required": True,
+                    "risk_level": "medium" if item["risk_flags"] else "low",
+                    "approval_decision_id": approval_id,
+                    "live_capital_side_effects": False,
+                },
+                "citation_bundle": {
+                    "evidence_refs": [
+                        {"ref_id": f"evidence-{market.lower()}-oos", "type": "oos_backtest"},
+                        {"ref_id": f"evidence-{market.lower()}-cost", "type": "cost_model"},
+                        *[
+                            {"ref_id": ref, "type": "data_source_readback"}
+                            for ref in data_source_refs
+                        ],
+                        *[
+                            {"ref_id": ref, "type": "research_linkage"}
+                            for ref in research_ref_values
+                        ],
+                    ],
+                    "memory_anchors": [],
+                    "insight_citations": [],
+                },
+                "summary": {"last_modified_at": "2026-04-01T12:00:00Z"},
+            },
+        )
+        changed |= _put_default_record(
+            target,
+            "telemetry_summaries",
+            runtime_id,
+            {
+                "runtime_id": runtime_id,
+                "window": "1d",
+                "pnl": item["pnl"],
+                "drawdown": item["drawdown"],
+                "sharpe_ratio": item["sharpe"],
+                "sortino_ratio": item["sortino"],
+                "total_trades": 38,
+                "fill_rate": item["fill_ratio"],
+                "fill_ratio": item["fill_ratio"],
+                "avg_slippage_bps": item["slippage_bps"],
+                "order_reject_rate": item["order_reject_rate"],
+                "collected_at": "2026-06-07T13:00:00Z",
+            },
+        )
+        changed |= _put_default_record(
+            target,
+            "agora_watchlist",
+            item["watch_symbol"],
+            {
+                "id": f"watch-{item['watch_symbol']}",
+                "symbol": item["watch_symbol"],
+                "market_scope": market,
+                "personaId": persona_id,
+                "return1dPct": 1.2 if market != "TW" else 0.6,
+                "updatedAt": "2026-06-07T13:00:00Z",
+            },
+            skip_datasets=skip_datasets,
+        )
+        changed |= _put_default_record(
+            target,
+            "agora_signals",
+            signal_id,
+            {
+                "id": signal_id,
+                "signal_id": signal_id,
+                "title": f"{market} market briefing signal",
+                "description": f"{item['name']} generated an Observe/Orient briefing for {item['watch_symbol']}.",
+                "reviewStatus": "pending_trader_review",
+                "conviction": 0.74 if market != "TW" else 0.66,
+                "alpha": item["strategy_family"],
+                "personaId": persona_id,
+                "persona_id": persona_id,
+                "market_scope": market,
+                "symbol": item["watch_symbol"],
+                "ooda_packet_id": ooda_id,
+                "updatedAt": "2026-06-07T13:00:00Z",
+                "createdAt": "2026-06-07T12:30:00Z",
+                "governance": {
+                    "can_promote_directly": False,
+                    "handoff_required": True,
+                    "data_source_status": data_truth["data_source_status"]["state"],
+                    "research_stage": research_truth["research_status"].get("stage"),
+                },
+            },
+            skip_datasets=skip_datasets,
+        )
+        changed |= _put_default_record(
+            target,
+            "agora_sessions",
+            session_id,
+            {
+                "id": session_id,
+                "sessionId": session_id,
+                "personaId": persona_id,
+                "persona_id": persona_id,
+                "title": f"{item['name']} daily Agora briefing",
+                "mode": "quick_ask",
+                "status": "active",
+                "targetEntity": {"type": "market", "id": market},
+                "participants": [
+                    {"type": "operator", "id": "operator-desk"},
+                    {"type": "persona", "id": persona_id},
+                ],
+                "messages": [
+                    {
+                        "id": f"msg-{session_id}-001",
+                        "sessionId": session_id,
+                        "sender": {"type": "operator", "id": "operator-desk"},
+                        "role": "user",
+                        "content": "今天我該注意什麼？",
+                        "language": "zh-TW",
+                        "attachments": [],
+                        "citations": [],
+                        "annotations": [],
+                        "createdAt": "2026-06-07T12:31:00Z",
+                    },
+                    {
+                        "id": f"msg-{session_id}-002",
+                        "sessionId": session_id,
+                        "sender": {"type": "persona", "id": persona_id},
+                        "role": "assistant",
+                        "content": f"{market} briefing is ready; promotion still requires governance evidence and human gate.",
+                        "language": "en-US",
+                        "attachments": [],
+                        "citations": [{"ref_id": ooda_id, "type": "ooda_packet"}],
+                        "annotations": ["no_live_capital_side_effects"],
+                        "createdAt": "2026-06-07T12:32:00Z",
+                    },
+                ],
+                "createdAt": "2026-06-07T12:30:00Z",
+                "updatedAt": "2026-06-07T13:00:00Z",
+            },
+            skip_datasets=skip_datasets,
+        )
+        changed |= _put_default_record(
+            target,
+            "ooda_packets",
+            ooda_id,
+            {
+                "packet_id": ooda_id,
+                "loop_type": "market_persona_governed_paper",
+                "status": item["ooda_status"],
+                "stage": item["ooda_stage"],
+                "environment": "paper",
+                "market_scope": [market],
+                "strategy_id": strategy_id,
+                "persona_ids": [persona_id],
+                "runtime_id": runtime_id,
+                "evolution_program_id": f"evo-program-{market.lower()}",
+                "capital_pool_id": pool_id,
+                "created_at": "2026-06-07T12:00:00Z",
+                "updated_at": "2026-06-07T13:00:00Z",
+                "observe": {
+                    "market_data_refs": [
+                        f"market://{market}/{item['watch_symbol']}",
+                        *data_source_refs,
+                    ],
+                    "telemetry_refs": [f"telemetry://{runtime_id}/1d"],
+                    "trader_training_refs": [teaching_id],
+                    "data_source_status": data_truth["data_source_status"],
+                },
+                "orient": {
+                    "backend_refs": ["qlib", "vectorbt", "statsmodels", "quantlib", "finrl-rllib"],
+                    "evidence_bundle_refs": [
+                        f"evidence://{market.lower()}-oos",
+                        *research_ref_values,
+                    ],
+                    "consultation_refs": [],
+                    "research_status": research_truth["research_status"],
+                },
+                "decide": {
+                    "approval_decision_id": approval_id,
+                    "human_gate_required": True,
+                    "recommendation": item["recommendation"],
+                },
+                "act": {
+                    "deployment_plan_id": plan_id,
+                    "runtime_binding_id": runtime_id,
+                    "artifact_id": artifact_id,
+                    "live_capital_side_effects": False,
+                },
+                "learn": {
+                    "telemetry_refs": [f"telemetry://{runtime_id}/learn"],
+                    "evolution_followthrough_refs": [f"evo://{persona_id}/next"],
+                    "training_improvement_pct": item["training_improvement_pct"],
+                },
+                "fail_closed_checks": [
+                    {"name": "approved_artifact_only", "passed": True},
+                    {"name": "live_capital_disabled", "passed": True},
+                    {"name": "human_gate_required_for_capital", "passed": True},
+                ],
+            },
+        )
+        changed |= _put_default_record(
+            target,
+            "persona_league",
+            persona_id,
+            {
+                "id": persona_id,
+                "persona_id": persona_id,
+                "name": item["name"],
+                "market_scope": [market],
+                "deployment_stage": item["deployment_stage"],
+                "status": item["persona_status"],
+                "rank": item["league_rank"],
+                "league_score": item["league_score"],
+                "quarter": "2026Q2",
+                "capital_pool_id": pool_id,
+                "runtime_id": runtime_id,
+                "ooda_stage": item["ooda_stage"],
+                "recommendation": item["recommendation"],
+                "governance_required": True,
+                "metrics": common_metrics,
+                "risk_flags": list(item["risk_flags"]),
+                "updated_at": "2026-06-07T13:00:00Z",
+            },
+        )
+
+    return changed
+
+
+def _market_persona_read_model_data() -> Dict[str, Any]:
+    data: Dict[str, Any] = {}
+    _merge_market_persona_fleet(data)
+    return data
 
 
 # Evidence redaction support
@@ -5429,6 +6749,7 @@ def _default_read_data() -> Dict[str, Any]:
             },
         },
     }
+    _merge_market_persona_fleet(data)
     _merge_default_fixture_pack(data, _load_default_fixture_pack_datasets())
     return data
 
@@ -5510,6 +6831,21 @@ class ReadSurfaceStore:
         "ranking_formulas": "ranking_formulas",
         "rebalances": "rebalances",
         "rankings": "rankings",
+        "persona_league": "persona_league",
+    }
+    _MARKET_PERSONA_RECORD_KEYS = {
+        "personas": ["persona_id", "id"],
+        "capital_pools": ["pool_id", "id"],
+        "persona_bindings": ["binding_id", "id"],
+        "bindings": ["binding_id", "id"],
+        "runtime_bindings": ["runtime_id", "runtime_binding_id", "binding_id", "id"],
+        "sessions": ["session_id", "id"],
+        "capability_snapshots": ["snapshot_id", "id"],
+        "teaching_sessions": ["session_id", "id"],
+        "strategy_specs": ["strategy_id", "id"],
+        "telemetry_summaries": ["runtime_id", "id"],
+        "ooda_packets": ["packet_id", "id"],
+        "persona_league": ["persona_id", "id"],
     }
 
     def __init__(
@@ -6958,6 +8294,9 @@ class ReadSurfaceStore:
         # preserve it as-is and do not inject fixture-pack incident records.
         if "incidents" in self._data:
             fixture_datasets.pop("incidents", None)
+        for explicit_agora_dataset in ("agora_signals", "agora_sessions", "agora_watchlist"):
+            if explicit_agora_dataset in self._data:
+                fixture_datasets.pop(explicit_agora_dataset, None)
         if _merge_default_fixture_pack(self._data, fixture_datasets):
             changed = True
         deployment_plans = self._data.get("deployment_plans")
@@ -7250,6 +8589,9 @@ class ReadSurfaceStore:
         if self._backfill_tw04_replay_route_defaults():
             changed = True
 
+        if _merge_market_persona_fleet(self._data, preserve_explicit_agora=True):
+            changed = True
+
         return changed
 
     def _backfill_tw04_replay_route_defaults(self) -> bool:
@@ -7314,6 +8656,59 @@ class ReadSurfaceStore:
             if persona_id:
                 local_personas[persona_id] = record
         return local_personas
+
+    def _market_persona_records(
+        self,
+        dataset: str,
+        key_candidates: Optional[List[str]] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        data_key = self._LOCAL_DATA_KEYS.get(dataset, dataset)
+        records = _market_persona_read_model_data().get(data_key)
+        keys = key_candidates or self._MARKET_PERSONA_RECORD_KEYS.get(dataset, ["id"])
+        return json.loads(json.dumps(_normalize_records(records, keys)))
+
+    def _merge_market_persona_records(
+        self,
+        dataset: str,
+        records_by_id: Dict[str, Dict[str, Any]],
+        key_candidates: Optional[List[str]] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        merged = {
+            str(key): json.loads(json.dumps(record))
+            for key, record in records_by_id.items()
+            if str(key).strip() and isinstance(record, dict)
+        }
+        for key, default_record in self._market_persona_records(dataset, key_candidates).items():
+            existing = merged.get(key)
+            if isinstance(existing, dict):
+                _merge_missing_default_values(existing, default_record)
+                continue
+            merged[key] = default_record
+        return merged
+
+    def _merge_market_persona_record_list(
+        self,
+        dataset: str,
+        records: List[Dict[str, Any]],
+        key_candidates: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        keys = key_candidates or self._MARKET_PERSONA_RECORD_KEYS.get(dataset)
+        if not keys:
+            return records
+        records_by_id = {
+            str(key): record
+            for record in records
+            if isinstance(record, dict)
+            for key in [_record_key(record, keys)]
+            if key
+        }
+        return list(
+            self._merge_market_persona_records(
+                dataset,
+                records_by_id,
+                keys,
+            ).values()
+        )
 
     def _ensure_local_overlay_records(self, dataset: str) -> Dict[str, Dict[str, Any]]:
         self._local_overlay_write_datasets.add(dataset)
@@ -8484,32 +9879,36 @@ class ReadSurfaceStore:
 
     @staticmethod
     def _project_canonical_capital_pool(raw: Dict[str, Any]) -> Dict[str, Any]:
+        pool_id = raw.get("pool_id") or raw.get("id")
         metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
         tenant_id = raw.get("tenant_id") or raw.get("tenantId") or metadata.get("tenant_id") or metadata.get("tenantId")
-        return {
-            "id": raw.get("pool_id") or raw.get("id"),
-            "name": raw.get("name"),
-            "status": raw.get("status"),
-            "owner_id": raw.get("owner_id"),
-            "owner_type": raw.get("owner_type"),
-            "tenant_id": tenant_id,
-            "tenantId": tenant_id,
-            "single_runtime_enforced": raw.get("single_runtime_enforced", True),
-            "risk_policy_ref": raw.get("risk_policy_ref"),
-        }
+        projected = json.loads(json.dumps(raw))
+        projected["id"] = pool_id
+        projected["pool_id"] = pool_id
+        projected.setdefault("name", raw.get("name"))
+        projected.setdefault("status", raw.get("status"))
+        projected.setdefault("owner_id", raw.get("owner_id"))
+        projected.setdefault("owner_type", raw.get("owner_type"))
+        projected.setdefault("single_runtime_enforced", raw.get("single_runtime_enforced", True))
+        projected.setdefault("risk_policy_ref", raw.get("risk_policy_ref"))
+        projected["tenant_id"] = tenant_id
+        projected["tenantId"] = tenant_id
+        return projected
 
     @staticmethod
     def _project_canonical_binding(raw: Dict[str, Any]) -> Dict[str, Any]:
-        return {
-            "id": raw.get("binding_id") or raw.get("id"),
-            "persona_id": raw.get("persona_id"),
-            "capital_pool_id": raw.get("capital_pool_id"),
-            "role": raw.get("role"),
-            "validity": raw.get("validity"),
-            "status": raw.get("status"),
-            "approval_decision_id": raw.get("approval_decision_id"),
-            "allowed_deployment_scope": raw.get("allowed_deployment_scope"),
-        }
+        binding_id = raw.get("binding_id") or raw.get("id")
+        projected = json.loads(json.dumps(raw))
+        projected["id"] = binding_id
+        projected["binding_id"] = binding_id
+        projected.setdefault("persona_id", raw.get("persona_id"))
+        projected.setdefault("capital_pool_id", raw.get("capital_pool_id"))
+        projected.setdefault("role", raw.get("role"))
+        projected.setdefault("validity", raw.get("validity"))
+        projected.setdefault("status", raw.get("status"))
+        projected.setdefault("approval_decision_id", raw.get("approval_decision_id"))
+        projected.setdefault("allowed_deployment_scope", raw.get("allowed_deployment_scope"))
+        return projected
 
     @staticmethod
     def _project_canonical_runtime_binding(raw: Dict[str, Any]) -> Dict[str, Any]:
@@ -8518,56 +9917,56 @@ class ReadSurfaceStore:
         deployment_mode = raw.get("deployment_mode") or deployment_stage
         metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
         tenant_id = raw.get("tenant_id") or raw.get("tenantId") or metadata.get("tenant_id") or metadata.get("tenantId")
-        return {
-            "id": binding_id,
-            "binding_id": binding_id,
-            "runtime_binding_id": raw.get("runtime_binding_id") or binding_id,
-            "runtime_id": raw.get("runtime_id") or binding_id,
-            "name": raw.get("name"),
-            "state": raw.get("state") or raw.get("status"),
-            "persona_id": raw.get("persona_id"),
-            "deployment_plan_id": raw.get("deployment_plan_id") or raw.get("plan_id"),
-            "runtime_kind": raw.get("runtime_kind") or deployment_mode,
-            "deployment_stage": deployment_stage,
-            "deployment_mode": deployment_mode,
-            "status": raw.get("status"),
-            "plan_id": raw.get("plan_id"),
-            "capital_pool_id": raw.get("capital_pool_id"),
-            "artifact_id": raw.get("artifact_id"),
-            "artifact_version": raw.get("artifact_version"),
-            "persona_capital_binding_id": raw.get("persona_capital_binding_id"),
-            "tenant_id": tenant_id,
-            "tenantId": tenant_id,
-            "effective_at": raw.get("effective_at"),
-            "retired_at": raw.get("retired_at"),
-            "rollback_parent": raw.get("rollback_parent"),
-            "rollback_action_type": raw.get("rollback_action_type"),
-            "created_at": raw.get("created_at"),
-            "updated_at": raw.get("updated_at"),
-            "created_by": raw.get("created_by"),
-            "params": json.loads(json.dumps(raw.get("params") or {})),
-            "metadata": json.loads(json.dumps(metadata)),
-        }
+        projected = json.loads(json.dumps(raw))
+        projected["id"] = binding_id
+        projected["binding_id"] = binding_id
+        projected["runtime_binding_id"] = raw.get("runtime_binding_id") or binding_id
+        projected["runtime_id"] = raw.get("runtime_id") or binding_id
+        projected.setdefault("name", raw.get("name"))
+        projected.setdefault("state", raw.get("state") or raw.get("status"))
+        projected.setdefault("persona_id", raw.get("persona_id"))
+        projected.setdefault("deployment_plan_id", raw.get("deployment_plan_id") or raw.get("plan_id"))
+        projected.setdefault("runtime_kind", raw.get("runtime_kind") or deployment_mode)
+        projected["deployment_stage"] = deployment_stage
+        projected["deployment_mode"] = deployment_mode
+        projected.setdefault("status", raw.get("status"))
+        projected.setdefault("plan_id", raw.get("plan_id"))
+        projected.setdefault("capital_pool_id", raw.get("capital_pool_id"))
+        projected.setdefault("artifact_id", raw.get("artifact_id"))
+        projected.setdefault("artifact_version", raw.get("artifact_version"))
+        projected.setdefault("persona_capital_binding_id", raw.get("persona_capital_binding_id"))
+        projected["tenant_id"] = tenant_id
+        projected["tenantId"] = tenant_id
+        projected.setdefault("effective_at", raw.get("effective_at"))
+        projected.setdefault("retired_at", raw.get("retired_at"))
+        projected.setdefault("rollback_parent", raw.get("rollback_parent"))
+        projected.setdefault("rollback_action_type", raw.get("rollback_action_type"))
+        projected.setdefault("created_at", raw.get("created_at"))
+        projected.setdefault("updated_at", raw.get("updated_at"))
+        projected.setdefault("created_by", raw.get("created_by"))
+        projected.setdefault("params", json.loads(json.dumps(raw.get("params") or {})))
+        projected["metadata"] = json.loads(json.dumps(metadata))
+        return projected
 
     @staticmethod
     def _project_service_persona(raw: Dict[str, Any]) -> Dict[str, Any]:
         persona_id = raw.get("persona_id") or raw.get("id")
         metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
         tenant_id = raw.get("tenant_id") or raw.get("tenantId") or metadata.get("tenant_id") or metadata.get("tenantId")
-        return {
-            "id": persona_id,
-            "persona_id": persona_id,
-            "name": raw.get("name"),
-            "mandate": raw.get("mandate"),
-            "lifecycle_state": raw.get("lifecycle_state"),
-            "created_at": raw.get("created_at"),
-            "strategy_family": raw.get("strategy_family"),
-            "status": raw.get("status"),
-            "updated_at": raw.get("updated_at"),
-            "tenant_id": tenant_id,
-            "tenantId": tenant_id,
-            "metadata": raw.get("metadata", {}),
-        }
+        projected = json.loads(json.dumps(raw))
+        projected["id"] = persona_id
+        projected["persona_id"] = persona_id
+        projected.setdefault("name", raw.get("name"))
+        projected.setdefault("mandate", raw.get("mandate"))
+        projected.setdefault("lifecycle_state", raw.get("lifecycle_state"))
+        projected.setdefault("created_at", raw.get("created_at"))
+        projected.setdefault("strategy_family", raw.get("strategy_family"))
+        projected.setdefault("status", raw.get("status"))
+        projected.setdefault("updated_at", raw.get("updated_at"))
+        projected.setdefault("metadata", raw.get("metadata", {}))
+        projected["tenant_id"] = tenant_id
+        projected["tenantId"] = tenant_id
+        return projected
 
     @staticmethod
     def _project_service_session(raw: Dict[str, Any]) -> Dict[str, Any]:
@@ -8677,6 +10076,7 @@ class ReadSurfaceStore:
         lifecycle_state: Optional[str] = None,
         mandate: Optional[str] = None,
         strategy_family: Optional[str] = None,
+        include_market_persona_defaults: bool = False,
     ) -> List[Dict[str, Any]]:
         local_personas = self._local_bff_persona_records()
         available, raw_personas = self._service.list_records("personas")
@@ -8687,7 +10087,6 @@ class ReadSurfaceStore:
                 if str(projected.get("persona_id") or projected.get("id") or "").strip()
             }
             personas_by_id.update(local_personas)
-            personas = list(personas_by_id.values())
         else:
             personas_by_id = {}
             local_fallback = self._local_fallback("personas")
@@ -8698,14 +10097,30 @@ class ReadSurfaceStore:
                     if isinstance(persona, dict)
                 })
             personas_by_id.update(local_personas)
-            personas = [persona for key, persona in personas_by_id.items() if key]
+        if include_market_persona_defaults:
+            personas_by_id = self._merge_market_persona_records(
+                "personas",
+                personas_by_id,
+                ["persona_id", "id"],
+            )
+        personas = [persona for key, persona in personas_by_id.items() if key]
         if lifecycle_state:
             personas = [p for p in personas if p.get("lifecycle_state") == lifecycle_state]
         if mandate:
             personas = [p for p in personas if p.get("mandate") == mandate]
         if strategy_family:
             personas = [p for p in personas if p.get("strategy_family") == strategy_family]
-        return sorted(personas, key=lambda x: x.get("created_at", ""), reverse=True)
+        anchor = [
+            persona
+            for persona in personas
+            if str(persona.get("id") or persona.get("persona_id") or "") == "persona-alpha"
+        ]
+        rest = [
+            persona
+            for persona in personas
+            if str(persona.get("id") or persona.get("persona_id") or "") != "persona-alpha"
+        ]
+        return anchor + sorted(rest, key=lambda x: x.get("created_at", ""), reverse=True)
 
     @staticmethod
     def _is_bff_local_persona(persona: Dict[str, Any]) -> bool:
@@ -8822,6 +10237,7 @@ class ReadSurfaceStore:
         self,
         status: Optional[str] = None,
         risk_policy_ref: Optional[str] = None,
+        include_market_persona_defaults: bool = False,
     ) -> List[Dict[str, Any]]:
         local_pools = self._local_overlay_records("capital_pools")
         available, raw_pools = self._canonical.list_records("capital_pools")
@@ -8832,14 +10248,30 @@ class ReadSurfaceStore:
             }
             for pool_id, pool in local_pools.items():
                 pools_by_id[str(pool.get("pool_id") or pool.get("id") or pool_id)] = pool
-            pools = [pool for key, pool in pools_by_id.items() if key]
         else:
-            pools = list(local_pools.values())
+            pools_by_id = {
+                str(pool.get("pool_id") or pool.get("id") or pool_id): pool
+                for pool_id, pool in local_pools.items()
+                if isinstance(pool, dict)
+            }
+        if include_market_persona_defaults:
+            pools_by_id = self._merge_market_persona_records(
+                "capital_pools",
+                pools_by_id,
+                ["pool_id", "id"],
+            )
+        pools = [pool for key, pool in pools_by_id.items() if key]
         if status:
             pools = [p for p in pools if p.get("status") == status]
         if risk_policy_ref:
             pools = [p for p in pools if p.get("risk_policy_ref") == risk_policy_ref]
-        return sorted(pools, key=lambda x: x.get("id", ""))
+        return sorted(
+            pools,
+            key=lambda x: (
+                0 if str(x.get("id") or x.get("pool_id") or "") == "pool-main" else 1,
+                str(x.get("id") or x.get("pool_id") or ""),
+            ),
+        )
 
     def list_bindings(
         self,
@@ -8847,12 +10279,27 @@ class ReadSurfaceStore:
         capital_pool_id: Optional[str] = None,
         role: Optional[str] = None,
         validity: Optional[str] = None,
+        include_market_persona_defaults: bool = False,
     ) -> List[Dict[str, Any]]:
         available, raw_bindings = self._canonical.list_records("persona_bindings")
         if available:
-            bindings = [self._project_canonical_binding(binding) for binding in raw_bindings]
+            bindings_by_id = {
+                str(binding.get("binding_id") or binding.get("id") or ""): binding
+                for binding in (self._project_canonical_binding(binding) for binding in raw_bindings)
+            }
         else:
-            bindings = list((self._local_fallback("persona_bindings") or {}).values())
+            bindings_by_id = {
+                str(binding.get("binding_id") or binding.get("id") or binding_id): binding
+                for binding_id, binding in (self._local_fallback("persona_bindings") or {}).items()
+                if isinstance(binding, dict)
+            }
+        if include_market_persona_defaults:
+            bindings_by_id = self._merge_market_persona_records(
+                "persona_bindings",
+                bindings_by_id,
+                ["binding_id", "id"],
+            )
+        bindings = [binding for key, binding in bindings_by_id.items() if key]
         if persona_id:
             bindings = [b for b in bindings if b.get("persona_id") == persona_id]
         if capital_pool_id:
@@ -8867,6 +10314,7 @@ class ReadSurfaceStore:
         self,
         status: Optional[str] = None,
         capital_pool_id: Optional[str] = None,
+        include_fixture_pack: bool = True,
     ) -> List[Dict[str, Any]]:
         available, raw_plans = self._canonical.list_records("deployment_plans")
         if available:
@@ -8904,12 +10352,15 @@ class ReadSurfaceStore:
                 p for p in plans
                 if str(p.get("capital_pool_id") or p.get("target_pool_id") or "") == capital_pool_id
             ]
+        if not include_fixture_pack:
+            plans = [p for p in plans if not _is_fixture_pack_record(p)]
         return sorted(plans, key=lambda x: x.get("id", ""))
 
     def list_approval_decisions(
         self,
         outcome: Optional[str] = None,
         state: Optional[str] = None,
+        include_fixture_pack: bool = True,
     ) -> List[Dict[str, Any]]:
         available, raw_decisions = self._canonical.list_records("approval_decisions")
         if available:
@@ -8923,32 +10374,68 @@ class ReadSurfaceStore:
                 d for d in decisions
                 if str(d.get("state") or "").lower() == state.lower()
             ]
-        return sorted(decisions, key=lambda x: str(x.get("decided_at") or ""), reverse=True)
+        if not include_fixture_pack:
+            decisions = [d for d in decisions if not _is_fixture_pack_record(d)]
+        anchor = [
+            decision
+            for decision in decisions
+            if str(decision.get("id") or decision.get("decision_id") or "") == "approval-042"
+        ]
+        rest = [
+            decision
+            for decision in decisions
+            if str(decision.get("id") or decision.get("decision_id") or "") != "approval-042"
+        ]
+        return anchor + sorted(rest, key=lambda x: str(x.get("decided_at") or ""), reverse=True)
 
     def list_runtime_bindings(
         self,
         deployment_mode: Optional[str] = None,
         version: Optional[str] = None,
+        include_market_persona_defaults: bool = False,
     ) -> List[Dict[str, Any]]:
         local_bindings = self._local_overlay_records("runtime_bindings")
         available, raw_bindings = self._canonical.list_records("runtime_bindings")
         if available:
             bindings_by_id = {
-                str(binding.get("binding_id") or binding.get("runtime_binding_id") or binding.get("id") or ""): binding
+                str(
+                    binding.get("runtime_id")
+                    or binding.get("runtime_binding_id")
+                    or binding.get("binding_id")
+                    or binding.get("id")
+                    or ""
+                ): binding
                 for binding in (self._project_canonical_runtime_binding(binding) for binding in raw_bindings)
             }
-            for binding_id, binding in local_bindings.items():
-                key = str(
-                    binding.get("binding_id")
+        else:
+            bindings_by_id = {
+                str(
+                    binding.get("runtime_id")
                     or binding.get("runtime_binding_id")
+                    or binding.get("binding_id")
                     or binding.get("id")
                     or binding_id
-                )
-                if key:
-                    bindings_by_id[key] = binding
-            bindings = [binding for key, binding in bindings_by_id.items() if key]
-        else:
-            bindings = list(local_bindings.values()) or list((self._local_fallback("runtime_bindings") or {}).values())
+                ): binding
+                for binding_id, binding in (self._local_fallback("runtime_bindings") or {}).items()
+                if isinstance(binding, dict)
+            }
+        for binding_id, binding in local_bindings.items():
+            key = str(
+                binding.get("runtime_id")
+                or binding.get("runtime_binding_id")
+                or binding.get("binding_id")
+                or binding.get("id")
+                or binding_id
+            )
+            if key:
+                bindings_by_id[key] = json.loads(json.dumps(binding))
+        if include_market_persona_defaults:
+            bindings_by_id = self._merge_market_persona_records(
+                "runtime_bindings",
+                bindings_by_id,
+                ["runtime_id", "runtime_binding_id", "binding_id", "id"],
+            )
+        bindings = [binding for key, binding in bindings_by_id.items() if key]
         if deployment_mode:
             bindings = [
                 b for b in bindings
@@ -9229,22 +10716,15 @@ class ReadSurfaceStore:
     def get_binding(self, binding_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not binding_id:
             return None
-        available, raw = self._canonical.binding(binding_id)
-        if available:
-            return self._project_canonical_binding(raw) if raw else None
-        return (self._local_fallback("persona_bindings") or {}).get(binding_id)
+        for binding in self.list_bindings():
+            if str(binding.get("binding_id") or binding.get("id") or "") == str(binding_id):
+                return json.loads(json.dumps(binding))
+        return None
 
     def get_bindings_for_pool(self, pool_id: Optional[str]) -> List[Dict[str, Any]]:
         if not pool_id:
             return []
-        available, bindings = self._canonical.bindings_for_pool(pool_id)
-        if available:
-            return [self._project_canonical_binding(binding) for binding in bindings]
-        return [
-            binding
-            for binding in (self._local_fallback("persona_bindings") or {}).values()
-            if binding.get("capital_pool_id") == pool_id
-        ]
+        return self.list_bindings(capital_pool_id=pool_id)
 
     def get_bindings_for_persona(self, persona_id: Optional[str]) -> Optional[List[Dict[str, Any]]]:
         """Return all bindings where the given persona_id is the owner.
@@ -9255,18 +10735,7 @@ class ReadSurfaceStore:
             return None
         if self.get_persona(persona_id) is None:
             return None
-        available, raw_bindings = self._canonical.list_records("persona_bindings")
-        if available:
-            return [
-                self._project_canonical_binding(binding)
-                for binding in raw_bindings
-                if binding.get("persona_id") == persona_id
-            ]
-        return [
-            binding
-            for binding in (self._local_fallback("persona_bindings") or {}).values()
-            if binding.get("persona_id") == persona_id
-        ]
+        return self.list_bindings(persona_id=persona_id)
 
     # ------------------------------------------------------------------ #
     # Ranking formulas
@@ -9419,6 +10888,57 @@ class ReadSurfaceStore:
         if not ranking_id:
             return None
         return self._local_overlay_records("rankings").get(ranking_id)
+
+    # ------------------------------------------------------------------ #
+    # Persona League / Management fleet projection
+    # ------------------------------------------------------------------ #
+
+    def list_persona_league(
+        self,
+        *,
+        market_scope: Optional[str] = None,
+        status: Optional[str] = None,
+        include_market_persona_defaults: bool = False,
+    ) -> List[Dict[str, Any]]:
+        items = [json.loads(json.dumps(item)) for item in self._read_dataset_records("persona_league")]
+        if include_market_persona_defaults:
+            items = self._merge_market_persona_record_list(
+                "persona_league",
+                items,
+                ["persona_id", "id"],
+            )
+        if market_scope:
+            requested = {item.strip().upper() for item in market_scope.split(",") if item.strip()}
+            items = [
+                item
+                for item in items
+                if requested.intersection(
+                    {str(scope).upper() for scope in (item.get("market_scope") or [])}
+                )
+            ]
+        if status:
+            requested_statuses = {item.strip().lower() for item in status.split(",") if item.strip()}
+            items = [
+                item
+                for item in items
+                if str(item.get("status") or "").lower() in requested_statuses
+            ]
+        return sorted(
+            items,
+            key=lambda item: (
+                int(item.get("rank") or 9999),
+                -float(item.get("league_score") or 0.0),
+                str(item.get("persona_id") or item.get("id") or ""),
+            ),
+        )
+
+    def get_persona_league_entry(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not persona_id:
+            return None
+        for item in self.list_persona_league():
+            if str(item.get("persona_id") or item.get("id") or "") == str(persona_id):
+                return json.loads(json.dumps(item))
+        return None
 
     # ------------------------------------------------------------------ #
     # Evolution programs (BFF-LUV-GAP-004)
@@ -10010,30 +11530,17 @@ class ReadSurfaceStore:
     def get_runtime_binding(self, binding_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not binding_id:
             return None
-        for binding in self._local_overlay_records("runtime_bindings").values():
-            if str(binding.get("binding_id") or binding.get("runtime_binding_id") or binding.get("id") or "") == binding_id:
-                return binding
-        available, raw = self._canonical.runtime_binding(binding_id)
-        if available:
-            return self._project_canonical_runtime_binding(raw) if raw else None
-        return (self._local_fallback("runtime_bindings") or {}).get(binding_id)
+        for binding in self.list_runtime_bindings(include_market_persona_defaults=True):
+            if str(binding.get("binding_id") or binding.get("runtime_binding_id") or binding.get("id") or "") == str(binding_id):
+                return json.loads(json.dumps(binding))
+        return None
 
     def get_runtime_binding_by_runtime_id(self, runtime_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not runtime_id:
             return None
-        for binding in self._local_overlay_records("runtime_bindings").values():
-            if str(binding.get("runtime_id") or binding.get("id") or binding.get("binding_id") or "") == runtime_id:
-                return binding
-        available, raw_bindings = self._canonical.list_records("runtime_bindings")
-        if available:
-            for raw in raw_bindings:
-                raw_runtime_id = str(raw.get("runtime_id") or raw.get("binding_id") or raw.get("id") or "")
-                if raw_runtime_id == runtime_id:
-                    return self._project_canonical_runtime_binding(raw)
-            return None
-        for binding in (self._local_fallback("runtime_bindings") or {}).values():
+        for binding in self.list_runtime_bindings(include_market_persona_defaults=True):
             if str(binding.get("runtime_id") or binding.get("id") or "") == runtime_id:
-                return binding
+                return json.loads(json.dumps(binding))
         return None
 
     def get_rollbacks(self, runtime_id: Optional[str]) -> List[Dict[str, Any]]:
@@ -10351,8 +11858,11 @@ class ReadSurfaceStore:
         *,
         statuses: Optional[List[str]] = None,
         owner: Optional[str] = None,
+        include_fixture_pack: bool = True,
     ) -> List[Dict[str, Any]]:
         tickets = self._read_dataset_records("research_tickets")
+        if not include_fixture_pack:
+            tickets = [ticket for ticket in tickets if not _is_fixture_pack_record(ticket)]
         if statuses:
             requested_statuses = {str(value).strip().lower() for value in statuses if str(value).strip()}
             tickets = [
@@ -11318,6 +12828,7 @@ class ReadSurfaceStore:
         source_kind: Optional[str] = None,
         persona_id: Optional[str] = None,
         include_retired: bool = False,
+        include_fixture_pack: bool = True,
     ) -> List[Dict[str, Any]]:
         items: List[Dict[str, Any]] = []
         for strategy_spec in self._read_dataset_records("strategy_specs"):
@@ -11344,6 +12855,8 @@ class ReadSurfaceStore:
                 continue
 
             strategy_id = str(current_version.get("strategy_id") or "")
+            if not include_fixture_pack and _is_fixture_pack_record({"strategy_id": strategy_id}):
+                continue
             items.append(
                 {
                     "object_ref": json.loads(json.dumps(current_version.get("object_ref") or {})),
@@ -11903,17 +13416,26 @@ class ReadSurfaceStore:
             or exp.get("strategy_id")
             or strategy_selector.get("strategy_id")
         )
+        run_config = exp.get("run_config") or {}
         return {
             "experiment_id": exp.get("experiment_id"),
             "ticket_id": exp.get("ticket_id"),
             "experiment_name": exp.get("experiment_name"),
             "status": status,
+            "stage": exp.get("stage"),
+            "framework": exp.get("framework") or run_config.get("backend"),
             "queued_at": exp.get("queued_at"),
             "started_at": exp.get("started_at"),
             "completed_at": exp.get("completed_at"),
             "strategy_id": strategy_id,
             "linked_strategy_id": strategy_id,
+            "dataset_ref": exp.get("dataset_ref") or run_config.get("dataset_ref"),
+            "dataset_manifest_id": (
+                exp.get("dataset_manifest_id") or run_config.get("dataset_manifest_id")
+            ),
             "artifact_ids": list(exp.get("artifact_ids") or []),
+            "registry_admission_status": exp.get("registry_admission_status"),
+            "can_deploy": bool(exp.get("can_deploy", True)),
             "allowedActions": {"canCancel": cls._rw04_can_cancel(status)},
         }
 
@@ -11931,6 +13453,7 @@ class ReadSurfaceStore:
             "ticket_id": exp.get("ticket_id"),
             "experiment_name": exp.get("experiment_name"),
             "status": status,
+            "stage": exp.get("stage"),
             "queued_at": exp.get("queued_at"),
             "started_at": exp.get("started_at"),
             "completed_at": exp.get("completed_at"),
@@ -11945,7 +13468,9 @@ class ReadSurfaceStore:
             },
             "parameter_set": json.loads(json.dumps(exp.get("parameter_set") or {})),
             "run_config": {
+                "backend": run_config.get("backend"),
                 "dataset_ref": run_config.get("dataset_ref"),
+                "dataset_manifest_id": run_config.get("dataset_manifest_id"),
                 "time_range": {
                     "start_at": time_range.get("start_at"),
                     "end_at": time_range.get("end_at"),
@@ -11963,6 +13488,18 @@ class ReadSurfaceStore:
             },
             "validation_warnings": json.loads(json.dumps(exp.get("validation_warnings") or [])),
             "artifact_ids": list(exp.get("artifact_ids") or []),
+            "artifact_refs": json.loads(json.dumps(exp.get("artifact_refs") or [])),
+            "framework": exp.get("framework") or run_config.get("backend"),
+            "dataset_ref": exp.get("dataset_ref") or run_config.get("dataset_ref"),
+            "dataset_manifest_id": (
+                exp.get("dataset_manifest_id") or run_config.get("dataset_manifest_id")
+            ),
+            "research_linkage": json.loads(json.dumps(exp.get("research_linkage") or {})),
+            "evidence_refs": json.loads(json.dumps(exp.get("evidence_refs") or [])),
+            "safety_assertions": json.loads(json.dumps(exp.get("safety_assertions") or {})),
+            "registry_admission_status": exp.get("registry_admission_status"),
+            "can_deploy": bool(exp.get("can_deploy", True)),
+            "deployment_stage": exp.get("deployment_stage"),
             "failure": {
                 "reason_code": failure.get("reason_code"),
                 "message": failure.get("message"),
@@ -11978,10 +13515,23 @@ class ReadSurfaceStore:
         Falls through to the in-memory dict so experiments created in the same
         process are always visible before the file-cache is flushed.
         """
+        defaults = _governed_research_experiment_defaults()
         available, records = self._service.list_records("research_experiments")
         if available:
-            return {str(r.get("experiment_id") or r.get("id") or ""): r for r in records}
-        return self._data.get("research_experiments") or {}
+            records_by_id = {
+                str(r.get("experiment_id") or r.get("id") or ""): r
+                for r in records
+                if isinstance(r, dict)
+            }
+        else:
+            records_by_id = dict(self._data.get("research_experiments") or {})
+        for experiment_id, default in defaults.items():
+            existing = records_by_id.get(experiment_id)
+            if isinstance(existing, dict):
+                _merge_missing_default_values(existing, default)
+                continue
+            records_by_id[experiment_id] = default
+        return records_by_id
 
     def list_research_experiments(
         self,
@@ -12011,9 +13561,9 @@ class ReadSurfaceStore:
         if not experiment_id:
             return None
         available, record = self._service.record("research_experiments", experiment_id)
-        if available:
+        if available and record:
             return self._project_research_experiment_detail(record) if record else None
-        experiment = (self._data.get("research_experiments") or {}).get(experiment_id)
+        experiment = self._research_experiments_store().get(experiment_id)
         if not experiment:
             return None
         return self._project_research_experiment_detail(experiment)
@@ -13068,7 +14618,17 @@ class ReadSurfaceStore:
             if str(ticket.get("ticket_id") or "").strip()
         }
         cutoff_days = self._date_range_cutoff_token(date_range)
-        reference_now = datetime.now(timezone.utc).replace(tzinfo=None)
+        index_adapter = self.get_research_search_index()
+        reference_at = (
+            _parse_rfc3339((index_adapter or {}).get("snapshot_at"))
+            if isinstance(index_adapter, dict)
+            else None
+        )
+        reference_now = (
+            reference_at.replace(tzinfo=None)
+            if reference_at is not None
+            else datetime.now(timezone.utc).replace(tzinfo=None)
+        )
 
         eligible_documents: List[Dict[str, Any]] = []
         for document in documents:
@@ -13207,7 +14767,17 @@ class ReadSurfaceStore:
             incidents = [i for i in incidents if i.get("severity") == severity]
         if affected_pool_id:
             incidents = [i for i in incidents if i.get("capital_pool_id") == affected_pool_id]
-        return sorted(incidents, key=lambda x: x.get("created_at", ""), reverse=True)
+        anchor = [
+            incident
+            for incident in incidents
+            if str(incident.get("incident_id") or incident.get("id") or "") == "inc-20260410-001"
+        ]
+        rest = [
+            incident
+            for incident in incidents
+            if str(incident.get("incident_id") or incident.get("id") or "") != "inc-20260410-001"
+        ]
+        return anchor + sorted(rest, key=lambda x: x.get("created_at", ""), reverse=True)
 
     def get_incident(self, incident_id: str) -> Optional[Dict[str, Any]]:
         available, raw = self._service.record("incidents", incident_id)
@@ -13421,8 +14991,11 @@ class ReadSurfaceStore:
         target_type: Optional[str] = None,
         from_ts: Optional[datetime] = None,
         to_ts: Optional[datetime] = None,
+        include_fixture_pack: bool = True,
     ) -> List[Dict[str, Any]]:
         events = list(self._local_fallback("governance_audit_events") or [])
+        if not include_fixture_pack:
+            events = [event for event in events if not _is_fixture_pack_record(event)]
 
         if actor:
             events = [event for event in events if event.get("actor") == actor]
@@ -13547,10 +15120,13 @@ class ReadSurfaceStore:
     def list_lineage_edges(
         self,
         artifact_id: Optional[str] = None,
+        include_fixture_pack: bool = True,
     ) -> List[Dict[str, Any]]:
         available, edges = self._service.list_records("lineage_edges")
         if not available:
             edges = list((self._local_fallback("lineage_edges") or {}).values())
+        if not include_fixture_pack:
+            edges = [edge for edge in edges if not _is_fixture_pack_record(edge)]
         if artifact_id:
             edges = [
                 e for e in edges
@@ -13561,8 +15137,9 @@ class ReadSurfaceStore:
     def list_lineage_records(
         self,
         artifact_id: Optional[str] = None,
+        include_fixture_pack: bool = True,
     ) -> List[Dict[str, Any]]:
-        edges = self.list_lineage_edges()
+        edges = self.list_lineage_edges(include_fixture_pack=include_fixture_pack)
         if artifact_id:
             artifact_edges = [
                 edge

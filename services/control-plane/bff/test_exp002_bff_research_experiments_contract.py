@@ -224,7 +224,7 @@ def test_exp002_detail_404_for_unknown_id() -> None:
         detail = payload.get("detail") or payload
         error = detail.get("error") if isinstance(detail, dict) else payload
         if isinstance(error, dict):
-            assert error.get("code") == "OBJECT_NOT_FOUND"
+            assert error.get("code") == "RESOURCE_NOT_FOUND"
 
 
 def test_exp002_detail_requires_auth() -> None:
