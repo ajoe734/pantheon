@@ -25647,8 +25647,18 @@ def _persona_id(record: Dict[str, Any]) -> str:
     return str(record.get("persona_id") or record.get("id") or "").strip()
 
 
-def _first_binding_for_persona(persona_id: str) -> Optional[Dict[str, Any]]:
-    bindings = read_store.get_bindings_for_persona(persona_id)
+def _first_binding_for_persona(
+    persona_id: str,
+    *,
+    include_market_persona_defaults: bool = False,
+) -> Optional[Dict[str, Any]]:
+    if include_market_persona_defaults:
+        bindings = read_store.list_bindings(
+            persona_id=persona_id,
+            include_market_persona_defaults=True,
+        )
+    else:
+        bindings = read_store.get_bindings_for_persona(persona_id)
     if not bindings:
         return None
     active = [
@@ -25660,10 +25670,16 @@ def _first_binding_for_persona(persona_id: str) -> Optional[Dict[str, Any]]:
     return active[0] if active else bindings[0]
 
 
-def _runtime_for_pool(pool_id: Optional[str]) -> Optional[Dict[str, Any]]:
+def _runtime_for_pool(
+    pool_id: Optional[str],
+    *,
+    include_market_persona_defaults: bool = False,
+) -> Optional[Dict[str, Any]]:
     if not pool_id:
         return None
-    for runtime in read_store.list_runtime_bindings():
+    for runtime in read_store.list_runtime_bindings(
+        include_market_persona_defaults=include_market_persona_defaults,
+    ):
         if str(runtime.get("capital_pool_id") or "") == str(pool_id):
             return runtime
     return None
@@ -25718,13 +25734,21 @@ def _training_improvement_delta(metrics: Dict[str, Any]) -> float:
     return _as_float(metrics.get("training_improvement_pct")) / 100.0
 
 
-def _build_persona_health_items(snapshot_at: str) -> List[Dict[str, Any]]:
+def _build_persona_health_items(
+    snapshot_at: str,
+    *,
+    include_market_persona_defaults: bool = False,
+) -> List[Dict[str, Any]]:
     league_by_persona = {
         str(item.get("persona_id") or item.get("id") or ""): item
-        for item in read_store.list_persona_league()
+        for item in read_store.list_persona_league(
+            include_market_persona_defaults=include_market_persona_defaults,
+        )
     }
     items: List[Dict[str, Any]] = []
-    for persona in read_store.list_personas():
+    for persona in read_store.list_personas(
+        include_market_persona_defaults=include_market_persona_defaults,
+    ):
         persona_id = _persona_id(persona)
         if not persona_id:
             continue
@@ -25741,13 +25765,19 @@ def _build_persona_health_items(snapshot_at: str) -> List[Dict[str, Any]]:
             else {}
         )
         metrics = {**performance, **league_metrics}
-        binding = _first_binding_for_persona(persona_id) or {}
+        binding = _first_binding_for_persona(
+            persona_id,
+            include_market_persona_defaults=include_market_persona_defaults,
+        ) or {}
         pool_id = (
             league_entry.get("capital_pool_id")
             or metadata.get("capital_pool_id")
             or binding.get("capital_pool_id")
         )
-        runtime = _runtime_for_pool(pool_id) or {}
+        runtime = _runtime_for_pool(
+            pool_id,
+            include_market_persona_defaults=include_market_persona_defaults,
+        ) or {}
         runtime_id = (
             league_entry.get("runtime_id")
             or runtime.get("runtime_id")
@@ -26030,10 +26060,13 @@ async def bff_management_fleet(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     snapshot_at = utc_now()
-    pools = read_store.list_capital_pools()
-    runtimes = read_store.list_runtime_bindings()
-    league = read_store.list_persona_league()
-    health = _build_persona_health_items(snapshot_at)
+    pools = read_store.list_capital_pools(include_market_persona_defaults=True)
+    runtimes = read_store.list_runtime_bindings(include_market_persona_defaults=True)
+    league = read_store.list_persona_league(include_market_persona_defaults=True)
+    health = _build_persona_health_items(
+        snapshot_at,
+        include_market_persona_defaults=True,
+    )
     pending_human_gate = [
         item
         for item in league
