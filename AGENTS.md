@@ -63,3 +63,31 @@ When deploying or validating the dev frontend, ensure the frontend build uses
 explicitly enables real writes. Also ensure the dev BFF
 `PANTHEON_BFF_CORS_ORIGINS` includes the Pantheon-owned frontend origin before
 browser smoke tests. See `docs/frontend/execute-plans-dev-hosting.md`.
+
+## Management AI / OpenClaw Dev Work
+
+Management AI frontend work must start from `execute-plans` and call Pantheon
+BFF assistant routes. Do not route new Management AI development through
+Lovable, and do not use `front-ai-trading-system` as a source checkout.
+
+For SA/SD generation and downstream agent work, the expected route family is:
+
+- `POST /bff/assistant/dev-docs/generate`
+- `GET /bff/assistant/dev-docs/{packetId}`
+- `POST /bff/assistant/dev-bridge/task-packet`
+- `GET /bff/assistant/orchestrator/status`
+- `GET|POST /bff/assistant/tools/*` for governed tool preview/validation/execute
+
+Provider readiness is necessary but not sufficient. Before claiming that
+Management AI can read/write VM files or collaborate on debugging through
+OpenClaw, verify `GET /bff/assistant/mode` reports `kernel_enabled: true` and
+that control mode can be activated by an authorized operator/admin session. If
+`providerReadiness.ready` is true but `kernel_enabled` is false, the blocker is
+dev BFF configuration, not frontend hosting.
+
+The supervisor handoff path is the assistant dev bridge inbox under
+`.orchestrator/assistant-dev-packets/`. The supervisor must drain pending task
+packets into `ai-task-archive/tasks/` before a SA/SD packet is considered
+accepted by downstream workers. See
+`docs/operations/management-ai-openclaw-dev-bridge.md` for the full validation
+runbook.

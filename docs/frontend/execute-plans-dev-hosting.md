@@ -103,6 +103,13 @@ Minimum smoke evidence:
 - If write paths are tested, the result is either a governed success or a
   documented fail-closed response.
 
+Management AI/OpenClaw dev work has an additional readiness gate. Provider
+readiness is not enough: `/bff/assistant/mode` must report
+`kernel_enabled: true`, and control mode must be activatable by an authorized
+operator/admin session before claiming that Management AI can read/write VM
+files or coordinate debugging through OpenClaw. See
+`docs/operations/management-ai-openclaw-dev-bridge.md`.
+
 ## CI Rule
 
 Pull-request CI may run Playwright against a local PR frontend so stale external
