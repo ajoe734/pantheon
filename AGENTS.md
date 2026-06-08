@@ -76,7 +76,35 @@ For SA/SD generation and downstream agent work, the expected route family is:
 - `GET /bff/assistant/dev-docs/{packetId}`
 - `POST /bff/assistant/dev-bridge/task-packet`
 - `GET /bff/assistant/orchestrator/status`
-- `GET|POST /bff/assistant/tools/*` for governed tool preview/validation/execute
+- `GET|POST /bff/assistant/tools/*` for governed UI/ops action
+  preview/validation/execute only
+
+Do not confuse `GET|POST /bff/assistant/tools/*` with VM file-system access.
+Those routes expose Pantheon-governed action contracts such as preview,
+validation, and execute for BFF-owned operations. They are not shell, repo file
+read, or repo file write tools.
+
+OpenClaw-backed VM inspection and debugging is reached through Management AI
+conversation routes, primarily `POST /bff/management/nl/ask`, with Pantheon BFF
+calling the OpenClaw gateway adapter. In active `kernel_debug` mode, provider
+work must remain read-only. In active `kernel_repair` mode, provider write work
+must run in a clean repair task worktree; never point repair at the shared live
+checkout.
+
+Any frontend or BFF change that claims Management AI can write VM files must
+send the OpenClaw repair metadata expected by the provider:
+
+- `task_id`
+- `task_worktree`
+- `declared_scope`
+- `expected_branch`
+- `remote`
+- `merge_target`
+
+The repair worktree must already exist under
+`PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT`, be the git repo root, be clean before
+provider execution, and be checked out on `expected_branch`. `declared_scope`
+must contain repo-relative paths; do not use `.` as a blanket write scope.
 
 Provider readiness is necessary but not sufficient. Before claiming that
 Management AI can read/write VM files or collaborate on debugging through
@@ -84,6 +112,11 @@ OpenClaw, verify `GET /bff/assistant/mode` reports `kernel_enabled: true` and
 that control mode can be activated by an authorized operator/admin session. If
 `providerReadiness.ready` is true but `kernel_enabled` is false, the blocker is
 dev BFF configuration, not frontend hosting.
+
+As of 2026-06-08, if the frontend can activate control mode but cannot provide
+valid `openclaw.repair` metadata, treat VM write capability as not complete.
+Add or use a governed repair-worktree preparation surface before asking other
+agents to implement code through Management AI.
 
 The supervisor handoff path is the assistant dev bridge inbox under
 `.orchestrator/assistant-dev-packets/`. The supervisor must drain pending task
