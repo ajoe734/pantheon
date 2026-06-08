@@ -298,6 +298,7 @@ def test_tw_qlib_research_experiment_drilldown_is_governed_default_not_seed() ->
     payload = detail.json()
     record = payload["data"]
     assert record["experiment_id"] == "exp-mgmt-qlib-006"
+    assert record["stage"] == "management_review_linked"
     assert record["framework"] == "qlib"
     assert record["dataset_ref"] == "dataset:tw-equity-ohlcv-top50-2024-daily"
     assert record["dataset_manifest_id"] == (

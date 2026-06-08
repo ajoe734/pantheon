@@ -12940,6 +12940,7 @@ class ReadSurfaceStore:
             "ticket_id": exp.get("ticket_id"),
             "experiment_name": exp.get("experiment_name"),
             "status": status,
+            "stage": exp.get("stage"),
             "queued_at": exp.get("queued_at"),
             "started_at": exp.get("started_at"),
             "completed_at": exp.get("completed_at"),
