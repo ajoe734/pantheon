@@ -29,6 +29,7 @@ The script defaults to the live dev compose project name:
 COMPOSE_PROJECT_NAME=pantheon
 COMPOSE_FILE=docker-compose.yml
 BFF_BASE_URL=http://127.0.0.1:18001
+BFF_AUTH_TOKEN=pantheon-dev-browser:admin,operator:mfa:assistant.kernel.debug,assistant.kernel.repair
 PANTHEON_STATUS_ROOT_HOST=/home/lupin/code/pantheon
 PANTHEON_STATUS_ROOT_CONTAINER=/workspace/status-root
 PANTHEON_ASSISTANT_KERNEL_ENABLED=true
