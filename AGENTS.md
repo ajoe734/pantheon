@@ -75,6 +75,7 @@ For SA/SD generation and downstream agent work, the expected route family is:
 - `POST /bff/assistant/dev-docs/generate`
 - `GET /bff/assistant/dev-docs/{packetId}`
 - `POST /bff/assistant/dev-bridge/task-packet`
+- `POST /bff/assistant/repair-worktrees/prepare`
 - `GET /bff/assistant/orchestrator/status`
 - `GET|POST /bff/assistant/tools/*` for governed UI/ops action
   preview/validation/execute only
@@ -92,8 +93,12 @@ must run in a clean repair task worktree; never point repair at the shared live
 checkout.
 
 Any frontend or BFF change that claims Management AI can write VM files must
-send the OpenClaw repair metadata expected by the provider:
+first call `POST /bff/assistant/repair-worktrees/prepare` while control mode is
+active in `kernel_repair`, then send the OpenClaw repair metadata returned by
+that route to `POST /bff/management/nl/ask`:
 
+- `repo_key` (`execute-plans` for frontend work, `pantheon` for backend/BFF
+  work)
 - `task_id`
 - `task_worktree`
 - `declared_scope`
@@ -101,10 +106,12 @@ send the OpenClaw repair metadata expected by the provider:
 - `remote`
 - `merge_target`
 
-The repair worktree must already exist under
-`PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT`, be the git repo root, be clean before
-provider execution, and be checked out on `expected_branch`. `declared_scope`
-must contain repo-relative paths; do not use `.` as a blanket write scope.
+The BFF prepare route delegates to the OpenClaw adapter route
+`POST /api/openclaw-adapter/assistant/repair-worktrees/prepare`. The adapter
+must clone or reuse a clean task worktree under
+`PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT`, make that directory the git repo
+root, check out `expected_branch`, and validate that `declared_scope` contains
+only repo-relative paths. Do not use `.` as a blanket write scope.
 
 Provider readiness is necessary but not sufficient. Before claiming that
 Management AI can read/write VM files or collaborate on debugging through
@@ -113,10 +120,11 @@ that control mode can be activated by an authorized operator/admin session. If
 `providerReadiness.ready` is true but `kernel_enabled` is false, the blocker is
 dev BFF configuration, not frontend hosting.
 
-As of 2026-06-08, if the frontend can activate control mode but cannot provide
-valid `openclaw.repair` metadata, treat VM write capability as not complete.
-Add or use a governed repair-worktree preparation surface before asking other
-agents to implement code through Management AI.
+As of 2026-06-08, if the frontend can activate control mode but cannot prepare
+a repair worktree through `POST /bff/assistant/repair-worktrees/prepare`, treat
+VM write capability as not complete. Do not ask other agents to implement code
+through Management AI until that prepare call succeeds and its
+`openclaw.repair` metadata is forwarded with the conversation request.
 
 The supervisor handoff path is the assistant dev bridge inbox under
 `.orchestrator/assistant-dev-packets/`. The supervisor must drain pending task

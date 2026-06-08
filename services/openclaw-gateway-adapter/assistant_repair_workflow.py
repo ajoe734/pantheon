@@ -8,8 +8,10 @@ PR, checks, and merge operations still happen through the repository workflow.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import os
+import re
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path, PurePosixPath
@@ -21,6 +23,8 @@ DEFAULT_REPAIR_WORKTREE_ROOT = "/srv/pantheon-assistant/worktrees"
 DEFAULT_REMOTE = "origin"
 DEFAULT_MERGE_TARGET = "dev"
 DEFAULT_TASK_BRANCH_PREFIX = "task/"
+DEFAULT_GIT_USER_EMAIL = "pantheon-assistant@pantheon.local"
+DEFAULT_GIT_USER_NAME = "Pantheon Assistant"
 
 GitRunner = Callable[[Sequence[str], Path], subprocess.CompletedProcess[str]]
 PullRequestLookup = Callable[[Path, str], Mapping[str, Any] | None]
@@ -121,6 +125,24 @@ class RepairWorkflowSnapshot:
         }
 
 
+@dataclasses.dataclass(frozen=True)
+class RepairWorktreePreparation:
+    created: bool
+    source_repo_url: str
+    repair_metadata: Mapping[str, Any]
+    workflow: RepairWorkflowSnapshot
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "created": self.created,
+            "existing": not self.created,
+            "source_repo_url": _sanitize_remote_url(self.source_repo_url),
+            "repair": dict(self.repair_metadata),
+            "repairMetadata": dict(self.repair_metadata),
+            "workflow": self.workflow.to_dict(),
+        }
+
+
 class AssistantRepairWorkflow:
     """Validate repair-mode task branch/worktree metadata."""
 
@@ -148,6 +170,106 @@ class AssistantRepairWorkflow:
             require_clean=require_clean,
         )
         return self.validate_request(request)
+
+    def prepare(self, metadata: Mapping[str, Any]) -> RepairWorktreePreparation:
+        """Create or validate a clean repair task worktree.
+
+        The repository source is controlled by adapter environment, not by the
+        browser.  Callers provide task identity and scope; this method prepares a
+        task branch under the configured repair root and then runs the same
+        validation used before provider execution.
+        """
+        prepared_metadata = self.prepare_metadata(metadata)
+        request = self.request_from_metadata(prepared_metadata, require_clean=True, require_pr=False)
+        repo_source_url = self._repair_repo_source_url(metadata)
+        remote_url = self._repair_remote_url(
+            metadata,
+            repo_source_url=repo_source_url,
+            remote=request.remote,
+        )
+
+        request.worktree_root.mkdir(parents=True, exist_ok=True)
+        created = False
+        if not request.worktree.exists():
+            created = True
+            self._git(
+                ["clone", "--origin", request.remote, repo_source_url, request.worktree.as_posix()],
+                cwd=request.worktree_root,
+                failure_code="REPAIR_WORKTREE_CLONE_FAILED",
+                failure_message="Failed to clone repair repository source.",
+            )
+            self._configure_prepared_worktree(request.worktree)
+            if remote_url:
+                self._git(["remote", "set-url", request.remote, remote_url], cwd=request.worktree)
+            self._git(["fetch", request.remote, request.merge_target], cwd=request.worktree, required=False)
+            base_ref = self._select_base_ref(request.worktree, request.remote, request.merge_target)
+            self._git(["checkout", "-B", request.expected_branch, base_ref], cwd=request.worktree)
+            self._git(
+                ["branch", "--set-upstream-to", f"{request.remote}/{request.merge_target}", request.expected_branch],
+                cwd=request.worktree,
+                required=False,
+            )
+
+        workflow = self.validate_request(request)
+        return RepairWorktreePreparation(
+            created=created,
+            source_repo_url=repo_source_url,
+            repair_metadata={
+                "task_id": request.task_id,
+                "taskId": request.task_id,
+                "task_worktree": request.worktree.as_posix(),
+                "taskWorktree": request.worktree.as_posix(),
+                "declared_scope": list(request.declared_scope),
+                "declaredScope": list(request.declared_scope),
+                "expected_branch": request.expected_branch,
+                "expectedBranch": request.expected_branch,
+                "remote": request.remote,
+                "merge_target": request.merge_target,
+                "mergeTarget": request.merge_target,
+                "require_clean": True,
+                "requireClean": True,
+                "repo_key": str(prepared_metadata.get("repo_key") or "pantheon"),
+                "repoKey": str(prepared_metadata.get("repo_key") or "pantheon"),
+            },
+            workflow=workflow,
+        )
+
+    def prepare_metadata(self, metadata: Mapping[str, Any]) -> dict[str, Any]:
+        task_id = str(metadata.get("task_id") or metadata.get("taskId") or "").strip()
+        if not task_id:
+            raise AssistantRepairWorkflowError(
+                "REPAIR_TASK_ID_REQUIRED",
+                "Repair worktree preparation requires task_id.",
+                details={"required": ["task_id"]},
+            )
+        repo_key = _repo_key(metadata, self._environ)
+        root = _resolve_path(
+            self._environ.get("PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT", DEFAULT_REPAIR_WORKTREE_ROOT)
+        )
+        worktree_raw = str(metadata.get("task_worktree") or metadata.get("taskWorktree") or "").strip()
+        if worktree_raw:
+            worktree = _resolve_path(worktree_raw, base=root)
+        else:
+            worktree = root / _safe_worktree_leaf(repo_key) / _safe_worktree_leaf(task_id)
+
+        prepared = dict(metadata)
+        prepared["task_id"] = task_id
+        prepared["repo_key"] = repo_key
+        prepared["task_worktree"] = worktree.as_posix()
+        prepared.setdefault(
+            "expected_branch",
+            f"{self._environ.get('PANTHEON_ASSISTANT_TASK_BRANCH_PREFIX', DEFAULT_TASK_BRANCH_PREFIX)}{task_id}",
+        )
+        prepared.setdefault(
+            "remote",
+            self._environ.get("PANTHEON_ASSISTANT_REPAIR_REMOTE") or DEFAULT_REMOTE,
+        )
+        prepared.setdefault(
+            "merge_target",
+            self._environ.get("PANTHEON_ASSISTANT_REPAIR_MERGE_TARGET") or DEFAULT_MERGE_TARGET,
+        )
+        prepared["require_clean"] = True
+        return prepared
 
     def request_from_metadata(
         self,
@@ -379,6 +501,59 @@ class AssistantRepairWorkflow:
             details={"git_args": list(args), "detail": detail},
         )
 
+    def _repair_repo_source_url(self, metadata: Mapping[str, Any]) -> str:
+        repo_key = _repo_key(metadata, self._environ)
+        value = str(
+            metadata.get("repo_source_url")
+            or metadata.get("repoSourceUrl")
+            or self._environ.get(_repo_env_name("PANTHEON_ASSISTANT_REPAIR_REPO_URL", repo_key))
+            or self._environ.get("PANTHEON_ASSISTANT_REPAIR_REPO_URL")
+            or ""
+        ).strip()
+        if not value:
+            raise AssistantRepairWorkflowError(
+                "REPAIR_REPO_URL_NOT_CONFIGURED",
+                "Repair worktree preparation requires PANTHEON_ASSISTANT_REPAIR_REPO_URL.",
+                status_code=503,
+            )
+        return value
+
+    def _repair_remote_url(self, metadata: Mapping[str, Any], *, repo_source_url: str, remote: str) -> str:
+        repo_key = _repo_key(metadata, self._environ)
+        configured = str(
+            metadata.get("remote_url")
+            or metadata.get("remoteUrl")
+            or self._environ.get(_repo_env_name("PANTHEON_ASSISTANT_REPAIR_REMOTE_URL", repo_key))
+            or self._environ.get("PANTHEON_ASSISTANT_REPAIR_REMOTE_URL")
+            or ""
+        ).strip()
+        if configured:
+            return configured
+        source_path = _repo_source_path(repo_source_url)
+        if source_path is not None and source_path.exists():
+            completed = self._git_runner(["git", "remote", "get-url", remote], source_path)
+            if completed.returncode == 0 and (completed.stdout or "").strip():
+                return (completed.stdout or "").strip()
+        return repo_source_url
+
+    def _configure_prepared_worktree(self, worktree: Path) -> None:
+        email = self._environ.get("PANTHEON_ASSISTANT_GIT_USER_EMAIL", DEFAULT_GIT_USER_EMAIL)
+        name = self._environ.get("PANTHEON_ASSISTANT_GIT_USER_NAME", DEFAULT_GIT_USER_NAME)
+        self._git(["config", "user.email", email], cwd=worktree)
+        self._git(["config", "user.name", name], cwd=worktree)
+
+    def _select_base_ref(self, worktree: Path, remote: str, merge_target: str) -> str:
+        for candidate in (f"{remote}/{merge_target}", merge_target, "HEAD"):
+            completed = self._git_runner(["git", "rev-parse", "--verify", candidate], worktree)
+            if completed.returncode == 0:
+                return candidate
+        raise AssistantRepairWorkflowError(
+            "REPAIR_BASE_REF_MISSING",
+            "Repair worktree preparation could not resolve the merge target base ref.",
+            status_code=409,
+            details={"merge_target": merge_target, "remote": remote},
+        )
+
 
 def _run_command(command: Sequence[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -388,6 +563,55 @@ def _run_command(command: Sequence[str], cwd: Path) -> subprocess.CompletedProce
         text=True,
         check=False,
     )
+
+
+def _safe_worktree_leaf(task_id: str) -> str:
+    clean = re.sub(r"[^A-Za-z0-9._-]+", "-", task_id).strip(".-").lower()
+    if not clean:
+        raise AssistantRepairWorkflowError(
+            "REPAIR_TASK_ID_INVALID",
+            "Repair task_id must contain at least one filesystem-safe character.",
+            details={"task_id": task_id},
+    )
+    if len(clean) > 96:
+        digest = hashlib.sha256(task_id.encode("utf-8")).hexdigest()[:8]
+        clean = f"{clean[:87]}-{digest}"
+    return clean
+
+
+def _repo_key(metadata: Mapping[str, Any], environ: Mapping[str, str]) -> str:
+    raw = str(
+        metadata.get("repo_key")
+        or metadata.get("repoKey")
+        or metadata.get("repository")
+        or environ.get("PANTHEON_ASSISTANT_REPAIR_DEFAULT_REPO_KEY")
+        or "pantheon"
+    ).strip()
+    clean = re.sub(r"[^A-Za-z0-9._-]+", "-", raw).strip(".-").lower()
+    if not clean:
+        raise AssistantRepairWorkflowError(
+            "REPAIR_REPO_KEY_INVALID",
+            "Repair repository key must contain at least one filesystem-safe character.",
+            details={"repo_key": raw},
+        )
+    return clean
+
+
+def _repo_env_name(prefix: str, repo_key: str) -> str:
+    suffix = re.sub(r"[^A-Z0-9]+", "_", repo_key.upper()).strip("_")
+    return f"{prefix}_{suffix}" if suffix else prefix
+
+
+def _repo_source_path(value: str) -> Path | None:
+    if "://" in value:
+        try:
+            parsed = urlsplit(value)
+        except ValueError:
+            return None
+        if parsed.scheme != "file":
+            return None
+        return Path(parsed.path).expanduser().resolve()
+    return Path(value).expanduser().resolve()
 
 
 def _lookup_pr_with_gh(worktree: Path, branch: str) -> Mapping[str, Any] | None:

@@ -32219,6 +32219,7 @@ def _mgmt_nl_openclaw_repair_metadata(payload: Dict[str, Any]) -> Dict[str, Any]
         "expected_branch": "expected_branch|expectedBranch",
         "remote": "remote",
         "merge_target": "merge_target|mergeTarget",
+        "repo_key": "repo_key|repoKey|repository",
     }
     for target, aliases in text_fields.items():
         value = _mgmt_nl_first_openclaw_value(repair, openclaw, aliases=aliases)
@@ -48516,6 +48517,21 @@ def _assistant_openclaw_effective_tools(operator_id: str) -> Dict[str, Any]:
         }
 
 
+def _assistant_prepare_repair_worktree(
+    payload: Dict[str, Any],
+    operator_id: str,
+    trace_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    try:
+        return OpenClawOpsClient().prepare_assistant_repair_worktree(
+            payload=payload,
+            operator_id=operator_id or "management-ai",
+            trace_id=trace_id,
+        )
+    except OpenClawOpsClientError as exc:
+        raise _openclaw_client_error(exc) from exc
+
+
 def _include_assistant_routes() -> None:
     global _ASSISTANT_SESSION_STORE, _ASSISTANT_TRANSCRIPT_STORE, _ASSISTANT_CONTROL_MODE_STORE
     from assistant.control_mode import ControlModeStore
@@ -48544,6 +48560,7 @@ def _include_assistant_routes() -> None:
             provider_readiness=_assistant_provider_readiness,
             openclaw_tool_policy=_assistant_openclaw_tool_policy,
             openclaw_effective_tools=_assistant_openclaw_effective_tools,
+            prepare_repair_worktree=_assistant_prepare_repair_worktree,
         )
     )
 

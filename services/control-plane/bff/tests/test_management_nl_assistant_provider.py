@@ -868,6 +868,7 @@ def test_management_nl_kernel_repair_passes_openclaw_task_metadata(tmp_path, mon
                         "expectedBranch": "task/ASST-REPAIR-123",
                         "mergeTarget": "dev",
                         "requireClean": True,
+                        "repoKey": "pantheon",
                     }
                 },
                 "ui": {"currentRoute": "/management/cockpit", "availableUiActions": []},
@@ -892,6 +893,7 @@ def test_management_nl_kernel_repair_passes_openclaw_task_metadata(tmp_path, mon
         ]
         assert call["metadata"]["expected_branch"] == "task/ASST-REPAIR-123"
         assert call["metadata"]["merge_target"] == "dev"
+        assert call["metadata"]["repo_key"] == "pantheon"
         assert call["metadata"]["require_clean"] is True
         assert call["metadata"]["repair_metadata_source"] == "management_nl_openclaw_payload"
         assert "You are operating in kernel_repair mode through OpenClaw/Codex." in call["prompt"]

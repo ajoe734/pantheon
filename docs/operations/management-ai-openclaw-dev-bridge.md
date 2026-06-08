@@ -26,6 +26,7 @@ Management AI should use Pantheon BFF assistant routes:
 - `POST /bff/assistant/dev-docs/generate`
 - `GET /bff/assistant/dev-docs/{packetId}`
 - `POST /bff/assistant/dev-bridge/task-packet`
+- `POST /bff/assistant/repair-worktrees/prepare`
 - `GET /bff/assistant/tools`
 - `POST /bff/assistant/tools/preview`
 - `POST /bff/assistant/tools/validate`
@@ -57,9 +58,15 @@ Do not expose direct browser-to-OpenClaw calls. Do not mount or write to the
 shared live checkout for repair work. Do not treat the status-root read mount as
 a repair workspace.
 
-For `kernel_repair`, the request must include `openclaw.repair` metadata that
-matches the provider contract:
+For `kernel_repair`, the frontend must first call
+`POST /bff/assistant/repair-worktrees/prepare`. The BFF verifies active
+`kernel_repair` control mode and delegates to
+`POST /api/openclaw-adapter/assistant/repair-worktrees/prepare`. The adapter
+clones or reuses a clean task worktree from the configured repo source, checks
+out the requested task branch, validates scope, and returns `openclaw.repair`
+metadata that matches the provider contract:
 
+- `repo_key`
 - `task_id`
 - `task_worktree`
 - `declared_scope`
@@ -67,16 +74,19 @@ matches the provider contract:
 - `remote`
 - `merge_target`
 
-The worktree must already exist under `PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT`
-and must be the git repo root. Before provider execution it must be clean, on
+The worktree must exist under `PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT` and
+must be the git repo root. Before provider execution it must be clean, on
 `expected_branch`, and limited to repo-relative `declared_scope` entries.
-`declared_scope` must not be empty and must not be `.`.
+`declared_scope` must not be empty and must not be `.`. Use `repoKey:
+execute-plans` with merge target `main` for frontend work and `repoKey:
+pantheon` with merge target `dev` for backend/BFF work.
 
 As of 2026-06-08, dev BFF control mode can be configured independently from
-repair-worktree provisioning. If Management AI chat does not send
-`openclaw.repair` metadata, or if no governed endpoint prepares the repair
-worktree, VM write capability is not complete. Add that preparation path first;
-do not tell downstream agents to implement code through Management AI yet.
+repair-worktree provisioning. If Management AI chat does not first prepare the
+worktree through the governed BFF route and then send the returned
+`openclaw.repair` metadata to `/bff/management/nl/ask`, VM write capability is
+not complete. Do not tell downstream agents to implement code through
+Management AI until that preparation path succeeds.
 
 ## Readiness Criteria
 
@@ -95,11 +105,13 @@ ready. Check all of these before telling another agent or operator it is done:
   contain obsolete BFF URLs.
 - `/bff/assistant/tools/*` is understood as governed BFF action tooling, not VM
   file tooling.
+- `POST /bff/assistant/repair-worktrees/prepare` is not `404`; unauthenticated
+  or inactive-control probes should fail closed with `401`, `403`, or `409`.
 - `POST /bff/assistant/dev-docs/generate` is not `404`; unauthenticated probes
   should fail closed with `401` or `403`.
-- For repair/write claims, a clean task worktree exists under the configured
-  repair root and Management AI sends valid `openclaw.repair` metadata to
-  `/bff/management/nl/ask`.
+- For repair/write claims, the prepare route returns a clean task worktree
+  under the configured repair root and Management AI sends that valid
+  `openclaw.repair` metadata to `/bff/management/nl/ask`.
 - A generated task packet reaches `.orchestrator/assistant-dev-packets/pending/`
   or is otherwise handed to the configured bridge inbox.
 - The supervisor drains the packet into
@@ -153,8 +165,9 @@ an `ai-task-archive/tasks/*.json` task record.
 - Do not claim completion from provider readiness if kernel/control mode is
   disabled.
 - Do not claim VM write capability from `/bff/assistant/tools/*`.
-- Do not claim repair capability unless the request includes valid
-  `openclaw.repair` metadata and the repair worktree is clean.
+- Do not claim repair capability unless
+  `POST /bff/assistant/repair-worktrees/prepare` succeeds, the request includes
+  the returned `openclaw.repair` metadata, and the repair worktree is clean.
 - Do not commit runtime state from the live worktree.
 - Do not change broker, paper, canary, live, or capital-binding behavior while
   repairing Management AI dev file access.

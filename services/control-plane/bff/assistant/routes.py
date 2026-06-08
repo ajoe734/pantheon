@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -74,6 +75,7 @@ BffErrorFactory = Callable[..., HTTPException]
 ProviderReadiness = Callable[[], Dict[str, Any]]
 OpenClawToolPolicy = Callable[[], Dict[str, Any]]
 OpenClawEffectiveTools = Callable[[str], Dict[str, Any]]
+PrepareRepairWorktree = Callable[[Dict[str, Any], str, Optional[str]], Dict[str, Any]]
 
 DEFAULT_DEV_DOC_CONTEXT_SOURCES = [
     "ui",
@@ -104,6 +106,7 @@ def create_assistant_router(
     provider_readiness: Optional[ProviderReadiness] = None,
     openclaw_tool_policy: Optional[OpenClawToolPolicy] = None,
     openclaw_effective_tools: Optional[OpenClawEffectiveTools] = None,
+    prepare_repair_worktree: Optional[PrepareRepairWorktree] = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/bff/assistant", tags=["assistant"])
 
@@ -430,6 +433,54 @@ def create_assistant_router(
     # ------------------------------------------------------------------
     # SA/SD generation and signed dev task packet bridge
     # ------------------------------------------------------------------
+
+    @router.post("/repair-worktrees/prepare", status_code=201)
+    async def prepare_assistant_repair_worktree(
+        payload: dict = Body(default_factory=dict),
+        authorization: Optional[str] = Header(default=None),
+    ) -> dict[str, Any]:
+        """Prepare the clean task worktree required by kernel_repair.
+
+        This route only delegates to the OpenClaw adapter after BFF control-mode
+        authorization succeeds. It never exposes git or filesystem writes to
+        the browser directly.
+        """
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+        control_status = _require_active_control_mode(
+            identity,
+            _control_mode_store,
+            bff_error=bff_error,
+        )
+        _require_kernel_repair_control(control_status, bff_error=bff_error)
+        if prepare_repair_worktree is None:
+            _raise_error(
+                bff_error,
+                503,
+                ErrorCode.PRECONDITION_FAILED,
+                "Assistant repair worktree preparation is not configured",
+                "OpenClaw adapter repair-worktree preparation is not configured for this BFF.",
+                field="openclaw_adapter",
+            )
+
+        request_payload = _prepare_repair_worktree_payload(
+            payload,
+            identity,
+            control_status=control_status,
+            bff_error=bff_error,
+        )
+        trace_id = str(payload.get("traceId") or payload.get("trace_id") or "").strip() or None
+        actor_id = str(getattr(identity, "operator_id", None) or "management-ai")
+        prepared = prepare_repair_worktree(request_payload, actor_id, trace_id)
+        if isinstance(prepared, dict) and isinstance(prepared.get("data"), dict):
+            return {
+                "data": prepared["data"],
+                "meta": {
+                    "openclawAdapterStatus": prepared.get("status"),
+                    "openclaw_adapter_status": prepared.get("status"),
+                },
+            }
+        return {"data": prepared}
 
     @router.post("/dev-docs/generate", status_code=201)
     async def generate_assistant_dev_docs(
@@ -881,6 +932,131 @@ def _require_active_control_mode(
             reason=status.get("reason") or status.get("state") or "inactive",
         )
     return status
+
+
+def _require_kernel_repair_control(
+    control_status: Dict[str, Any],
+    *,
+    bff_error: Optional[BffErrorFactory],
+) -> None:
+    mode = str(control_status.get("mode") or "")
+    capabilities = {str(value) for value in (control_status.get("capabilities") or [])}
+    if mode != AssistantMode.KERNEL_REPAIR.value:
+        _raise_error(
+            bff_error,
+            409,
+            ErrorCode.PRECONDITION_FAILED,
+            "Assistant repair worktree preparation requires active kernel_repair control mode",
+            "Activate assistant control mode in kernel_repair before preparing a repair worktree",
+            field="control_mode",
+            reason="kernel_repair_required",
+            mode=mode or None,
+        )
+    if "assistant.kernel.repair" not in capabilities:
+        _raise_error(
+            bff_error,
+            403,
+            ErrorCode.FORBIDDEN,
+            "Assistant repair worktree preparation requires assistant.kernel.repair capability",
+            "The active control-mode activation does not include assistant.kernel.repair",
+            field="capabilities",
+            required_capability="assistant.kernel.repair",
+        )
+
+
+def _prepare_repair_worktree_payload(
+    payload: Dict[str, Any],
+    identity: Any,
+    *,
+    control_status: Dict[str, Any],
+    bff_error: Optional[BffErrorFactory],
+) -> Dict[str, Any]:
+    if not isinstance(payload, dict):
+        _raise_error(
+            bff_error,
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Repair worktree preparation payload must be an object",
+            field="payload",
+        )
+
+    declared_scope = _declared_scope_from_payload(payload, bff_error=bff_error)
+    task_id = str(payload.get("taskId") or payload.get("task_id") or "").strip()
+    if not task_id:
+        task_id = f"MGMT-AI-REPAIR-{_utc_now_z().replace('-', '').replace(':', '')}-{uuid.uuid4().hex[:8]}"
+
+    request_payload: Dict[str, Any] = {
+        "task_id": task_id,
+        "taskId": task_id,
+        "declared_scope": declared_scope,
+        "declaredScope": declared_scope,
+        "operator_id": str(getattr(identity, "operator_id", None) or "management-ai"),
+        "control_mode": {
+            "activationId": control_status.get("activationId") or control_status.get("activation_id"),
+            "mode": control_status.get("mode"),
+        },
+    }
+    repo_key = str(payload.get("repoKey") or payload.get("repo_key") or payload.get("repository") or "").strip()
+    if repo_key:
+        request_payload["repo_key"] = repo_key
+        request_payload["repoKey"] = repo_key
+        request_payload["repository"] = repo_key
+    for camel, snake in (
+        ("taskWorktree", "task_worktree"),
+        ("expectedBranch", "expected_branch"),
+        ("mergeTarget", "merge_target"),
+        ("traceId", "trace_id"),
+    ):
+        value = payload.get(camel)
+        if value is None:
+            value = payload.get(snake)
+        if value not in (None, ""):
+            request_payload[snake] = value
+            request_payload[camel] = value
+    remote = payload.get("remote")
+    if remote not in (None, ""):
+        request_payload["remote"] = remote
+    reason = str(payload.get("reason") or control_status.get("reason") or "").strip()
+    if reason:
+        request_payload["reason"] = reason
+    return request_payload
+
+
+def _declared_scope_from_payload(
+    payload: Dict[str, Any],
+    *,
+    bff_error: Optional[BffErrorFactory],
+) -> List[str]:
+    raw = payload.get("declaredScope")
+    if raw is None:
+        raw = payload.get("declared_scope")
+    if isinstance(raw, str):
+        import re
+
+        values = [item.strip() for item in re.split(r"[,\n]", raw) if item.strip()]
+    elif isinstance(raw, list):
+        values = [str(item).strip() for item in raw if str(item).strip()]
+    else:
+        values = []
+    if not values:
+        _raise_error(
+            bff_error,
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Repair worktree preparation requires declaredScope",
+            "declaredScope must contain one or more repo-relative paths",
+            field="declaredScope",
+        )
+    if any(value == "." or value.startswith("../") or "/../" in value for value in values):
+        _raise_error(
+            bff_error,
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Repair declaredScope entries must be repo-relative paths",
+            "declaredScope cannot include '.', '..', or parent traversal",
+            field="declaredScope",
+        )
+    return values
 
 
 def _parse_dev_doc_request(

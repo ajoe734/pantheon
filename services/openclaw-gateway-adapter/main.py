@@ -83,6 +83,7 @@ from assistant_provider_runtime import (
     AssistantProviderRuntimeError,
     ProviderInvocationRequest,
 )
+from assistant_repair_workflow import AssistantRepairWorkflow, AssistantRepairWorkflowError
 
 from services.foundation.health import (
     health_payload,
@@ -675,6 +676,48 @@ class AssistantProviderInvokeRequest(BaseModel):
     attachments: Optional[List[Dict[str, Any]]] = None
 
 
+class AssistantRepairWorktreePrepareRequest(BaseModel):
+    task_id: Optional[str] = None
+    taskId: Optional[str] = None
+    task_worktree: Optional[str] = None
+    taskWorktree: Optional[str] = None
+    declared_scope: Optional[List[str]] = None
+    declaredScope: Optional[List[str]] = None
+    expected_branch: Optional[str] = None
+    expectedBranch: Optional[str] = None
+    remote: Optional[str] = None
+    repo_key: Optional[str] = None
+    repoKey: Optional[str] = None
+    repository: Optional[str] = None
+    merge_target: Optional[str] = None
+    mergeTarget: Optional[str] = None
+    reason: Optional[str] = None
+
+    def to_metadata(self) -> Dict[str, Any]:
+        metadata: Dict[str, Any] = {}
+        for key in (
+            "task_id",
+            "taskId",
+            "task_worktree",
+            "taskWorktree",
+            "declared_scope",
+            "declaredScope",
+            "expected_branch",
+            "expectedBranch",
+            "remote",
+            "repo_key",
+            "repoKey",
+            "repository",
+            "merge_target",
+            "mergeTarget",
+            "reason",
+        ):
+            value = getattr(self, key)
+            if value not in (None, "", []):
+                metadata[key] = value
+        return metadata
+
+
 def _assistant_provider_runtime_error_response(exc: AssistantProviderRuntimeError) -> JSONResponse:
     return JSONResponse(
         status_code=400,
@@ -686,6 +729,10 @@ def _assistant_provider_runtime_error_response(exc: AssistantProviderRuntimeErro
             "retryable": False,
         },
     )
+
+
+def _assistant_repair_workflow_error_response(exc: AssistantRepairWorkflowError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
 
 
 @app.get("/api/openclaw-adapter/assistant/readiness/{provider}")
@@ -707,6 +754,32 @@ def list_assistant_providers(auth_probe: bool = False) -> Dict[str, Any]:
             _CLAUDE_PROVIDER.readiness(auth_probe=auth_probe),
         ],
     }
+
+
+@app.post("/api/openclaw-adapter/assistant/repair-worktrees/prepare")
+def prepare_assistant_repair_worktree(
+    req: AssistantRepairWorktreePrepareRequest,
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+) -> JSONResponse:
+    if not x_operator_id or not x_operator_id.strip():
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "repair_workflow_error",
+                "error_code": "OPERATOR_REQUIRED",
+                "message": "X-Operator-Id header is required for repair worktree preparation.",
+            },
+        )
+    metadata = req.to_metadata()
+    metadata["operator_id"] = x_operator_id.strip()
+    if x_trace_id:
+        metadata["trace_id"] = x_trace_id
+    try:
+        prepared = _REPAIR_WORKFLOW.prepare(metadata)
+    except AssistantRepairWorkflowError as exc:
+        return _assistant_repair_workflow_error_response(exc)
+    return JSONResponse(status_code=201, content={"status": "ok", "data": prepared.to_dict()})
 
 
 @app.post("/api/openclaw-adapter/assistant/providers/codex/invoke")
@@ -1227,6 +1300,7 @@ _CODEX_PROVIDER = AssistantCodexProvider(mounts=_ASSISTANT_MOUNTS)
 _CLAUDE_PROVIDER = AssistantClaudeProvider(mounts=_ASSISTANT_MOUNTS)
 _CODEX_RUNTIME = AssistantProviderRuntime(runner=_CODEX_PROVIDER.invoke)
 _ASSISTANT_RUNTIME = AssistantProviderRuntime(runner=_dummy_runner)
+_REPAIR_WORKFLOW = AssistantRepairWorkflow()
 
 
 def _paper_broker_error_response(exc: PaperBrokerAdapterError) -> JSONResponse:
