@@ -130,6 +130,13 @@ _PRODUCTION_STRICT_ENVIRONMENTS = {
     "staging-live",
 }
 _DEFAULT_LOVABLE_CORS_ORIGINS = [
+    # Pantheon-owned self-hosted dev frontend (execute-plans). This replaced the
+    # Lovable-hosted dev FE; it is the current dev acceptance origin. Dev-only:
+    # it must be filtered out by the production-strict CORS filter below.
+    "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
+    # TODO(off-lovable): staging-live and prod FE are also migrating off Lovable
+    # to self-hosted sslip.io origins. Replace the staging/prod *.lovable.app
+    # entries below once the new self-hosted URLs are provisioned.
     # Lovable shared-preview and published URLs for the Pantheon UI lanes.
     "https://preview--pantheon-dev.lovable.app",
     "https://preview--pantheon-ai-system-front-dev.lovable.app",
@@ -148,6 +155,8 @@ _DEFAULT_LOVABLE_CORS_ORIGINS = [
     "https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com",
 ]
 _DEV_LOVABLE_CORS_ORIGINS = {
+    # Self-hosted dev FE origin is dev-only: production-strict mode must filter it.
+    "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
     "https://preview--pantheon-dev.lovable.app",
     "https://preview--pantheon-ai-system-front-dev.lovable.app",
     "https://pantheon-dev.lovable.app",

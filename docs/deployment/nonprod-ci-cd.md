@@ -91,7 +91,7 @@ Guardrails applied by the deploy script:
 ```env
 PANTHEON_ENV=dev
 PANTHEON_LIVE_BROKER_ENABLED=false
-PANTHEON_BFF_CORS_ORIGINS=https://pantheon-ai-system-front-dev.lovable.app
+PANTHEON_BFF_CORS_ORIGINS=https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io
 ```
 
 Post-deploy smoke:
@@ -99,7 +99,7 @@ Post-deploy smoke:
 - local VM BFF `/health`
 - local VM BFF `/readyz`
 - public HTTPS BFF `/health`
-- CORS preflight for the dev Lovable origin
+- CORS preflight for the Pantheon-owned dev FE origin
 
 ## Staging-Live Lane
 
