@@ -17723,6 +17723,17 @@ def _project_persona_dto(
         "recommendedGovernanceAction": metadata.get("recommended_governance_action"),
         "riskFlags": list(metadata.get("risk_flags") or []),
     }
+    for source_key, dto_key in (
+        ("data_source_status", "dataSourceStatus"),
+        ("data_sources", "dataSources"),
+        ("data_source_refs", "dataSourceRefs"),
+        ("research_status", "researchStatus"),
+        ("research_refs", "researchRefs"),
+        ("current_research_projects", "currentResearchProjects"),
+    ):
+        value = metadata.get(source_key)
+        if value is not None:
+            dto[dto_key] = json.loads(json.dumps(value))
     performance = metadata.get("performance") if isinstance(metadata.get("performance"), dict) else {}
     if performance:
         dto["metrics"] = json.loads(json.dumps(performance))
@@ -25783,6 +25794,36 @@ def _build_persona_health_items(snapshot_at: str) -> List[Dict[str, Any]]:
             or persona.get("status")
             or lifecycle_state
         )
+        data_source_status = (
+            metadata.get("data_source_status")
+            if isinstance(metadata.get("data_source_status"), dict)
+            else {}
+        )
+        data_sources = (
+            metadata.get("data_sources")
+            if isinstance(metadata.get("data_sources"), list)
+            else []
+        )
+        data_source_refs = (
+            metadata.get("data_source_refs")
+            if isinstance(metadata.get("data_source_refs"), list)
+            else []
+        )
+        research_status = (
+            metadata.get("research_status")
+            if isinstance(metadata.get("research_status"), dict)
+            else {}
+        )
+        research_refs = (
+            metadata.get("research_refs")
+            if isinstance(metadata.get("research_refs"), list)
+            else []
+        )
+        current_research_projects = (
+            metadata.get("current_research_projects")
+            if isinstance(metadata.get("current_research_projects"), list)
+            else []
+        )
         human_needed = governance_required and str(recommendation).strip().lower() not in {
             "",
             "none",
@@ -25843,6 +25884,18 @@ def _build_persona_health_items(snapshot_at: str) -> List[Dict[str, Any]]:
             "recommendation": recommendation,
             "governance_required": governance_required,
             "governanceRequired": governance_required,
+            "data_source_status": json.loads(json.dumps(data_source_status)),
+            "dataSourceStatus": json.loads(json.dumps(data_source_status)),
+            "data_sources": json.loads(json.dumps(data_sources)),
+            "dataSources": json.loads(json.dumps(data_sources)),
+            "data_source_refs": json.loads(json.dumps(data_source_refs)),
+            "dataSourceRefs": json.loads(json.dumps(data_source_refs)),
+            "research_status": json.loads(json.dumps(research_status)),
+            "researchStatus": json.loads(json.dumps(research_status)),
+            "research_refs": json.loads(json.dumps(research_refs)),
+            "researchRefs": json.loads(json.dumps(research_refs)),
+            "current_research_projects": json.loads(json.dumps(current_research_projects)),
+            "currentResearchProjects": json.loads(json.dumps(current_research_projects)),
             "metrics": {
                 "pnl": _as_float(metrics.get("pnl")),
                 "sharpe": _as_float(metrics.get("sharpe")),

@@ -231,12 +231,401 @@ def _put_default_record(
     existing = records.get(key)
     if not isinstance(existing, dict):
         return False
+    return _merge_missing_default_values(existing, record)
+
+
+def _merge_missing_default_values(existing: Dict[str, Any], defaults: Dict[str, Any]) -> bool:
     changed = False
-    for field, value in record.items():
-        if field not in existing and value is not None:
+    for field, value in defaults.items():
+        if value is None:
+            continue
+        if field not in existing or existing.get(field) is None:
             existing[field] = json.loads(json.dumps(value))
             changed = True
+            continue
+        existing_value = existing.get(field)
+        if isinstance(existing_value, dict) and isinstance(value, dict):
+            changed |= _merge_missing_default_values(existing_value, value)
     return changed
+
+
+_MARKETDATA_EVIDENCE_BASE = (
+    "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001"
+)
+_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE = (
+    f"{_MARKETDATA_EVIDENCE_BASE}/repo-local-uncredentialed"
+)
+_QUOTE_READBACK_EVIDENCE_BASE = (
+    f"{_MARKETDATA_EVIDENCE_BASE}/repo-local-quote-readback"
+)
+_BROKER_006_DATASOURCE_SMOKE_REF = (
+    "support/evidence/MGMT-BROKER-006/datasource-smoke/datasource-smoke.json"
+)
+_TW_QLIB_DATASET_MANIFEST_REF = "support/evidence/MGMT-QLIB-001/dataset_manifest.json"
+_TW_QLIB_LINKAGE_PACKET_REF = (
+    "support/evidence/MGMT-QLIB-006/management_linkage_packet.json"
+)
+
+
+def _read_only_side_effect_guard() -> Dict[str, Any]:
+    return {
+        "read_only": True,
+        "order_side_effects_allowed": False,
+        "capital_side_effects_allowed": False,
+        "live_ingestion_enabled": False,
+    }
+
+
+def _provider_truth(
+    *,
+    provider_key: str,
+    provider: str,
+    market: str,
+    source_class: str,
+    status: str,
+    evidence_ref: str,
+    order_capable_provider: bool,
+    order_path: str,
+    read_intent: Optional[Dict[str, Any]] = None,
+    reason: Optional[str] = None,
+) -> Dict[str, Any]:
+    return {
+        "provider_key": provider_key,
+        "provider": provider,
+        "market": market,
+        "source_class": source_class,
+        "status": status,
+        "evidence_ref": evidence_ref,
+        "order_capable_provider": order_capable_provider,
+        "order_path": order_path,
+        "read_intent": json.loads(json.dumps(read_intent)) if read_intent else None,
+        "reason": reason,
+        **_read_only_side_effect_guard(),
+    }
+
+
+def _market_persona_data_truth(item: Dict[str, Any]) -> Dict[str, Any]:
+    market = str(item.get("market") or "").upper()
+    watch_symbol = str(item.get("watch_symbol") or "")
+    if market == "TW":
+        sources = [
+            _provider_truth(
+                provider_key="twse",
+                provider="TWSE OpenAPI",
+                market="TW",
+                source_class="official_reference",
+                status="read_unavailable",
+                evidence_ref=f"{_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE}/twse.json",
+                order_capable_provider=False,
+                order_path="not_applicable",
+                reason="repo-local smoke did not open a TWSE network session",
+            ),
+            _provider_truth(
+                provider_key="tpex",
+                provider="TPEx E-Data",
+                market="TW",
+                source_class="official_reference",
+                status="read_unavailable",
+                evidence_ref=f"{_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE}/tpex.json",
+                order_capable_provider=False,
+                order_path="not_applicable",
+                reason="repo-local smoke did not open a TPEx network session",
+            ),
+            _provider_truth(
+                provider_key="mops",
+                provider="MOPS",
+                market="TW",
+                source_class="official_reference",
+                status="public_reference_unavailable",
+                evidence_ref=f"{_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE}/mops.json",
+                order_capable_provider=False,
+                order_path="not_applicable",
+                reason="repo-local smoke has no public-reference readback",
+            ),
+            _provider_truth(
+                provider_key="tej",
+                provider="TEJ API",
+                market="TW",
+                source_class="research_grade",
+                status="credential_unavailable",
+                evidence_ref=f"{_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE}/tej.json",
+                order_capable_provider=False,
+                order_path="not_applicable",
+                reason="required repo-local TEJ credential env var is absent",
+            ),
+            _provider_truth(
+                provider_key="shioaji",
+                provider="Shioaji quote",
+                market="TW",
+                source_class="broker_execution",
+                status="read_ok",
+                evidence_ref=f"{_QUOTE_READBACK_EVIDENCE_BASE}/shioaji.json",
+                order_capable_provider=True,
+                order_path="disabled_for_marketdata_smoke",
+                read_intent={
+                    "symbol": "2330",
+                    "exchange": "TSE",
+                    "quote_type": "tick",
+                    "version": "v1",
+                    "bind": True,
+                },
+            ),
+        ]
+        provider_statuses = {source["provider_key"]: source["status"] for source in sources}
+        readback_refs = [
+            source["evidence_ref"]
+            for source in sources
+            if source.get("status") == "read_ok"
+        ]
+        unavailable_refs = [
+            source["evidence_ref"]
+            for source in sources
+            if source.get("status") != "read_ok"
+        ]
+        data_source_status = {
+            "state": "partial_readback",
+            "summary": (
+                "Shioaji quote readback is present; TWSE, TPEx, MOPS, and TEJ "
+                "are explicit unavailable/credential-unavailable repo-local smoke evidence."
+            ),
+            "provider_statuses": provider_statuses,
+            "readback_refs": readback_refs,
+            "unavailable_refs": unavailable_refs,
+            "research_dataset_ref": "dataset:tw-equity-ohlcv-top50-2024-daily",
+            "research_dataset_manifest_ref": _TW_QLIB_DATASET_MANIFEST_REF,
+            "research_dataset_as_of": "2026-01-05T00:00:00Z",
+            "readback_captured_at": "2026-05-01T17:20:00Z",
+            **_read_only_side_effect_guard(),
+        }
+        return {
+            "data_source_status": data_source_status,
+            "data_sources": sources,
+            "data_source_refs": [*readback_refs, *unavailable_refs],
+        }
+
+    if market == "US":
+        sources = [
+            _provider_truth(
+                provider_key="ibkr",
+                provider="IBKR market data",
+                market="US",
+                source_class="broker_execution",
+                status="read_ok",
+                evidence_ref=f"{_QUOTE_READBACK_EVIDENCE_BASE}/ibkr.json",
+                order_capable_provider=True,
+                order_path="disabled_for_marketdata_smoke",
+                read_intent={
+                    "contract": {
+                        "symbol": watch_symbol,
+                        "exchange": "SMART",
+                        "currency": "USD",
+                        "secType": "STK",
+                    },
+                    "snapshot": True,
+                    "readonly": True,
+                },
+            )
+        ]
+        data_source_status = {
+            "state": "quote_readback_ok",
+            "summary": "IBKR quote readback is present; order path is disabled for marketdata smoke.",
+            "provider_statuses": {"ibkr": "read_ok"},
+            "readback_refs": [sources[0]["evidence_ref"]],
+            "unavailable_refs": [],
+            "readback_captured_at": "2026-05-01T17:20:00Z",
+            **_read_only_side_effect_guard(),
+        }
+        return {
+            "data_source_status": data_source_status,
+            "data_sources": sources,
+            "data_source_refs": [sources[0]["evidence_ref"]],
+        }
+
+    if market == "CRYPTO":
+        sources = [
+            _provider_truth(
+                provider_key="kraken",
+                provider="Kraken market data",
+                market="CRYPTO",
+                source_class="broker_execution",
+                status="datasource_smoke_ok",
+                evidence_ref=_BROKER_006_DATASOURCE_SMOKE_REF,
+                order_capable_provider=True,
+                order_path="validate_only",
+                read_intent={
+                    "pair": watch_symbol,
+                    "interval": 1,
+                    "venue": "KRAKEN",
+                },
+            ),
+            _provider_truth(
+                provider_key="coingecko",
+                provider="CoinGecko",
+                market="CRYPTO",
+                source_class="research_grade",
+                status="read_unavailable",
+                evidence_ref=f"{_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE}/coingecko.json",
+                order_capable_provider=False,
+                order_path="not_applicable",
+                reason="repo-local smoke did not open a CoinGecko network session",
+            ),
+        ]
+        data_source_status = {
+            "state": "datasource_smoke_ok",
+            "summary": (
+                "Kraken datasource smoke has a normalized quote projection; "
+                "repo-local network readback remains disabled."
+            ),
+            "provider_statuses": {
+                "kraken": "datasource_smoke_ok",
+                "coingecko": "read_unavailable",
+            },
+            "readback_refs": [_BROKER_006_DATASOURCE_SMOKE_REF],
+            "unavailable_refs": [sources[1]["evidence_ref"]],
+            "readback_captured_at": "2026-05-15T17:34:44Z",
+            **_read_only_side_effect_guard(),
+        }
+        return {
+            "data_source_status": data_source_status,
+            "data_sources": sources,
+            "data_source_refs": [source["evidence_ref"] for source in sources],
+        }
+
+    data_source_status = {
+        "state": "not_declared",
+        "summary": "No governed data source readback is declared for this persona.",
+        "provider_statuses": {},
+        "readback_refs": [],
+        "unavailable_refs": [],
+        **_read_only_side_effect_guard(),
+    }
+    return {
+        "data_source_status": data_source_status,
+        "data_sources": [],
+        "data_source_refs": [],
+    }
+
+
+def _market_persona_research_truth(item: Dict[str, Any]) -> Dict[str, Any]:
+    market = str(item.get("market") or "").upper()
+    if market == "TW":
+        research_refs = [
+            {
+                "ref_type": "management_linkage_packet",
+                "ref_id": "mgmt-qlib-006-management-linkage-v1",
+                "ref": _TW_QLIB_LINKAGE_PACKET_REF,
+            },
+            {
+                "ref_type": "dataset_manifest",
+                "ref_id": "qlib-dataset-manifest:dataset-tw-equity-ohlcv-top50-2024-daily",
+                "ref": _TW_QLIB_DATASET_MANIFEST_REF,
+            },
+            {
+                "ref_type": "research_experiment",
+                "ref_id": "exp-mgmt-qlib-006",
+                "route": "/bff/research-experiments/exp-mgmt-qlib-006",
+            },
+            {
+                "ref_type": "strategy_artifacts",
+                "ref_id": "tw-cross-sectional-equity-alpha",
+                "route": "/bff/strategies/tw-cross-sectional-equity-alpha/artifacts",
+            },
+        ]
+        research_status = {
+            "stage": "management_review_linked",
+            "framework": "qlib",
+            "frameworks": ["qlib", "vectorbt", "statsmodels"],
+            "experiment_id": "exp-mgmt-qlib-006",
+            "strategy_id": "tw-cross-sectional-equity-alpha",
+            "strategy_spec_id": "qlib-tw-cross-sectional-alpha-spec-v1",
+            "artifact_id": "qlib-tw-cross-sectional-alpha-model-draft-v1",
+            "artifact_state": "draft",
+            "deployment_stage": "none",
+            "dataset_ref": "dataset:tw-equity-ohlcv-top50-2024-daily",
+            "dataset_manifest_id": "qlib-dataset-manifest:dataset-tw-equity-ohlcv-top50-2024-daily",
+            "registry_admission_status": "pending_upstream_task",
+            "pending_task_ids": ["MGMT-QLIB-003", "MGMT-QLIB-005"],
+            "can_deploy": False,
+            "summary": (
+                "Qlib TW cross-sectional alpha draft is linked for Management review; "
+                "registry admission and deployment are still pending upstream evidence."
+            ),
+            "safety_assertions": {
+                "registry_write_performed": False,
+                "broker_session_opened": False,
+                "order_route": "none",
+                "live_capital_side_effects": False,
+            },
+        }
+        return {
+            "research_status": research_status,
+            "research_refs": research_refs,
+            "current_research_projects": [
+                {
+                    "project_id": "MGMT-QLIB-006",
+                    "title": "Qlib TW cross-sectional equity alpha admission linkage",
+                    "stage": research_status["stage"],
+                    "status": "needs_human_approval",
+                    "frameworks": research_status["frameworks"],
+                    "dataset_ref": research_status["dataset_ref"],
+                    "artifact_id": research_status["artifact_id"],
+                    "experiment_id": research_status["experiment_id"],
+                    "blocked_by_task_ids": research_status["pending_task_ids"],
+                    "evidence_refs": research_refs,
+                    "can_deploy": False,
+                }
+            ],
+        }
+
+    frameworks = ["vectorbt", "statsmodels", "quantlib"]
+    if market == "CRYPTO":
+        frameworks = ["vectorbt", "statsmodels", "finrl-rllib"]
+    research_status = {
+        "stage": str(item.get("ooda_stage") or "observe"),
+        "frameworks": frameworks,
+        "strategy_id": item.get("strategy_id"),
+        "artifact_id": item.get("artifact_id"),
+        "deployment_stage": item.get("deployment_stage"),
+        "registry_admission_status": "not_requested",
+        "can_deploy": False,
+        "summary": str(item.get("current_work") or ""),
+        "safety_assertions": {
+            "registry_write_performed": False,
+            "broker_session_opened": False,
+            "order_route": "none",
+            "live_capital_side_effects": False,
+        },
+    }
+    return {
+        "research_status": research_status,
+        "research_refs": [],
+        "current_research_projects": [
+            {
+                "project_id": f"research-{market.lower()}-paper-001",
+                "title": str(item.get("current_work") or f"{market} paper research loop"),
+                "stage": research_status["stage"],
+                "status": item.get("persona_status"),
+                "frameworks": frameworks,
+                "artifact_id": item.get("artifact_id"),
+                "strategy_id": item.get("strategy_id"),
+                "can_deploy": False,
+            }
+        ],
+    }
+
+
+def _ref_values(refs: List[Any]) -> List[str]:
+    values: List[str] = []
+    for ref in refs:
+        if isinstance(ref, str) and ref:
+            values.append(ref)
+            continue
+        if not isinstance(ref, dict):
+            continue
+        value = ref.get("ref") or ref.get("route") or ref.get("ref_id")
+        if value:
+            values.append(str(value))
+    return values
 
 
 def _merge_market_persona_fleet(
@@ -450,6 +839,10 @@ def _merge_market_persona_fleet(
             "training_improvement_pct": item["training_improvement_pct"],
             "violation_count": item["violation_count"],
         }
+        data_truth = _market_persona_data_truth(item)
+        research_truth = _market_persona_research_truth(item)
+        data_source_refs = list(data_truth.get("data_source_refs") or [])
+        research_ref_values = _ref_values(list(research_truth.get("research_refs") or []))
         metadata = {
             "market_scope": [market],
             "asset_classes": list(item["asset_classes"]),
@@ -469,6 +862,12 @@ def _merge_market_persona_fleet(
             "success_rate": item["win_rate"],
             "risk_level": "medium" if item["risk_flags"] else "low",
             "performance": common_metrics,
+            "data_source_status": data_truth["data_source_status"],
+            "data_sources": data_truth["data_sources"],
+            "data_source_refs": data_source_refs,
+            "research_status": research_truth["research_status"],
+            "research_refs": research_truth["research_refs"],
+            "current_research_projects": research_truth["current_research_projects"],
         }
         changed |= _put_default_record(
             target,
@@ -695,6 +1094,14 @@ def _merge_market_persona_fleet(
                     "evidence_refs": [
                         {"ref_id": f"evidence-{market.lower()}-oos", "type": "oos_backtest"},
                         {"ref_id": f"evidence-{market.lower()}-cost", "type": "cost_model"},
+                        *[
+                            {"ref_id": ref, "type": "data_source_readback"}
+                            for ref in data_source_refs
+                        ],
+                        *[
+                            {"ref_id": ref, "type": "research_linkage"}
+                            for ref in research_ref_values
+                        ],
                     ],
                     "memory_anchors": [],
                     "insight_citations": [],
@@ -757,6 +1164,8 @@ def _merge_market_persona_fleet(
                 "governance": {
                     "can_promote_directly": False,
                     "handoff_required": True,
+                    "data_source_status": data_truth["data_source_status"]["state"],
+                    "research_stage": research_truth["research_status"].get("stage"),
                 },
             },
             skip_datasets=skip_datasets,
@@ -828,14 +1237,22 @@ def _merge_market_persona_fleet(
                 "created_at": "2026-06-07T12:00:00Z",
                 "updated_at": "2026-06-07T13:00:00Z",
                 "observe": {
-                    "market_data_refs": [f"market://{market}/{item['watch_symbol']}"],
+                    "market_data_refs": [
+                        f"market://{market}/{item['watch_symbol']}",
+                        *data_source_refs,
+                    ],
                     "telemetry_refs": [f"telemetry://{runtime_id}/1d"],
                     "trader_training_refs": [teaching_id],
+                    "data_source_status": data_truth["data_source_status"],
                 },
                 "orient": {
                     "backend_refs": ["qlib", "vectorbt", "statsmodels", "quantlib", "finrl-rllib"],
-                    "evidence_bundle_refs": [f"evidence://{market.lower()}-oos"],
+                    "evidence_bundle_refs": [
+                        f"evidence://{market.lower()}-oos",
+                        *research_ref_values,
+                    ],
                     "consultation_refs": [],
+                    "research_status": research_truth["research_status"],
                 },
                 "decide": {
                     "approval_decision_id": approval_id,
