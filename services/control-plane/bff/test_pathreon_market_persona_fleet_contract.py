@@ -75,6 +75,14 @@ def test_default_read_store_has_us_tw_crypto_persona_execution_chain() -> None:
             assert "governance_handoff" in capabilities["effective_tools"]
             assert "no_live_trade_without_approval" in capabilities["restrictions"]
 
+        tw_persona = store.get_persona("persona-tw-equity")
+        assert tw_persona is not None
+        tw_metadata = tw_persona["metadata"]
+        assert tw_metadata["data_source_status"]["state"] == "partial_readback"
+        assert tw_metadata["data_source_status"]["live_ingestion_enabled"] is False
+        assert tw_metadata["research_status"]["stage"] == "management_review_linked"
+        assert tw_metadata["current_research_projects"][0]["project_id"] == "MGMT-QLIB-006"
+
 
 def test_persona_catalog_and_health_expose_market_fields() -> None:
     with _fleet_client() as client:
@@ -87,6 +95,16 @@ def test_persona_catalog_and_health_expose_market_fields() -> None:
         assert catalog[persona_id]["marketScope"] == [market]
         assert catalog[persona_id]["governanceRequired"] is True
         assert catalog[persona_id]["deploymentStage"] == "paper"
+        assert catalog[persona_id]["dataSourceStatus"]["live_ingestion_enabled"] is False
+        assert catalog[persona_id]["dataSources"]
+        assert catalog[persona_id]["researchStatus"]["can_deploy"] is False
+
+    tw_catalog = catalog["persona-tw-equity"]
+    assert tw_catalog["dataSourceStatus"]["state"] == "partial_readback"
+    assert tw_catalog["researchStatus"]["experiment_id"] == "exp-mgmt-qlib-006"
+    assert tw_catalog["currentResearchProjects"][0]["artifact_id"] == (
+        "qlib-tw-cross-sectional-alpha-model-draft-v1"
+    )
 
     assert health.status_code == 200, health.text
     health_by_id = {item["persona_id"]: item for item in health.json()["items"]}
@@ -162,6 +180,32 @@ def test_management_persona_fleet_alias_returns_ui_safe_rows() -> None:
     assert tw["lastMutation"] == "2026-06-07"
     assert tw["perfDelta"] == 0.095
     assert tw["currentWork"] == "TW corporate-action and session-boundary evidence review"
+    assert tw["dataSourceStatus"]["state"] == "partial_readback"
+    assert tw["dataSourceStatus"]["order_side_effects_allowed"] is False
+    assert tw["dataSourceStatus"]["capital_side_effects_allowed"] is False
+    assert tw["dataSourceStatus"]["provider_statuses"] == {
+        "mops": "public_reference_unavailable",
+        "shioaji": "read_ok",
+        "tej": "credential_unavailable",
+        "tpex": "read_unavailable",
+        "twse": "read_unavailable",
+    }
+    data_sources = {source["provider_key"]: source for source in tw["dataSources"]}
+    assert data_sources["shioaji"]["status"] == "read_ok"
+    assert data_sources["shioaji"]["order_path"] == "disabled_for_marketdata_smoke"
+    assert data_sources["shioaji"]["order_side_effects_allowed"] is False
+    assert data_sources["twse"]["status"] == "read_unavailable"
+    assert data_sources["tpex"]["status"] == "read_unavailable"
+    assert data_sources["tej"]["status"] == "credential_unavailable"
+    assert tw["researchStatus"]["stage"] == "management_review_linked"
+    assert tw["researchStatus"]["framework"] == "qlib"
+    assert tw["researchStatus"]["artifact_id"] == "qlib-tw-cross-sectional-alpha-model-draft-v1"
+    assert tw["researchStatus"]["registry_admission_status"] == "pending_upstream_task"
+    assert tw["researchStatus"]["can_deploy"] is False
+    assert tw["currentResearchProjects"][0]["project_id"] == "MGMT-QLIB-006"
+    assert "support/evidence/MGMT-QLIB-006/management_linkage_packet.json" in {
+        ref.get("ref") for ref in tw["researchRefs"]
+    }
 
 
 def test_agora_and_ooda_routes_surface_market_persona_work() -> None:
@@ -175,12 +219,23 @@ def test_agora_and_ooda_routes_surface_market_persona_work() -> None:
     assert set(MARKET_PERSONAS.values()).issubset(signal_personas)
 
     assert packets.status_code == 200, packets.text
-    packet_ids = {item["packet_id"] for item in packets.json()["items"]}
+    packets_by_id = {item["packet_id"]: item for item in packets.json()["items"]}
+    packet_ids = set(packets_by_id)
     assert {
         "ooda-us-equity-paper-001",
         "ooda-tw-equity-paper-001",
         "ooda-crypto-paper-001",
     }.issubset(packet_ids)
+    tw_packet = packets_by_id["ooda-tw-equity-paper-001"]
+    assert tw_packet["observe"]["data_source_status"]["state"] == "partial_readback"
+    assert (
+        "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/"
+        "repo-local-quote-readback/shioaji.json"
+    ) in tw_packet["observe"]["market_data_refs"]
+    assert tw_packet["orient"]["research_status"]["stage"] == "management_review_linked"
+    assert (
+        "support/evidence/MGMT-QLIB-006/management_linkage_packet.json"
+    ) in tw_packet["orient"]["evidence_bundle_refs"]
 
     assert crypto_packets.status_code == 200, crypto_packets.text
     assert [item["packet_id"] for item in crypto_packets.json()["items"]] == [
