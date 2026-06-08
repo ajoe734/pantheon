@@ -7,6 +7,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-pantheon}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
 BFF_BASE_URL="${BFF_BASE_URL:-http://127.0.0.1:18001}"
+BFF_AUTH_TOKEN="${BFF_AUTH_TOKEN:-pantheon-dev-browser:admin,operator:mfa:assistant.kernel.debug,assistant.kernel.repair}"
 PANTHEON_SUPERVISOR_CONFIG="${PANTHEON_SUPERVISOR_CONFIG:-/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json}"
 
 resolve_status_root_host() {
@@ -54,6 +55,11 @@ echo "Enabling Management AI dev kernel control mode for operator-bff"
 echo "compose_project=${COMPOSE_PROJECT_NAME}"
 echo "compose_file=${COMPOSE_FILE}"
 echo "bff_base_url=${BFF_BASE_URL}"
+if [ -n "${BFF_AUTH_TOKEN}" ]; then
+  echo "bff_auth_token=configured"
+else
+  echo "bff_auth_token=empty"
+fi
 echo "status_root_host=${PANTHEON_STATUS_ROOT_HOST}"
 echo "status_root_container=${PANTHEON_STATUS_ROOT_CONTAINER}"
 echo "kernel_enabled=${PANTHEON_ASSISTANT_KERNEL_ENABLED}"
@@ -68,9 +74,13 @@ docker compose -p "${COMPOSE_PROJECT_NAME}" -f "${COMPOSE_FILE}" ps operator-bff
 
 mode_body="$(mktemp)"
 trap 'rm -f "${mode_body}"' EXIT
+auth_args=()
+if [ -n "${BFF_AUTH_TOKEN}" ]; then
+  auth_args=(-H "Authorization: Bearer ${BFF_AUTH_TOKEN}")
+fi
 
 for attempt in $(seq 1 20); do
-  if curl -fsS --max-time 5 "${BFF_BASE_URL}/bff/assistant/mode" >"${mode_body}"; then
+  if curl -fsS --max-time 5 "${auth_args[@]}" "${BFF_BASE_URL}/bff/assistant/mode" >"${mode_body}"; then
     if command -v jq >/dev/null 2>&1; then
       jq '{kernel_enabled:.data.kernel_enabled, control_mode:.data.control_mode}' "${mode_body}"
     else
