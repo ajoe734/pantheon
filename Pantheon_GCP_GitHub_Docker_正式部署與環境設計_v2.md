@@ -594,13 +594,15 @@ flowchart LR
     PR["GitHub PR"] --> CI1["GitHub Actions: lint / schema / unit / smoke"]
     CI1 --> DEC{Pass?}
     DEC -- no --> FAIL["Block merge"]
-    DEC -- yes --> MERGE["Merge to main"]
+    DEC -- yes --> DEV_MERGE["Merge to dev"]
 
-    MERGE --> AUTH["GitHub OIDC -> GCP WIF"]
+    DEV_MERGE --> NIGHTLY["03:00 UTC nightly-publish-cut from dev HEAD"]
+    NIGHTLY --> SNAP["Immutable publish/v* snapshot"]
+    SNAP --> AUTH["GitHub OIDC -> GCP WIF"]
     AUTH --> BUILD["Cloud Build builds changed images"]
     BUILD --> AR["Push to Artifact Registry"]
 
-    AR --> DEV["Auto deploy to dev"]
+    AR --> DEV["Auto deploy publish/v* snapshot to dev"]
     DEV --> SANDBOX["Promote to sandbox after integration gate"]
 
     SANDBOX --> PAPER["Pantheon Governance creates DeploymentPlan for paper"]
@@ -675,10 +677,14 @@ flowchart LR
 - early integration
 
 ### 流程
-- merge to `main`
-- 自動 deploy 到 `dev`
+- task / hotfix PR 持續 merge 到 `dev`
+- `nightly-publish-cut.yml` 每天 03:00 UTC 從 `dev` HEAD 切出不可變 `publish/v*` snapshot
+- push `publish/v*` 自動觸發 `nonprod-deploy.yml`
+- deploy-dev 使用該 snapshot 內的 workflow 與 runtime 定義，也就是 `dev` 當下的 4-service / FLP 等部署邏輯
 - 只允許 non-production secrets
 - 執行 health / smoke / migration checks
+
+`main` / `master` release branch 不屬於 dev deploy source path；它只負責 staging / paper / prod 類 promotion 路徑。若本文件與 `docs/conventions/GIT_WORKFLOW.md` 衝突，以 `docs/conventions/GIT_WORKFLOW.md` 的 branch / publish / promote 定義為準。
 
 ### 可直接由 GitHub/CD 完成的內容
 - Cloud Run revisions
@@ -782,7 +788,7 @@ Paper deploy 不能只靠 GitHub Action 把 image 推到 paper namespace 就算�
 | 項目 | dev | sandbox | paper | prod |
 |---|---|---|---|---|
 | 目的 | 開發與單元驗證 | 跨服務整合、contract 驗證 | production-like 模擬交易 | 真實營運 |
-| Git trigger | PR / feature branch | main / RC tag | release + Pantheon approval | release + Pantheon approval |
+| Git trigger | `dev` -> nightly `publish/v*` snapshot -> auto deploy | release branch / RC tag | release + Pantheon approval | release + Pantheon approval |
 | Cloud Run services | yes | yes | yes | yes |
 | GKE Autopilot workers | minimal / shared | yes | yes | yes |
 | GKE execution cluster | optional / stub | optional / stub | yes | yes |
@@ -1300,7 +1306,7 @@ echo "GCP_PROJECT_NUMBER=${PROJECT_NUMBER}"
 | Tag | 特性 | 說明 |
 |---|---|---|
 | `:<commit-sha>` | immutable | canonical artifact identity；永不覆寫 |
-| `:dev-candidate` | mutable | 指向 main 分支最新 dev build |
+| `:dev-candidate` | mutable | 指向最新 `publish/v*` dev snapshot build；source 必須來自 `dev` HEAD 切出的 publish 快照 |
 | `:paper-candidate` | mutable | 指向通過 sandbox gate 的候選 |
 | `:paper-approved` | mutable | 指向 DeploymentPlan 核准後的 paper image |
 | `:prod-approved` | mutable | 指向 prod ApprovalDecision 核准後的 image |
