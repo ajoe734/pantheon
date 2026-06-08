@@ -35,6 +35,96 @@ from assistant_command_policy import (
 )
 
 
+ASSISTANT_SKILL_DESCRIPTOR_SCHEMA_VERSION = "assistant_skill_descriptor.v1"
+_DEFAULT_EFFECTIVE_SKILL_MODE = "kernel_debug"
+_DEFAULT_OPERATOR_ROLE = "operator"
+_TOOL_SKILL_MODES = ("kernel_debug", "kernel_repair")
+_ASSISTANT_COMMAND_SKILL_MODES = ("kernel_observe", "kernel_debug", "kernel_repair")
+_WORKFLOW_SKILL_MODES = ("kernel_repair",)
+_OPERATOR_ROLE_ALIASES = {
+    "admin": "admin",
+    "approver": "approver",
+    "capability_admin": "approver",
+    "operator": "operator",
+    "reviewer": "reviewer",
+    "viewer": "viewer",
+}
+_ROLE_GATE: Dict[str, frozenset[str]] = {
+    "viewer": frozenset({"viewer", "reviewer", "operator", "approver", "admin"}),
+    "reviewer": frozenset({"reviewer", "operator", "approver", "admin"}),
+    "operator": frozenset({"operator", "admin"}),
+    "approver": frozenset({"approver", "admin"}),
+    "admin": frozenset({"admin"}),
+}
+
+
+def _normalize_mode(mode: Optional[str]) -> str:
+    clean = str(mode or "").strip()
+    return clean if clean else _DEFAULT_EFFECTIVE_SKILL_MODE
+
+
+def _normalize_operator_role(role: Optional[str]) -> str:
+    clean = str(role or "").strip().lower()
+    return _OPERATOR_ROLE_ALIASES.get(clean, clean or _DEFAULT_OPERATOR_ROLE)
+
+
+def _role_allowed(*, required_role: str, operator_role: str) -> bool:
+    allowed_roles = _ROLE_GATE.get(required_role, frozenset())
+    return operator_role in allowed_roles
+
+
+def _title_from_ref(ref: str) -> str:
+    clean = str(ref or "").strip()
+    if not clean:
+        return "Unnamed Skill"
+    return " ".join(part.capitalize() for part in clean.replace(":", ".").replace("_", ".").split(".") if part)
+
+
+def _mode_gate(allowed_modes: tuple[str, ...]) -> Dict[str, Any]:
+    return {
+        "type": "allowlist",
+        "default": "deny",
+        "allowed_modes": list(allowed_modes),
+    }
+
+
+def _open_input_schema(metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    metadata = metadata or {}
+    for key in ("input_schema", "inputSchema", "schema", "parameters"):
+        schema = metadata.get(key)
+        if isinstance(schema, dict):
+            return schema
+    return {"type": "object", "additionalProperties": True}
+
+
+@dataclasses.dataclass(frozen=True)
+class AssistantSkillDescriptor:
+    """Pantheon assistant-skill descriptor derived from OpenClaw policy state."""
+
+    id: str
+    title: str
+    surface: str
+    mode_gate: Dict[str, Any]
+    role: str
+    confirm_policy: Dict[str, Any]
+    input_schema: Dict[str, Any]
+    handler_ref: str
+    result_surface: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "surface": self.surface,
+            "mode_gate": dict(self.mode_gate),
+            "role": self.role,
+            "confirm_policy": dict(self.confirm_policy),
+            "input_schema": dict(self.input_schema),
+            "handler_ref": self.handler_ref,
+            "result_surface": self.result_surface,
+        }
+
+
 # ---------------------------------------------------------------------------
 # Audit log
 # ---------------------------------------------------------------------------
@@ -256,6 +346,93 @@ class ToolPolicy:
                 "to enable specific tools or workflow refs."
             ),
         }
+
+
+def _tool_skill_descriptor(
+    tool_name: str,
+    *,
+    upstream_metadata: Optional[Dict[str, Any]] = None,
+) -> AssistantSkillDescriptor:
+    metadata = upstream_metadata or {}
+    if tool_name == ASSISTANT_COMMAND_TOOL_NAME:
+        return AssistantSkillDescriptor(
+            id=tool_name,
+            title="Assistant Command Authorization",
+            surface="assistant_command",
+            mode_gate=_mode_gate(_ASSISTANT_COMMAND_SKILL_MODES),
+            role="operator",
+            confirm_policy={
+                "required": False,
+                "note": "This descriptor authorizes brokered command requests only; execution has a separate policy gate.",
+            },
+            input_schema={
+                "type": "object",
+                "required": ["session_id", "mode", "argv"],
+                "properties": {
+                    "session_id": {"type": "string"},
+                    "mode": {"type": "string"},
+                    "command_class": {"type": "string"},
+                    "argv": {"type": "array", "items": {"type": "string"}},
+                },
+                "additionalProperties": False,
+            },
+            handler_ref=f"openclaw.tool:{tool_name}",
+            result_surface="assistant_command_authorization",
+        )
+    title = str(metadata.get("title") or metadata.get("display_name") or "").strip()
+    return AssistantSkillDescriptor(
+        id=tool_name,
+        title=title or _title_from_ref(tool_name),
+        surface="openclaw_tool",
+        mode_gate=_mode_gate(_TOOL_SKILL_MODES),
+        role="operator",
+        confirm_policy={"required": False},
+        input_schema=_open_input_schema(metadata),
+        handler_ref=f"openclaw.tool:{tool_name}",
+        result_surface="openclaw_tool_result",
+    )
+
+
+def _workflow_skill_descriptor(workflow_ref: str) -> AssistantSkillDescriptor:
+    return AssistantSkillDescriptor(
+        id=f"workflow:{workflow_ref}",
+        title=_title_from_ref(workflow_ref),
+        surface="openclaw_workflow",
+        mode_gate=_mode_gate(_WORKFLOW_SKILL_MODES),
+        role="operator",
+        confirm_policy={
+            "required": True,
+            "policy": "bff_command_or_control_mode",
+        },
+        input_schema={"type": "object", "additionalProperties": True},
+        handler_ref=f"openclaw.workflow:{workflow_ref}",
+        result_surface="openclaw_workflow_result",
+    )
+
+
+def _descriptor_effective(
+    descriptor: AssistantSkillDescriptor,
+    *,
+    mode: str,
+    operator_role: str,
+) -> bool:
+    allowed_modes = descriptor.mode_gate.get("allowed_modes")
+    mode_allowed = isinstance(allowed_modes, list) and mode in {str(item) for item in allowed_modes}
+    return mode_allowed and _role_allowed(required_role=descriptor.role, operator_role=operator_role)
+
+
+def _upstream_tool_metadata(raw_tools: Optional[List[Dict[str, Any]]]) -> Dict[str, Dict[str, Any]]:
+    metadata: Dict[str, Dict[str, Any]] = {}
+    for raw in raw_tools or []:
+        if isinstance(raw, dict):
+            name = str(raw.get("name") or raw.get("tool_name") or raw.get("id") or "").strip()
+            if name:
+                metadata[name] = dict(raw)
+        else:
+            name = str(raw).strip()
+            if name:
+                metadata[name] = {"name": name}
+    return metadata
 
 
 # ---------------------------------------------------------------------------
@@ -603,13 +780,16 @@ class ToolWorkflowBridge:
         agent_id: str,
         session_id: Optional[str] = None,
         operator_id: str,
+        mode: Optional[str] = None,
+        operator_role: Optional[str] = None,
         upstream: Any = None,
     ) -> Dict[str, Any]:
         """Return the effective tool set visible to this operator/session.
 
-        The effective set is the intersection of:
-        1. The policy allowlist (Pantheon-owned)
+        The effective tool set is the intersection of:
+        1. The executable policy allowlist (Pantheon-owned)
         2. What the upstream reports for the agent/session (if reachable)
+        3. The assistant-skill descriptor mode/role gates
 
         If the upstream is absent, the response shows the policy allowlist only
         (degraded mode).
@@ -617,6 +797,8 @@ class ToolWorkflowBridge:
         if not operator_id:
             raise BridgeError("BRIDGE_OPERATOR_REQUIRED", "operator_id is required.", status_code=401)
 
+        resolved_mode = _normalize_mode(mode)
+        resolved_operator_role = _normalize_operator_role(operator_role)
         policy_tools = self._policy.allowed_tools
         executable_policy_tools = [
             tool_name
@@ -624,6 +806,13 @@ class ToolWorkflowBridge:
             if self._policy.evaluate_tool(tool_name).allowed
         ]
         blocked_policy_tools = sorted(set(policy_tools) - set(executable_policy_tools))
+        policy_workflows = self._policy.allowed_workflows
+        executable_policy_workflows = [
+            workflow_ref
+            for workflow_ref in policy_workflows
+            if self._policy.evaluate_workflow(workflow_ref).allowed
+        ]
+        blocked_policy_workflows = sorted(set(policy_workflows) - set(executable_policy_workflows))
         upstream_tools: Optional[List[Dict[str, Any]]] = None
         upstream_status = "not_configured"
 
@@ -641,12 +830,9 @@ class ToolWorkflowBridge:
                 upstream_tools = None
 
         effective: List[str]
+        upstream_metadata = _upstream_tool_metadata(upstream_tools)
         if upstream_tools is not None:
-            upstream_names = {
-                str(t.get("name") or t.get("tool_name") or t)
-                for t in upstream_tools
-                if isinstance(t, dict)
-            }
+            upstream_names = set(upstream_metadata)
             if executable_policy_tools:
                 effective = sorted(frozenset(executable_policy_tools) & upstream_names)
             else:
@@ -654,19 +840,72 @@ class ToolWorkflowBridge:
         else:
             effective = list(executable_policy_tools)
 
+        effective = [
+            tool_name
+            for tool_name in effective
+            if _descriptor_effective(
+                _tool_skill_descriptor(tool_name, upstream_metadata=upstream_metadata.get(tool_name)),
+                mode=resolved_mode,
+                operator_role=resolved_operator_role,
+            )
+        ]
+        effective_workflows = [
+            workflow_ref
+            for workflow_ref in executable_policy_workflows
+            if _descriptor_effective(
+                _workflow_skill_descriptor(workflow_ref),
+                mode=resolved_mode,
+                operator_role=resolved_operator_role,
+            )
+        ]
+        effective_skill_descriptors = [
+            _tool_skill_descriptor(tool_name, upstream_metadata=upstream_metadata.get(tool_name)).to_dict()
+            for tool_name in effective
+        ] + [
+            _workflow_skill_descriptor(workflow_ref).to_dict()
+            for workflow_ref in effective_workflows
+        ]
+
         return {
             "status": "ok" if upstream_status == "ok" else "degraded",
+            "schema_version": ASSISTANT_SKILL_DESCRIPTOR_SCHEMA_VERSION,
             "upstream_status": upstream_status,
             "agent_id": agent_id,
             "session_id": session_id,
+            "mode": resolved_mode,
+            "operator_role": resolved_operator_role,
             "policy_allowed_tools": policy_tools,
             "policy_blocked_tools": blocked_policy_tools,
+            "policy_allowed_workflows": policy_workflows,
+            "policy_blocked_workflows": blocked_policy_workflows,
             "effective_tools": effective,
+            "effective_workflows": effective_workflows,
+            "effective_skills": effective_skill_descriptors,
+            "skill_resolution": {
+                "default_posture": "deny_all",
+                "source": "openclaw_tool_workflow_policy",
+                "mode_gate": "deny_unless_mode_allowed",
+                "role_gate": "deny_unless_role_allowed",
+                "unknown_skills": "fail_closed",
+                "descriptor_fields": [
+                    "id",
+                    "title",
+                    "surface",
+                    "mode_gate",
+                    "role",
+                    "confirm_policy",
+                    "input_schema",
+                    "handler_ref",
+                    "result_surface",
+                ],
+            },
             "note": (
                 "effective_tools is the intersection of the Pantheon executable policy allowlist "
-                "and upstream-reported tools. Always-blocked broker/live/paper/capital tools are "
-                "excluded even if configured in the allowlist. An empty list means no tools are "
-                "available to this operator/session."
+                "and upstream-reported tools, then filtered by assistant-skill descriptor mode/role "
+                "gates. effective_skills contains the descriptor form derived from the same policy "
+                "state; no second registry is consulted. Always-blocked broker/live/paper/capital "
+                "tools are excluded even if configured in the allowlist. An empty list means no "
+                "tools are available to this operator/session."
             ),
         }
 

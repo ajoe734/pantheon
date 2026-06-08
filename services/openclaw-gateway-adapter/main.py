@@ -1170,7 +1170,10 @@ def get_tool_policy() -> Dict[str, Any]:
 def list_tools(
     agent_id: str,
     session_id: Optional[str] = None,
+    mode: Optional[str] = None,
+    operator_role: Optional[str] = None,
     x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+    x_operator_role: Optional[str] = Header(default=None, alias="X-Operator-Role"),
 ) -> JSONResponse:
     if not x_operator_id:
         return JSONResponse(
@@ -1186,6 +1189,8 @@ def list_tools(
             agent_id=agent_id,
             session_id=session_id,
             operator_id=x_operator_id,
+            mode=mode,
+            operator_role=operator_role or x_operator_role,
             upstream=_upstream_client_or_none(),
         )
     except BridgeError as exc:
