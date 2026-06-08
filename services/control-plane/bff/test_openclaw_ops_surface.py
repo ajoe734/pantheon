@@ -54,6 +54,12 @@ class _Recorder:
         return _FakeResponse(self.responses[key])
 
 
+def _error_details(payload: Dict[str, Any]) -> Dict[str, Any]:
+    detail_error = payload.get("detail", {}).get("error") if isinstance(payload.get("detail"), dict) else None
+    error = detail_error if isinstance(detail_error, dict) else payload.get("error")
+    return error.get("details", {}) if isinstance(error, dict) else {}
+
+
 def _healthy_payloads() -> Dict[Tuple[str, str], Dict[str, Any]]:
     return {
         ("GET", f"{BASE_URL}/api/openclaw-adapter/capabilities"): {
@@ -288,7 +294,7 @@ def test_openclaw_session_commands_require_auth_role_and_idempotency(monkeypatch
         json=body,
     )
     assert missing_idempotency.status_code == 400
-    assert missing_idempotency.json()["detail"]["error"]["details"]["precondition_failed"] == "idempotency_key"
+    assert _error_details(missing_idempotency.json())["precondition_failed"] == "idempotency_key"
 
 
 def test_openclaw_session_create_forwards_operator_and_idempotency(monkeypatch) -> None:
