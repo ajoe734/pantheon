@@ -166,6 +166,11 @@ def test_management_fleet_composes_personas_ooda_capital_runtime_and_human_gate(
     assert data["capital_totals"]["total_nav"] > 0
     assert data["human_inbox"]["pending_count"] >= 3
     assert data["ooda_status"]["enabled"] is True
+    meta_surfaces = response.json()["meta"]["surfaces"]
+    assert meta_surfaces["persona_league"]["status"] in {"ok", "degraded"}
+    assert meta_surfaces["persona_league"]["source"] != "missing"
+    assert meta_surfaces["ooda_control_room_status"]["status"] == "ok"
+    assert meta_surfaces["ooda_control_room_status"]["source"] != "missing"
     assert data["execution_boundary"] == {
         "approved_artifacts_only": True,
         "live_capital_side_effects": False,
@@ -265,6 +270,9 @@ def test_management_fleet_keeps_market_personas_with_live_dev_overlay_only() -> 
     assert {item["persona_id"] for item in data["persona_league"]}.issuperset(
         set(MARKET_PERSONAS.values())
     )
+    meta_surfaces = response.json()["meta"]["surfaces"]
+    assert meta_surfaces["persona_league"]["status"] == "ok"
+    assert meta_surfaces["persona_league"]["source"] == "composed_market_persona_defaults"
 
     tw = rows["persona-tw-equity"]
     assert tw["dataSourceStatus"]["state"] == "partial_readback"
