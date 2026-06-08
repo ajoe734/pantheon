@@ -302,6 +302,30 @@ def test_execute_plans_lovableproject_survives_production_strict_filter(monkeypa
     assert "https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com" in origins
 
 
+def test_self_hosted_dev_fe_origin_in_default_origins(monkeypatch) -> None:
+    """off-lovable: the Pantheon-owned self-hosted dev FE origin is the current dev
+    acceptance origin and must be present in the default CORS allowlist."""
+    monkeypatch.delenv("PANTHEON_BFF_CORS_ORIGINS", raising=False)
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+
+    origins = bff_main._cors_origins_from_env()
+
+    assert "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io" in origins
+
+
+def test_self_hosted_dev_fe_origin_filtered_in_production_strict(monkeypatch) -> None:
+    """off-lovable: the self-hosted dev FE origin is dev-only and must be filtered out
+    of the CORS allowlist when production-strict mode is active."""
+    monkeypatch.delenv("PANTHEON_BFF_CORS_ORIGINS", raising=False)
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_ENV", "production")
+
+    origins = bff_main._cors_origins_from_env()
+
+    assert "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io" not in origins
+
+
 def test_static_id_preview_survives_production_strict_filter(monkeypatch) -> None:
     """BFF-B1-001-DELTA-2 regression: static id-preview origins must remain
     exact-match allowlisted when production strict mode filters dev-only origins."""
