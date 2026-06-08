@@ -47,6 +47,8 @@ def test_enable_management_ai_dev_kernel_script_targets_only_operator_bff() -> N
 
     assert 'COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-pantheon}"' in script
     assert 'COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"' in script
+    assert 'BFF_AUTH_TOKEN="${BFF_AUTH_TOKEN:-pantheon-dev-browser:admin,operator:mfa:assistant.kernel.debug,assistant.kernel.repair}"' in script
+    assert 'auth_args=(-H "Authorization: Bearer ${BFF_AUTH_TOKEN}")' in script
     assert "PANTHEON_SUPERVISOR_CONFIG" in script
     assert "resolve_status_root_host" in script
     assert 'PANTHEON_STATUS_ROOT_HOST="$(resolve_status_root_host)"' in script
