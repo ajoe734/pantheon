@@ -139,15 +139,24 @@ class OpenClawOpsClient:
         agent_id: str,
         operator_id: str,
         session_id: Optional[str] = None,
+        mode: Optional[str] = None,
+        operator_role: Optional[str] = None,
     ) -> Dict[str, Any]:
         query = {"agent_id": agent_id}
         if session_id:
             query["session_id"] = session_id
+        if mode:
+            query["mode"] = mode
+        if operator_role:
+            query["operator_role"] = operator_role
+        headers = {"X-Operator-Id": operator_id}
+        if operator_role:
+            headers["X-Operator-Role"] = operator_role
         return self._request(
             "GET",
             "/api/openclaw-adapter/tools",
             query=query,
-            headers={"X-Operator-Id": operator_id},
+            headers=headers,
         )
 
     def list_invocation_audit(

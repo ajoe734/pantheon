@@ -176,6 +176,66 @@ def test_openclaw_ops_surface_aggregates_status_sessions_gates_and_audit(monkeyp
     assert payload["meta"]["surfaces"]["openclaw_tool_workflow_bridge"]["status"] == "ok"
 
 
+def test_openclaw_ops_surface_projects_effective_skill_descriptors(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", BASE_URL)
+    responses = _healthy_payloads()
+    responses[
+        (
+            "GET",
+            f"{BASE_URL}/api/openclaw-adapter/tools?agent_id=management-ai&mode=kernel_debug&operator_role=operator",
+        )
+    ] = {
+        "status": "ok",
+        "schema_version": "assistant_skill_descriptor.v1",
+        "upstream_status": "ok",
+        "agent_id": "management-ai",
+        "mode": "kernel_debug",
+        "operator_role": "operator",
+        "policy_allowed_tools": ["assistant.command"],
+        "policy_blocked_tools": [],
+        "effective_tools": ["assistant.command"],
+        "effective_workflows": [],
+        "effective_skills": [
+            {
+                "id": "assistant.command",
+                "title": "Assistant Command Authorization",
+                "surface": "assistant_command",
+                "mode_gate": {
+                    "type": "allowlist",
+                    "default": "deny",
+                    "allowed_modes": ["kernel_observe", "kernel_debug", "kernel_repair"],
+                },
+                "role": "operator",
+                "confirm_policy": {"required": False},
+                "input_schema": {"type": "object"},
+                "handler_ref": "openclaw.tool:assistant.command",
+                "result_surface": "assistant_command_authorization",
+            }
+        ],
+    }
+    recorder = _Recorder(responses)
+    client = TestClient(bff_main.app)
+
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen", recorder):
+        response = client.get(
+            "/api/v1/operator/openclaw/ops?agent_id=management-ai&mode=kernel_debug",
+            headers={"Authorization": OPERATOR_AUTH},
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    effective = payload["data"]["tool_workflow"]["effective_tools"]
+    assert effective["schema_version"] == "assistant_skill_descriptor.v1"
+    assert effective["effective_skills"][0]["id"] == "assistant.command"
+    assert effective["effective_skills"][0]["handler_ref"] == "openclaw.tool:assistant.command"
+    assert payload["meta"]["surfaces"]["openclaw_effective_tools"]["status"] == "ok"
+
+    tool_call = [call for call in recorder.calls if "/api/openclaw-adapter/tools?" in call[1]][0]
+    _, _, headers, _ = tool_call
+    assert headers["X-operator-id"] == "op-2"
+    assert headers["X-operator-role"] == "operator"
+
+
 def test_openclaw_ops_surface_degrades_when_adapter_is_not_configured(monkeypatch) -> None:
     for env_name in (
         "PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL",

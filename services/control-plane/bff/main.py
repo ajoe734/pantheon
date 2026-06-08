@@ -14763,6 +14763,19 @@ def _authorized_openclaw_operator_filter(
     return clean
 
 
+def _openclaw_effective_operator_role(identity: OperatorIdentity) -> str:
+    roles = set(identity.roles)
+    if "admin" in roles:
+        return "admin"
+    if "operator" in roles:
+        return "operator"
+    if "approver" in roles or "capability_admin" in roles:
+        return "approver"
+    if "reviewer" in roles:
+        return "reviewer"
+    return "viewer"
+
+
 def _openclaw_ops_meta(snapshot_at: str, data: Dict[str, Any], surface_key: str) -> Dict[str, Any]:
     service_surfaces = {
         service: {
@@ -14797,6 +14810,8 @@ def _build_openclaw_ops_response(
     agent_id: Optional[str],
     effective_tools_session_id: Optional[str],
     requesting_operator_id: str,
+    effective_tools_mode: Optional[str],
+    requesting_operator_role: Optional[str],
     surface_key: str,
 ) -> Dict[str, Any]:
     snapshot_at = utc_now()
@@ -14808,6 +14823,8 @@ def _build_openclaw_ops_response(
         agent_id=agent_id,
         effective_tools_session_id=effective_tools_session_id,
         requesting_operator_id=requesting_operator_id,
+        effective_tools_mode=effective_tools_mode,
+        requesting_operator_role=requesting_operator_role,
     )
     return {
         "data": data,
@@ -14895,6 +14912,7 @@ async def get_openclaw_ops(
     operator_id: Optional[str] = Query(default=None),
     agent_id: Optional[str] = Query(default=None),
     session_id: Optional[str] = Query(default=None),
+    mode: Optional[str] = Query(default=None),
     authorization: Optional[str] = Header(default=None),
 ):
     identity = _extract_identity(authorization)
@@ -14908,6 +14926,8 @@ async def get_openclaw_ops(
         agent_id=agent_id,
         effective_tools_session_id=session_id,
         requesting_operator_id=identity.operator_id,
+        effective_tools_mode=mode,
+        requesting_operator_role=_openclaw_effective_operator_role(identity),
         surface_key="openclaw_ops",
     )
 
@@ -14920,6 +14940,7 @@ async def get_openclaw_tool_workflow_bridge(
     operator_id: Optional[str] = Query(default=None),
     agent_id: Optional[str] = Query(default=None),
     session_id: Optional[str] = Query(default=None),
+    mode: Optional[str] = Query(default=None),
     authorization: Optional[str] = Header(default=None),
 ):
     identity = _extract_identity(authorization)
@@ -14933,6 +14954,8 @@ async def get_openclaw_tool_workflow_bridge(
         agent_id=agent_id,
         effective_tools_session_id=session_id,
         requesting_operator_id=identity.operator_id,
+        effective_tools_mode=mode,
+        requesting_operator_role=_openclaw_effective_operator_role(identity),
         surface_key="openclaw_tool_workflow_bridge",
     )
 
@@ -48516,6 +48539,8 @@ def _assistant_openclaw_effective_tools(operator_id: str) -> Dict[str, Any]:
         return OpenClawOpsClient().list_effective_tools(
             agent_id="management-ai",
             operator_id=operator_id or "management-ai",
+            mode="kernel_debug",
+            operator_role="operator",
         )
     except OpenClawOpsClientError as exc:
         return {

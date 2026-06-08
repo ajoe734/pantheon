@@ -64,6 +64,7 @@ import httpx  # noqa: E402
 import pydantic  # noqa: E402
 
 from tool_workflow_bridge import (  # noqa: E402
+    ASSISTANT_SKILL_DESCRIPTOR_SCHEMA_VERSION,
     BridgeAuditLog,
     BridgeError,
     ToolPolicy,
@@ -626,6 +627,93 @@ class TestListEffectiveTools(unittest.TestCase):
         self.assertEqual(result["upstream_status"], "not_configured")
         self.assertEqual(result["effective_tools"], ["search"])
         self.assertEqual(result["policy_blocked_tools"], ["broker.submit", "paper.execute"])
+
+    def test_effective_skills_include_descriptor_schema_for_allowed_tool(self):
+        bridge, _ = _make_bridge(allowed_tools=["search"])
+        result = bridge.list_effective_tools(
+            agent_id="a1",
+            operator_id="op1",
+            mode="kernel_debug",
+            operator_role="operator",
+            upstream=FakeUpstream(),
+        )
+
+        self.assertEqual(result["schema_version"], ASSISTANT_SKILL_DESCRIPTOR_SCHEMA_VERSION)
+        self.assertEqual(result["effective_tools"], ["search"])
+        self.assertEqual(len(result["effective_skills"]), 1)
+        descriptor = result["effective_skills"][0]
+        for field in (
+            "id",
+            "title",
+            "surface",
+            "mode_gate",
+            "role",
+            "confirm_policy",
+            "input_schema",
+            "handler_ref",
+            "result_surface",
+        ):
+            self.assertIn(field, descriptor)
+        self.assertEqual(descriptor["id"], "search")
+        self.assertEqual(descriptor["surface"], "openclaw_tool")
+        self.assertEqual(descriptor["mode_gate"]["default"], "deny")
+        self.assertIn("kernel_debug", descriptor["mode_gate"]["allowed_modes"])
+        self.assertEqual(descriptor["handler_ref"], "openclaw.tool:search")
+
+    def test_effective_skills_deny_user_mode(self):
+        bridge, _ = _make_bridge(allowed_tools=["search"])
+        result = bridge.list_effective_tools(
+            agent_id="a1",
+            operator_id="op1",
+            mode="user",
+            operator_role="operator",
+            upstream=FakeUpstream(),
+        )
+
+        self.assertEqual(result["mode"], "user")
+        self.assertEqual(result["effective_tools"], [])
+        self.assertEqual(result["effective_skills"], [])
+        self.assertEqual(result["skill_resolution"]["unknown_skills"], "fail_closed")
+
+    def test_effective_skills_deny_viewer_role(self):
+        bridge, _ = _make_bridge(allowed_tools=["search"])
+        result = bridge.list_effective_tools(
+            agent_id="a1",
+            operator_id="op1",
+            mode="kernel_debug",
+            operator_role="viewer",
+            upstream=FakeUpstream(),
+        )
+
+        self.assertEqual(result["operator_role"], "viewer")
+        self.assertEqual(result["effective_tools"], [])
+        self.assertEqual(result["effective_skills"], [])
+
+    def test_workflow_skill_descriptors_are_repair_mode_gated(self):
+        bridge, _ = _make_bridge(allowed_workflows=["research.scan"])
+
+        debug_result = bridge.list_effective_tools(
+            agent_id="a1",
+            operator_id="op1",
+            mode="kernel_debug",
+            operator_role="operator",
+            upstream=None,
+        )
+        repair_result = bridge.list_effective_tools(
+            agent_id="a1",
+            operator_id="op1",
+            mode="kernel_repair",
+            operator_role="operator",
+            upstream=None,
+        )
+
+        self.assertEqual(debug_result["effective_workflows"], [])
+        self.assertEqual(debug_result["effective_skills"], [])
+        self.assertEqual(repair_result["effective_workflows"], ["research.scan"])
+        descriptor = repair_result["effective_skills"][0]
+        self.assertEqual(descriptor["id"], "workflow:research.scan")
+        self.assertEqual(descriptor["surface"], "openclaw_workflow")
+        self.assertTrue(descriptor["confirm_policy"]["required"])
 
 
 class TestNoBrokerLivePaperExecution(unittest.TestCase):

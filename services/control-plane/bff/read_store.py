@@ -7599,6 +7599,8 @@ class ReadSurfaceStore:
         agent_id: Optional[str] = None,
         effective_tools_session_id: Optional[str] = None,
         requesting_operator_id: Optional[str] = None,
+        effective_tools_mode: Optional[str] = None,
+        requesting_operator_role: Optional[str] = None,
     ) -> Dict[str, Any]:
         bounded_session_limit = max(min(session_limit, 100), 1)
         bounded_audit_limit = max(min(audit_limit, 100), 1)
@@ -7648,6 +7650,8 @@ class ReadSurfaceStore:
                     agent_id=agent_id,
                     operator_id=requesting_operator_id,
                     session_id=effective_tools_session_id,
+                    mode=effective_tools_mode,
+                    operator_role=requesting_operator_role,
                 ),
             )
             service_status["openclaw_effective_tools"] = tools_surface
