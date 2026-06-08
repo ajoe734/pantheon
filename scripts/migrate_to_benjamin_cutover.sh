@@ -16,6 +16,7 @@
 #   1) GitHub repo variables (project ID/number/WIF/SA/bucket/BFF URLs)
 #   2) Hardcoded dev BFF URL in two scripts (probe + sidecar)
 #   3) On-VM Caddyfile for dev + staging (re-points cert SNI to the new IP host)
+#      including the Pantheon-owned dev FE host
 #
 # What this does NOT change:
 #   - Archived docs/evidence (immutable history)
@@ -72,7 +73,9 @@ echo "=== Re-pointing on-VM Caddy to the new IP hostnames ==="
 deploy/caddy/sync-caddy.sh \
   "lupin@${NEW_DEV_IP}" \
   "pantheon-lupin-dev-bff.${NEW_DEV_IP}.sslip.io" \
-  deploy/caddy/dev.Caddyfile.tmpl
+  deploy/caddy/dev.Caddyfile.tmpl \
+  "pantheon-lupin-dev-fe.${NEW_DEV_IP}.sslip.io" \
+  /var/www/pantheon-dev-fe
 deploy/caddy/sync-caddy.sh \
   "lupin@${NEW_STAGING_IP}" \
   "pantheon-lupin-staging-bff.${NEW_STAGING_IP}.sslip.io" \
@@ -82,6 +85,7 @@ echo
 echo "=== Done. Verify with: ==="
 echo "  gh variable list | grep -E 'GCP_|BFF_URL'"
 echo "  curl -sS https://pantheon-lupin-dev-bff.${NEW_DEV_IP}.sslip.io/health"
+echo "  curl -sS https://pantheon-lupin-dev-fe.${NEW_DEV_IP}.sslip.io/"
 echo
 echo "Next steps (manual):"
 echo "  1) git commit + PR for the sed changes"
