@@ -36,6 +36,10 @@ they are not the dev deployment target and must not block Pantheon dev
 acceptance. A stale Lovable bundle is not proof that the current
 `execute-plans` commit failed.
 
+Do not ask the operator to press Lovable publish for Pantheon dev delivery, and
+do not block on Lovable connector authorization. Current dev deployment flows
+through GitHub PRs, an `execute-plans` build, and Pantheon-owned HTTPS hosting.
+
 The dev frontend should be served by Pantheon-owned infrastructure from the
 recorded `execute-plans` commit. The intended host is:
 
@@ -44,6 +48,25 @@ recorded `execute-plans` commit. The intended host is:
 
 If the FE hostname or VM IP changes, update this document and `AGENTS.md`
 before routing work to the new target.
+
+## Current Verified Dev Deployment
+
+Verified on 2026-06-08:
+
+- Backend/BFF repo: `ajoe734/pantheon`
+- Backend/BFF branch: `dev`
+- Backend/BFF merge commit:
+  `22b89367a56cdbb4fb8a7345fc7c4ad1d293a118`
+- Frontend repo: `ajoe734/execute-plans`
+- Frontend branch: `main`
+- Frontend merge commit:
+  `8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf`
+- Frontend dev VM document root: `/var/www/pantheon-dev-fe/`
+- Frontend bundle observed after deployment: `assets/index-9w0t7Wkm.js`
+
+If an agent sees a different Lovable bundle, that is not the Pantheon dev FE.
+Validate the Pantheon-owned host and the GitHub commits above before changing
+code.
 
 ## Required Frontend Build Env
 
@@ -141,6 +164,7 @@ Known legacy surfaces include:
 - `scripts/bootstrap_front_repo.sh`
 - `scripts/coordination_publish_handoff.py`
 - `scripts/coordination_drift_guard.py`
+- `docs/delivery-coordination-bus.md` before its 2026-06-08 supersession note
 
 If a worker needs to use one of these flows, update the code/config first and
 put that change through PR review before dispatching frontend work.

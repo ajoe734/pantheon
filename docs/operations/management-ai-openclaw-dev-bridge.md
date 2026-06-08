@@ -17,6 +17,24 @@ Do not use `front-ai-trading-system` for current frontend development. Do not
 use Lovable publish state as the dev frontend host or acceptance source. Lovable
 may only be historical evidence or an external reference.
 
+Do not ask the operator to press Lovable publish or reconnect Lovable before
+working on Management AI dev capability. The active frontend is
+`execute-plans`, and the active host is Pantheon-owned.
+
+Current verified dev deployment, 2026-06-08:
+
+- `pantheon@22b89367a56cdbb4fb8a7345fc7c4ad1d293a118` on `dev` for BFF and
+  OpenClaw adapter repair-worktree preparation.
+- `execute-plans@8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf` on `main` for the
+  Management AI frontend control dialog and `openclaw.repair` forwarding.
+- Dev FE document root: `/var/www/pantheon-dev-fe/`.
+
+Current known gate: provider readiness and route availability can be healthy
+while control mode is configured but inactive. A positive VM-write claim still
+requires an authorized operator/admin activation in `kernel_repair`, a
+successful `POST /bff/assistant/repair-worktrees/prepare`, and forwarding the
+returned `openclaw.repair` metadata to the Management AI ask request.
+
 ## Expected Route Family
 
 Management AI should use Pantheon BFF assistant routes:
@@ -118,6 +136,24 @@ ready. Check all of these before telling another agent or operator it is done:
   `.orchestrator/assistant-dev-packets/processed/` and writes a receipt.
 - The downstream task record exists under `ai-task-archive/tasks/`.
 
+## Current Work Order For Agents
+
+When the user asks for Management AI frontend or OpenClaw repair changes:
+
+1. For frontend code, work in `ajoe734/execute-plans` from `main`, merge by PR,
+   build with the dev BFF URL, and deploy to the Pantheon-owned dev FE host.
+2. For backend/BFF code, work in `ajoe734/pantheon` from `dev`, merge by PR,
+   rebuild/restart the relevant dev VM services, then re-smoke the FE host.
+3. For write-capable Management AI work, use `repoKey: execute-plans` with
+   merge target `main` for frontend changes and `repoKey: pantheon` with merge
+   target `dev` for backend/BFF changes.
+4. Do not dispatch downstream implementation agents from a SA/SD packet until
+   the packet has reached the assistant dev bridge inbox and the supervisor has
+   produced an archive task record.
+5. Do not switch to Lovable or `front-ai-trading-system` when any of the above
+   steps fails. Diagnose the failing Pantheon-owned route, build, control mode,
+   or supervisor bridge instead.
+
 ## Kernel/Control-Mode Failure Pattern
 
 If `GET /bff/assistant/orchestrator/status` shows `providerReadiness.ready:
@@ -162,6 +198,8 @@ an `ai-task-archive/tasks/*.json` task record.
 
 - Do not claim completion from a local-only frontend build.
 - Do not claim completion from a Lovable publish.
+- Do not ask the user to press Lovable publish for Pantheon dev delivery.
+- Do not use Lovable connector state as proof that the dev FE is deployed.
 - Do not claim completion from provider readiness if kernel/control mode is
   disabled.
 - Do not claim VM write capability from `/bff/assistant/tools/*`.
