@@ -1,6 +1,6 @@
 # Non-Prod Development Workflow
 
-Status date: 2026-04-27
+Status date: 2026-06-08
 
 ## Purpose
 
@@ -32,9 +32,11 @@ executed.
 - Do not run the root `pantheon` compose project on `pantheon-taiwan`.
 - Do not run `pantheon-exec` on `pantheon-taiwan`.
 - Do not put broker secrets, TWS credentials, or live broker state on the
-  workstation or Lovable frontend.
+  workstation or frontend.
 - Do not treat the workstation checkout as the active dev backend unless a task
   explicitly says the dev stack has been moved back.
+- Do not treat Lovable publish state as Pantheon dev frontend hosting or
+  acceptance evidence.
 - Do not rebuild staging-live from a dirty worktree unless the operator
   explicitly asks for an emergency direct patch.
 - Staging-live should consume a verified commit or a clearly documented hotfix,
@@ -107,30 +109,36 @@ gcloud compute ssh edna@pantheon-exec-vm2-20260424 --zone=asia-east1-a --project
   'cd /home/lupin/code/pantheon-ep5 && docker compose -p pantheon-exec -f docker-compose.exec.yml ps && curl -fsS http://127.0.0.1:28081/__health__'
 ```
 
-## Frontend / Lovable
+## Frontend / Execute-Plans
 
-Lovable must follow:
+Current Pantheon dev frontend work must follow:
 
-- `docs/deployment/lovable-dev-staging-operating-rules.md`
+- `docs/frontend/execute-plans-dev-hosting.md`
 
-Summary: use two hosted apps:
+Summary:
 
-- dev app: `VITE_PANTHEON_ENV=dev`
-- staging-live app: `VITE_PANTHEON_ENV=staging-live`
+- active frontend repo: `ajoe734/execute-plans`
+- local checkout: `/home/lupin/code/execute-plans` or a clean task worktree
+- do not use `front-ai-trading-system` for new frontend work
+- do not use Lovable publish status as dev frontend acceptance
 
 Current browser-reachable HTTPS BFF URLs:
 
-- dev: `https://pantheon-dev-bff.35.236.178.81.sslip.io`
+- dev FE: `https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io`
+- dev BFF: `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io`
 - staging-live: `https://pantheon-staging-bff.34.81.225.122.sslip.io`
 
-Do not point Lovable at GCP internal IPs or unsecured
-`http://<external-ip>:<port>` endpoints.
+Do not point any browser frontend at GCP internal IPs or unsecured
+`http://<external-ip>:<port>` endpoints. Staging-live Lovable context remains in
+`docs/deployment/lovable-dev-staging-operating-rules.md`, but that file does
+not override the current dev frontend rule above.
 
 ## LLM Agent Checklist
 
-Before changing deployment, runtime, BFF, Lovable, or broker behavior:
+Before changing deployment, runtime, BFF, frontend, Lovable, or broker behavior:
 
 - read this file
+- read `docs/frontend/execute-plans-dev-hosting.md` for dev frontend work
 - read `docs/deployment/staging-live-topology.md`
 - identify which VM owns the runtime you are touching
 - state whether you are editing workstation files, dev runtime files, staging
