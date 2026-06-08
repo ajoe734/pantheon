@@ -29,7 +29,8 @@ describe("managementClient — coverage", () => {
       "rebalances", "deployments", "evolution", "research", "artifacts",
       "tools", "mcpServers", "mcpTools", "skills", "channels",
       "jobs", "runtimes", "alerts", "incidents", "approvals", "audit",
-      "oodaPackets", "humanInbox", "tradingPulse", "evidenceExplorer", "evolutionJournal", "personaIntent",
+      "oodaPackets", "personaLeague", "personaFleet", "humanInbox",
+      "tradingPulse", "evidenceExplorer", "evolutionJournal", "personaIntent",
     ] as const;
     for (const family of required) {
       expect(managementClient).toHaveProperty(family);
@@ -44,7 +45,7 @@ describe("managementClient — coverage", () => {
       "rebalances", "deployments", "evolution", "research", "artifacts",
       "tools", "mcpServers", "mcpTools", "skills", "channels",
       "jobs", "runtimes", "alerts", "incidents", "approvals",
-      "oodaPackets", "humanInbox",
+      "oodaPackets", "personaLeague", "humanInbox",
     ] as const;
     for (const family of entityRegistries) {
       const adapter = managementClient[family] as { get?: unknown };

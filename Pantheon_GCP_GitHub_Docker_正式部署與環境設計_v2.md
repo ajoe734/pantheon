@@ -1458,7 +1458,7 @@ gcloud run deploy pantheon-dev-bff \
 | `research-finrl` | `services/research/finrl/Dockerfile` | ✓ | research |
 | `research-imitation` | `services/research/imitation/Dockerfile` | ✓ | research |
 | `research-qlib` | `services/research/qlib/Dockerfile` | ✓ | research |
-| `lean` | `lean/Dockerfile` | ✓ | execution-lab |
+| `lean` | `lean/Dockerfile` | verification-only | execution-lab |
 | `incidents` | `services/incidents/Dockerfile` | — (manual-only) | — |
 | `postmortems` | `services/postmortems/Dockerfile` | — (manual-only) | — |
 

@@ -57,6 +57,12 @@ ROUTE_STATUS_OVERRIDES: dict[str, dict] = {
         "covered_by": "PATCH /bff/ranking/formulas/{formula_id}",
     },
     "POST /bff/ranking-formulas": {"status": "alias", "covered_by": "POST /bff/ranking/formulas"},
+    # /bff/management/persona-fleet is retained for stale UI builds; current
+    # execute-plans code uses the canonical Pathreon fleet aggregate endpoint.
+    "GET /bff/management/persona-fleet": {
+        "status": "superseded",
+        "covered_by": "GET /bff/management/fleet",
+    },
     # Track E OODA read routes are backend-owned first; frontend cards/drawer
     # activate in follow-on MGMT-OODA tasks.
     "GET /bff/strategies/{strategy_id}/ooda": {"family": "ooda-packet-foundation"},

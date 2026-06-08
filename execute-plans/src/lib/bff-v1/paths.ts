@@ -102,6 +102,9 @@ export const paths = {
   channels: () => `${BASE}/channels`,
   tools: () => `${BASE}/tools`,
   rankingFormulas: () => `${BASE}/ranking-formulas`,
+  personaLeague: () => `${BASE}/persona-league`,
+  personaLeagueEntry: (id: string) => `${BASE}/persona-league/${enc(id)}`,
+  managementFleet: () => `${BASE}/management/fleet`,
   search: () => `${BASE}/search`,
 
   // ---- P1 Management aggregate APIs ----

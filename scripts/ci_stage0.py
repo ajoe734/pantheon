@@ -8,6 +8,7 @@ import json
 import os
 import re
 import secrets
+import shlex
 import shutil
 import subprocess
 import sys
@@ -115,6 +116,8 @@ def validate_target(target: dict[str, Any], root: Path) -> None:
         context = ensure_string(f"{target_id}.build.context", build.get("context"))
         dockerfile = ensure_string(f"{target_id}.build.dockerfile", build.get("dockerfile"))
         ensure_string(f"{target_id}.build.tag", build.get("tag"))
+        for build_arg in ensure_sequence(f"{target_id}.build.args", build.get("args", [])):
+            ensure_string(f"{target_id}.build.args[]", build_arg)
         validate_paths_exist(f"{target_id}.build", [context, dockerfile], root)
 
 
@@ -319,9 +322,11 @@ def cmd_run_target(args: argparse.Namespace) -> int:
         docker_tag = ensure_string("build.tag", build["tag"])
         if args.tag_suffix:
             docker_tag = f"{docker_tag}:{args.tag_suffix}"
-        command = (
-            f"docker build --file {build['dockerfile']} --tag {docker_tag} {build['context']}"
-        )
+        command_parts = ["docker", "build", "--file", build["dockerfile"]]
+        for build_arg in ensure_sequence(f"{args.target_id}.build.args", build.get("args", [])):
+            command_parts.extend(["--build-arg", ensure_string(f"{args.target_id}.build.args[]", build_arg)])
+        command_parts.extend(["--tag", docker_tag, build["context"]])
+        command = " ".join(shlex.quote(part) for part in command_parts)
         run_shell_command(command)
         return 0
 
