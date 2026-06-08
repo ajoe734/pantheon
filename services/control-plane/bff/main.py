@@ -25676,6 +25676,37 @@ def _persona_health_status(
     return "healthy"
 
 
+def _management_fleet_ooda_label(value: Any) -> str:
+    stage = str(value or "").strip().lower()
+    return {
+        "observe": "Observe",
+        "oriented": "Orient",
+        "orient": "Orient",
+        "decided": "Decide",
+        "decide": "Decide",
+        "acted": "Act",
+        "act": "Act",
+    }.get(stage, "Observe")
+
+
+def _management_fleet_autonomy(
+    *,
+    deployment_stage: str,
+    governance_required: bool,
+    human_needed: bool,
+) -> str:
+    stage = str(deployment_stage or "").strip().lower()
+    if human_needed or governance_required:
+        return "supervised"
+    if stage == "live":
+        return "autonomous"
+    return "manual"
+
+
+def _training_improvement_delta(metrics: Dict[str, Any]) -> float:
+    return _as_float(metrics.get("training_improvement_pct")) / 100.0
+
+
 def _build_persona_health_items(snapshot_at: str) -> List[Dict[str, Any]]:
     league_by_persona = {
         str(item.get("persona_id") or item.get("id") or ""): item
@@ -25736,6 +25767,34 @@ def _build_persona_health_items(snapshot_at: str) -> List[Dict[str, Any]]:
         routed = _routed_strategies_for_persona(persona_id)
         open_findings = len(risk_flags) + int(metrics.get("violation_count") or 0)
         drill_target = runtime_id or persona_id
+        governance_required = bool(
+            league_entry.get("governance_required")
+            if "governance_required" in league_entry
+            else metadata.get("governance_required", True)
+        )
+        recommendation = (
+            league_entry.get("recommendation")
+            or metadata.get("recommended_governance_action")
+            or ""
+        )
+        persona_status = str(
+            metadata.get("persona_status")
+            or league_entry.get("status")
+            or persona.get("status")
+            or lifecycle_state
+        )
+        human_needed = governance_required and str(recommendation).strip().lower() not in {
+            "",
+            "none",
+            "no_change",
+        }
+        updated_at = (
+            league_entry.get("updated_at")
+            or persona.get("updated_at")
+            or persona.get("last_active_at")
+            or snapshot_at
+        )
+        ooda_stage = league_entry.get("ooda_stage") or metadata.get("ooda_stage")
         item = {
             "id": persona_id,
             "persona_id": persona_id,
@@ -25743,10 +25802,28 @@ def _build_persona_health_items(snapshot_at: str) -> List[Dict[str, Any]]:
             "name": persona.get("name") or persona_id,
             "persona_name": persona.get("name") or persona_id,
             "personaName": persona.get("name") or persona_id,
+            "owner": metadata.get("owner")
+            or metadata.get("owner_id")
+            or "pathreon-management",
             "mode": deployment_stage,
             "status": health,
             "health": health,
             "score": score,
+            "ooda": _management_fleet_ooda_label(ooda_stage),
+            "autonomy": _management_fleet_autonomy(
+                deployment_stage=deployment_stage,
+                governance_required=governance_required,
+                human_needed=human_needed,
+            ),
+            "perf_delta": _training_improvement_delta(metrics),
+            "perfDelta": _training_improvement_delta(metrics),
+            "human_needed": human_needed,
+            "humanNeeded": human_needed,
+            "last_mutation": str(updated_at)[:10],
+            "lastMutation": str(updated_at)[:10],
+            "state": persona_status,
+            "current_work": metadata.get("current_work"),
+            "currentWork": metadata.get("current_work"),
             "routed_strategies": routed,
             "routedStrategies": routed,
             "open_findings": open_findings,
@@ -25761,20 +25838,11 @@ def _build_persona_health_items(snapshot_at: str) -> List[Dict[str, Any]]:
             "runtimeId": runtime_id,
             "deployment_stage": deployment_stage,
             "deploymentStage": deployment_stage,
-            "ooda_stage": league_entry.get("ooda_stage") or metadata.get("ooda_stage"),
-            "oodaStage": league_entry.get("ooda_stage") or metadata.get("ooda_stage"),
-            "recommendation": league_entry.get("recommendation")
-            or metadata.get("recommended_governance_action"),
-            "governance_required": bool(
-                league_entry.get("governance_required")
-                if "governance_required" in league_entry
-                else metadata.get("governance_required", True)
-            ),
-            "governanceRequired": bool(
-                league_entry.get("governance_required")
-                if "governance_required" in league_entry
-                else metadata.get("governance_required", True)
-            ),
+            "ooda_stage": ooda_stage,
+            "oodaStage": ooda_stage,
+            "recommendation": recommendation,
+            "governance_required": governance_required,
+            "governanceRequired": governance_required,
             "metrics": {
                 "pnl": _as_float(metrics.get("pnl")),
                 "sharpe": _as_float(metrics.get("sharpe")),
@@ -25789,10 +25857,7 @@ def _build_persona_health_items(snapshot_at: str) -> List[Dict[str, Any]]:
             },
             "risk_flags": risk_flags,
             "riskFlags": risk_flags,
-            "updated_at": league_entry.get("updated_at")
-            or persona.get("updated_at")
-            or persona.get("last_active_at")
-            or snapshot_at,
+            "updated_at": updated_at,
             "drill_down": {
                 "kind": "runtime" if runtime_id else "persona",
                 "href": f"/management/runtimes/{drill_target}" if runtime_id else f"/personas/{persona_id}",
@@ -25905,6 +25970,7 @@ async def bff_persona_league_detail(
 
 
 @app.get("/bff/management/fleet")
+@app.get("/bff/management/persona-fleet")
 async def bff_management_fleet(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -25924,6 +25990,7 @@ async def bff_management_fleet(
     ooda_card = _build_ooda_control_room_status_card(snapshot_at)
     return {
         "data": {
+            "items": health,
             "persona_fleet": health,
             "persona_league": league,
             "capital_pools": pools,
@@ -25940,6 +26007,7 @@ async def bff_management_fleet(
                 "human_gate_required_for_capital_changes": True,
             },
         },
+        "items": health,
         "meta": {
             "snapshot_at": snapshot_at,
             "surfaces": {

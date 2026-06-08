@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "snapshot_date": "2026-06-07",
+    "snapshot_date": "2026-06-08",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 403,
+    "total_routes": 404,
     "status_values": [
       "implemented",
       "alias",
@@ -2348,6 +2348,13 @@
       "path": "/bff/management/fleet",
       "family": "unknown",
       "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/persona-fleet",
+      "family": "unknown",
+      "status": "superseded",
+      "covered_by": "GET /bff/management/fleet"
     },
     {
       "method": "GET",

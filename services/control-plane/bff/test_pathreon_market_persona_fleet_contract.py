@@ -139,6 +139,31 @@ def test_management_fleet_composes_personas_ooda_capital_runtime_and_human_gate(
     }
 
 
+def test_management_persona_fleet_alias_returns_ui_safe_rows() -> None:
+    with _fleet_client() as client:
+        response = client.get("/bff/management/persona-fleet", headers=HEADERS)
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    data = payload["data"]
+    assert payload["items"] == data["items"] == data["persona_fleet"]
+
+    rows = {item["persona_id"]: item for item in data["items"]}
+    assert set(MARKET_PERSONAS.values()).issubset(rows)
+
+    tw = rows["persona-tw-equity"]
+    assert tw["personaId"] == "persona-tw-equity"
+    assert tw["personaName"] == "Taiwan Equity Persona"
+    assert tw["owner"] == "pathreon-management"
+    assert tw["ooda"] == "Decide"
+    assert tw["autonomy"] == "supervised"
+    assert tw["humanNeeded"] is True
+    assert tw["state"] == "needs_human_approval"
+    assert tw["lastMutation"] == "2026-06-07"
+    assert tw["perfDelta"] == 0.095
+    assert tw["currentWork"] == "TW corporate-action and session-boundary evidence review"
+
+
 def test_agora_and_ooda_routes_surface_market_persona_work() -> None:
     with _fleet_client() as client:
         signals = client.get("/bff/agora/signals", headers=HEADERS)
