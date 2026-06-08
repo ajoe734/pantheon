@@ -265,6 +265,14 @@ _TW_QLIB_DATASET_MANIFEST_REF = "support/evidence/MGMT-QLIB-001/dataset_manifest
 _TW_QLIB_LINKAGE_PACKET_REF = (
     "support/evidence/MGMT-QLIB-006/management_linkage_packet.json"
 )
+_TW_QLIB_EXPERIMENT_ID = "exp-mgmt-qlib-006"
+_TW_QLIB_STRATEGY_ID = "tw-cross-sectional-equity-alpha"
+_TW_QLIB_STRATEGY_SPEC_ID = "qlib-tw-cross-sectional-alpha-spec-v1"
+_TW_QLIB_ARTIFACT_ID = "qlib-tw-cross-sectional-alpha-model-draft-v1"
+_TW_QLIB_DATASET_REF = "dataset:tw-equity-ohlcv-top50-2024-daily"
+_TW_QLIB_DATASET_MANIFEST_ID = (
+    "qlib-dataset-manifest:dataset-tw-equity-ohlcv-top50-2024-daily"
+)
 
 
 def _read_only_side_effect_guard() -> Dict[str, Any]:
@@ -273,6 +281,212 @@ def _read_only_side_effect_guard() -> Dict[str, Any]:
         "order_side_effects_allowed": False,
         "capital_side_effects_allowed": False,
         "live_ingestion_enabled": False,
+    }
+
+
+def _tw_qlib_evidence_refs() -> List[Dict[str, Any]]:
+    return [
+        {
+            "ref_type": "management_linkage_packet",
+            "ref_id": "mgmt-qlib-006-management-linkage-v1",
+            "ref": _TW_QLIB_LINKAGE_PACKET_REF,
+        },
+        {
+            "ref_type": "dataset_manifest",
+            "ref_id": _TW_QLIB_DATASET_MANIFEST_ID,
+            "ref": _TW_QLIB_DATASET_MANIFEST_REF,
+        },
+        {
+            "ref_type": "research_experiment",
+            "ref_id": _TW_QLIB_EXPERIMENT_ID,
+            "route": f"/bff/research-experiments/{_TW_QLIB_EXPERIMENT_ID}",
+        },
+        {
+            "ref_type": "strategy_artifacts",
+            "ref_id": _TW_QLIB_STRATEGY_ID,
+            "route": f"/bff/strategies/{_TW_QLIB_STRATEGY_ID}/artifacts",
+        },
+    ]
+
+
+def _tw_qlib_safety_assertions() -> Dict[str, Any]:
+    return {
+        "registry_write_performed": False,
+        "registry_write_authority": "registry_service_only",
+        "broker_session_opened": False,
+        "order_route": "none",
+        "deployment_stage": "none",
+        "live_capital_side_effects": False,
+    }
+
+
+def _tw_qlib_research_linkage() -> Dict[str, Any]:
+    return {
+        "kind": "qlib_admission_research_linkage",
+        "framework": "qlib",
+        "admission_stage": "management_review_linked",
+        "strategy_id": _TW_QLIB_STRATEGY_ID,
+        "strategy_spec_id": _TW_QLIB_STRATEGY_SPEC_ID,
+        "dataset_manifest_id": _TW_QLIB_DATASET_MANIFEST_ID,
+        "source_task_ids": [
+            "MGMT-QLIB-001",
+            "MGMT-QLIB-002",
+            "MGMT-QLIB-004",
+            "MGMT-QLIB-006",
+        ],
+        "pending_task_ids": ["MGMT-QLIB-003", "MGMT-QLIB-005"],
+        "evidence_refs": [
+            {
+                "ref_type": "dataset_manifest",
+                "task_id": "MGMT-QLIB-001",
+                "ref": _TW_QLIB_DATASET_MANIFEST_REF,
+            },
+            {
+                "ref_type": "strategy_spec_packet",
+                "task_id": "MGMT-QLIB-002",
+                "ref": "support/evidence/MGMT-QLIB-002/strategy_spec_packet.json",
+            },
+            {
+                "ref_type": "model_eval_artifact_review",
+                "task_id": "MGMT-QLIB-004",
+                "ref": "support/reviews/MGMT-QLIB-004-review-codex2.md",
+            },
+        ],
+        "expected_evidence_refs": [
+            {
+                "ref_type": "registry_admission_packet",
+                "task_id": "MGMT-QLIB-005",
+                "ref": "support/evidence/MGMT-QLIB-005/registry_admission_packet.json",
+                "status": "pending_upstream_task",
+            },
+        ],
+        "artifact_refs": [
+            {
+                "artifact_name": "model_artifact",
+                "artifact_type": "model_artifact",
+                "artifact_ref": f"{_TW_QLIB_ARTIFACT_ID}@1.0.0",
+                "artifact_state": "draft",
+                "deployment_stage": "none",
+                "registry_id": _TW_QLIB_ARTIFACT_ID,
+            },
+            {
+                "artifact_name": "evaluation_report",
+                "artifact_type": "evaluation_result",
+                "artifact_ref": f"eval-{_TW_QLIB_ARTIFACT_ID}@1.0.0",
+                "target_artifact_ref": f"{_TW_QLIB_ARTIFACT_ID}@1.0.0",
+                "artifact_state": "draft",
+                "deployment_stage": "none",
+            },
+            {
+                "artifact_name": "registry_entry_projection",
+                "artifact_type": "registry_entry_projection",
+                "artifact_ref": f"artifact://qlib/{_TW_QLIB_ARTIFACT_ID}/1.0.0/registry_entry",
+                "artifact_state": "draft",
+                "deployment_stage": "none",
+            },
+            {
+                "artifact_name": "candidate_packet",
+                "artifact_type": "registry_candidate_handoff",
+                "artifact_ref": f"artifact://qlib/{_TW_QLIB_ARTIFACT_ID}/1.0.0/candidate_packet",
+                "artifact_state": "draft",
+                "deployment_stage": "none",
+            },
+        ],
+        "ooda_refs": [
+            {
+                "stage": "observe",
+                "ref_type": "dataset_manifest",
+                "ref": _TW_QLIB_DATASET_MANIFEST_REF,
+            },
+            {
+                "stage": "orient",
+                "ref_type": "strategy_spec_packet",
+                "ref": "support/evidence/MGMT-QLIB-002/strategy_spec_packet.json",
+            },
+            {
+                "stage": "decide",
+                "ref_type": "registry_admission_packet",
+                "ref": "support/evidence/MGMT-QLIB-005/registry_admission_packet.json",
+                "status": "pending_upstream_task",
+            },
+        ],
+        "management_routes": {
+            "artifact_detail": f"/bff/artifacts/{_TW_QLIB_ARTIFACT_ID}",
+            "api_artifact_detail": f"/api/v1/artifacts/{_TW_QLIB_ARTIFACT_ID}",
+            "research_experiment_detail": f"/bff/research-experiments/{_TW_QLIB_EXPERIMENT_ID}",
+            "strategy_artifacts": f"/bff/strategies/{_TW_QLIB_STRATEGY_ID}/artifacts",
+        },
+        "safety_assertions": _tw_qlib_safety_assertions(),
+    }
+
+
+def _tw_qlib_research_experiment_default() -> Dict[str, Any]:
+    linkage = _tw_qlib_research_linkage()
+    return {
+        "experiment_id": _TW_QLIB_EXPERIMENT_ID,
+        "ticket_id": "rt-mgmt-qlib-006",
+        "experiment_name": "MGMT-QLIB-006 Qlib TW admission linkage",
+        "status": "completed",
+        "stage": "management_review_linked",
+        "queued_at": "2026-05-15T17:25:00Z",
+        "started_at": "2026-05-15T17:26:00Z",
+        "completed_at": "2026-05-15T17:30:00Z",
+        "progress": {
+            "percent": 100,
+            "phase": "management_review_linked",
+            "message": "Management linkage packet is ready; registry admission remains gated.",
+        },
+        "strategy_selector": {"strategy_id": _TW_QLIB_STRATEGY_ID, "variant_id": None},
+        "linked_strategy_id": _TW_QLIB_STRATEGY_ID,
+        "parameter_set": {
+            "framework": "qlib",
+            "model_family": "lightgbm",
+            "market": "TW",
+            "universe": "tw-equity-top50",
+        },
+        "run_config": {
+            "backend": "qlib",
+            "dataset_ref": _TW_QLIB_DATASET_REF,
+            "dataset_manifest_id": _TW_QLIB_DATASET_MANIFEST_ID,
+            "time_range": {
+                "start_at": "2024-01-02T00:00:00Z",
+                "end_at": "2026-01-05T00:00:00Z",
+            },
+            "execution_mode": "offline_admission_review",
+            "priority": "normal",
+            "requested_by": "pathreon-management",
+        },
+        "launch_context": {
+            "task_id": "MGMT-QLIB-006",
+            "analysis_refs": None,
+            "source_task_ids": linkage["source_task_ids"],
+            "pending_task_ids": linkage["pending_task_ids"],
+        },
+        "validation_warnings": [
+            {
+                "code": "REGISTRY_ADMISSION_PENDING",
+                "message": "MGMT-QLIB-005 registry admission evidence is pending; deployment is blocked.",
+            }
+        ],
+        "artifact_ids": [_TW_QLIB_ARTIFACT_ID],
+        "artifact_refs": linkage["artifact_refs"],
+        "framework": "qlib",
+        "dataset_ref": _TW_QLIB_DATASET_REF,
+        "dataset_manifest_id": _TW_QLIB_DATASET_MANIFEST_ID,
+        "research_linkage": linkage,
+        "evidence_refs": _tw_qlib_evidence_refs(),
+        "safety_assertions": _tw_qlib_safety_assertions(),
+        "registry_admission_status": "pending_upstream_task",
+        "can_deploy": False,
+        "deployment_stage": "none",
+        "failure": {"reason_code": None, "message": None},
+        "governed_default_source": "composed_market_persona_defaults",
+    }
+
+
+def _governed_research_experiment_defaults() -> Dict[str, Dict[str, Any]]:
+    return {
+        _TW_QLIB_EXPERIMENT_ID: _tw_qlib_research_experiment_default(),
     }
 
 
@@ -509,40 +723,19 @@ def _market_persona_data_truth(item: Dict[str, Any]) -> Dict[str, Any]:
 def _market_persona_research_truth(item: Dict[str, Any]) -> Dict[str, Any]:
     market = str(item.get("market") or "").upper()
     if market == "TW":
-        research_refs = [
-            {
-                "ref_type": "management_linkage_packet",
-                "ref_id": "mgmt-qlib-006-management-linkage-v1",
-                "ref": _TW_QLIB_LINKAGE_PACKET_REF,
-            },
-            {
-                "ref_type": "dataset_manifest",
-                "ref_id": "qlib-dataset-manifest:dataset-tw-equity-ohlcv-top50-2024-daily",
-                "ref": _TW_QLIB_DATASET_MANIFEST_REF,
-            },
-            {
-                "ref_type": "research_experiment",
-                "ref_id": "exp-mgmt-qlib-006",
-                "route": "/bff/research-experiments/exp-mgmt-qlib-006",
-            },
-            {
-                "ref_type": "strategy_artifacts",
-                "ref_id": "tw-cross-sectional-equity-alpha",
-                "route": "/bff/strategies/tw-cross-sectional-equity-alpha/artifacts",
-            },
-        ]
+        research_refs = _tw_qlib_evidence_refs()
         research_status = {
             "stage": "management_review_linked",
             "framework": "qlib",
             "frameworks": ["qlib", "vectorbt", "statsmodels"],
-            "experiment_id": "exp-mgmt-qlib-006",
-            "strategy_id": "tw-cross-sectional-equity-alpha",
-            "strategy_spec_id": "qlib-tw-cross-sectional-alpha-spec-v1",
-            "artifact_id": "qlib-tw-cross-sectional-alpha-model-draft-v1",
+            "experiment_id": _TW_QLIB_EXPERIMENT_ID,
+            "strategy_id": _TW_QLIB_STRATEGY_ID,
+            "strategy_spec_id": _TW_QLIB_STRATEGY_SPEC_ID,
+            "artifact_id": _TW_QLIB_ARTIFACT_ID,
             "artifact_state": "draft",
             "deployment_stage": "none",
-            "dataset_ref": "dataset:tw-equity-ohlcv-top50-2024-daily",
-            "dataset_manifest_id": "qlib-dataset-manifest:dataset-tw-equity-ohlcv-top50-2024-daily",
+            "dataset_ref": _TW_QLIB_DATASET_REF,
+            "dataset_manifest_id": _TW_QLIB_DATASET_MANIFEST_ID,
             "registry_admission_status": "pending_upstream_task",
             "pending_task_ids": ["MGMT-QLIB-003", "MGMT-QLIB-005"],
             "can_deploy": False,
@@ -550,12 +743,7 @@ def _market_persona_research_truth(item: Dict[str, Any]) -> Dict[str, Any]:
                 "Qlib TW cross-sectional alpha draft is linked for Management review; "
                 "registry admission and deployment are still pending upstream evidence."
             ),
-            "safety_assertions": {
-                "registry_write_performed": False,
-                "broker_session_opened": False,
-                "order_route": "none",
-                "live_capital_side_effects": False,
-            },
+            "safety_assertions": _tw_qlib_safety_assertions(),
         }
         return {
             "research_status": research_status,
@@ -12715,17 +12903,26 @@ class ReadSurfaceStore:
             or exp.get("strategy_id")
             or strategy_selector.get("strategy_id")
         )
+        run_config = exp.get("run_config") or {}
         return {
             "experiment_id": exp.get("experiment_id"),
             "ticket_id": exp.get("ticket_id"),
             "experiment_name": exp.get("experiment_name"),
             "status": status,
+            "stage": exp.get("stage"),
+            "framework": exp.get("framework") or run_config.get("backend"),
             "queued_at": exp.get("queued_at"),
             "started_at": exp.get("started_at"),
             "completed_at": exp.get("completed_at"),
             "strategy_id": strategy_id,
             "linked_strategy_id": strategy_id,
+            "dataset_ref": exp.get("dataset_ref") or run_config.get("dataset_ref"),
+            "dataset_manifest_id": (
+                exp.get("dataset_manifest_id") or run_config.get("dataset_manifest_id")
+            ),
             "artifact_ids": list(exp.get("artifact_ids") or []),
+            "registry_admission_status": exp.get("registry_admission_status"),
+            "can_deploy": bool(exp.get("can_deploy", True)),
             "allowedActions": {"canCancel": cls._rw04_can_cancel(status)},
         }
 
@@ -12757,7 +12954,9 @@ class ReadSurfaceStore:
             },
             "parameter_set": json.loads(json.dumps(exp.get("parameter_set") or {})),
             "run_config": {
+                "backend": run_config.get("backend"),
                 "dataset_ref": run_config.get("dataset_ref"),
+                "dataset_manifest_id": run_config.get("dataset_manifest_id"),
                 "time_range": {
                     "start_at": time_range.get("start_at"),
                     "end_at": time_range.get("end_at"),
@@ -12775,6 +12974,18 @@ class ReadSurfaceStore:
             },
             "validation_warnings": json.loads(json.dumps(exp.get("validation_warnings") or [])),
             "artifact_ids": list(exp.get("artifact_ids") or []),
+            "artifact_refs": json.loads(json.dumps(exp.get("artifact_refs") or [])),
+            "framework": exp.get("framework") or run_config.get("backend"),
+            "dataset_ref": exp.get("dataset_ref") or run_config.get("dataset_ref"),
+            "dataset_manifest_id": (
+                exp.get("dataset_manifest_id") or run_config.get("dataset_manifest_id")
+            ),
+            "research_linkage": json.loads(json.dumps(exp.get("research_linkage") or {})),
+            "evidence_refs": json.loads(json.dumps(exp.get("evidence_refs") or [])),
+            "safety_assertions": json.loads(json.dumps(exp.get("safety_assertions") or {})),
+            "registry_admission_status": exp.get("registry_admission_status"),
+            "can_deploy": bool(exp.get("can_deploy", True)),
+            "deployment_stage": exp.get("deployment_stage"),
             "failure": {
                 "reason_code": failure.get("reason_code"),
                 "message": failure.get("message"),
@@ -12790,10 +13001,23 @@ class ReadSurfaceStore:
         Falls through to the in-memory dict so experiments created in the same
         process are always visible before the file-cache is flushed.
         """
+        defaults = _governed_research_experiment_defaults()
         available, records = self._service.list_records("research_experiments")
         if available:
-            return {str(r.get("experiment_id") or r.get("id") or ""): r for r in records}
-        return self._data.get("research_experiments") or {}
+            records_by_id = {
+                str(r.get("experiment_id") or r.get("id") or ""): r
+                for r in records
+                if isinstance(r, dict)
+            }
+        else:
+            records_by_id = dict(self._data.get("research_experiments") or {})
+        for experiment_id, default in defaults.items():
+            existing = records_by_id.get(experiment_id)
+            if isinstance(existing, dict):
+                _merge_missing_default_values(existing, default)
+                continue
+            records_by_id[experiment_id] = default
+        return records_by_id
 
     def list_research_experiments(
         self,
@@ -12823,9 +13047,9 @@ class ReadSurfaceStore:
         if not experiment_id:
             return None
         available, record = self._service.record("research_experiments", experiment_id)
-        if available:
+        if available and record:
             return self._project_research_experiment_detail(record) if record else None
-        experiment = (self._data.get("research_experiments") or {}).get(experiment_id)
+        experiment = self._research_experiments_store().get(experiment_id)
         if not experiment:
             return None
         return self._project_research_experiment_detail(experiment)

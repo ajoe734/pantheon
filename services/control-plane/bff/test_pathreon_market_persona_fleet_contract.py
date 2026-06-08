@@ -280,6 +280,50 @@ def test_management_fleet_keeps_market_personas_with_live_dev_overlay_only() -> 
     assert tw["currentResearchProjects"][0]["project_id"] == "MGMT-QLIB-006"
 
 
+def test_tw_qlib_research_experiment_drilldown_is_governed_default_not_seed() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        store = ReadSurfaceStore(
+            str(Path(td) / "read_surfaces.json"),
+            allow_local_snapshot_fallback=False,
+        )
+
+        with _client_with_store(store) as client:
+            detail = client.get(
+                "/bff/research-experiments/exp-mgmt-qlib-006",
+                headers=HEADERS,
+            )
+            listing = client.get("/bff/research-experiments", headers=HEADERS)
+
+    assert detail.status_code == 200, detail.text
+    payload = detail.json()
+    record = payload["data"]
+    assert record["experiment_id"] == "exp-mgmt-qlib-006"
+    assert record["framework"] == "qlib"
+    assert record["dataset_ref"] == "dataset:tw-equity-ohlcv-top50-2024-daily"
+    assert record["dataset_manifest_id"] == (
+        "qlib-dataset-manifest:dataset-tw-equity-ohlcv-top50-2024-daily"
+    )
+    assert record["research_linkage"]["admission_stage"] == "management_review_linked"
+    assert record["registry_admission_status"] == "pending_upstream_task"
+    assert record["can_deploy"] is False
+    assert record["safety_assertions"]["broker_session_opened"] is False
+    assert record["safety_assertions"]["order_route"] == "none"
+    assert record["safety_assertions"]["live_capital_side_effects"] is False
+    assert payload["meta"]["surfaces"]["research_experiment_detail"] == {
+        "status": "ok",
+        "source": "composed_market_persona_defaults",
+    }
+
+    assert listing.status_code == 200, listing.text
+    list_payload = listing.json()
+    ids = {item["experiment_id"] for item in list_payload["items"]}
+    assert "exp-mgmt-qlib-006" in ids
+    assert list_payload["meta"]["surfaces"]["research_experiments"] == {
+        "status": "ok",
+        "source": "composed_market_persona_defaults",
+    }
+
+
 def test_agora_and_ooda_routes_surface_market_persona_work() -> None:
     with _fleet_client() as client:
         signals = client.get("/bff/agora/signals", headers=HEADERS)

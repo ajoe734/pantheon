@@ -22994,6 +22994,17 @@ def _list_bff_experiments(*, status: Optional[str] = None) -> List[Dict[str, Any
     return sorted(items, key=lambda e: str(e.get("created_at") or e.get("queued_at") or ""), reverse=True)
 
 
+def _research_experiments_surface_source(records: Sequence[Dict[str, Any]]) -> Optional[str]:
+    if _GOV_BFF_EXPERIMENT_OVERLAY:
+        return "bff_overlay"
+    if read_store.dataset_source("research_experiments") != "missing":
+        return None
+    for record in records:
+        if str(record.get("experiment_id") or record.get("id") or "") == "exp-mgmt-qlib-006":
+            return "composed_market_persona_defaults"
+    return None
+
+
 def _get_bff_job(job_id: str) -> Optional[Dict[str, Any]]:
     overlay = _GOV_BFF_JOB_OVERLAY.get(job_id)
     if overlay is not None:
@@ -23303,7 +23314,7 @@ async def bff_list_experiments_compat(
 
     snapshot_at = utc_now()
     items = _list_bff_experiments(status=status)
-    source = read_store.dataset_source("research_experiments")
+    source = _research_experiments_surface_source(items)
     surface = _dataset_surface_status("research_experiments", snapshot_at=snapshot_at, source=source)
     if surface.get("status") == "unavailable" and not _GOV_BFF_EXPERIMENT_OVERLAY:
         items = []
@@ -26165,9 +26176,10 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
             surface_key="ranking_formulas",
         )
     if path == "/bff/research-experiments":
-        source = "bff_overlay" if _GOV_BFF_EXPERIMENT_OVERLAY else None
+        items = _list_bff_experiments()
+        source = _research_experiments_surface_source(items)
         return _sem_final_list_response(
-            _list_bff_experiments(),
+            items,
             dataset="research_experiments",
             surface_key="research_experiments",
             source=source,
@@ -26342,15 +26354,16 @@ def _sem_final_generic_detail_for_path(path: str, entity_id: str) -> Optional[Di
             surface_key="ranking_formula_detail",
         )
     if path.startswith("/bff/research-experiments/"):
-        source = "bff_overlay" if _GOV_BFF_EXPERIMENT_OVERLAY else None
+        record = _get_bff_experiment(entity_id)
+        source = _research_experiments_surface_source([record] if record else [])
         return _sem_final_read_model_detail(
-            _get_bff_experiment(entity_id),
+            record,
             entity_id=entity_id,
             label="Research experiment",
             dataset="research_experiments",
             surface_key="research_experiment_detail",
             source=source,
-            source_available=True if _GOV_BFF_EXPERIMENT_OVERLAY else None,
+            source_available=True if source is not None else None,
         )
     if path.startswith("/bff/research-analyses/"):
         return _sem_final_read_model_detail(
