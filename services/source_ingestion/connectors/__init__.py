@@ -22,6 +22,7 @@ from .base import (
 from .examples import ExternalFeedProviderExample, StaticRecordsProviderExample, example_provider_catalog
 from .paper import OpenAlexPaperIngestAdapter
 from .repo_allowlist import RepoAllowlistEntry, RepoAllowlistProvider
+from .taiwan_market import MopsSourceIngestAdapter, TejSourceIngestAdapter
 
 __all__ = [
     "AuthPolicy",
@@ -46,5 +47,7 @@ __all__ = [
     "RepoAllowlistEntry",
     "RepoAllowlistProvider",
     "StaticRecordsProviderExample",
+    "MopsSourceIngestAdapter",
+    "TejSourceIngestAdapter",
     "example_provider_catalog",
 ]
