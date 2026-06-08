@@ -60,6 +60,22 @@ the supervisor drains from the main runtime checkout, Management AI can answer
 provider questions but `queueTaskPacket` and assistant dev-bridge readback will
 point at the wrong `.orchestrator/assistant-dev-packets` directory.
 
+## Dev Deploy Persistence
+
+`scripts/deploy_nonprod_vm.sh --environment dev` now exports the same dev-only
+kernel overlay during root stack deployment:
+
+- `PANTHEON_ASSISTANT_KERNEL_ENABLED=true`
+- `PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH=/data/bff/assistant-control-mode.json`
+- `PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS=300`
+- `PANTHEON_BFF_STUB_CAPABILITIES=assistant.kernel.debug,assistant.kernel.repair`
+- `PANTHEON_STATUS_ROOT_HOST=<dev remote repo root by default>`
+- `PANTHEON_STATUS_ROOT_CONTAINER=/workspace/status-root`
+
+Override `DEV_STATUS_ROOT_HOST` when the supervisor drains from a different
+runtime root than the deploy checkout. The staging-live env file remains
+explicitly kernel-disabled.
+
 ## Verify
 
 Kernel flag and control-mode posture:

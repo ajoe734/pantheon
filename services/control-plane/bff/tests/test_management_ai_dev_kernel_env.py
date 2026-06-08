@@ -7,6 +7,7 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 DEV_KERNEL_ENV = REPO_ROOT / "env" / "dev-management-ai-kernel.env.example"
 PROD_CONTROL_ENV = REPO_ROOT / "env" / "prod-control.env.example"
 ENABLE_SCRIPT = REPO_ROOT / "scripts" / "enable_management_ai_dev_kernel.sh"
+NONPROD_DEPLOY = REPO_ROOT / "scripts" / "deploy_nonprod_vm.sh"
 
 
 def _read_env_file(path: Path) -> dict[str, str]:
@@ -56,3 +57,30 @@ def test_enable_management_ai_dev_kernel_script_targets_only_operator_bff() -> N
     assert 'PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED:-true}"' in script
     assert "--no-deps --force-recreate operator-bff" in script
     assert "/bff/assistant/mode" in script
+
+
+def test_nonprod_dev_deploy_exports_management_ai_kernel_overlay() -> None:
+    script = NONPROD_DEPLOY.read_text(encoding="utf-8")
+
+    assert "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io" in script
+    assert 'DEV_ASSISTANT_KERNEL_ENABLED="${DEV_ASSISTANT_KERNEL_ENABLED:-true}"' in script
+    assert (
+        'DEV_ASSISTANT_CONTROL_MODE_STORE_PATH="${DEV_ASSISTANT_CONTROL_MODE_STORE_PATH:-/data/bff/assistant-control-mode.json}"'
+        in script
+    )
+    assert 'DEV_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="${DEV_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-300}"' in script
+    assert (
+        'DEV_BFF_STUB_CAPABILITIES="${DEV_BFF_STUB_CAPABILITIES:-assistant.kernel.debug,assistant.kernel.repair}"'
+        in script
+    )
+    assert 'DEV_STATUS_ROOT_CONTAINER="${DEV_STATUS_ROOT_CONTAINER:-/workspace/status-root}"' in script
+    assert "configure_management_ai_dev_kernel_env" in script
+    assert (
+        'PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED:-$DEV_ASSISTANT_KERNEL_ENABLED}"'
+        in script
+    )
+    assert 'PANTHEON_STATUS_ROOT_HOST="${PANTHEON_STATUS_ROOT_HOST:-${DEV_STATUS_ROOT_HOST:-$DEV_REMOTE_DIR}}"' in script
+    assert 'command_prefix+=" PANTHEON_ASSISTANT_KERNEL_ENABLED=' in script
+    assert 'command_prefix+=" PANTHEON_STATUS_ROOT_HOST=' in script
+    assert 'PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED}" \\' in script
+    assert 'PANTHEON_STATUS_ROOT_HOST="${PANTHEON_STATUS_ROOT_HOST}" \\' in script
