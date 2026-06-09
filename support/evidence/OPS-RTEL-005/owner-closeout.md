@@ -110,6 +110,35 @@ git diff --check
 # passed
 ```
 
+## PR #1212 Second Branch Refresh - 2026-06-09T12:26:49Z
+
+PR #1212 was refreshed again after PR #1215 advanced `origin/dev`. That merge
+brought in persona memory service/docs/tests and did not change the
+OPS-RTEL-005 BFF runtime-state, runtime-manager, signal consumer, telemetry,
+rollback, or canonical architecture surfaces.
+
+Codex reran the focused owner validation after the second refresh:
+
+```bash
+python3 -m pytest services/control-plane/bff/test_pkt010_runtime_state_board_contract.py -q
+# 5 passed in 2.78s
+
+python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py -q
+# 25 passed in 2.28s
+
+python3 -m pytest services/execution/lean_runtime/test_signal_consumer.py -q
+# 22 passed in 2.00s
+
+python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/test_pkt010_runtime_state_board_contract.py
+# passed
+
+python3 -m json.tool docs/examples/PKT-010-runtime-state-board.json
+# passed
+
+git diff --check
+# passed
+```
+
 ## Boundaries
 
 - No runtime-manager reconciler code changed in this task.
