@@ -118,10 +118,10 @@ per active paper `RuntimeBinding`, replacing manual `docker run` for paper worke
 - `services/execution/runtime-manager/Dockerfile` — Python 3.11-slim image for
   the reconciler container; installs `redis` and `jsonschema` for spawned workers.
 - `services/execution/runtime-manager/requirements.txt` — container dependencies.
-- `services/execution/runtime-manager/test_paper_fleet_reconciler.py` — 22 unit
+- `services/execution/runtime-manager/test_paper_fleet_reconciler.py` — 25 unit
   tests covering start, stop, restart, port allocation, env builder, snapshot,
-  degraded-fetch safety, restart backoff, and binding-scoped signal queue
-  isolation (4 tests added in anchor eb95ea8e).
+  degraded-fetch safety, restart backoff, binding-scoped signal queue
+  isolation, and monitoring session lifecycle (open/stale-reap/restart).
 - `docker-compose.yml` — adds `paper-fleet-reconciler` service under the
   `paper-fleet` profile. Activate with:
 
@@ -168,7 +168,7 @@ default queue.
 
 ```bash
 python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py -v
-# Expected: 22 passed
+# Expected: 25 passed
 ```
 
 ---
