@@ -6,7 +6,7 @@ This note records the production hardening scope for the memory service.
 
 ## Retrieval Authorization
 
-`GET /api/memory/retrieve` is the read facade. It performs a governance AuthZ check before accessing the institutional memory store.
+`GET /api/memory/retrieve` is the read facade. It performs a governance AuthZ check before accessing the institutional and persona memory stores.
 
 Configuration:
 
@@ -15,6 +15,18 @@ Configuration:
 - If no governance endpoint is configured, retrieval fails closed with `governance_authz_unconfigured`.
 
 The local-only `PANTHEON_MEMORY_AUTHZ_MODE=local` path is for focused tests and single-process development. Production deployments should use the governance endpoint.
+
+Persona memory retrieval is scoped by `persona_id`. Persona-session style actors must provide matching `session_persona_id`; operator/admin/reviewer/auditor reads are authorized for a specified `persona_id` through governance. Consultation sessions only receive persona entries marked `relevance_scope=persona_and_committee`.
+
+## Persona Memory
+
+Persona memory is first-class in the memory service:
+
+- `POST /api/memory/persona-entries` stores a canonical `PersonaMemory` entry.
+- `POST /api/memory/writebacks/persona` is the writeback trigger entrypoint for lifecycle events.
+- `GET /api/memory/retrieve?scope=persona|both` returns persona-scoped hits and increments `reuse_count` for returned entries.
+
+JSON mode uses `PANTHEON_PERSONA_MEMORY_STORE` when set, otherwise `PANTHEON_MEMORY_DATA_DIR/persona_memory_entries.json`. `PANTHEON_PERSONA_MEMORY_STORE_BACKEND` defaults to `PANTHEON_MEMORY_STORE_BACKEND`; Postgres mode defaults to table `memory.persona_memory_entries`.
 
 ## Retention
 
@@ -28,7 +40,7 @@ Institutional entries support durable archival rather than deletion:
 
 ## Replay Coverage
 
-Focused replay coverage verifies that an institutional memory write persists, survives store reload, is retrievable through the governed facade, increments `reuse_count`, and excludes expired archived records from active retrieval while keeping them available through `active_only=false`.
+Focused replay coverage verifies that institutional and persona memory writes persist, survive store reload, are retrievable through the governed facade, increment `reuse_count`, and exclude expired archived institutional records from active retrieval while keeping them available through `active_only=false`.
 
 Verification command:
 
