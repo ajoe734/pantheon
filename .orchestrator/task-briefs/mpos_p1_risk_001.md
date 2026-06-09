@@ -21,5 +21,5 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Closeout Evidence
 - Owner: Codex.
 - Verification: `python3 -m pytest services/capital/test_risk_policy.py services/control-plane/governance/test_deployment_plan.py services/deployment/test_service.py services/execution/runtime-manager/test_runtime_manager_risk_policy.py services/optimizer-svc/test_portfolio_synthesis.py services/promotion/test_service.py services/runtime-manager/test_runtime_manager.py`
-- Result: 123 passed in 19.04s on 2026-06-09.
+- Result: 123 passed in 18.64s on 2026-06-09 after merging `origin/dev` for closeout refresh.
 - Pending terminal closeout: merge the task closeout PR into `dev`, then run `AI_NAME=Codex ./scripts/ai-status.sh done MPOS-P1-RISK-001 "<checkpoint>"`.
