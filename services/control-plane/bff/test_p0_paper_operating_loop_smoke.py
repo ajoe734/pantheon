@@ -281,8 +281,24 @@ class MinimumPaperOperatingLoopSmokeTest(unittest.TestCase):
             )
 
             plan_payload = plan.to_dict()
+            plan_payload["artifact_state"] = "approved"
             plan_payload["artifact_checksum"] = projection.metadata["checksum"]
             plan_payload["runtime_role"] = "pantheon-lean-paper-runtime"
+            plan_payload["runtime_config_status"] = "approved"
+            plan_payload["risk_policy_ref"] = "risk-policy-p0-loop-paper"
+            plan_payload["risk_policy_evaluation"] = {
+                "risk_policy_id": "risk-policy-p0-loop-paper",
+                "risk_policy_version": "v1",
+                "capital_pool_id": plan.capital_pool_id,
+                "target_type": "runtime_launch",
+                "target_id": plan.plan_id,
+                "decision": "allowed",
+                "checks": [],
+                "blocking_reasons": [],
+                "warnings": [],
+                "evaluated_at": "2026-06-09T00:00:00Z",
+                "trace_id": "trace-risk-policy-p0-loop-paper",
+            }
             bootstrap_request = materialize_runtime_bootstrap_request(
                 deployment_plan=plan_payload,
                 runtime_binding=binding.to_dict(),
