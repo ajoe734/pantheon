@@ -40,14 +40,27 @@ def test_promotion_gate() -> None:
     assert paper["lifecycle_state"] == "paper"
     print("Success.")
 
-    print("Testing Paper -> Live...")
+    print("Testing Paper -> Canary...")
+    paper["approver"] = "risk-committee"
     paper["metadata"] = {
         "rollback": {
             "target_registry_id": "reg-test-alpha-0.9.0",
             "target_version": "0.9.0",
         }
     }
-    live = gate.promote(paper, PromotionState.LIVE, approver="human-operator")
+    canary = gate.promote(paper, PromotionState.CANARY, approver="risk-committee")
+    assert canary["lifecycle_state"] == "canary"
+    print("Success.")
+
+    print("Testing Paper -> Live (Expected Failure - must go through canary)...")
+    try:
+        gate.promote(paper, PromotionState.LIVE, approver="human-operator")
+        assert False, "Should have failed: paper -> live skip is forbidden"
+    except PromotionError as exc:
+        print(f"Caught expected error: {exc}")
+
+    print("Testing Canary -> Live...")
+    live = gate.promote(canary, PromotionState.LIVE, approver="human-operator")
     assert live["lifecycle_state"] == "live"
     assert live["approver"] == "human-operator"
     print("Success.")
