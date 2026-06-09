@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-06-09T12:29:11Z",
+  "updated_at": "2026-06-09T12:39:21Z",
   "counts": {
-    "total": 1422,
-    "completed": 1399,
+    "total": 1423,
+    "completed": 1400,
     "superseded": 23
   },
   "recent_terminal_ids": [
+    "MPOS-P0-E2E-001",
     "OPS-RTEL-005",
     "OPS-RTEL-004",
     "MPOS-P0-VAL-001",
@@ -25,7 +26,6 @@
     "ASST-INTEG-004",
     "ASST-INTEG-007",
     "MGMT-AI-PERSIST-P1-ATTACH-007",
-    "MGMT-AI-PERSIST-P1-ATTACH-006",
-    "MGMT-AI-PERSIST-P0-WRITE-003"
+    "MGMT-AI-PERSIST-P1-ATTACH-006"
   ]
 }
