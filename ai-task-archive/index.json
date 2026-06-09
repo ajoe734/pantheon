@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-06-08T14:44:07Z",
+  "updated_at": "2026-06-09T00:58:25Z",
   "counts": {
-    "total": 1412,
-    "completed": 1389,
+    "total": 1413,
+    "completed": 1390,
     "superseded": 23
   },
   "recent_terminal_ids": [
+    "ASST-SKILL-002",
     "ASST-SKILL-001",
     "OPS-RTEL-001",
     "MGMT-AI-LIVE-BRIDGE-SMOKE-20260607101732",
@@ -25,7 +26,6 @@
     "ASST-INTEG-003",
     "ASST-INTEG-005",
     "ASST-INTEG-002",
-    "ASST-INTEG-001",
-    "PROD-WRITES-001-V2"
+    "ASST-INTEG-001"
   ]
 }

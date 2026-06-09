@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "task_id": "ASST-SKILL-002",
+  "archived_at": "2026-06-09T00:58:25Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASST-SKILL-002",
+    "title": "Pilot: migrate SA/SD button to governed skill assistant.sa_sd.generate",
+    "summary_zh": "把 SA/SD 從寫死的工具列按鈕改成 catalog-driven skill assistant.sa_sd.generate：handler_ref 指向既有 dev-docs/generate handler（不改 handler 邏輯），經 effective catalog 曝光，FE 從 descriptor 渲染這一顆。這是整個 EPIC 的端到端樣板。",
+    "phase": "EPIC ASST-SKILL / SA-SD pilot (template)",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "ASST-SKILL-001"
+    ],
+    "artifacts": [
+      "docs/decisions/assistant-capability-skill-catalog-ownership.md;services/control-plane/bff/assistant;services/openclaw-gateway-adapter/main.py;execute-plans/src"
+    ],
+    "acceptance": [
+      "assistant.sa_sd.generate is registered as a governed skill with mode_gate kernel;Its handler_ref points at the existing dev-docs/generate handler with no handler logic change;The skill appears in GET /api/openclaw-adapter/tools effective catalog when permitted;FE renders the SA/SD affordance from the descriptor",
+      "not from a hardcoded button;Invocation enforces the descriptor gate and writes one audit record;Tests prove catalog presence",
+      "gate enforcement",
+      "and parity with the prior route"
+    ],
+    "next": "Merged PR #1171 (implementation) and PR #1172 (review closeout artifact) into dev; local verification passed for bridge, BFF projection/ops, compose activation, and diff check.",
+    "last_update": "2026-06-09T00:58:25Z",
+    "auto_created_by": "dispatch_assistant_skill_catalog_2026-06-08",
+    "review_notes_zh": [
+      "審查通過：SA/SD descriptor 正確掛載 kernel mode_gate，handler_ref 指向既有 dev-docs handler，FE 從 effective_skills 條件渲染，gate 強制執行正確。所有驗收條件滿足。",
+      "後續：Codex owner 進行 closeout finalization"
+    ],
+    "review_file": ".orchestrator/reviews/asst_skill_002_review_claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-09T00:58:25Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/asst-skill-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/ASST-SKILL-002",
+      "git_clean_required": false,
+      "commit": "165ec6fd876bc3caecdcb4ed6dabdde5c2076d30",
+      "commit_subject": "ASST-SKILL-002: add review closeout artifact",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "ASST-SKILL-002",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m pytest services/openclaw-gateway-adapter/test_tool_workflow_bridge.py -q; python3 -m pytest services/control-plane/bff/assistant/tests/test_orchestrator_status.py services/control-plane/bff/test_openclaw_ops_surface.py -q; python3 -m pytest services/openclaw-gateway-adapter/test_compose_activation.py -q; git diff --check HEAD -- scoped implementation files"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/ASST-SKILL-002",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "83cc84fe85af4e9dd3f7087914c525f313a5dadf",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASST-SKILL-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented and merged catalog-driven assistant.sa_sd.generate pilot via PR #1171 (merge c0b1f8a297bc6a3b60cc889f8fdee673713197df). Local verification: adapter/compose tests 66 passed, BFF/orchestrator tests 16 passed, git diff --check passed. Please review/approve lifecycle closeout.",
+      "status": "done",
+      "created_at": "2026-06-09T00:38:17Z",
+      "resolved_at": "2026-06-09T00:48:54Z"
+    },
+    {
+      "task_id": "ASST-SKILL-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all acceptance criteria met. SA/SD descriptor correctly governed, handler_ref points at existing BFF route, FE renders from catalog, gate enforcement verified. 80/80 tests pass. Returning to Codex for closeout finalization.",
+      "status": "done",
+      "created_at": "2026-06-09T00:48:54Z",
+      "resolved_at": "2026-06-09T00:58:26Z"
+    }
+  ],
+  "blockers": []
+}
