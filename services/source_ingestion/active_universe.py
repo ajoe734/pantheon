@@ -60,6 +60,52 @@ class ActiveUniverseMember:
 
 
 @dataclass(frozen=True)
+class UniverseTransition:
+    symbol: str
+    from_tier: UniverseTier | str
+    to_tier: UniverseTier | str
+    reason: str
+    triggered_by: str
+    effective_at: str
+    market: str = "TW"
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        symbol = str(self.symbol or "").strip().upper()
+        if not symbol:
+            raise ValueError("symbol is required")
+        reason = str(self.reason or "").strip()
+        if not reason:
+            raise ValueError("reason is required")
+        triggered_by = str(self.triggered_by or "").strip()
+        if not triggered_by:
+            raise ValueError("triggered_by is required")
+        effective_at = str(self.effective_at or "").strip()
+        if not effective_at:
+            raise ValueError("effective_at is required")
+        object.__setattr__(self, "symbol", symbol)
+        object.__setattr__(self, "from_tier", _coerce_tier(self.from_tier))
+        object.__setattr__(self, "to_tier", _coerce_tier(self.to_tier))
+        object.__setattr__(self, "reason", reason)
+        object.__setattr__(self, "triggered_by", triggered_by)
+        object.__setattr__(self, "effective_at", effective_at)
+        object.__setattr__(self, "market", str(self.market or "TW").strip().upper())
+        object.__setattr__(self, "metadata", dict(self.metadata))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "symbol": self.symbol,
+            "market": self.market,
+            "from_tier": self.from_tier.value,
+            "to_tier": self.to_tier.value,
+            "reason": self.reason,
+            "triggered_by": self.triggered_by,
+            "effective_at": self.effective_at,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class SourceUpdateRule:
     connector_id: str
     dataset: str
@@ -103,6 +149,20 @@ class SourceUpdateRule:
 
 
 DEFAULT_SOURCE_UPDATE_RULES: tuple[SourceUpdateRule, ...] = (
+    SourceUpdateRule(
+        connector_id="tw-twse-tpex-official-market",
+        dataset="tw_price_daily",
+        eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE, UniverseTier.ARCHIVE),
+        cadence="daily_after_close",
+        priority=5,
+        reason="TWSE/TPEx official daily price is the baseline market-maintenance source for all active-universe tiers",
+        metadata={
+            "detail_level": "official_daily_price_baseline",
+            "source_role": "preferred_official_reference",
+            "storage_targets": ["normalized/tw_price_daily", "features/returns"],
+            "archive_behavior": "daily_price_only",
+        },
+    ),
     SourceUpdateRule(
         connector_id="tw-finmind-broker-daily-report",
         dataset="tw_broker_top",
@@ -150,6 +210,35 @@ DEFAULT_SOURCE_UPDATE_RULES: tuple[SourceUpdateRule, ...] = (
         metadata={"detail_level": "rss_metadata", "archive_behavior": "skip"},
     ),
     SourceUpdateRule(
+        connector_id="tw-mops-official-disclosures",
+        dataset="tw_material_events",
+        eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE, UniverseTier.ARCHIVE),
+        cadence="event_poll_10m_to_30m",
+        priority=25,
+        reason="MOPS material events remain official-reference event truth even after a symbol moves to archive",
+        metadata={
+            "detail_level": "official_event_metadata",
+            "source_role": "official_reference",
+            "storage_targets": ["raw/mops", "normalized/tw_news_event"],
+            "archive_behavior": "material_events_only",
+        },
+    ),
+    SourceUpdateRule(
+        connector_id="tw-mops-official-disclosures",
+        dataset="tw_financial_fundamentals",
+        eligible_tiers=(UniverseTier.CORE,),
+        cadence="daily_scan_monthly_quarterly_events",
+        priority=30,
+        reason="core universe keeps full MOPS monthly revenue and quarterly filing refresh",
+        metadata={
+            "datasets": ["tw_monthly_revenue", "tw_financial_statement"],
+            "source_role": "official_reference",
+            "storage_targets": ["normalized/tw_monthly_revenue", "normalized/tw_financial_statement"],
+            "candidate_behavior": "defer_until_promoted_to_core",
+            "archive_behavior": "skip_except_material_events",
+        },
+    ),
+    SourceUpdateRule(
         connector_id="tw-yahoo-broker-top15",
         dataset="tw_broker_top",
         eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE),
@@ -179,7 +268,108 @@ DEFAULT_SOURCE_UPDATE_RULES: tuple[SourceUpdateRule, ...] = (
             "run_by_default": False,
         },
     ),
+    SourceUpdateRule(
+        connector_id="us-sec-edgar-filings",
+        dataset="sec_filing_event",
+        eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE, UniverseTier.ARCHIVE),
+        cadence="event_poll_daily",
+        market="US",
+        priority=30,
+        reason="SEC EDGAR filing events are the official US event baseline for all tracked US symbols",
+        metadata={
+            "detail_level": "filing_event_metadata",
+            "source_role": "official_reference",
+            "storage_targets": ["raw/sec-edgar", "normalized/sec_filing_event"],
+            "archive_behavior": "filing_events_only",
+        },
+    ),
+    SourceUpdateRule(
+        connector_id="us-fred-macro",
+        dataset="macro_fred_observation",
+        eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE, UniverseTier.ARCHIVE),
+        cadence="daily_weekly_monthly_by_series_frequency",
+        market="GLOBAL",
+        priority=80,
+        reason="FRED macro series are global context and are maintained outside per-symbol detail fanout",
+        metadata={
+            "detail_level": "symbolless_macro_context",
+            "source_role": "public_macro_reference",
+            "symbol_scope": "global_no_symbol_filter",
+            "storage_targets": ["normalized/macro_fred_observation", "features/macro_regime_features"],
+            "archive_behavior": "not_symbol_scoped",
+        },
+    ),
 )
+
+
+def active_universe_policy_payload(
+    rules: Sequence[SourceUpdateRule | Mapping[str, Any]] = DEFAULT_SOURCE_UPDATE_RULES,
+) -> dict[str, Any]:
+    normalized_rules = tuple(_rule(rule) for rule in rules)
+    archive_baseline_rules = [
+        rule
+        for rule in normalized_rules
+        if UniverseTier.ARCHIVE in tuple(rule.eligible_tiers)
+    ]
+    archive_skipped_rules = [
+        rule
+        for rule in normalized_rules
+        if UniverseTier.ARCHIVE not in tuple(rule.eligible_tiers)
+    ]
+    return {
+        "schema_version": "active_universe_scheduling_policy.v1",
+        "tiers": [
+            {
+                "tier": UniverseTier.CORE.value,
+                "definition": "holdings, active strategies, and active research targets",
+                "data_policy": "full price, financials, chip, broker top N, news, and event refresh",
+            },
+            {
+                "tier": UniverseTier.CANDIDATE.value,
+                "definition": "likely research or trading candidates",
+                "data_policy": "price, chip summary, broker top N, and news metadata refresh",
+            },
+            {
+                "tier": UniverseTier.ARCHIVE.value,
+                "definition": "symbols removed from research and trading focus",
+                "data_policy": "daily price and material events only; skip broker and detailed news fanout",
+            },
+        ],
+        "transition_event_schema": {
+            "schema_version": "universe_transition.v1",
+            "required_fields": [
+                "symbol",
+                "market",
+                "from_tier",
+                "to_tier",
+                "reason",
+                "triggered_by",
+                "effective_at",
+            ],
+            "tier_values": [tier.value for tier in UniverseTier],
+        },
+        "scheduling_rules": [rule.to_dict() for rule in normalized_rules],
+        "summary": {
+            "rule_count": len(normalized_rules),
+            "archive_baseline_rule_count": len(archive_baseline_rules),
+            "archive_detail_skip_rule_count": len(archive_skipped_rules),
+            "core_detail_connector_ids": sorted(
+                {
+                    rule.connector_id
+                    for rule in normalized_rules
+                    if UniverseTier.CORE in tuple(rule.eligible_tiers)
+                }
+            ),
+            "candidate_detail_connector_ids": sorted(
+                {
+                    rule.connector_id
+                    for rule in normalized_rules
+                    if UniverseTier.CANDIDATE in tuple(rule.eligible_tiers)
+                }
+            ),
+            "archive_baseline_connector_ids": sorted({rule.connector_id for rule in archive_baseline_rules}),
+        },
+    }
 
 
 def build_active_universe_update_plan(
@@ -224,6 +414,7 @@ def build_active_universe_update_plan(
 
     return {
         "schema_version": "active_universe_update_plan.v1",
+        "policy_ref": "active_universe_scheduling_policy.v1",
         "members": [member.to_dict() for member in normalized_members],
         "rules": [rule.to_dict() for rule in normalized_rules],
         "connector_updates": connector_updates,
