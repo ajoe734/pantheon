@@ -75,3 +75,24 @@ SA/SD generation logic.
 The Management AI frontend renders the SA/SD action from the effective
 descriptor, not from a hard-coded toolbar button. The BFF still only projects
 adapter-provided `effective_skills` and does not recompute catalog truth.
+
+## ASST-SKILL-005 Provider Reauth
+
+`assistant.provider.reauth` is an adapter-owned `assistant_command` descriptor
+for Codex service-user device-flow reauthentication. It is effective only when
+the OpenClaw adapter allowlist includes `assistant.provider.reauth`, the
+operator role passes the `operator` gate, and the active mode is `kernel_debug`
+or `kernel_repair`.
+
+The descriptor's `handler_ref` is
+`bff.route:POST /bff/assistant/provider/reauth`. The BFF must require active
+control mode before forwarding the request and must not receive, store, or
+forward provider credentials. The adapter starts `codex login --device-auth`
+with the mounted service-user `CODEX_HOME`, returns only
+`verification_uri`/`user_code` device-flow fields, and exposes background
+reauth status for readiness re-probe results.
+
+Credential exchange stays between the operator browser, the identity provider,
+and the Codex CLI process. Frontend and BFF surfaces may display the device URL
+and user code, but they must not handle OAuth tokens, access tokens, refresh
+tokens, or mounted credential file contents.
