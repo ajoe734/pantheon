@@ -1117,10 +1117,16 @@ def _extract_device_auth_text(line: str) -> dict[str, Any]:
         key = "verification_uri_complete" if "user_code=" in url or "code=" in url else "verification_uri"
         fields[key] = url
     code_match = re.search(
-        r"(?:user\s*code|code|enter)\s*[:=]?\s*([A-Z0-9][A-Z0-9-]{3,})",
+        r"(?:user\s*code|code)\s*[:=]\s*([A-Z0-9][A-Z0-9-]{3,})",
         line,
         re.IGNORECASE,
     )
+    if code_match is None:
+        code_match = re.search(
+            r"enter\s+(?:the\s+)?(?:code\s+)?([A-Z0-9][A-Z0-9-]{3,})",
+            line,
+            re.IGNORECASE,
+        )
     if code_match:
         fields["user_code"] = code_match.group(1).strip()
     return fields

@@ -64,6 +64,7 @@ import httpx  # noqa: E402
 import pydantic  # noqa: E402
 
 from tool_workflow_bridge import (  # noqa: E402
+    ASSISTANT_PROVIDER_REAUTH_TOOL_NAME,
     ASSISTANT_SA_SD_GENERATE_TOOL_NAME,
     ASSISTANT_SKILL_DESCRIPTOR_SCHEMA_VERSION,
     BridgeAuditLog,
@@ -701,6 +702,44 @@ class TestListEffectiveTools(unittest.TestCase):
         )
 
         self.assertEqual(user_result["effective_skills"], [])
+        self.assertEqual(viewer_result["effective_skills"], [])
+
+    def test_provider_reauth_skill_descriptor_is_kernel_control_gated(self):
+        bridge, _ = _make_bridge(allowed_tools=[ASSISTANT_PROVIDER_REAUTH_TOOL_NAME])
+        debug_result = bridge.list_effective_tools(
+            agent_id="management-ai",
+            operator_id="op1",
+            mode="kernel_debug",
+            operator_role="operator",
+            upstream=FakeUpstream(),
+        )
+        observe_result = bridge.list_effective_tools(
+            agent_id="management-ai",
+            operator_id="op1",
+            mode="kernel_observe",
+            operator_role="operator",
+            upstream=FakeUpstream(),
+        )
+        viewer_result = bridge.list_effective_tools(
+            agent_id="management-ai",
+            operator_id="op1",
+            mode="kernel_debug",
+            operator_role="viewer",
+            upstream=FakeUpstream(),
+        )
+
+        self.assertEqual(debug_result["effective_tools"], [ASSISTANT_PROVIDER_REAUTH_TOOL_NAME])
+        descriptor = debug_result["effective_skills"][0]
+        self.assertEqual(descriptor["id"], ASSISTANT_PROVIDER_REAUTH_TOOL_NAME)
+        self.assertEqual(descriptor["surface"], "assistant_command")
+        self.assertEqual(descriptor["handler_ref"], "bff.route:POST /bff/assistant/provider/reauth")
+        self.assertEqual(descriptor["result_surface"], "assistant_provider_reauth_device_flow")
+        self.assertTrue(descriptor["confirm_policy"]["required"])
+        self.assertEqual(descriptor["confirm_policy"]["policy"], "active_control_mode")
+        self.assertIn("kernel_debug", descriptor["mode_gate"]["allowed_modes"])
+        self.assertIn("kernel_repair", descriptor["mode_gate"]["allowed_modes"])
+        self.assertNotIn("kernel_observe", descriptor["mode_gate"]["allowed_modes"])
+        self.assertEqual(observe_result["effective_skills"], [])
         self.assertEqual(viewer_result["effective_skills"], [])
 
     def test_effective_skills_deny_user_mode(self):
