@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-06-09T13:04:21Z",
+  "updated_at": "2026-06-09T13:25:19Z",
   "counts": {
-    "total": 1425,
-    "completed": 1402,
+    "total": 1426,
+    "completed": 1403,
     "superseded": 23
   },
   "recent_terminal_ids": [
+    "MPOS-P1-RISK-001",
     "MPOS-P1-PER-001",
     "MPOS-P1-MEM-001",
     "MPOS-P0-E2E-001",
@@ -25,7 +26,6 @@
     "OPS-RTEL-003",
     "ASST-INTEG-008",
     "ASST-INTEG-009",
-    "ASST-INTEG-004",
-    "ASST-INTEG-007"
+    "ASST-INTEG-004"
   ]
 }
