@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "task_id": "ASST-SKILL-004",
+  "archived_at": "2026-06-09T11:18:31Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASST-SKILL-004",
+    "title": "Migrate remaining toolbar capabilities (control-mode, resync, openclaw) to skills",
+    "summary_zh": "把剩下的工具列能力（Control / Resync / OpenClaw 等）依樣板包成 catalog skill，handler_ref 指向既有 route/handler，門禁改由 descriptor+policy 統一解析。",
+    "phase": "EPIC ASST-SKILL / Remaining toolbar migration",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "ASST-SKILL-003"
+    ],
+    "artifacts": [
+      "docs/decisions/assistant-capability-skill-catalog-ownership.md;services/control-plane/bff/assistant;services/openclaw-gateway-adapter/main.py;execute-plans/src"
+    ],
+    "acceptance": [
+      "Control-mode resync and openclaw affordances are registered as governed skills;Each handler_ref points at an existing handler with no behavior change;Per-route ad hoc gate checks are replaced by descriptor plus policy resolution;All migrated capabilities render from the catalog only;Deny-first policy and audit are preserved for every migrated skill;Tests cover catalog presence and gate parity for each migrated capability"
+    ],
+    "next": "PR #1199 merged implementation/review closeout into dev at 007b19a5929c058993e42e73d1ec73100bb93b94; PR #1204 merged final trailer-bearing delivery head at d0b2a9bcdb81770146054055721b85ed7c2015de; focused local checks and GitHub branch gates passed.",
+    "last_update": "2026-06-09T11:18:31Z",
+    "auto_created_by": "dispatch_assistant_skill_catalog_2026-06-08",
+    "review_notes_zh": [
+      "審查通過：四個工具列技能描述符正確，模式閘門分離合理（ask 排除 observe），路徑模板替換安全 fail-closed，85 tests 通過"
+    ],
+    "review_file": ".orchestrator/task-briefs/asst_skill_004_review_claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-09T11:18:31Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/asst-skill-004",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/ASST-SKILL-004",
+      "git_clean_required": false,
+      "commit": "2623fedf2a6c45a5429d523ca92ef0fb6270d69d",
+      "commit_subject": "ASST-SKILL-004: refresh final delivery head",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "closeout evidence only.",
+        "Not changing": "implementation files, review artifact, generated status state, or",
+        "Composes with": "PR #1199 merge commit 007b19a5929c058993e42e73d1ec73100bb93b94.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "ASST-SKILL-004",
+        "Reviewer": "Claude",
+        "Verified": "AI_NAME=Codex ./scripts/ai-status.sh show ASST-SKILL-004; git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/ASST-SKILL-004",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "d0b2a9bcdb81770146054055721b85ed7c2015de",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASST-SKILL-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-06-09T06:32:33Z",
+      "resolved_at": "2026-06-09T06:32:39Z"
+    },
+    {
+      "task_id": "ASST-SKILL-004",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review: PR #1190 merged into dev at d3d38b175d39070b6293ddbfc1df25bda3425c7d; task head 97d639dcf77ee1bf5e11edc68f42261da971ccfb. Implemented catalog skills for assistant.openclaw.ask, assistant.control_mode.status, assistant.transcript.resync, and assistant.orchestrator.status with existing BFF handler_ref routes. Validation: adapter tests 69 passed, BFF projection tests 16 passed, docker compose config --quiet, py_compile, git diff --check, commit trailer check, GitHub Branch CI Gate green. execute-plans package tests unavailable in this Pantheon mirror because execute-plans/package.json is absent.",
+      "status": "done",
+      "created_at": "2026-06-09T06:43:00Z",
+      "resolved_at": "2026-06-09T10:42:48Z"
+    },
+    {
+      "task_id": "ASST-SKILL-004",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned ASST-SKILL-004 away from unavailable lane Codex2 (disabled, sidecar-only, or auth-down); reviewer Codex2 -> Claude.",
+      "status": "done",
+      "created_at": "2026-06-09T10:42:48Z",
+      "resolved_at": "2026-06-09T10:58:49Z"
+    },
+    {
+      "task_id": "ASST-SKILL-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved — toolbar skills correctly migrated to catalog descriptors; handler_ref, mode gates, path template resolution, and test coverage all verified. Returned to owner for finalization.",
+      "status": "done",
+      "created_at": "2026-06-09T10:58:49Z",
+      "resolved_at": "2026-06-09T11:18:32Z"
+    }
+  ],
+  "blockers": []
+}

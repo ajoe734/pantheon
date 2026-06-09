@@ -1,12 +1,15 @@
 {
   "version": 1,
-  "updated_at": "2026-06-09T11:11:05Z",
+  "updated_at": "2026-06-09T12:00:27Z",
   "counts": {
-    "total": 1417,
-    "completed": 1394,
+    "total": 1421,
+    "completed": 1398,
     "superseded": 23
   },
   "recent_terminal_ids": [
+    "OPS-RTEL-004",
+    "MPOS-P0-VAL-001",
+    "ASST-SKILL-004",
     "OPS-RTEL-002",
     "DATASTRAT-CONTRACT-001",
     "ASST-SKILL-005",
@@ -15,6 +18,7 @@
     "ASST-SKILL-001",
     "OPS-RTEL-001",
     "MGMT-AI-LIVE-BRIDGE-SMOKE-20260607101732",
+    "OPS-RTEL-003",
     "ASST-INTEG-008",
     "ASST-INTEG-009",
     "ASST-INTEG-004",
@@ -22,10 +26,6 @@
     "MGMT-AI-PERSIST-P1-ATTACH-007",
     "MGMT-AI-PERSIST-P1-ATTACH-006",
     "MGMT-AI-PERSIST-P0-WRITE-003",
-    "MGMT-AI-PERSIST-P0-WRITE-004",
-    "MGMT-AI-PERSIST-P0-WRITE-002",
-    "MGMT-AI-PERSIST-P0-READ-005",
-    "MGMT-AI-PERSIST-P0-STORE-001",
-    "ASST-INTEG-006"
+    "MGMT-AI-PERSIST-P0-WRITE-004"
   ]
 }
