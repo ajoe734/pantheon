@@ -291,7 +291,7 @@ class TestGovernedLinkageFields(unittest.TestCase):
         }
 
         capture.capture_pnl(ExecutionMode.PAPER, 'test_strategy', 100.0, metadata=metadata)
-        event = capture.get_canary_events()[0]
+        event = capture.get_paper_events()[0]
 
         self.assertEqual(event['target']['strategy_id'], 'test_strategy')
         self.assertEqual(event['target']['registry_id'], 'reg-123')

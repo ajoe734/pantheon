@@ -251,7 +251,8 @@ class TestArtifactLoader(unittest.TestCase):
                 }
             },
         }
-        live_entry = self.gate.promote(live_entry, PromotionState.LIVE)
+        canary_entry = self.gate.promote(live_entry, PromotionState.CANARY)
+        live_entry = self.gate.promote(canary_entry, PromotionState.LIVE)
         projection = self.gate.build_execution_projection(live_entry)
         store = FakeObjectStore({})
 
