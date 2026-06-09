@@ -3,7 +3,7 @@
 Owner: Codex
 Reviewer: Claude
 Date: 2026-06-09
-Status: ready for PR merge, then done transition
+Status: final delivery head refresh for done transition
 
 ## Finalization Summary
 
@@ -13,9 +13,15 @@ Claude approved the reviewed scope in
 toolbar capability descriptors, handler refs, mode gates, route template
 resolution, result surfaces, dev allowlist, and focused test coverage.
 
-This closeout keeps the approved implementation unchanged. It records the owner
-finalization state and syncs the task brief to `review_approved` so the task can
-merge through PR #1199 before the canonical `done` transition.
+This closeout keeps the approved implementation unchanged. PR #1199 merged into
+`dev` at merge commit `007b19a5929c058993e42e73d1ec73100bb93b94` after Branch CI
+Gate and Orchestrator Sync checks passed.
+
+The first `AI_NAME=Codex ./scripts/ai-status.sh done ASST-SKILL-004 ...`
+attempt correctly refused to finalize while the local task branch HEAD was the
+PR merge commit, because the latest commit body did not carry the required task
+trailers. This follow-up artifact commit exists only to make the final task
+branch HEAD trailer-bearing before the canonical `done` transition.
 
 ## Verification
 
@@ -37,4 +43,4 @@ Owned layer: owner closeout evidence and task brief review-approved sync.
 Not changing: toolbar skill descriptors, BFF route handlers, OpenClaw provider
 logic, control-mode store semantics, or frontend catalog dispatch code.
 Composes with: implementation commit `97d639dc` already merged to `dev`,
-review approval commit `e5680efd`, and PR #1199.
+review approval commit `e5680efd`, PR #1199, and merge commit `007b19a5`.
