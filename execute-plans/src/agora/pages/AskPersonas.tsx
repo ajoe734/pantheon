@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import { postAsk, openAskSse, getAskSession } from "@/lib/bff/agora";
 import {
-  generateAssistantDevDocs,
+  assistantCatalogRouteFromHandlerRef,
   getAssistantOrchestratorStatus,
   getAssistantTranscript,
+  invokeAssistantCatalogRoute,
   postManagementAssistantAsk,
   type ManagementAssistantAskRequest,
 } from "@/lib/bff/managementAssistant";
@@ -23,9 +24,7 @@ type JsonRecord = Record<string, unknown>;
 type ManagementAskControlMode = NonNullable<ManagementAssistantAskRequest["controlMode"]>;
 type ManagementAskOpenClaw = NonNullable<ManagementAssistantAskRequest["openclaw"]>;
 type ManagementAskRepair = NonNullable<ManagementAskOpenClaw["repair"]>;
-
-const ASSISTANT_SA_SD_GENERATE_SKILL_ID = "assistant.sa_sd.generate";
-const ASSISTANT_SA_SD_GENERATE_HANDLER_REF = "bff.route:POST /bff/assistant/dev-docs/generate";
+type CatalogRenderSurface = "button" | "command" | "card_action";
 
 interface SourceCitation {
   source_id: string;
@@ -375,13 +374,154 @@ function assistantSkillDescriptors(value: unknown): JsonRecord[] {
     .filter((skill) => Boolean(firstString(skill.id)));
 }
 
-function findAssistantSkill(value: unknown, skillId: string): JsonRecord | null {
-  return assistantSkillDescriptors(value).find((skill) => firstString(skill.id) === skillId) ?? null;
+function assistantSkillId(skill: JsonRecord): string {
+  return firstString(skill.id) ?? "assistant.catalog.skill";
+}
+
+function assistantSkillLabel(skill: JsonRecord): string {
+  return firstString(skill.title, skill.label, skill.name, skill.id) ?? "Assistant action";
 }
 
 function assistantSkillHandlerRef(skill: JsonRecord | null): string | null {
   if (!skill) return null;
   return firstString(skill.handler_ref, skill.handlerRef);
+}
+
+function assistantSkillInputSchema(skill: JsonRecord): JsonRecord {
+  return recordFrom(skill.input_schema ?? skill.inputSchema);
+}
+
+function assistantSkillInputProperties(skill: JsonRecord): JsonRecord {
+  return recordFrom(assistantSkillInputSchema(skill).properties);
+}
+
+function assistantSkillRequiredInputs(skill: JsonRecord): string[] {
+  return uniqueStrings(arrayFrom(assistantSkillInputSchema(skill).required));
+}
+
+function assistantSkillConfirmRequired(skill: JsonRecord): boolean {
+  const policy = recordFrom(skill.confirm_policy ?? skill.confirmPolicy);
+  return firstBoolean(policy.required, skill.requires_confirmation, skill.requiresConfirmation) === true;
+}
+
+function assistantSkillRenderSurface(skill: JsonRecord): CatalogRenderSurface {
+  const explicitSurface = firstString(
+    skill.ui_surface,
+    skill.uiSurface,
+    skill.render_surface,
+    skill.renderSurface,
+  );
+  const surface = (explicitSurface ?? firstString(skill.surface, skill.result_surface, skill.resultSurface) ?? "")
+    .trim()
+    .toLowerCase();
+  if (["button", "toolbar", "toolbar_button"].includes(surface)) return "button";
+  if (["card_action", "card-action", "degraded_card_action", "degraded-card-action"].includes(surface)) {
+    return "card_action";
+  }
+  if (["command", "assistant_command", "openclaw_tool", "openclaw_workflow"].includes(surface)) {
+    const handlerRef = assistantSkillHandlerRef(skill);
+    return assistantCatalogRouteFromHandlerRef(handlerRef) ? "button" : "command";
+  }
+  return assistantCatalogRouteFromHandlerRef(assistantSkillHandlerRef(skill)) ? "button" : "command";
+}
+
+function hasInputProperty(properties: JsonRecord, name: string): boolean {
+  return Object.prototype.hasOwnProperty.call(properties, name);
+}
+
+function setDescriptorInput(
+  body: JsonRecord,
+  properties: JsonRecord,
+  name: string,
+  value: unknown,
+): void {
+  if (!hasInputProperty(properties, name)) return;
+  if (value === undefined || value === null) return;
+  body[name] = value;
+}
+
+function catalogSkillInputBody(
+  skill: JsonRecord,
+  options: {
+    prompt: string;
+    sessionId: string | null;
+    uiContext: AssistantUiContextV1;
+    openClawMode: AssistantMode;
+  },
+): JsonRecord {
+  const properties = assistantSkillInputProperties(skill);
+  const body: JsonRecord = {};
+  const featureSummary = options.prompt.trim() || (options.sessionId ? `Assistant follow-up for ${options.sessionId}` : "");
+  const affectedModules = ["execute-plans", "assistant", "management_ai"];
+  const contextPackRequest = {
+    mode: options.openClawMode,
+    include: [
+      "ui",
+      "control_room",
+      "jobs",
+      "alerts",
+      "audit",
+      "recent_sse",
+      "persona_health",
+      "strategy_health",
+      "management_nl",
+      "docs_rag",
+      "repo_status",
+    ],
+    question: options.prompt,
+    frontend: {
+      route: options.uiContext.route.path,
+      visibleErrors: options.uiContext.visibleErrors,
+      contextRefs: options.uiContext.contextRefs,
+    },
+  };
+
+  setDescriptorInput(body, properties, "conversationId", options.sessionId);
+  setDescriptorInput(body, properties, "conversation_id", options.sessionId);
+  setDescriptorInput(body, properties, "featureSummary", featureSummary);
+  setDescriptorInput(body, properties, "feature_summary", featureSummary);
+  setDescriptorInput(body, properties, "affectedModules", affectedModules);
+  setDescriptorInput(body, properties, "affected_modules", affectedModules);
+  setDescriptorInput(body, properties, "archive", true);
+  setDescriptorInput(body, properties, "emitTaskPacket", true);
+  setDescriptorInput(body, properties, "emit_task_packet", true);
+  setDescriptorInput(body, properties, "queueTaskPacket", true);
+  setDescriptorInput(body, properties, "queue_task_packet", true);
+  setDescriptorInput(body, properties, "contextPackRequest", contextPackRequest);
+  setDescriptorInput(body, properties, "context_pack_request", contextPackRequest);
+  setDescriptorInput(body, properties, "contextPack", { ui: options.uiContext });
+  setDescriptorInput(body, properties, "context_pack", { ui: options.uiContext });
+  setDescriptorInput(body, properties, "extraContext", {
+    route: options.uiContext.route.path,
+    visibleErrors: options.uiContext.visibleErrors,
+    contextRefs: options.uiContext.contextRefs,
+  });
+  setDescriptorInput(body, properties, "extra_context", {
+    route: options.uiContext.route.path,
+    visibleErrors: options.uiContext.visibleErrors,
+    contextRefs: options.uiContext.contextRefs,
+  });
+  return body;
+}
+
+function missingCatalogSkillInputs(skill: JsonRecord, body: JsonRecord): string[] {
+  return assistantSkillRequiredInputs(skill).filter((name) => {
+    const value = body[name];
+    if (value === undefined || value === null) return true;
+    if (typeof value === "string" && !value.trim()) return true;
+    if (Array.isArray(value) && value.length === 0) return true;
+    return false;
+  });
+}
+
+function catalogSkillDisabledReason(skill: JsonRecord, body: JsonRecord): string | null {
+  const handlerRef = assistantSkillHandlerRef(skill);
+  if (!handlerRef || !assistantCatalogRouteFromHandlerRef(handlerRef)) {
+    return "handler is not a frontend-routable BFF route";
+  }
+  const missing = missingCatalogSkillInputs(skill, body);
+  if (missing.length > 0) return `missing ${missing.join(", ")}`;
+  return null;
 }
 
 function systemProviderReadiness(value: unknown): JsonRecord {
@@ -527,6 +667,8 @@ export default function AskPersonas(): JSX.Element {
   const [sourceCitations, setSourceCitations] = useState<SourceCitation[]>([]);
   const [systemStatus, setSystemStatus] = useState<JsonRecord | null>(null);
   const [devDocResult, setDevDocResult] = useState<JsonRecord | null>(null);
+  const [catalogResultSkill, setCatalogResultSkill] = useState<JsonRecord | null>(null);
+  const [catalogActionPending, setCatalogActionPending] = useState<string | null>(null);
   const [workflowError, setWorkflowError] = useState<string | null>(null);
   const [openClawMode, setOpenClawMode] = useState<AssistantMode>("kernel_debug");
   const [repairTaskId, setRepairTaskId] = useState("");
@@ -589,6 +731,7 @@ export default function AskPersonas(): JSX.Element {
             valueState: openClawMode ? "present" : "empty",
             dirty: openClawMode !== "kernel_debug",
             required: false,
+            validatorRefs: [],
           },
           {
             name: "repairTaskId",
@@ -597,6 +740,9 @@ export default function AskPersonas(): JSX.Element {
             valueState: repairTaskId.trim() ? "present" : "empty",
             dirty: Boolean(repairTaskId.trim()),
             required: openClawMode === "kernel_repair",
+            validatorRefs: openClawMode === "kernel_repair"
+              ? [{ type: "required", message: "Repair task is required in kernel repair mode." }]
+              : [],
           },
           {
             name: "repairWorktree",
@@ -605,6 +751,9 @@ export default function AskPersonas(): JSX.Element {
             valueState: repairWorktree.trim() ? "present" : "empty",
             dirty: Boolean(repairWorktree.trim()),
             required: openClawMode === "kernel_repair",
+            validatorRefs: openClawMode === "kernel_repair"
+              ? [{ type: "required", message: "Repair worktree is required in kernel repair mode." }]
+              : [],
           },
           {
             name: "repairScope",
@@ -613,6 +762,9 @@ export default function AskPersonas(): JSX.Element {
             valueState: repairScope.trim() ? "present" : "empty",
             dirty: Boolean(repairScope.trim()),
             required: openClawMode === "kernel_repair",
+            validatorRefs: openClawMode === "kernel_repair"
+              ? [{ type: "required", message: "Repair scope is required in kernel repair mode." }]
+              : [],
           },
         ],
         dirty: Boolean(prompt.trim()),
@@ -699,7 +851,7 @@ export default function AskPersonas(): JSX.Element {
       if (!id) throw new Error("no session id returned");
       setSessionId(id);
       const sessionSignals = normalizeAssistantSignals(res, id);
-      const sessionMode = sessionSignals.mode ?? null;
+      const sessionMode = normalizeMode(sessionSignals.mode);
       setMode(sessionMode);
       setAssistantSignals(sessionSignals);
       const initialCitations = normalizeSourceCitations(res);
@@ -777,6 +929,7 @@ export default function AskPersonas(): JSX.Element {
     setStatus("management_ai_sending");
     setWorkflowError(null);
     setDevDocResult(null);
+    setCatalogResultSkill(null);
     setHandoffCopied(null);
     setSourceCitations([]);
 
@@ -833,53 +986,39 @@ export default function AskPersonas(): JSX.Element {
     }
   };
 
-  const handleGenerateDevDocs = async () => {
-    if (!saSdGenerateSkill) {
-      setWorkflowError("Generate SA/SD is not available in the effective assistant skill catalog.");
+  const handleCatalogAction = async (skill: JsonRecord, surface: CatalogRenderSurface) => {
+    const skillId = assistantSkillId(skill);
+    const label = assistantSkillLabel(skill);
+    const handlerRef = assistantSkillHandlerRef(skill);
+    const uiContext = currentUiContext();
+    const body = catalogSkillInputBody(skill, {
+      prompt,
+      sessionId,
+      uiContext,
+      openClawMode,
+    });
+    const disabledReason = catalogSkillDisabledReason(skill, body);
+    if (disabledReason) {
+      setWorkflowError(`${label} is unavailable: ${disabledReason}.`);
       return;
     }
-    if (assistantSkillHandlerRef(saSdGenerateSkill) !== ASSISTANT_SA_SD_GENERATE_HANDLER_REF) {
-      setWorkflowError("Generate SA/SD skill is not bound to the assistant dev-docs handler.");
+    if (!handlerRef) {
+      setWorkflowError(`${label} is unavailable: missing handler.`);
       return;
     }
-    if (!sessionId) {
-      setWorkflowError("Generate SA/SD requires a server-backed assistant session.");
-      return;
+    if (assistantSkillConfirmRequired(skill)) {
+      const ok = typeof window === "undefined"
+        ? true
+        : window.confirm(`${label} requires confirmation. Continue?`);
+      if (!ok) return;
     }
     setWorkflowError(null);
-    setStatus("generating_sa_sd");
+    setStatus(`catalog_${surface}_running`);
+    setCatalogActionPending(skillId);
     try {
-      const uiContext = currentUiContext();
-      const res = await generateAssistantDevDocs({
-        conversationId: sessionId,
-        featureSummary: prompt.trim() || `Assistant follow-up for ${sessionId}`,
-        affectedModules: ["execute-plans", "assistant", "management_ai"],
-        archive: true,
-        emitTaskPacket: true,
-        contextPackRequest: {
-          mode: "kernel_debug",
-          include: [
-            "ui",
-            "control_room",
-            "jobs",
-            "alerts",
-            "audit",
-            "recent_sse",
-            "persona_health",
-            "strategy_health",
-            "management_nl",
-            "docs_rag",
-            "repo_status",
-          ],
-          question: prompt,
-          frontend: {
-            route: uiContext.route.path,
-            visibleErrors: uiContext.visibleErrors,
-            contextRefs: uiContext.contextRefs,
-          },
-        },
-      });
-      setDevDocResult(res);
+      const res = await invokeAssistantCatalogRoute(handlerRef, body);
+      setDevDocResult(recordFrom(res));
+      setCatalogResultSkill(skill);
       setHandoffCopied(null);
       const generatedTaskId = firstPacketTaskId(res);
       if (generatedTaskId && !repairTaskId.trim()) {
@@ -889,12 +1028,14 @@ export default function AskPersonas(): JSX.Element {
       if (generatedScope.length > 0 && !repairScope.trim()) {
         setRepairScope(generatedScope.join("\n"));
       }
-      setStatus("sa_sd_ready");
+      setStatus(`catalog_${surface}_ready`);
     } catch (err) {
-      const message = `SA/SD generation failed: ${String(err)}`;
+      const message = `${label} failed: ${String(err)}`;
       setStatus("error");
       setWorkflowError(message);
       appendDelta(message, "assistant");
+    } finally {
+      setCatalogActionPending(null);
     }
   };
 
@@ -941,8 +1082,45 @@ export default function AskPersonas(): JSX.Element {
   const devBridge = devDocResult ? devBridgeRecord(devDocResult) : {};
   const devArtifactPaths = devDocResult ? devDocArtifactPaths(devDocResult) : [];
   const devDispatchCommand = devDocResult ? buildAssistantDevDispatchCommand(devDocResult) : null;
-  const saSdGenerateSkill = findAssistantSkill(systemStatus, ASSISTANT_SA_SD_GENERATE_SKILL_ID);
-  const saSdGenerateLabel = firstString(saSdGenerateSkill?.title, saSdGenerateSkill?.label) ?? "Generate SA/SD";
+  const catalogSkills = systemStatus ? assistantSkillDescriptors(systemStatus) : [];
+  const catalogToolbarSkills = catalogSkills.filter((skill) => assistantSkillRenderSurface(skill) === "button");
+  const catalogCommandSkills = catalogSkills.filter((skill) => assistantSkillRenderSurface(skill) === "command");
+  const catalogCardActionSkills = catalogSkills.filter((skill) => assistantSkillRenderSurface(skill) === "card_action");
+  const catalogResultLabel =
+    firstString(catalogResultSkill?.title, catalogResultSkill?.label, catalogResultSkill?.result_surface, catalogResultSkill?.resultSurface)
+    ?? "Catalog result";
+
+  const renderCatalogAction = (skill: JsonRecord, surface: CatalogRenderSurface) => {
+    const skillId = assistantSkillId(skill);
+    const label = assistantSkillLabel(skill);
+    const body = catalogSkillInputBody(skill, {
+      prompt,
+      sessionId,
+      uiContext: currentUiContext(),
+      openClawMode,
+    });
+    const disabledReason = catalogSkillDisabledReason(skill, body);
+    const busy = catalogActionPending === skillId;
+    const disabled = Boolean(disabledReason) || Boolean(catalogActionPending);
+    const required = assistantSkillRequiredInputs(skill);
+    return (
+      <button
+        key={`${surface}:${skillId}`}
+        onClick={() => void handleCatalogAction(skill, surface)}
+        disabled={disabled}
+        title={[
+          disabledReason,
+          required.length > 0 ? `requires ${required.join(", ")}` : null,
+          assistantSkillConfirmRequired(skill) ? "confirmation required" : null,
+        ].filter(Boolean).join(" - ")}
+        data-skill-id={skillId}
+        data-skill-surface={surface}
+      >
+        {busy ? "Running..." : label}
+        {assistantSkillConfirmRequired(skill) ? " *" : ""}
+      </button>
+    );
+  };
 
   return (
     <div>
@@ -991,18 +1169,25 @@ export default function AskPersonas(): JSX.Element {
         <button onClick={handleSystemStatus}>
           System Status
         </button>
-        {saSdGenerateSkill && (
-          <button onClick={handleGenerateDevDocs} disabled={!sessionId || status === "generating_sa_sd"}>
-            {saSdGenerateLabel}
-          </button>
-        )}
+        {catalogToolbarSkills.map((skill) => renderCatalogAction(skill, "button"))}
       </div>
+      {catalogCommandSkills.length > 0 && (
+        <div data-testid="assistant-catalog-commands" style={{ border: "1px solid #ddd", marginTop: 8, padding: 8 }}>
+          <strong>Catalog commands:</strong>{" "}
+          {catalogCommandSkills.map((skill) => renderCatalogAction(skill, "command"))}
+        </div>
+      )}
       <div>
         <strong>Status:</strong> {status ?? "idle"} {sessionId ? `(session ${sessionId})` : null}
       </div>
       {workflowError && (
         <div role="alert" style={{ border: "1px solid #fca5a5", color: "#991b1b", marginTop: 8, padding: 8 }}>
           {workflowError}
+          {catalogCardActionSkills.length > 0 && (
+            <div data-testid="assistant-catalog-card-actions" style={{ marginTop: 8 }}>
+              {catalogCardActionSkills.map((skill) => renderCatalogAction(skill, "card_action"))}
+            </div>
+          )}
         </div>
       )}
       {!isUserMode(mode) && isKernelMode(mode) && (
@@ -1020,11 +1205,14 @@ export default function AskPersonas(): JSX.Element {
           <div>
             <strong>Dev inbox:</strong> {assistantDevBridgeLine(systemStatus)}
           </div>
+          <div>
+            <strong>Effective catalog:</strong> {catalogSkills.length} skills
+          </div>
         </div>
       )}
       {devDocResult && (
         <div data-testid="assistant-dev-handoff" style={{ border: "1px solid #ddd", marginTop: 8, padding: 8 }}>
-          <strong>SA/SD:</strong> {packetId(devDocResult) ?? "packet pending"}
+          <strong>{catalogResultLabel}:</strong> {packetId(devDocResult) ?? "packet pending"}
           {taskPacketId(devDocResult) ? ` - task packet ${taskPacketId(devDocResult)}` : ""}
           <div>
             <strong>Tasks:</strong> {devDocTaskCount(devDocResult)}
