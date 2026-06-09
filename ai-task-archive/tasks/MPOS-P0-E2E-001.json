@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "task_id": "MPOS-P0-E2E-001",
+  "archived_at": "2026-06-09T12:39:21Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MPOS-P0-E2E-001",
+    "title": "Add minimal governed persona proposal to runtime binding E2E",
+    "summary_zh": "建立最小整合測試，證明 persona 只能提出 proposal/evidence，必須經 artifact lineage、approval、deployment plan、runtime binding、telemetry/evolution 才能形成 runtime 影響。",
+    "phase": "EPIC MPOS / P0 validation and governed E2E",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "MPOS-P0-VAL-001"
+    ],
+    "artifacts": [
+      "services/control-plane/persona",
+      "services/research",
+      "services/registry",
+      "services/control-plane/governance",
+      "services/runtime-manager",
+      "services/telemetry",
+      "services/evolution",
+      "services/*/test*",
+      "TARGET_ARCHITECTURE.md",
+      "PERSONA_RUNTIME_MODEL.md",
+      "MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md",
+      "PAPER_CANARY_LIVE_POLICY.md"
+    ],
+    "acceptance": [
+      "Integration test covers persona proposal to structured artifact to approval decision to deployment plan to runtime binding to telemetry ingest to evolution proposal",
+      "Test proves persona cannot create direct live order or mutate runtime state",
+      "Every hop carries trace id lineage id artifact id plan id binding id and capital pool id",
+      "Fake runtime is allowed and no real broker credential is required"
+    ],
+    "next": "Final closeout PR #1216 merged into dev at e0ea595166425c532fa1dd30b1de53ce9b9bc87a; focused governed persona E2E validation passed (12 tests).",
+    "last_update": "2026-06-09T12:39:21Z",
+    "auto_created_by": "codex_mpos_gap_dispatch_2026-06-09",
+    "review_notes_zh": [
+      "審查通過",
+      "所有驗收條件均符合：完整 governed chain 測試、persona 直接創建 binding 被阻擋、lineage ID 全程傳遞、無真實 broker 憑證需求",
+      "test 通過 (2 tests in 0.083s OK)"
+    ],
+    "review_file": "/tmp/mpos-p0-e2e-001-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-09T12:39:21Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mpos-p0-e2e-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "HEAD",
+      "git_clean_required": false,
+      "commit": "e0ea595166425c532fa1dd30b1de53ce9b9bc87a",
+      "commit_subject": "MPOS-P0-E2E-001: update task brief to review_approved (#1216)",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "* MPOS-P0-E2E-001": "finalize closeout record",
+        "Owned layer": "task-scoped closeout record for the review-approved governed persona proposal E2E.",
+        "Not changing": "E2E test implementation, production runtime/governance code, or canonical architecture policy.",
+        "Composes with": "merged implementation PR #1213 and finalization PR #1216 into dev.",
+        "Verified": "python3 -m unittest services/control-plane/governance/test_paper_approval_decision.py services/control-plane/governance/test_paper_deployment_plan.py services/control-plane/governance/test_paper_runtime_binding.py services/telemetry/test_paper_telemetry_packet.py services/control-plane/governance/test_paper_evolution_decision.py services/control-plane/governance/test_persona_proposal_runtime_binding_e2e.py (12 tests, OK)",
+        "LLM-Agent": "Codex",
+        "Task-ID": "MPOS-P0-E2E-001",
+        "Reviewer": "Claude2",
+        "Co-authored-by": "Codex <codex@pantheon.local>"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "e0ea595166425c532fa1dd30b1de53ce9b9bc87a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MPOS-P0-E2E-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned MPOS-P0-E2E-001 away from unavailable lane Codex2 (disabled, sidecar-only, or auth-down); owner Codex2 -> Codex.",
+      "status": "done",
+      "created_at": "2026-06-09T10:42:48Z",
+      "resolved_at": "2026-06-09T12:15:31Z"
+    },
+    {
+      "task_id": "MPOS-P0-E2E-001",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Implementation commit 650dc45 is pushed in PR #1213 with auto-merge enabled. Focused paper loop and persona proposal E2E tests pass; ready for Claude2 review.",
+      "status": "done",
+      "created_at": "2026-06-09T12:21:01Z",
+      "resolved_at": "2026-06-09T12:25:21Z"
+    },
+    {
+      "task_id": "MPOS-P0-E2E-001",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved: E2E test proves persona proposals are evidence-only and runtime impact requires full governed chain. Returning to Codex for final closeout.",
+      "status": "done",
+      "created_at": "2026-06-09T12:25:21Z",
+      "resolved_at": "2026-06-09T12:39:22Z"
+    }
+  ],
+  "blockers": []
+}
