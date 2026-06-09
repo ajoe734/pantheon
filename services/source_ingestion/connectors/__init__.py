@@ -23,6 +23,11 @@ from .examples import ExternalFeedProviderExample, StaticRecordsProviderExample,
 from .paper import OpenAlexPaperIngestAdapter
 from .repo_allowlist import RepoAllowlistEntry, RepoAllowlistProvider
 from .taiwan_market import MopsSourceIngestAdapter, TejSourceIngestAdapter
+from .yahoo_taiwan import (
+    YahooTaiwanBrokerTopAdapter,
+    YahooTaiwanRssAdapter,
+    parse_yahoo_broker_trading_html,
+)
 
 __all__ = [
     "AuthPolicy",
@@ -49,5 +54,8 @@ __all__ = [
     "StaticRecordsProviderExample",
     "MopsSourceIngestAdapter",
     "TejSourceIngestAdapter",
+    "YahooTaiwanBrokerTopAdapter",
+    "YahooTaiwanRssAdapter",
+    "parse_yahoo_broker_trading_html",
     "example_provider_catalog",
 ]

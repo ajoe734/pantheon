@@ -41,6 +41,13 @@ from services.knowledge.evidence import EvidenceBundleBuilder, EvidenceItem, nor
 from services.knowledge.evidence.models import EvidenceValidationError
 from services.source_search_posture import require_source_search_posture
 
+from .active_universe import (
+    DEFAULT_SOURCE_UPDATE_RULES,
+    ActiveUniverseMember,
+    SourceUpdateRule,
+    UniverseTier,
+    build_active_universe_update_plan,
+)
 from .connectors import (
     AuthType,
     ConnectorMode,
@@ -296,6 +303,55 @@ class SetScheduleRequest(StrictBaseModel):
     enabled: bool = False
 
 
+class ActiveUniverseMemberBody(StrictBaseModel):
+    symbol: str
+    tier: UniverseTier
+    market: str = "TW"
+    venue: str | None = None
+    reason: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    def to_domain(self) -> ActiveUniverseMember:
+        return ActiveUniverseMember(
+            symbol=self.symbol,
+            tier=self.tier.value,
+            market=self.market,
+            venue=self.venue,
+            reason=self.reason,
+            metadata=self.metadata,
+        )
+
+
+class SourceUpdateRuleBody(StrictBaseModel):
+    connector_id: str
+    dataset: str
+    eligible_tiers: list[UniverseTier]
+    cadence: str
+    market: str = "TW"
+    priority: int = 100
+    max_symbols_per_run: int | None = None
+    reason: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    def to_domain(self) -> SourceUpdateRule:
+        return SourceUpdateRule(
+            connector_id=self.connector_id,
+            dataset=self.dataset,
+            eligible_tiers=[tier.value for tier in self.eligible_tiers],
+            cadence=self.cadence,
+            market=self.market,
+            priority=self.priority,
+            max_symbols_per_run=self.max_symbols_per_run,
+            reason=self.reason,
+            metadata=self.metadata,
+        )
+
+
+class ActiveUniversePlanRequest(StrictBaseModel):
+    members: list[ActiveUniverseMemberBody]
+    rules: list[SourceUpdateRuleBody] = Field(default_factory=list)
+
+
 class SetConnectorLifecycleRequest(StrictBaseModel):
     status: ConnectorStatus
     reason: str
@@ -498,6 +554,60 @@ def _connector_freshness_summary(connector_id: str) -> dict[str, Any]:
     }
 
 
+def _connector_schema_hash(connector: SourceConnector, fetch: dict[str, Any] | None) -> str:
+    metadata_hash = connector.metadata.get("schema_hash")
+    if metadata_hash not in (None, "", [], {}):
+        return str(metadata_hash)
+    payload = {
+        "connector_id": connector.connector_id,
+        "source_type": connector.source_type.value,
+        "provider": connector.provider,
+        "license_scope": connector.license_scope,
+        "metadata": dict(connector.metadata),
+        "fetch_policy": _fetch_policy_summary(fetch),
+    }
+    body = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    return sha256(body).hexdigest()[:16]
+
+
+def _expected_rows(connector: SourceConnector, fetch: dict[str, Any] | None) -> int | None:
+    metadata = dict(connector.metadata)
+    for key in ("expected_rows_per_run", "expected_rows"):
+        value = metadata.get(key)
+        if value not in (None, "", [], {}):
+            return int(value)
+    if fetch:
+        if fetch.get("mode") == "static_records":
+            return len(fetch.get("records") or [])
+        if fetch.get("mode") == "external_feed" and fetch.get("max_records") not in (None, ""):
+            return int(fetch["max_records"])
+    return None
+
+
+def _connector_health_metrics(
+    connector: SourceConnector,
+    *,
+    fetch: dict[str, Any] | None,
+    state: dict[str, Any],
+    freshness: dict[str, Any],
+) -> dict[str, Any]:
+    latest_run = freshness.get("latest_run") if isinstance(freshness.get("latest_run"), dict) else None
+    row_count = latest_run.get("normalized_count") if latest_run else None
+    source_error = state.get("last_error")
+    if not source_error and latest_run and latest_run.get("status") in {"failed", "rejected"}:
+        source_error = f"latest ingest run {latest_run['status']}"
+    return {
+        "schema_version": "source_connector_health_metrics.v1",
+        "last_success_at": freshness.get("last_success_at"),
+        "row_count": row_count,
+        "expected_rows": _expected_rows(connector, fetch),
+        "watermark": freshness.get("last_watermark"),
+        "schema_hash": _connector_schema_hash(connector, fetch),
+        "staleness_seconds": freshness.get("staleness_seconds"),
+        "source_error": source_error,
+    }
+
+
 def _connector_registry_entry(
     connector: SourceConnector,
     *,
@@ -526,6 +636,12 @@ def _connector_registry_entry(
         "fetch_policy": _fetch_policy_summary(fetch),
         "schedule": schedule,
         "freshness": freshness,
+        "health_metrics": _connector_health_metrics(
+            connector,
+            fetch=fetch,
+            state=state_payload,
+            freshness=freshness,
+        ),
         "state": state_payload,
         "crawler_policy": crawler_policy_for_connector(
             connector,
@@ -1075,6 +1191,18 @@ def source_connector_registry() -> dict[str, Any]:
 @app.get("/api/source-ingest/policy-registry")
 def source_policy_registry() -> dict[str, Any]:
     return _source_policy_registry_payload()
+
+
+@app.post("/api/source-ingest/active-universe/plan")
+def active_universe_plan(request: ActiveUniversePlanRequest) -> dict[str, Any]:
+    try:
+        rules = [rule.to_domain() for rule in request.rules] if request.rules else DEFAULT_SOURCE_UPDATE_RULES
+        return build_active_universe_update_plan(
+            [member.to_domain() for member in request.members],
+            rules=rules,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/source-ingest/schemas/source-record")

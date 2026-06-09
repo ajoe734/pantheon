@@ -19,6 +19,7 @@ from .base import (
 from .paper import OpenAlexPaperIngestAdapter
 from .repo_allowlist import RepoAllowlistProvider
 from .taiwan_market import MopsSourceIngestAdapter, TejSourceIngestAdapter
+from .yahoo_taiwan import YahooTaiwanBrokerTopAdapter, YahooTaiwanRssAdapter
 
 
 @dataclass(frozen=True)
@@ -267,6 +268,24 @@ def example_provider_catalog() -> tuple[SourceConnectorProvider, ...]:
                 docs_url="https://api.tej.com.tw/document_rest.html",
                 owner="TEJ",
                 tags=("example", "taiwan", "tej", "research_grade", "market"),
+            ),
+        ),
+        YahooTaiwanBrokerTopAdapter(
+            connector_id="example-tw-yahoo-broker-top15",
+            source_metadata=SourceMetadata(
+                display_name="Yahoo Taiwan top broker trading",
+                homepage_url="https://tw.stock.yahoo.com/",
+                owner="Yahoo Taiwan Stock",
+                tags=("example", "taiwan", "yahoo", "broker_top", "public_web_summary"),
+            ),
+        ),
+        YahooTaiwanRssAdapter(
+            connector_id="example-tw-yahoo-stock-rss",
+            source_metadata=SourceMetadata(
+                display_name="Yahoo Taiwan stock RSS",
+                homepage_url="https://tw.stock.yahoo.com/",
+                owner="Yahoo Taiwan Stock",
+                tags=("example", "taiwan", "yahoo", "rss", "news"),
             ),
         ),
     )
