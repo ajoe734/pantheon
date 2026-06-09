@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Migrate remaining toolbar capabilities (control-mode, resync, openclaw) to skills
-- Status: review
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Claude
-- Next: Auto-reassigned ASST-SKILL-004 away from unavailable lane Codex2 (disabled, sidecar-only, or auth-down); reviewer Codex2 -> Claude.
+- Next: Review approved — toolbar skills correctly migrated to catalog descriptors; handler_ref, mode gates, path template resolution, and test coverage all verified. Returned to owner for finalization.
 
 ## Summary
 把剩下的工具列能力（Control / Resync / OpenClaw 等）依樣板包成 catalog skill，handler_ref 指向既有 route/handler，門禁改由 descriptor+policy 統一解析。
