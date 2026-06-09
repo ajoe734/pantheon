@@ -125,6 +125,23 @@ class MarketDataCredentialSmokeTest(unittest.TestCase):
         self.assertNotIn("raw-tej-key-123", json.dumps(packet))
         self.assertIn("<redacted>", packet["request"]["url"])
 
+    def test_finmind_default_probe_targets_data_endpoint_and_redacts_token(self) -> None:
+        packet = smoke.run_provider("finmind", {"FINMIND_API_TOKEN": "raw-finmind-token-123"}, allow_network=False)
+
+        self.assertEqual(packet["status"], "read_unavailable")
+        self.assertIn("/api/v4/data?", packet["request"]["url"])
+        self.assertIn("dataset=TaiwanStockPrice", packet["request"]["url"])
+        self.assertIn("data_id=2330", packet["request"]["url"])
+        self.assertNotIn("raw-finmind-token-123", json.dumps(packet))
+        self.assertIn("<redacted>", packet["request"]["url"])
+
+    def test_finmind_missing_required_credential_records_unavailable_evidence(self) -> None:
+        packet = smoke.run_provider("finmind", {}, allow_network=False)
+
+        self.assertEqual(packet["status"], "credential_unavailable")
+        self.assertEqual(packet["provider"], "FinMind")
+        self.assert_evidence_fields(packet)
+
     def test_order_capable_providers_disable_order_path(self) -> None:
         for provider in ("ibkr", "shioaji", "kraken"):
             with self.subTest(provider=provider):

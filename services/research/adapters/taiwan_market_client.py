@@ -1,4 +1,4 @@
-"""Governed Taiwan market adapters for TWSE, TPEx, MOPS, and TEJ.
+"""Governed Taiwan market adapters for TWSE, TPEx, MOPS, FinMind, and TEJ.
 
 The module exposes a small client plus normalization helpers so Pantheon
 can separate official-reference truth from vendor-grade research data.
@@ -452,7 +452,13 @@ class TaiwanMarketClient:
             key="tej",
             base_url="https://api.tej.com.tw",
             source_class="research_grade",
-            governance_context="Governed vendor research/reference source; does not replace official disclosure truth",
+            governance_context="Governed vendor research/reference backfill source; does not replace official disclosure truth",
+        ),
+        "finmind": TaiwanSourceSpec(
+            key="finmind",
+            base_url="https://api.finmindtrade.com/api/v4",
+            source_class="research_grade",
+            governance_context="Low-cost primary Taiwan research API/cache layer; official sources remain identity and disclosure truth",
         ),
     }
 
@@ -670,6 +676,16 @@ class TaiwanMarketClient:
         query = {"api_key": api_key, **dict(params or {})}
         return self.get_json("tej", f"api/datatables/{dataset_code.strip('/')}.json", params=query)
 
+    def fetch_finmind_dataset(
+        self,
+        dataset_code: str,
+        *,
+        token: str,
+        params: Mapping[str, Any] | None = None,
+    ) -> Any:
+        query = {"dataset": dataset_code, "token": token, **dict(params or {})}
+        return self.get_json("finmind", "data", params=query)
+
     def build_metadata(self, source_key: str, api_endpoint: str) -> TaiwanGovernanceMetadata:
         spec = self._spec(source_key)
         return TaiwanGovernanceMetadata(
@@ -751,6 +767,32 @@ class TaiwanMarketClient:
         if not symbol or not as_of_date:
             raise ValueError("TEJ dataset requires symbol and as_of_date")
         values = {key: value for key, value in record.items() if key not in {"coid", "symbol", "股票代號", "mdate", "date", "資料日"}}
+        return TaiwanResearchDatasetRecord(
+            dataset_code=dataset_code,
+            symbol=symbol,
+            as_of_date=as_of_date,
+            values=values,
+            source_metadata={"raw_record": dict(record)},
+            governance_metadata=metadata.to_dict(),
+        )
+
+    def normalize_finmind_dataset(
+        self,
+        record: dict[str, Any],
+        *,
+        dataset_code: str,
+        api_endpoint: str = "finmind://dataset",
+    ) -> TaiwanResearchDatasetRecord:
+        metadata = self.build_metadata("finmind", api_endpoint)
+        symbol = str(_first_present(record, "stock_id", "data_id", "symbol", "coid", "股票代號") or "")
+        as_of_date = str(_first_present(record, "date", "mdate", "published_at", "資料日") or "")
+        if not symbol or not as_of_date:
+            raise ValueError("FinMind dataset requires symbol and as_of_date")
+        values = {
+            key: value
+            for key, value in record.items()
+            if key not in {"stock_id", "data_id", "symbol", "coid", "股票代號", "date", "mdate", "published_at", "資料日"}
+        }
         return TaiwanResearchDatasetRecord(
             dataset_code=dataset_code,
             symbol=symbol,

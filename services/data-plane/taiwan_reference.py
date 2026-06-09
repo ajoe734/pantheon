@@ -287,6 +287,8 @@ def build_tw_broker_top_row(
     venue: str = "TWSE",
     available_time: str | None = None,
     source_url: str | None = None,
+    broker_id: str | None = None,
+    source_dataset: str | None = None,
 ) -> dict[str, Any]:
     native_symbol = str(symbol or "").strip().upper()
     if not native_symbol:
@@ -307,7 +309,7 @@ def build_tw_broker_top_row(
     sell_value = int(sell_qty)
     canonical_venue = normalize_tw_venue(venue)
     resolved_net = int(net_qty) if net_qty is not None else buy_value - sell_value
-    return {
+    row = {
         "date": str(date),
         "symbol": native_symbol,
         "symbol_canonical": f"{native_symbol}.{_tw_canonical_suffix(canonical_venue)}",
@@ -323,6 +325,11 @@ def build_tw_broker_top_row(
         "available_time": available_time,
         "source_url": source_url,
     }
+    if broker_id not in (None, ""):
+        row["broker_id"] = str(broker_id).strip()
+    if source_dataset not in (None, ""):
+        row["source_dataset"] = str(source_dataset).strip()
+    return row
 
 
 def build_tw_broker_top_normalized_dataset(
@@ -347,12 +354,29 @@ def build_tw_broker_top_normalized_dataset(
         checksum=checksum,
         metadata_json={
             "market_boundary": "TW",
-            "provider": "Yahoo Taiwan + TEJ",
+            "provider": "FinMind primary + Yahoo fallback + TEJ/TWSE-TPEx backfill",
             "source_role": "active_universe_broker_top_summary",
             "table_name": "tw_broker_top",
             "top_n": int(top_n),
             "row_contract": "date,symbol,source,side,rank,broker,buy_qty,sell_qty,net_qty",
-            "source_keys": list(source_keys or ["yahoo_tw_broker_top15", "tej_twn_absr20", "tej_twn_amtop1"]),
+            "source_keys": list(
+                source_keys
+                or [
+                    "finmind_taiwan_stock_trading_daily_report",
+                    "yahoo_tw_broker_top15_fallback",
+                    "finmind_sponsorpro_storage_objects_backfill",
+                    "tej_twn_absr20_optional_gap_fill",
+                    "tej_twn_amtop1_optional_gap_fill",
+                    "twse_tpex_purchased_history_optional_gap_fill",
+                ]
+            ),
+            "primary_source": "FinMind TaiwanStockTradingDailyReport",
+            "fallback_source": "Yahoo Taiwan broker-trading top15",
+            "historical_backfill_priority": [
+                "FinMind SponsorPro TaiwanStockTradingDailyReport parquet 2021-06-30_to_now",
+                "TEJ ABSR20/AMTOP1 only for older or missing history",
+                "TWSE/TPEx purchased branch history only when vendor gaps remain",
+            ],
             "archive_behavior": "skip_detail_updates",
         },
     )

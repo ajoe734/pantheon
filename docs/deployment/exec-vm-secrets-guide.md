@@ -8,7 +8,7 @@ This guide exists for `DEPLOY-008` and focuses on the execution-only boundary:
 - `runtime-manager`
 - `pantheon-paper-runtime` paper execution package
 - broker / exchange adapter sidecars
-- governed datasource bring-up for `IBKR`, `Shioaji`, `Kraken`, and `TEJ`
+- governed datasource bring-up for `IBKR`, `Shioaji`, `Kraken`, `FinMind`, and optional `TEJ` gap-fill
 
 Control-plane services such as BFF, persona, registry, promotion, lineage-read,
 governance, telemetry, incidents, and postmortems stay on VM-1 and must not
@@ -22,7 +22,8 @@ VM-2 is the only place that should hold:
 - exchange API keys / secrets
 - `Shioaji` API key / secret
 - `Kraken` API key / secret
-- `TEJ` API key
+- `FinMind` API token
+- optional `TEJ` API key for historical gap-fill
 - execution-only runtime-manager bearer token
 - any future paper/live account credentials used by LEAN sidecars
 
@@ -48,7 +49,8 @@ Then replace at least:
 - `EXECUTION_BROKER_PROVIDER=IBKR`
 - `TW_EXECUTION_PROVIDER=Shioaji`
 - `CRYPTO_EXECUTION_PROVIDER=Kraken`
-- `TW_RESEARCH_PROVIDER=TEJ`
+- `TW_RESEARCH_PROVIDER=FinMind`
+- `TW_HISTORICAL_BACKFILL_PROVIDER=TEJ`
 - `US_MARKET_DATA_PROVIDER`
 - `CANARY_BROKER_ACCOUNT_REF`
 - `CANARY_VENUE_REF`
@@ -60,6 +62,7 @@ Then replace at least:
 - `SHIOAJI_SECRET_KEY`
 - `KRAKEN_API_KEY`
 - `KRAKEN_API_SECRET`
+- `FINMIND_API_TOKEN`
 - `TEJ_API_KEY`
 - `PANTHEON_SECRETS_OPTIONAL=false` once real credentials are present
 
@@ -73,6 +76,7 @@ The repo already establishes execution-only secret names for nonprod:
 - `pantheon-dev-shioaji-secret-key`
 - `pantheon-dev-kraken-api-key`
 - `pantheon-dev-kraken-api-secret`
+- `pantheon-dev-finmind-api-token`
 - `pantheon-dev-tej-api-key`
 - `pantheon-dev-us-market-data`
 
@@ -101,6 +105,7 @@ export SHIOAJI_API_KEY='...'
 export SHIOAJI_SECRET_KEY='...'
 export KRAKEN_API_KEY='...'
 export KRAKEN_API_SECRET='...'
+export FINMIND_API_TOKEN='...'
 export TEJ_API_KEY='...'
 export PANTHEON_RUNTIME_MANAGER_TOKEN='...'
 export PANTHEON_TELEMETRY_URL='http://<vm1-ip>:38083'
@@ -143,6 +148,7 @@ SHIOAJI_API_KEY="$(gcloud secrets versions access latest --secret pantheon-dev-s
 SHIOAJI_SECRET_KEY="$(gcloud secrets versions access latest --secret pantheon-dev-shioaji-secret-key 2>/dev/null || true)"
 KRAKEN_API_KEY="$(gcloud secrets versions access latest --secret pantheon-dev-kraken-api-key 2>/dev/null || true)"
 KRAKEN_API_SECRET="$(gcloud secrets versions access latest --secret pantheon-dev-kraken-api-secret 2>/dev/null || true)"
+FINMIND_API_TOKEN="$(gcloud secrets versions access latest --secret pantheon-dev-finmind-api-token 2>/dev/null || true)"
 TEJ_API_KEY="$(gcloud secrets versions access latest --secret pantheon-dev-tej-api-key 2>/dev/null || true)"
 PANTHEON_RUNTIME_MANAGER_TOKEN="$(openssl rand -hex 24)"
 
@@ -155,6 +161,7 @@ SHIOAJI_API_KEY=${SHIOAJI_API_KEY}
 SHIOAJI_SECRET_KEY=${SHIOAJI_SECRET_KEY}
 KRAKEN_API_KEY=${KRAKEN_API_KEY}
 KRAKEN_API_SECRET=${KRAKEN_API_SECRET}
+FINMIND_API_TOKEN=${FINMIND_API_TOKEN}
 TEJ_API_KEY=${TEJ_API_KEY}
 PANTHEON_RUNTIME_MANAGER_TOKEN=${PANTHEON_RUNTIME_MANAGER_TOKEN}
 EOF
@@ -201,4 +208,4 @@ The VM-2 acceptance bar for `DEPLOY-008` is:
 - the paper execution runtime package is healthy
 - control-plane services are absent from the compose
 - provider credentials live only on VM-2
-- datasource smoke emits governed provider payloads for `IBKR`, `Shioaji`, `Kraken`, and `TEJ`
+- datasource smoke emits governed provider payloads for `IBKR`, `Shioaji`, `Kraken`, `FinMind`, and optional `TEJ` gap-fill
