@@ -660,6 +660,9 @@
       "retry": {
         "max_attempts": 5,
         "fallback_mode": null
+      },
+      "auth_probe": {
+        "failed_probe_interval_seconds": 3600
       }
     },
     "antigravity2": {
@@ -937,7 +940,9 @@
       "todo"
     ],
     "sidecar_only_agents": [],
-    "disabled_agents": [],
+    "disabled_agents": [
+      "antigravity"
+    ],
     "dependency_done_statuses": [
       "done"
     ],
