@@ -19,6 +19,13 @@ from .strategy_seed_source_registry import (
     StrategySeedSourceRegistryError,
 )
 from .jsonl_store import JsonlRegistryStore
+from .connector_projection import (
+    ConnectorProjectionError,
+    RegistryRole,
+    natural_role,
+    project_to_data_source,
+    project_to_strategy_seed_source,
+)
 
 __all__ = [
     "DataSourceEntry",
@@ -30,4 +37,9 @@ __all__ = [
     "StrategySeedSourceRegistry",
     "StrategySeedSourceRegistryError",
     "JsonlRegistryStore",
+    "ConnectorProjectionError",
+    "RegistryRole",
+    "natural_role",
+    "project_to_data_source",
+    "project_to_strategy_seed_source",
 ]
