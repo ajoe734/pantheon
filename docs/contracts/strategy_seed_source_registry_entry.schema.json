@@ -1,0 +1,165 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/strategy-seed-source-registry-entry/v1",
+  "title": "Pantheon StrategySeedSourceRegistryEntry",
+  "description": "Product-level registry contract for sources that can produce research-only strategy seeds. This contract is intentionally separate from data source registry entries.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "strategy_seed_source_id",
+    "source_kind",
+    "provider",
+    "source_class",
+    "source_scope",
+    "license_scope",
+    "entitlement_tags",
+    "allowed_use",
+    "crawler_policy_ref",
+    "lifecycle_state",
+    "lineage",
+    "connector_id",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["strategy_seed_source_registry_entry.v1"]
+    },
+    "strategy_seed_source_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_kind": {
+      "type": "string",
+      "const": "strategy_seed_source",
+      "description": "Discriminator that keeps strategy idea sources separate from data sources."
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_class": {
+      "type": "string",
+      "enum": [
+        "paper",
+        "repo",
+        "internal_note",
+        "telemetry",
+        "persona_proposal",
+        "alpha_db"
+      ]
+    },
+    "source_scope": {
+      "type": "string",
+      "enum": [
+        "public_metadata",
+        "public_full_text",
+        "allowlisted_repo",
+        "internal",
+        "restricted_vendor"
+      ]
+    },
+    "license_scope": {
+      "type": "string",
+      "minLength": 1
+    },
+    "entitlement_tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "allowed_use": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "research_discovery",
+          "strategy_seed_generation",
+          "alpha_template_generation",
+          "citation_reference",
+          "internal_research_only"
+        ]
+      }
+    },
+    "crawler_policy_ref": {
+      "type": ["string", "null"]
+    },
+    "expected_outputs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["knowledge_object", "evidence_bundle", "strategy_spec_seed", "alpha_template"]
+      }
+    },
+    "lifecycle_state": {
+      "type": "string",
+      "enum": ["candidate", "enabled", "degraded", "disabled", "retired"]
+    },
+    "lineage": {
+      "type": "object",
+      "required": ["source_record_refs", "evidence_bundle_refs", "seed_refs", "citation_refs"],
+      "properties": {
+        "source_record_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "evidence_bundle_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "seed_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "citation_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "connector_id": {
+      "type": ["string", "null"],
+      "description": "Optional link to the generic source-ingestion connector backing this strategy seed source."
+    },
+    "created_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "updated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "research_only": {
+          "type": "boolean",
+          "const": true
+        },
+        "execution_route": {
+          "type": "string",
+          "enum": ["none"]
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

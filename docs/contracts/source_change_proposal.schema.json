@@ -1,0 +1,244 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/source-change-proposal/v1",
+  "title": "Pantheon SourceChangeProposal",
+  "description": "Governed proposal for adding, disabling, retiring, replacing, or changing data and strategy seed sources. A proposal is not direct registry mutation authority.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "proposal_id",
+    "proposal_type",
+    "source_kind",
+    "target_source_id",
+    "payload",
+    "rationale",
+    "evidence_refs",
+    "lineage",
+    "proposed_by",
+    "status",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["source_change_proposal.v1"]
+    },
+    "proposal_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "proposal_type": {
+      "type": "string",
+      "enum": [
+        "add_data_source",
+        "add_strategy_seed_source",
+        "disable_source",
+        "retire_source",
+        "replace_source",
+        "change_schedule",
+        "change_universe_policy",
+        "request_vendor_quote"
+      ]
+    },
+    "source_kind": {
+      "type": "string",
+      "enum": ["data_source", "strategy_seed_source"]
+    },
+    "target_source_id": {
+      "type": ["string", "null"]
+    },
+    "payload": {
+      "type": "object",
+      "properties": {
+        "proposed_source": {
+          "type": "object",
+          "required": ["source_id", "source_kind", "provider", "source_class", "license_scope", "allowed_use"],
+          "properties": {
+            "source_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "source_kind": {
+              "type": "string",
+              "enum": ["data_source", "strategy_seed_source"]
+            },
+            "provider": {
+              "type": "string",
+              "minLength": 1
+            },
+            "source_class": {
+              "type": "string",
+              "minLength": 1
+            },
+            "homepage_url": {
+              "type": ["string", "null"]
+            },
+            "docs_url": {
+              "type": ["string", "null"]
+            },
+            "license_scope": {
+              "type": "string",
+              "minLength": 1
+            },
+            "entitlement_required": {
+              "type": "boolean"
+            },
+            "entitlement_tags": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "allowed_use": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "expected_datasets": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "update_frequency": {
+              "type": ["string", "null"]
+            },
+            "cost_notes": {
+              "type": ["string", "null"]
+            }
+          },
+          "additionalProperties": false
+        },
+        "expected_value": {
+          "type": "object",
+          "properties": {
+            "coverage_gain": {
+              "type": "string"
+            },
+            "cost_change": {
+              "type": "string"
+            },
+            "reliability_change": {
+              "type": "string"
+            },
+            "strategy_impact": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "risks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["risk_type", "severity", "note"],
+            "properties": {
+              "risk_type": {
+                "type": "string",
+                "enum": ["license", "cost", "quality", "stability", "privacy", "operational"]
+              },
+              "severity": {
+                "type": "string",
+                "enum": ["low", "medium", "high"]
+              },
+              "note": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "schedule_change": {
+          "type": "object"
+        },
+        "universe_policy_change": {
+          "type": "object"
+        },
+        "replacement_source_id": {
+          "type": ["string", "null"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "rationale": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "lineage": {
+      "type": "object",
+      "required": ["evidence_refs", "proposal_trace_refs", "applied_change_refs"],
+      "properties": {
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "proposal_trace_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "applied_change_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "proposed_by": {
+      "type": "object",
+      "required": ["actor_type", "actor_id"],
+      "properties": {
+        "actor_type": {
+          "type": "string",
+          "enum": ["human", "agent", "service"]
+        },
+        "actor_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "trace_id": {
+          "type": ["string", "null"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "submitted", "approved", "rejected", "applied", "retired"]
+    },
+    "created_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "updated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "metadata": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}
