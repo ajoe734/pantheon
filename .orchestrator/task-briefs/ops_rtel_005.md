@@ -10,8 +10,8 @@ Do not read `current-work.md` by default for implementation context.
 - Owner: Codex
 - Reviewer: Claude
 - Phase: Runtime Telemetry Hardening
-- Last update: 2026-06-06T14:15:55Z
-- Next: Review approved: row_health truth split correct; 15-row test passes; all acceptance criteria verified. Returning to Codex for done.
+- Last update: 2026-06-09T12:13:44Z
+- Next: Review approved: all 52 tests pass, all acceptance criteria verified. Row health split is clean and scoped correctly. Returning to owner (Codex) for done.
 
 ## Summary
 拆分 BFF runtime telemetry row health 與 rollback_history 等支援 surface degraded 狀態，並收集最終重啟、重啟單 worker、retire binding、signal isolation 證據。
@@ -30,12 +30,22 @@ Do not read `current-work.md` by default for implementation context.
 - docs/deployment/runtime-telemetry-hardening-2026-06-06.md
 
 ## Recent Task Activity
-- 2026-06-06T14:13:59Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
-- 2026-06-06T14:14:00Z · Orchestrator · worker_worktree_refreshed · -
-- 2026-06-06T14:14:00Z · Orchestrator · worker_worktree_reused · -
-- 2026-06-06T14:14:00Z · Orchestrator · worker_started · Worker started via claude_cli: review_ready_dispatch
+- 2026-06-06T14:09:59Z · Codex · handoff · PR #1093 is merged into dev at dcfdfdc559509c319a009ca38644172a8e1aa24b; owner closeout evidence is present; please approve review so owner can run done.
 - 2026-06-06T14:15:55Z · Claude · review_approved · Review approved: row_health truth split correct; 15-row test passes; all acceptance criteria verified. Returning to Codex for done.
-- 2026-06-06T14:19:13Z · Orchestrator · worker_completed · Worker exited successfully during supervisor boot reconciliation.
+- 2026-06-09T12:07:24Z · Codex · handoff · Central state resurrected this reviewed/merged task as in_progress without review_notes_zh; requested re-approval before owner done.
+- 2026-06-09T12:13:44Z · Claude · review_approved · Review approved: all 52 tests pass, all acceptance criteria verified. Row health split is clean and scoped correctly. Returning to owner (Codex) for done.
+
+## Closeout Finalization
+- PR #1093 previously delivered the BFF runtime-state truth split into `dev` at dcfdfdc559509c319a009ca38644172a8e1aa24b.
+- PR #1096 previously recorded owner closeout metadata into `dev` at 0f47a6564a8037e2db61e07e2f15fd2f54101d42.
+- Claude re-approved the resurrected central-state task on 2026-06-09 with review evidence in `support/evidence/OPS-RTEL-005/claude-review.md`.
+- Owner final validation rerun at 2026-06-09T12:18:06Z:
+  `python3 -m pytest services/control-plane/bff/test_pkt010_runtime_state_board_contract.py -q` (5 passed),
+  `python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py -q` (25 passed),
+  `python3 -m pytest services/execution/lean_runtime/test_signal_consumer.py -q` (22 passed),
+  `python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/test_pkt010_runtime_state_board_contract.py`,
+  `python3 -m json.tool docs/examples/PKT-010-runtime-state-board.json`,
+  and `git diff --check`.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md

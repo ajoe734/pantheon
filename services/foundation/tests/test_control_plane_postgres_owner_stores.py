@@ -171,6 +171,10 @@ def test_wave3_postgres_builders_are_env_gated():
         PostgresInstitutionalMemoryStore,
         build_institutional_memory_store,
     )
+    from services.memory.persona_memory_store import (
+        PostgresPersonaMemoryStore,
+        build_persona_memory_store,
+    )
     from services.promotion.pg_store import (
         PostgresDeploymentPlanStore,
         PostgresPromotionApprovalStore,
@@ -231,6 +235,10 @@ def test_wave3_postgres_builders_are_env_gated():
         assert isinstance(
             build_institutional_memory_store(data_dir / "institutional_memory_entries.json"),
             PostgresInstitutionalMemoryStore,
+        )
+        assert isinstance(
+            build_persona_memory_store(data_dir / "persona_memory_entries.json"),
+            PostgresPersonaMemoryStore,
         )
         assert isinstance(
             reconciliation_store.build_reconciliation_drift_store(data_dir / "reconciliation-drift"),

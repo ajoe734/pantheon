@@ -103,6 +103,12 @@
       "enum": ["persona_private", "persona_and_committee"],
       "default": "persona_private",
       "description": "Controls read visibility. persona_private: only the owning persona's sessions. persona_and_committee: also readable by authorised committee/consult sessions involving this persona."
+    },
+    "reuse_count": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 0,
+      "description": "Incremented by the retrieval facade when this memory is reused in an authorized context."
     }
   },
   "additionalProperties": false

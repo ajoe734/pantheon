@@ -1,7 +1,7 @@
 {
   "version": 1,
   "task_id": "OPS-RTEL-005",
-  "archived_at": "2026-06-06T14:27:55Z",
+  "archived_at": "2026-06-09T12:29:11Z",
   "terminal_status": "done",
   "terminal_outcome": "completed",
   "task": {
@@ -31,8 +31,8 @@
       "final evidence proves stack restart and kill-one-worker recovery",
       "final evidence proves binding retire stop and signal isolation"
     ],
-    "next": "Done: PR #1093 delivered BFF runtime-state truth split; PR #1096 recorded reviewer-approved closeout; focused validation rerun and checks passed.",
-    "last_update": "2026-06-06T14:27:55Z",
+    "next": "Done: PR #1212 merged into dev at 0bc8aa55b408215f2466b0363d9337f42e426740; refreshed owner closeout evidence and validation after dev advanced.",
+    "last_update": "2026-06-09T12:29:11Z",
     "source_ref": {
       "archive": "docs/deployment/runtime-telemetry-hardening-2026-06-06.md",
       "execution_plan": "docs/deployment/runtime-telemetry-execution-tasks-2026-06-06.md",
@@ -44,27 +44,28 @@
     "auto_generated": true,
     "mutates_canonical": true,
     "review_notes_zh": [
-      "BFF row_health 與 board support surface 分離正確",
-      "rollback_history 不污染 row_health 狀態",
-      "15 筆 paper runtime 場景測試通過",
-      "所有 acceptance criteria 對應到測試並通過"
+      "審查通過：15 執行時 telemetry 列健康且 rollback_history 列為降級",
+      "BFF board 5 通過；fleet reconciler 25 通過；signal consumer 22 通過；py_compile/json/git 通過"
     ],
-    "review_file": "/tmp/ops-rtel-005-review.md",
+    "review_file": "support/evidence/OPS-RTEL-005/claude-review.md",
     "terminal_outcome": "completed",
     "delivery": {
-      "recorded_at": "2026-06-06T14:27:55Z",
+      "recorded_at": "2026-06-09T12:29:11Z",
       "repository_id": "pantheon",
       "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-rtel-005",
       "repository_slug": "ajoe734/pantheon",
       "branch": "task/OPS-RTEL-005",
       "git_clean_required": false,
-      "commit": "e2be7cc23ee82b4bb290105004db98ae34826e52",
-      "commit_subject": "OPS-RTEL-005: merge dev for finalization PR",
+      "commit": "0547cc10e1f7c369d94d7c9d4c2a144a371f2ec5",
+      "commit_subject": "OPS-RTEL-005: refresh closeout after second dev merge",
       "commit_author": {
         "name": "Codex",
         "email": "codex@pantheon.local"
       },
       "commit_metadata": {
+        "Owned layer": "OPS-RTEL-005 owner closeout evidence.",
+        "Not changing": "BFF runtime code, runtime-manager reconciler, signal consumer, telemetry or rollback writers, persona memory code, and canonical architecture docs.",
+        "Composes with": "PR #1212 merge into dev after refreshed branch checks pass; previous delivery PR #1093 and metadata PR #1096 remain the implementation baseline.",
         "LLM-Agent": "Codex",
         "Task-ID": "OPS-RTEL-005",
         "Reviewer": "Claude",
@@ -82,7 +83,7 @@
       "push_status": "in_sync",
       "merge_target_branch": "dev",
       "merge_target_ref": "origin/dev",
-      "merge_target_sha": "0f47a6564a8037e2db61e07e2f15fd2f54101d42",
+      "merge_target_sha": "0bc8aa55b408215f2466b0363d9337f42e426740",
       "head_merged_to_target": true
     }
   },
@@ -91,19 +92,19 @@
       "task_id": "OPS-RTEL-005",
       "from": "Codex",
       "to": "Claude",
-      "message": "PR #1093 is merged into dev at dcfdfdc559509c319a009ca38644172a8e1aa24b; owner closeout evidence is present; please approve review so owner can run done.",
+      "message": "Central state resurrected this reviewed/merged task as in_progress without review_notes_zh, so owner cannot legally run restore_approved/done. PR #1093 merged at dcfdfdc559509c319a009ca38644172a8e1aa24b; PR #1096 merged at 0f47a6564a8037e2db61e07e2f15fd2f54101d42. Reran closeout validation: BFF board 5 passed; fleet reconciler 25 passed; signal consumer 22 passed; py_compile/json tool/git diff --check passed. Please re-approve so Codex can run done.",
       "status": "done",
-      "created_at": "2026-06-06T14:09:59Z",
-      "resolved_at": "2026-06-06T14:15:55Z"
+      "created_at": "2026-06-09T12:07:24Z",
+      "resolved_at": "2026-06-09T12:13:44Z"
     },
     {
       "task_id": "OPS-RTEL-005",
       "from": "Claude",
       "to": "Codex",
-      "message": "Review approved: row_health truth split correct; 15-row test passes; all acceptance criteria verified. Returning to Codex for done.",
+      "message": "Review approved: all 52 tests pass, all acceptance criteria verified. Row health split is clean and scoped correctly. Returning to owner (Codex) for done.",
       "status": "done",
-      "created_at": "2026-06-06T14:15:55Z",
-      "resolved_at": "2026-06-06T14:27:55Z"
+      "created_at": "2026-06-09T12:13:44Z",
+      "resolved_at": "2026-06-09T12:29:11Z"
     }
   ],
   "blockers": []
