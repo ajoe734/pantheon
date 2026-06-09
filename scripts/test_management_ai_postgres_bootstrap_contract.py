@@ -46,3 +46,11 @@ def test_nonprod_deploy_repairs_existing_management_ai_object_owners() -> None:
         "ALTER DEFAULT PRIVILEGES FOR ROLE :\"mgmt_user\" IN SCHEMA :\"mgmt_schema\" "
         "GRANT ALL PRIVILEGES ON TABLES TO :\"mgmt_user\""
     ) in deploy
+
+
+def test_nonprod_deploy_preserves_dirty_managed_worktree_before_checkout() -> None:
+    deploy = _read("scripts/deploy_nonprod_vm.sh")
+
+    assert "stashing local changes before checkout" in deploy
+    assert "git stash push --include-untracked -m \"$stash_label\"" in deploy
+    assert "managed deploy worktree is still dirty after preserve step" in deploy
