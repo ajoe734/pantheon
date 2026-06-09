@@ -24,6 +24,10 @@ from services.memory.institutional_memory_store import (
     SourceEventType,
     WriteAuthority,
 )
+from services.memory.persona_memory_store import (
+    PersonaMemoryEntry,
+    PersonaMemoryStore,
+)
 
 SCHEMA_PATH = Path(__file__).parent / "institutional_memory_entry.schema.json"
 results: list[tuple[str, bool, str]] = []
@@ -32,6 +36,7 @@ SECONDARY_ID = "mem-22222222-2222-2222-2222-222222222222"
 INVALID_ID = "mem-33333333-3333-3333-3333-333333333333"
 INVALID_SCHEMA_ID = "mem-44444444-4444-4444-4444-444444444444"
 OFFSET_ID = "mem-55555555-5555-5555-5555-555555555555"
+PERSONA_MEMORY_ID = "pmem-11111111-1111-1111-1111-111111111111"
 
 
 def check(label: str, ok: bool, detail: str = "") -> None:
@@ -60,6 +65,27 @@ def make_entry(**overrides) -> InstitutionalMemoryEntry:
     }
     payload.update(overrides)
     return InstitutionalMemoryEntry(**payload)
+
+
+def make_persona_entry(**overrides) -> PersonaMemoryEntry:
+    payload = {
+        "memory_id": PERSONA_MEMORY_ID,
+        "persona_id": "LP-001",
+        "memory_type": "strategy_lesson",
+        "content": {
+            "summary": "LP-001 should reduce momentum exposure near abrupt regime breaks.",
+            "tags": ["momentum", "regime_break"],
+            "structured_payload": {"lag_bars": 2},
+        },
+        "source_event_type": "postmortem_published",
+        "source_event_id": "PM-smoke-001",
+        "written_at": "2026-06-09T01:00:00Z",
+        "write_authority": "incident-svc",
+        "relevance_scope": "persona_and_committee",
+        "reuse_count": 0,
+    }
+    payload.update(overrides)
+    return PersonaMemoryEntry(**payload)
 
 
 def smoke_s1_schema_validation() -> None:
@@ -261,6 +287,79 @@ def smoke_s7_governed_retrieval_replay() -> None:
                 os.environ[key] = value
 
 
+def smoke_s8_persona_memory_retrieval_replay() -> None:
+    print("\nS8: Persona memory retrieval replay")
+    from services.memory import main as memory_main
+
+    tracked_env = {
+        "PANTHEON_MEMORY_STORE": os.environ.get("PANTHEON_MEMORY_STORE"),
+        "PANTHEON_PERSONA_MEMORY_STORE": os.environ.get("PANTHEON_PERSONA_MEMORY_STORE"),
+        "PANTHEON_MEMORY_STORE_BACKEND": os.environ.get("PANTHEON_MEMORY_STORE_BACKEND"),
+        "PANTHEON_PERSONA_MEMORY_STORE_BACKEND": os.environ.get("PANTHEON_PERSONA_MEMORY_STORE_BACKEND"),
+        "PANTHEON_MEMORY_AUTHZ_MODE": os.environ.get("PANTHEON_MEMORY_AUTHZ_MODE"),
+        "PANTHEON_GOVERNANCE_API_URL": os.environ.get("PANTHEON_GOVERNANCE_API_URL"),
+        "PANTHEON_GOVERNANCE_AUTHZ_URL": os.environ.get("PANTHEON_GOVERNANCE_AUTHZ_URL"),
+        "PANTHEON_GOVERNANCE_SERVICE_URL": os.environ.get("PANTHEON_GOVERNANCE_SERVICE_URL"),
+    }
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            institutional_store_path = Path(tmpdir) / "institutional-memory.json"
+            persona_store_path = Path(tmpdir) / "persona-memory.json"
+            os.environ["PANTHEON_MEMORY_STORE"] = str(institutional_store_path)
+            os.environ["PANTHEON_PERSONA_MEMORY_STORE"] = str(persona_store_path)
+            os.environ["PANTHEON_MEMORY_STORE_BACKEND"] = "json"
+            os.environ["PANTHEON_PERSONA_MEMORY_STORE_BACKEND"] = "json"
+            os.environ["PANTHEON_MEMORY_AUTHZ_MODE"] = "local"
+            os.environ.pop("PANTHEON_GOVERNANCE_API_URL", None)
+            os.environ.pop("PANTHEON_GOVERNANCE_AUTHZ_URL", None)
+            os.environ.pop("PANTHEON_GOVERNANCE_SERVICE_URL", None)
+            client = TestClient(memory_main.app)
+
+            create_response = client.post(
+                "/api/memory/writebacks/persona",
+                json=make_persona_entry().to_dict(),
+            )
+            check("persona writeback accepts canonical entry", create_response.status_code == 201, create_response.text)
+
+            reloaded = PersonaMemoryStore(path=persona_store_path)
+            check(
+                "persona writeback survives store reload",
+                reloaded.require(PERSONA_MEMORY_ID).memory_id == PERSONA_MEMORY_ID,
+            )
+
+            retrieve_response = client.get(
+                "/api/memory/retrieve",
+                params={
+                    "actor_id": "persona-session-1",
+                    "actor_roles": "persona_session",
+                    "session_id": "persona-replay-smoke-001",
+                    "session_persona_id": "LP-001",
+                    "persona_id": "LP-001",
+                    "scope": "persona",
+                    "query": "momentum regime",
+                    "tags": "regime_break",
+                },
+            )
+            check("governed persona retrieval succeeds", retrieve_response.status_code == 200, retrieve_response.text)
+            payload = retrieve_response.json() if retrieve_response.status_code == 200 else {}
+            hits = payload.get("hits") or []
+            check(
+                "persona retrieval returns replayed entry",
+                bool(hits) and hits[0]["entry"]["memory_id"] == PERSONA_MEMORY_ID,
+            )
+            replayed = PersonaMemoryStore(path=persona_store_path)
+            check(
+                "persona retrieval increments reuse_count durably",
+                replayed.require(PERSONA_MEMORY_ID).reuse_count == 1,
+            )
+    finally:
+        for key, value in tracked_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 def main() -> int:
     print("Institutional memory smoke test")
     smoke_s1_schema_validation()
@@ -270,6 +369,7 @@ def main() -> int:
     smoke_s5_non_utc_timestamp_is_rejected()
     smoke_s6_schema_only_persisted_violation_is_rejected()
     smoke_s7_governed_retrieval_replay()
+    smoke_s8_persona_memory_retrieval_replay()
 
     passed = sum(1 for _, ok, _ in results if ok)
     failed = len(results) - passed
