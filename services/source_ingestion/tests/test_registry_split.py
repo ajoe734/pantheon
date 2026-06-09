@@ -8,6 +8,8 @@ Acceptance criteria:
    the registry add operation.
 4. Disabled/retired sources are not ingestable.
 5. JSONL persistence round-trip works for both registries.
+6. Existing SourceConnector projects into exactly one product registry role
+   unless explicitly configured twice (connector_projection module).
 """
 
 from __future__ import annotations
@@ -19,15 +21,21 @@ from pathlib import Path
 import pytest
 
 from services.source_ingestion.registry import (
+    ConnectorProjectionError,
     DataSourceEntry,
     DataSourceLifecycleState,
     DataSourceRegistry,
     DataSourceRegistryError,
+    RegistryRole,
     StrategySeedSourceEntry,
     StrategySeedSourceLifecycleState,
     StrategySeedSourceRegistry,
     StrategySeedSourceRegistryError,
+    natural_role,
+    project_to_data_source,
+    project_to_strategy_seed_source,
 )
+from services.source_ingestion.connectors.base import SourceConnector, SourceType
 
 
 # ---------------------------------------------------------------------------
@@ -424,3 +432,149 @@ class TestStrategySeedSourceRegistry:
             reg2 = StrategySeedSourceRegistry.from_jsonl(path)
             entry = reg2.get("sss-openalex")
             assert entry.lifecycle_state == StrategySeedSourceLifecycleState.ENABLED
+
+
+# ---------------------------------------------------------------------------
+# Connector projection tests (acceptance criterion 3)
+# ---------------------------------------------------------------------------
+
+def _market_connector(**overrides) -> SourceConnector:
+    defaults = dict(
+        connector_id="conn-finmind-market",
+        source_type="market",
+        provider="FinMind",
+        license_scope="commercial",
+    )
+    defaults.update(overrides)
+    return SourceConnector(**defaults)
+
+
+def _paper_connector(**overrides) -> SourceConnector:
+    defaults = dict(
+        connector_id="conn-openalex-paper",
+        source_type="paper",
+        provider="OpenAlex",
+        license_scope="open",
+    )
+    defaults.update(overrides)
+    return SourceConnector(**defaults)
+
+
+_MINIMAL_DATASETS = [{"dataset_id": "tw_price_daily", "dataset_class": "market_daily"}]
+
+
+class TestConnectorProjection:
+    """SourceConnector projects into exactly one product registry role."""
+
+    def test_market_connector_natural_role_is_data_source(self) -> None:
+        conn = _market_connector()
+        assert natural_role(conn) == RegistryRole.DATA_SOURCE
+
+    def test_paper_connector_natural_role_is_strategy_seed_source(self) -> None:
+        conn = _paper_connector()
+        assert natural_role(conn) == RegistryRole.STRATEGY_SEED_SOURCE
+
+    def test_all_data_source_types_have_data_source_role(self) -> None:
+        data_types = ["market", "filing", "news", "social", "macro"]
+        for st in data_types:
+            conn = _market_connector(connector_id=f"conn-{st}", source_type=st, provider="P")
+            assert natural_role(conn) == RegistryRole.DATA_SOURCE, f"{st} should map to data_source"
+
+    def test_all_seed_source_types_have_strategy_seed_role(self) -> None:
+        seed_types = ["paper", "repo", "internal_note", "telemetry", "alpha_db"]
+        for st in seed_types:
+            conn = _paper_connector(connector_id=f"conn-{st}", source_type=st, provider="P")
+            assert natural_role(conn) == RegistryRole.STRATEGY_SEED_SOURCE, f"{st} should map to strategy_seed_source"
+
+    def test_project_market_connector_to_data_source(self) -> None:
+        conn = _market_connector()
+        entry = project_to_data_source(
+            conn,
+            data_source_id="ds-finmind-market",
+            datasets=_MINIMAL_DATASETS,
+            allowed_use=["research_data", "backtest_data"],
+            update_frequency="daily",
+        )
+        assert entry.source_kind == "data_source"
+        assert entry.connector_id == conn.connector_id
+        assert entry.provider == conn.provider
+
+    def test_project_paper_connector_to_strategy_seed_source(self) -> None:
+        conn = _paper_connector()
+        entry = project_to_strategy_seed_source(
+            conn,
+            strategy_seed_source_id="sss-openalex-proj",
+            source_scope="public_metadata",
+            allowed_use=["research_discovery", "strategy_seed_generation"],
+        )
+        assert entry.source_kind == "strategy_seed_source"
+        assert entry.connector_id == conn.connector_id
+        assert entry.provider == conn.provider
+
+    def test_market_connector_cannot_project_to_strategy_seed_source(self) -> None:
+        conn = _market_connector()
+        with pytest.raises(ConnectorProjectionError, match="natural role"):
+            project_to_strategy_seed_source(
+                conn,
+                strategy_seed_source_id="sss-wrong",
+                source_scope="public_metadata",
+                allowed_use=["research_discovery"],
+            )
+
+    def test_paper_connector_cannot_project_to_data_source(self) -> None:
+        conn = _paper_connector()
+        with pytest.raises(ConnectorProjectionError, match="natural role"):
+            project_to_data_source(
+                conn,
+                data_source_id="ds-wrong",
+                datasets=_MINIMAL_DATASETS,
+                allowed_use=["research_data"],
+                update_frequency="daily",
+            )
+
+    def test_force_role_requires_non_empty_note(self) -> None:
+        conn = _market_connector()
+        with pytest.raises(ConnectorProjectionError, match="force_role_note"):
+            project_to_strategy_seed_source(
+                conn,
+                strategy_seed_source_id="sss-dual",
+                source_scope="internal",
+                allowed_use=["internal_research_only"],
+                force_role=True,
+                force_role_note="",
+            )
+
+    def test_force_role_with_note_allows_cross_projection(self) -> None:
+        """Dual-role registration must be explicit with an audit note."""
+        conn = _market_connector()
+        entry = project_to_strategy_seed_source(
+            conn,
+            strategy_seed_source_id="sss-tej-dual",
+            source_scope="restricted_vendor",
+            allowed_use=["internal_research_only"],
+            force_role=True,
+            force_role_note="TEJ also provides strategy factor ideas — separate entry for seed role.",
+        )
+        assert entry.source_kind == "strategy_seed_source"
+        assert entry.connector_id == conn.connector_id
+
+    def test_connector_id_is_preserved_in_data_source_entry(self) -> None:
+        conn = _market_connector(connector_id="conn-unique-market-id")
+        entry = project_to_data_source(
+            conn,
+            data_source_id="ds-market-x",
+            datasets=_MINIMAL_DATASETS,
+            allowed_use=["research_data"],
+            update_frequency="daily",
+        )
+        assert entry.connector_id == "conn-unique-market-id"
+
+    def test_connector_id_is_preserved_in_seed_source_entry(self) -> None:
+        conn = _paper_connector(connector_id="conn-unique-paper-id")
+        entry = project_to_strategy_seed_source(
+            conn,
+            strategy_seed_source_id="sss-paper-x",
+            source_scope="public_metadata",
+            allowed_use=["research_discovery"],
+        )
+        assert entry.connector_id == "conn-unique-paper-id"
