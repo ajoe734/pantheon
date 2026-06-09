@@ -24,15 +24,6 @@ Do not read `current-work.md` by default for implementation context.
 - services/source_ingestion
 - docs/contracts
 
-## Closeout Evidence
-- Status: review_approved → done
-- PR: #1227 merged to dev (213a7c46)
-- Implementation commits: 23986f16 (connector projection layer)
-- Verified: python3 -m pytest services/source_ingestion/tests/test_registry_split.py: 63 passed
-- Verified: python3 -m pytest services/source_ingestion/ --ignore=services/source_ingestion/test_postgres_store.py: 142 passed
-- All acceptance criteria met: DataSourceRegistry, StrategySeedSourceRegistry, ConnectorProjection with JSONL dev store
-- Closeout date: 2026-06-09
-
 ## Recent Task Activity
 - 2026-06-09T07:36:49Z · Operator · assign · Assigned DATASTRAT-REG-002 to Claude with reviewer Codex
 
