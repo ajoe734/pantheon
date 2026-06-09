@@ -151,18 +151,21 @@ def run_smoke_test():
         print("   ✓ heartbeat")
 
         # Verify separation
-        print("\n5. Verifying paper/live separation...")
+        print("\n5. Verifying canonical execution-mode separation...")
         paper_events = capture.get_paper_events()
         live_events = capture.get_live_events()
+        canary_events = capture.get_canary_events()
 
         print(f"   Paper events: {len(paper_events)}")
         print(f"   Live events: {len(live_events)}")
-        assert len(paper_events) == 4, f"Expected 4 paper events, got {len(paper_events)}"
-        assert len(live_events) == 9, f"Expected 9 live events, got {len(live_events)}"
+        print(f"   Canary events: {len(canary_events)}")
+        assert len(paper_events) == 0, f"Expected 0 paper events, got {len(paper_events)}"
+        assert len(live_events) == 0, f"Expected 0 live events, got {len(live_events)}"
+        assert len(canary_events) == 13, f"Expected 13 canary events, got {len(canary_events)}"
         print("   ✓ Separation verified")
 
         # All events carry binding evidence
-        for event in paper_events + live_events:
+        for event in canary_events:
             assert event.get("binding_id") == FULL_BINDING_CONTEXT["binding_id"], \
                 f"Missing binding_id in {event['event_type']}"
             assert event.get("deployment_stage") == FULL_BINDING_CONTEXT["deployment_stage"], \
@@ -173,38 +176,32 @@ def run_smoke_test():
 
         # Persistence check
         print("\n6. Verifying persistent storage...")
-        # NOTE: binding_context has deployment_stage=canary → execution_mode=live,
-        # so _persist_event writes ALL events to live/ regardless of capture mode.
         paper_dir = Path(storage_dir) / "paper"
         live_dir = Path(storage_dir) / "live"
+        canary_dir = Path(storage_dir) / "canary"
 
         paper_files = list(paper_dir.glob("*.json"))
         live_files = list(live_dir.glob("*.json"))
+        canary_files = list(canary_dir.glob("*.json"))
 
         print(f"   Paper files: {len(paper_files)}")
         print(f"   Live files: {len(live_files)}")
-        # All 13 events persist to live/ because canary → execution_mode=live
-        assert len(paper_files) == 0, f"Expected 0 paper files (canary→live), got {len(paper_files)}"
-        assert len(live_files) == 13, f"Expected 13 live files, got {len(live_files)}"
-        print("   ✓ Persistence verified (all events in live/ due to canary binding)")
+        print(f"   Canary files: {len(canary_files)}")
+        assert len(paper_files) == 0, f"Expected 0 paper files, got {len(paper_files)}"
+        assert len(live_files) == 0, f"Expected 0 live files, got {len(live_files)}"
+        assert len(canary_files) == 13, f"Expected 13 canary files, got {len(canary_files)}"
+        print("   ✓ Persistence verified (all events in canary/ due to canary binding)")
 
         # Feed to adapter (with configured shared feedback store)
         print("\n7. Ingesting to feedback store adapter...")
         store_path = Path(storage_dir) / "feedback_store.jsonl"
         adapter = FeedbackStoreAdapter(feedback_store_path=str(store_path))
 
-        for event in paper_events:
+        for event in canary_events:
             adapter.ingest_telemetry_event(
                 event,
                 strategy_id="momentum_strategy",
-                promotion_state="paper",
-            )
-
-        for event in live_events:
-            adapter.ingest_telemetry_event(
-                event,
-                strategy_id="momentum_strategy",
-                promotion_state="live",
+                promotion_state="canary",
             )
 
         print(f"   ✓ Ingested {len(adapter.telemetry_log)} events")
@@ -218,13 +215,10 @@ def run_smoke_test():
 
         # Query by promotion state
         print("\n9. Querying by promotion state...")
-        paper_state_events = adapter.get_telemetry_by_promotion_state("paper")
-        live_state_events = adapter.get_telemetry_by_promotion_state("live")
+        canary_state_events = adapter.get_telemetry_by_promotion_state("canary")
 
-        print(f"   Paper state: {len(paper_state_events)} events")
-        print(f"   Live state: {len(live_state_events)} events")
-        assert len(paper_state_events) == 4, f"Expected 4 paper state events, got {len(paper_state_events)}"
-        assert len(live_state_events) == 9, f"Expected 9 live state events, got {len(live_state_events)}"
+        print(f"   Canary state: {len(canary_state_events)} events")
+        assert len(canary_state_events) == 13, f"Expected 13 canary state events, got {len(canary_state_events)}"
         print("   ✓ State queries successful")
 
         # Export
@@ -247,11 +241,11 @@ def run_smoke_test():
 
         # Test idempotency
         print("\n12. Testing idempotency...")
-        first_event = paper_events[0]
+        first_event = canary_events[0]
         adapter2.ingest_telemetry_event(
             first_event,
             strategy_id="momentum_strategy",
-            promotion_state="paper",
+            promotion_state="canary",
         )
         strategy_events_after = adapter2.get_telemetry_for_strategy("momentum_strategy")
         print(f"   After duplicate ingest: {len(strategy_events_after)} events (should still be 13)")
@@ -280,12 +274,12 @@ def run_smoke_test():
         )
         ok = frozen_capture.capture_pnl(ExecutionMode.LIVE, "strat", 1.0)
         assert ok, "frozen stage should produce valid events"
-        event = frozen_capture.get_live_events()[0]
+        event = frozen_capture.get_frozen_events()[0]
         assert event["deployment_stage"] == "frozen"
         assert event["environment"] == "frozen"
-        assert event["execution_mode"] == "paper", \
-            f"frozen stage must map to paper mode, got {event['execution_mode']}"
-        print("   ✓ Frozen deployment stage correctly maps to paper execution_mode")
+        assert event["execution_mode"] == "frozen", \
+            f"frozen stage must remain explicit, got {event['execution_mode']}"
+        print("   ✓ Frozen deployment stage keeps explicit frozen execution_mode")
 
         # Summary
         print("\n" + "=" * 60)
@@ -294,9 +288,10 @@ def run_smoke_test():
         print("\nSummary:")
         print(f"  - Paper events captured: {len(paper_events)}")
         print(f"  - Live events captured: {len(live_events)}")
+        print(f"  - Canary events captured: {len(canary_events)}")
         print(f"  - Lifecycle events (deploy/rollback/kill-switch/heartbeat): 6")
         print(f"  - Total events in adapter: {len(adapter.telemetry_log)}")
-        print(f"  - Events by promotion state: paper={len(paper_state_events)}, live={len(live_state_events)}")
+        print(f"  - Events by promotion state: canary={len(canary_state_events)}")
         print(f"  - Feedback store path: {store_path}")
         print(f"  - Export file: {export_path}")
         print(f"  - Schema: canonical telemetry_event.schema.json")
@@ -304,7 +299,7 @@ def run_smoke_test():
         print("  ✓ All events validated against canonical telemetry_event.schema.json")
         print("  ✓ Full binding evidence injected (no fabricated defaults)")
         print("  ✓ Non-metric lifecycle events carry canonical metric payloads")
-        print("  ✓ frozen deployment_stage maps to paper execution_mode")
+        print("  ✓ frozen deployment_stage keeps frozen execution_mode")
         print("  ✓ Partial binding context explicitly rejected")
         print("  ✓ Shared feedback store semantics with cross-process recovery")
         print("  ✓ Idempotent event persistence (no duplicates in queries)")

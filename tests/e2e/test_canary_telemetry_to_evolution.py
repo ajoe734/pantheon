@@ -129,7 +129,7 @@ def _canary_telemetry() -> dict[str, Any]:
         "event_type": "drawdown_snapshot",
         "severity": "high",
         "created_at": "2026-05-19T15:50:00Z",
-        "execution_mode": "live",
+        "execution_mode": "canary",
         "binding_id": binding_id,
         "runtime_binding_id": binding_id,
         "deployment_stage": "canary",
@@ -146,7 +146,7 @@ def _canary_telemetry() -> dict[str, Any]:
             "strategy_id": "strategy-canary-ooda-003",
             "artifact_version": "2.0.0",
             "artifact_type": "strategy_spec",
-            "promotion_state": "live",
+            "promotion_state": "canary",
         },
         "metrics": {
             "max_drawdown_pct": 0.18,

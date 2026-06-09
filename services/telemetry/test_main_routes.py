@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 import services.telemetry.main as _main
 from services.telemetry.ingest_svc import TelemetryIngestService
+from services.telemetry.heartbeat_service import build_telemetry_event_from_runtime_heartbeat
 from services.telemetry.lineage_read import LineageReadService
 from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
 from services.telemetry.dead_letter import TAG_WRITER_ERROR
@@ -43,6 +44,7 @@ _KNOWN_BINDING = types.SimpleNamespace(
     plan_id="plan-456",
     persona_capital_binding_id="pcb-789",
     deployment_mode="paper",
+    execution_mode="paper",
     effective_at="2026-01-01T00:00:00Z",
     retired_at=None,
 )
@@ -386,6 +388,36 @@ class TestMainRoutes(unittest.TestCase):
         self.assertEqual(status["broker_status"], "ok")
         self.assertEqual(status["queue_lag_ms"], 7)
         self.assertEqual(status["event_delivery_lag_ms"], 12)
+
+    def test_runtime_heartbeat_canary_execution_mode_remains_canary(self):
+        binding = types.SimpleNamespace(
+            binding_id="canary-binding-001",
+            runtime_id="lean-worker-canary",
+            capital_pool_id="pool-canary",
+            artifact_id="artifact-canary",
+            artifact_version="1.0.0",
+            plan_id="plan-canary",
+            persona_capital_binding_id="pcb-canary",
+            deployment_mode="canary",
+            execution_mode="canary",
+        )
+        event = build_telemetry_event_from_runtime_heartbeat(
+            {
+                "runtime_id": "lean-worker-canary",
+                "runtime_binding_id": "canary-binding-001",
+                "capital_pool_id": "pool-canary",
+                "artifact_id": "artifact-canary",
+                "deployment_mode": "canary",
+                "heartbeat_time": "2026-04-15T12:00:06Z",
+                "connectivity_status": "connected",
+                "broker_status": "ok",
+                "target": {"strategy_id": "strategy-canary"},
+            },
+            binding=binding,
+        )
+
+        self.assertEqual(event["execution_mode"], "canary")
+        self.assertEqual(event["deployment_stage"], "canary")
 
     def test_runtime_heartbeat_endpoint_rejects_unknown_binding(self):
         heartbeat = {
