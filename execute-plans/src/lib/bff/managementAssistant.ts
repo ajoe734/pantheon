@@ -151,6 +151,31 @@ export function assistantCatalogRouteFromHandlerRef(handlerRef?: string | null):
   return { method, path };
 }
 
+function catalogPathParamAliases(name: string): string[] {
+  if (name.includes("_")) {
+    return [
+      name,
+      name.replace(/_([a-z])/g, (_, char: string) => char.toUpperCase()),
+    ];
+  }
+  return [
+    name,
+    name.replace(/[A-Z]/g, (char) => `_${char.toLowerCase()}`),
+  ];
+}
+
+function resolveCatalogPath(path: string, body: Record<string, unknown>): string {
+  return path.replace(/\{([A-Za-z0-9_]+)\}/g, (_match, name: string) => {
+    for (const alias of catalogPathParamAliases(name)) {
+      const value = body[alias];
+      if (value === undefined || value === null) continue;
+      const text = String(value).trim();
+      if (text) return encodeURIComponent(text);
+    }
+    throw new Error(`Missing assistant catalog route path parameter: ${name}`);
+  });
+}
+
 export function invokeAssistantCatalogRoute(
   handlerRef: string,
   body: Record<string, unknown>,
@@ -160,9 +185,10 @@ export function invokeAssistantCatalogRoute(
   if (!route) {
     throw new Error("Assistant skill handler is not a frontend-routable BFF route.");
   }
+  const path = resolveCatalogPath(route.path, body);
   return requestJson(
     route.method,
-    route.path,
+    path,
     route.method === "GET" ? undefined : body,
     baseUrl,
     "assistant-catalog",

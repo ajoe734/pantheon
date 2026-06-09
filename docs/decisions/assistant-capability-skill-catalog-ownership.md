@@ -76,6 +76,27 @@ The Management AI frontend renders the SA/SD action from the effective
 descriptor, not from a hard-coded toolbar button. The BFF still only projects
 adapter-provided `effective_skills` and does not recompute catalog truth.
 
+## ASST-SKILL-004 Toolbar Capability Migration
+
+The remaining Management AI toolbar capabilities are adapter-owned
+`assistant_command` descriptors. They become visible only when the OpenClaw
+adapter allowlist includes the specific tool id and the descriptor mode/role
+gates pass:
+
+| Skill id | Handler ref | Result surface |
+|---|---|---|
+| `assistant.openclaw.ask` | `bff.route:POST /bff/management/nl/ask` | `assistant_management_answer` |
+| `assistant.control_mode.status` | `bff.route:GET /bff/assistant/control-mode` | `assistant_control_mode_status` |
+| `assistant.transcript.resync` | `bff.route:GET /bff/assistant/sessions/{sessionId}/transcript` | `assistant_transcript_resync` |
+| `assistant.orchestrator.status` | `bff.route:GET /bff/assistant/orchestrator/status` | `assistant_orchestrator_status` |
+
+These descriptors point at existing BFF routes and handlers. ASST-SKILL-004
+does not add a new BFF command router, OpenClaw registry, or frontend
+capability allowlist. The frontend may resolve `{sessionId}` route templates
+from descriptor-declared input, then dispatches through the descriptor
+`handler_ref`; result projection is selected by `result_surface`, not by
+hard-coded capability ids.
+
 ## ASST-SKILL-005 Provider Reauth
 
 `assistant.provider.reauth` is an adapter-owned `assistant_command` descriptor

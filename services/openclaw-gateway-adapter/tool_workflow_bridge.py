@@ -38,17 +38,27 @@ from assistant_command_policy import (
 ASSISTANT_SKILL_DESCRIPTOR_SCHEMA_VERSION = "assistant_skill_descriptor.v1"
 ASSISTANT_SA_SD_GENERATE_TOOL_NAME = "assistant.sa_sd.generate"
 ASSISTANT_PROVIDER_REAUTH_TOOL_NAME = "assistant.provider.reauth"
+ASSISTANT_OPENCLAW_ASK_TOOL_NAME = "assistant.openclaw.ask"
+ASSISTANT_CONTROL_MODE_STATUS_TOOL_NAME = "assistant.control_mode.status"
+ASSISTANT_TRANSCRIPT_RESYNC_TOOL_NAME = "assistant.transcript.resync"
+ASSISTANT_ORCHESTRATOR_STATUS_TOOL_NAME = "assistant.orchestrator.status"
 _DEFAULT_EFFECTIVE_SKILL_MODE = "kernel_debug"
 _DEFAULT_OPERATOR_ROLE = "operator"
 _TOOL_SKILL_MODES = ("kernel_debug", "kernel_repair")
 _ASSISTANT_COMMAND_SKILL_MODES = ("kernel_observe", "kernel_debug", "kernel_repair")
 _ASSISTANT_SA_SD_GENERATE_SKILL_MODES = ("kernel_debug", "kernel_repair")
 _ASSISTANT_PROVIDER_REAUTH_SKILL_MODES = ("kernel_debug", "kernel_repair")
+_ASSISTANT_OPENCLAW_ASK_SKILL_MODES = ("kernel_debug", "kernel_repair")
+_ASSISTANT_READBACK_SKILL_MODES = ("kernel_observe", "kernel_debug", "kernel_repair")
 _WORKFLOW_SKILL_MODES = ("kernel_repair",)
 _ADAPTER_OWNED_ASSISTANT_TOOLS = frozenset({
     ASSISTANT_COMMAND_TOOL_NAME,
     ASSISTANT_SA_SD_GENERATE_TOOL_NAME,
     ASSISTANT_PROVIDER_REAUTH_TOOL_NAME,
+    ASSISTANT_OPENCLAW_ASK_TOOL_NAME,
+    ASSISTANT_CONTROL_MODE_STATUS_TOOL_NAME,
+    ASSISTANT_TRANSCRIPT_RESYNC_TOOL_NAME,
+    ASSISTANT_ORCHESTRATOR_STATUS_TOOL_NAME,
 })
 _OPERATOR_ROLE_ALIASES = {
     "admin": "admin",
@@ -363,6 +373,87 @@ def _tool_skill_descriptor(
     upstream_metadata: Optional[Dict[str, Any]] = None,
 ) -> AssistantSkillDescriptor:
     metadata = upstream_metadata or {}
+    if tool_name == ASSISTANT_OPENCLAW_ASK_TOOL_NAME:
+        return AssistantSkillDescriptor(
+            id=tool_name,
+            title="Ask Management AI",
+            surface="assistant_command",
+            mode_gate=_mode_gate(_ASSISTANT_OPENCLAW_ASK_SKILL_MODES),
+            role="operator",
+            confirm_policy={
+                "required": False,
+                "policy": "active_control_mode_for_kernel_payloads",
+                "note": "Sends the prompt to the existing Management AI BFF route with optional OpenClaw repair metadata.",
+            },
+            input_schema={
+                "type": "object",
+                "required": ["question"],
+                "properties": {
+                    "question": {"type": "string"},
+                    "sessionId": {"type": "string"},
+                    "focus": {"type": "string"},
+                    "controlMode": {"type": "object", "additionalProperties": True},
+                    "openclaw": {"type": "object", "additionalProperties": True},
+                    "ui": {"type": "object", "additionalProperties": True},
+                    "conversation": {"type": "object", "additionalProperties": True},
+                    "metadata": {"type": "object", "additionalProperties": True},
+                },
+                "additionalProperties": True,
+            },
+            handler_ref="bff.route:POST /bff/management/nl/ask",
+            result_surface="assistant_management_answer",
+        )
+    if tool_name == ASSISTANT_CONTROL_MODE_STATUS_TOOL_NAME:
+        return AssistantSkillDescriptor(
+            id=tool_name,
+            title="Control Mode",
+            surface="assistant_command",
+            mode_gate=_mode_gate(_ASSISTANT_READBACK_SKILL_MODES),
+            role="operator",
+            confirm_policy={"required": False},
+            input_schema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+            handler_ref="bff.route:GET /bff/assistant/control-mode",
+            result_surface="assistant_control_mode_status",
+        )
+    if tool_name == ASSISTANT_TRANSCRIPT_RESYNC_TOOL_NAME:
+        return AssistantSkillDescriptor(
+            id=tool_name,
+            title="Resync Transcript",
+            surface="assistant_command",
+            mode_gate=_mode_gate(_ASSISTANT_READBACK_SKILL_MODES),
+            role="operator",
+            confirm_policy={"required": False},
+            input_schema={
+                "type": "object",
+                "required": ["sessionId"],
+                "properties": {
+                    "sessionId": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            handler_ref="bff.route:GET /bff/assistant/sessions/{sessionId}/transcript",
+            result_surface="assistant_transcript_resync",
+        )
+    if tool_name == ASSISTANT_ORCHESTRATOR_STATUS_TOOL_NAME:
+        return AssistantSkillDescriptor(
+            id=tool_name,
+            title="System Status",
+            surface="assistant_command",
+            mode_gate=_mode_gate(_ASSISTANT_READBACK_SKILL_MODES),
+            role="operator",
+            confirm_policy={"required": False},
+            input_schema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+            handler_ref="bff.route:GET /bff/assistant/orchestrator/status",
+            result_surface="assistant_orchestrator_status",
+        )
     if tool_name == ASSISTANT_SA_SD_GENERATE_TOOL_NAME:
         return AssistantSkillDescriptor(
             id=tool_name,
