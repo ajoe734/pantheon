@@ -14178,6 +14178,41 @@ class ReadSurfaceStore:
             "policy_registry": json.loads(json.dumps(policy_registry)) if policy_registry else None,
         }
 
+    def get_source_change_proposals(
+        self,
+        *,
+        status: Optional[str] = None,
+        proposal_type: Optional[str] = None,
+        source_kind: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Read source-change proposals from the source-ingest service.
+
+        BFF is read-only: this method never mutates proposal state.  All
+        lifecycle transitions go through operator-gated action endpoints on
+        the source-ingest service directly.
+        """
+        base_url = self._source_ingest_service_url()
+        if not base_url:
+            return {"source": "missing", "proposals": []}
+        path = "/api/source-change-proposals"
+        params: list[str] = []
+        if status:
+            params.append(f"status={status}")
+        if proposal_type:
+            params.append(f"proposal_type={proposal_type}")
+        if source_kind:
+            params.append(f"source_kind={source_kind}")
+        if params:
+            path = path + "?" + "&".join(params)
+        available, payload = _http_json_get(base_url, path)
+        if not available or not isinstance(payload, dict):
+            return {"source": "unavailable", "proposals": []}
+        proposals = payload.get("proposals") if isinstance(payload.get("proposals"), list) else []
+        return {
+            "source": "service_client",
+            "proposals": json.loads(json.dumps(proposals)),
+        }
+
     # ---------------------------------------------------------------------- #
     # Source / Search Ops BFF surfaces (SVC-SOURCE-SEARCH-OPS-BFF)
     # ---------------------------------------------------------------------- #
