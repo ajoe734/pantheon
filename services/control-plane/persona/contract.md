@@ -245,7 +245,9 @@ MUST NOT introduce a fourth name for this edge.
 
 - `PersonaRegistry` — CRUD and lifecycle transitions for Persona objects
 - `PersonaSessionStore` — create / terminate / quarantine sessions
-- `CapabilitySnapshot` — compute and store capability snapshots
+- `CapabilitySnapshot` — compute and store capability snapshots (incl. `denial_reasons`)
+- `PersonaPolicyResolver` — resolve `route_policy_id`, `consult_policy_id`, `tool_profile_id`
+  from a policy catalog into an auditable `PolicyResolutionResult`; fail-closed on unknown IDs
 - Session type enforcement (which sessions require runtime binding)
 - Lifecycle state transition validation
 
@@ -260,11 +262,22 @@ MUST NOT introduce a fourth name for this edge.
 ### 6.3 Resolution order (session creation)
 
 1. Verify persona exists and `lifecycle_state` allows the session type
-2. Compute `CapabilitySnapshot` from route_policy + consult_policy + RBAC
-3. For deployment-bound sessions: look up active `RuntimeBinding` for the pool
-4. Populate `runtime_binding_id`, `deployment_stage`, `capital_pool_id`
-5. Create `SessionPersona` record
-6. Pass to `openclaw-gateway-adapter` for runtime session creation
+2. Check persona `status` — suspended personas are denied immediately (fail closed)
+3. Run `PersonaPolicyResolver.resolve(persona, ...)` to get `PolicyResolutionResult`
+   - `tool_profile_id` → `effective_tools` (fail closed if unknown)
+   - `route_policy_id` → `effective_workflows` + route skills (fail closed if unknown)
+   - `consult_policy_id` → consult skills (fail closed if unknown)
+   - If `capital_pool_id` + `target_scope` provided → capital eligibility check
+4. Build `CapabilitySnapshot` from the result (includes `source_refs` and `denial_reasons`)
+5. For deployment-bound sessions: look up active `RuntimeBinding` for the pool
+6. Populate `runtime_binding_id`, `deployment_stage`, `capital_pool_id`
+7. Create `SessionPersona` record
+8. Pass to `openclaw-gateway-adapter` for runtime session creation
+
+**Fail-closed rule:** an unknown or disallowed policy ID causes the corresponding capability
+bucket to be empty and a denial reason to be recorded in `CapabilitySnapshot.denial_reasons`.
+The session is still created unless the persona is suspended or a capital eligibility failure
+makes the requested scope invalid.
 
 ---
 
@@ -309,7 +322,7 @@ Every session MUST carry these fields for audit and replay:
 
 ---
 
-## 9. Acceptance Criteria (PER-001)
+## 9. Acceptance Criteria (PER-001 + MPOS-P1-PER-001)
 
 - [x] Persona identity, session, and runtime instance boundaries are explicit
   in platform contracts (this document + schemas + Python objects)
@@ -320,6 +333,14 @@ Every session MUST carry these fields for audit and replay:
 - [x] Lifecycle state machine is validated in Python with allowed transitions
 - [x] JSON schemas cover Persona, SessionPersona, CapabilitySnapshot
 - [x] `PersonaRegistry` and `PersonaSessionStore` enforce semantic rules
+- [x] `PersonaPolicyResolver` resolves `route_policy_id`, `consult_policy_id`,
+  `tool_profile_id` into effective capability decisions (MPOS-P1-PER-001)
+- [x] Unknown or disallowed policy IDs fail closed with denial reasons recorded
+  in `CapabilitySnapshot.denial_reasons`
+- [x] Capital eligibility checked via binding store when `capital_pool_id` and
+  `target_scope` are supplied; denial reason recorded on failure
+- [x] Suspended persona fails completely closed before any policy resolution
+- [x] Tests cover: allowed session, denied tool, denied capital scope, suspended persona
 
 ---
 
