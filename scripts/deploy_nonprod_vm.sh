@@ -64,7 +64,8 @@ Options:
                          auto maps to root for dev and all for staging-live.
   --sha <commit>         Required unless GITHUB_SHA is set. Commit to deploy.
   --project-id <id>      GCP project. Default: pantheon-493602.
-  --allow-dirty          Emergency only: allow a dirty managed deploy worktree.
+  --allow-dirty          Emergency only: stash dirty managed deploy worktree
+                         changes before checkout.
   --allow-example-env    Allow staging to use env/*.env.example if real env files
                          are absent. Intended for rehearsal only.
   --dry-run              Print the target plan without SSHing.
@@ -373,14 +374,24 @@ snapshot_remote_state() {
 }
 
 require_clean_checkout() {
-  if [[ "${PANTHEON_ALLOW_DIRTY_DEPLOY}" == "true" ]]; then
-    info "dirty managed deploy worktree allowed by explicit flag"
-    return
+  local status
+  local stash_label
+
+  status="$(git status --porcelain)"
+  if [[ -n "$status" && "${PANTHEON_ALLOW_DIRTY_DEPLOY}" != "true" ]]; then
+    git status --short >&2
+    error "managed deploy worktree is dirty; refusing deploy without --allow-dirty"
+  fi
+
+  if [[ -n "$status" ]]; then
+    stash_label="deploy-dirty-${PANTHEON_DEPLOY_ENV}-${PANTHEON_DEPLOY_COMPONENT}-${PANTHEON_DEPLOY_SHA:0:12}-$(date -u +%Y%m%dT%H%M%SZ)"
+    info "dirty managed deploy worktree allowed by explicit flag; stashing local changes before checkout (${stash_label})"
+    git stash push --include-untracked -m "$stash_label" >/dev/null
   fi
 
   if [[ -n "$(git status --porcelain)" ]]; then
     git status --short >&2
-    error "managed deploy worktree is dirty; refusing deploy without --allow-dirty"
+    error "managed deploy worktree is still dirty after preserve step"
   fi
 }
 
