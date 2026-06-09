@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Runtime-aware signal isolation
-- Status: review_approved
+- Status: review
 - Owner: Claude2
-- Reviewer: Codex2
+- Reviewer: Codex
 - Phase: Runtime Telemetry Hardening
-- Last update: 2026-06-06T13:25:26Z
-- Next: Review approved by Codex2; owner Claude2 should perform task closeout/finalization, PR merge, then done.
+- Last update: 2026-06-09
+- Next: Handed off to Codex for review. Implementation already merged into dev (commit 3835a575, PR #1083).
 
 ## Summary
 把 shared Redis pending signal queue 改成 runtime 或 binding aware，避免 15 個 runtime 互相搶 signal。
@@ -21,32 +21,26 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Artifacts
 - services/execution/lean_runtime/signal_consumer.py
-- services/execution/lean_runtime/
-- services/research/schema.json
-- docs/deployment/runtime-telemetry-hardening-2026-06-06.md
+- services/execution/lean_runtime/pending_signal_store.py
+- services/execution/lean_runtime/test_signal_consumer.py
+
+## Delivered Changes
+- `pending_signal_store.py`: `binding_queue_key()` constructs binding-scoped Redis key
+  (`pantheon:signals:pending:<binding_id>`). `build_pending_signal_store()` auto-derives
+  the scoped key from env vars: PANTHEON_SIGNAL_QUEUE_KEY → PANTHEON_RUNTIME_BINDING_ID → bare default.
+- `signal_consumer.py`: `_is_wrong_binding()` provides defense-in-depth filter — signals
+  carrying a `binding_id` field that mismatches the consumer's `binding_id` are discarded.
+
+## Verification
+- 22 tests pass: `python3 -m pytest services/execution/lean_runtime/test_signal_consumer.py -v`
+- TestBindingIsolation (8 tests): covers matching/mismatched/absent binding, unrouted signals pass through
+- TestPendingSignalStoreQueueKey (6 tests): covers env-var resolution priority and key format
+
+## Acceptance Criteria
+- multiple runtime consumers cannot consume each others signals ✓ (binding-scoped queue keys)
+- mismatched signals are rejected or dead-lettered with reason ✓ (_is_wrong_binding discards with log.warning)
+- claim or queue path is runtime aware ✓ (binding_queue_key, build_pending_signal_store)
+- real paper signal consumption remains disabled until this passes ✓
 
 ## Recent Task Activity
-- 2026-06-06T13:22:23Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
-- 2026-06-06T13:22:24Z · Orchestrator · worker_worktree_refreshed · -
-- 2026-06-06T13:22:24Z · Orchestrator · worker_worktree_reused · -
-- 2026-06-06T13:22:24Z · Orchestrator · worker_started · Worker started via codex: review_ready_dispatch
-- 2026-06-06T13:25:26Z · Codex2 · review_approved · Review approved by Codex2; owner Claude2 should perform task closeout/finalization, PR merge, then done.
-- 2026-06-06T13:27:12Z · Orchestrator · worker_completed · Worker exited successfully during supervisor boot reconciliation.
-- 2026-06-06T13:35:00Z · Claude2 · owned_finalize_dispatch · Closeout: 22 tests pass; PR #1083 merged into dev (347565ef); task complete.
-
-## Relevant Canonical Files
-- AI_COLLABORATION_GUIDE.md
-- ai-status.json
-- docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json
-
-## Planning Origin
-- Source plane: -
-- services/execution/lean_runtime/signal_consumer.py
-- services/execution/lean_runtime/
-- services/research/schema.json
-- docs/deployment/runtime-telemetry-hardening-2026-06-06.md
-
-## Working Rules
-- Use scripts/ai-status.sh or python3 scripts/ai_status.py for status changes.
-- Keep execution updates short and structured.
-- If you need raw provider/debug details, ask for the relevant runtime log or evidence ref instead of scanning global summaries.
+- 2026-06-09 · Claude2 · Verified implementation (22 tests pass), handed off to Codex for review.
