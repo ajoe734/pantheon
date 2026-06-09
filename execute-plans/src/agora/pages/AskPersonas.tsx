@@ -731,6 +731,7 @@ export default function AskPersonas(): JSX.Element {
             valueState: openClawMode ? "present" : "empty",
             dirty: openClawMode !== "kernel_debug",
             required: false,
+            validatorRefs: [],
           },
           {
             name: "repairTaskId",
@@ -739,6 +740,9 @@ export default function AskPersonas(): JSX.Element {
             valueState: repairTaskId.trim() ? "present" : "empty",
             dirty: Boolean(repairTaskId.trim()),
             required: openClawMode === "kernel_repair",
+            validatorRefs: openClawMode === "kernel_repair"
+              ? [{ type: "required", message: "Repair task is required in kernel repair mode." }]
+              : [],
           },
           {
             name: "repairWorktree",
@@ -747,6 +751,9 @@ export default function AskPersonas(): JSX.Element {
             valueState: repairWorktree.trim() ? "present" : "empty",
             dirty: Boolean(repairWorktree.trim()),
             required: openClawMode === "kernel_repair",
+            validatorRefs: openClawMode === "kernel_repair"
+              ? [{ type: "required", message: "Repair worktree is required in kernel repair mode." }]
+              : [],
           },
           {
             name: "repairScope",
@@ -755,6 +762,9 @@ export default function AskPersonas(): JSX.Element {
             valueState: repairScope.trim() ? "present" : "empty",
             dirty: Boolean(repairScope.trim()),
             required: openClawMode === "kernel_repair",
+            validatorRefs: openClawMode === "kernel_repair"
+              ? [{ type: "required", message: "Repair scope is required in kernel repair mode." }]
+              : [],
           },
         ],
         dirty: Boolean(prompt.trim()),
@@ -841,7 +851,7 @@ export default function AskPersonas(): JSX.Element {
       if (!id) throw new Error("no session id returned");
       setSessionId(id);
       const sessionSignals = normalizeAssistantSignals(res, id);
-      const sessionMode = sessionSignals.mode ?? null;
+      const sessionMode = normalizeMode(sessionSignals.mode);
       setMode(sessionMode);
       setAssistantSignals(sessionSignals);
       const initialCitations = normalizeSourceCitations(res);

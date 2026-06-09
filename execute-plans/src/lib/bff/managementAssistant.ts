@@ -202,7 +202,7 @@ export function generateAssistantDevDocs(
   body: AssistantDevDocsGenerateRequest,
   baseUrl?: string,
 ): Promise<Record<string, unknown>> {
-  return postJson(paths.assistantDevDocsGenerate(), body as Record<string, unknown>, baseUrl);
+  return postJson(paths.assistantDevDocsGenerate(), body as unknown as Record<string, unknown>, baseUrl);
 }
 
 export function getAssistantDevDoc(
