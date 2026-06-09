@@ -95,6 +95,86 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
         description="Start a stopped runtime binding; two-man authorization required for live runtimes.",
     ),
     BffActionCatalogEntry(
+        action_id="RestartPaperRuntime",
+        entity_type="Runtime",
+        endpoint=_FINAL_COMMAND_ENDPOINT,
+        risk_level=RiskLevel.HIGH,
+        requires_approval=False,
+        requires_confirm_token=True,
+        requires_two_man=False,
+        cooldown_seconds=90,
+        idempotency_required=True,
+        required_roles=["operator", "runtime_operator"],
+        description=(
+            "Restart a paper runtime worker through the protected runtime-manager "
+            "repair path; success is heartbeat freshness, not trade count."
+        ),
+    ),
+    BffActionCatalogEntry(
+        action_id="RestartTelemetryBridge",
+        entity_type="Runtime",
+        endpoint=_FINAL_COMMAND_ENDPOINT,
+        risk_level=RiskLevel.HIGH,
+        requires_approval=False,
+        requires_confirm_token=True,
+        requires_two_man=False,
+        cooldown_seconds=90,
+        idempotency_required=True,
+        required_roles=["operator", "runtime_operator"],
+        description=(
+            "Restart the telemetry bridge for a paper runtime through the protected "
+            "runtime-manager repair path; no broker or capital authority is granted."
+        ),
+    ),
+    BffActionCatalogEntry(
+        action_id="TerminateStalePaperMonitoringSession",
+        entity_type="Runtime",
+        endpoint=_FINAL_COMMAND_ENDPOINT,
+        risk_level=RiskLevel.HIGH,
+        requires_approval=False,
+        requires_confirm_token=True,
+        requires_two_man=False,
+        cooldown_seconds=90,
+        idempotency_required=True,
+        required_roles=["operator", "runtime_operator"],
+        description=(
+            "Terminate a paper monitoring session only when stale heartbeat evidence "
+            "is supplied; no session is ended from status alone."
+        ),
+    ),
+    BffActionCatalogEntry(
+        action_id="StartPaperMonitoringSession",
+        entity_type="Runtime",
+        endpoint=_FINAL_COMMAND_ENDPOINT,
+        risk_level=RiskLevel.HIGH,
+        requires_approval=False,
+        requires_confirm_token=True,
+        requires_two_man=False,
+        cooldown_seconds=90,
+        idempotency_required=True,
+        required_roles=["operator", "runtime_operator"],
+        description=(
+            "Start a paper monitoring session through runtime-manager after repair "
+            "preconditions pass; success is fresh monitoring heartbeat."
+        ),
+    ),
+    BffActionCatalogEntry(
+        action_id="ProbeTelemetryIngest",
+        entity_type="Runtime",
+        endpoint=_FINAL_COMMAND_ENDPOINT,
+        risk_level=RiskLevel.HIGH,
+        requires_approval=False,
+        requires_confirm_token=True,
+        requires_two_man=False,
+        cooldown_seconds=30,
+        idempotency_required=True,
+        required_roles=["operator", "runtime_operator"],
+        description=(
+            "Probe telemetry ingest freshness through a governed runtime repair "
+            "command; the action is read-only and emits an audit receipt."
+        ),
+    ),
+    BffActionCatalogEntry(
         action_id="PauseRuntime",
         entity_type="Runtime",
         endpoint=_FINAL_COMMAND_ENDPOINT,
@@ -145,6 +225,19 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
         idempotency_required=True,
         required_roles=["operator", "approver"],
         description="Switch a runtime into safe mode; reduces exposure and disables new strategies.",
+    ),
+    BffActionCatalogEntry(
+        action_id="AlertAcknowledge",
+        entity_type="RiskAlert",
+        endpoint=_FINAL_COMMAND_ENDPOINT,
+        risk_level=RiskLevel.LOW,
+        requires_approval=False,
+        requires_confirm_token=False,
+        requires_two_man=False,
+        cooldown_seconds=0,
+        idempotency_required=True,
+        required_roles=["operator"],
+        description="Acknowledge a risk alert without mutating runtime or capital state.",
     ),
     # ------------------------------------------------------------------ #
     # Rollback lifecycle
