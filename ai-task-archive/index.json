@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-06-09T08:03:02Z",
+  "updated_at": "2026-06-09T11:11:05Z",
   "counts": {
-    "total": 1416,
-    "completed": 1393,
+    "total": 1417,
+    "completed": 1394,
     "superseded": 23
   },
   "recent_terminal_ids": [
+    "OPS-RTEL-002",
     "DATASTRAT-CONTRACT-001",
     "ASST-SKILL-005",
     "ASST-SKILL-003",
@@ -25,7 +26,6 @@
     "MGMT-AI-PERSIST-P0-WRITE-002",
     "MGMT-AI-PERSIST-P0-READ-005",
     "MGMT-AI-PERSIST-P0-STORE-001",
-    "ASST-INTEG-006",
-    "ASST-INTEG-003"
+    "ASST-INTEG-006"
   ]
 }
