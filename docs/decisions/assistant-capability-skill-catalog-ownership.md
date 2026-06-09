@@ -60,3 +60,18 @@ callers. ASST-SKILL-001 adds `schema_version`, `mode`, `operator_role`,
 `effective_workflows`, `effective_skills`, and `skill_resolution`.
 
 No new registry, gateway, or BFF command route is introduced.
+
+## ASST-SKILL-002 Pilot
+
+`assistant.sa_sd.generate` is the first catalog-driven assistant command skill.
+The OpenClaw gateway adapter owns its descriptor and exposes it only when the
+operator, mode, and `OPENCLAW_ALLOWED_TOOLS` policy make it effective.
+
+The descriptor's `handler_ref` is
+`bff.route:POST /bff/assistant/dev-docs/generate`. This points at the existing
+BFF dev-docs generate handler; the pilot does not add a second handler or alter
+SA/SD generation logic.
+
+The Management AI frontend renders the SA/SD action from the effective
+descriptor, not from a hard-coded toolbar button. The BFF still only projects
+adapter-provided `effective_skills` and does not recompute catalog truth.

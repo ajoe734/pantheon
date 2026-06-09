@@ -64,6 +64,7 @@ import httpx  # noqa: E402
 import pydantic  # noqa: E402
 
 from tool_workflow_bridge import (  # noqa: E402
+    ASSISTANT_SA_SD_GENERATE_TOOL_NAME,
     ASSISTANT_SKILL_DESCRIPTOR_SCHEMA_VERSION,
     BridgeAuditLog,
     BridgeError,
@@ -659,6 +660,48 @@ class TestListEffectiveTools(unittest.TestCase):
         self.assertEqual(descriptor["mode_gate"]["default"], "deny")
         self.assertIn("kernel_debug", descriptor["mode_gate"]["allowed_modes"])
         self.assertEqual(descriptor["handler_ref"], "openclaw.tool:search")
+
+    def test_sa_sd_skill_descriptor_points_to_bff_dev_docs_handler(self):
+        bridge, _ = _make_bridge(allowed_tools=[ASSISTANT_SA_SD_GENERATE_TOOL_NAME])
+        result = bridge.list_effective_tools(
+            agent_id="management-ai",
+            operator_id="op1",
+            mode="kernel_debug",
+            operator_role="operator",
+            upstream=FakeUpstream(),
+        )
+
+        self.assertEqual(result["effective_tools"], [ASSISTANT_SA_SD_GENERATE_TOOL_NAME])
+        descriptor = result["effective_skills"][0]
+        self.assertEqual(descriptor["id"], ASSISTANT_SA_SD_GENERATE_TOOL_NAME)
+        self.assertEqual(descriptor["title"], "Generate SA/SD")
+        self.assertEqual(descriptor["surface"], "assistant_command")
+        self.assertEqual(descriptor["handler_ref"], "bff.route:POST /bff/assistant/dev-docs/generate")
+        self.assertEqual(descriptor["result_surface"], "assistant_dev_docs_packet")
+        self.assertIn("kernel_debug", descriptor["mode_gate"]["allowed_modes"])
+        self.assertIn("kernel_repair", descriptor["mode_gate"]["allowed_modes"])
+        self.assertNotIn("kernel_observe", descriptor["mode_gate"]["allowed_modes"])
+
+    def test_sa_sd_skill_descriptor_denies_user_mode_and_viewer_role(self):
+        bridge, _ = _make_bridge(allowed_tools=[ASSISTANT_SA_SD_GENERATE_TOOL_NAME])
+
+        user_result = bridge.list_effective_tools(
+            agent_id="management-ai",
+            operator_id="op1",
+            mode="user",
+            operator_role="operator",
+            upstream=FakeUpstream(),
+        )
+        viewer_result = bridge.list_effective_tools(
+            agent_id="management-ai",
+            operator_id="op1",
+            mode="kernel_debug",
+            operator_role="viewer",
+            upstream=FakeUpstream(),
+        )
+
+        self.assertEqual(user_result["effective_skills"], [])
+        self.assertEqual(viewer_result["effective_skills"], [])
 
     def test_effective_skills_deny_user_mode(self):
         bridge, _ = _make_bridge(allowed_tools=["search"])

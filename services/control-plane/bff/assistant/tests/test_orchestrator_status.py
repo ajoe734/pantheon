@@ -209,8 +209,32 @@ class TestOrchestratorStatus(unittest.TestCase):
                 "status": "degraded",
                 "upstream_status": "degraded",
                 "agent_id": "management-ai",
-                "policy_allowed_tools": ["assistant.command"],
-                "effective_tools": ["assistant.command"],
+                "policy_allowed_tools": ["assistant.command", "assistant.sa_sd.generate"],
+                "effective_tools": ["assistant.command", "assistant.sa_sd.generate"],
+                "effective_skills": [
+                    {
+                        "id": "assistant.command",
+                        "title": "Assistant Command Authorization",
+                        "surface": "assistant_command",
+                        "mode_gate": {"type": "allowlist", "default": "deny", "allowed_modes": ["kernel_debug"]},
+                        "role": "operator",
+                        "confirm_policy": {"required": False},
+                        "input_schema": {"type": "object"},
+                        "handler_ref": "openclaw.tool:assistant.command",
+                        "result_surface": "assistant_command_authorization",
+                    },
+                    {
+                        "id": "assistant.sa_sd.generate",
+                        "title": "Generate SA/SD",
+                        "surface": "assistant_command",
+                        "mode_gate": {"type": "allowlist", "default": "deny", "allowed_modes": ["kernel_debug"]},
+                        "role": "operator",
+                        "confirm_policy": {"required": False},
+                        "input_schema": {"type": "object"},
+                        "handler_ref": "bff.route:POST /bff/assistant/dev-docs/generate",
+                        "result_surface": "assistant_dev_docs_packet",
+                    },
+                ],
                 "note": "upstream unavailable; policy allowlist visible",
             },
         )
@@ -274,8 +298,14 @@ class TestOrchestratorStatus(unittest.TestCase):
         self.assertEqual(status.openclaw_tool_policy["assistantCommandStatus"], "usable")
         self.assertEqual(status.openclaw_tool_policy["allowedTools"], ["assistant.command"])
         self.assertEqual(status.openclaw_tool_policy["effectiveStatus"], "degraded")
-        self.assertEqual(status.openclaw_tool_policy["effectiveTools"], ["assistant.command"])
-        self.assertEqual(status.openclaw_tool_policy["policyAllowedTools"], ["assistant.command"])
+        self.assertEqual(status.openclaw_tool_policy["effectiveTools"], ["assistant.command", "assistant.sa_sd.generate"])
+        self.assertEqual(status.openclaw_tool_policy["policyAllowedTools"], ["assistant.command", "assistant.sa_sd.generate"])
+        skill_ids = [skill["id"] for skill in status.openclaw_tool_policy["effectiveSkills"]]
+        self.assertEqual(skill_ids, ["assistant.command", "assistant.sa_sd.generate"])
+        self.assertEqual(
+            status.openclaw_tool_policy["effectiveSkills"][1]["handler_ref"],
+            "bff.route:POST /bff/assistant/dev-docs/generate",
+        )
         self.assertIn("broker_order", status.openclaw_tool_policy["alwaysBlockedTools"])
         self.assertEqual(status.assistant_dev_bridge["status"], "attention")
         self.assertEqual(status.assistant_dev_bridge["inbox"]["pendingCount"], 1)

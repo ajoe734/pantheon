@@ -835,6 +835,11 @@ def _normalize_openclaw_tool_policy(
         for tool in (effective_payload.get("effective_tools") or effective_payload.get("effectiveTools") or [])
         if str(tool).strip()
     ]
+    effective_skill_descriptors = [
+        _safe(dict(skill))
+        for skill in (effective_payload.get("effective_skills") or effective_payload.get("effectiveSkills") or [])
+        if isinstance(skill, Mapping)
+    ]
     assistant_effective = ASSISTANT_COMMAND_TOOL in effective_tool_names
     if assistant_effective:
         assistant_status = "usable"
@@ -861,6 +866,7 @@ def _normalize_openclaw_tool_policy(
             "alwaysBlockedWorkflowPrefixes": policy.get("always_blocked_workflow_prefixes") or policy.get("alwaysBlockedWorkflowPrefixes") or [],
             "effectiveStatus": effective_status,
             "effectiveTools": effective_tool_names,
+            "effectiveSkills": effective_skill_descriptors,
             "policyAllowedTools": effective_payload.get("policy_allowed_tools") or effective_payload.get("policyAllowedTools"),
             "upstreamStatus": effective_payload.get("upstream_status") or effective_payload.get("upstreamStatus"),
             "agentId": effective_payload.get("agent_id") or effective_payload.get("agentId"),

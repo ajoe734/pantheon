@@ -197,9 +197,9 @@ def test_openclaw_ops_surface_projects_effective_skill_descriptors(monkeypatch) 
         "agent_id": "management-ai",
         "mode": "kernel_debug",
         "operator_role": "operator",
-        "policy_allowed_tools": ["assistant.command"],
+        "policy_allowed_tools": ["assistant.command", "assistant.sa_sd.generate"],
         "policy_blocked_tools": [],
-        "effective_tools": ["assistant.command"],
+        "effective_tools": ["assistant.command", "assistant.sa_sd.generate"],
         "effective_workflows": [],
         "effective_skills": [
             {
@@ -216,6 +216,21 @@ def test_openclaw_ops_surface_projects_effective_skill_descriptors(monkeypatch) 
                 "input_schema": {"type": "object"},
                 "handler_ref": "openclaw.tool:assistant.command",
                 "result_surface": "assistant_command_authorization",
+            },
+            {
+                "id": "assistant.sa_sd.generate",
+                "title": "Generate SA/SD",
+                "surface": "assistant_command",
+                "mode_gate": {
+                    "type": "allowlist",
+                    "default": "deny",
+                    "allowed_modes": ["kernel_debug", "kernel_repair"],
+                },
+                "role": "operator",
+                "confirm_policy": {"required": False},
+                "input_schema": {"type": "object"},
+                "handler_ref": "bff.route:POST /bff/assistant/dev-docs/generate",
+                "result_surface": "assistant_dev_docs_packet",
             }
         ],
     }
@@ -234,6 +249,8 @@ def test_openclaw_ops_surface_projects_effective_skill_descriptors(monkeypatch) 
     assert effective["schema_version"] == "assistant_skill_descriptor.v1"
     assert effective["effective_skills"][0]["id"] == "assistant.command"
     assert effective["effective_skills"][0]["handler_ref"] == "openclaw.tool:assistant.command"
+    assert effective["effective_skills"][1]["id"] == "assistant.sa_sd.generate"
+    assert effective["effective_skills"][1]["handler_ref"] == "bff.route:POST /bff/assistant/dev-docs/generate"
     assert payload["meta"]["surfaces"]["openclaw_effective_tools"]["status"] == "ok"
 
     tool_call = [call for call in recorder.calls if "/api/openclaw-adapter/tools?" in call[1]][0]

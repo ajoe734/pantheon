@@ -24,6 +24,7 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Recent Task Activity
 - 2026-06-08T13:37:13Z · Codex · assign · Assigned ASST-SKILL-002 to Claude with reviewer Codex
+- 2026-06-08T15:33:17Z · Orchestrator · wake_queued · Wake-up queued for supervisor: owned_ready_dispatch
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md

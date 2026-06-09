@@ -24,6 +24,9 @@ type ManagementAskControlMode = NonNullable<ManagementAssistantAskRequest["contr
 type ManagementAskOpenClaw = NonNullable<ManagementAssistantAskRequest["openclaw"]>;
 type ManagementAskRepair = NonNullable<ManagementAskOpenClaw["repair"]>;
 
+const ASSISTANT_SA_SD_GENERATE_SKILL_ID = "assistant.sa_sd.generate";
+const ASSISTANT_SA_SD_GENERATE_HANDLER_REF = "bff.route:POST /bff/assistant/dev-docs/generate";
+
 interface SourceCitation {
   source_id: string;
   href?: string;
@@ -360,6 +363,27 @@ function systemStatusData(value: unknown): JsonRecord {
   return recordFrom(root.data ?? root);
 }
 
+function openClawToolPolicy(value: unknown): JsonRecord {
+  const data = systemStatusData(value);
+  return recordFrom(data.openclawToolPolicy ?? data.openclaw_tool_policy);
+}
+
+function assistantSkillDescriptors(value: unknown): JsonRecord[] {
+  const policy = openClawToolPolicy(value);
+  return arrayFrom(policy.effectiveSkills ?? policy.effective_skills)
+    .map(recordFrom)
+    .filter((skill) => Boolean(firstString(skill.id)));
+}
+
+function findAssistantSkill(value: unknown, skillId: string): JsonRecord | null {
+  return assistantSkillDescriptors(value).find((skill) => firstString(skill.id) === skillId) ?? null;
+}
+
+function assistantSkillHandlerRef(skill: JsonRecord | null): string | null {
+  if (!skill) return null;
+  return firstString(skill.handler_ref, skill.handlerRef);
+}
+
 function systemProviderReadiness(value: unknown): JsonRecord {
   const data = systemStatusData(value);
   return recordFrom(data.providerReadiness ?? data.provider_readiness);
@@ -512,7 +536,15 @@ export default function AskPersonas(): JSX.Element {
   const esRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+    void getAssistantOrchestratorStatus()
+      .then((res) => {
+        if (!cancelled) setSystemStatus(recordFrom(res));
+      })
+      .catch(() => undefined);
+
     return () => {
+      cancelled = true;
       if (esRef.current) {
         esRef.current.close();
       }
@@ -802,6 +834,14 @@ export default function AskPersonas(): JSX.Element {
   };
 
   const handleGenerateDevDocs = async () => {
+    if (!saSdGenerateSkill) {
+      setWorkflowError("Generate SA/SD is not available in the effective assistant skill catalog.");
+      return;
+    }
+    if (assistantSkillHandlerRef(saSdGenerateSkill) !== ASSISTANT_SA_SD_GENERATE_HANDLER_REF) {
+      setWorkflowError("Generate SA/SD skill is not bound to the assistant dev-docs handler.");
+      return;
+    }
     if (!sessionId) {
       setWorkflowError("Generate SA/SD requires a server-backed assistant session.");
       return;
@@ -901,6 +941,8 @@ export default function AskPersonas(): JSX.Element {
   const devBridge = devDocResult ? devBridgeRecord(devDocResult) : {};
   const devArtifactPaths = devDocResult ? devDocArtifactPaths(devDocResult) : [];
   const devDispatchCommand = devDocResult ? buildAssistantDevDispatchCommand(devDocResult) : null;
+  const saSdGenerateSkill = findAssistantSkill(systemStatus, ASSISTANT_SA_SD_GENERATE_SKILL_ID);
+  const saSdGenerateLabel = firstString(saSdGenerateSkill?.title, saSdGenerateSkill?.label) ?? "Generate SA/SD";
 
   return (
     <div>
@@ -949,9 +991,11 @@ export default function AskPersonas(): JSX.Element {
         <button onClick={handleSystemStatus}>
           System Status
         </button>
-        <button onClick={handleGenerateDevDocs} disabled={!sessionId || status === "generating_sa_sd"}>
-          Generate SA/SD
-        </button>
+        {saSdGenerateSkill && (
+          <button onClick={handleGenerateDevDocs} disabled={!sessionId || status === "generating_sa_sd"}>
+            {saSdGenerateLabel}
+          </button>
+        )}
       </div>
       <div>
         <strong>Status:</strong> {status ?? "idle"} {sessionId ? `(session ${sessionId})` : null}
