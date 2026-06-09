@@ -262,6 +262,7 @@ class CapabilitySnapshot:
     effective_workflows : list of workflow names/IDs allowed in this session
     restrictions        : list of explicit restrictions applied
     source_refs         : list of policy document refs used to compute this snapshot
+    denial_reasons      : reasons why capabilities were denied (set by PersonaPolicyResolver)
     metadata            : arbitrary metadata
     """
     snapshot_id: str
@@ -273,6 +274,7 @@ class CapabilitySnapshot:
     effective_workflows: List[str] = field(default_factory=list)
     restrictions: List[str] = field(default_factory=list)
     source_refs: List[str] = field(default_factory=list)
+    denial_reasons: List[str] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
