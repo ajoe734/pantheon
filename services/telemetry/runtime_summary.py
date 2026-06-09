@@ -59,9 +59,12 @@ class RuntimeSummaryProjectionStore:
                 "heartbeat_stale_after_seconds": self._heartbeat_stale_after_seconds,
             }
 
+    _VALID_STAGES = frozenset({"paper", "canary", "live", "frozen"})
+
     def project_event(self, event: dict[str, Any]) -> Optional[dict[str, Any]]:
         """Update the runtime summary from one validated, accepted telemetry event."""
-        if str(event.get("deployment_stage") or "").lower() != "paper":
+        stage = str(event.get("deployment_stage") or "").lower()
+        if stage not in self._VALID_STAGES:
             return None
 
         runtime_id = _summary_key(event)
@@ -193,8 +196,10 @@ class RuntimeSummaryProjectionStore:
         if connectivity_status in {"degraded", "disconnected"}:
             telemetry_state = "degraded"
         broker_status = summary.get("broker_status")
+        stage = str(summary.get("deployment_stage") or "paper").lower()
+        stage_key = f"{stage}_runtime"
         return {
-            "paper_runtime": (
+            stage_key: (
                 "ok"
                 if summary.get("state") == "active" and connectivity_status != "disconnected"
                 else "degraded"
@@ -223,7 +228,9 @@ class RuntimeSummaryProjectionStore:
                 projected["connectivity_status"] = "degraded"
             health = dict(projected.get("health_summary") or {})
             health["telemetry"] = "degraded"
-            health["paper_runtime"] = "degraded"
+            stage = str(projected.get("deployment_stage") or "paper").lower()
+            stage_key = f"{stage}_runtime"
+            health[stage_key] = "degraded"
             projected["health_summary"] = health
             projected["staleness"] = {
                 "last_known_at": projected.get("last_heartbeat_at"),
