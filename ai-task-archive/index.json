@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-06-09T14:27:40Z",
+  "updated_at": "2026-06-09T14:58:57Z",
   "counts": {
-    "total": 1428,
-    "completed": 1405,
+    "total": 1429,
+    "completed": 1406,
     "superseded": 23
   },
   "recent_terminal_ids": [
+    "DATASTRAT-PROPOSAL-006",
     "DATASTRAT-CATALOG-003",
     "DATASTRAT-REG-002",
     "MPOS-P1-RISK-001",
@@ -25,7 +26,6 @@
     "ASST-SKILL-001",
     "OPS-RTEL-001",
     "MGMT-AI-LIVE-BRIDGE-SMOKE-20260607101732",
-    "OPS-RTEL-003",
-    "ASST-INTEG-008"
+    "OPS-RTEL-003"
   ]
 }
