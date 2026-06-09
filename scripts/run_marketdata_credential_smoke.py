@@ -35,6 +35,7 @@ PROVIDERS = (
     "twse",
     "tpex",
     "mops",
+    "finmind",
     "tej",
     "coingecko",
     "kraken",
@@ -132,6 +133,14 @@ SPECS = {
         market="TW",
         credential_envs=("TEJ_API_KEY",),
         secret_ref_envs=("TEJ_API_KEY_SECRET_NAME", "TEJ_SECRET_REF"),
+    ),
+    "finmind": ProviderSpec(
+        key="finmind",
+        display_name="FinMind",
+        source_class="research_grade",
+        market="TW",
+        credential_envs=("FINMIND_API_TOKEN", "FINMIND_API_KEY"),
+        secret_ref_envs=("FINMIND_API_TOKEN_SECRET_NAME", "FINMIND_SECRET_REF"),
     ),
     "coingecko": ProviderSpec(
         key="coingecko",
@@ -416,6 +425,19 @@ def build_probe_request(provider: str, env_map: dict[str, str], credential: str 
             }
         )
         return ProbeRequest("GET", f"{base_url.rstrip('/')}/api/datatables/{dataset}.json?{query}", {}, None, [credential or ""])
+    if provider == "finmind":
+        base_url = optional(env_map, "FINMIND_BASE_URL", "https://api.finmindtrade.com/api/v4")
+        dataset = optional(env_map, "FINMIND_SMOKE_DATASET", "TaiwanStockPrice")
+        query = urlencode(
+            {
+                "dataset": dataset,
+                "data_id": optional(env_map, "FINMIND_SMOKE_SYMBOL", "2330"),
+                "start_date": optional(env_map, "FINMIND_SMOKE_START_DATE", "2026-06-01"),
+                "end_date": optional(env_map, "FINMIND_SMOKE_END_DATE", "2026-06-08"),
+                "token": credential or "",
+            }
+        )
+        return ProbeRequest("GET", f"{base_url.rstrip('/')}/data?{query}", {}, None, [credential or ""])
     if provider == "coingecko":
         base_url = optional(env_map, "COINGECKO_BASE_URL", "https://api.coingecko.com/api/v3")
         headers = {"x-cg-demo-api-key": credential} if credential else {}

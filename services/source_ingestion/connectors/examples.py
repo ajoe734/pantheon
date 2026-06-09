@@ -16,6 +16,11 @@ from .base import (
     SourceMetadata,
     SourceRecord,
 )
+from .finmind_taiwan import (
+    FinMindTaiwanBrokerBulkBackfillAdapter,
+    FinMindTaiwanBrokerDailyReportAdapter,
+    FinMindTaiwanDatasetAdapter,
+)
 from .paper import OpenAlexPaperIngestAdapter
 from .repo_allowlist import RepoAllowlistProvider
 from .taiwan_market import MopsSourceIngestAdapter, TejSourceIngestAdapter
@@ -268,6 +273,36 @@ def example_provider_catalog() -> tuple[SourceConnectorProvider, ...]:
                 docs_url="https://api.tej.com.tw/document_rest.html",
                 owner="TEJ",
                 tags=("example", "taiwan", "tej", "research_grade", "market"),
+            ),
+        ),
+        FinMindTaiwanDatasetAdapter(
+            connector_id="example-tw-finmind-datasets",
+            source_metadata=SourceMetadata(
+                display_name="FinMind Taiwan datasets",
+                homepage_url="https://finmindtrade.com/",
+                docs_url="https://finmind.github.io/",
+                owner="FinMind",
+                tags=("example", "taiwan", "finmind", "research_grade", "market_data", "chip"),
+            ),
+        ),
+        FinMindTaiwanBrokerDailyReportAdapter(
+            connector_id="example-tw-finmind-broker-daily-report",
+            source_metadata=SourceMetadata(
+                display_name="FinMind Taiwan broker trading daily report",
+                homepage_url="https://finmindtrade.com/",
+                docs_url="https://finmind.github.io/tutor/TaiwanMarket/Chip/",
+                owner="FinMind",
+                tags=("example", "taiwan", "finmind", "broker_top", "branch_trading"),
+            ),
+        ),
+        FinMindTaiwanBrokerBulkBackfillAdapter(
+            connector_id="example-tw-finmind-broker-bulk-parquet",
+            source_metadata=SourceMetadata(
+                display_name="FinMind SponsorPro Taiwan broker bulk parquet",
+                homepage_url="https://finmindtrade.com/",
+                docs_url="https://finmind.github.io/tutor/TaiwanMarket/Chip/",
+                owner="FinMind",
+                tags=("example", "taiwan", "finmind", "sponsorpro", "broker_backfill"),
             ),
         ),
         YahooTaiwanBrokerTopAdapter(

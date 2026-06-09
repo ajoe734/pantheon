@@ -20,6 +20,11 @@ from .base import (
     SourceType,
 )
 from .examples import ExternalFeedProviderExample, StaticRecordsProviderExample, example_provider_catalog
+from .finmind_taiwan import (
+    FinMindTaiwanBrokerBulkBackfillAdapter,
+    FinMindTaiwanBrokerDailyReportAdapter,
+    FinMindTaiwanDatasetAdapter,
+)
 from .paper import OpenAlexPaperIngestAdapter
 from .repo_allowlist import RepoAllowlistEntry, RepoAllowlistProvider
 from .taiwan_market import MopsSourceIngestAdapter, TejSourceIngestAdapter
@@ -48,6 +53,9 @@ __all__ = [
     "SourceRecordStatus",
     "SourceType",
     "ExternalFeedProviderExample",
+    "FinMindTaiwanBrokerBulkBackfillAdapter",
+    "FinMindTaiwanBrokerDailyReportAdapter",
+    "FinMindTaiwanDatasetAdapter",
     "OpenAlexPaperIngestAdapter",
     "RepoAllowlistEntry",
     "RepoAllowlistProvider",

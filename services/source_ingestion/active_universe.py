@@ -104,13 +104,41 @@ class SourceUpdateRule:
 
 DEFAULT_SOURCE_UPDATE_RULES: tuple[SourceUpdateRule, ...] = (
     SourceUpdateRule(
-        connector_id="tw-yahoo-broker-top15",
+        connector_id="tw-finmind-broker-daily-report",
         dataset="tw_broker_top",
         eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE),
         cadence="daily_after_close",
         priority=10,
-        reason="low-cost broker top15/top20 substitute for active research symbols",
-        metadata={"detail_level": "top15_buy_sell_only", "archive_behavior": "skip"},
+        reason="FinMind Sponsor branch-trading daily report is the low-cost primary top20 broker source for active symbols",
+        metadata={
+            "detail_level": "top20_buy_sell_aggregated_from_full_branch_daily_report",
+            "source_dataset": "TaiwanStockTradingDailyReport",
+            "entitlement_tier": "sponsor",
+            "history_start": "2021-06-30",
+            "fallback_connector_id": "tw-yahoo-broker-top15",
+            "archive_behavior": "skip",
+        },
+    ),
+    SourceUpdateRule(
+        connector_id="tw-finmind-datasets",
+        dataset="tw_daily_price_and_chip",
+        eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE),
+        cadence="daily_after_close",
+        priority=15,
+        reason="FinMind normalized API covers active-universe Taiwan daily price, institutional, margin, lending, holding, and news metadata",
+        metadata={
+            "datasets": [
+                "TaiwanStockPrice",
+                "TaiwanStockDayTrading",
+                "TaiwanStockInstitutionalInvestorsBuySell",
+                "TaiwanStockMarginPurchaseShortSale",
+                "TaiwanStockSecuritiesLending",
+                "TaiwanStockShareholding",
+                "TaiwanStockNews",
+            ],
+            "entitlement_tier": "sponsor",
+            "archive_behavior": "baseline_only_elsewhere",
+        },
     ),
     SourceUpdateRule(
         connector_id="tw-yahoo-stock-rss",
@@ -120,6 +148,36 @@ DEFAULT_SOURCE_UPDATE_RULES: tuple[SourceUpdateRule, ...] = (
         priority=20,
         reason="cheap news metadata for symbols still under research",
         metadata={"detail_level": "rss_metadata", "archive_behavior": "skip"},
+    ),
+    SourceUpdateRule(
+        connector_id="tw-yahoo-broker-top15",
+        dataset="tw_broker_top",
+        eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE),
+        cadence="daily_after_close_fallback",
+        priority=90,
+        reason="Yahoo Taiwan top15 broker page remains the public fallback when FinMind quota, entitlement, or endpoint health is unavailable",
+        metadata={
+            "detail_level": "top15_buy_sell_only",
+            "fallback_for_connector_id": "tw-finmind-broker-daily-report",
+            "archive_behavior": "skip",
+        },
+    ),
+    SourceUpdateRule(
+        connector_id="tw-finmind-broker-bulk-parquet",
+        dataset="tw_broker_trading_daily_backfill",
+        eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE),
+        cadence="manual_one_time_historical_backfill",
+        priority=200,
+        reason="FinMind SponsorPro daily parquet backfills 2021-06-30 to now before falling back to TEJ or TWSE/TPEx purchased history",
+        metadata={
+            "source_dataset": "TaiwanStockTradingDailyReport",
+            "entitlement_tier": "sponsorpro",
+            "history_start": "2021-06-30",
+            "raw_storage_partition": "raw/finmind/TaiwanStockTradingDailyReport/date=YYYY-MM-DD/",
+            "normalization_target": "tw_broker_top",
+            "archive_behavior": "filter_after_raw_partition_load",
+            "run_by_default": False,
+        },
     ),
 )
 

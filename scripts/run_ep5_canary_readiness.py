@@ -140,11 +140,11 @@ GOVERNED_PROVIDER_SPECS = (
         role="Crypto venue execution",
     ),
     GovernedProviderSpec(
-        key="tej",
+        key="finmind",
         env_key="TW_RESEARCH_PROVIDER",
-        expected_value="TEJ",
-        secret_name_keys=("TEJ_API_KEY_SECRET_NAME",),
-        role="Taiwan research-grade vendor",
+        expected_value="FinMind",
+        secret_name_keys=("FINMIND_API_TOKEN_SECRET_NAME",),
+        role="Taiwan low-cost research-grade data layer",
     ),
 )
 
@@ -472,7 +472,7 @@ def evaluate_provider_matrix(env_map: dict[str, str]) -> list[ChecklistItem]:
     if mismatched_refs:
         matrix_detail_parts.append("mismatched refs: " + ", ".join(mismatched_refs))
     if not matrix_detail_parts:
-        matrix_detail_parts.append("governed provider refs declared for IBKR, Shioaji, Kraken, and TEJ")
+        matrix_detail_parts.append("governed provider refs declared for IBKR, Shioaji, Kraken, and FinMind")
     items.append(
         ChecklistItem(
             "governed_provider_matrix_declared",
@@ -486,7 +486,7 @@ def evaluate_provider_matrix(env_map: dict[str, str]) -> list[ChecklistItem]:
             not missing_secret_names,
             "missing: " + ", ".join(missing_secret_names)
             if missing_secret_names
-            else "tracked secret-name refs exist for IBKR, Shioaji, Kraken, and TEJ",
+            else "tracked secret-name refs exist for IBKR, Shioaji, Kraken, and FinMind",
         )
     )
     return items
@@ -732,7 +732,8 @@ def build_datasource_smoke_payloads(env_map: dict[str, str]) -> dict[str, Any]:
     ibkr_provider = optional(env_map, "EXECUTION_BROKER_PROVIDER")
     shioaji_provider = optional(env_map, "TW_EXECUTION_PROVIDER")
     kraken_provider = optional(env_map, "CRYPTO_EXECUTION_PROVIDER")
-    tej_provider = optional(env_map, "TW_RESEARCH_PROVIDER")
+    finmind_provider = optional(env_map, "TW_RESEARCH_PROVIDER")
+    tej_backfill_provider = optional(env_map, "TW_HISTORICAL_BACKFILL_PROVIDER", "TEJ")
 
     ibkr_adapter = IBKRAdapter(
         IBKRConfig(
@@ -809,6 +810,21 @@ def build_datasource_smoke_payloads(env_map: dict[str, str]) -> dict[str, Any]:
     ).to_dict()
 
     taiwan_client = TaiwanMarketClient(rate_limit_delay=0.0)
+    finmind_dataset_code = optional(env_map, "FINMIND_DATASET_CODE", "TaiwanStockTradingDailyReport")
+    finmind_symbol = optional(env_map, "FINMIND_SMOKE_SYMBOL", "2330")
+    finmind_as_of = optional(env_map, "FINMIND_SMOKE_AS_OF_DATE", "2026-06-08")
+    finmind_record = taiwan_client.normalize_finmind_dataset(
+        {
+            "stock_id": finmind_symbol,
+            "date": finmind_as_of,
+            "buy": int(optional(env_map, "FINMIND_SMOKE_BUY", "4100")),
+            "sell": int(optional(env_map, "FINMIND_SMOKE_SELL", "400")),
+            "securities_trader": optional(env_map, "FINMIND_SMOKE_BROKER", "國泰-敦南"),
+            "securities_trader_id": optional(env_map, "FINMIND_SMOKE_BROKER_ID", "9200"),
+        },
+        dataset_code=finmind_dataset_code,
+        api_endpoint="finmind://dataset-smoke",
+    ).to_dict()
     tej_dataset_code = optional(env_map, "TEJ_DATASET_CODE", "TWN/APRCD1")
     tej_symbol = optional(env_map, "TEJ_SMOKE_SYMBOL", "2330")
     tej_as_of = optional(env_map, "TEJ_SMOKE_AS_OF_DATE", "2026-04-24")
@@ -863,15 +879,27 @@ def build_datasource_smoke_payloads(env_map: dict[str, str]) -> dict[str, Any]:
                 "market_data_request": kraken_market_data,
                 "normalized_quote": kraken_quote,
             },
-            "tej": {
-                "configured_provider": tej_provider,
+            "finmind": {
+                "configured_provider": finmind_provider,
+                "expected_provider": "FinMind",
+                "provider_ok": normalize_token(finmind_provider) == normalize_token("FinMind"),
+                "secret_name_refs": {
+                    "api_token": optional(env_map, "FINMIND_API_TOKEN_SECRET_NAME"),
+                },
+                "dataset_code": finmind_dataset_code,
+                "normalized_dataset": finmind_record,
+                "role": "primary_taiwan_low_cost_research_layer",
+            },
+            "tej_backfill": {
+                "configured_provider": tej_backfill_provider,
                 "expected_provider": "TEJ",
-                "provider_ok": normalize_token(tej_provider) == normalize_token("TEJ"),
+                "provider_ok": normalize_token(tej_backfill_provider) == normalize_token("TEJ"),
                 "secret_name_refs": {
                     "api_key": optional(env_map, "TEJ_API_KEY_SECRET_NAME"),
                 },
                 "dataset_code": tej_dataset_code,
                 "normalized_dataset": tej_record,
+                "role": "optional_historical_gap_fill",
             },
         },
     }

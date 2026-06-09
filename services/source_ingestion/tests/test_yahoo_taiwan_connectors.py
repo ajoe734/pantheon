@@ -75,6 +75,8 @@ def test_yahoo_broker_adapter_emits_market_source_records() -> None:
 
     assert connector.source_type.value == "market"
     assert connector.metadata["dataset"] == "tw_broker_top"
+    assert connector.metadata["source_priority"] == "fallback"
+    assert connector.metadata["fallback_for_connector_id"] == "tw-finmind-broker-daily-report"
     assert connector.metadata["active_universe_tiers"] == ["core_universe", "candidate_universe"]
     assert len(records) == 4
     assert records[0].connector_id == "tw-yahoo-broker-top15"

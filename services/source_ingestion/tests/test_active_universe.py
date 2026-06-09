@@ -17,14 +17,22 @@ def test_active_universe_plan_limits_detail_connectors_to_core_and_candidates() 
     )
 
     broker_update = next(
+        update for update in plan["connector_updates"] if update["connector_id"] == "tw-finmind-broker-daily-report"
+    )
+    dataset_update = next(update for update in plan["connector_updates"] if update["connector_id"] == "tw-finmind-datasets")
+    rss_update = next(update for update in plan["connector_updates"] if update["connector_id"] == "tw-yahoo-stock-rss")
+    yahoo_fallback = next(
         update for update in plan["connector_updates"] if update["connector_id"] == "tw-yahoo-broker-top15"
     )
-    rss_update = next(update for update in plan["connector_updates"] if update["connector_id"] == "tw-yahoo-stock-rss")
 
     assert plan["schema_version"] == "active_universe_update_plan.v1"
     assert broker_update["symbols"] == ["2330", "2317"]
     assert broker_update["dataset"] == "tw_broker_top"
+    assert broker_update["metadata"]["source_dataset"] == "TaiwanStockTradingDailyReport"
+    assert dataset_update["symbols"] == ["2330", "2317"]
+    assert dataset_update["dataset"] == "tw_daily_price_and_chip"
     assert rss_update["symbols"] == ["2330", "2317"]
+    assert yahoo_fallback["metadata"]["fallback_for_connector_id"] == "tw-finmind-broker-daily-report"
     assert plan["summary"]["archive_detail_updates_skipped"] == ["6488"]
     assert plan["summary"]["core_count"] == 1
     assert plan["summary"]["candidate_count"] == 1
