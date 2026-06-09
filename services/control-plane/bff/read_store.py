@@ -14402,6 +14402,37 @@ class ReadSurfaceStore:
             },
         }
 
+    def get_source_health_usage_snapshot(self) -> Dict[str, Any]:
+        """Composite source health, usage, and retirement recommendation surface.
+
+        Calls the source-ingest service for enriched health/usage data.
+        The BFF is read-only: it never writes health or usage records.
+        """
+        base_url = self._source_ingest_service_url()
+        if not base_url:
+            return {
+                "source": "missing",
+                "source_count": 0,
+                "sources": [],
+                "recommendation_summary": {},
+            }
+        available, payload = _http_json_get(base_url, "/api/source-ingest/health-usage-snapshot")
+        if not available or not isinstance(payload, dict):
+            return {
+                "source": "unavailable",
+                "source_count": 0,
+                "sources": [],
+                "recommendation_summary": {},
+            }
+        sources = payload.get("sources") if isinstance(payload.get("sources"), list) else []
+        rec_summary = payload.get("recommendation_summary") if isinstance(payload.get("recommendation_summary"), dict) else {}
+        return {
+            "source": "service_client",
+            "source_count": int(payload.get("source_count") or len(sources)),
+            "sources": json.loads(json.dumps(sources)),
+            "recommendation_summary": json.loads(json.dumps(rec_summary)),
+        }
+
     def get_search_ops_snapshot(
         self,
         *,
