@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "task_id": "ASST-CTRL-003",
+  "archived_at": "2026-06-09T00:58:16Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "ASST-CTRL-003",
+    "title": "Improve Management AI control-mode status and frontend-visible posture",
+    "summary_zh": "讓 Management AI 與管理前端能清楚顯示 user/control/kernel 狀態、缺少哪個啟動條件，並確保暗語永不外洩。",
+    "phase": "Sprint ASST-CTRL / Management AI control UX",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "ASST-CTRL-001",
+      "ASST-CTRL-002"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/CONTROL_MODE_REPAIR_EXECUTION_TASKS_2026-06-06.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/USER_MODE_CONTRACTION.md;services/control-plane/bff/assistant/routes.py;services/control-plane/bff/main.py;apps/management/src;services/control-plane/bff/tests/test_management_nl_assistant_provider.py"
+    ],
+    "acceptance": [
+      "/bff/assistant/mode and /bff/assistant/control-mode expose machine-readable inactive reasons;Management NL /control status /control off explicit passphrase and direct passphrase commands return redacted questions;UI does not imply passphrase alone grants authority;failed explicit passphrase attempts are redacted before provider conversation and audit persistence;context packs switch to kernel_debug only while a valid same-session activation is active"
+    ],
+    "next": "Superseded by merged control-mode status and UX delivery: PR #1131 (03ee00ae) added the operator-run control-mode queue smoke and documented frontend-visible activation preconditions; PR #1171 (c0b1f8a) now renders SA/SD from the governed effective skill descriptor. Retired during OPS-STATE-CLOSEOUT-CLEANUP-20260609 audit.",
+    "last_update": "2026-06-09T00:58:16Z",
+    "task_class": "assistant_control_runtime_repair",
+    "auto_created_by": "dispatch_assistant_control_mode_repair_2026-06-06",
+    "auto_generated": true,
+    "terminal_outcome": "superseded",
+    "superseded_by": "ASST-SKILL-002"
+  },
+  "handoffs": [],
+  "blockers": []
+}

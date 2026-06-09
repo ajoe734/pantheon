@@ -81,6 +81,11 @@ class CommandType(str, Enum):
     ADVANCE_LIFECYCLE = "AdvanceLifecycle"
     APPROVE_POOL = "ApprovePool"
     START_RUNTIME = "StartRuntime"
+    RESTART_PAPER_RUNTIME = "RestartPaperRuntime"
+    RESTART_TELEMETRY_BRIDGE = "RestartTelemetryBridge"
+    TERMINATE_STALE_PAPER_MONITORING_SESSION = "TerminateStalePaperMonitoringSession"
+    START_PAPER_MONITORING_SESSION = "StartPaperMonitoringSession"
+    PROBE_TELEMETRY_INGEST = "ProbeTelemetryIngest"
 
 
 class ObjectType(str, Enum):
