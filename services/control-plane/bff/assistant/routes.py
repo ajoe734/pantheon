@@ -76,6 +76,8 @@ ProviderReadiness = Callable[[], Dict[str, Any]]
 OpenClawToolPolicy = Callable[[], Dict[str, Any]]
 OpenClawEffectiveTools = Callable[[str], Dict[str, Any]]
 PrepareRepairWorktree = Callable[[Dict[str, Any], str, Optional[str]], Dict[str, Any]]
+ProviderReauth = Callable[[Dict[str, Any], str, Optional[str]], Dict[str, Any]]
+ProviderReauthStatus = Callable[[str, str, str], Dict[str, Any]]
 
 DEFAULT_DEV_DOC_CONTEXT_SOURCES = [
     "ui",
@@ -107,6 +109,8 @@ def create_assistant_router(
     openclaw_tool_policy: Optional[OpenClawToolPolicy] = None,
     openclaw_effective_tools: Optional[OpenClawEffectiveTools] = None,
     prepare_repair_worktree: Optional[PrepareRepairWorktree] = None,
+    provider_reauth: Optional[ProviderReauth] = None,
+    provider_reauth_status: Optional[ProviderReauthStatus] = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/bff/assistant", tags=["assistant"])
 
@@ -481,6 +485,85 @@ def create_assistant_router(
                 },
             }
         return {"data": prepared}
+
+    @router.post("/provider/reauth", status_code=202)
+    async def start_assistant_provider_reauth(
+        payload: dict = Body(default_factory=dict),
+        authorization: Optional[str] = Header(default=None),
+    ) -> dict[str, Any]:
+        """Start a provider device-auth reauth flow through the OpenClaw adapter.
+
+        BFF gates operator authorization and active control mode, but it never
+        receives or forwards provider credentials.  The adapter returns only
+        browser-safe device flow fields.
+        """
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+        control_status = _require_active_control_mode(
+            identity,
+            _control_mode_store,
+            bff_error=bff_error,
+        )
+        _require_provider_reauth_control(control_status, bff_error=bff_error)
+        if provider_reauth is None:
+            _raise_error(
+                bff_error,
+                503,
+                ErrorCode.PRECONDITION_FAILED,
+                "Assistant provider reauth is not configured",
+                "OpenClaw adapter provider reauth is not configured for this BFF.",
+                field="openclaw_adapter",
+            )
+
+        request_payload = dict(payload or {})
+        provider = str(request_payload.get("provider") or "codex").strip().lower() or "codex"
+        request_payload["provider"] = provider
+        request_payload["control_mode"] = {
+            "mode": control_status.get("mode"),
+            "activation_id": control_status.get("activation_id") or control_status.get("activationId"),
+        }
+        trace_id = str(request_payload.get("traceId") or request_payload.get("trace_id") or "").strip() or None
+        actor_id = str(getattr(identity, "operator_id", None) or "management-ai")
+        started = provider_reauth(request_payload, actor_id, trace_id)
+        if isinstance(started, dict) and isinstance(started.get("data"), dict):
+            return {
+                "data": started["data"],
+                "meta": {
+                    "openclawAdapterStatus": started.get("status"),
+                    "openclaw_adapter_status": started.get("status"),
+                },
+            }
+        return {"data": started}
+
+    @router.get("/provider/reauth/{session_id}")
+    async def get_assistant_provider_reauth_status(
+        session_id: str,
+        provider: str = "codex",
+        authorization: Optional[str] = Header(default=None),
+    ) -> dict[str, Any]:
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+        _require_active_control_mode(identity, _control_mode_store, bff_error=bff_error)
+        if provider_reauth_status is None:
+            _raise_error(
+                bff_error,
+                503,
+                ErrorCode.PRECONDITION_FAILED,
+                "Assistant provider reauth status is not configured",
+                "OpenClaw adapter provider reauth status is not configured for this BFF.",
+                field="openclaw_adapter",
+            )
+        actor_id = str(getattr(identity, "operator_id", None) or "management-ai")
+        status = provider_reauth_status(provider, session_id, actor_id)
+        if isinstance(status, dict) and isinstance(status.get("data"), dict):
+            return {
+                "data": status["data"],
+                "meta": {
+                    "openclawAdapterStatus": status.get("status"),
+                    "openclaw_adapter_status": status.get("status"),
+                },
+            }
+        return {"data": status}
 
     @router.post("/dev-docs/generate", status_code=201)
     async def generate_assistant_dev_docs(
@@ -961,6 +1044,38 @@ def _require_kernel_repair_control(
             "The active control-mode activation does not include assistant.kernel.repair",
             field="capabilities",
             required_capability="assistant.kernel.repair",
+        )
+
+
+def _require_provider_reauth_control(
+    control_status: Dict[str, Any],
+    *,
+    bff_error: Optional[BffErrorFactory],
+) -> None:
+    mode = str(control_status.get("mode") or "")
+    capabilities = {str(value) for value in (control_status.get("capabilities") or [])}
+    allowed_modes = {AssistantMode.KERNEL_DEBUG.value, AssistantMode.KERNEL_REPAIR.value}
+    if mode not in allowed_modes:
+        _raise_error(
+            bff_error,
+            409,
+            ErrorCode.PRECONDITION_FAILED,
+            "Assistant provider reauth requires active kernel_debug or kernel_repair control mode",
+            "Activate assistant control mode in kernel_debug or kernel_repair before starting provider reauth",
+            field="control_mode",
+            reason="kernel_debug_or_repair_required",
+            mode=mode or None,
+        )
+    if not capabilities.intersection({"assistant.kernel.debug", "assistant.kernel.repair"}):
+        _raise_error(
+            bff_error,
+            403,
+            ErrorCode.FORBIDDEN,
+            "Assistant provider reauth requires assistant.kernel.debug or assistant.kernel.repair capability",
+            "The active control-mode activation does not include a provider reauth-capable kernel capability",
+            field="capabilities",
+            required_capability="assistant.kernel.debug",
+            alternate_capability="assistant.kernel.repair",
         )
 
 

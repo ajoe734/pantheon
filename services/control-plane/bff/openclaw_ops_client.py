@@ -79,6 +79,14 @@ def _assistant_repair_prepare_timeout_seconds() -> float:
         return 45.0
 
 
+def _assistant_reauth_timeout_seconds() -> float:
+    raw = os.getenv("PANTHEON_ASSISTANT_REAUTH_TIMEOUT_SECONDS", "30.0").strip()
+    try:
+        return max(float(raw), 0.1)
+    except ValueError:
+        return 30.0
+
+
 def _safe_json(raw: str) -> Dict[str, Any]:
     if not raw:
         return {}
@@ -249,6 +257,46 @@ class OpenClawOpsClient:
             headers=headers,
             expected_status={201},
             timeout_seconds=_assistant_repair_prepare_timeout_seconds(),
+        )
+
+    def start_assistant_provider_reauth(
+        self,
+        *,
+        provider: str = "codex",
+        payload: Optional[Dict[str, Any]] = None,
+        operator_id: str,
+        trace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        normalized = str(provider or "codex").strip().lower()
+        headers: Dict[str, str] = {"X-Operator-Id": operator_id}
+        if trace_id:
+            headers["X-Trace-Id"] = trace_id
+        body = dict(payload or {})
+        body.setdefault("provider", normalized)
+        return self._request(
+            "POST",
+            f"/api/openclaw-adapter/assistant/providers/{urllib.parse.quote(normalized)}/reauth",
+            body=body,
+            headers=headers,
+            expected_status={202},
+            timeout_seconds=_assistant_reauth_timeout_seconds(),
+        )
+
+    def get_assistant_provider_reauth_status(
+        self,
+        *,
+        provider: str = "codex",
+        session_id: str,
+        operator_id: str,
+    ) -> Dict[str, Any]:
+        normalized = str(provider or "codex").strip().lower()
+        return self._request(
+            "GET",
+            (
+                f"/api/openclaw-adapter/assistant/providers/{urllib.parse.quote(normalized)}"
+                f"/reauth/{urllib.parse.quote(session_id)}"
+            ),
+            headers={"X-Operator-Id": operator_id},
         )
 
     def create_session(

@@ -37,15 +37,18 @@ from assistant_command_policy import (
 
 ASSISTANT_SKILL_DESCRIPTOR_SCHEMA_VERSION = "assistant_skill_descriptor.v1"
 ASSISTANT_SA_SD_GENERATE_TOOL_NAME = "assistant.sa_sd.generate"
+ASSISTANT_PROVIDER_REAUTH_TOOL_NAME = "assistant.provider.reauth"
 _DEFAULT_EFFECTIVE_SKILL_MODE = "kernel_debug"
 _DEFAULT_OPERATOR_ROLE = "operator"
 _TOOL_SKILL_MODES = ("kernel_debug", "kernel_repair")
 _ASSISTANT_COMMAND_SKILL_MODES = ("kernel_observe", "kernel_debug", "kernel_repair")
 _ASSISTANT_SA_SD_GENERATE_SKILL_MODES = ("kernel_debug", "kernel_repair")
+_ASSISTANT_PROVIDER_REAUTH_SKILL_MODES = ("kernel_debug", "kernel_repair")
 _WORKFLOW_SKILL_MODES = ("kernel_repair",)
 _ADAPTER_OWNED_ASSISTANT_TOOLS = frozenset({
     ASSISTANT_COMMAND_TOOL_NAME,
     ASSISTANT_SA_SD_GENERATE_TOOL_NAME,
+    ASSISTANT_PROVIDER_REAUTH_TOOL_NAME,
 })
 _OPERATOR_ROLE_ALIASES = {
     "admin": "admin",
@@ -390,6 +393,35 @@ def _tool_skill_descriptor(
             },
             handler_ref="bff.route:POST /bff/assistant/dev-docs/generate",
             result_surface="assistant_dev_docs_packet",
+        )
+    if tool_name == ASSISTANT_PROVIDER_REAUTH_TOOL_NAME:
+        return AssistantSkillDescriptor(
+            id=tool_name,
+            title="Re-authenticate Assistant Provider",
+            surface="assistant_command",
+            mode_gate=_mode_gate(_ASSISTANT_PROVIDER_REAUTH_SKILL_MODES),
+            role="operator",
+            confirm_policy={
+                "required": True,
+                "policy": "active_control_mode",
+                "note": (
+                    "Starts Codex device auth through the service-user mount. "
+                    "Credentials are exchanged only between the operator browser, IdP, and provider CLI."
+                ),
+            },
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "provider": {"type": "string", "enum": ["codex", "codex_cli"]},
+                    "reason": {"type": "string"},
+                    "captureTimeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 120},
+                    "pollIntervalSeconds": {"type": "integer", "minimum": 1, "maximum": 60},
+                    "maxWaitSeconds": {"type": "integer", "minimum": 30, "maximum": 3600},
+                },
+                "additionalProperties": False,
+            },
+            handler_ref="bff.route:POST /bff/assistant/provider/reauth",
+            result_surface="assistant_provider_reauth_device_flow",
         )
     if tool_name == ASSISTANT_COMMAND_TOOL_NAME:
         return AssistantSkillDescriptor(

@@ -676,6 +676,26 @@ class AssistantProviderInvokeRequest(BaseModel):
     attachments: Optional[List[Dict[str, Any]]] = None
 
 
+class AssistantProviderReauthRequest(BaseModel):
+    provider: str = "codex"
+    reason: Optional[str] = None
+    capture_timeout_seconds: Optional[int] = None
+    captureTimeoutSeconds: Optional[int] = None
+    poll_interval_seconds: Optional[int] = None
+    pollIntervalSeconds: Optional[int] = None
+    max_wait_seconds: Optional[int] = None
+    maxWaitSeconds: Optional[int] = None
+
+    def capture_timeout(self) -> Optional[int]:
+        return self.capture_timeout_seconds if self.capture_timeout_seconds is not None else self.captureTimeoutSeconds
+
+    def poll_interval(self) -> Optional[int]:
+        return self.poll_interval_seconds if self.poll_interval_seconds is not None else self.pollIntervalSeconds
+
+    def max_wait(self) -> Optional[int]:
+        return self.max_wait_seconds if self.max_wait_seconds is not None else self.maxWaitSeconds
+
+
 class AssistantRepairWorktreePrepareRequest(BaseModel):
     task_id: Optional[str] = None
     taskId: Optional[str] = None
@@ -754,6 +774,78 @@ def list_assistant_providers(auth_probe: bool = False) -> Dict[str, Any]:
             _CLAUDE_PROVIDER.readiness(auth_probe=auth_probe),
         ],
     }
+
+
+@app.post("/api/openclaw-adapter/assistant/providers/{provider}/reauth")
+def start_assistant_provider_reauth(
+    provider: str,
+    req: AssistantProviderReauthRequest,
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+) -> JSONResponse:
+    if not x_operator_id or not x_operator_id.strip():
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "provider_error",
+                "error_code": "OPERATOR_REQUIRED",
+                "message": "X-Operator-Id header is required for provider reauth.",
+            },
+        )
+    normalized = str(provider or req.provider or "").strip().lower()
+    if normalized not in {"codex", "codex_cli"}:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "status": "provider_error",
+                "error_code": "PROVIDER_REAUTH_UNSUPPORTED",
+                "message": "Provider reauth is currently supported only for codex.",
+            },
+        )
+    try:
+        result = _CODEX_PROVIDER.start_device_reauth(
+            operator_id=x_operator_id.strip(),
+            trace_id=x_trace_id,
+            reason=req.reason,
+            capture_timeout_seconds=req.capture_timeout(),
+            poll_interval_seconds=req.poll_interval(),
+            max_wait_seconds=req.max_wait(),
+        )
+    except CodexProviderError as exc:
+        return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
+    return JSONResponse(status_code=202, content={"status": "ok", "data": result})
+
+
+@app.get("/api/openclaw-adapter/assistant/providers/{provider}/reauth/{session_id}")
+def get_assistant_provider_reauth_status(
+    provider: str,
+    session_id: str,
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+) -> JSONResponse:
+    if not x_operator_id or not x_operator_id.strip():
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "provider_error",
+                "error_code": "OPERATOR_REQUIRED",
+                "message": "X-Operator-Id header is required for provider reauth status.",
+            },
+        )
+    normalized = str(provider or "").strip().lower()
+    if normalized not in {"codex", "codex_cli"}:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "status": "provider_error",
+                "error_code": "PROVIDER_REAUTH_UNSUPPORTED",
+                "message": "Provider reauth is currently supported only for codex.",
+            },
+        )
+    try:
+        result = _CODEX_PROVIDER.reauth_status(session_id)
+    except CodexProviderError as exc:
+        return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
+    return JSONResponse(status_code=200, content={"status": "ok", "data": result})
 
 
 @app.post("/api/openclaw-adapter/assistant/repair-worktrees/prepare")
