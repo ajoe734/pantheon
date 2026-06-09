@@ -196,6 +196,21 @@ This catalog is a target onboarding plan, not a claim that each connector is alr
 | US short interest | FINRA | none | normalized/features | Daily and half-month depending dataset. |
 | Macro | FRED | none | normalized/features | Mixed frequencies. |
 
+Implementation note, `DATASTRAT-CATALOG-003`:
+
+- `services/source_ingestion/financial_source_catalog.py` now materializes the
+  initial financial data-source catalog as `DataSourceEntry` templates with
+  `source_kind=data_source`.
+- The initial template set covers FinMind, TWSE/TPEx, MOPS, Yahoo Taiwan
+  RSS/broker top N, SEC EDGAR, and FRED.
+- Source-ingest exposes the catalog read-only through
+  `GET /api/source-ingest/data-sources/financial-catalog`; the existing
+  `GET /api/source-ingest/registry` response also embeds
+  `financial_data_source_catalog` for BFF/operator composition.
+- Catalog entries are `candidate` templates. This is not a live connector
+  enablement claim and does not bypass connector lifecycle, schedule config,
+  source health, or registry write authority.
+
 ### 4.4 Active Universe Policy
 
 The system must not run full-market full-depth updates for every dataset every day.
@@ -220,6 +235,22 @@ UniverseTransition:
   triggered_by: actor_ref
   effective_at: datetime
 ```
+
+Implementation note, `DATASTRAT-CATALOG-003`:
+
+- `services/source_ingestion/active_universe.py` now exposes
+  `active_universe_policy_payload()` with tier definitions, scheduling rules,
+  and the `UniverseTransition` record schema.
+- Default rules keep TWSE/TPEx daily price and MOPS/SEC material filing events
+  available for `archive_universe`, while broker top N, detailed FinMind chip
+  data, and Yahoo RSS fanout remain scoped to `core_universe` and
+  `candidate_universe`.
+- The active-universe planner response includes
+  `policy_ref=active_universe_scheduling_policy.v1`; the policy is available
+  through `GET /api/source-ingest/active-universe/policy`.
+- BFF read surfaces pass the catalog and active-universe policy through from
+  source-ingest only; BFF does not read source-ingest volumes or mutate registry
+  state.
 
 ### 4.5 Storage Design
 

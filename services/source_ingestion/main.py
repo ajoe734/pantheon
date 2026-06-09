@@ -75,6 +75,7 @@ from .external_sources import (
     validate_external_source_connector,
     validate_external_source_record,
 )
+from .financial_source_catalog import financial_data_source_catalog_payload
 from .ingest_manager import IngestManager
 from .pg_store import build_source_evidence_repository
 from .policy_registry import crawler_policy_for_connector, policy_registry_payload
@@ -1193,17 +1194,30 @@ def list_connectors() -> dict[str, Any]:
 @app.get("/api/source-ingest/registry")
 def source_connector_registry() -> dict[str, Any]:
     entries = _source_connector_entries()
+    financial_catalog = financial_data_source_catalog_payload()
     return {
         "schema_version": "source_connector_registry.v1",
         "connectors": entries,
         "provider_examples": _provider_example_payloads(),
         "policy_registry": _source_policy_registry_payload(),
+        "financial_data_source_catalog": financial_catalog,
+        "active_universe_policy": financial_catalog["active_universe_policy"],
     }
 
 
 @app.get("/api/source-ingest/policy-registry")
 def source_policy_registry() -> dict[str, Any]:
     return _source_policy_registry_payload()
+
+
+@app.get("/api/source-ingest/data-sources/financial-catalog")
+def financial_data_source_catalog() -> dict[str, Any]:
+    return financial_data_source_catalog_payload()
+
+
+@app.get("/api/source-ingest/active-universe/policy")
+def active_universe_policy() -> dict[str, Any]:
+    return financial_data_source_catalog_payload()["active_universe_policy"]
 
 
 @app.post("/api/source-ingest/active-universe/plan")
