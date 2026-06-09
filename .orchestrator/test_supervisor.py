@@ -4378,12 +4378,26 @@ class OrphanedQueueEventTests(unittest.TestCase):
         )
         state = {"queue": {"events": {}}, "workers": {}}
 
-        with mock.patch.object(supervisor, "start_worker_for_request") as start_worker:
+        with mock.patch.object(supervisor, "start_worker_for_request") as start_worker, mock.patch.object(
+            supervisor, "write_activity_log"
+        ) as write_activity_log:
             changed = supervisor.process_queue(self.config, state, provider_report={})
+            # A second pass must not re-log the same orphaned event.
+            changed_again = supervisor.process_queue(self.config, state, provider_report={})
 
-        self.assertFalse(changed)
+        # Orphaned wake never starts a worker, but it is no longer dropped silently.
         start_worker.assert_not_called()
-        self.assertEqual(state["queue"]["events"], {})
+        self.assertTrue(changed)
+        self.assertFalse(changed_again)
+        orphan_logs = [
+            call.args[1]
+            for call in write_activity_log.call_args_list
+            if call.args[1].get("type") == "wake_orphaned"
+        ]
+        self.assertEqual(len(orphan_logs), 1)
+        self.assertEqual(orphan_logs[0]["task_id"], "RW-05-artifact-compare")
+        self.assertEqual(orphan_logs[0]["queue_event_id"], "coord-old")
+        self.assertTrue(state["queue"]["events"]["coord-old"]["orphan_logged"])
 
     def test_prune_event_queue_drops_stale_orphan_event(self) -> None:
         self._write_event(
