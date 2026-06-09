@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "task_id": "ASST-SKILL-003",
+  "archived_at": "2026-06-09T04:40:16Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASST-SKILL-003",
+    "title": "Frontend generic renderer: surfaces driven by the effective skill catalog",
+    "summary_zh": "把 Management AI 工具列/命令/降級卡 action 改成遍歷 effective catalog 動態渲染（button/command/card_action 由 surface 決定，enable/confirm/輸入表單由 descriptor 決定），達到 parity 後移除寫死按鈕；FE 不得在原始碼列舉能力。",
+    "phase": "EPIC ASST-SKILL / FE generic renderer",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "ASST-SKILL-002"
+    ],
+    "artifacts": [
+      "docs/decisions/assistant-capability-skill-catalog-ownership.md;execute-plans/src"
+    ],
+    "acceptance": [
+      "Toolbar command-palette and degraded-card actions are rendered by iterating the effective catalog;Enablement confirm steps and input modals derive from descriptor fields only;Hardcoded capability buttons are removed once catalog parity is confirmed;FE source enumerates no capability and calls no uncatalogued route;FE shows nothing the policy did not advertise for the current context;Tests or snapshot cover catalog-driven render and removal of hardcoded entries"
+    ],
+    "next": "Closed out after PR #1180 merged; catalog-driven renderer delivery approved by Claude2 and merged via PR #1177, review/finalization artifacts merged through #1178/#1179/#1180.",
+    "last_update": "2026-06-09T04:40:16Z",
+    "auto_created_by": "dispatch_assistant_skill_catalog_2026-06-08",
+    "review_notes_zh": [
+      "審查通過：FE 已完全去除硬編碼能力 ID，catalog 驅動渲染正確實作；handler_ref 路由限制 /bff/ 前綴符合 deny-by-default 政策；descriptor-driven input/enable/confirm 邏輯完整；test 覆蓋新 BFF helper 關鍵路徑。",
+      "後續追蹤：window.confirm 確認門控建議改為 proper modal；動態 status string 若有外部 test 耦合需同步更新。"
+    ],
+    "review_file": "docs/decisions/asst-skill-003-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-09T04:40:16Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/asst-skill-003",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/ASST-SKILL-003",
+      "git_clean_required": false,
+      "commit": "7acc0c5ed1056a5c88daec328416d913e35330a8",
+      "commit_subject": "ASST-SKILL-003: merge dev for final closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "ASST-SKILL-003",
+        "Reviewer": "Claude2",
+        "Verified": "base merge for PR #1180; GitHub checks rerun on updated branch."
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/ASST-SKILL-003",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "f80499de8b0639788626516ace2d981d75a003e3",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASST-SKILL-003",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Implementation committed and PR #1177 opened with auto-merge enabled. Scope: execute-plans Management AI catalog-driven renderer from effectiveSkills; validation passed locally (git diff --check, targeted tsc, targeted Vitest, no hard-coded SA/SD capability grep). Waiting for Claude2 review and GitHub checks/merge.",
+      "status": "done",
+      "created_at": "2026-06-09T04:16:38Z",
+      "resolved_at": "2026-06-09T04:23:44Z"
+    },
+    {
+      "task_id": "ASST-SKILL-003",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved: catalog-driven renderer removes all hardcoded FE capability enumeration; BFF helper deny-by-default routing and descriptor-driven input/enable/confirm logic are correct. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-06-09T04:23:44Z",
+      "resolved_at": "2026-06-09T04:40:17Z"
+    }
+  ],
+  "blockers": []
+}
