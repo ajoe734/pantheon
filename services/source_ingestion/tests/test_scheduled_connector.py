@@ -325,6 +325,37 @@ def test_registry_reports_connector_freshness_after_scheduled_run(client) -> Non
     assert freshness["last_ingest_run_id"]
     assert freshness["latest_run"]["status"] == "completed"
     assert freshness["seconds_until_due"] > 0
+    health = entry["health_metrics"]
+    assert health["schema_version"] == "source_connector_health_metrics.v1"
+    assert health["last_success_at"] == freshness["last_success_at"]
+    assert health["row_count"] == 1
+    assert health["expected_rows"] == 1
+    assert health["schema_hash"]
+    assert health["source_error"] is None
+
+
+def test_active_universe_plan_endpoint_uses_default_low_cost_rules(client) -> None:
+    test_client, _, _ = client
+
+    response = test_client.post(
+        "/api/source-ingest/active-universe/plan",
+        json={
+            "members": [
+                {"symbol": "2330", "tier": "core_universe", "reason": "holding"},
+                {"symbol": "2317", "tier": "candidate_universe", "reason": "watchlist"},
+                {"symbol": "6488", "tier": "archive_universe", "reason": "removed"},
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    plan = response.json()
+    broker_update = next(
+        update for update in plan["connector_updates"] if update["connector_id"] == "tw-yahoo-broker-top15"
+    )
+    assert broker_update["symbols"] == ["2330", "2317"]
+    assert "6488" not in broker_update["symbols"]
+    assert plan["summary"]["archive_detail_updates_skipped"] == ["6488"]
 
 
 def test_policy_registry_reports_crawler_guards_and_rate_limits(client) -> None:
