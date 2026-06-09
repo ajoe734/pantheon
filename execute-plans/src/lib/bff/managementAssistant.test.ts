@@ -54,4 +54,31 @@ describe("assistant catalog route descriptors", () => {
       featureSummary: "Generate work packet",
     });
   });
+
+  it("substitutes catalog route path parameters from descriptor input", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ data: { transcript: [] } }));
+    globalThis.fetch = fetchMock;
+
+    await invokeAssistantCatalogRoute(
+      "bff.route:GET /bff/assistant/sessions/{sessionId}/transcript",
+      { sessionId: "session/alpha" },
+      "https://bff.example.test",
+    );
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://bff.example.test/bff/assistant/sessions/session%2Falpha/transcript",
+    );
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(init.method).toBe("GET");
+    expect(init.body).toBeUndefined();
+  });
+
+  it("fails closed when a descriptor route template is missing input", async () => {
+    await expect(
+      invokeAssistantCatalogRoute(
+        "bff.route:GET /bff/assistant/sessions/{sessionId}/transcript",
+        {},
+      ),
+    ).rejects.toThrow("Missing assistant catalog route path parameter: sessionId");
+  });
 });

@@ -3,9 +3,7 @@ import { postAsk, openAskSse, getAskSession } from "@/lib/bff/agora";
 import {
   assistantCatalogRouteFromHandlerRef,
   getAssistantOrchestratorStatus,
-  getAssistantTranscript,
   invokeAssistantCatalogRoute,
-  postManagementAssistantAsk,
   type ManagementAssistantAskRequest,
 } from "@/lib/bff/managementAssistant";
 import {
@@ -447,6 +445,9 @@ function catalogSkillInputBody(
     sessionId: string | null;
     uiContext: AssistantUiContextV1;
     openClawMode: AssistantMode;
+    controlMode?: ManagementAskControlMode;
+    openclaw?: ManagementAskOpenClaw;
+    recentTurns?: Array<Record<string, unknown>>;
   },
 ): JsonRecord {
   const properties = assistantSkillInputProperties(skill);
@@ -475,7 +476,25 @@ function catalogSkillInputBody(
       contextRefs: options.uiContext.contextRefs,
     },
   };
+  const conversation = {
+    source: "client_hint",
+    recentTurns: options.recentTurns ?? [],
+  };
+  const metadata = assistantUiContextMetadata(options.uiContext, { source: "ask-personas-ui" });
 
+  setDescriptorInput(body, properties, "question", options.prompt);
+  setDescriptorInput(body, properties, "prompt", options.prompt);
+  setDescriptorInput(body, properties, "sessionId", options.sessionId);
+  setDescriptorInput(body, properties, "session_id", options.sessionId);
+  setDescriptorInput(body, properties, "focus", "all");
+  setDescriptorInput(body, properties, "controlMode", options.controlMode);
+  setDescriptorInput(body, properties, "control_mode", options.controlMode);
+  setDescriptorInput(body, properties, "openclaw", options.openclaw);
+  setDescriptorInput(body, properties, "ui", options.uiContext);
+  setDescriptorInput(body, properties, "conversation", conversation);
+  setDescriptorInput(body, properties, "metadata", metadata);
+  setDescriptorInput(body, properties, "provider", "codex");
+  setDescriptorInput(body, properties, "reason", "management_ai_frontend_catalog_skill");
   setDescriptorInput(body, properties, "conversationId", options.sessionId);
   setDescriptorInput(body, properties, "conversation_id", options.sessionId);
   setDescriptorInput(body, properties, "featureSummary", featureSummary);
@@ -923,79 +942,21 @@ export default function AskPersonas(): JSX.Element {
     }
   };
 
-  const handleManagementAsk = async () => {
-    if (!prompt.trim()) return;
-    setMessages([{ role: "operator", content: prompt }]);
-    setStatus("management_ai_sending");
-    setWorkflowError(null);
-    setDevDocResult(null);
-    setCatalogResultSkill(null);
-    setHandoffCopied(null);
-    setSourceCitations([]);
-
-    try {
-      const uiContext = currentUiContext();
-      const openclaw = openClawRepairPayload();
-      const controlMode = controlModePayload();
-      const res = await postManagementAssistantAsk({
-        question: prompt,
-        ...(sessionId ? { sessionId } : {}),
-        focus: "all",
-        ...(controlMode ? { controlMode } : {}),
-        ...(openclaw ? { openclaw } : {}),
-        ui: uiContext,
-        conversation: {
-          source: "client_hint",
-          recentTurns: recentTurns(messages),
-        },
-        metadata: assistantUiContextMetadata(uiContext, { source: "ask-personas-ui" }),
-      });
-      const data = recordFrom(res.data ?? res);
-      const id = firstString(data.sessionId, data.session_id, data.session);
-      if (id) setSessionId(id);
-      const answer = firstString(data.answer);
-      if (answer) {
-        setMessages([{ role: "operator", content: prompt }, { role: "assistant", content: answer }]);
-      }
-      const signals = normalizeAssistantSignals(res, id);
-      setAssistantSignals(signals);
-      setMode(normalizeMode(signals.mode));
-      setStatus(
-        firstString(recordFrom(data.providerStatus ?? data.provider_status).status, data.status) ?? "completed",
-      );
-      const citations = normalizeSourceCitations(res);
-      if (citations.length > 0) setSourceCitations(citations);
-    } catch (err) {
-      const message = `Management AI failed: ${String(err)}`;
-      setStatus("error");
-      setWorkflowError(message);
-      appendDelta(message, "assistant");
-    }
-  };
-
-  const handleSystemStatus = async () => {
-    setWorkflowError(null);
-    try {
-      const res = await getAssistantOrchestratorStatus();
-      setSystemStatus(res);
-      setStatus("system_status_loaded");
-    } catch (err) {
-      const message = `System status failed: ${String(err)}`;
-      setWorkflowError(message);
-      appendDelta(message, "assistant");
-    }
-  };
-
   const handleCatalogAction = async (skill: JsonRecord, surface: CatalogRenderSurface) => {
     const skillId = assistantSkillId(skill);
     const label = assistantSkillLabel(skill);
     const handlerRef = assistantSkillHandlerRef(skill);
     const uiContext = currentUiContext();
+    const openclaw = openClawRepairPayload();
+    const controlMode = controlModePayload();
     const body = catalogSkillInputBody(skill, {
       prompt,
       sessionId,
       uiContext,
       openClawMode,
+      controlMode,
+      openclaw,
+      recentTurns: recentTurns(messages),
     });
     const disabledReason = catalogSkillDisabledReason(skill, body);
     if (disabledReason) {
@@ -1017,6 +978,55 @@ export default function AskPersonas(): JSX.Element {
     setCatalogActionPending(skillId);
     try {
       const res = await invokeAssistantCatalogRoute(handlerRef, body);
+      const resultSurface = firstString(skill.result_surface, skill.resultSurface);
+      if (resultSurface === "assistant_management_answer") {
+        const data = recordFrom(res.data ?? res);
+        const id = firstString(data.sessionId, data.session_id, data.session);
+        if (id) setSessionId(id);
+        const answer = firstString(data.answer);
+        if (answer) {
+          setMessages([{ role: "operator", content: prompt }, { role: "assistant", content: answer }]);
+        }
+        const signals = normalizeAssistantSignals(res, id);
+        setAssistantSignals(signals);
+        setMode(normalizeMode(signals.mode));
+        setStatus(
+          firstString(recordFrom(data.providerStatus ?? data.provider_status).status, data.status) ?? "completed",
+        );
+        const citations = normalizeSourceCitations(res);
+        if (citations.length > 0) setSourceCitations(citations);
+        return;
+      }
+      if (resultSurface === "assistant_orchestrator_status") {
+        setSystemStatus(res);
+        setStatus("system_status_loaded");
+        return;
+      }
+      if (resultSurface === "assistant_control_mode_status") {
+        const signals = normalizeAssistantSignals(res, sessionId);
+        setAssistantSignals((current) => ({
+          ...current,
+          ...signals,
+          mode: signals.mode ?? current.mode,
+        }));
+        setMode(normalizeMode(signals.mode) ?? mode);
+        setStatus("control_mode_loaded");
+        return;
+      }
+      if (resultSurface === "assistant_transcript_resync") {
+        const final = transcriptMessages(res);
+        setMessages(final);
+        const record = recordFrom(res.data ?? res);
+        setStatus(firstString(record.status) ?? "transcript_resynced");
+        const updatedSignals = normalizeAssistantSignals(res, sessionId);
+        setMode(normalizeMode(updatedSignals.mode));
+        setAssistantSignals(updatedSignals);
+        const citations = normalizeSourceCitations(res);
+        if (citations.length > 0) {
+          setSourceCitations(citations);
+        }
+        return;
+      }
       setDevDocResult(recordFrom(res));
       setCatalogResultSkill(skill);
       setHandoffCopied(null);
@@ -1054,31 +1064,6 @@ export default function AskPersonas(): JSX.Element {
     }
   };
 
-  const handleResync = async () => {
-    if (!sessionId) return;
-    try {
-      let s: unknown;
-      try {
-        s = await getAskSession(sessionId);
-      } catch (_agoraError) {
-        s = await getAssistantTranscript(sessionId);
-      }
-      const final = transcriptMessages(s);
-      setMessages(final);
-      const record = recordFrom(s);
-      setStatus(firstString(record.status) ?? null);
-      const updatedSignals = normalizeAssistantSignals(s, sessionId);
-      setMode(normalizeMode(updatedSignals.mode));
-      setAssistantSignals(updatedSignals);
-      const citations = normalizeSourceCitations(s);
-      if (citations.length > 0) {
-        setSourceCitations(citations);
-      }
-    } catch (e) {
-      appendDelta(`Resync failed: ${String(e)}`, "assistant");
-    }
-  };
-
   const devBridge = devDocResult ? devBridgeRecord(devDocResult) : {};
   const devArtifactPaths = devDocResult ? devDocArtifactPaths(devDocResult) : [];
   const devDispatchCommand = devDocResult ? buildAssistantDevDispatchCommand(devDocResult) : null;
@@ -1098,6 +1083,9 @@ export default function AskPersonas(): JSX.Element {
       sessionId,
       uiContext: currentUiContext(),
       openClawMode,
+      controlMode: controlModePayload(),
+      openclaw: openClawRepairPayload(),
+      recentTurns: recentTurns(messages),
     });
     const disabledReason = catalogSkillDisabledReason(skill, body);
     const busy = catalogActionPending === skillId;
@@ -1159,15 +1147,6 @@ export default function AskPersonas(): JSX.Element {
       <div>
         <button onClick={handleSend} disabled={status === "sending" || !prompt.trim()}>
           Ask
-        </button>
-        <button onClick={handleManagementAsk} disabled={status === "management_ai_sending" || !prompt.trim()}>
-          Ask Management AI
-        </button>
-        <button onClick={handleResync} disabled={!sessionId}>
-          Resync Transcript
-        </button>
-        <button onClick={handleSystemStatus}>
-          System Status
         </button>
         {catalogToolbarSkills.map((skill) => renderCatalogAction(skill, "button"))}
       </div>
