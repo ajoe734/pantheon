@@ -1,6 +1,5 @@
-"""Pantheon capital service package."""
-
-from .risk_policy import (
+"""Governance-plane import surface for the capital-owned RiskPolicy contract."""
+from services.capital.risk_policy import (
     RiskPolicy,
     RiskPolicyCheck,
     RiskPolicyCheckStatus,
