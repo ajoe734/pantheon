@@ -4,6 +4,10 @@ Reviewer: Claude
 Date: 2026-05-03
 Status: APPROVED
 
+Historical note: this review captured the pre-Benjamin staging VM names and
+internal IPs. Current VM/project values live in `staging-live-topology.md` and
+`nonprod-ci-cd.md`.
+
 ## Scope
 
 Review of the dev single-VM / staging dual-VM topology contract materialized by

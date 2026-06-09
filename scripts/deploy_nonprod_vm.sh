@@ -8,12 +8,12 @@
 
 set -euo pipefail
 
-PROJECT_ID="${PROJECT_ID:-pantheon-493602}"
-REMOTE_USER="${REMOTE_USER:-edna}"
+PROJECT_ID="${PROJECT_ID:-pantheon-benjamin-20260528}"
+REMOTE_USER="${REMOTE_USER:-lupin}"
 
-DEV_VM="${DEV_VM:-pantheon-dev-vm1}"
+DEV_VM="${DEV_VM:-pantheon-lupin-dev}"
 DEV_ZONE="${DEV_ZONE:-asia-east1-b}"
-DEV_REMOTE_DIR="${DEV_REMOTE_DIR:-/home/edna/code/pantheon}"
+DEV_REMOTE_DIR="${DEV_REMOTE_DIR:-/home/lupin/code/pantheon}"
 DEV_BFF_CORS_ORIGINS="${DEV_BFF_CORS_ORIGINS:-https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io,https://pantheon-ai-system-front-dev.lovable.app,https://pantheon-dev.lovable.app}"
 DEV_BFF_REQUIRED_CORS_ORIGINS="${DEV_BFF_REQUIRED_CORS_ORIGINS:-https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com}"
 DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-true}"
@@ -37,14 +37,14 @@ DEV_MANAGEMENT_AI_ATTACH_BUCKET="${DEV_MANAGEMENT_AI_ATTACH_BUCKET:-}"
 DEV_MANAGEMENT_AI_ATTACH_LOCATION="${DEV_MANAGEMENT_AI_ATTACH_LOCATION:-asia-east1}"
 DEV_APP_DB_USER="${DEV_APP_DB_USER:-${PANTHEON_APP_DB_USER:-pantheon_app}}"
 
-STAGING_CONTROL_VM="${STAGING_CONTROL_VM:-pantheon-taiwan}"
+STAGING_CONTROL_VM="${STAGING_CONTROL_VM:-pantheon-lupin-staging-control}"
 STAGING_CONTROL_ZONE="${STAGING_CONTROL_ZONE:-asia-east1-b}"
-STAGING_CONTROL_REMOTE_DIR="${STAGING_CONTROL_REMOTE_DIR:-/home/edna/code/pantheon}"
+STAGING_CONTROL_REMOTE_DIR="${STAGING_CONTROL_REMOTE_DIR:-/home/lupin/code/pantheon}"
 
-STAGING_EXEC_VM="${STAGING_EXEC_VM:-pantheon-exec-vm2-20260424}"
-STAGING_EXEC_ZONE="${STAGING_EXEC_ZONE:-asia-east1-a}"
-STAGING_EXEC_REMOTE_DIR="${STAGING_EXEC_REMOTE_DIR:-/home/edna/code/pantheon}"
-STAGING_EXEC_HEALTH_URL="${STAGING_EXEC_HEALTH_URL:-http://10.140.0.5:28081}"
+STAGING_EXEC_VM="${STAGING_EXEC_VM:-pantheon-lupin-staging-exec}"
+STAGING_EXEC_ZONE="${STAGING_EXEC_ZONE:-asia-east1-b}"
+STAGING_EXEC_REMOTE_DIR="${STAGING_EXEC_REMOTE_DIR:-/home/lupin/code/pantheon}"
+STAGING_EXEC_HEALTH_URL="${STAGING_EXEC_HEALTH_URL:-http://10.50.0.21:28081}"
 
 DEPLOY_ENV=""
 COMPONENT="auto"
@@ -63,7 +63,7 @@ Options:
   --component <name>     auto, root, control, exec, or all. Default: auto.
                          auto maps to root for dev and all for staging-live.
   --sha <commit>         Required unless GITHUB_SHA is set. Commit to deploy.
-  --project-id <id>      GCP project. Default: pantheon-493602.
+  --project-id <id>      GCP project. Default: pantheon-benjamin-20260528.
   --allow-dirty          Emergency only: stash dirty managed deploy worktree
                          changes before checkout.
   --allow-example-env    Allow staging to use env/*.env.example if real env files
