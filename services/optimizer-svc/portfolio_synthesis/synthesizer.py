@@ -25,8 +25,14 @@ Usage
 from __future__ import annotations
 
 import uuid
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from services.capital.risk_policy import (
     RiskPolicy,
