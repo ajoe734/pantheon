@@ -220,6 +220,110 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(snapshot["paper_state"]["processed_signal_count"], 0)
         self.assertEqual(snapshot["paper_state"]["execution_event_count"], 0)
 
+    def test_drain_once_requires_runtime_binding_before_execution(self):
+        store = InMemoryPendingSignalStore([self._signal()])
+        telemetry = _FakeTelemetryEmitter()
+        service = PaperRuntimeService(
+            store=store,
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([]),
+            telemetry_emitter=telemetry,
+            poll_interval_seconds=3600,
+        )
+
+        snapshot = service.drain_once()
+
+        self.assertEqual(snapshot["status"], "degraded")
+        self.assertIn("RuntimeBinding is required", snapshot["paper_state"]["last_error"])
+        self.assertEqual(snapshot["paper_state"]["processed_signal_count"], 0)
+        self.assertEqual(snapshot["paper_state"]["execution_event_count"], 0)
+        self.assertEqual(snapshot["paper_state"]["positions"], [])
+        self.assertEqual(telemetry.events, [])
+
+    def test_runtime_state_pool_scope_mismatch_is_rejected(self):
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore(),
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([self._binding()]),
+            telemetry_emitter=_FakeTelemetryEmitter(),
+            poll_interval_seconds=3600,
+        )
+
+        violation = service.pool_access_violation("pool-other")
+
+        self.assertIsNotNone(violation)
+        assert violation is not None
+        self.assertEqual(violation["status"], "blocked")
+        self.assertEqual(violation["error"], "capital_pool_scope_mismatch")
+        self.assertEqual(violation["runtime_capital_pool_id"], "pool-paper")
+        self.assertIsNone(service.pool_access_violation("pool-paper"))
+
+    def test_http_runtime_state_pool_scope_mismatch_returns_403(self):
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore(),
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([self._binding()]),
+            telemetry_emitter=_FakeTelemetryEmitter(),
+            poll_interval_seconds=3600,
+        )
+        with patch(
+            "services.execution.lean_runtime.paper_runtime.get_service",
+            return_value=service,
+        ):
+            server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                with self.assertRaises(urllib.error.HTTPError) as raised:
+                    urllib.request.urlopen(
+                        f"{base_url}/api/runtime/state?capital_pool_id=pool-other",
+                        timeout=2,
+                    )
+
+                self.assertEqual(raised.exception.code, 403)
+                payload = json.loads(raised.exception.read().decode("utf-8"))
+                self.assertEqual(payload["error"], "capital_pool_scope_mismatch")
+                self.assertEqual(payload["runtime_capital_pool_id"], "pool-paper")
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
+    def test_http_runtime_adapter_does_not_expose_kill_switch_dispatch(self):
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore(),
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([self._binding()]),
+            telemetry_emitter=_FakeTelemetryEmitter(),
+            poll_interval_seconds=3600,
+        )
+        with patch(
+            "services.execution.lean_runtime.paper_runtime.get_service",
+            return_value=service,
+        ):
+            server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                request = urllib.request.Request(
+                    f"{base_url}/api/kill-switch/dispatch",
+                    data=b"{}",
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with self.assertRaises(urllib.error.HTTPError) as raised:
+                    urllib.request.urlopen(request, timeout=2)
+
+                self.assertEqual(raised.exception.code, 404)
+                payload = json.loads(raised.exception.read().decode("utf-8"))
+                self.assertEqual(payload["status"], "not_found")
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
     def test_guarded_paper_bracket_order_event_is_submitted_to_paper_broker(self):
         signal = self._signal()
         signal["metadata"] = {

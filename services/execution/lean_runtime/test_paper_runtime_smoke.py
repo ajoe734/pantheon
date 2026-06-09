@@ -50,6 +50,7 @@ def _deployment_plan(**overrides):
         "approval_decision_id": "appr-smoke-001",
         "artifact_id": "art-smoke",
         "artifact_version": "1.0.0",
+        "artifact_state": "approved",
         "artifact_checksum": "sha256:smoke",
         "strategy_id": "strat-smoke",
         "capital_pool_id": "pool-smoke-001",
@@ -57,6 +58,21 @@ def _deployment_plan(**overrides):
         "runtime_role": "paper",
         "persona_capital_binding_id": "pcb-smoke-001",
         "runtime_config_ref": "/workspace/lean/Launcher/config.json",
+        "runtime_config_status": "approved",
+        "risk_policy_ref": "risk-policy-smoke",
+        "risk_policy_evaluation": {
+            "risk_policy_id": "risk-policy-smoke",
+            "risk_policy_version": "v1",
+            "capital_pool_id": "pool-smoke-001",
+            "target_type": "runtime_launch",
+            "target_id": "dp-smoke-001",
+            "decision": "allowed",
+            "checks": [],
+            "blocking_reasons": [],
+            "warnings": [],
+            "evaluated_at": "2026-06-09T00:00:00Z",
+            "trace_id": "trace-risk-policy-smoke",
+        },
     }
     plan.update(overrides)
     return plan
