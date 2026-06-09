@@ -16,7 +16,7 @@ ROOT = THIS_DIR.parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
-from common import append_jsonl, config_path, load_config, load_json, utc_now, write_activity_log, write_json
+from common import append_jsonl, config_path, load_config, load_json, repo_root_for_config, utc_now, write_activity_log, write_json
 
 
 ACTIVE_WORKER_STATUSES = {
@@ -354,6 +354,18 @@ def start_supervisor(config: dict[str, Any], settings: dict[str, Any], now: date
     stamp = now.strftime("%Y%m%dT%H%M%SZ")
     log_path = log_dir / f"supervisor-watchdog-restart-{stamp}.log"
     command = [str(value) for value in settings.get("supervisor_command") or ["python3", "-u", ".orchestrator/supervisor.py", "--verbose"]]
+    # Pin the supervisor's archive/status root to the configured status file's
+    # repo, regardless of where the supervisor module lives on disk. The
+    # supervisor runs from the dev-root checkout but operates on the canonical
+    # worktree named in config.paths; without this, task_archive falls back to
+    # its own module location and resolves freshly-archived task dependencies as
+    # "missing", stalling ready-dispatch down to a single self-claiming worker.
+    # See docs/decisions/supervisor-status-root-split-brain-2026-06-09.md.
+    env = dict(os.environ)
+    try:
+        env["PANTHEON_STATUS_ROOT"] = str(repo_root_for_config(config))
+    except KeyError:
+        pass
     with log_path.open("ab") as log_handle:
         process = subprocess.Popen(
             command,
@@ -362,6 +374,7 @@ def start_supervisor(config: dict[str, Any], settings: dict[str, Any], now: date
             stdout=log_handle,
             stderr=subprocess.STDOUT,
             start_new_session=True,
+            env=env,
         )
     return process.pid, log_path
 
