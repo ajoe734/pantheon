@@ -157,6 +157,31 @@ class RuntimeManagerServiceTests(unittest.TestCase):
                 )
             )
 
+    def test_deploy_records_allowed_risk_policy_evaluation(self):
+        binding = self.service.deploy(
+            _valid_deploy_request(
+                risk_policy_ref="risk-main",
+                risk_policy={
+                    "risk_policy_id": "risk-main",
+                    "allowed_stages": ["paper"],
+                    "max_single_name_weight": 0.7,
+                },
+                metadata={"target_weights": {"AAPL": 0.6}},
+            )
+        )
+
+        self.assertEqual(binding.metadata["risk_policy_evaluation"]["decision"], "allowed")
+        self.assertEqual(binding.metadata["risk_policy_evaluation"]["risk_policy_id"], "risk-main")
+
+    def test_deploy_rejects_risk_policy_identity_mismatch(self):
+        with self.assertRaisesRegex(RuntimeManagerError, "RiskPolicy"):
+            self.service.deploy(
+                _valid_deploy_request(
+                    risk_policy_ref="risk-other",
+                    risk_policy={"risk_policy_id": "risk-main"},
+                )
+            )
+
     def test_deploy_preserves_strategy_id_in_metadata_for_runtime_readers(self):
         binding = self.service.deploy(_valid_deploy_request(strategy_id="strat-001"))
 

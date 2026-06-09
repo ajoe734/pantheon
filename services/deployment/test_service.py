@@ -315,6 +315,25 @@ def test_create_plan_from_snapshots(client):
     assert "plan-paper-001" in store_payload
 
 
+def test_create_plan_rejects_risk_policy_violation(client):
+    test_client, _ = client
+    payload = _plan_payload(
+        plan_id="plan-canary-risk-reject",
+        current_stage="paper",
+        target_stage="canary",
+    )
+    payload["risk_policy"] = {
+        "risk_policy_id": "risk-main",
+        "max_canary_capital_scale_pct": 2.0,
+        "max_canary_gross_scale_pct": 10.0,
+    }
+
+    response = test_client.post("/api/deployment/plans", json=payload)
+
+    assert response.status_code == 422
+    assert "RiskPolicy" in response.json()["detail"]
+
+
 def test_create_plan_rejects_deployment_stage_as_artifact_state(client):
     test_client, _ = client
     for artifact_state in ["paper", "canary", "live"]:

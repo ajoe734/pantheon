@@ -803,6 +803,8 @@ def _string_tuple(value: Any) -> tuple[str, ...]:
         return ()
     if isinstance(value, str):
         return (value.strip(),) if value.strip() else ()
+    if isinstance(value, set):
+        return tuple(str(item).strip() for item in value if str(item).strip())
     if not isinstance(value, Sequence):
         return ()
     return tuple(str(item).strip() for item in value if str(item).strip())
