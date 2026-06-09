@@ -488,6 +488,41 @@ def _antigravity_auth_metadata(config: dict[str, Any], provider_id: str, env: di
     }
 
 
+def _antigravity_probe_ready(returncode: int, stdout: str, combined: str) -> tuple[bool, str | None, str]:
+    """Decide whether an `agy --prompt` smoke probe proves non-interactive auth.
+
+    The Antigravity CLI exits 0 in print mode even when its OAuth token is
+    revoked or expired: it simply emits no output, and the
+    "You are not logged into Antigravity" notice only reaches the CLI's own
+    log file (never the probe's stdout/stderr). A clean exit code therefore is
+    not sufficient. Require a non-zero exit to fail, an exhausted-quota or
+    not-logged-in marker to fail, and non-empty stdout before declaring ready.
+    """
+    lowered = combined.lower()
+    if returncode != 0:
+        return False, _compact_auth_error(combined), f"exit_{returncode}"
+    if "quota reached" in lowered or "individual quota" in lowered:
+        return (
+            False,
+            "Antigravity account quota is exhausted; enable overages or wait for reset.",
+            "quota_reached",
+        )
+    if "not logged into antigravity" in lowered or "not authenticated" in lowered:
+        return (
+            False,
+            "Antigravity CLI is not logged in (silent print-mode failure).",
+            "not_logged_in",
+        )
+    if not stdout:
+        return (
+            False,
+            "Antigravity auth probe exited 0 but returned no output "
+            "(silent not-logged-in print-mode failure).",
+            "empty_output",
+        )
+    return True, None, "ready"
+
+
 def _antigravity_auth_probe(config: dict[str, Any], provider_id: str, binary: str | None) -> dict[str, Any]:
     env = _antigravity_runtime_env(config, provider_id)
     metadata = _antigravity_auth_metadata(config, provider_id, env)
@@ -552,13 +587,16 @@ def _antigravity_auth_probe(config: dict[str, Any], provider_id: str, binary: st
             metadata=metadata,
         )
     output = "\n".join(part for part in (result.stdout, result.stderr) if part)
+    ready, error, status = _antigravity_probe_ready(
+        result.returncode, (result.stdout or "").strip(), output
+    )
     return _auth_probe_record(
         provider_id,
         "antigravity",
-        ready=result.returncode == 0,
+        ready=ready,
         method=method,
-        error=None if result.returncode == 0 else _compact_auth_error(output),
-        status="ready" if result.returncode == 0 else f"exit_{result.returncode}",
+        error=error,
+        status=status,
         metadata=metadata,
     )
 
