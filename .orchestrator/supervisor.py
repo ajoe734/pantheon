@@ -5122,11 +5122,66 @@ def agent_dispatch_disabled(config: dict[str, Any], agent_name: str | None) -> b
     return False
 
 
+_PROVIDER_CAPS_MTIME_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+def _cached_provider_capabilities(config: dict[str, Any]) -> dict[str, Any]:
+    """Load provider_capabilities.json, cached by mtime to avoid re-reading it on
+    every per-task dispatch check within a scan."""
+    try:
+        path = config_path(config, "provider_capabilities")
+    except (KeyError, TypeError):
+        return {}
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return {}
+    cached = _PROVIDER_CAPS_MTIME_CACHE.get(str(path))
+    if cached and cached[0] == mtime:
+        return cached[1]
+    data = load_json(path, default={}) or {}
+    _PROVIDER_CAPS_MTIME_CACHE[str(path)] = (mtime, data)
+    return data
+
+
+def agent_provider_auth_blocked(
+    config: dict[str, Any],
+    agent_name: str | None,
+    provider_report: dict[str, Any] | None = None,
+) -> bool:
+    """True when the agent's provider auth probe is explicitly not ready.
+
+    The dispatch gate (agent_auto_dispatch_block_reason) already refuses to
+    dispatch to an auth-down provider, but that only *skips* the task and leaves
+    it parked on a dead owner forever. Surfacing the same signal here lets
+    agent_can_take_task treat an auth-down owner as unable to take the task, so
+    the mainline reassignment policy moves it to a healthy fallback instead of
+    silently stalling. Mirrors the `is False` semantics of the dispatch gate so
+    a missing/None capability never triggers churn.
+    """
+    name = str(agent_name or "").strip()
+    if not name:
+        return False
+    if provider_report is None:
+        provider_report = _cached_provider_capabilities(config)
+    providers = provider_report.get("providers") or {}
+    if not providers:
+        return False
+    normalized = normalize_agent_id(name)
+    agent = (config.get("agents", {}) or {}).get(normalized) or {}
+    provider_key = str(agent.get("provider") or normalized or name)
+    provider_id = normalize_agent_id(provider_key)
+    capability = providers.get(provider_key) or providers.get(provider_id) or {}
+    return capability.get("auth_ready") is False
+
+
 def agent_can_take_task(config: dict[str, Any], agent_name: str | None, task: dict[str, Any] | None) -> bool:
     name = str(agent_name or "").strip()
     if not name:
         return False
     if agent_dispatch_disabled(config, name):
+        return False
+    if agent_provider_auth_blocked(config, name):
         return False
     if not isinstance(task, dict) or task_is_sidecar(task):
         return True
@@ -7583,8 +7638,8 @@ def normalize_mainline_task_assignment(config: dict[str, Any], task: dict[str, A
     ]
     blocked_summary = ", ".join(dict.fromkeys(blocked_agents)) or "disallowed lane"
     message = (
-        f"Auto-reassigned {task_id} away from sidecar-only lane {blocked_summary}; "
-        f"{', '.join(changed_fields)}. Reserved sidecar-only agents no longer hold mainline tasks."
+        f"Auto-reassigned {task_id} away from unavailable lane {blocked_summary} "
+        f"(disabled, sidecar-only, or auth-down); {', '.join(changed_fields)}."
     )
     if not persist_task_reassignment(
         config,

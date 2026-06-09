@@ -2932,6 +2932,88 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(queued_event["target_agent"], "Codex")
         self.assertEqual(queued_event["reason"], "owned_ready_dispatch")
 
+    def test_agent_can_take_task_blocks_auth_down_provider(self) -> None:
+        config = {
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
+            },
+        }
+        report = {"providers": {"codex": {"auth_ready": True}, "codex2": {"auth_ready": False}}}
+        task = {"id": "T1", "status": "todo", "owner": "Codex2"}
+        with mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=report):
+            self.assertTrue(supervisor.agent_can_take_task(config, "Codex", task))
+            self.assertFalse(supervisor.agent_can_take_task(config, "Codex2", task))
+
+    def test_agent_can_take_task_allows_when_capabilities_unknown(self) -> None:
+        # A missing/None capability must NOT block (avoid reassignment churn).
+        config = {"agents": {"codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"}}}
+        task = {"id": "T1", "status": "todo", "owner": "Codex2"}
+        with mock.patch.object(supervisor, "_cached_provider_capabilities", return_value={"providers": {}}):
+            self.assertTrue(supervisor.agent_can_take_task(config, "Codex2", task))
+
+    def test_normalize_reassigns_todo_owned_by_auth_down_agent(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "worker_reassignment": {
+                "eligible_statuses": ["todo", "in_progress", "review", "review_approved"],
+                "owner_fallbacks": {"Codex2": ["Codex"]},
+                "reviewer_fallbacks": {"Codex2": ["Codex"]},
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+            },
+            "providers": {},
+        }
+        report = {
+            "providers": {
+                "codex": {"auth_ready": True},
+                "codex2": {"auth_ready": False},
+                "claude": {"auth_ready": True},
+            }
+        }
+        task = {"id": "OPS-RTEL-003", "status": "todo", "owner": "Codex2", "reviewer": "Claude", "depends_on": []}
+        with (
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=report),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.normalize_mainline_task_assignment(config, task)
+
+        self.assertTrue(changed)
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "OPS-RTEL-003")
+        self.assertEqual(kwargs["new_owner"], "Codex")
+        self.assertEqual(kwargs["new_reviewer"], "Claude")
+
+    def test_normalize_does_not_reassign_when_owner_auth_ready(self) -> None:
+        config = {
+            "schema": {"tasks_path": "tasks", "task_id_field": "id", "assignee_field": "owner", "reviewer_field": "reviewer"},
+            "worker_reassignment": {"eligible_statuses": ["todo"], "owner_fallbacks": {"Codex": ["Claude"]}},
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+            },
+            "providers": {},
+        }
+        report = {"providers": {"codex": {"auth_ready": True}, "claude": {"auth_ready": True}}}
+        task = {"id": "OK-1", "status": "todo", "owner": "Codex", "reviewer": "Claude", "depends_on": []}
+        with (
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=report),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.normalize_mainline_task_assignment(config, task)
+        self.assertFalse(changed)
+        persist.assert_not_called()
+
     def test_dispatcher_reassigns_mainline_qwen_reviewer_before_dispatch(self) -> None:
         config = {
             "schema": {
