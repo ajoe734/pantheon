@@ -11,6 +11,10 @@ Related docs:
 - `docs/03/SD-02_persona_governance.md`
 - `docs/03/SD-03_source_knowledge_evidence.md`
 - `docs/03/SD-04_research_orchestrator.md`
+- `docs/contracts/data_source_registry_entry.schema.json`
+- `docs/contracts/strategy_seed_source_registry_entry.schema.json`
+- `docs/contracts/source_change_proposal.schema.json`
+- `docs/contracts/persona_strategy_match.schema.json`
 - `docs/contracts/strategy_spec_seed.schema.json`
 - `Pantheon_資料表_Schema_設計版.md`
 
@@ -664,6 +668,8 @@ Rules:
 
 ### 10.1 Data Source Registry
 
+Contract stub: `docs/contracts/data_source_registry_entry.schema.json`
+
 ```yaml
 registry.data_sources:
   data_source_id: text primary key
@@ -682,6 +688,8 @@ registry.data_sources:
 ```
 
 ### 10.2 Strategy Seed Source Registry
+
+Contract stub: `docs/contracts/strategy_seed_source_registry_entry.schema.json`
 
 ```yaml
 registry.strategy_seed_sources:
@@ -727,6 +735,8 @@ source.strategy_spec_seeds:
 
 ### 10.4 Source Change Proposal
 
+Contract stub: `docs/contracts/source_change_proposal.schema.json`
+
 ```yaml
 governance.source_change_proposals:
   proposal_id: text primary key
@@ -743,6 +753,8 @@ governance.source_change_proposals:
 ```
 
 ### 10.5 Persona Strategy Match
+
+Contract stub: `docs/contracts/persona_strategy_match.schema.json`
 
 ```yaml
 research.persona_strategy_matches:
