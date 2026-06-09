@@ -61,15 +61,20 @@ change production behavior beyond adding the shared test dependency.
 
 ## Status Command
 
-Attempted canonical approval command:
+Initial canonical approval command attempt:
 
 ```bash
 AI_NAME=Codex REVIEW_FILE=.orchestrator/reviews/MPOS-P0-VAL-001-review-codex.md REVIEW_NOTES_ZH='...' ./scripts/ai-status.sh approve MPOS-P0-VAL-001 '...'
 # Unknown agent: Antigravity2
 ```
 
-The same failure occurs through the supervisor root script at
-`/home/lupin/code/pantheon/scripts/ai-status.sh sync`. This is an existing
-central status schema/tool mismatch: the canonical status file contains
-`Antigravity2`, but `scripts/ai_status.py` does not include that lane in
-`KNOWN_AGENTS`. I did not hand-edit `ai-status.json`.
+I did not hand-edit `ai-status.json`. After PR #1198 merged, the canonical
+command was retried successfully:
+
+```bash
+AI_NAME=Codex ./scripts/ai-status.sh approve MPOS-P0-VAL-001 'Review approved after PR #1198 merged into dev; validation passed.'
+# MPOS-P0-VAL-001 moved to review_approved at 2026-06-09T10:59:50Z
+```
+
+Central status now shows MPOS-P0-VAL-001 as `review_approved` with a pending
+handoff from Codex to Claude for owner finalization.
