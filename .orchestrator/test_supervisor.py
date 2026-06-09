@@ -2236,6 +2236,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             "agents": {
                 "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
                 "copilot": {"id": "copilot", "display_name": "Copilot", "provider": "copilot"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
             },
             "providers": {},
         }
@@ -2302,6 +2303,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             "agents": {
                 "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
                 "copilot": {"id": "copilot", "display_name": "Copilot", "provider": "copilot"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
             },
             "providers": {},
         }
@@ -2377,6 +2379,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             "agents": {
                 "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
                 "copilot": {"id": "copilot", "display_name": "Copilot", "provider": "copilot"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
             },
             "providers": {},
         }
@@ -3013,6 +3016,44 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             changed = supervisor.normalize_mainline_task_assignment(config, task)
         self.assertFalse(changed)
         persist.assert_not_called()
+
+    def test_agent_is_known_rejects_phantom_owner(self) -> None:
+        config = {"agents": {"codex": {"id": "codex", "display_name": "Codex", "provider": "codex"}}}
+        self.assertTrue(supervisor.agent_is_known(config, "Codex"))
+        self.assertTrue(supervisor.agent_is_known(config, "codex"))
+        self.assertFalse(supervisor.agent_is_known(config, "Gemini2"))
+        self.assertFalse(supervisor.agent_is_known(config, ""))
+
+    def test_agent_can_take_task_blocks_unknown_owner(self) -> None:
+        config = {"agents": {"codex": {"id": "codex", "display_name": "Codex", "provider": "codex"}}}
+        task = {"id": "T1", "status": "todo", "owner": "Gemini2"}
+        with mock.patch.object(supervisor, "_cached_provider_capabilities", return_value={"providers": {}}):
+            self.assertFalse(supervisor.agent_can_take_task(config, "Gemini2", task))
+            self.assertTrue(supervisor.agent_can_take_task(config, "Codex", task))
+
+    def test_normalize_reassigns_phantom_owner_via_default_fallback(self) -> None:
+        config = {
+            "schema": {"tasks_path": "tasks", "task_id_field": "id", "assignee_field": "owner", "reviewer_field": "reviewer"},
+            "worker_reassignment": {"eligible_statuses": ["todo"], "owner_fallbacks": {}, "reviewer_fallbacks": {}},
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+            },
+            "providers": {},
+        }
+        report = {"providers": {"codex": {"auth_ready": True}, "claude": {"auth_ready": True}}}
+        # phantom owner "Gemini2" not in roster, no fallback mapping -> default candidates
+        task = {"id": "MPOS-P1-TEL-001", "status": "todo", "owner": "Gemini2", "reviewer": "Claude", "depends_on": []}
+        with (
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=report),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.normalize_mainline_task_assignment(config, task)
+        self.assertTrue(changed)
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "MPOS-P1-TEL-001")
+        self.assertEqual(kwargs["new_owner"], "Codex")  # first viable default candidate (Claude is reviewer-excluded)
 
     def test_dispatcher_reassigns_mainline_qwen_reviewer_before_dispatch(self) -> None:
         config = {
