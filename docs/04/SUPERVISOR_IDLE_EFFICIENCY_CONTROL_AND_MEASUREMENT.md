@@ -335,6 +335,8 @@ After implementation, compare:
 ### P5: Supervisor Watchdog Fuse
 
 - Run `scripts/run-supervisor-watchdog.sh --restart` from an external timer or operator shell.
+- Install the external timer with `python3 scripts/supervisor_watchdog_install.py --method auto --start-now`; it prefers a user systemd timer and falls back to cron.
+- Verify the timer and supervisor together with `python3 scripts/supervisor_runtime_health.py --require-watchdog --json`.
 - The watchdog must remain non-LLM and non-dispatching: it probes PID, heartbeat, state I/O, resource pressure, restart budget, and circuit breaker state.
 - If restart is allowed, the watchdog writes `watchdog.safe_mode_until` into `.orchestrator/state.json` before launching `.orchestrator/supervisor.py`.
 - While `watchdog.safe_mode_until` is active, supervisor may reconcile queue/worker/runtime state but must not dispatch execution, planning, chair-review, sidecar, or queued worker work.

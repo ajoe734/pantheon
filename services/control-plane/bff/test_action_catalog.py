@@ -117,6 +117,24 @@ def test_get_catalog_entry_lookup() -> None:
     assert get_catalog_entry("NonExistentAction") is None
 
 
+def test_runtime_repair_actions_are_high_risk_confirmed_and_auditable() -> None:
+    action_ids = {
+        "RestartPaperRuntime",
+        "RestartTelemetryBridge",
+        "TerminateStalePaperMonitoringSession",
+        "StartPaperMonitoringSession",
+        "ProbeTelemetryIngest",
+    }
+    for action_id in action_ids:
+        entry = get_catalog_entry(action_id)
+        assert entry is not None
+        assert entry.entity_type == "Runtime"
+        assert entry.risk_level == RiskLevel.HIGH
+        assert entry.requires_confirm_token is True
+        assert entry.idempotency_required is True
+        assert "runtime_operator" in entry.required_roles
+
+
 # --------------------------------------------------------------------------- #
 # HTTP endpoint tests
 # --------------------------------------------------------------------------- #

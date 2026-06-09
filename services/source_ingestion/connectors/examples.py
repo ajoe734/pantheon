@@ -16,8 +16,15 @@ from .base import (
     SourceMetadata,
     SourceRecord,
 )
+from .finmind_taiwan import (
+    FinMindTaiwanBrokerBulkBackfillAdapter,
+    FinMindTaiwanBrokerDailyReportAdapter,
+    FinMindTaiwanDatasetAdapter,
+)
 from .paper import OpenAlexPaperIngestAdapter
 from .repo_allowlist import RepoAllowlistProvider
+from .taiwan_market import MopsSourceIngestAdapter, TejSourceIngestAdapter
+from .yahoo_taiwan import YahooTaiwanBrokerTopAdapter, YahooTaiwanRssAdapter
 
 
 @dataclass(frozen=True)
@@ -247,6 +254,73 @@ def example_provider_catalog() -> tuple[SourceConnectorProvider, ...]:
                 docs_url="https://docs.github.com/rest",
                 owner="pantheon-source-ingest",
                 tags=("example", "repo", "allowlist"),
+            ),
+        ),
+        MopsSourceIngestAdapter(
+            connector_id="example-tw-mops-official-disclosures",
+            source_metadata=SourceMetadata(
+                display_name="MOPS official Taiwan disclosures",
+                homepage_url="https://mops.twse.com.tw/mops/",
+                owner="Taiwan Stock Exchange",
+                tags=("example", "taiwan", "mops", "official_reference", "filing"),
+            ),
+        ),
+        TejSourceIngestAdapter(
+            connector_id="example-tw-tej-research-datasets",
+            source_metadata=SourceMetadata(
+                display_name="TEJ API Taiwan research datasets",
+                homepage_url="https://api.tej.com.tw",
+                docs_url="https://api.tej.com.tw/document_rest.html",
+                owner="TEJ",
+                tags=("example", "taiwan", "tej", "research_grade", "market"),
+            ),
+        ),
+        FinMindTaiwanDatasetAdapter(
+            connector_id="example-tw-finmind-datasets",
+            source_metadata=SourceMetadata(
+                display_name="FinMind Taiwan datasets",
+                homepage_url="https://finmindtrade.com/",
+                docs_url="https://finmind.github.io/",
+                owner="FinMind",
+                tags=("example", "taiwan", "finmind", "research_grade", "market_data", "chip"),
+            ),
+        ),
+        FinMindTaiwanBrokerDailyReportAdapter(
+            connector_id="example-tw-finmind-broker-daily-report",
+            source_metadata=SourceMetadata(
+                display_name="FinMind Taiwan broker trading daily report",
+                homepage_url="https://finmindtrade.com/",
+                docs_url="https://finmind.github.io/tutor/TaiwanMarket/Chip/",
+                owner="FinMind",
+                tags=("example", "taiwan", "finmind", "broker_top", "branch_trading"),
+            ),
+        ),
+        FinMindTaiwanBrokerBulkBackfillAdapter(
+            connector_id="example-tw-finmind-broker-bulk-parquet",
+            source_metadata=SourceMetadata(
+                display_name="FinMind SponsorPro Taiwan broker bulk parquet",
+                homepage_url="https://finmindtrade.com/",
+                docs_url="https://finmind.github.io/tutor/TaiwanMarket/Chip/",
+                owner="FinMind",
+                tags=("example", "taiwan", "finmind", "sponsorpro", "broker_backfill"),
+            ),
+        ),
+        YahooTaiwanBrokerTopAdapter(
+            connector_id="example-tw-yahoo-broker-top15",
+            source_metadata=SourceMetadata(
+                display_name="Yahoo Taiwan top broker trading",
+                homepage_url="https://tw.stock.yahoo.com/",
+                owner="Yahoo Taiwan Stock",
+                tags=("example", "taiwan", "yahoo", "broker_top", "public_web_summary"),
+            ),
+        ),
+        YahooTaiwanRssAdapter(
+            connector_id="example-tw-yahoo-stock-rss",
+            source_metadata=SourceMetadata(
+                display_name="Yahoo Taiwan stock RSS",
+                homepage_url="https://tw.stock.yahoo.com/",
+                owner="Yahoo Taiwan Stock",
+                tags=("example", "taiwan", "yahoo", "rss", "news"),
             ),
         ),
     )

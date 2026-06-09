@@ -216,9 +216,9 @@
         "local_path": ".",
         "default_branch": "master"
       },
-      "front_ai_trading_system": {
-        "repo": "your-org/front-ai-trading-system",
-        "local_path": "../front-ai-trading-system",
+      "execute_plans": {
+        "repo": "ajoe734/execute-plans",
+        "local_path": "../execute-plans",
         "default_branch": "main"
       },
       "runtime_platform": {
@@ -252,10 +252,6 @@
       "qa-worker": {
         "target_agent": "Claude"
       }
-    },
-    "lovable": {
-      "project_url_env": "PANTHEON_FRONT_LOVABLE_PROJECT_URL",
-      "project_url": "https://lovable.dev/projects/your-project-id"
     }
   },
   "github_bus": {
@@ -631,6 +627,7 @@
       "enabled": true,
       "cron_utc": "0 3 * * *",
       "version_format": "vYYYY.MM.DD.N",
+      "release_state_file": ".orchestrator/release-state.json",
       "skip_if_no_new_commits": true
     },
     "promote": {

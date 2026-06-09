@@ -14,7 +14,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 import tempfile
+import types
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,7 +48,11 @@ from services.telemetry.batch_writer import (
     AsyncBatchWriter,
     WriteResult,
 )
-from services.telemetry.ingest_svc import TelemetryIngestService
+from services.telemetry.ingest_svc import (
+    TelemetryIngestService,
+    _coerce_postgres_created_at,
+    build_postgres_write_fn,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -580,6 +586,52 @@ class TestAsyncBatchWriter(unittest.IsolatedAsyncioTestCase):
 # ---------------------------------------------------------------------------
 # 6. TelemetryIngestService Integration Tests
 # ---------------------------------------------------------------------------
+
+class TestPostgresWriteFn(unittest.IsolatedAsyncioTestCase):
+
+    def test_coerce_postgres_created_at_parses_rfc3339_z(self):
+        parsed = _coerce_postgres_created_at("2026-06-06T05:16:32Z")
+
+        self.assertEqual(
+            parsed,
+            datetime(2026, 6, 6, 5, 16, 32, tzinfo=timezone.utc),
+        )
+
+    async def test_postgres_writer_passes_datetime_to_asyncpg(self):
+        captured: dict[str, object] = {}
+
+        class FakeConnection:
+            async def executemany(self, query, rows):
+                captured["query"] = query
+                captured["rows"] = rows
+
+            async def close(self):
+                captured["closed"] = True
+
+        async def connect(dsn):
+            captured["dsn"] = dsn
+            return FakeConnection()
+
+        fake_asyncpg = types.SimpleNamespace(connect=connect)
+        event = _make_event(
+            event_id="postgres-created-at",
+            created_at="2026-06-06T05:16:32Z",
+        )
+
+        with patch.dict(sys.modules, {"asyncpg": fake_asyncpg}):
+            result = await build_postgres_write_fn("postgresql://example/db")([event])
+
+        self.assertTrue(result.success, result.error)
+        self.assertEqual(captured["dsn"], "postgresql://example/db")
+        self.assertTrue(captured["closed"])
+        rows = captured["rows"]
+        self.assertEqual(len(rows), 1)
+        self.assertIsInstance(rows[0][2], datetime)
+        self.assertEqual(
+            rows[0][2],
+            datetime(2026, 6, 6, 5, 16, 32, tzinfo=timezone.utc),
+        )
+
 
 class TestTelemetryIngestService(unittest.IsolatedAsyncioTestCase):
 

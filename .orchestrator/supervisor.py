@@ -115,6 +115,7 @@ WORKER_FAILURE_PATTERNS = (
     ),
     re.compile(r"^status:\s*(401|429)\b", re.IGNORECASE),
     re.compile(r"^(?:you(?:'ve| have)\s+)?hit your(?:\s+\w+)?\s+limit\b", re.IGNORECASE),
+    re.compile(r"^rate_limit\s*:\s*.*\b(?:limit|quota|reset|resets)\b", re.IGNORECASE),
     re.compile(r"^An unexpected critical error occurred", re.IGNORECASE),
     re.compile(r"^(?:Error|error|fatal):", re.IGNORECASE),
 )
@@ -487,6 +488,87 @@ def refresh_dashboard_runtime_artifacts(config: dict[str, Any]) -> None:
             f"dashboard bundle refresh failed: {type(exc).__name__}: {exc}",
             quiet=SUPERVISOR_LOG_QUIET,
         )
+
+
+def assistant_dev_bridge_bff_dirs(repo_root: Path) -> list[Path]:
+    code_bff_dir = THIS_DIR.parent / "services" / "control-plane" / "bff"
+    repo_bff_dir = repo_root / "services" / "control-plane" / "bff"
+    dirs: list[Path] = []
+    for candidate in (code_bff_dir, repo_bff_dir):
+        if candidate not in dirs:
+            dirs.append(candidate)
+    return dirs
+
+
+def drain_assistant_dev_packet_inbox(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    settings = config.get("assistant_dev_bridge") if isinstance(config.get("assistant_dev_bridge"), dict) else {}
+    if settings.get("enabled") is False:
+        return False
+
+    try:
+        repo_root = config_path(config, "status_file").parent
+    except KeyError:
+        repo_root = THIS_DIR.parent
+    bff_dirs = assistant_dev_bridge_bff_dirs(repo_root)
+    for bff_dir in reversed(bff_dirs):
+        if str(bff_dir) not in sys.path:
+            sys.path.insert(0, str(bff_dir))
+
+    try:
+        from assistant.dev_bridge_inbox import drain_task_packet_inbox
+    except Exception as exc:
+        write_activity_log(
+            config,
+            {
+                "type": "assistant_dev_packet_drain_unavailable",
+                "message": f"Assistant dev packet inbox drain unavailable: {type(exc).__name__}: {exc}",
+                "searched_bff_dirs": [str(path) for path in bff_dirs],
+            },
+        )
+        bridge_state = state.setdefault("assistant_dev_bridge", {})
+        bridge_state["last_drain_at"] = utc_now()
+        bridge_state["last_result"] = {
+            "status": "unavailable",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+        return True
+
+    limit_value = settings.get("max_packets_per_tick", settings.get("limit", 4))
+    try:
+        limit = max(0, int(limit_value))
+    except (TypeError, ValueError):
+        limit = 4
+    result = drain_task_packet_inbox(
+        repo_root=str(repo_root),
+        inbox_dir=settings.get("inbox_path") or settings.get("inbox_dir"),
+        limit=limit,
+    )
+    processed_count = int(result.get("processedCount") or 0)
+    error_count = int(result.get("errorCount") or 0)
+    if processed_count == 0 and error_count == 0:
+        return False
+
+    bridge_state = state.setdefault("assistant_dev_bridge", {})
+    bridge_state["last_drain_at"] = utc_now()
+    bridge_state["last_result"] = result
+    write_activity_log(
+        config,
+        {
+            "type": "assistant_dev_packet_inbox_drained",
+            "message": (
+                "Drained assistant dev packet inbox: "
+                f"processed={processed_count} errors={error_count}"
+            ),
+            "processed_count": processed_count,
+            "error_count": error_count,
+            "packet_ids": [
+                item.get("packetId")
+                for item in result.get("packets", [])
+                if isinstance(item, dict) and item.get("packetId")
+            ],
+        },
+    )
+    return True
 
 
 def safe_load_approval_state(config: dict[str, Any]) -> dict[str, Any]:
@@ -4129,6 +4211,8 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         return {"kind": "tool_auth", "transient": False, "label": "tool auth"}
     if any(marker in normalized for marker in auth_markers):
         return {"kind": "auth", "transient": False, "label": "auth"}
+    if re.search(r"\b(?:you(?:'ve| have)\s+)?hit your(?:\s+\w+){0,3}\s+limit\b", normalized):
+        return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}
     if any(marker in normalized for marker in terminal_quota_markers):
         return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}
     if any(marker in normalized for marker in retryable_capacity_markers):
@@ -4356,6 +4440,14 @@ _QUOTA_RESETS_AT_PATTERN = re.compile(
     r"\bresets\s+(?:at\s+)?(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<meridiem>[ap]\.?m\.?)?",
     re.IGNORECASE,
 )
+_QUOTA_RESETS_AT_DATE_PATTERN = re.compile(
+    r"\bresets\s+(?:at\s+)?"
+    r"(?P<month>jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|"
+    r"sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+"
+    r"(?P<day>\d{1,2})(?:st|nd|rd|th)?(?:,\s*|\s+)"
+    r"(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<meridiem>[ap]\.?m\.?)?",
+    re.IGNORECASE,
+)
 _MONTH_NAME_TO_NUMBER = {
     "jan": 1,
     "january": 1,
@@ -4394,6 +4486,7 @@ def parse_quota_retry_hint(reason: str | None, *, now: datetime | None = None) -
     if not reason:
         return None
     hint_tz = timezone.utc if re.search(r"\(\s*UTC\s*\)|\bUTC\b", reason, re.IGNORECASE) else LOCAL_TZ
+    now_dt = now or datetime.now(timezone.utc)
     date_match = _QUOTA_RETRY_AT_DATE_PATTERN.search(reason)
     if date_match:
         month = _MONTH_NAME_TO_NUMBER.get(date_match.group("month").lower())
@@ -4420,6 +4513,39 @@ def parse_quota_retry_hint(reason: str | None, *, now: datetime | None = None) -
         except ValueError:
             return None
 
+    reset_date_match = _QUOTA_RESETS_AT_DATE_PATTERN.search(reason)
+    if reset_date_match:
+        month = _MONTH_NAME_TO_NUMBER.get(reset_date_match.group("month").lower())
+        if not month:
+            return None
+        hour = int(reset_date_match.group("hour"))
+        minute = int(reset_date_match.group("minute") or 0)
+        meridiem = (reset_date_match.group("meridiem") or "").replace(".", "").lower()
+        if meridiem == "pm" and hour < 12:
+            hour += 12
+        elif meridiem == "am" and hour == 12:
+            hour = 0
+        if not (0 <= hour < 24 and 0 <= minute < 60):
+            return None
+        base = now_dt.astimezone(hint_tz)
+        try:
+            candidate = datetime(
+                base.year,
+                month,
+                int(reset_date_match.group("day")),
+                hour,
+                minute,
+                tzinfo=hint_tz,
+            )
+        except ValueError:
+            return None
+        if candidate <= base:
+            try:
+                candidate = candidate.replace(year=candidate.year + 1)
+            except ValueError:
+                return None
+        return candidate.astimezone(timezone.utc)
+
     match = _QUOTA_RETRY_AT_PATTERN.search(reason) or _QUOTA_RESETS_AT_PATTERN.search(reason)
     if not match:
         return None
@@ -4432,7 +4558,7 @@ def parse_quota_retry_hint(reason: str | None, *, now: datetime | None = None) -
         hour = 0
     if not (0 <= hour < 24 and 0 <= minute < 60):
         return None
-    base = (now.astimezone(hint_tz) if now else datetime.now(hint_tz))
+    base = now_dt.astimezone(hint_tz)
     candidate = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if candidate <= base:
         candidate += timedelta(days=1)
@@ -4738,6 +4864,135 @@ def clear_task_failure_streaks_for_task(state: dict[str, Any], task_id: str | No
         bucket.pop(key, None)
 
 
+def _provider_report_entry(provider_report: dict[str, Any] | None, provider: str | None) -> dict[str, Any]:
+    providers = (provider_report or {}).get("providers") or {}
+    raw = str(provider or "").strip()
+    normalized = normalize_agent_id(raw)
+    candidates = [raw, normalized, raw.replace("_", "-"), raw.replace("-", "_")]
+    for candidate in candidates:
+        entry = providers.get(candidate)
+        if isinstance(entry, dict):
+            return entry
+    for provider_id, entry in providers.items():
+        if normalize_agent_id(str(provider_id)) == normalized and isinstance(entry, dict):
+            return entry
+    return {}
+
+
+def _provider_auth_identity_ids(config: dict[str, Any], provider: str | None) -> set[str]:
+    provider_id = normalize_agent_id(provider or "")
+    if not provider_id:
+        return set()
+    ids = {provider_id}
+    group_id = provider_dispatch_group_id(config, provider_id)
+    if group_id:
+        ids.add(group_id)
+    for configured_provider in (config.get("providers", {}) or {}):
+        configured_id = normalize_agent_id(str(configured_provider))
+        configured_group = provider_dispatch_group_id(config, configured_provider)
+        if configured_id in ids or (group_id and configured_group == group_id):
+            ids.add(configured_id)
+            if configured_group:
+                ids.add(configured_group)
+    for agent_id, agent in (config.get("agents", {}) or {}).items():
+        normalized_agent = normalize_agent_id(str(agent_id))
+        agent_provider = normalize_agent_id(str((agent or {}).get("provider") or normalized_agent))
+        agent_group = provider_dispatch_group_id(config, agent_provider)
+        dispatch_parent = normalize_agent_id(str((agent or {}).get("dispatch_slot_for") or ""))
+        if agent_provider in ids or normalized_agent in ids or dispatch_parent in ids or (group_id and agent_group == group_id):
+            ids.update(value for value in (normalized_agent, agent_provider, agent_group, dispatch_parent) if value)
+    return ids
+
+
+def _is_auth_failure_streak(config: dict[str, Any], record: dict[str, Any]) -> bool:
+    if is_auth_failure_kind(str(record.get("last_failure_kind") or "")):
+        return True
+    reason = str(record.get("last_reason") or "")
+    if not reason:
+        return False
+    provider = str(record.get("provider") or "")
+    return classify_worker_failure(config, {"provider": provider}, reason).get("kind") == "auth"
+
+
+def clear_auth_failure_streaks_for_provider(config: dict[str, Any], state: dict[str, Any], provider: str | None) -> list[str]:
+    ids = _provider_auth_identity_ids(config, provider)
+    if not ids:
+        return []
+    bucket = _task_failure_streak_bucket(state)
+    removed: list[str] = []
+    for key, record in list(bucket.items()):
+        key_provider = key.rsplit(":", 1)[-1] if ":" in key else ""
+        record_provider = normalize_agent_id(str((record if isinstance(record, dict) else {}).get("provider") or key_provider))
+        if record_provider not in ids:
+            continue
+        if isinstance(record, dict) and _is_auth_failure_streak(config, record):
+            bucket.pop(key, None)
+            removed.append(key)
+    return removed
+
+
+def clear_auth_dispatch_pauses_for_provider(config: dict[str, Any], state: dict[str, Any], provider: str | None) -> list[str]:
+    ids = _provider_auth_identity_ids(config, provider)
+    if not ids:
+        return []
+    bucket = _dispatch_pause_bucket(state)
+    removed: list[str] = []
+    for pause_id, entry in list(bucket.items()):
+        if normalize_agent_id(str(pause_id)) not in ids or not isinstance(entry, dict):
+            continue
+        pause_kind = str(entry.get("pause_kind") or entry.get("failure_kind") or "").strip().lower()
+        if pause_kind != "auth":
+            continue
+        bucket.pop(pause_id, None)
+        removed.append(str(pause_id))
+        write_activity_log(
+            config,
+            {
+                "type": "provider_dispatch_resumed",
+                "provider": pause_id,
+                "task_id": entry.get("task_id"),
+                "worker_run_id": entry.get("worker_run_id"),
+                "message": f"Cleared authentication dispatch pause for {pause_id}; provider auth probe is healthy again.",
+                "raw_ref": entry.get("raw_ref"),
+                "cleared_pause": entry,
+            },
+        )
+    return removed
+
+
+def reconcile_provider_auth_recovery(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    previous_report: dict[str, Any] | None,
+    current_report: dict[str, Any] | None,
+) -> bool:
+    changed = False
+    for provider_id, current in ((current_report or {}).get("providers") or {}).items():
+        if not isinstance(current, dict) or current.get("auth_ready") is not True:
+            continue
+        previous = _provider_report_entry(previous_report, str(provider_id))
+        if previous.get("auth_ready") is not False:
+            continue
+        cleared_streaks = clear_auth_failure_streaks_for_provider(config, state, str(provider_id))
+        cleared_pauses = clear_auth_dispatch_pauses_for_provider(config, state, str(provider_id))
+        if not cleared_streaks and not cleared_pauses:
+            continue
+        changed = True
+        write_activity_log(
+            config,
+            {
+                "type": "provider_auth_recovered",
+                "provider": str(provider_id),
+                "message": f"Provider {provider_id} authentication recovered; cleared stale auth guardrails.",
+                "cleared_task_failure_streaks": cleared_streaks,
+                "cleared_dispatch_pauses": cleared_pauses,
+                "last_auth_probe_at": current.get("last_auth_probe_at"),
+                "auth_method": current.get("auth_method"),
+            },
+        )
+    return changed
+
+
 def worker_retry_settings(config: dict[str, Any], provider: str | None) -> dict[str, Any]:
     retry = dict(config.get("worker_retry", {}) or {})
     if provider:
@@ -4867,11 +5122,66 @@ def agent_dispatch_disabled(config: dict[str, Any], agent_name: str | None) -> b
     return False
 
 
+_PROVIDER_CAPS_MTIME_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+def _cached_provider_capabilities(config: dict[str, Any]) -> dict[str, Any]:
+    """Load provider_capabilities.json, cached by mtime to avoid re-reading it on
+    every per-task dispatch check within a scan."""
+    try:
+        path = config_path(config, "provider_capabilities")
+    except (KeyError, TypeError):
+        return {}
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return {}
+    cached = _PROVIDER_CAPS_MTIME_CACHE.get(str(path))
+    if cached and cached[0] == mtime:
+        return cached[1]
+    data = load_json(path, default={}) or {}
+    _PROVIDER_CAPS_MTIME_CACHE[str(path)] = (mtime, data)
+    return data
+
+
+def agent_provider_auth_blocked(
+    config: dict[str, Any],
+    agent_name: str | None,
+    provider_report: dict[str, Any] | None = None,
+) -> bool:
+    """True when the agent's provider auth probe is explicitly not ready.
+
+    The dispatch gate (agent_auto_dispatch_block_reason) already refuses to
+    dispatch to an auth-down provider, but that only *skips* the task and leaves
+    it parked on a dead owner forever. Surfacing the same signal here lets
+    agent_can_take_task treat an auth-down owner as unable to take the task, so
+    the mainline reassignment policy moves it to a healthy fallback instead of
+    silently stalling. Mirrors the `is False` semantics of the dispatch gate so
+    a missing/None capability never triggers churn.
+    """
+    name = str(agent_name or "").strip()
+    if not name:
+        return False
+    if provider_report is None:
+        provider_report = _cached_provider_capabilities(config)
+    providers = provider_report.get("providers") or {}
+    if not providers:
+        return False
+    normalized = normalize_agent_id(name)
+    agent = (config.get("agents", {}) or {}).get(normalized) or {}
+    provider_key = str(agent.get("provider") or normalized or name)
+    provider_id = normalize_agent_id(provider_key)
+    capability = providers.get(provider_key) or providers.get(provider_id) or {}
+    return capability.get("auth_ready") is False
+
+
 def agent_can_take_task(config: dict[str, Any], agent_name: str | None, task: dict[str, Any] | None) -> bool:
     name = str(agent_name or "").strip()
     if not name:
         return False
     if agent_dispatch_disabled(config, name):
+        return False
+    if agent_provider_auth_blocked(config, name):
         return False
     if not isinstance(task, dict) or task_is_sidecar(task):
         return True
@@ -5377,6 +5687,49 @@ def maybe_reassign_task_after_worker_failure(
         return new_owner
 
     return None
+
+
+def maybe_reassign_tasks_from_failure_streaks(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    settings = worker_reassignment_settings(config)
+    if not settings.get("enabled", True):
+        return False
+    threshold = max(1, int(settings.get("after_attempts", 2)))
+    max_reassignments = max(1, int(settings.get("max_failure_streak_reassignments_per_cycle", 4)))
+    changed = False
+    applied = 0
+    streaks = list((_task_failure_streak_bucket(state) or {}).items())
+    for _key, record in streaks:
+        if applied >= max_reassignments:
+            break
+        if not isinstance(record, dict):
+            continue
+        task_id = str(record.get("task_id") or "").strip()
+        provider = str(record.get("provider") or "").strip()
+        count = int(record.get("count") or 0)
+        if not task_id or not provider or count < threshold:
+            continue
+        reason = str(record.get("last_reason") or GENERIC_WORKER_EXIT_REASON)
+        failure_kind = str(record.get("last_failure_kind") or "")
+        worker = {
+            "task_id": task_id,
+            "provider": provider,
+            "agent_id": provider,
+            "run_id": record.get("worker_run_id"),
+            "retry_count": max(0, count - 1),
+        }
+        reassigned_to = maybe_reassign_task_after_worker_failure(
+            config,
+            state,
+            worker,
+            reason,
+            terminal=True,
+            force=is_terminal_quota_failure_kind(failure_kind),
+            failure_count=count,
+        )
+        if reassigned_to:
+            applied += 1
+            changed = True
+    return changed
 
 
 def is_transient_worker_failure(config: dict[str, Any], worker: dict[str, Any], reason: str | None) -> bool:
@@ -7285,8 +7638,8 @@ def normalize_mainline_task_assignment(config: dict[str, Any], task: dict[str, A
     ]
     blocked_summary = ", ".join(dict.fromkeys(blocked_agents)) or "disallowed lane"
     message = (
-        f"Auto-reassigned {task_id} away from sidecar-only lane {blocked_summary}; "
-        f"{', '.join(changed_fields)}. Reserved sidecar-only agents no longer hold mainline tasks."
+        f"Auto-reassigned {task_id} away from unavailable lane {blocked_summary} "
+        f"(disabled, sidecar-only, or auth-down); {', '.join(changed_fields)}."
     )
     if not persist_task_reassignment(
         config,
@@ -9047,7 +9400,13 @@ def run_once(
         pruned = prune_stale_approvals(config)
         if pruned:
             changed = True
+        try:
+            previous_provider_report = load_json(config_path(config, "provider_capabilities"), default={}) or {}
+        except KeyError:
+            previous_provider_report = {}
         provider_report = load_provider_report(config)
+        changed = reconcile_provider_auth_recovery(config, state, previous_provider_report, provider_report) or changed
+        changed = drain_assistant_dev_packet_inbox(config, state) or changed
         if watch:
             changed = run_scan(config, state, replay=replay, provider_capabilities=provider_report) or changed
             state = load_runtime_state(config)
@@ -9061,6 +9420,7 @@ def run_once(
             )
         changed = sync_coordination_files(config, state) or changed
         changed = poll_workers(config, state, provider_report=provider_report) or changed
+        changed = maybe_reassign_tasks_from_failure_streaks(config, state) or changed
         changed = reconcile_queue_records(config, state) or changed
         changed = prune_event_queue(config, state) or changed
         changed = refresh_chair_review_state(config, state) or changed

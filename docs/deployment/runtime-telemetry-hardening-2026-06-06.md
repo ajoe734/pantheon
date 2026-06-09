@@ -118,10 +118,10 @@ per active paper `RuntimeBinding`, replacing manual `docker run` for paper worke
 - `services/execution/runtime-manager/Dockerfile` — Python 3.11-slim image for
   the reconciler container; installs `redis` and `jsonschema` for spawned workers.
 - `services/execution/runtime-manager/requirements.txt` — container dependencies.
-- `services/execution/runtime-manager/test_paper_fleet_reconciler.py` — 22 unit
+- `services/execution/runtime-manager/test_paper_fleet_reconciler.py` — 25 unit
   tests covering start, stop, restart, port allocation, env builder, snapshot,
-  degraded-fetch safety, restart backoff, and binding-scoped signal queue
-  isolation (4 tests added in anchor eb95ea8e).
+  degraded-fetch safety, restart backoff, binding-scoped signal queue
+  isolation, and monitoring session lifecycle (open/stale-reap/restart).
 - `docker-compose.yml` — adds `paper-fleet-reconciler` service under the
   `paper-fleet` profile. Activate with:
 
@@ -168,7 +168,7 @@ default queue.
 
 ```bash
 python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py -v
-# Expected: 22 passed
+# Expected: 25 passed
 ```
 
 ---
@@ -246,4 +246,91 @@ These fields are optional; existing signals without them are unaffected.
 ```bash
 python3 -m pytest services/execution/lean_runtime/test_signal_consumer.py -v
 # Expected: 22 passed
+```
+
+---
+
+# Paper Monitoring Session Stale Reaper — OPS-RTEL-003
+
+Task: OPS-RTEL-003
+
+## Scope
+
+Paper fleet monitoring sessions are now owned by the runtime-manager fleet
+reconciler instead of being inferred by `ended_at == null`.
+
+- `PaperFleetReconciler` opens one `paper_runtime_monitoring` session for each
+  spawned paper worker.
+- Each session records binding/runtime identity, start/end timestamps,
+  restart count, last heartbeat, stale threshold, and end reason.
+- The reconciler reads telemetry runtime summaries from
+  `PANTHEON_TELEMETRY_API_URL` or `PANTHEON_TELEMETRY_URL` and closes open
+  sessions whose heartbeat is stale.
+- A stale session terminates the tracked worker; the normal desired-state
+  reconcile then starts a replacement worker with a new monitoring session.
+- Persisted zombie sessions are also reaped on reconciler restart when their
+  heartbeat evidence is stale.
+
+## Configuration
+
+Optional knobs:
+
+```bash
+RECONCILER_MONITORING_HEARTBEAT_STALE_SECONDS=90
+PANTHEON_PAPER_RUNTIME_MONITORING_SESSION_STORE=/data/paper_runtime_monitoring_sessions.json
+PANTHEON_PAPER_FLEET_RECONCILER_URL=http://paper-fleet-reconciler:8011
+```
+
+`PANTHEON_PAPER_RUNTIME_MONITORING_SESSION_STORE` persists the session list for
+BFF/file-backed reads and restart reaping. If unset, sessions remain available
+in the reconciler `/api/fleet/state` snapshot for the current process.
+
+The BFF runtime-state board now joins this evidence as
+`paper_runtime_monitoring` per row and reports the
+`paper_runtime_monitoring` surface status separately from telemetry summaries.
+The BFF never writes these sessions.
+
+## Validation
+
+Focused local validation for this task:
+
+```bash
+python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py -q
+# Expected: 25 passed
+
+python3 -m pytest services/control-plane/bff/test_pkt010_runtime_state_board_contract.py -q
+# Expected: 4 passed
+```
+
+---
+
+# BFF Runtime-State Truth Split and Closeout — OPS-RTEL-005
+
+Task: OPS-RTEL-005
+
+## Scope
+
+The BFF runtime-state board now separates row-local runtime evidence from
+board-level support surface health:
+
+- Each runtime row includes `row_health`, covering only the runtime binding,
+  telemetry summary row, and paper runtime monitoring row.
+- `rollback_history` remains a board support surface under
+  `meta.surfaces.rollback_history`; it does not make telemetry rows unhealthy
+  when rollback history is degraded or unavailable.
+- `meta.surfaces.runtime_state.support_surface_status` records the status of
+  each support surface.
+- `meta.surfaces.runtime_state.degraded_support_surfaces` names the surfaces
+  causing the composed board to be degraded.
+
+This lets operators see a healthy 15-runtime telemetry fleet while still
+getting an explicit degraded banner for unavailable rollback history or other
+supporting reads.
+
+## Evidence
+
+Closeout evidence is recorded in:
+
+```text
+support/evidence/OPS-RTEL-005/owner-closeout.md
 ```

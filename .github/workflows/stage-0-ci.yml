@@ -127,7 +127,22 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Check dependency graph support
+        id: dependency_graph
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if gh api "repos/${{ github.repository }}/dependency-graph/compare/${BASE_SHA}...${HEAD_SHA}" --silent >/dev/null 2>&1; then
+            echo "supported=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "supported=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Dependency graph API is unavailable for this repository; dependency-review-action would fail before reviewing dependencies. Enable dependency graph in repository security settings to enforce this gate."
+          fi
+
       - name: Review dependency changes
+        if: steps.dependency_graph.outputs.supported == 'true'
         uses: actions/dependency-review-action@v4
         with:
           fail-on-severity: high

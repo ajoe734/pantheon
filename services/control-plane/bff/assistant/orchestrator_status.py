@@ -11,16 +11,20 @@ from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from .models import OrchestratorStatusResponse, OrchestratorTaskStatus, OrchestratorWorkerStatus
 from .redaction import redact_payload, redact_text
 
 
 GITHUB_BUS_SOURCE = ".orchestrator/github-bus-state.json"
+DEFAULT_ASSISTANT_DEV_PACKET_INBOX = ".orchestrator/assistant-dev-packets"
+ASSISTANT_DEV_PACKET_INBOX_ENV = "PANTHEON_ASSISTANT_DEV_PACKET_INBOX"
+ASSISTANT_COMMAND_TOOL = "assistant.command"
 FAILURE_CHECK_STATES = {"ACTION_REQUIRED", "CANCELLED", "ERROR", "FAILURE", "FAILED", "STALE", "TIMED_OUT"}
 PENDING_CHECK_STATES = {"EXPECTED", "IN_PROGRESS", "PENDING", "QUEUED", "REQUESTED", "WAITING"}
 SUCCESS_CHECK_STATES = {"COMPLETED", "NEUTRAL", "SKIPPED", "SUCCESS"}
+TERMINAL_TASK_STATUSES = {"done", "superseded", "cancelled"}
 DEPLOY_CHECK_MARKERS = (
     "deploy",
     "deployment",
@@ -134,7 +138,88 @@ def _first_mapping(*values: Any) -> Mapping[str, Any]:
     return {}
 
 
-def _task_blockers(blockers: Iterable[Any], task_id: str) -> List[Dict[str, Any]]:
+def _iso_at_or_after(value: Any, baseline: Any) -> bool:
+    if not baseline:
+        return True
+    if not value:
+        return False
+    try:
+        value_dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        baseline_dt = datetime.fromisoformat(str(baseline).replace("Z", "+00:00"))
+    except ValueError:
+        return str(value) >= str(baseline)
+    return value_dt >= baseline_dt
+
+
+def _failure_summary_text(value: Any) -> Optional[str]:
+    if value in (None, ""):
+        return None
+    raw = str(value)
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return _safe_text(raw)
+
+    parts: List[str] = []
+    error = payload.get("error") if isinstance(payload, Mapping) else None
+    if error:
+        parts.append(str(error))
+    message = _as_mapping(payload.get("message")) if isinstance(payload, Mapping) else {}
+    for content in message.get("content") or []:
+        item = _as_mapping(content)
+        text = item.get("text")
+        if text:
+            parts.append(str(text))
+            break
+    if not parts and message.get("stop_reason"):
+        parts.append(str(message.get("stop_reason")))
+    if not parts:
+        return _safe_text(raw)
+    return _safe_text(": ".join(parts))
+
+
+def _task_failure_streaks(state: Mapping[str, Any], task: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    task_id = str(task.get("id") or "")
+    if not task_id:
+        return []
+    task_status = str(task.get("status") or "").lower()
+    if task_status in TERMINAL_TASK_STATUSES:
+        return []
+
+    guardrails = _as_mapping(state.get("provider_guardrails"))
+    failure_streaks = _as_mapping(guardrails.get("task_failure_streaks"))
+    task_failures: List[Dict[str, Any]] = []
+    for key, raw_streak in sorted(failure_streaks.items()):
+        streak = _as_mapping(raw_streak)
+        streak_task_id = str(streak.get("task_id") or streak.get("taskId") or key).split(":", 1)[0]
+        if streak_task_id != task_id:
+            continue
+        if not _iso_at_or_after(streak.get("last_failure_at") or streak.get("lastFailureAt"), task.get("last_update")):
+            continue
+        count = streak.get("count")
+        try:
+            count_value = int(count)
+        except (TypeError, ValueError):
+            count_value = 1
+        task_failures.append(
+            _safe(
+                {
+                    "type": "worker_failure_streak",
+                    "status": "attention",
+                    "source": "provider_guardrails.task_failure_streaks",
+                    "waitingFor": streak.get("provider"),
+                    "provider": streak.get("provider"),
+                    "count": count_value,
+                    "failureKind": streak.get("last_failure_kind") or streak.get("lastFailureKind"),
+                    "lastFailureAt": streak.get("last_failure_at") or streak.get("lastFailureAt"),
+                    "message": _failure_summary_text(streak.get("last_reason") or streak.get("message") or streak.get("reason")),
+                }
+            )
+        )
+    return task_failures[:5]
+
+
+def _task_blockers(blockers: Iterable[Any], task_id: str, *, state: Mapping[str, Any], task: Mapping[str, Any]) -> List[Dict[str, Any]]:
     task_blockers: List[Dict[str, Any]] = []
     for blocker in blockers:
         item = _as_mapping(blocker)
@@ -160,6 +245,7 @@ def _task_blockers(blockers: Iterable[Any], task_id: str) -> List[Dict[str, Any]
                 }
             )
         )
+    task_blockers.extend(_task_failure_streaks(state, task))
     return task_blockers
 
 
@@ -485,10 +571,318 @@ def _normalize_provider_guardrails(state: Mapping[str, Any]) -> Dict[str, Any]:
             )
         )
     failure_streaks = _as_mapping(guardrails.get("task_failure_streaks"))
-    return {"dispatchPauses": normalized_pauses, "taskFailureStreakCount": len(failure_streaks)}
+    normalized_streaks = []
+    for key, raw_streak in sorted(failure_streaks.items()):
+        streak = _as_mapping(raw_streak)
+        normalized_streaks.append(
+            _safe(
+                {
+                    "key": key,
+                    "taskId": streak.get("task_id") or streak.get("taskId") or str(key).split(":", 1)[0],
+                    "provider": streak.get("provider"),
+                    "count": streak.get("count"),
+                    "lastFailureAt": streak.get("last_failure_at") or streak.get("lastFailureAt"),
+                    "failureKind": streak.get("last_failure_kind") or streak.get("lastFailureKind"),
+                    "reason": _failure_summary_text(streak.get("last_reason") or streak.get("reason")),
+                }
+            )
+        )
+    normalized_streaks.sort(key=lambda item: str(item.get("lastFailureAt") or ""), reverse=True)
+    return {
+        "dispatchPauses": normalized_pauses,
+        "taskFailureStreakCount": len(failure_streaks),
+        "taskFailureStreaks": normalized_streaks[:20],
+    }
 
 
-def read_orchestrator_status(repo_root: Optional[str] = None) -> OrchestratorStatusResponse:
+def _assistant_inbox_root(root: Path) -> Path:
+    configured = os.environ.get(ASSISTANT_DEV_PACKET_INBOX_ENV, "").strip() or DEFAULT_ASSISTANT_DEV_PACKET_INBOX
+    path = Path(configured)
+    if not path.is_absolute():
+        path = root / path
+    return path
+
+
+def _count_json_files(path: Path) -> int:
+    try:
+        if not path.exists():
+            return 0
+        return sum(1 for item in path.glob("*.json") if item.is_file())
+    except OSError:
+        return 0
+
+
+def _read_json_file(path: Path) -> Dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _recent_receipts(path: Path, *, limit: int = 5) -> List[Dict[str, Any]]:
+    try:
+        files = sorted(
+            (item for item in path.glob("*.json") if item.is_file()),
+            key=lambda item: item.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return []
+    receipts: List[Dict[str, Any]] = []
+    for receipt_path in files[:limit]:
+        receipt = _read_json_file(receipt_path)
+        result = _as_mapping(receipt.get("result"))
+        receipts.append(
+            _safe(
+                {
+                    "packetId": receipt.get("packetId") or receipt_path.stem,
+                    "status": receipt.get("status"),
+                    "drainedAt": receipt.get("drainedAt"),
+                    "dryRun": receipt.get("dryRun"),
+                    "processedTaskCount": result.get("processedTaskCount") or result.get("processed_task_count"),
+                    "errorCount": len(result.get("errors") or []) if isinstance(result.get("errors"), list) else None,
+                    "archivedPath": receipt.get("archivedPath"),
+                    "error": receipt.get("error"),
+                }
+            )
+        )
+    return receipts
+
+
+def _normalize_assistant_dev_bridge(root: Path, state: Mapping[str, Any]) -> Dict[str, Any]:
+    bridge = _as_mapping(state.get("assistant_dev_bridge") or state.get("assistantDevBridge"))
+    inbox = _assistant_inbox_root(root)
+    last_result = _as_mapping(bridge.get("last_result") or bridge.get("lastResult"))
+    counts = {
+        "pending": _count_json_files(inbox / "pending"),
+        "processed": _count_json_files(inbox / "processed"),
+        "failed": _count_json_files(inbox / "failed"),
+        "receipts": _count_json_files(inbox / "receipts"),
+    }
+    status = "idle"
+    if counts["pending"] > 0:
+        status = "pending"
+    if counts["failed"] > 0 or int(last_result.get("errorCount") or last_result.get("error_count") or 0) > 0:
+        status = "attention"
+
+    return _safe(
+        {
+            "status": status,
+            "inbox": {
+                "path": str(inbox),
+                "exists": inbox.exists(),
+                "pendingCount": counts["pending"],
+                "processedCount": counts["processed"],
+                "failedCount": counts["failed"],
+                "receiptCount": counts["receipts"],
+            },
+            "lastDrainAt": bridge.get("last_drain_at") or bridge.get("lastDrainAt"),
+            "lastResult": last_result,
+            "recentReceipts": _recent_receipts(inbox / "receipts"),
+        }
+    )
+
+
+def _provider_status_from_ready(ready: Optional[bool], fallback: str = "unavailable") -> str:
+    if ready is True:
+        return "ready"
+    if ready is False:
+        return "degraded"
+    return fallback
+
+
+def _normalize_provider_readiness(
+    provider_readiness: Optional[Callable[[], Mapping[str, Any]]],
+    snapshot_at: str,
+) -> Dict[str, Any]:
+    if provider_readiness is None:
+        return {
+            "available": False,
+            "provider": "codex_cli",
+            "runtime": "openclaw_gateway_cli_mount",
+            "ready": None,
+            "status": "not_configured",
+            "checkedAt": snapshot_at,
+            "source": "not_configured",
+        }
+    try:
+        raw = provider_readiness()
+    except Exception as exc:  # noqa: BLE001 - status readback must fail soft
+        return _safe(
+            {
+                "available": False,
+                "provider": "codex_cli",
+                "runtime": "openclaw_gateway_cli_mount",
+                "ready": False,
+                "status": "unavailable",
+                "reason": type(exc).__name__,
+                "message": str(exc),
+                "checkedAt": snapshot_at,
+                "source": "openclaw_gateway_adapter",
+            }
+        )
+
+    value = _as_mapping(raw.get("data")) if isinstance(raw, Mapping) and isinstance(raw.get("data"), Mapping) else _as_mapping(raw)
+    ready_value = value.get("ready")
+    ready = ready_value if isinstance(ready_value, bool) else None
+    status = str(value.get("status") or _provider_status_from_ready(ready)).strip() or "unknown"
+    return _safe(
+        {
+            "available": True,
+            "provider": value.get("provider") or value.get("provider_name") or "codex_cli",
+            "providerName": value.get("provider_name") or value.get("provider") or "codex_cli",
+            "runtime": value.get("runtime") or "openclaw_gateway_cli_mount",
+            "ready": ready,
+            "status": status,
+            "reason": value.get("reason") or value.get("degraded_reason"),
+            "degradedReason": value.get("degraded_reason") or value.get("reason"),
+            "auth": value.get("auth"),
+            "authStatus": value.get("auth_status") or value.get("authStatus"),
+            "binaryPath": value.get("binary_path") or value.get("binaryPath"),
+            "version": value.get("version"),
+            "credentialMount": value.get("credential_mount") or value.get("credentialMount"),
+            "mountMode": value.get("mount_mode") or value.get("mountMode"),
+            "repairWorkspace": value.get("repair_workspace") or value.get("repairWorkspace"),
+            "capabilities": value.get("capabilities"),
+            "checkedAt": value.get("checked_at") or value.get("checkedAt") or snapshot_at,
+            "source": "openclaw_gateway_adapter",
+        }
+    )
+
+
+def _normalize_openclaw_tool_policy(
+    tool_policy: Optional[Callable[[], Mapping[str, Any]]],
+    effective_tools: Optional[Callable[[], Mapping[str, Any]]],
+    snapshot_at: str,
+) -> Dict[str, Any]:
+    if tool_policy is None:
+        return {
+            "available": False,
+            "status": "not_configured",
+            "source": "not_configured",
+            "assistantCommandTool": ASSISTANT_COMMAND_TOOL,
+            "assistantCommandAllowed": False,
+            "checkedAt": snapshot_at,
+        }
+
+    try:
+        raw_policy = tool_policy()
+    except Exception as exc:  # noqa: BLE001 - status readback must fail soft
+        return _safe(
+            {
+                "available": False,
+                "status": "unavailable",
+                "source": "openclaw_gateway_adapter",
+                "reason": type(exc).__name__,
+                "message": str(exc),
+                "assistantCommandTool": ASSISTANT_COMMAND_TOOL,
+                "assistantCommandAllowed": False,
+                "checkedAt": snapshot_at,
+            }
+        )
+
+    policy = (
+        _as_mapping(raw_policy.get("data"))
+        if isinstance(raw_policy, Mapping) and isinstance(raw_policy.get("data"), Mapping)
+        else _as_mapping(raw_policy)
+    )
+    allowed_tools = [
+        str(tool)
+        for tool in (policy.get("allowed_tools") or policy.get("allowedTools") or [])
+        if str(tool).strip()
+    ]
+    if str(policy.get("status") or "").strip().lower() == "unavailable" and not allowed_tools:
+        return _safe(
+            {
+                "available": False,
+                "status": "unavailable",
+                "source": "openclaw_gateway_adapter",
+                "reason": policy.get("reason"),
+                "message": policy.get("message"),
+                "httpStatus": policy.get("httpStatus") or policy.get("http_status"),
+                "assistantCommandTool": ASSISTANT_COMMAND_TOOL,
+                "assistantCommandAllowed": False,
+                "checkedAt": snapshot_at,
+            }
+        )
+
+    assistant_allowed = ASSISTANT_COMMAND_TOOL in allowed_tools
+
+    effective_payload: Dict[str, Any] = {}
+    effective_status = "not_configured"
+    if effective_tools is not None:
+        try:
+            raw_effective = effective_tools()
+            effective_payload = (
+                _as_mapping(raw_effective.get("data"))
+                if isinstance(raw_effective, Mapping) and isinstance(raw_effective.get("data"), Mapping)
+                else dict(_as_mapping(raw_effective))
+            )
+            effective_status = str(effective_payload.get("status") or "available")
+        except Exception as exc:  # noqa: BLE001 - status readback must fail soft
+            effective_payload = _safe(
+                {
+                    "status": "unavailable",
+                    "reason": type(exc).__name__,
+                    "message": str(exc),
+                }
+            )
+            effective_status = "unavailable"
+
+    effective_tool_names = [
+        str(tool)
+        for tool in (effective_payload.get("effective_tools") or effective_payload.get("effectiveTools") or [])
+        if str(tool).strip()
+    ]
+    effective_skill_descriptors = [
+        _safe(dict(skill))
+        for skill in (effective_payload.get("effective_skills") or effective_payload.get("effectiveSkills") or [])
+        if isinstance(skill, Mapping)
+    ]
+    assistant_effective = ASSISTANT_COMMAND_TOOL in effective_tool_names
+    if assistant_effective:
+        assistant_status = "usable"
+    elif assistant_allowed:
+        assistant_status = "policy_allowed_not_effective"
+    else:
+        assistant_status = "blocked"
+
+    return _safe(
+        {
+            "available": True,
+            "status": "ready" if assistant_allowed else "degraded",
+            "source": "openclaw_gateway_adapter",
+            "assistantCommandTool": ASSISTANT_COMMAND_TOOL,
+            "assistantCommandAllowed": assistant_allowed,
+            "assistantCommandEffective": assistant_effective,
+            "assistantCommandUsable": assistant_allowed and assistant_effective,
+            "assistantCommandStatus": assistant_status,
+            "allowedTools": allowed_tools,
+            "allowedWorkflows": policy.get("allowed_workflows") or policy.get("allowedWorkflows") or [],
+            "defaultPosture": policy.get("default_posture") or policy.get("defaultPosture"),
+            "alwaysBlockedTools": policy.get("always_blocked_tools") or policy.get("alwaysBlockedTools") or [],
+            "alwaysBlockedToolPrefixes": policy.get("always_blocked_tool_prefixes") or policy.get("alwaysBlockedToolPrefixes") or [],
+            "alwaysBlockedWorkflowPrefixes": policy.get("always_blocked_workflow_prefixes") or policy.get("alwaysBlockedWorkflowPrefixes") or [],
+            "effectiveStatus": effective_status,
+            "effectiveTools": effective_tool_names,
+            "effectiveSkills": effective_skill_descriptors,
+            "policyAllowedTools": effective_payload.get("policy_allowed_tools") or effective_payload.get("policyAllowedTools"),
+            "upstreamStatus": effective_payload.get("upstream_status") or effective_payload.get("upstreamStatus"),
+            "agentId": effective_payload.get("agent_id") or effective_payload.get("agentId"),
+            "note": policy.get("note") or effective_payload.get("note"),
+            "checkedAt": snapshot_at,
+        }
+    )
+
+
+def read_orchestrator_status(
+    repo_root: Optional[str] = None,
+    *,
+    provider_readiness: Optional[Callable[[], Mapping[str, Any]]] = None,
+    openclaw_tool_policy: Optional[Callable[[], Mapping[str, Any]]] = None,
+    openclaw_effective_tools: Optional[Callable[[], Mapping[str, Any]]] = None,
+) -> OrchestratorStatusResponse:
     root = _find_repo_root(repo_root)
     snapshot_at = _now()
 
@@ -537,7 +931,7 @@ def read_orchestrator_status(repo_root: Optional[str] = None) -> OrchestratorSta
             summary_zh=t.get("summary_zh"),
             waiting_for=t.get("waiting_for"),
             brief_path=brief_path,
-            blockers=_task_blockers(blockers, task_id),
+            blockers=_task_blockers(blockers, task_id, state=state, task=t),
             github=github_status,
             deployment=deployment_status,
             delivery=delivery,
@@ -556,5 +950,12 @@ def read_orchestrator_status(repo_root: Optional[str] = None) -> OrchestratorSta
         blockers=_safe(blockers),
         supervisor=_normalize_supervisor(state),
         providerGuardrails=_normalize_provider_guardrails(state),
+        providerReadiness=_normalize_provider_readiness(provider_readiness, snapshot_at),
+        openclawToolPolicy=_normalize_openclaw_tool_policy(
+            openclaw_tool_policy,
+            openclaw_effective_tools,
+            snapshot_at,
+        ),
+        assistantDevBridge=_normalize_assistant_dev_bridge(root, state),
         coordination=_normalize_coordination(state),
     )

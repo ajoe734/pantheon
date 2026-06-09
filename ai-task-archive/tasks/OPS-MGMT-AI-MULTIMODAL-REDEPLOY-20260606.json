@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "OPS-MGMT-AI-MULTIMODAL-REDEPLOY-20260606",
+  "archived_at": "2026-06-06T15:57:16Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OPS-MGMT-AI-MULTIMODAL-REDEPLOY-20260606",
+    "title": "Redeploy openclaw-gateway-adapter for codex -i multimodal plus live-verify image sight (babysit)",
+    "summary_zh": null,
+    "phase": "Sprint MGMT-AI-PERSIST / EPIC-MGMT-AI-PERSIST-P1-ATTACH",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/openclaw-gateway-adapter/assistant_codex_provider.py;support/evidence/mgmt-ai-multimodal-20260606/live-verify.md"
+    ],
+    "acceptance": [
+      "Precondition: PR #1101 (MGMT-AI-ATTACH-MULTIMODAL) must be merged into dev before deploy — verify the codex provider on dev contains _materialize_request_images plus the -i image wiring;Redeploy the openclaw-gateway-adapter on the dev BFF VM so the new codex provider (image attachments forwarded to codex exec -i) is live; confirm the new container is ready and serving;Confirm the gateway-mounted codex runtime uses a VISION-capable model plus image-permitted auth: inspect the mounted /srv/pantheon-assistant/.codex/config.toml model plus GET /api/openclaw-adapter/assistant/readiness/codex?auth_probe=true (auth ready plus codex version supports -i);Live image-sight verify (babysit): via the dev Management AI upload a small recognizable image (solid red PNG) then ask the model to name its colour/content; PASS only if the answer reflects the actual image not a generic text reply;Graceful degradation: a malformed or non-image attachment still returns a normal text answer with no 5xx;Capture evidence (curl plus the colour answer plus codex model/version plus readiness probe) to support/evidence/mgmt-ai-multimodal-20260606/live-verify.md;Babysit rule (feedback_babysit_deploy_tasks): do NOT mark done unless the model demonstrably sees the image in a live test"
+    ],
+    "next": "PR #1109 merged into dev at a2e43cff3f90acfad978aa0b9202a01fd99caf3c; owner closeout evidence recorded; verification: pytest assistant_codex_provider 15 passed, py_compile adapter files, git diff --check evidence/code, GitHub checks passed.",
+    "last_update": "2026-06-06T15:57:16Z",
+    "review_notes_zh": [
+      "審查通過"
+    ],
+    "review_file": "support/evidence/mgmt-ai-multimodal-20260606/review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-06T15:57:16Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-mgmt-ai-multimodal-redeploy-20260606",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-MGMT-AI-MULTIMODAL-REDEPLOY-20260606",
+      "git_clean_required": false,
+      "commit": "7d631a714ccaf6d91dc62dacb0041cef3c9e13d6",
+      "commit_subject": "OPS-MGMT-AI-MULTIMODAL-REDEPLOY-20260606: refresh closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped owner finalization evidence.",
+        "Not changing": "runtime code, live redeploy behavior, reviewer verdict, or",
+        "Composes with": "PR #1109 and the origin/dev archive sync commits that made the",
+        "LLM-Agent": "Codex",
+        "Task-ID": "OPS-MGMT-AI-MULTIMODAL-REDEPLOY-20260606",
+        "Reviewer": "Claude",
+        "Verified": "git diff --check owner-closeout.md"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OPS-MGMT-AI-MULTIMODAL-REDEPLOY-20260606",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "a2e43cff3f90acfad978aa0b9202a01fd99caf3c",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OPS-MGMT-AI-MULTIMODAL-REDEPLOY-20260606",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "PR #1104 and #1105 merged into dev. Evidence covers redeploy, Codex readiness/auth, live image sight via adapter and BFF upload, malformed fallback, and local regression. Please review for approval before owner done.",
+      "status": "done",
+      "created_at": "2026-06-06T15:34:55Z",
+      "resolved_at": "2026-06-06T15:47:33Z"
+    },
+    {
+      "task_id": "OPS-MGMT-AI-MULTIMODAL-REDEPLOY-20260606",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all acceptance criteria met per live-verify.md evidence. Returning to Codex for done finalization.",
+      "status": "done",
+      "created_at": "2026-06-06T15:47:33Z",
+      "resolved_at": "2026-06-06T15:57:17Z"
+    }
+  ],
+  "blockers": []
+}

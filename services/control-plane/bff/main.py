@@ -12,15 +12,17 @@ import sys
 import time
 import uuid
 from collections import deque
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Sequence, Set, Tuple
 from urllib.parse import quote, urlencode
 
 from fastapi import Body, Cookie, FastAPI, HTTPException, BackgroundTasks, Header, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -128,6 +130,13 @@ _PRODUCTION_STRICT_ENVIRONMENTS = {
     "staging-live",
 }
 _DEFAULT_LOVABLE_CORS_ORIGINS = [
+    # Pantheon-owned self-hosted dev frontend (execute-plans). This replaced the
+    # Lovable-hosted dev FE; it is the current dev acceptance origin. Dev-only:
+    # it must be filtered out by the production-strict CORS filter below.
+    "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
+    # TODO(off-lovable): staging-live and prod FE are also migrating off Lovable
+    # to self-hosted sslip.io origins. Replace the staging/prod *.lovable.app
+    # entries below once the new self-hosted URLs are provisioned.
     # Lovable shared-preview and published URLs for the Pantheon UI lanes.
     "https://preview--pantheon-dev.lovable.app",
     "https://preview--pantheon-ai-system-front-dev.lovable.app",
@@ -146,6 +155,8 @@ _DEFAULT_LOVABLE_CORS_ORIGINS = [
     "https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com",
 ]
 _DEV_LOVABLE_CORS_ORIGINS = {
+    # Self-hosted dev FE origin is dev-only: production-strict mode must filter it.
+    "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
     "https://preview--pantheon-dev.lovable.app",
     "https://preview--pantheon-ai-system-front-dev.lovable.app",
     "https://pantheon-dev.lovable.app",
@@ -285,6 +296,59 @@ _CORS_EXPOSE_HEADERS = [
     "X-Request-Id",
 ]
 app = _build_bff_app()
+_OPENAPI_HTTP_CONTEXT: ContextVar[bool] = ContextVar("openapi_http_context", default=False)
+
+
+def _schema_with_legacy_action_path_for_http(schema: Dict[str, Any]) -> Dict[str, Any]:
+    http_schema = json.loads(json.dumps(schema))
+    paths = http_schema.setdefault("paths", {})
+    canonical = paths.get("/bff/actions/{type}/{id}/{action}")
+    if not isinstance(canonical, dict):
+        return http_schema
+    legacy_path = "/bff/actions/{entityType}/{entityId}/{actionId}"
+    if legacy_path in paths:
+        return http_schema
+    legacy = json.loads(json.dumps(canonical))
+    rename = {"type": "entityType", "id": "entityId", "action": "actionId"}
+    for operation in legacy.values():
+        if not isinstance(operation, dict):
+            continue
+        if operation.get("operationId"):
+            operation["operationId"] = f"{operation['operationId']}_legacy_named"
+        for parameter in operation.get("parameters") or []:
+            if isinstance(parameter, dict) and parameter.get("in") == "path":
+                name = str(parameter.get("name") or "")
+                if name in rename:
+                    parameter["name"] = rename[name]
+    paths[legacy_path] = legacy
+    return http_schema
+
+
+def _custom_openapi() -> Dict[str, Any]:
+    if app.openapi_schema is None:
+        app.openapi_schema = get_openapi(
+            title=app.title,
+            version=app.version,
+            routes=app.routes,
+        )
+    if _OPENAPI_HTTP_CONTEXT.get():
+        return _schema_with_legacy_action_path_for_http(app.openapi_schema)
+    return app.openapi_schema
+
+
+app.openapi = _custom_openapi  # type: ignore[method-assign]
+
+
+@app.middleware("http")
+async def _openapi_http_schema_context(request: Request, call_next):
+    token = None
+    if request.url.path == app.openapi_url:
+        token = _OPENAPI_HTTP_CONTEXT.set(True)
+    try:
+        return await call_next(request)
+    finally:
+        if token is not None:
+            _OPENAPI_HTTP_CONTEXT.reset(token)
 
 # --------------------------------------------------------------------------- #
 # Storage
@@ -869,23 +933,35 @@ def _extract_identity_stub(authorization: Optional[str]) -> OperatorIdentity:
             inferred_roles = ["analyst"]
         elif lowered.startswith("viewer_"):
             inferred_roles = ["viewer"]
+        capabilities = _stub_identity_capabilities([])
         return OperatorIdentity(
             operator_id=token,
             roles=inferred_roles,
             mfa_verified="mfa" in lowered,
-            claims={"sub": token, "roles": inferred_roles},
+            claims={"sub": token, "roles": inferred_roles, "capabilities": capabilities},
             token_kind="stub",
         )
     parts = token.split(":")
     operator_id = parts[0] if parts else "unknown"
     roles = parts[1].split(",") if len(parts) > 1 else ["operator"]
     mfa_verified = len(parts) > 2 and parts[2] == "mfa"
+    token_capabilities = parts[3].split(",") if len(parts) > 3 else []
+    capabilities = _stub_identity_capabilities(token_capabilities)
     return OperatorIdentity(
         operator_id=operator_id,
         roles=roles,
         mfa_verified=mfa_verified,
-        claims={"sub": operator_id, "roles": roles},
+        claims={"sub": operator_id, "roles": roles, "capabilities": capabilities},
         token_kind="stub",
+    )
+
+
+def _stub_identity_capabilities(token_capabilities: List[str]) -> List[str]:
+    return _dedupe_nonblank_strings(
+        [
+            *token_capabilities,
+            *_env_csv("PANTHEON_BFF_STUB_CAPABILITIES"),
+        ]
     )
 
 
@@ -1113,6 +1189,19 @@ def _foundation_request_payload(
     return payload
 
 
+def _foundation_idempotency_payload(request_payload: Dict[str, Any]) -> Dict[str, Any]:
+    payload = json.loads(json.dumps(request_payload))
+    audit_context = payload.get("audit_context")
+    if isinstance(audit_context, dict):
+        audit_context.pop("timestamp", None)
+    raw_payload = payload.get("raw_payload")
+    if isinstance(raw_payload, dict):
+        raw_audit_context = raw_payload.get("audit_context")
+        if isinstance(raw_audit_context, dict):
+            raw_audit_context.pop("timestamp", None)
+    return payload
+
+
 def _foundation_route_metadata(route: str, source_route: Optional[str] = None) -> Dict[str, Any]:
     metadata: Dict[str, Any] = {"route": route}
     if source_route:
@@ -1199,7 +1288,7 @@ def _build_foundation_command_context(
         idempotency_key=command_envelope.idempotency_key,
         operation_type=f"bff.{cmd.command.value}",
         target_ref=authority_scope.target_ref,
-        request_payload=request_payload,
+        request_payload=_foundation_idempotency_payload(request_payload),
         trace_id=command_envelope.trace.trace_id,
     )
     policy_decision = PolicyDecision.make(
@@ -1612,6 +1701,8 @@ def _list_governance_audit_events(
     target_type: Optional[str] = None,
     from_ts: Optional[datetime] = None,
     to_ts: Optional[datetime] = None,
+    include_command_store: bool = True,
+    include_fixture_pack: bool = True,
 ) -> List[Dict[str, Any]]:
     events = read_store.list_governance_audit_events(
         actor=actor,
@@ -1619,23 +1710,25 @@ def _list_governance_audit_events(
         target_type=target_type,
         from_ts=from_ts,
         to_ts=to_ts,
+        include_fixture_pack=include_fixture_pack,
     )
     events_by_id: Dict[str, Dict[str, Any]] = {
         str(event.get("entry_id") or event.get("auditId") or event.get("id") or index): event
         for index, event in enumerate(events)
     }
-    for record in command_store._get_all_commands():
-        event = _project_command_record_audit_event(record)
-        if not event or not _audit_event_matches(
-            event,
-            actor=actor,
-            action_types=action_types,
-            target_type=target_type,
-            from_ts=from_ts,
-            to_ts=to_ts,
-        ):
-            continue
-        events_by_id.setdefault(str(event.get("entry_id")), event)
+    if include_command_store:
+        for record in command_store._get_all_commands():
+            event = _project_command_record_audit_event(record)
+            if not event or not _audit_event_matches(
+                event,
+                actor=actor,
+                action_types=action_types,
+                target_type=target_type,
+                from_ts=from_ts,
+                to_ts=to_ts,
+            ):
+                continue
+            events_by_id.setdefault(str(event.get("entry_id")), event)
     merged = list(events_by_id.values())
     merged.sort(key=lambda event: str(event.get("timestamp") or ""), reverse=True)
     return json.loads(json.dumps(merged))
@@ -5588,6 +5681,23 @@ def _dataset_surface_status(
     return surface
 
 
+def _composed_dataset_surface_status(
+    dataset: str,
+    records: Sequence[Any],
+    *,
+    snapshot_at: str,
+    source: str,
+) -> Dict[str, Any]:
+    surface = _dataset_surface_status(dataset, snapshot_at=snapshot_at)
+    if records and surface.get("source") == "missing":
+        return {
+            "status": "ok",
+            "source": source,
+            "note": "Composed from governed market-persona read-model defaults.",
+        }
+    return surface
+
+
 def _read_surface_meta(
     dataset: str,
     surface_key: str,
@@ -5973,6 +6083,34 @@ def _project_runtime_state_telemetry_summary(summary: Optional[Dict[str, Any]]) 
     return projected
 
 
+def _project_runtime_state_monitoring_session(session: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not session:
+        return None
+    projected: Dict[str, Any] = {}
+    for key in (
+        "session_id",
+        "session_type",
+        "binding_id",
+        "runtime_binding_id",
+        "runtime_id",
+        "deployment_stage",
+        "status",
+        "active",
+        "started_at",
+        "ended_at",
+        "ended_reason",
+        "last_heartbeat_at",
+        "heartbeat_status",
+        "stale_after_seconds",
+        "restart_count",
+        "staleness",
+        "last_error",
+    ):
+        if key in session:
+            projected[key] = session.get(key)
+    return projected
+
+
 def _project_runtime_state_latest_rollback(rollbacks: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if not rollbacks:
         return None
@@ -5996,10 +6134,111 @@ def _project_runtime_state_latest_rollback(rollbacks: List[Dict[str, Any]]) -> O
     }
 
 
+def _runtime_state_row_health_check(
+    status: str,
+    *,
+    source: str,
+    message: Optional[str] = None,
+    applies: bool = True,
+) -> Dict[str, Any]:
+    check: Dict[str, Any] = {
+        "status": status,
+        "source": source,
+        "applies": applies,
+    }
+    if message:
+        check["message"] = message
+    return check
+
+
+def _derive_runtime_state_row_health(
+    *,
+    binding: Dict[str, Any],
+    telemetry_summary: Optional[Dict[str, Any]],
+    monitoring_session: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    deployment_stage = str(
+        binding.get("deployment_stage") or binding.get("deployment_mode") or ""
+    ).lower()
+    checks: Dict[str, Dict[str, Any]] = {
+        "runtime_binding": _runtime_state_row_health_check(
+            "ok",
+            source="runtime_bindings",
+        ),
+        "telemetry_summary": (
+            _runtime_state_row_health_check("ok", source="telemetry_summaries")
+            if telemetry_summary is not None
+            else _runtime_state_row_health_check(
+                "unavailable",
+                source="telemetry_summaries",
+                message="Telemetry summary row is unavailable for this runtime.",
+            )
+        ),
+    }
+    if deployment_stage == "paper":
+        checks["paper_runtime_monitoring"] = (
+            _runtime_state_row_health_check(
+                "ok",
+                source="paper_runtime_monitoring_sessions",
+            )
+            if monitoring_session is not None
+            else _runtime_state_row_health_check(
+                "unavailable",
+                source="paper_runtime_monitoring_sessions",
+                message="Paper runtime monitoring session is unavailable for this runtime.",
+            )
+        )
+    else:
+        checks["paper_runtime_monitoring"] = _runtime_state_row_health_check(
+            "ok",
+            source="not_applicable",
+            applies=False,
+            message="Paper runtime monitoring applies only to paper runtimes.",
+        )
+
+    degraded_checks = [
+        key
+        for key, check in checks.items()
+        if check.get("applies", True) and check.get("status") != "ok"
+    ]
+    return {
+        "status": "degraded" if degraded_checks else "ok",
+        "checks": checks,
+        "degraded_checks": degraded_checks,
+    }
+
+
+def _runtime_state_support_surface_ref(
+    surface_key: str,
+    surface: Dict[str, Any],
+) -> Dict[str, Any]:
+    ref = {
+        "surface_key": surface_key,
+        "status": surface.get("status"),
+        "source": surface.get("source"),
+    }
+    for key in ("message", "note", "staleness"):
+        if key in surface:
+            ref[key] = surface.get(key)
+    return ref
+
+
+def _runtime_state_degraded_support_surfaces(
+    surfaces: Dict[str, Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    refs: List[Dict[str, Any]] = []
+    for surface_key, surface in surfaces.items():
+        if surface.get("status") == "ok":
+            continue
+        refs.append(_runtime_state_support_surface_ref(surface_key, surface))
+    return refs
+
+
 def _derive_runtime_state_last_updated_at(
     binding: Dict[str, Any],
     telemetry_summary: Optional[Dict[str, Any]],
     latest_rollback: Optional[Dict[str, Any]],
+    monitoring_session: Optional[Dict[str, Any]],
 ) -> Optional[str]:
     candidates = [
         binding.get("last_updated_at"),
@@ -6011,6 +6250,9 @@ def _derive_runtime_state_last_updated_at(
         (telemetry_summary or {}).get("collected_at"),
         (latest_rollback or {}).get("completed_at"),
         (latest_rollback or {}).get("initiated_at"),
+        (monitoring_session or {}).get("last_heartbeat_at"),
+        (monitoring_session or {}).get("ended_at"),
+        (monitoring_session or {}).get("started_at"),
     ]
     values = [candidate for candidate in candidates if candidate]
     if not values:
@@ -6020,8 +6262,19 @@ def _derive_runtime_state_last_updated_at(
 
 def _project_operator_runtime_state_row(binding: Dict[str, Any]) -> Dict[str, Any]:
     runtime_id = str(binding.get("runtime_id") or binding.get("id") or "")
+    runtime_binding_id = (
+        binding.get("runtime_binding_id")
+        or binding.get("binding_id")
+        or binding.get("id")
+    )
     telemetry_summary = _project_runtime_state_telemetry_summary(
         read_store.get_telemetry_summary(runtime_id)
+    )
+    monitoring_session = _project_runtime_state_monitoring_session(
+        read_store.get_paper_runtime_monitoring_session(
+            runtime_id=runtime_id,
+            binding_id=str(runtime_binding_id or ""),
+        )
     )
     rollbacks = read_store.get_rollbacks(runtime_id)
     latest_rollback = _project_runtime_state_latest_rollback(rollbacks)
@@ -6031,11 +6284,7 @@ def _project_operator_runtime_state_row(binding: Dict[str, Any]) -> Dict[str, An
 
     return {
         "runtime_id": runtime_id,
-        "runtime_binding_id": (
-            binding.get("runtime_binding_id")
-            or binding.get("binding_id")
-            or binding.get("id")
-        ),
+        "runtime_binding_id": runtime_binding_id,
         "deployment_stage": binding.get("deployment_stage") or binding.get("deployment_mode"),
         "status": binding.get("status"),
         "capital_pool_id": binding.get("capital_pool_id"),
@@ -6056,6 +6305,12 @@ def _project_operator_runtime_state_row(binding: Dict[str, Any]) -> Dict[str, An
             else None
         ),
         "telemetry_summary": telemetry_summary,
+        "paper_runtime_monitoring": monitoring_session,
+        "row_health": _derive_runtime_state_row_health(
+            binding=binding,
+            telemetry_summary=telemetry_summary,
+            monitoring_session=monitoring_session,
+        ),
         "rollback_summary": {
             "count": len(rollbacks),
             "latest": latest_rollback,
@@ -6065,6 +6320,7 @@ def _project_operator_runtime_state_row(binding: Dict[str, Any]) -> Dict[str, An
             binding,
             telemetry_summary,
             latest_rollback,
+            monitoring_session,
         ),
     }
 
@@ -12789,6 +13045,7 @@ async def list_deployment_plans(
     plans = read_store.list_deployment_plans(
         status=status,
         capital_pool_id=capital_pool_id,
+        include_fixture_pack=False,
     )
     snapshot_at = utc_now()
     return {
@@ -13051,6 +13308,7 @@ async def list_approval_decisions(
     decisions = read_store.list_approval_decisions(
         outcome=outcome,
         state=state,
+        include_fixture_pack=False,
     )
     snapshot_at = utc_now()
     return {
@@ -13873,10 +14131,40 @@ async def list_operator_runtime_state(
             {"served_from": "unverifiable", "last_known_at": snapshot_at},
         )
 
+    monitoring_surface = _dataset_surface_status(
+        "paper_runtime_monitoring_sessions",
+        snapshot_at=snapshot_at,
+    )
+    paper_runtime_rows = [
+        row for row in runtimes
+        if str(row.get("deployment_stage") or "").lower() == "paper"
+    ]
+    if paper_runtime_rows and any(
+        row.get("paper_runtime_monitoring") is None
+        for row in paper_runtime_rows
+    ):
+        if monitoring_surface.get("status") == "ok":
+            monitoring_surface["status"] = "degraded"
+        monitoring_surface.setdefault(
+            "message",
+            "Paper runtime monitoring session evidence is unavailable for one or more paper runtimes.",
+        )
+        monitoring_surface.setdefault(
+            "staleness",
+            {"served_from": "unverifiable", "last_known_at": snapshot_at},
+        )
+
     rollback_history_surface = _dataset_surface_status(
         "rollbacks",
         snapshot_at=snapshot_at,
     )
+    support_surfaces = {
+        "runtime_roster": runtime_roster_surface,
+        "telemetry_summary": telemetry_surface,
+        "paper_runtime_monitoring": monitoring_surface,
+        "rollback_history": rollback_history_surface,
+    }
+    degraded_support_surfaces = _runtime_state_degraded_support_surfaces(support_surfaces)
 
     runtime_state_surface = _composed_surface_status(
         snapshot_at=snapshot_at,
@@ -13889,7 +14177,7 @@ async def list_operator_runtime_state(
         runtime_state_surface["status"] = "unavailable"
     elif any(
         surface.get("status") != "ok"
-        for surface in (telemetry_surface, rollback_history_surface)
+        for surface in (telemetry_surface, monitoring_surface, rollback_history_surface)
     ):
         runtime_state_surface["status"] = "degraded"
         runtime_state_surface.setdefault(
@@ -13900,6 +14188,11 @@ async def list_operator_runtime_state(
             "staleness",
             {"served_from": "unverifiable", "last_known_at": snapshot_at},
         )
+    runtime_state_surface["support_surface_status"] = {
+        key: surface.get("status") for key, surface in support_surfaces.items()
+    }
+    if degraded_support_surfaces:
+        runtime_state_surface["degraded_support_surfaces"] = degraded_support_surfaces
 
     total = len(runtimes)
     if runtime_state_surface.get("status") == "unavailable":
@@ -13918,6 +14211,7 @@ async def list_operator_runtime_state(
         "runtime_state": runtime_state_surface,
         "runtime_roster": runtime_roster_surface,
         "telemetry_summary": telemetry_surface,
+        "paper_runtime_monitoring": monitoring_surface,
         "rollback_history": rollback_history_surface,
     }
 
@@ -14469,6 +14763,19 @@ def _authorized_openclaw_operator_filter(
     return clean
 
 
+def _openclaw_effective_operator_role(identity: OperatorIdentity) -> str:
+    roles = set(identity.roles)
+    if "admin" in roles:
+        return "admin"
+    if "operator" in roles:
+        return "operator"
+    if "approver" in roles or "capability_admin" in roles:
+        return "approver"
+    if "reviewer" in roles:
+        return "reviewer"
+    return "viewer"
+
+
 def _openclaw_ops_meta(snapshot_at: str, data: Dict[str, Any], surface_key: str) -> Dict[str, Any]:
     service_surfaces = {
         service: {
@@ -14503,6 +14810,8 @@ def _build_openclaw_ops_response(
     agent_id: Optional[str],
     effective_tools_session_id: Optional[str],
     requesting_operator_id: str,
+    effective_tools_mode: Optional[str],
+    requesting_operator_role: Optional[str],
     surface_key: str,
 ) -> Dict[str, Any]:
     snapshot_at = utc_now()
@@ -14514,6 +14823,8 @@ def _build_openclaw_ops_response(
         agent_id=agent_id,
         effective_tools_session_id=effective_tools_session_id,
         requesting_operator_id=requesting_operator_id,
+        effective_tools_mode=effective_tools_mode,
+        requesting_operator_role=requesting_operator_role,
     )
     return {
         "data": data,
@@ -14601,6 +14912,7 @@ async def get_openclaw_ops(
     operator_id: Optional[str] = Query(default=None),
     agent_id: Optional[str] = Query(default=None),
     session_id: Optional[str] = Query(default=None),
+    mode: Optional[str] = Query(default=None),
     authorization: Optional[str] = Header(default=None),
 ):
     identity = _extract_identity(authorization)
@@ -14614,6 +14926,8 @@ async def get_openclaw_ops(
         agent_id=agent_id,
         effective_tools_session_id=session_id,
         requesting_operator_id=identity.operator_id,
+        effective_tools_mode=mode,
+        requesting_operator_role=_openclaw_effective_operator_role(identity),
         surface_key="openclaw_ops",
     )
 
@@ -14626,6 +14940,7 @@ async def get_openclaw_tool_workflow_bridge(
     operator_id: Optional[str] = Query(default=None),
     agent_id: Optional[str] = Query(default=None),
     session_id: Optional[str] = Query(default=None),
+    mode: Optional[str] = Query(default=None),
     authorization: Optional[str] = Header(default=None),
 ):
     identity = _extract_identity(authorization)
@@ -14639,6 +14954,8 @@ async def get_openclaw_tool_workflow_bridge(
         agent_id=agent_id,
         effective_tools_session_id=session_id,
         requesting_operator_id=identity.operator_id,
+        effective_tools_mode=mode,
+        requesting_operator_role=_openclaw_effective_operator_role(identity),
         surface_key="openclaw_tool_workflow_bridge",
     )
 
@@ -15149,7 +15466,11 @@ async def list_research_tickets(
     if statuses:
         statuses = [_rw01_validate_status(value) for value in statuses]
 
-    items = read_store.list_research_tickets(statuses=statuses, owner=owner)
+    items = read_store.list_research_tickets(
+        statuses=statuses,
+        owner=owner,
+        include_fixture_pack=False,
+    )
     total = len(items)
     surface_state = _rw01_surface_state("research_tickets", snapshot_at=snapshot_at)
     if surface_state == "unavailable":
@@ -16597,6 +16918,7 @@ async def list_strategy_specs(
         source_kind=source_kind,
         persona_id=persona_id,
         include_retired=include_retired,
+        include_fixture_pack=False,
     )
     dataset_available = read_store.dataset_source("strategy_specs") != "missing"
     surface_state = _kw05_surface_state(
@@ -17287,6 +17609,8 @@ async def list_governance_audit_trail(
         target_type=target_type,
         from_ts=from_,
         to_ts=to,
+        include_command_store=False,
+        include_fixture_pack=False,
     )
     audit_surface = _dataset_surface_status(
         "governance_audit_events",
@@ -18096,7 +18420,10 @@ async def list_lineage(
 
     snapshot_at = utc_now()
     surface = _dataset_surface_status("lineage_edges", snapshot_at=snapshot_at)
-    items = read_store.list_lineage_records(artifact_id=artifact_id)
+    items = read_store.list_lineage_records(
+        artifact_id=artifact_id,
+        include_fixture_pack=False,
+    )
     if surface.get("status") == "unavailable":
         items = []
         next_page_token = None
@@ -21497,6 +21824,20 @@ async def bff_get_capital_pool(
     pool_surface = _dataset_surface_status("capital_pools", snapshot_at=snapshot_at)
     pool = read_store.get_capital_pool(pool_id)
     if not pool:
+        if pool_surface.get("status") == "unavailable" and pool_id.startswith("pool_"):
+            return {
+                "data": {
+                    "id": pool_id,
+                    "pool_id": pool_id,
+                    "status": "unavailable",
+                },
+                "meta": _read_surface_meta(
+                    "capital_pools",
+                    "capital_pool_detail",
+                    snapshot_at=snapshot_at,
+                    surface=pool_surface,
+                ),
+            }
         _raise_if_read_surface_unavailable(pool_surface, label="Capital pool")
         raise _bff_error(
             404, ErrorCode.RESOURCE_NOT_FOUND,
@@ -22289,7 +22630,31 @@ def _project_persona_dto(
         "successRate": float(metadata.get("success_rate") or 0.0),
         "labelKey": f"persona.{persona_id}" if persona_id else None,
         "lifecycleStatus": str(raw.get("lifecycle_state") or ""),
+        "marketScope": list(metadata.get("market_scope") or []),
+        "assetClasses": list(metadata.get("asset_classes") or []),
+        "capitalPoolId": metadata.get("capital_pool_id"),
+        "runtimeId": metadata.get("runtime_binding_id"),
+        "deploymentStage": metadata.get("deployment_stage"),
+        "oodaStage": metadata.get("ooda_stage"),
+        "currentWork": metadata.get("current_work"),
+        "governanceRequired": bool(metadata.get("governance_required", True)),
+        "recommendedGovernanceAction": metadata.get("recommended_governance_action"),
+        "riskFlags": list(metadata.get("risk_flags") or []),
     }
+    for source_key, dto_key in (
+        ("data_source_status", "dataSourceStatus"),
+        ("data_sources", "dataSources"),
+        ("data_source_refs", "dataSourceRefs"),
+        ("research_status", "researchStatus"),
+        ("research_refs", "researchRefs"),
+        ("current_research_projects", "currentResearchProjects"),
+    ):
+        value = metadata.get(source_key)
+        if value is not None:
+            dto[dto_key] = json.loads(json.dumps(value))
+    performance = metadata.get("performance") if isinstance(metadata.get("performance"), dict) else {}
+    if performance:
+        dto["metrics"] = json.loads(json.dumps(performance))
     if overlay:
         for k, v in overlay.items():
             if v is not None:
@@ -29251,14 +29616,7 @@ async def bff_management_persona_fleet(
     authorization: Optional[str] = Header(default=None),
 ):
     """BFF: compose the Management Persona Fleet aggregate from read surfaces."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    return _project_persona_fleet_payload(
-        state=state,
-        health=health,
-        page_token=page_token,
-        page_size=page_size,
-    )
+    return await bff_management_fleet(authorization=authorization)
 
 
 # ---------------- /bff/management/nl (BFF-B6-001) ----------------
@@ -31710,7 +32068,7 @@ def _mgmt_nl_build_context_pack(
 
     request = AssistantContextPackRequest(
         mode=assistant_mode,
-        include=["ui", "management_nl", "persona_health"],
+        include=["ui", "management_nl", "persona_health", "orchestrator_status"],
         question=question,
         route=frontend_route,
         frontend={
@@ -31757,6 +32115,58 @@ def _mgmt_nl_build_context_pack(
                 status=str(persona_surface.get("status") or "ok"),
                 source_kind="bff",
             )
+        if source_id == "orchestrator_status":
+            from assistant.orchestrator_status import read_orchestrator_status
+
+            status = read_orchestrator_status(
+                provider_readiness=_assistant_provider_readiness,
+                openclaw_tool_policy=_assistant_openclaw_tool_policy,
+                openclaw_effective_tools=lambda: _assistant_openclaw_effective_tools(identity.operator_id),
+            )
+            status_payload = status.model_dump(mode="json", by_alias=True)
+            source_refs = status_payload.get("sourceRefs") if isinstance(status_payload.get("sourceRefs"), list) else []
+            tasks = status_payload.get("tasks") if isinstance(status_payload.get("tasks"), list) else []
+            workers = status_payload.get("workers") if isinstance(status_payload.get("workers"), list) else []
+            queue = status_payload.get("queue") if isinstance(status_payload.get("queue"), list) else []
+            summary = {
+                "snapshotAt": status_payload.get("snapshotAt"),
+                "project": status_payload.get("project"),
+                "sprint": status_payload.get("sprint"),
+                "objective": status_payload.get("objective"),
+                "sourceRefs": source_refs,
+                "taskCount": len(tasks),
+                "workerCount": len(workers),
+                "queueCount": len(queue),
+                "tasks": tasks[:20],
+                "workers": workers[:20],
+                "queue": queue[:20],
+                "supervisor": status_payload.get("supervisor"),
+                "providerGuardrails": status_payload.get("providerGuardrails"),
+                "providerReadiness": status_payload.get("providerReadiness"),
+                "openclawToolPolicy": status_payload.get("openclawToolPolicy"),
+                "assistantDevBridge": status_payload.get("assistantDevBridge"),
+                "coordination": status_payload.get("coordination"),
+            }
+            available = all(bool(ref.get("available")) for ref in source_refs) if source_refs else False
+            return AssistantCollectedSource(
+                source_id="orchestrator_status",
+                href="/bff/assistant/orchestrator/status",
+                payload={
+                    "data": summary,
+                    "meta": {
+                        "snapshot_at": snapshot_at,
+                        "surfaces": {
+                            "orchestrator_status": {
+                                "status": "ok" if available else "degraded",
+                                "source": "bff_orchestrator_status",
+                                "source_refs_available": available,
+                            }
+                        },
+                    },
+                },
+                status="ok" if available else "degraded",
+                source_kind="bff",
+            )
         if source_id != "management_nl":
             return _assistant_collect_source(source_id, _request, snapshot_at)
         return AssistantCollectedSource(
@@ -31782,12 +32192,128 @@ def _mgmt_nl_build_context_pack(
     return pack.model_dump(mode="json", by_alias=False)
 
 
+def _mgmt_nl_provider_mode_from_context(context_pack: Dict[str, Any]) -> str:
+    mode = str(context_pack.get("mode") or "user").strip()
+    if mode in {"user", "kernel_observe", "kernel_debug", "kernel_repair"}:
+        return mode
+    return "user"
+
+
+def _mgmt_nl_provider_control_metadata(context_pack: Dict[str, Any]) -> Dict[str, Any]:
+    management_context = (
+        ((context_pack.get("backend") or {}).get("management_nl") or {}).get("data") or {}
+        if isinstance(context_pack, dict)
+        else {}
+    )
+    control_mode = management_context.get("controlMode") or management_context.get("control_mode")
+    if not isinstance(control_mode, dict):
+        return {"active": False, "mode": "user"}
+    return {
+        "active": bool(control_mode.get("active")),
+        "state": control_mode.get("state"),
+        "mode": control_mode.get("mode") or "user",
+        "activation_id": control_mode.get("activation_id") or control_mode.get("activationId"),
+    }
+
+
+def _mgmt_nl_first_openclaw_value(*sources: Dict[str, Any], aliases: str) -> Any:
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for alias in aliases.split("|"):
+            if alias in source:
+                return source.get(alias)
+    return None
+
+
+def _mgmt_nl_openclaw_string_list(value: Any) -> List[str]:
+    if isinstance(value, str):
+        raw_items = re.split(r"[,;\n]+", value)
+    elif isinstance(value, list):
+        raw_items = value
+    else:
+        raw_items = []
+    return _dedupe_nonblank_strings(raw_items)
+
+
+def _mgmt_nl_openclaw_repair_metadata(payload: Dict[str, Any]) -> Dict[str, Any]:
+    raw_openclaw = payload.get("openclaw")
+    if raw_openclaw is None:
+        raw_openclaw = payload.get("openClaw")
+    openclaw = raw_openclaw if isinstance(raw_openclaw, dict) else {}
+    raw_repair = openclaw.get("repair") or openclaw.get("task") or payload.get("repair")
+    repair = raw_repair if isinstance(raw_repair, dict) else {}
+
+    metadata: Dict[str, Any] = {}
+    text_fields = {
+        "task_id": "task_id|taskId",
+        "task_worktree": "task_worktree|taskWorktree|worktree",
+        "expected_branch": "expected_branch|expectedBranch",
+        "remote": "remote",
+        "merge_target": "merge_target|mergeTarget",
+        "repo_key": "repo_key|repoKey|repository",
+    }
+    for target, aliases in text_fields.items():
+        value = _mgmt_nl_first_openclaw_value(repair, openclaw, aliases=aliases)
+        clean = str(value or "").strip()
+        if clean:
+            metadata[target] = clean
+
+    declared_scope = _mgmt_nl_first_openclaw_value(
+        repair,
+        openclaw,
+        aliases="declared_scope|declaredScope|scope",
+    )
+    scope = _mgmt_nl_openclaw_string_list(declared_scope)
+    if scope:
+        metadata["declared_scope"] = scope
+
+    for target, aliases in {
+        "require_clean": "require_clean|requireClean",
+        "require_pr": "require_pr|requirePr",
+    }.items():
+        value = _mgmt_nl_first_openclaw_value(repair, openclaw, aliases=aliases)
+        if isinstance(value, bool):
+            metadata[target] = value
+
+    pull_request = _mgmt_nl_first_openclaw_value(
+        repair,
+        openclaw,
+        aliases="pull_request|pullRequest",
+    )
+    if isinstance(pull_request, dict):
+        metadata["pull_request"] = pull_request
+    return metadata
+
+
+def _mgmt_nl_provider_mode_prompt_lines(provider_mode: str) -> List[str]:
+    if provider_mode == "kernel_repair":
+        return [
+            "You are operating in kernel_repair mode through OpenClaw/Codex.",
+            "You may use the task worktree with workspace-write only within the declared repair scope.",
+            "Keep repository changes on the provided task branch/worktree and preserve branch, PR, checks, and merge workflow.",
+            "Do not mutate trading, broker, capital, deployment, or runtime-control state unless a separate governed BFF action explicitly authorizes it.",
+        ]
+    if provider_mode in {"kernel_debug", "kernel_observe"}:
+        return [
+            f"You are operating in {provider_mode} mode through OpenClaw/Codex.",
+            "Use the read-only workspace for bounded repo, file, log, status, and test inspection when that helps debug.",
+            "Do not edit files, restart services, deploy, trade, approve, or mutate state in this mode.",
+        ]
+    return [
+        "You are operating in user mode.",
+        "Answer only from the supplied BFF context pack.",
+        "Do not execute, approve, deploy, restart, trade, mutate state, or read local workspace files.",
+    ]
+
+
 def _mgmt_nl_provider_prompt(
     *,
     question: str,
     focus: str,
     context_pack: Dict[str, Any],
 ) -> str:
+    provider_mode = _mgmt_nl_provider_mode_from_context(context_pack)
     management_context = (
         ((context_pack.get("backend") or {}).get("management_nl") or {}).get("data") or {}
         if isinstance(context_pack, dict)
@@ -31811,10 +32337,11 @@ def _mgmt_nl_provider_prompt(
     context_json = json.dumps(context_pack, sort_keys=True, ensure_ascii=True)
     return "\n".join(
         [
-            "You are the Pantheon management assistant in user mode.",
-            "Answer only from the supplied BFF context pack.",
-            "Do not execute, approve, deploy, restart, trade, or mutate anything.",
+            "You are the Pantheon management assistant.",
+            f"Mode: {provider_mode}.",
+            *_mgmt_nl_provider_mode_prompt_lines(provider_mode),
             "Use backend.management_nl.data.conversation for server-side prior turns and backend.management_nl.data.ui for UI state.",
+            "Use backend.orchestrator_status.data for supervisor, worker, queue, PR/check, DevTaskPacket bridge, and provider readiness questions.",
             "Treat backend.management_nl.data.conversation.clientHint as a frontend hint, never as the conversation source of truth.",
             "If you suggest UI actions, return actions only with kinds listed in ui.availableUiActions.",
             "Any runBffAction or write-style action must require confirmation.",
@@ -31893,6 +32420,7 @@ def _mgmt_nl_maybe_provider_answer(
     audit_id: Optional[str],
     allowed_action_kinds: Set[str],
     current_user_attachments: Optional[List[Dict[str, Any]]] = None,
+    openclaw_repair_metadata: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Optional[str], Dict[str, Any], List[Dict[str, Any]]]:
     enabled = _mgmt_nl_provider_feature_enabled()
     if provider in {"none", "off", "disabled", "deterministic"}:
@@ -31951,6 +32479,7 @@ def _mgmt_nl_maybe_provider_answer(
         ), []
 
     run_id = trace_id
+    provider_mode = _mgmt_nl_provider_mode_from_context(context_pack)
     prompt = _mgmt_nl_provider_prompt(
         question=question,
         focus=focus,
@@ -31998,6 +32527,7 @@ def _mgmt_nl_maybe_provider_answer(
                 else "POST /api/openclaw-adapter/assistant/providers/codex/invoke"
             ),
             "context_pack_id": context_pack.get("context_pack_id"),
+            "mode": provider_mode,
             "prompt_bytes": len(prompt.encode("utf-8")),
             "multimodal": multimodal_summary,
         }
@@ -32012,7 +32542,11 @@ def _mgmt_nl_maybe_provider_answer(
         "audit_id": audit_id,
         "attachments": current_user_attachments or [],
         "multimodal": multimodal_summary,
+        "control_mode": _mgmt_nl_provider_control_metadata(context_pack),
     }
+    if provider_mode == "kernel_repair" and openclaw_repair_metadata:
+        metadata.update(openclaw_repair_metadata)
+        metadata["repair_metadata_source"] = "management_nl_openclaw_payload"
 
     def _provider_failure(error: OpenClawOpsClientError) -> Tuple[None, Dict[str, Any], List[Dict[str, Any]]]:
         duration_ms = max(0, int((time.monotonic() - provider_started) * 1000))
@@ -32025,6 +32559,7 @@ def _mgmt_nl_maybe_provider_answer(
                 "provider_run_id": run_id,
                 "actor_id": identity.operator_id,
                 "provider": provider,
+                "mode": provider_mode,
                 "duration_ms": duration_ms,
                 "status_code": error.status_code,
                 "error_code": error.error_code,
@@ -32039,13 +32574,14 @@ def _mgmt_nl_maybe_provider_answer(
             reason=error.error_code,
             run_id=run_id,
         )
+        status["mode"] = provider_mode
         if multimodal_summary:
             status["multimodal"] = multimodal_summary
         return None, status, []
 
     invoke_kwargs: Dict[str, Any] = {
         "provider": provider,
-        "mode": "user",
+        "mode": provider_mode,
         "prompt": prompt,
         "context_pack": context_pack,
         "operator_id": identity.operator_id,
@@ -32086,7 +32622,7 @@ def _mgmt_nl_maybe_provider_answer(
         try:
             provider_payload = OpenClawOpsClient().invoke_assistant_provider(
                 provider=provider,
-                mode="user",
+                mode=provider_mode,
                 prompt=prompt,
                 context_pack=context_pack,
                 operator_id=identity.operator_id,
@@ -32113,6 +32649,7 @@ def _mgmt_nl_maybe_provider_answer(
             "provider_run_id": run_id,
             "actor_id": identity.operator_id,
             "provider": str((data or {}).get("provider") or provider),
+            "mode": provider_mode,
             "duration_ms": duration_ms,
             "provider_state": provider_state,
             "answer_present": bool(answer),
@@ -32130,6 +32667,7 @@ def _mgmt_nl_maybe_provider_answer(
             reason="provider_empty_answer",
             run_id=run_id,
         )
+        empty_status["mode"] = provider_mode
         if multimodal_summary:
             empty_status["multimodal"] = multimodal_summary
         return None, empty_status, []
@@ -32140,6 +32678,17 @@ def _mgmt_nl_maybe_provider_answer(
         run_id=run_id,
         used=True,
     )
+    status["mode"] = provider_mode
+    output = (data or {}).get("output") if isinstance(data, dict) else None
+    if isinstance(output, dict):
+        if output.get("sandbox") is not None:
+            status["sandbox"] = output.get("sandbox")
+        if output.get("workspace_class") is not None:
+            status["workspaceClass"] = output.get("workspace_class")
+            status["workspace_class"] = output.get("workspace_class")
+        if output.get("repair_workflow") is not None:
+            status["repairWorkflow"] = output.get("repair_workflow")
+            status["repair_workflow"] = output.get("repair_workflow")
     if multimodal_summary:
         status["multimodal"] = multimodal_summary
     if multimodal_unsupported:
@@ -32402,6 +32951,7 @@ async def bff_management_nl_ask(
             "audit_ref": audit_ref,
         }
     )
+    openclaw_repair_metadata = _mgmt_nl_openclaw_repair_metadata(payload)
 
     provider_answer, provider_status, actions = _mgmt_nl_maybe_provider_answer(
         provider=_mgmt_nl_provider_name(),
@@ -32416,6 +32966,7 @@ async def bff_management_nl_ask(
         audit_id=audit_ref.get("auditId"),
         allowed_action_kinds=allowed_action_kinds,
         current_user_attachments=current_user_attachments,
+        openclaw_repair_metadata=openclaw_repair_metadata,
     )
     answer = provider_answer or deterministic_answer
 
@@ -40841,7 +41392,21 @@ def _list_bff_incidents(
             affected_pool_id=affected_pool_id,
         ):
             incidents.append(_project_bff_incident_case(incident))
-    return sorted(incidents, key=lambda item: str(item.get("created_at") or item.get("submitted_at") or ""), reverse=True)
+    anchor = [
+        incident
+        for incident in incidents
+        if str(incident.get("incident_id") or incident.get("id") or "") == "inc-20260410-001"
+    ]
+    rest = [
+        incident
+        for incident in incidents
+        if str(incident.get("incident_id") or incident.get("id") or "") != "inc-20260410-001"
+    ]
+    return anchor + sorted(
+        rest,
+        key=lambda item: str(item.get("created_at") or item.get("submitted_at") or ""),
+        reverse=True,
+    )
 
 
 def _get_bff_incident(incident_id: str) -> Optional[Dict[str, Any]]:
@@ -42462,6 +43027,17 @@ def _list_bff_experiments(*, status: Optional[str] = None) -> List[Dict[str, Any
     return sorted(items, key=lambda e: str(e.get("created_at") or e.get("queued_at") or ""), reverse=True)
 
 
+def _research_experiments_surface_source(records: Sequence[Dict[str, Any]]) -> Optional[str]:
+    if _GOV_BFF_EXPERIMENT_OVERLAY:
+        return "bff_overlay"
+    if read_store.dataset_source("research_experiments") != "missing":
+        return None
+    for record in records:
+        if str(record.get("experiment_id") or record.get("id") or "") == "exp-mgmt-qlib-006":
+            return "composed_market_persona_defaults"
+    return None
+
+
 def _get_bff_job(job_id: str) -> Optional[Dict[str, Any]]:
     overlay = _GOV_BFF_JOB_OVERLAY.get(job_id)
     if overlay is not None:
@@ -42771,7 +43347,7 @@ async def bff_list_experiments_compat(
 
     snapshot_at = utc_now()
     items = _list_bff_experiments(status=status)
-    source = read_store.dataset_source("research_experiments")
+    source = _research_experiments_surface_source(items)
     surface = _dataset_surface_status("research_experiments", snapshot_at=snapshot_at, source=source)
     if surface.get("status") == "unavailable" and not _GOV_BFF_EXPERIMENT_OVERLAY:
         items = []
@@ -43000,21 +43576,21 @@ async def bff_list_research_experiments(
     _require_read_role(identity)
 
     snapshot_at = utc_now()
-    items = _list_bff_experiments(status=status)
-    source = "bff_overlay" if _GOV_BFF_EXPERIMENT_OVERLAY else None
-    surface = _dataset_surface_status("research_experiments", snapshot_at=snapshot_at, source=source)
-    if surface.get("status") == "unavailable" and not _GOV_BFF_EXPERIMENT_OVERLAY:
-        items = []
-        next_page_token = None
-    else:
-        items, next_page_token = _page_slice(items, page_token, page_size)
+    all_items = _list_bff_experiments(status=status)
+    source = _research_experiments_surface_source(all_items)
+    surface = _dataset_surface_status(
+        "research_experiments",
+        snapshot_at=snapshot_at,
+        source=source,
+    )
+    items, next_page_token = _page_slice(all_items, page_token, page_size)
 
     meta = _snapshot_meta(snapshot_at)
     meta["surfaces"] = {"research_experiments": surface}
     return {
         "data": items,
         "items": items,
-        "page_info": {"next_page_token": next_page_token, "total": len(items)},
+        "page_info": {"next_page_token": next_page_token, "total": len(all_items)},
         "meta": meta,
     }
 
@@ -43029,15 +43605,16 @@ async def bff_get_research_experiment(
     _require_read_role(identity)
 
     clean_id = experiment_id.strip()
-    source = "bff_overlay" if _GOV_BFF_EXPERIMENT_OVERLAY else None
+    record = _get_bff_experiment(clean_id)
+    source = _research_experiments_surface_source([record] if record else [])
     return _sem_final_read_model_detail(
-        _get_bff_experiment(clean_id),
+        record,
         entity_id=clean_id,
         label="Research experiment",
         dataset="research_experiments",
         surface_key="research_experiment_detail",
         source=source,
-        source_available=True if _GOV_BFF_EXPERIMENT_OVERLAY else None,
+        source_available=True if source is not None else None,
     )
 
 
@@ -45864,6 +46441,8 @@ def _build_ooda_control_room_status_card(snapshot_at: str) -> Dict[str, Any]:
         if str(p.get("environment") or "").lower() != "live"
     )
 
+    if ooda_src in (None, "missing") and packets:
+        ooda_src = "composed_market_persona_defaults"
     surface_status = "ok" if ooda_src not in (None, "missing") else "unavailable"
 
     return {
@@ -45890,6 +46469,482 @@ def _build_ooda_control_room_status_card(snapshot_at: str) -> Dict[str, Any]:
             "source": ooda_src if ooda_src else "missing",
             "status": surface_status,
             "surface_key": "ooda_control_room_status",
+        },
+    }
+
+
+def _as_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _persona_id(record: Dict[str, Any]) -> str:
+    return str(record.get("persona_id") or record.get("id") or "").strip()
+
+
+def _first_binding_for_persona(
+    persona_id: str,
+    *,
+    include_market_persona_defaults: bool = False,
+) -> Optional[Dict[str, Any]]:
+    if include_market_persona_defaults:
+        bindings = read_store.list_bindings(
+            persona_id=persona_id,
+            include_market_persona_defaults=True,
+        )
+    else:
+        bindings = read_store.get_bindings_for_persona(persona_id)
+    if not bindings:
+        return None
+    active = [
+        binding
+        for binding in bindings
+        if str(binding.get("status") or binding.get("validity") or "").lower()
+        in {"active", "ready", "bound"}
+    ]
+    return active[0] if active else bindings[0]
+
+
+def _runtime_for_pool(
+    pool_id: Optional[str],
+    *,
+    include_market_persona_defaults: bool = False,
+) -> Optional[Dict[str, Any]]:
+    if not pool_id:
+        return None
+    for runtime in read_store.list_runtime_bindings(
+        include_market_persona_defaults=include_market_persona_defaults,
+    ):
+        if str(runtime.get("capital_pool_id") or "") == str(pool_id):
+            return runtime
+    return None
+
+
+def _persona_health_status(
+    *,
+    lifecycle_state: str,
+    league_entry: Dict[str, Any],
+    risk_flags: List[str],
+) -> str:
+    league_status = str(league_entry.get("status") or "").strip().lower()
+    if league_status in {"critical", "frozen", "halted"}:
+        return "critical"
+    if int(league_entry.get("metrics", {}).get("violation_count") or 0) > 0:
+        return "critical"
+    if risk_flags or league_status in {"needs_human_approval", "degraded", "under_review"}:
+        return "degraded"
+    if lifecycle_state in {"frozen", "retired"}:
+        return "critical"
+    return "healthy"
+
+
+def _management_fleet_ooda_label(value: Any) -> str:
+    stage = str(value or "").strip().lower()
+    return {
+        "observe": "Observe",
+        "oriented": "Orient",
+        "orient": "Orient",
+        "decided": "Decide",
+        "decide": "Decide",
+        "acted": "Act",
+        "act": "Act",
+    }.get(stage, "Observe")
+
+
+def _management_fleet_autonomy(
+    *,
+    deployment_stage: str,
+    governance_required: bool,
+    human_needed: bool,
+) -> str:
+    stage = str(deployment_stage or "").strip().lower()
+    if human_needed or governance_required:
+        return "supervised"
+    if stage == "live":
+        return "autonomous"
+    return "manual"
+
+
+def _training_improvement_delta(metrics: Dict[str, Any]) -> float:
+    return _as_float(metrics.get("training_improvement_pct")) / 100.0
+
+
+def _build_persona_health_items(
+    snapshot_at: str,
+    *,
+    include_market_persona_defaults: bool = False,
+) -> List[Dict[str, Any]]:
+    league_by_persona = {
+        str(item.get("persona_id") or item.get("id") or ""): item
+        for item in read_store.list_persona_league(
+            include_market_persona_defaults=include_market_persona_defaults,
+        )
+    }
+    items: List[Dict[str, Any]] = []
+    for persona in read_store.list_personas(
+        include_market_persona_defaults=include_market_persona_defaults,
+    ):
+        persona_id = _persona_id(persona)
+        if not persona_id:
+            continue
+        metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+        league_entry = league_by_persona.get(persona_id, {})
+        league_metrics = (
+            league_entry.get("metrics")
+            if isinstance(league_entry.get("metrics"), dict)
+            else {}
+        )
+        performance = (
+            metadata.get("performance")
+            if isinstance(metadata.get("performance"), dict)
+            else {}
+        )
+        metrics = {**performance, **league_metrics}
+        binding = _first_binding_for_persona(
+            persona_id,
+            include_market_persona_defaults=include_market_persona_defaults,
+        ) or {}
+        pool_id = (
+            league_entry.get("capital_pool_id")
+            or metadata.get("capital_pool_id")
+            or binding.get("capital_pool_id")
+        )
+        runtime = _runtime_for_pool(
+            pool_id,
+            include_market_persona_defaults=include_market_persona_defaults,
+        ) or {}
+        runtime_id = (
+            league_entry.get("runtime_id")
+            or runtime.get("runtime_id")
+            or runtime.get("id")
+            or metadata.get("runtime_binding_id")
+        )
+        deployment_stage = (
+            league_entry.get("deployment_stage")
+            or runtime.get("deployment_stage")
+            or runtime.get("deployment_mode")
+            or metadata.get("deployment_stage")
+            or "none"
+        )
+        market_scope = list(
+            league_entry.get("market_scope")
+            or metadata.get("market_scope")
+            or []
+        )
+        asset_classes = list(metadata.get("asset_classes") or [])
+        risk_flags = list(league_entry.get("risk_flags") or metadata.get("risk_flags") or [])
+        lifecycle_state = str(persona.get("lifecycle_state") or persona.get("status") or "unknown")
+        health = _persona_health_status(
+            lifecycle_state=lifecycle_state,
+            league_entry=league_entry,
+            risk_flags=risk_flags,
+        )
+        score = _as_float(league_entry.get("league_score") or metadata.get("league_score"), 75.0)
+        routed = _routed_strategies_for_persona(persona_id)
+        open_findings = len(risk_flags) + int(metrics.get("violation_count") or 0)
+        drill_target = runtime_id or persona_id
+        governance_required = bool(
+            league_entry.get("governance_required")
+            if "governance_required" in league_entry
+            else metadata.get("governance_required", True)
+        )
+        recommendation = (
+            league_entry.get("recommendation")
+            or metadata.get("recommended_governance_action")
+            or ""
+        )
+        persona_status = str(
+            metadata.get("persona_status")
+            or league_entry.get("status")
+            or persona.get("status")
+            or lifecycle_state
+        )
+        data_source_status = (
+            metadata.get("data_source_status")
+            if isinstance(metadata.get("data_source_status"), dict)
+            else {}
+        )
+        data_sources = (
+            metadata.get("data_sources")
+            if isinstance(metadata.get("data_sources"), list)
+            else []
+        )
+        data_source_refs = (
+            metadata.get("data_source_refs")
+            if isinstance(metadata.get("data_source_refs"), list)
+            else []
+        )
+        research_status = (
+            metadata.get("research_status")
+            if isinstance(metadata.get("research_status"), dict)
+            else {}
+        )
+        research_refs = (
+            metadata.get("research_refs")
+            if isinstance(metadata.get("research_refs"), list)
+            else []
+        )
+        current_research_projects = (
+            metadata.get("current_research_projects")
+            if isinstance(metadata.get("current_research_projects"), list)
+            else []
+        )
+        human_needed = governance_required and str(recommendation).strip().lower() not in {
+            "",
+            "none",
+            "no_change",
+        }
+        updated_at = (
+            league_entry.get("updated_at")
+            or persona.get("updated_at")
+            or persona.get("last_active_at")
+            or snapshot_at
+        )
+        ooda_stage = league_entry.get("ooda_stage") or metadata.get("ooda_stage")
+        item = {
+            "id": persona_id,
+            "persona_id": persona_id,
+            "personaId": persona_id,
+            "name": persona.get("name") or persona_id,
+            "persona_name": persona.get("name") or persona_id,
+            "personaName": persona.get("name") or persona_id,
+            "owner": metadata.get("owner")
+            or metadata.get("owner_id")
+            or "pathreon-management",
+            "mode": deployment_stage,
+            "status": health,
+            "health": health,
+            "score": score,
+            "ooda": _management_fleet_ooda_label(ooda_stage),
+            "autonomy": _management_fleet_autonomy(
+                deployment_stage=deployment_stage,
+                governance_required=governance_required,
+                human_needed=human_needed,
+            ),
+            "perf_delta": _training_improvement_delta(metrics),
+            "perfDelta": _training_improvement_delta(metrics),
+            "human_needed": human_needed,
+            "humanNeeded": human_needed,
+            "last_mutation": str(updated_at)[:10],
+            "lastMutation": str(updated_at)[:10],
+            "state": persona_status,
+            "current_work": metadata.get("current_work"),
+            "currentWork": metadata.get("current_work"),
+            "routed_strategies": routed,
+            "routedStrategies": routed,
+            "open_findings": open_findings,
+            "openFindings": open_findings,
+            "market_scope": market_scope,
+            "marketScope": market_scope,
+            "asset_classes": asset_classes,
+            "assetClasses": asset_classes,
+            "capital_pool_id": pool_id,
+            "capitalPoolId": pool_id,
+            "runtime_id": runtime_id,
+            "runtimeId": runtime_id,
+            "deployment_stage": deployment_stage,
+            "deploymentStage": deployment_stage,
+            "ooda_stage": ooda_stage,
+            "oodaStage": ooda_stage,
+            "recommendation": recommendation,
+            "governance_required": governance_required,
+            "governanceRequired": governance_required,
+            "data_source_status": json.loads(json.dumps(data_source_status)),
+            "dataSourceStatus": json.loads(json.dumps(data_source_status)),
+            "data_sources": json.loads(json.dumps(data_sources)),
+            "dataSources": json.loads(json.dumps(data_sources)),
+            "data_source_refs": json.loads(json.dumps(data_source_refs)),
+            "dataSourceRefs": json.loads(json.dumps(data_source_refs)),
+            "research_status": json.loads(json.dumps(research_status)),
+            "researchStatus": json.loads(json.dumps(research_status)),
+            "research_refs": json.loads(json.dumps(research_refs)),
+            "researchRefs": json.loads(json.dumps(research_refs)),
+            "current_research_projects": json.loads(json.dumps(current_research_projects)),
+            "currentResearchProjects": json.loads(json.dumps(current_research_projects)),
+            "metrics": {
+                "pnl": _as_float(metrics.get("pnl")),
+                "sharpe": _as_float(metrics.get("sharpe")),
+                "sortino": _as_float(metrics.get("sortino")),
+                "max_drawdown": _as_float(metrics.get("max_drawdown")),
+                "win_rate": _as_float(metrics.get("win_rate")),
+                "trading_cost_bps": _as_float(metrics.get("trading_cost_bps")),
+                "stability_score": _as_float(metrics.get("stability_score")),
+                "human_interventions": int(metrics.get("human_interventions") or 0),
+                "training_improvement_pct": _as_float(metrics.get("training_improvement_pct")),
+                "violation_count": int(metrics.get("violation_count") or 0),
+            },
+            "risk_flags": risk_flags,
+            "riskFlags": risk_flags,
+            "updated_at": updated_at,
+            "drill_down": {
+                "kind": "runtime" if runtime_id else "persona",
+                "href": f"/management/runtimes/{drill_target}" if runtime_id else f"/personas/{persona_id}",
+                "runtime_id": runtime_id,
+                "persona_id": persona_id,
+            },
+            "drillDown": {
+                "kind": "runtime" if runtime_id else "persona",
+                "href": f"/management/runtimes/{drill_target}" if runtime_id else f"/personas/{persona_id}",
+                "runtimeId": runtime_id,
+                "personaId": persona_id,
+            },
+        }
+        items.append(item)
+    return sorted(
+        items,
+        key=lambda item: (
+            -_as_float(item.get("score")),
+            str(item.get("persona_id") or ""),
+        ),
+    )
+
+
+def _capital_pool_totals(pools: List[Dict[str, Any]]) -> Dict[str, Any]:
+    return {
+        "pool_count": len(pools),
+        "total_nav": sum(_as_float(pool.get("nav") or pool.get("capital_allocation")) for pool in pools),
+        "cash": sum(_as_float(pool.get("cash")) for pool in pools),
+        "gross_exposure": sum(_as_float(pool.get("gross_exposure")) for pool in pools),
+        "net_exposure": sum(_as_float(pool.get("net_exposure")) for pool in pools),
+        "realized_pnl": sum(_as_float(pool.get("realized_pnl")) for pool in pools),
+        "unrealized_pnl": sum(_as_float(pool.get("unrealized_pnl")) for pool in pools),
+        "var_95": max((_as_float(pool.get("var_95")) for pool in pools), default=0.0),
+        "drawdown": max((_as_float(pool.get("drawdown")) for pool in pools), default=0.0),
+        "slippage_bps": max((_as_float(pool.get("slippage_bps")) for pool in pools), default=0.0),
+        "fill_ratio": min((_as_float(pool.get("fill_ratio"), 1.0) for pool in pools), default=1.0),
+        "order_reject_rate": max((_as_float(pool.get("order_reject_rate")) for pool in pools), default=0.0),
+    }
+
+
+def _persona_league_payload(
+    *,
+    snapshot_at: str,
+    market_scope: Optional[str] = None,
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = 20,
+) -> Dict[str, Any]:
+    items = read_store.list_persona_league(market_scope=market_scope, status=status)
+    total = len(items)
+    page_items, next_page_token = _page_slice(items, page_token, page_size)
+    return {
+        "data": page_items,
+        "items": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": _read_surface_meta(
+            "persona_league",
+            "persona_league",
+            snapshot_at=snapshot_at,
+            total=total,
+        ),
+    }
+
+
+@app.get("/bff/persona-league")
+@app.get("/bff/management/persona-league")
+async def bff_persona_league(
+    market_scope: Optional[str] = None,
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _persona_league_payload(
+        snapshot_at=utc_now(),
+        market_scope=market_scope,
+        status=status,
+        page_token=page_token,
+        page_size=page_size,
+    )
+
+
+@app.get("/bff/persona-league/{persona_id}")
+@app.get("/bff/management/persona-league/{persona_id}")
+async def bff_persona_league_detail(
+    persona_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    entry = read_store.get_persona_league_entry(persona_id)
+    if not entry:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Persona league entry not found",
+            f"Persona league entry {persona_id} does not exist",
+        )
+    return {
+        "data": entry,
+        "meta": _read_surface_meta(
+            "persona_league",
+            "persona_league_detail",
+            snapshot_at=snapshot_at,
+        ),
+    }
+
+
+@app.get("/bff/management/fleet")
+@app.get("/bff/management/persona-fleet")
+async def bff_management_fleet(
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    pools = read_store.list_capital_pools(include_market_persona_defaults=True)
+    runtimes = read_store.list_runtime_bindings(include_market_persona_defaults=True)
+    league = read_store.list_persona_league(include_market_persona_defaults=True)
+    health = _build_persona_health_items(
+        snapshot_at,
+        include_market_persona_defaults=True,
+    )
+    pending_human_gate = [
+        item
+        for item in league
+        if item.get("governance_required")
+        and str(item.get("recommendation") or "").strip()
+    ]
+    ooda_card = _build_ooda_control_room_status_card(snapshot_at)
+    return {
+        "data": {
+            "items": health,
+            "persona_fleet": health,
+            "persona_league": league,
+            "capital_pools": pools,
+            "capital_totals": _capital_pool_totals(pools),
+            "runtime_bindings": runtimes,
+            "ooda_status": ooda_card,
+            "human_inbox": {
+                "pending_count": len(pending_human_gate),
+                "items": pending_human_gate,
+            },
+            "execution_boundary": {
+                "approved_artifacts_only": True,
+                "live_capital_side_effects": False,
+                "human_gate_required_for_capital_changes": True,
+            },
+        },
+        "items": health,
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": {
+                "personas": _dataset_surface_status("personas", snapshot_at=snapshot_at),
+                "persona_league": _composed_dataset_surface_status(
+                    "persona_league",
+                    league,
+                    snapshot_at=snapshot_at,
+                    source="composed_market_persona_defaults",
+                ),
+                "capital_pools": _dataset_surface_status("capital_pools", snapshot_at=snapshot_at),
+                "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
+                "ooda_control_room_status": ooda_card["meta"],
+            },
         },
     }
 
@@ -45928,9 +46983,10 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
             surface_key="ranking_formulas",
         )
     if path == "/bff/research-experiments":
-        source = "bff_overlay" if _GOV_BFF_EXPERIMENT_OVERLAY else None
+        items = _list_bff_experiments()
+        source = _research_experiments_surface_source(items)
         return _sem_final_list_response(
-            _list_bff_experiments(),
+            items,
             dataset="research_experiments",
             surface_key="research_experiments",
             source=source,
@@ -46021,24 +47077,19 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
     if path == "/bff/v5/execution/persona-health":
         snapshot_at = utc_now()
         persona_surface = _dataset_surface_status("personas", snapshot_at=snapshot_at)
-        personas = read_store.list_personas()
-        health_items = [
-            {
-                "id": p.get("persona_id") or p.get("id"),
-                "persona_id": p.get("persona_id") or p.get("id"),
-                "name": p.get("name") or p.get("persona_id"),
-                "health": (
-                    "healthy"
-                    if _is_persona_lifecycle_operational(p.get("lifecycle_state"))
-                    else "degraded"
-                ),
-                "lifecycle_state": p.get("lifecycle_state"),
-            }
-            for p in personas
-        ]
+        league_surface = _dataset_surface_status("persona_league", snapshot_at=snapshot_at)
+        health_items = _build_persona_health_items(snapshot_at)
         return {
+            "data": health_items,
             "items": health_items,
-            "meta": {"snapshot_at": snapshot_at, "surfaces": {"persona_health": persona_surface}},
+            "page_info": {"next_page_token": None, "total": len(health_items)},
+            "meta": {
+                "snapshot_at": snapshot_at,
+                "surfaces": {
+                    "persona_health": persona_surface,
+                    "persona_league": league_surface,
+                },
+            },
         }
     if path == "/bff/v5/execution/strategy-health":
         snapshot_at = utc_now()
@@ -46110,15 +47161,16 @@ def _sem_final_generic_detail_for_path(path: str, entity_id: str) -> Optional[Di
             surface_key="ranking_formula_detail",
         )
     if path.startswith("/bff/research-experiments/"):
-        source = "bff_overlay" if _GOV_BFF_EXPERIMENT_OVERLAY else None
+        record = _get_bff_experiment(entity_id)
+        source = _research_experiments_surface_source([record] if record else [])
         return _sem_final_read_model_detail(
-            _get_bff_experiment(entity_id),
+            record,
             entity_id=entity_id,
             label="Research experiment",
             dataset="research_experiments",
             surface_key="research_experiment_detail",
             source=source,
-            source_available=True if _GOV_BFF_EXPERIMENT_OVERLAY else None,
+            source_available=True if source is not None else None,
         )
     if path.startswith("/bff/research-analyses/"):
         return _sem_final_read_model_detail(
@@ -46376,24 +47428,28 @@ async def bff_v5_execution_persona_health(
     _require_read_role(_extract_identity(authorization))
     snapshot_at = utc_now()
     persona_surface = _dataset_surface_status("personas", snapshot_at=snapshot_at)
-    personas = read_store.list_personas()
-    health_items = [
-        {
-            "id": p.get("persona_id") or p.get("id"),
-            "persona_id": p.get("persona_id") or p.get("id"),
-            "name": p.get("name") or p.get("persona_id"),
-            "health": (
-                "healthy"
-                if _is_persona_lifecycle_operational(p.get("lifecycle_state"))
-                else "degraded"
-            ),
-            "lifecycle_state": p.get("lifecycle_state"),
-        }
-        for p in personas
-    ]
+    league = read_store.list_persona_league(include_market_persona_defaults=True)
+    league_surface = _composed_dataset_surface_status(
+        "persona_league",
+        league,
+        snapshot_at=snapshot_at,
+        source="composed_market_persona_defaults",
+    )
+    health_items = _build_persona_health_items(
+        snapshot_at,
+        include_market_persona_defaults=True,
+    )
     return {
+        "data": health_items,
         "items": health_items,
-        "meta": {"snapshot_at": snapshot_at, "surfaces": {"persona_health": persona_surface}},
+        "page_info": {"next_page_token": None, "total": len(health_items)},
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": {
+                "persona_health": persona_surface,
+                "persona_league": league_surface,
+            },
+        },
     }
 
 
@@ -47450,6 +48506,98 @@ def _agora_ask_deterministic_fallback(prompt: str) -> str:
     )
 
 
+def _assistant_provider_readiness() -> Dict[str, Any]:
+    provider = _mgmt_nl_provider_name()
+    try:
+        return OpenClawOpsClient().get_assistant_readiness(provider=provider)
+    except OpenClawOpsClientError as exc:
+        return {
+            "provider": provider,
+            "runtime": "openclaw_gateway_cli_mount",
+            "ready": False,
+            "status": "unavailable",
+            "reason": exc.error_code,
+            "message": exc.message,
+            "httpStatus": exc.status_code,
+        }
+
+
+def _assistant_openclaw_tool_policy() -> Dict[str, Any]:
+    try:
+        return OpenClawOpsClient().get_tool_policy()
+    except OpenClawOpsClientError as exc:
+        return {
+            "status": "unavailable",
+            "reason": exc.error_code,
+            "message": exc.message,
+            "httpStatus": exc.status_code,
+        }
+
+
+def _assistant_openclaw_effective_tools(operator_id: str) -> Dict[str, Any]:
+    try:
+        return OpenClawOpsClient().list_effective_tools(
+            agent_id="management-ai",
+            operator_id=operator_id or "management-ai",
+            mode="kernel_debug",
+            operator_role="operator",
+        )
+    except OpenClawOpsClientError as exc:
+        return {
+            "status": "unavailable",
+            "reason": exc.error_code,
+            "message": exc.message,
+            "httpStatus": exc.status_code,
+        }
+
+
+def _assistant_prepare_repair_worktree(
+    payload: Dict[str, Any],
+    operator_id: str,
+    trace_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    try:
+        return OpenClawOpsClient().prepare_assistant_repair_worktree(
+            payload=payload,
+            operator_id=operator_id or "management-ai",
+            trace_id=trace_id,
+        )
+    except OpenClawOpsClientError as exc:
+        raise _openclaw_client_error(exc) from exc
+
+
+def _assistant_provider_reauth(
+    payload: Dict[str, Any],
+    operator_id: str,
+    trace_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    provider = str(payload.get("provider") or "codex").strip() or "codex"
+    try:
+        return OpenClawOpsClient().start_assistant_provider_reauth(
+            provider=provider,
+            payload=payload,
+            operator_id=operator_id or "management-ai",
+            trace_id=trace_id,
+        )
+    except OpenClawOpsClientError as exc:
+        raise _openclaw_client_error(exc) from exc
+
+
+def _assistant_provider_reauth_status(
+    provider: str,
+    session_id: str,
+    operator_id: str,
+) -> Dict[str, Any]:
+    try:
+        return OpenClawOpsClient().get_assistant_provider_reauth_status(
+            provider=provider or "codex",
+            session_id=session_id,
+            operator_id=operator_id or "management-ai",
+        )
+    except OpenClawOpsClientError as exc:
+        raise _openclaw_client_error(exc) from exc
+
+
 def _include_assistant_routes() -> None:
     global _ASSISTANT_SESSION_STORE, _ASSISTANT_TRANSCRIPT_STORE, _ASSISTANT_CONTROL_MODE_STORE
     from assistant.control_mode import ControlModeStore
@@ -47475,6 +48623,12 @@ def _include_assistant_routes() -> None:
             session_store=_ASSISTANT_SESSION_STORE,
             transcript_store=_ASSISTANT_TRANSCRIPT_STORE,
             control_mode_store=_ASSISTANT_CONTROL_MODE_STORE,
+            provider_readiness=_assistant_provider_readiness,
+            openclaw_tool_policy=_assistant_openclaw_tool_policy,
+            openclaw_effective_tools=_assistant_openclaw_effective_tools,
+            prepare_repair_worktree=_assistant_prepare_repair_worktree,
+            provider_reauth=_assistant_provider_reauth,
+            provider_reauth_status=_assistant_provider_reauth_status,
         )
     )
 

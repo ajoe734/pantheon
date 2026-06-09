@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Cut a wave-aligned publish snapshot from dev tip if dev advanced since
-# the latest release tag.
+# Cut a release-state disciplined publish snapshot from dev tip if dev
+# advanced since the latest release tag.
 #
 # Usage: scripts/git/nightly_publish.sh [now|check]
 #   now    cut and push immediately (default)
@@ -9,7 +9,8 @@
 # Driven by .github/workflows/nightly-publish-cut.yml on cron. Also
 # usable manually after a hotfix when an out-of-band publish is needed.
 #
-# Output: pushes publish/v<YYYY>.<WW>.0 and release/v<...> tag.
+# Output: pushes publish/v<YYYY>.<MM>.<DD>.<N> and release/v<...> tag in
+# current per-task mode.
 # Refuses to overwrite an existing publish branch (immutable snapshots).
 
 set -euo pipefail
@@ -66,7 +67,7 @@ if [[ -n "$LATEST_RELEASE_COMMIT" && "$DEV_SHA" == "$LATEST_RELEASE_COMMIT" ]]; 
   exit 0
 fi
 
-echo "-> validate wave release discipline"
+echo "-> validate release-state discipline"
 VER=$(python3 scripts/release_branch_discipline.py version)
 
 PUBLISH_BRANCH="${PUBLISH_PREFIX}${VER}"

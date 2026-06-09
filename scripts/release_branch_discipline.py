@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Validate release branch discipline for wave-aligned publish cuts.
+"""Validate release branch discipline for publish cuts.
 
-The 2026-05-19 delivery-governance supplement maps the human release
-track to ISO waves:
+The current per-task branch workflow uses .orchestrator/release-state.json
+as the maintained release policy source and git release/publish refs as the
+release history.  The legacy wave-aligned validator remains for historical
+wave release-state files and tests:
 
     wave 2026-W25 -> publish/v2026.25.0 and release/v2026.25.0
 
 This module is intentionally side-effect free.  It reads status/config
-state, builds a validation report, and exits non-zero when a release
-branch would violate the wave discipline.
+state, builds a validation report, and exits non-zero when a publish branch
+would violate the configured discipline.
 """
 
 from __future__ import annotations
@@ -16,8 +18,9 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -25,11 +28,14 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_STATUS_FILE = ROOT / "ai-status.json"
 DEFAULT_CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
 DEFAULT_ARCHIVE_DIR = ROOT / "ai-task-archive" / "tasks"
+DEFAULT_RELEASE_STATE_FILE = ROOT / ".orchestrator" / "release-state.json"
 
 WAVE_ID_RE = re.compile(r"^(\d{4})-W(\d{1,2})$")
 PUBLISH_VERSION_RE = re.compile(r"^v(\d{4})\.(\d{2})\.(\d+)$")
+DAILY_PUBLISH_VERSION_RE = re.compile(r"^v(\d{4})\.(\d{2})\.(\d{2})\.(\d+)$")
 TERMINAL_ACTIVE_STATUSES = {"done"}
 REQUIRED_DELIVERY_METADATA = ("LLM-Agent", "Task-ID", "Reviewer")
+PER_TASK_VERSION_FORMAT = "vYYYY.MM.DD.N"
 
 
 class ReleaseDisciplineError(ValueError):
@@ -103,13 +109,94 @@ def publish_version_to_wave_id(version: str) -> str:
 
 def workflow_settings(config: dict[str, Any]) -> dict[str, str]:
     workflow = config.get("branch_workflow") or config.get("wave_workflow") or {}
+    nightly_publish = workflow.get("nightly_publish") or {}
     return {
         "publish_branch_prefix": str(workflow.get("publish_branch_prefix") or "publish/"),
         "release_tag_prefix": str(workflow.get("release_tag_prefix") or "release/"),
         "release_candidate_prefix": str(
             workflow.get("release_candidate_branch_prefix") or "release-candidate/"
         ),
+        "version_format": str(nightly_publish.get("version_format") or "vYYYY.WW.0"),
+        "release_state_file": str(
+            workflow.get("release_state_file")
+            or nightly_publish.get("release_state_file")
+            or ".orchestrator/release-state.json"
+        ),
     }
+
+
+def release_state_mode(release_state: dict[str, Any] | None) -> str:
+    if not isinstance(release_state, dict):
+        return ""
+    return str(release_state.get("mode") or "").strip()
+
+
+def _release_state_version_format(
+    settings: dict[str, str],
+    release_state: dict[str, Any] | None,
+) -> str:
+    if isinstance(release_state, dict) and release_state.get("version_format"):
+        return str(release_state["version_format"])
+    return settings["version_format"]
+
+
+def list_git_release_versions(
+    release_prefix: str = "release/",
+    publish_prefix: str = "publish/",
+) -> list[str]:
+    """Return known release/publish versions from local refs without mutating git."""
+    versions: set[str] = set()
+    ref_specs = ("refs/tags/", "refs/remotes/origin/")
+    try:
+        out = subprocess.run(
+            ["git", "for-each-ref", "--format=%(refname:short)", *ref_specs],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=ROOT,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return []
+    remote_publish_prefix = f"origin/{publish_prefix}"
+    for line in out.splitlines():
+        ref = line.strip()
+        if ref.startswith(release_prefix):
+            versions.add(ref[len(release_prefix) :])
+        elif ref.startswith(remote_publish_prefix):
+            versions.add(ref[len(remote_publish_prefix) :])
+    return sorted(versions)
+
+
+def next_daily_publish_version(
+    now: datetime | None = None,
+    existing_versions: list[str] | None = None,
+) -> str:
+    today = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    prefix = f"v{today:%Y.%m.%d}."
+    existing_patch_numbers: list[int] = []
+    for version in existing_versions or []:
+        if not version.startswith(prefix):
+            continue
+        match = DAILY_PUBLISH_VERSION_RE.fullmatch(version)
+        if match:
+            existing_patch_numbers.append(int(match.group(4)))
+    patch = max(existing_patch_numbers) + 1 if existing_patch_numbers else 0
+    return f"{prefix}{patch}"
+
+
+def resolve_publish_version(
+    version_format: str,
+    wave_id: str | None = None,
+    now: datetime | None = None,
+    existing_versions: list[str] | None = None,
+) -> str:
+    if version_format == PER_TASK_VERSION_FORMAT:
+        return next_daily_publish_version(now=now, existing_versions=existing_versions)
+    if wave_id:
+        return wave_to_publish_version(wave_id)
+    raise ReleaseDisciplineError(
+        f"cannot resolve publish version for format {version_format!r} without a wave id"
+    )
 
 
 def _parse_ts(raw: Any) -> datetime | None:
@@ -318,7 +405,60 @@ def build_release_discipline_report(
     config: dict[str, Any] | None = None,
     archive_dir: Path | None = None,
     target_wave_id: str | None = None,
+    release_state: dict[str, Any] | None = None,
+    now: datetime | None = None,
+    existing_versions: list[str] | None = None,
 ) -> dict[str, Any]:
+    settings = workflow_settings(config or {})
+    mode = release_state_mode(release_state) or "legacy_wave"
+    version_format = _release_state_version_format(settings, release_state)
+
+    if mode == "per_task":
+        known_versions = (
+            existing_versions
+            if existing_versions is not None
+            else list_git_release_versions(
+                release_prefix=settings["release_tag_prefix"],
+                publish_prefix=settings["publish_branch_prefix"],
+            )
+        )
+        version = resolve_publish_version(
+            version_format,
+            now=now,
+            existing_versions=known_versions,
+        )
+        report: dict[str, Any] = {
+            "ok": True,
+            "release_state_mode": mode,
+            "version_format": version_format,
+            "version": version,
+            "publish_branch": f"{settings['publish_branch_prefix']}{version}",
+            "release_candidate_branch": f"{settings['release_candidate_prefix']}{version}",
+            "release_tag": f"{settings['release_tag_prefix']}{version}",
+            "checks": {
+                "release_state": {
+                    "ok": True,
+                    "errors": [],
+                    "mode": mode,
+                    "source": "release-state + git release/publish refs",
+                },
+                "legacy_wave_state": {
+                    "ok": True,
+                    "errors": [],
+                    "skipped": True,
+                    "reason": "per-task release state supersedes ai-status.wave_state for publish cuts",
+                },
+                "task_board_closeout": {
+                    "ok": True,
+                    "errors": [],
+                    "skipped": True,
+                    "reason": "task closeout is enforced before dev merge by task PR checks",
+                },
+            },
+            "errors": [],
+        }
+        return report
+
     wave_state = state.get("wave_state")
     if not isinstance(wave_state, dict):
         wave_state = {}
@@ -326,10 +466,11 @@ def build_release_discipline_report(
         target_wave_id = str(wave_state.get("current_wave_id") or "").strip()
     target = canonical_wave_id(target_wave_id or "")
 
-    settings = workflow_settings(config or {})
     version = wave_to_publish_version(target)
     report: dict[str, Any] = {
         "ok": True,
+        "release_state_mode": mode,
+        "version_format": version_format,
         "wave_id": target,
         "version": version,
         "publish_branch": f"{settings['publish_branch_prefix']}{version}",
@@ -359,16 +500,17 @@ def build_release_discipline_report(
 
 
 def print_human_report(report: dict[str, Any]) -> None:
+    target = report.get("wave_id") or report.get("release_state_mode") or "release"
     if report["ok"]:
         print(
             "Release branch discipline passed: "
-            f"{report['wave_id']} -> {report['publish_branch']} "
+            f"{target} -> {report['publish_branch']} "
             f"({report['release_tag']})"
         )
         return
     print(
         "Release branch discipline failed: "
-        f"{report['wave_id']} -> {report['publish_branch']}",
+        f"{target} -> {report['publish_branch']}",
         file=sys.stderr,
     )
     for error in report["errors"]:
@@ -383,6 +525,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         subparser.add_argument("--status-file", type=Path, default=DEFAULT_STATUS_FILE)
         subparser.add_argument("--config-file", type=Path, default=DEFAULT_CONFIG_FILE)
         subparser.add_argument("--archive-dir", type=Path, default=DEFAULT_ARCHIVE_DIR)
+        subparser.add_argument("--release-state-file", type=Path, default=DEFAULT_RELEASE_STATE_FILE)
         subparser.add_argument("--target-wave")
         subparser.add_argument("--json", action="store_true")
 
@@ -399,11 +542,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
     state = load_json_file(args.status_file, {})
     config = load_json_file(args.config_file, {})
+    release_state = load_json_file(args.release_state_file, {})
     report = build_release_discipline_report(
         state=state,
         config=config,
         archive_dir=args.archive_dir,
         target_wave_id=args.target_wave,
+        release_state=release_state,
     )
 
     if args.command == "version":

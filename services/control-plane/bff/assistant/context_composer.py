@@ -45,6 +45,7 @@ ALLOWLISTED_SOURCES = frozenset(
         "sanitized_logs",
         "repo_status",
         "management_nl",
+        "orchestrator_status",
         "docs_rag",
     }
 )
@@ -85,6 +86,7 @@ SOURCE_HREFS = {
     "sanitized_logs": "/bff/assistant/internal/sanitized-logs",
     "repo_status": "/bff/assistant/internal/repo-status",
     "management_nl": "/bff/management/nl/ask",
+    "orchestrator_status": "/bff/assistant/orchestrator/status",
     "docs_rag": "docs://assistant/context",
 }
 
@@ -97,6 +99,7 @@ BACKEND_PAYLOAD_SOURCES = frozenset(
         "persona_health",
         "strategy_health",
         "management_nl",
+        "orchestrator_status",
     }
 )
 

@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -153,6 +154,42 @@ class RunShellCommandTests(unittest.TestCase):
                 ci_stage0.run_shell_command("docker build --file Dockerfile .")
 
         self.assertIn("docker is required", str(ctx.exception))
+
+
+class RunTargetTests(unittest.TestCase):
+    def test_build_mode_passes_declared_build_args(self) -> None:
+        config = {
+            "targets": [
+                {
+                    "id": "research-qlib",
+                    "build": {
+                        "context": ".",
+                        "dockerfile": "services/research/qlib/Dockerfile",
+                        "tag": "pantheon-stage0/research-qlib",
+                        "args": ["PANTHEON_INSTALL_UPSTREAM_DEPS=false"],
+                    },
+                }
+            ]
+        }
+        args = SimpleNamespace(
+            matrix=Path("unused"),
+            doc=Path("unused"),
+            target_id="research-qlib",
+            mode="build",
+            tag_suffix="sha123",
+        )
+
+        with (
+            mock.patch("ci_stage0.load_config", return_value=config),
+            mock.patch("ci_stage0.run_shell_command") as run_shell_command,
+        ):
+            self.assertEqual(ci_stage0.cmd_run_target(args), 0)
+
+        run_shell_command.assert_called_once_with(
+            "docker build --file services/research/qlib/Dockerfile "
+            "--build-arg PANTHEON_INSTALL_UPSTREAM_DEPS=false "
+            "--tag pantheon-stage0/research-qlib:sha123 ."
+        )
 
 
 if __name__ == "__main__":

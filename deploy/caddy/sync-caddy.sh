@@ -12,11 +12,14 @@
 #   the breakage stops recurring on every rebuild/cutover.
 #
 # Usage:
-#   deploy/caddy/sync-caddy.sh <ssh-target> <bff-host> <template>
+#   deploy/caddy/sync-caddy.sh <ssh-target> <bff-host> <template> [fe-host] [fe-root]
 #     ssh-target  SSH destination, e.g. lupin@35.201.239.38
 #     bff-host    sslip.io hostname for the new IP,
 #                 e.g. pantheon-lupin-dev-bff.35.201.239.38.sslip.io
 #     template    repo-relative template, e.g. deploy/caddy/dev.Caddyfile.tmpl
+#     fe-host     optional sslip.io hostname for the static dev frontend,
+#                 required when template contains __FE_HOST__
+#     fe-root     optional static frontend root (default: /var/www/pantheon-dev-fe)
 #
 # Env:
 #   CADDY_SSH_KEY   SSH identity (default: ~/.ssh/google_compute_engine — the
@@ -28,15 +31,28 @@ set -euo pipefail
 SSH_TARGET="${1:?ssh-target required, e.g. lupin@35.201.239.38}"
 BFF_HOST="${2:?bff-host required, e.g. pantheon-lupin-dev-bff.<ip>.sslip.io}"
 TEMPLATE="${3:?template path required, e.g. deploy/caddy/dev.Caddyfile.tmpl}"
+FE_HOST="${4:-}"
+FE_ROOT="${5:-${PANTHEON_DEV_FE_ROOT:-/var/www/pantheon-dev-fe}}"
 
 SSH_KEY="${CADDY_SSH_KEY:-$HOME/.ssh/google_compute_engine}"
 SSH=(ssh -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10)
 
 [[ -f "$TEMPLATE" ]] || { echo "ERROR: template not found: $TEMPLATE" >&2; exit 1; }
+if grep -Eq '__FE_HOST__|__FE_ROOT__' "$TEMPLATE" && [[ -z "$FE_HOST" ]]; then
+  echo "ERROR: template requires fe-host; pass [fe-host] [fe-root]" >&2
+  exit 1
+fi
 
-echo "=== sync-caddy: ${SSH_TARGET}  host=${BFF_HOST}  tmpl=${TEMPLATE} ==="
+echo "=== sync-caddy: ${SSH_TARGET}  bff=${BFF_HOST}  tmpl=${TEMPLATE} ==="
+if [[ -n "$FE_HOST" ]]; then
+  echo "=== sync-caddy: frontend=${FE_HOST} root=${FE_ROOT} ==="
+fi
 
-RENDERED="$(sed "s|__BFF_HOST__|${BFF_HOST}|g" "$TEMPLATE")"
+RENDERED="$(sed \
+  -e "s|__BFF_HOST__|${BFF_HOST}|g" \
+  -e "s|__FE_HOST__|${FE_HOST}|g" \
+  -e "s|__FE_ROOT__|${FE_ROOT}|g" \
+  "$TEMPLATE")"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 
 # Push rendered config, back up the existing one, validate, then reload.
@@ -58,11 +74,32 @@ printf '%s\n' "$RENDERED" | "${SSH[@]}" "$SSH_TARGET" '
 
 # Verify HTTPS health from here (ACME issuance for a new SNI takes a few seconds).
 echo "=== verifying https://${BFF_HOST}/health ==="
+bff_ok=false
 for i in $(seq 1 8); do
   code="$(curl -sS -m 8 -o /dev/null -w '%{http_code}' "https://${BFF_HOST}/health" 2>/dev/null || echo 000)"
   echo "  attempt ${i}: http_code=${code}"
-  [[ "$code" == "200" ]] && { echo "OK: ${BFF_HOST} live"; exit 0; }
+  if [[ "$code" == "200" ]]; then
+    echo "OK: ${BFF_HOST} live"
+    bff_ok=true
+    break
+  fi
   sleep 5
 done
-echo "WARN: ${BFF_HOST}/health did not return 200 — check 'journalctl -u caddy' for ACME errors" >&2
-exit 1
+if [[ "$bff_ok" != "true" ]]; then
+  echo "WARN: ${BFF_HOST}/health did not return 200 — check 'journalctl -u caddy' for ACME errors" >&2
+  exit 1
+fi
+
+if [[ -n "$FE_HOST" ]]; then
+  echo "=== verifying https://${FE_HOST}/ ==="
+  for i in $(seq 1 8); do
+    code="$(curl -sS -m 8 -o /dev/null -w '%{http_code}' "https://${FE_HOST}/" 2>/dev/null || echo 000)"
+    echo "  attempt ${i}: http_code=${code}"
+    [[ "$code" == "200" ]] && { echo "OK: ${FE_HOST} live"; exit 0; }
+    sleep 5
+  done
+  echo "WARN: ${FE_HOST}/ did not return 200 — check FE root ${FE_ROOT} and 'journalctl -u caddy'" >&2
+  exit 1
+fi
+
+exit 0

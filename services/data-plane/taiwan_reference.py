@@ -8,14 +8,14 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from .models.dataset_lineage import NormalizedDataset, RawDataset
+    from .models.dataset_lineage import FeatureDataset, NormalizedDataset, RawDataset
     from .models.security_master import SecurityMaster
     from .models.market_calendar_session import MarketCalendarSession
 except ImportError:  # pragma: no cover - supports direct file loading in tests
     module_root = Path(__file__).resolve().parent
     if str(module_root) not in sys.path:
         sys.path.insert(0, str(module_root))
-    from models.dataset_lineage import NormalizedDataset, RawDataset
+    from models.dataset_lineage import FeatureDataset, NormalizedDataset, RawDataset
     from models.security_master import SecurityMaster
     from models.market_calendar_session import MarketCalendarSession
 
@@ -175,6 +175,70 @@ def build_shioaji_raw_dataset(
     )
 
 
+def build_mops_raw_dataset(
+    *,
+    dataset_id: str,
+    instrument_scope: list[str],
+    coverage_start: str,
+    coverage_end: str,
+    ingest_time: str,
+    storage_ref: str,
+    checksum: str,
+    route_ids: list[str],
+) -> RawDataset:
+    return RawDataset(
+        dataset_id=dataset_id,
+        source_class="official_reference",
+        market="TW",
+        instrument_scope=list(instrument_scope),
+        coverage_start=coverage_start,
+        coverage_end=coverage_end,
+        ingest_time=ingest_time,
+        storage_ref=storage_ref,
+        checksum=checksum,
+        metadata_json={
+            "provider": "MOPS",
+            "dataset_type": "official_disclosure",
+            "frequency": "event",
+            "route_ids": list(route_ids),
+            "governed_role": "tw_official_disclosure_truth",
+        },
+    )
+
+
+def build_tej_raw_dataset(
+    *,
+    dataset_id: str,
+    instrument_scope: list[str],
+    coverage_start: str,
+    coverage_end: str,
+    ingest_time: str,
+    storage_ref: str,
+    checksum: str,
+    dataset_codes: list[str],
+    frequency: str = "daily",
+) -> RawDataset:
+    return RawDataset(
+        dataset_id=dataset_id,
+        source_class="research_grade",
+        market="TW",
+        instrument_scope=list(instrument_scope),
+        coverage_start=coverage_start,
+        coverage_end=coverage_end,
+        ingest_time=ingest_time,
+        storage_ref=storage_ref,
+        checksum=checksum,
+        metadata_json={
+            "provider": "TEJ API",
+            "dataset_type": "vendor_research_dataset",
+            "frequency": frequency,
+            "dataset_codes": list(dataset_codes),
+            "governed_role": "tw_research_grade_fundamentals_ownership_market_data",
+            "does_not_replace_official_disclosure_truth": True,
+        },
+    )
+
+
 def build_tw_normalized_dataset(
     *,
     dataset_id: str,
@@ -205,6 +269,145 @@ def build_tw_normalized_dataset(
             "disclosure_join_version": disclosure_join_version,
             "fundamentals_join_version": fundamentals_join_version,
             "source_keys": list(source_keys or ["shioaji", "twse", "tpex", "mops", "tej"]),
+        },
+    )
+
+
+def build_tw_broker_top_row(
+    *,
+    date: str,
+    symbol: str,
+    source: str,
+    side: str,
+    rank: int,
+    broker: str,
+    buy_qty: int,
+    sell_qty: int,
+    net_qty: int | None = None,
+    venue: str = "TWSE",
+    available_time: str | None = None,
+    source_url: str | None = None,
+    broker_id: str | None = None,
+    source_dataset: str | None = None,
+) -> dict[str, Any]:
+    native_symbol = str(symbol or "").strip().upper()
+    if not native_symbol:
+        raise ValueError("symbol is required")
+    source_text = str(source or "").strip()
+    if not source_text:
+        raise ValueError("source is required")
+    broker_text = str(broker or "").strip()
+    if not broker_text:
+        raise ValueError("broker is required")
+    side_text = str(side or "").strip().lower()
+    if side_text not in {"buy", "sell"}:
+        raise ValueError("side must be buy or sell")
+    rank_value = int(rank)
+    if rank_value <= 0:
+        raise ValueError("rank must be > 0")
+    buy_value = int(buy_qty)
+    sell_value = int(sell_qty)
+    canonical_venue = normalize_tw_venue(venue)
+    resolved_net = int(net_qty) if net_qty is not None else buy_value - sell_value
+    row = {
+        "date": str(date),
+        "symbol": native_symbol,
+        "symbol_canonical": f"{native_symbol}.{_tw_canonical_suffix(canonical_venue)}",
+        "market": "TW",
+        "venue": canonical_venue,
+        "source": source_text,
+        "side": side_text,
+        "rank": rank_value,
+        "broker": broker_text,
+        "buy_qty": buy_value,
+        "sell_qty": sell_value,
+        "net_qty": resolved_net,
+        "available_time": available_time,
+        "source_url": source_url,
+    }
+    if broker_id not in (None, ""):
+        row["broker_id"] = str(broker_id).strip()
+    if source_dataset not in (None, ""):
+        row["source_dataset"] = str(source_dataset).strip()
+    return row
+
+
+def build_tw_broker_top_normalized_dataset(
+    *,
+    dataset_id: str,
+    parent_raw_dataset_id: str,
+    storage_ref: str,
+    checksum: str,
+    symbol_mapping_version: str,
+    calendar_version: str,
+    source_keys: list[str] | None = None,
+    top_n: int = 15,
+) -> NormalizedDataset:
+    return NormalizedDataset(
+        dataset_id=dataset_id,
+        parent_raw_dataset_id=parent_raw_dataset_id,
+        normalization_version="tw-broker-top-v1",
+        symbol_mapping_version=symbol_mapping_version,
+        calendar_version=calendar_version,
+        available_time_policy="at_ingest",
+        storage_ref=storage_ref,
+        checksum=checksum,
+        metadata_json={
+            "market_boundary": "TW",
+            "provider": "FinMind primary + Yahoo fallback + TEJ/TWSE-TPEx backfill",
+            "source_role": "active_universe_broker_top_summary",
+            "table_name": "tw_broker_top",
+            "top_n": int(top_n),
+            "row_contract": "date,symbol,source,side,rank,broker,buy_qty,sell_qty,net_qty",
+            "source_keys": list(
+                source_keys
+                or [
+                    "finmind_taiwan_stock_trading_daily_report",
+                    "yahoo_tw_broker_top15_fallback",
+                    "finmind_sponsorpro_storage_objects_backfill",
+                    "tej_twn_absr20_optional_gap_fill",
+                    "tej_twn_amtop1_optional_gap_fill",
+                    "twse_tpex_purchased_history_optional_gap_fill",
+                ]
+            ),
+            "primary_source": "FinMind TaiwanStockTradingDailyReport",
+            "fallback_source": "Yahoo Taiwan broker-trading top15",
+            "historical_backfill_priority": [
+                "FinMind SponsorPro TaiwanStockTradingDailyReport parquet 2021-06-30_to_now",
+                "TEJ ABSR20/AMTOP1 only for older or missing history",
+                "TWSE/TPEx purchased branch history only when vendor gaps remain",
+            ],
+            "archive_behavior": "skip_detail_updates",
+        },
+    )
+
+
+def build_tw_broker_top_feature_dataset(
+    *,
+    dataset_id: str,
+    parent_normalized_dataset_id: str,
+    storage_ref: str,
+    checksum: str,
+    feature_spec_version: str = "tw-broker-top-features-v1",
+    label_spec_version: str = "none",
+) -> FeatureDataset:
+    return FeatureDataset(
+        dataset_id=dataset_id,
+        parent_normalized_dataset_id=parent_normalized_dataset_id,
+        feature_spec_version=feature_spec_version,
+        label_spec_version=label_spec_version,
+        point_in_time_rule="use only rows with available_time <= feature_as_of_time",
+        storage_ref=storage_ref,
+        checksum=checksum,
+        metadata_json={
+            "market_boundary": "TW",
+            "parent_table": "tw_broker_top",
+            "features": [
+                "top_broker_net_qty",
+                "top_broker_concentration",
+                "main_broker_consecutive_buy_days",
+                "broker_flow_reversal",
+            ],
         },
     )
 

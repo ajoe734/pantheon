@@ -1,0 +1,186 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/data-source-registry-entry/v1",
+  "title": "Pantheon DataSourceRegistryEntry",
+  "description": "Product-level registry contract for data supply sources. This contract is for market, filing, news, macro, and other research data sources, not strategy idea or seed sources.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "data_source_id",
+    "source_kind",
+    "provider",
+    "source_class",
+    "datasets",
+    "license_scope",
+    "entitlement_tags",
+    "allowed_use",
+    "update_frequency",
+    "lifecycle_state",
+    "lineage",
+    "connector_id",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["data_source_registry_entry.v1"]
+    },
+    "data_source_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_kind": {
+      "type": "string",
+      "const": "data_source",
+      "description": "Discriminator that keeps data sources separate from strategy seed sources."
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_class": {
+      "type": "string",
+      "enum": [
+        "market_daily",
+        "intraday_quote",
+        "filing_event",
+        "financial_fundamental",
+        "taiwan_chip",
+        "news",
+        "macro",
+        "short_interest",
+        "vendor_backfill"
+      ]
+    },
+    "datasets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["dataset_id", "dataset_class"],
+        "properties": {
+          "dataset_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "dataset_class": {
+            "type": "string",
+            "minLength": 1
+          },
+          "markets": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "asset_classes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "storage_tier": {
+            "type": "string",
+            "enum": ["raw", "normalized", "features"]
+          },
+          "point_in_time_fields": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["event_time", "available_time", "ingest_time"]
+            }
+          },
+          "metadata": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "license_scope": {
+      "type": "string",
+      "minLength": 1
+    },
+    "entitlement_tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "allowed_use": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "research_data",
+          "backtest_data",
+          "feature_generation",
+          "monitoring",
+          "paper_runtime",
+          "canary_runtime",
+          "live_runtime"
+        ]
+      }
+    },
+    "update_frequency": {
+      "type": "string",
+      "minLength": 1
+    },
+    "universe_policy_ref": {
+      "type": ["string", "null"]
+    },
+    "lifecycle_state": {
+      "type": "string",
+      "enum": ["candidate", "enabled", "degraded", "disabled", "retired"]
+    },
+    "lineage": {
+      "type": "object",
+      "required": ["source_record_refs", "evidence_refs", "dependent_strategy_refs"],
+      "properties": {
+        "source_record_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "dependent_strategy_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "connector_id": {
+      "type": ["string", "null"],
+      "description": "Optional link to the generic source-ingestion connector backing this data source."
+    },
+    "created_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "updated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "metadata": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}

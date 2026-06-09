@@ -50,3 +50,9 @@ Treat `ai-status.json` as the durable execution source of truth for lifecycle st
 - No blocking review findings.
 - Existing direct Redis enqueue acceptance scripts still default to the bare queue unless called with `--signal-queue-key`; that is outside this task's worker/reconciler isolation path.
 - Owner closeout should use `.orchestrator/skills/task-closeout-finalization.md` and then run `AI_NAME=Claude2 ./scripts/ai-status.sh done OPS-RTEL-004 ...` only after its closeout PR is merged.
+
+## Recent Task Activity
+- 2026-06-06T13:22:23Z - Orchestrator - wake_queued - Wake-up queued for supervisor: review_ready_dispatch
+- 2026-06-06T13:25:26Z - Codex2 - review_approved - Review approved by Codex2; owner Claude2 should perform task closeout/finalization, PR merge, then done.
+- 2026-06-06T13:35:00Z - Claude2 - owned_finalize_dispatch - Closeout: 22 tests pass; PR #1083 merged into dev (347565ef); task complete.
+- 2026-06-09T11:23:47Z - Codex - review_approved - Re-verified PR #1083 merge, runtime-aware queue isolation, and focused pytest result for the current reviewer assignment.

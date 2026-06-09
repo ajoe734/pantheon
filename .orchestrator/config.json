@@ -90,6 +90,13 @@
     "quota_terminal_pause_seconds": 900,
     "quota_terminal_hint_max_seconds": 3600
   },
+  "provider_auth": {
+    "enabled": true,
+    "probe_interval_seconds": 900,
+    "failed_probe_interval_seconds": 60,
+    "probe_timeout_seconds": 45,
+    "probe_prompt": "Reply exactly: OK"
+  },
   "worker_tree_guard": {
     "enabled": false,
     "mode": "warn",
@@ -177,12 +184,12 @@
         "Codex2",
         "Claude"
       ],
-      "Gemini": [
+      "Antigravity": [
         "Codex",
         "Codex2",
         "Claude"
       ],
-      "Gemini2": [
+      "Antigravity2": [
         "Codex",
         "Codex2",
         "Claude"
@@ -213,12 +220,12 @@
         "Codex2",
         "Claude"
       ],
-      "Gemini": [
+      "Antigravity": [
         "Codex",
         "Codex2",
         "Claude"
       ],
-      "Gemini2": [
+      "Antigravity2": [
         "Codex",
         "Codex2",
         "Claude"
@@ -278,7 +285,7 @@
       "Claude": [
         "ajoe734"
       ],
-      "Gemini": [
+      "Antigravity": [
         "ajoe734"
       ],
       "Codex": [
@@ -358,19 +365,19 @@
       "wake_template": ".orchestrator/templates/wakeup.txt",
       "file_inbox_path": ".llm-inbox/claude2.md"
     },
-    "gemini": {
-      "display_name": "Gemini",
-      "provider": "gemini",
-      "adapter": "gemini",
+    "antigravity": {
+      "display_name": "Antigravity",
+      "provider": "antigravity",
+      "adapter": "antigravity",
       "wake_template": ".orchestrator/templates/wakeup.txt",
-      "file_inbox_path": ".llm-inbox/gemini.md"
+      "file_inbox_path": ".llm-inbox/antigravity.md"
     },
-    "gemini2": {
-      "display_name": "Gemini2",
-      "provider": "gemini2",
-      "adapter": "gemini",
+    "antigravity2": {
+      "display_name": "Antigravity2",
+      "provider": "antigravity2",
+      "adapter": "antigravity",
       "wake_template": ".orchestrator/templates/wakeup.txt",
-      "file_inbox_path": ".llm-inbox/gemini2.md"
+      "file_inbox_path": ".llm-inbox/antigravity2.md"
     },
     "codex": {
       "display_name": "Codex",
@@ -562,59 +569,45 @@
         "fallback_mode": null
       }
     },
-    "gemini": {
-      "delivery_mode": "gemini",
+    "antigravity": {
+      "delivery_mode": "antigravity",
       "allow_inbox_fallback": false,
       "file_inbox": {
-        "path": ".llm-inbox/gemini.md",
+        "path": ".llm-inbox/antigravity.md",
         "open_in_vscode": false
       },
-      "gemini": {
-        "cli": ".orchestrator/bin/gemini",
-        "include_directories": true
+      "antigravity": {
+        "cli": ".orchestrator/bin/agy",
+        "include_directories": true,
+        "print_timeout": "15m"
       },
       "approval": {
-        "default_approval_mode": "auto_edit",
-        "workspace_agent_yolo_mode": false,
-        "enable_permanent_tool_approval": true,
-        "auto_add_to_policy_by_default": true,
-        "disable_yolo_mode": false,
-        "disable_always_allow": false
+        "dangerously_skip_permissions": true
       },
       "retry": {
         "max_attempts": 5,
         "fallback_mode": null
+      },
+      "auth_probe": {
+        "failed_probe_interval_seconds": 3600
       }
     },
-    "gemini2": {
-      "delivery_mode": "gemini",
+    "antigravity2": {
+      "delivery_mode": "antigravity",
       "allow_inbox_fallback": false,
       "file_inbox": {
-        "path": ".llm-inbox/gemini2.md",
+        "path": ".llm-inbox/antigravity2.md",
         "open_in_vscode": false
       },
-      "gemini": {
-        "cli": ".orchestrator/bin/gemini2",
-        "config_home": "/home/lupin/.gemini2",
-        "home": "/home/lupin/.gemini2",
+      "antigravity": {
+        "cli": ".orchestrator/bin/agy",
+        "config_home": "/home/lupin/.gemini-agy2",
+        "home": "/home/lupin/.gemini-agy2",
         "include_directories": true,
-        "model": "gemini-2.5-flash-lite",
-        "output_format": "json",
-        "env": {
-          "GEMINI_CLI_TRUST_WORKSPACE": "true",
-          "GOOGLE_GENAI_USE_GCA": "true",
-          "GOOGLE_CLOUD_PROJECT": "pantheon-493602",
-          "GOOGLE_CLOUD_PROJECT_ID": "pantheon-493602",
-          "GOOGLE_CLOUD_LOCATION": "us-central1"
-        }
+        "print_timeout": "15m"
       },
       "approval": {
-        "default_approval_mode": "yolo",
-        "workspace_agent_yolo_mode": false,
-        "enable_permanent_tool_approval": true,
-        "auto_add_to_policy_by_default": true,
-        "disable_yolo_mode": false,
-        "disable_always_allow": false
+        "dangerously_skip_permissions": true
       },
       "retry": {
         "max_attempts": 5,
@@ -874,7 +867,9 @@
       "todo"
     ],
     "sidecar_only_agents": [],
-    "disabled_agents": [],
+    "disabled_agents": [
+      "antigravity"
+    ],
     "dependency_done_statuses": [
       "done"
     ],
@@ -913,17 +908,17 @@
     "target_workload": {
       "Claude": 10,
       "Claude2": 5,
-      "Gemini": 5,
-      "Gemini2": 5,
-      "Codex": 35,
-      "Codex2": 35,
+      "Antigravity": 5,
+      "Antigravity2": 5,
+      "Codex": 30,
+      "Codex2": 30,
       "Copilot": 5
     },
     "max_tasks_per_agent_by_agent": {
       "Claude": 3,
       "Claude2": 1,
-      "Gemini": 1,
-      "Gemini2": 1,
+      "Antigravity": 1,
+      "Antigravity2": 1,
       "Codex": 4,
       "Codex2": 4,
       "Copilot": 1
@@ -933,13 +928,13 @@
     "max_concurrent_per_quota_group": {
       "claude": 3,
       "claude2": 1,
-      "gemini": 1,
-      "gemini2": 1,
+      "antigravity": 1,
+      "antigravity2": 1,
       "codex1": 4,
       "codex2": 4,
       "copilot": 1
     },
-    "max_concurrent_workers": 11
+    "max_concurrent_workers": 13
   },
   "branch_workflow": {
     "enabled": true,
@@ -953,7 +948,8 @@
     "nightly_publish": {
       "enabled": true,
       "cron_utc": "0 3 * * *",
-      "version_format": "vYYYY.WW.0",
+      "version_format": "vYYYY.MM.DD.N",
+      "release_state_file": ".orchestrator/release-state.json",
       "skip_if_no_new_commits": true
     },
     "promote": {

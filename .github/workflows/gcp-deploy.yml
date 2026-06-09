@@ -111,7 +111,7 @@ jobs:
         if: steps.detect.outputs.services != ''
         env:
           GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
-          GCS_SOURCE_STAGING_DIR: ${{ vars.GCP_BUILD_STAGING_BUCKET || 'gs://pantheon-493602-pantheon-builds/source' }}
+          GCS_SOURCE_STAGING_DIR: ${{ vars.GCP_BUILD_STAGING_BUCKET || 'gs://pantheon-benjamin-20260528-pantheon-builds/source' }}
           ENV_TAG: ${{ github.event.inputs.env_tag || 'dev-candidate' }}
           SERVICES: ${{ steps.detect.outputs.services }}
         run: |

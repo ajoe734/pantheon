@@ -215,6 +215,47 @@ codes include:
 | `IDEMPOTENCY_CONFLICT` | Same idempotency key was reused with a different payload. |
 | `SSE_REPLAY_UNAVAILABLE` | Requested SSE replay window is no longer available. |
 
+## 6.1 Assistant-Skill Descriptor Discovery
+
+Assistant-skill discovery is a read projection, not a BFF command route. The BFF
+must forward authenticated operator context to the existing OpenClaw adapter
+discovery endpoint and project the adapter response without maintaining a second
+skill registry.
+
+Adapter source:
+
+```http
+GET /api/openclaw-adapter/tools?agent_id=<agent>&mode=<mode>&operator_role=<role>
+X-Operator-Id: <operator-id>
+```
+
+The adapter response preserves `effective_tools` for compatibility and adds
+`effective_skills[]` descriptors with these required fields:
+
+```json
+{
+  "id": "assistant.command",
+  "title": "Assistant Command Authorization",
+  "surface": "assistant_command",
+  "mode_gate": {
+    "type": "allowlist",
+    "default": "deny",
+    "allowed_modes": ["kernel_observe", "kernel_debug", "kernel_repair"]
+  },
+  "role": "operator",
+  "confirm_policy": {"required": false},
+  "input_schema": {"type": "object"},
+  "handler_ref": "openclaw.tool:assistant.command",
+  "result_surface": "assistant_command_authorization"
+}
+```
+
+Discovery must remain deny-by-default: unknown or unallowlisted tools/workflows,
+viewer-only role context, user mode, and always-blocked broker/live/paper/canary/
+capital/Lean refs yield no effective descriptor. Discovery does not authorize
+execution; actual invocation still passes command admission, RBAC, idempotency,
+confirmation, and audit gates.
+
 ## 7. Command Classes
 
 | Class | Commands | Minimum Admission Contract |

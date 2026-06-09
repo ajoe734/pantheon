@@ -6,12 +6,16 @@ and transcript redaction to ``AssistantProviderRuntime``.
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
 import shutil
 import subprocess
+import tempfile
+import threading
 import time
+import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -40,13 +44,32 @@ DEFAULT_CODEX_WORKSPACE = "/srv/pantheon-assistant/workspaces/read-only"
 DEFAULT_REPAIR_WORKTREE_ROOT = "/srv/pantheon-assistant/worktrees"
 DEFAULT_TIMEOUT_SECONDS = 60
 DEFAULT_AUDIT_PATH = "/tmp/openclaw-gateway-adapter/assistant_provider_audit.jsonl"
+DEFAULT_REAUTH_CAPTURE_TIMEOUT_SECONDS = 20
+DEFAULT_REAUTH_MAX_WAIT_SECONDS = 900
+DEFAULT_REAUTH_POLL_INTERVAL_SECONDS = 5
+MAX_CODEX_IMAGES = 8
+MAX_CODEX_IMAGE_TOTAL_BYTES = 16 * 1024 * 1024
+_CODEX_IMAGE_MIME_EXT = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
 _AUTH_FAILURE_RE = re.compile(
     r"(not\s+logged\s+in|login\s+required|sign\s+in|authentication|unauthorized|oauth|expired|token)",
+    re.IGNORECASE,
+)
+_SANDBOX_NAMESPACE_FAILURE_RE = re.compile(
+    r"(bwrap:\s*No permissions to create a new namespace|"
+    r"fs sandbox helper failed|"
+    r"kernel\.unprivileged_userns_clone)",
     re.IGNORECASE,
 )
 
 
 RunFunc = Callable[..., subprocess.CompletedProcess[str]]
+PopenFunc = Callable[..., subprocess.Popen[str]]
 WhichFunc = Callable[[str], str | None]
 ClockFunc = Callable[[], datetime]
 
@@ -155,6 +178,7 @@ class AssistantCodexProvider:
         *,
         mounts: AssistantCredentialMounts | None = None,
         run_func: RunFunc | None = None,
+        popen_func: PopenFunc | None = None,
         which_func: WhichFunc | None = None,
         audit_log: AssistantProviderAuditLog | None = None,
         repair_workflow: AssistantRepairWorkflow | None = None,
@@ -163,17 +187,23 @@ class AssistantCodexProvider:
         self._environ = dict(environ if environ is not None else os.environ)
         self._mounts = mounts or AssistantCredentialMounts(self._environ)
         self._run = run_func or subprocess.run
+        self._popen = popen_func or subprocess.Popen
         self._which = which_func or shutil.which
         self._audit = audit_log or AssistantProviderAuditLog(
             redaction_enabled=_truthy(self._environ.get("PANTHEON_ASSISTANT_REDACTION_ENABLED", "true")),
         )
         self._repair_workflow = repair_workflow or AssistantRepairWorkflow(self._environ)
         self._clock = clock or _utc_now
+        self._reauth_lock = threading.Lock()
+        self._reauth_sessions: dict[str, dict[str, Any]] = {}
 
     def readiness(self, *, auth_probe: bool = False) -> dict[str, Any]:
         checked_at = self._clock().isoformat().replace("+00:00", "Z")
         binary = self._resolve_binary()
         mount_validation = self._mounts.validate_mounts().get(CODEX_PROVIDER)
+        repair_workspace = _repair_workspace_metadata(
+            self._environ.get("PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT", DEFAULT_REPAIR_WORKTREE_ROOT)
+        )
         base = {
             "provider": CODEX_PROVIDER_ID,
             "provider_name": CODEX_PROVIDER,
@@ -185,6 +215,13 @@ class AssistantCodexProvider:
             "auth_status": "not_checked",
             "credential_mount": _mount_metadata(mount_validation),
             "mount_mode": getattr(mount_validation, "mount_mode", "unknown"),
+            "repair_workspace": repair_workspace,
+            "repairWorkspace": repair_workspace,
+            "capabilities": {
+                "read": True,
+                "repairWrite": bool(repair_workspace.get("ready")),
+                "repair_write": bool(repair_workspace.get("ready")),
+            },
             "last_refresh_check_time": None,
             "ready": False,
             "status": "degraded",
@@ -246,7 +283,8 @@ class AssistantCodexProvider:
         context = self._command_context(mode, metadata)
         self._ensure_workspace_available(context)
         binary = self._require_binary()
-        cmd = self._build_command(binary=binary, context=context)
+        image_paths, image_tmpdir, image_bytes = self._materialize_request_images(payload)
+        cmd = self._build_command(binary=binary, context=context, image_paths=image_paths)
         env = self._build_env()
         timeout = self._timeout_seconds()
         started = time.monotonic()
@@ -263,6 +301,8 @@ class AssistantCodexProvider:
                 "workspace_class": context.workspace_class,
                 **({"repair_workflow": context.repair_workflow} if context.repair_workflow else {}),
                 "prompt_bytes": len(prompt.encode("utf-8")),
+                "image_count": len(image_paths),
+                "image_bytes": image_bytes,
                 "timeout_seconds": timeout,
             }
         )
@@ -338,6 +378,9 @@ class AssistantCodexProvider:
                     "errno": getattr(exc, "errno", None),
                 },
             ) from exc
+        finally:
+            if image_tmpdir is not None:
+                shutil.rmtree(image_tmpdir, ignore_errors=True)
 
         duration_ms = _duration_ms(started)
         if completed.returncode != 0:
@@ -364,6 +407,34 @@ class AssistantCodexProvider:
                 _failure_message(code),
                 status_code=status_code,
                 retryable=retryable,
+                details={"returncode": completed.returncode, "duration_ms": duration_ms},
+            )
+
+        sandbox_error = _sandbox_namespace_failure(completed.stdout, completed.stderr)
+        if sandbox_error:
+            code = "CODEX_SANDBOX_UNAVAILABLE"
+            self._audit.record(
+                {
+                    "event_type": "assistant.provider.failed",
+                    "provider": CODEX_PROVIDER_ID,
+                    "runtime": PROVIDER_RUNTIME,
+                    **audit_context,
+                    "mode": mode,
+                    "sandbox": context.sandbox,
+                    "workspace_class": context.workspace_class,
+                    **({"repair_workflow": context.repair_workflow} if context.repair_workflow else {}),
+                    "duration_ms": duration_ms,
+                    "returncode": completed.returncode,
+                    "stdout": completed.stdout,
+                    "stderr": completed.stderr,
+                    "error_code": code,
+                }
+            )
+            raise CodexProviderError(
+                code,
+                _failure_message(code),
+                status_code=503,
+                retryable=False,
                 details={"returncode": completed.returncode, "duration_ms": duration_ms},
             )
 
@@ -397,8 +468,96 @@ class AssistantCodexProvider:
             "json_events": _parse_json_lines(completed.stdout),
         }
 
-    def _build_command(self, *, binary: str, context: _CommandContext) -> list[str]:
-        return [
+    def _materialize_request_images(
+        self, payload: Mapping[str, Any]
+    ) -> tuple[list[str], str | None, int]:
+        """Decode forwarded image attachments to temp files for ``codex exec -i``.
+
+        Images arrive as ``data:<mime>;base64,<...>`` URLs inside the request
+        ``attachments`` (or ``messages[].content``) the BFF forwards. The codex
+        CLI reads ``-i`` files itself, so we stage decoded bytes in a private
+        out-of-tree temp dir (never the read-only workspace or a worker
+        worktree). Returns (paths, tmpdir_or_None, total_bytes). Any decode/IO
+        problem degrades to text-only rather than failing the ask.
+        """
+        parts = self._collect_image_parts(payload)
+        if not parts:
+            return [], None, 0
+        try:
+            tmpdir = tempfile.mkdtemp(prefix="codex-img-")
+            os.chmod(tmpdir, 0o700)
+        except OSError:
+            return [], None, 0
+        paths: list[str] = []
+        total = 0
+        try:
+            for index, part in enumerate(parts):
+                if len(paths) >= MAX_CODEX_IMAGES:
+                    break
+                image_url = part.get("image_url")
+                url = str(image_url.get("url") or "") if isinstance(image_url, Mapping) else ""
+                if not url.startswith("data:") or "," not in url:
+                    continue
+                header, _, b64 = url.partition(",")
+                mime = header[5:].split(";")[0].strip().lower()
+                try:
+                    data = base64.b64decode(b64, validate=False)
+                except (ValueError, TypeError):
+                    continue
+                if not data:
+                    continue
+                if total + len(data) > MAX_CODEX_IMAGE_TOTAL_BYTES:
+                    break
+                total += len(data)
+                ext = _CODEX_IMAGE_MIME_EXT.get(mime) or self._image_ext_fallback(part.get("filename"))
+                path = os.path.join(tmpdir, f"image-{index}{ext}")
+                with open(path, "wb") as handle:
+                    handle.write(data)
+                paths.append(path)
+        except OSError:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            return [], None, 0
+        if not paths:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            return [], None, 0
+        return paths, tmpdir, total
+
+    @staticmethod
+    def _collect_image_parts(payload: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+        parts: list[Mapping[str, Any]] = []
+        attachments = payload.get("attachments")
+        if isinstance(attachments, list):
+            for item in attachments:
+                if isinstance(item, Mapping) and item.get("type") == "image_url":
+                    parts.append(item)
+        if parts:
+            return parts
+        messages = payload.get("messages")
+        if isinstance(messages, list):
+            for message in messages:
+                content = message.get("content") if isinstance(message, Mapping) else None
+                if isinstance(content, list):
+                    for chunk in content:
+                        if isinstance(chunk, Mapping) and chunk.get("type") == "image_url":
+                            parts.append(chunk)
+        return parts
+
+    @staticmethod
+    def _image_ext_fallback(filename: Any) -> str:
+        if isinstance(filename, str) and "." in filename:
+            ext = "." + filename.rsplit(".", 1)[1].strip().lower()
+            if 2 <= len(ext) <= 6 and ext[1:].isalnum():
+                return ext
+        return ".img"
+
+    def _build_command(
+        self,
+        *,
+        binary: str,
+        context: _CommandContext,
+        image_paths: list[str] | tuple[str, ...] = (),
+    ) -> list[str]:
+        cmd = [
             binary,
             "exec",
             "-C",
@@ -409,8 +568,12 @@ class AssistantCodexProvider:
             "-c",
             'ask_for_approval="never"',
             "--json",
-            "-",
         ]
+        for path in image_paths:
+            cmd.extend(["-i", path])
+        # Trailing "-" tells codex exec to read the prompt from stdin.
+        cmd.append("-")
+        return cmd
 
     def _command_context(self, mode: str, metadata: Mapping[str, Any]) -> _CommandContext:
         if mode == "kernel_repair":
@@ -562,9 +725,503 @@ class AssistantCodexProvider:
                 details={"workspace_class": context.workspace_class},
             )
 
+    def start_device_reauth(
+        self,
+        *,
+        operator_id: str,
+        trace_id: str | None = None,
+        reason: str | None = None,
+        capture_timeout_seconds: int | None = None,
+        poll_interval_seconds: int | None = None,
+        max_wait_seconds: int | None = None,
+    ) -> dict[str, Any]:
+        """Start ``codex login --device-auth`` and return only browser-safe fields.
+
+        The OAuth credential exchange remains between the operator browser, the
+        IdP, and the Codex CLI process.  The adapter captures the verification
+        URI and user code, then monitors readiness in the background.
+        """
+        clean_operator = str(operator_id or "").strip()
+        if not clean_operator:
+            raise CodexProviderError(
+                "OPERATOR_REQUIRED",
+                "Codex provider reauth requires X-Operator-Id.",
+                status_code=401,
+                retryable=False,
+            )
+        binary = self._require_binary()
+        self._ensure_reauth_mount_ready()
+        capture_timeout = _positive_int(
+            capture_timeout_seconds,
+            DEFAULT_REAUTH_CAPTURE_TIMEOUT_SECONDS,
+            minimum=1,
+            maximum=120,
+        )
+        poll_interval = _positive_int(
+            poll_interval_seconds,
+            DEFAULT_REAUTH_POLL_INTERVAL_SECONDS,
+            minimum=1,
+            maximum=60,
+        )
+        max_wait = _positive_int(
+            max_wait_seconds,
+            DEFAULT_REAUTH_MAX_WAIT_SECONDS,
+            minimum=30,
+            maximum=3600,
+        )
+        session_id = f"codex_reauth_{uuid.uuid4().hex}"
+        now = self._clock().isoformat().replace("+00:00", "Z")
+        audit_context = {
+            "operator_id": clean_operator,
+            **({"trace_id": trace_id} if trace_id else {}),
+        }
+        session: dict[str, Any] = {
+            "reauth_session_id": session_id,
+            "provider": CODEX_PROVIDER_ID,
+            "provider_name": CODEX_PROVIDER,
+            "runtime": PROVIDER_RUNTIME,
+            "status": "capturing",
+            "started_at": now,
+            "updated_at": now,
+            "verification_uri": None,
+            "verification_uri_complete": None,
+            "user_code": None,
+            "poll_interval_seconds": poll_interval,
+            "max_wait_seconds": max_wait,
+            "credential_exchange": _reauth_credential_exchange_metadata(),
+            "readiness": None,
+        }
+        if reason:
+            session["reason"] = str(reason)
+        with self._reauth_lock:
+            self._reauth_sessions[session_id] = session
+
+        cmd = [binary, "login", "--device-auth"]
+        self._audit.record(
+            {
+                "event_type": "assistant.provider.reauth.started",
+                "provider": CODEX_PROVIDER_ID,
+                "runtime": PROVIDER_RUNTIME,
+                **audit_context,
+                "reauth_session_id": session_id,
+                "capture_timeout_seconds": capture_timeout,
+                "poll_interval_seconds": poll_interval,
+                "max_wait_seconds": max_wait,
+                "credential_exchange": "operator_browser_to_identity_provider",
+            }
+        )
+        try:
+            process = self._popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=self._build_env(),
+                cwd=self._reauth_cwd(),
+                bufsize=1,
+            )
+        except FileNotFoundError as exc:
+            self._mark_reauth_failed(session_id, "CODEX_BINARY_NOT_FOUND", "Codex binary is not available.")
+            raise CodexProviderError(
+                "CODEX_BINARY_NOT_FOUND",
+                "Codex binary is not available inside the gateway container.",
+                status_code=503,
+                retryable=False,
+            ) from exc
+        except OSError as exc:
+            self._mark_reauth_failed(session_id, "CODEX_REAUTH_START_FAILED", type(exc).__name__)
+            raise CodexProviderError(
+                "CODEX_REAUTH_START_FAILED",
+                "Codex device-auth login process could not be started.",
+                status_code=503,
+                retryable=True,
+                details={"error_type": type(exc).__name__, "errno": getattr(exc, "errno", None)},
+            ) from exc
+
+        captured = threading.Event()
+        for stream_name, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
+            if stream is None:
+                continue
+            threading.Thread(
+                target=self._read_reauth_stream,
+                args=(session_id, stream_name, stream, captured),
+                daemon=True,
+            ).start()
+
+        deadline = time.monotonic() + capture_timeout
+        while time.monotonic() < deadline:
+            if captured.is_set():
+                break
+            if process.poll() is not None:
+                break
+            time.sleep(0.1)
+
+        public = self.reauth_status(session_id)
+        if not public.get("verification_uri") or not public.get("user_code"):
+            returncode = process.poll()
+            if returncode is None:
+                _terminate_process(process)
+                code = "CODEX_REAUTH_DEVICE_CODE_TIMEOUT"
+                message = "Codex device-auth login did not emit a verification URI and user code before timeout."
+            else:
+                code = "CODEX_REAUTH_DEVICE_CODE_UNAVAILABLE"
+                message = "Codex device-auth login exited before emitting a verification URI and user code."
+            self._mark_reauth_failed(session_id, code, message)
+            self._audit.record(
+                {
+                    "event_type": "assistant.provider.reauth.failed",
+                    "provider": CODEX_PROVIDER_ID,
+                    "runtime": PROVIDER_RUNTIME,
+                    **audit_context,
+                    "reauth_session_id": session_id,
+                    "error_code": code,
+                    "returncode": returncode,
+                }
+            )
+            raise CodexProviderError(code, message, status_code=503, retryable=True)
+
+        self._update_reauth_session(
+            session_id,
+            status="pending",
+            updated_at=self._clock().isoformat().replace("+00:00", "Z"),
+        )
+        self._audit.record(
+            {
+                "event_type": "assistant.provider.reauth.device_code_captured",
+                "provider": CODEX_PROVIDER_ID,
+                "runtime": PROVIDER_RUNTIME,
+                **audit_context,
+                "reauth_session_id": session_id,
+                "verification_uri_host": _uri_host(str(public.get("verification_uri") or "")),
+            }
+        )
+        threading.Thread(
+            target=self._monitor_reauth_session,
+            args=(session_id, process, poll_interval, max_wait, audit_context),
+            daemon=True,
+        ).start()
+        return self.reauth_status(session_id)
+
+    def reauth_status(self, session_id: str) -> dict[str, Any]:
+        clean_session_id = str(session_id or "").strip()
+        with self._reauth_lock:
+            session = dict(self._reauth_sessions.get(clean_session_id) or {})
+        if not session:
+            raise CodexProviderError(
+                "CODEX_REAUTH_SESSION_NOT_FOUND",
+                "Codex provider reauth session was not found.",
+                status_code=404,
+                retryable=False,
+            )
+        return _reauth_public_payload(session)
+
+    def _read_reauth_stream(
+        self,
+        session_id: str,
+        _stream_name: str,
+        stream: Any,
+        captured: threading.Event,
+    ) -> None:
+        try:
+            for raw_line in iter(stream.readline, ""):
+                line = _coerce_output(raw_line).strip()
+                if not line:
+                    continue
+                fields = _extract_device_auth_fields(line)
+                if fields:
+                    fields["updated_at"] = self._clock().isoformat().replace("+00:00", "Z")
+                    self._update_reauth_session(session_id, **fields)
+                with self._reauth_lock:
+                    session = self._reauth_sessions.get(session_id) or {}
+                    if session.get("verification_uri") and session.get("user_code"):
+                        captured.set()
+        finally:
+            close = getattr(stream, "close", None)
+            if callable(close):
+                close()
+
+    def _monitor_reauth_session(
+        self,
+        session_id: str,
+        process: Any,
+        poll_interval_seconds: int,
+        max_wait_seconds: int,
+        audit_context: Mapping[str, Any],
+    ) -> None:
+        deadline = time.monotonic() + max_wait_seconds
+        while time.monotonic() < deadline:
+            readiness = self.readiness(auth_probe=True)
+            if readiness.get("ready") is True:
+                self._update_reauth_session(
+                    session_id,
+                    status="completed",
+                    updated_at=self._clock().isoformat().replace("+00:00", "Z"),
+                    completed_at=self._clock().isoformat().replace("+00:00", "Z"),
+                    readiness=readiness,
+                    error_code=None,
+                    message=None,
+                )
+                if process.poll() is None:
+                    _terminate_process(process)
+                self._audit.record(
+                    {
+                        "event_type": "assistant.provider.reauth.completed",
+                        "provider": CODEX_PROVIDER_ID,
+                        "runtime": PROVIDER_RUNTIME,
+                        **dict(audit_context),
+                        "reauth_session_id": session_id,
+                        "auth_status": readiness.get("auth_status"),
+                    }
+                )
+                return
+
+            returncode = process.poll()
+            if returncode is not None:
+                self._update_reauth_session(
+                    session_id,
+                    status="failed",
+                    updated_at=self._clock().isoformat().replace("+00:00", "Z"),
+                    readiness=readiness,
+                    error_code="CODEX_REAUTH_NOT_READY",
+                    message="Codex device-auth login exited but readiness auth probe is not ready.",
+                    returncode=returncode,
+                )
+                self._audit.record(
+                    {
+                        "event_type": "assistant.provider.reauth.failed",
+                        "provider": CODEX_PROVIDER_ID,
+                        "runtime": PROVIDER_RUNTIME,
+                        **dict(audit_context),
+                        "reauth_session_id": session_id,
+                        "error_code": "CODEX_REAUTH_NOT_READY",
+                        "returncode": returncode,
+                        "auth_status": readiness.get("auth_status"),
+                    }
+                )
+                return
+            time.sleep(max(1, poll_interval_seconds))
+
+        if process.poll() is None:
+            _terminate_process(process)
+        self._update_reauth_session(
+            session_id,
+            status="timeout",
+            updated_at=self._clock().isoformat().replace("+00:00", "Z"),
+            error_code="CODEX_REAUTH_TIMEOUT",
+            message="Codex device-auth login did not complete before the reauth timeout.",
+        )
+        self._audit.record(
+            {
+                "event_type": "assistant.provider.reauth.timeout",
+                "provider": CODEX_PROVIDER_ID,
+                "runtime": PROVIDER_RUNTIME,
+                **dict(audit_context),
+                "reauth_session_id": session_id,
+                "max_wait_seconds": max_wait_seconds,
+            }
+        )
+
+    def _update_reauth_session(self, session_id: str, **fields: Any) -> None:
+        with self._reauth_lock:
+            session = self._reauth_sessions.get(session_id)
+            if session is None:
+                return
+            session.update({key: value for key, value in fields.items() if value is not None})
+
+    def _mark_reauth_failed(self, session_id: str, error_code: str, message: str) -> None:
+        self._update_reauth_session(
+            session_id,
+            status="failed",
+            updated_at=self._clock().isoformat().replace("+00:00", "Z"),
+            error_code=error_code,
+            message=message,
+        )
+
+    def _ensure_reauth_mount_ready(self) -> None:
+        mount_validation = self._mounts.validate_mounts().get(CODEX_PROVIDER)
+        if not mount_validation or not mount_validation.ready:
+            status = getattr(mount_validation, "status", "missing")
+            raise CodexProviderError(
+                "CODEX_REAUTH_MOUNT_UNAVAILABLE",
+                "Codex device-auth reauth requires a ready service-user credential mount.",
+                status_code=503,
+                retryable=False,
+                details={"mount_status": status},
+            )
+        if getattr(mount_validation, "mount_mode", "") != "rw":
+            raise CodexProviderError(
+                "CODEX_REAUTH_MOUNT_READ_ONLY",
+                "Codex device-auth reauth requires a writable service-user credential mount.",
+                status_code=409,
+                retryable=False,
+                details={"mount_mode": getattr(mount_validation, "mount_mode", "unknown")},
+            )
+
+    def _reauth_cwd(self) -> str:
+        workspace = Path(_norm_path(self._environ.get("PANTHEON_ASSISTANT_CODEX_WORKSPACE", DEFAULT_CODEX_WORKSPACE)))
+        if _path_is_dir(workspace):
+            return workspace.as_posix()
+        return "/tmp"
+
+
+def _positive_int(value: int | None, default: int, *, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value if value is not None else default)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(maximum, parsed))
+
+
+def _extract_device_auth_fields(line: str) -> dict[str, Any]:
+    fields = _extract_device_auth_json(line)
+    fields.update(_extract_device_auth_text(line))
+    return {key: value for key, value in fields.items() if value}
+
+
+def _extract_device_auth_json(line: str) -> dict[str, Any]:
+    text = line.strip()
+    if not text.startswith("{"):
+        return {}
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(payload, Mapping):
+        return {}
+    return {
+        "verification_uri": _first_mapping_value(
+            payload,
+            "verification_uri",
+            "verificationUri",
+            "verification_url",
+            "verificationUrl",
+            "url",
+        ),
+        "verification_uri_complete": _first_mapping_value(
+            payload,
+            "verification_uri_complete",
+            "verificationUriComplete",
+            "verification_url_complete",
+            "verificationUrlComplete",
+        ),
+        "user_code": _first_mapping_value(payload, "user_code", "userCode", "code"),
+        "expires_in": _first_mapping_value(payload, "expires_in", "expiresIn"),
+    }
+
+
+def _extract_device_auth_text(line: str) -> dict[str, Any]:
+    fields: dict[str, Any] = {}
+    url_match = re.search(r"https?://[^\s)>\]\"']+", line)
+    if url_match:
+        url = url_match.group(0).rstrip(".,;")
+        key = "verification_uri_complete" if "user_code=" in url or "code=" in url else "verification_uri"
+        fields[key] = url
+    code_match = re.search(
+        r"(?:user\s*code|code)\s*[:=]\s*([A-Z0-9][A-Z0-9-]{3,})",
+        line,
+        re.IGNORECASE,
+    )
+    if code_match is None:
+        code_match = re.search(
+            r"enter\s+(?:the\s+)?(?:code\s+)?([A-Z0-9][A-Z0-9-]{3,})",
+            line,
+            re.IGNORECASE,
+        )
+    if code_match:
+        fields["user_code"] = code_match.group(1).strip()
+    return fields
+
+
+def _first_mapping_value(payload: Mapping[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = payload.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _reauth_public_payload(session: Mapping[str, Any]) -> dict[str, Any]:
+    payload = {
+        "status": session.get("status"),
+        "reauth_session_id": session.get("reauth_session_id"),
+        "reauthSessionId": session.get("reauth_session_id"),
+        "provider": session.get("provider") or CODEX_PROVIDER_ID,
+        "provider_name": session.get("provider_name") or CODEX_PROVIDER,
+        "providerName": session.get("provider_name") or CODEX_PROVIDER,
+        "runtime": session.get("runtime") or PROVIDER_RUNTIME,
+        "started_at": session.get("started_at"),
+        "startedAt": session.get("started_at"),
+        "updated_at": session.get("updated_at"),
+        "updatedAt": session.get("updated_at"),
+        "completed_at": session.get("completed_at"),
+        "completedAt": session.get("completed_at"),
+        "verification_uri": session.get("verification_uri"),
+        "verificationUri": session.get("verification_uri"),
+        "verification_uri_complete": session.get("verification_uri_complete"),
+        "verificationUriComplete": session.get("verification_uri_complete"),
+        "user_code": session.get("user_code"),
+        "userCode": session.get("user_code"),
+        "expires_in": session.get("expires_in"),
+        "expiresIn": session.get("expires_in"),
+        "poll_interval_seconds": session.get("poll_interval_seconds"),
+        "pollIntervalSeconds": session.get("poll_interval_seconds"),
+        "max_wait_seconds": session.get("max_wait_seconds"),
+        "maxWaitSeconds": session.get("max_wait_seconds"),
+        "credential_exchange": session.get("credential_exchange") or _reauth_credential_exchange_metadata(),
+        "credentialExchange": session.get("credential_exchange") or _reauth_credential_exchange_metadata(),
+        "readiness": session.get("readiness"),
+        "error_code": session.get("error_code"),
+        "errorCode": session.get("error_code"),
+        "message": session.get("message"),
+        "returncode": session.get("returncode"),
+    }
+    if session.get("reason"):
+        payload["reason"] = session.get("reason")
+    return {key: value for key, value in payload.items() if value is not None}
+
+
+def _reauth_credential_exchange_metadata() -> dict[str, Any]:
+    return {
+        "idp_exchange": "operator_browser",
+        "idpExchange": "operator_browser",
+        "bff_handles_credentials": False,
+        "bffHandlesCredentials": False,
+        "frontend_handles_credentials": False,
+        "frontendHandlesCredentials": False,
+        "provider_cli_writes_mount": True,
+        "providerCliWritesMount": True,
+        "returned_fields": ["verification_uri", "user_code"],
+    }
+
+
+def _terminate_process(process: Any) -> None:
+    terminate = getattr(process, "terminate", None)
+    wait = getattr(process, "wait", None)
+    kill = getattr(process, "kill", None)
+    try:
+        if callable(terminate):
+            terminate()
+        if callable(wait):
+            wait(timeout=2)
+    except Exception:  # noqa: BLE001 - cleanup path only
+        if callable(kill):
+            try:
+                kill()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def _uri_host(uri: str) -> str | None:
+    match = re.match(r"https?://([^/]+)", uri)
+    if not match:
+        return None
+    return match.group(1)
+
 
 def _classify_failure(stdout: str, stderr: str) -> tuple[str, int, bool]:
     combined = f"{stdout}\n{stderr}"
+    if _SANDBOX_NAMESPACE_FAILURE_RE.search(combined):
+        return "CODEX_SANDBOX_UNAVAILABLE", 503, False
     if _AUTH_FAILURE_RE.search(combined):
         return "CODEX_AUTH_UNAVAILABLE", 503, False
     return "CODEX_EXEC_FAILED", 502, True
@@ -573,7 +1230,96 @@ def _classify_failure(stdout: str, stderr: str) -> tuple[str, int, bool]:
 def _failure_message(code: str) -> str:
     if code == "CODEX_AUTH_UNAVAILABLE":
         return "Codex service-user account session is unavailable or expired."
+    if code == "CODEX_SANDBOX_UNAVAILABLE":
+        return "Codex workspace-write sandbox is unavailable in the OpenClaw adapter container."
     return "Codex provider invocation failed."
+
+
+def _sandbox_namespace_failure(stdout: str, stderr: str) -> bool:
+    return bool(_SANDBOX_NAMESPACE_FAILURE_RE.search(f"{stdout}\n{stderr}"))
+
+
+def _repair_workspace_metadata(root_value: str) -> dict[str, Any]:
+    root = Path(_norm_path(root_value or DEFAULT_REPAIR_WORKTREE_ROOT))
+    exists = _path_exists(root)
+    is_dir = _path_is_dir(root)
+    base: dict[str, Any] = {
+        "root": root.as_posix(),
+        "exists": exists,
+        "isDir": is_dir,
+        "is_dir": is_dir,
+        "writable": os.access(root, os.W_OK) if exists else False,
+        "ready": False,
+        "status": "missing",
+        "worktreeCount": 0,
+        "worktree_count": 0,
+        "recentWorktrees": [],
+        "recent_worktrees": [],
+    }
+    if not exists:
+        return base
+    if not is_dir:
+        return {**base, "status": "not_directory"}
+    if not os.access(root, os.W_OK):
+        return {**base, "status": "not_writable"}
+
+    worktrees = _recent_worktree_dirs(root)
+    recent = [
+        {
+            "name": item.name,
+            "path": item.as_posix(),
+            "lastModifiedAt": _mtime_z(item),
+            "last_modified_at": _mtime_z(item),
+            "gitRepo": (item / ".git").exists(),
+            "git_repo": (item / ".git").exists(),
+        }
+        for item in worktrees[:8]
+    ]
+    return {
+        **base,
+        "ready": True,
+        "status": "ready",
+        "worktreeCount": len(worktrees),
+        "worktree_count": len(worktrees),
+        "recentWorktrees": recent,
+        "recent_worktrees": recent,
+    }
+
+
+def _recent_worktree_dirs(root: Path) -> list[Path]:
+    try:
+        dirs = [item for item in root.iterdir() if _path_is_dir(item)]
+    except OSError:
+        return []
+    return sorted(dirs, key=lambda item: _safe_mtime(item), reverse=True)
+
+
+def _path_exists(path: Path) -> bool:
+    try:
+        return path.exists()
+    except OSError:
+        return False
+
+
+def _path_is_dir(path: Path) -> bool:
+    try:
+        return path.is_dir()
+    except OSError:
+        return False
+
+
+def _safe_mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def _mtime_z(path: Path) -> str | None:
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat().replace("+00:00", "Z")
+    except OSError:
+        return None
 
 
 def _mount_metadata(validation: Any) -> dict[str, Any]:

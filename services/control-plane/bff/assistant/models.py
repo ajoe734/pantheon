@@ -66,6 +66,7 @@ class AssistantBackendContext(AssistantBaseModel):
     persona_health: Optional[Dict[str, Any]] = None
     strategy_health: Optional[Dict[str, Any]] = None
     management_nl: Optional[Dict[str, Any]] = None
+    orchestrator_status: Optional[Dict[str, Any]] = None
     recent_sse: List[Dict[str, Any]] = Field(default_factory=list)
 
 
@@ -189,4 +190,7 @@ class OrchestratorStatusResponse(AssistantBaseModel):
     blockers: List[Dict[str, Any]]
     supervisor: Dict[str, Any]
     provider_guardrails: Dict[str, Any] = Field(default_factory=dict, alias="providerGuardrails")
+    provider_readiness: Dict[str, Any] = Field(default_factory=dict, alias="providerReadiness")
+    openclaw_tool_policy: Dict[str, Any] = Field(default_factory=dict, alias="openclawToolPolicy")
+    assistant_dev_bridge: Dict[str, Any] = Field(default_factory=dict, alias="assistantDevBridge")
     coordination: Optional[Dict[str, Any]] = None

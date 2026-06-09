@@ -64,6 +64,13 @@ import httpx  # noqa: E402
 import pydantic  # noqa: E402
 
 from tool_workflow_bridge import (  # noqa: E402
+    ASSISTANT_CONTROL_MODE_STATUS_TOOL_NAME,
+    ASSISTANT_OPENCLAW_ASK_TOOL_NAME,
+    ASSISTANT_ORCHESTRATOR_STATUS_TOOL_NAME,
+    ASSISTANT_PROVIDER_REAUTH_TOOL_NAME,
+    ASSISTANT_SA_SD_GENERATE_TOOL_NAME,
+    ASSISTANT_SKILL_DESCRIPTOR_SCHEMA_VERSION,
+    ASSISTANT_TRANSCRIPT_RESYNC_TOOL_NAME,
     BridgeAuditLog,
     BridgeError,
     ToolPolicy,
@@ -626,6 +633,251 @@ class TestListEffectiveTools(unittest.TestCase):
         self.assertEqual(result["upstream_status"], "not_configured")
         self.assertEqual(result["effective_tools"], ["search"])
         self.assertEqual(result["policy_blocked_tools"], ["broker.submit", "paper.execute"])
+
+    def test_effective_skills_include_descriptor_schema_for_allowed_tool(self):
+        bridge, _ = _make_bridge(allowed_tools=["search"])
+        result = bridge.list_effective_tools(
+            agent_id="a1",
+            operator_id="op1",
+            mode="kernel_debug",
+            operator_role="operator",
+            upstream=FakeUpstream(),
+        )
+
+        self.assertEqual(result["schema_version"], ASSISTANT_SKILL_DESCRIPTOR_SCHEMA_VERSION)
+        self.assertEqual(result["effective_tools"], ["search"])
+        self.assertEqual(len(result["effective_skills"]), 1)
+        descriptor = result["effective_skills"][0]
+        for field in (
+            "id",
+            "title",
+            "surface",
+            "mode_gate",
+            "role",
+            "confirm_policy",
+            "input_schema",
+            "handler_ref",
+            "result_surface",
+        ):
+            self.assertIn(field, descriptor)
+        self.assertEqual(descriptor["id"], "search")
+        self.assertEqual(descriptor["surface"], "openclaw_tool")
+        self.assertEqual(descriptor["mode_gate"]["default"], "deny")
+        self.assertIn("kernel_debug", descriptor["mode_gate"]["allowed_modes"])
+        self.assertEqual(descriptor["handler_ref"], "openclaw.tool:search")
+
+    def test_sa_sd_skill_descriptor_points_to_bff_dev_docs_handler(self):
+        bridge, _ = _make_bridge(allowed_tools=[ASSISTANT_SA_SD_GENERATE_TOOL_NAME])
+        result = bridge.list_effective_tools(
+            agent_id="management-ai",
+            operator_id="op1",
+            mode="kernel_debug",
+            operator_role="operator",
+            upstream=FakeUpstream(),
+        )
+
+        self.assertEqual(result["effective_tools"], [ASSISTANT_SA_SD_GENERATE_TOOL_NAME])
+        descriptor = result["effective_skills"][0]
+        self.assertEqual(descriptor["id"], ASSISTANT_SA_SD_GENERATE_TOOL_NAME)
+        self.assertEqual(descriptor["title"], "Generate SA/SD")
+        self.assertEqual(descriptor["surface"], "assistant_command")
+        self.assertEqual(descriptor["handler_ref"], "bff.route:POST /bff/assistant/dev-docs/generate")
+        self.assertEqual(descriptor["result_surface"], "assistant_dev_docs_packet")
+        self.assertIn("kernel_debug", descriptor["mode_gate"]["allowed_modes"])
+        self.assertIn("kernel_repair", descriptor["mode_gate"]["allowed_modes"])
+        self.assertNotIn("kernel_observe", descriptor["mode_gate"]["allowed_modes"])
+
+    def test_sa_sd_skill_descriptor_denies_user_mode_and_viewer_role(self):
+        bridge, _ = _make_bridge(allowed_tools=[ASSISTANT_SA_SD_GENERATE_TOOL_NAME])
+
+        user_result = bridge.list_effective_tools(
+            agent_id="management-ai",
+            operator_id="op1",
+            mode="user",
+            operator_role="operator",
+            upstream=FakeUpstream(),
+        )
+        viewer_result = bridge.list_effective_tools(
+            agent_id="management-ai",
+            operator_id="op1",
+            mode="kernel_debug",
+            operator_role="viewer",
+            upstream=FakeUpstream(),
+        )
+
+        self.assertEqual(user_result["effective_skills"], [])
+        self.assertEqual(viewer_result["effective_skills"], [])
+
+    def test_provider_reauth_skill_descriptor_is_kernel_control_gated(self):
+        bridge, _ = _make_bridge(allowed_tools=[ASSISTANT_PROVIDER_REAUTH_TOOL_NAME])
+        debug_result = bridge.list_effective_tools(
+            agent_id="management-ai",
+            operator_id="op1",
+            mode="kernel_debug",
+            operator_role="operator",
+            upstream=FakeUpstream(),
+        )
+        observe_result = bridge.list_effective_tools(
+            agent_id="management-ai",
+            operator_id="op1",
+            mode="kernel_observe",
+            operator_role="operator",
+            upstream=FakeUpstream(),
+        )
+        viewer_result = bridge.list_effective_tools(
+            agent_id="management-ai",
+            operator_id="op1",
+            mode="kernel_debug",
+            operator_role="viewer",
+            upstream=FakeUpstream(),
+        )
+
+        self.assertEqual(debug_result["effective_tools"], [ASSISTANT_PROVIDER_REAUTH_TOOL_NAME])
+        descriptor = debug_result["effective_skills"][0]
+        self.assertEqual(descriptor["id"], ASSISTANT_PROVIDER_REAUTH_TOOL_NAME)
+        self.assertEqual(descriptor["surface"], "assistant_command")
+        self.assertEqual(descriptor["handler_ref"], "bff.route:POST /bff/assistant/provider/reauth")
+        self.assertEqual(descriptor["result_surface"], "assistant_provider_reauth_device_flow")
+        self.assertTrue(descriptor["confirm_policy"]["required"])
+        self.assertEqual(descriptor["confirm_policy"]["policy"], "active_control_mode")
+        self.assertIn("kernel_debug", descriptor["mode_gate"]["allowed_modes"])
+        self.assertIn("kernel_repair", descriptor["mode_gate"]["allowed_modes"])
+        self.assertNotIn("kernel_observe", descriptor["mode_gate"]["allowed_modes"])
+        self.assertEqual(observe_result["effective_skills"], [])
+        self.assertEqual(viewer_result["effective_skills"], [])
+
+    def test_toolbar_skill_descriptors_point_to_existing_bff_handlers(self):
+        toolbar_tools = [
+            ASSISTANT_OPENCLAW_ASK_TOOL_NAME,
+            ASSISTANT_CONTROL_MODE_STATUS_TOOL_NAME,
+            ASSISTANT_TRANSCRIPT_RESYNC_TOOL_NAME,
+            ASSISTANT_ORCHESTRATOR_STATUS_TOOL_NAME,
+        ]
+        bridge, _ = _make_bridge(allowed_tools=toolbar_tools)
+        result = bridge.list_effective_tools(
+            agent_id="management-ai",
+            operator_id="op1",
+            mode="kernel_debug",
+            operator_role="operator",
+            upstream=FakeUpstream(),
+        )
+
+        by_id = {descriptor["id"]: descriptor for descriptor in result["effective_skills"]}
+        self.assertEqual(set(by_id), set(toolbar_tools))
+        self.assertEqual(
+            by_id[ASSISTANT_OPENCLAW_ASK_TOOL_NAME]["handler_ref"],
+            "bff.route:POST /bff/management/nl/ask",
+        )
+        self.assertEqual(
+            by_id[ASSISTANT_OPENCLAW_ASK_TOOL_NAME]["result_surface"],
+            "assistant_management_answer",
+        )
+        self.assertEqual(
+            by_id[ASSISTANT_CONTROL_MODE_STATUS_TOOL_NAME]["handler_ref"],
+            "bff.route:GET /bff/assistant/control-mode",
+        )
+        self.assertEqual(
+            by_id[ASSISTANT_CONTROL_MODE_STATUS_TOOL_NAME]["result_surface"],
+            "assistant_control_mode_status",
+        )
+        self.assertEqual(
+            by_id[ASSISTANT_TRANSCRIPT_RESYNC_TOOL_NAME]["handler_ref"],
+            "bff.route:GET /bff/assistant/sessions/{sessionId}/transcript",
+        )
+        self.assertEqual(
+            by_id[ASSISTANT_TRANSCRIPT_RESYNC_TOOL_NAME]["input_schema"]["required"],
+            ["sessionId"],
+        )
+        self.assertEqual(
+            by_id[ASSISTANT_ORCHESTRATOR_STATUS_TOOL_NAME]["handler_ref"],
+            "bff.route:GET /bff/assistant/orchestrator/status",
+        )
+        for descriptor in by_id.values():
+            self.assertEqual(descriptor["surface"], "assistant_command")
+            self.assertFalse(descriptor["confirm_policy"]["required"])
+            self.assertTrue(descriptor["handler_ref"].startswith("bff.route:"))
+
+    def test_toolbar_skill_modes_keep_openclaw_ask_out_of_observe_mode(self):
+        toolbar_tools = [
+            ASSISTANT_OPENCLAW_ASK_TOOL_NAME,
+            ASSISTANT_CONTROL_MODE_STATUS_TOOL_NAME,
+            ASSISTANT_TRANSCRIPT_RESYNC_TOOL_NAME,
+            ASSISTANT_ORCHESTRATOR_STATUS_TOOL_NAME,
+        ]
+        bridge, _ = _make_bridge(allowed_tools=toolbar_tools)
+        observe_result = bridge.list_effective_tools(
+            agent_id="management-ai",
+            operator_id="op1",
+            mode="kernel_observe",
+            operator_role="operator",
+            upstream=FakeUpstream(),
+        )
+
+        effective_ids = {descriptor["id"] for descriptor in observe_result["effective_skills"]}
+        self.assertNotIn(ASSISTANT_OPENCLAW_ASK_TOOL_NAME, effective_ids)
+        self.assertEqual(
+            effective_ids,
+            {
+                ASSISTANT_CONTROL_MODE_STATUS_TOOL_NAME,
+                ASSISTANT_TRANSCRIPT_RESYNC_TOOL_NAME,
+                ASSISTANT_ORCHESTRATOR_STATUS_TOOL_NAME,
+            },
+        )
+
+    def test_effective_skills_deny_user_mode(self):
+        bridge, _ = _make_bridge(allowed_tools=["search"])
+        result = bridge.list_effective_tools(
+            agent_id="a1",
+            operator_id="op1",
+            mode="user",
+            operator_role="operator",
+            upstream=FakeUpstream(),
+        )
+
+        self.assertEqual(result["mode"], "user")
+        self.assertEqual(result["effective_tools"], [])
+        self.assertEqual(result["effective_skills"], [])
+        self.assertEqual(result["skill_resolution"]["unknown_skills"], "fail_closed")
+
+    def test_effective_skills_deny_viewer_role(self):
+        bridge, _ = _make_bridge(allowed_tools=["search"])
+        result = bridge.list_effective_tools(
+            agent_id="a1",
+            operator_id="op1",
+            mode="kernel_debug",
+            operator_role="viewer",
+            upstream=FakeUpstream(),
+        )
+
+        self.assertEqual(result["operator_role"], "viewer")
+        self.assertEqual(result["effective_tools"], [])
+        self.assertEqual(result["effective_skills"], [])
+
+    def test_workflow_skill_descriptors_are_repair_mode_gated(self):
+        bridge, _ = _make_bridge(allowed_workflows=["research.scan"])
+
+        debug_result = bridge.list_effective_tools(
+            agent_id="a1",
+            operator_id="op1",
+            mode="kernel_debug",
+            operator_role="operator",
+            upstream=None,
+        )
+        repair_result = bridge.list_effective_tools(
+            agent_id="a1",
+            operator_id="op1",
+            mode="kernel_repair",
+            operator_role="operator",
+            upstream=None,
+        )
+
+        self.assertEqual(debug_result["effective_workflows"], [])
+        self.assertEqual(debug_result["effective_skills"], [])
+        self.assertEqual(repair_result["effective_workflows"], ["research.scan"])
+        descriptor = repair_result["effective_skills"][0]
+        self.assertEqual(descriptor["id"], "workflow:research.scan")
+        self.assertEqual(descriptor["surface"], "openclaw_workflow")
+        self.assertTrue(descriptor["confirm_policy"]["required"])
 
 
 class TestNoBrokerLivePaperExecution(unittest.TestCase):

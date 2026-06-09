@@ -43,6 +43,11 @@ def _internal_url(path: str) -> str:
     return f"{base}{path}"
 
 
+def _runtime_repair_url(path: str) -> str:
+    base = _configured_base_url("PANTHEON_RUNTIME_MANAGER_API_URL", "PANTHEON_INTERNAL_API_URL")
+    return f"{base}{path}"
+
+
 def _governance_url(path: str) -> str:
     base = _configured_base_url(
         "PANTHEON_GOVERNANCE_API_URL",
@@ -736,6 +741,222 @@ def _execute_start_runtime(
     }
 
 
+_RUNTIME_REPAIR_ACTION_PATHS: dict[CommandType, tuple[str, tuple[str, ...], str]] = {
+    CommandType.RESTART_PAPER_RUNTIME: (
+        "/api/internal/v1/runtime-repair/paper-runtimes/{runtime_id}/restart",
+        ("runtime_id",),
+        "runtime_id",
+    ),
+    CommandType.RESTART_TELEMETRY_BRIDGE: (
+        "/api/internal/v1/runtime-repair/paper-runtimes/{runtime_id}/telemetry-bridge/restart",
+        ("runtime_id",),
+        "runtime_id",
+    ),
+    CommandType.TERMINATE_STALE_PAPER_MONITORING_SESSION: (
+        "/api/internal/v1/runtime-repair/monitoring-sessions/{session_id}/terminate-stale",
+        ("session_id",),
+        "session_id",
+    ),
+    CommandType.START_PAPER_MONITORING_SESSION: (
+        "/api/internal/v1/runtime-repair/paper-runtimes/{runtime_id}/monitoring-sessions/start",
+        ("runtime_id",),
+        "runtime_id",
+    ),
+    CommandType.PROBE_TELEMETRY_INGEST: (
+        "/api/internal/v1/runtime-repair/paper-runtimes/{runtime_id}/telemetry-ingest/probe",
+        ("runtime_id",),
+        "runtime_id",
+    ),
+}
+
+
+def _require_confirm_token(action_id: str, params: Dict[str, Any]) -> str:
+    confirm_token = str(params.get("confirm_token") or "").strip()
+    if not confirm_token:
+        raise ValueError(f"{action_id} requires confirm_token.")
+    return confirm_token
+
+
+def _require_runtime_repair_target(
+    action_id: str,
+    params: Dict[str, Any],
+    required_keys: tuple[str, ...],
+) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for key in required_keys:
+        value = str(params.get(key) or "").strip()
+        if not value:
+            raise ValueError(f"{action_id} requires {key}.")
+        values[key] = value
+    return values
+
+
+def _require_staleness_evidence(action_id: str, params: Dict[str, Any]) -> dict[str, Any]:
+    evidence = params.get("staleness_evidence")
+    if not isinstance(evidence, dict):
+        evidence = {
+            key: params.get(key)
+            for key in (
+                "last_heartbeat_at",
+                "observed_at",
+                "heartbeat_age_seconds",
+                "stale_since",
+                "session_started_at",
+            )
+            if params.get(key) is not None
+        }
+    has_timestamp = bool(evidence.get("last_heartbeat_at") or evidence.get("stale_since"))
+    has_age = evidence.get("heartbeat_age_seconds") is not None
+    if not has_timestamp and not has_age:
+        raise ValueError(
+            f"{action_id} requires staleness_evidence with heartbeat age or timestamp."
+        )
+    return evidence
+
+
+def _runtime_repair_audit_receipt(
+    *,
+    command_id: str,
+    action_id: str,
+    params: Dict[str, Any],
+    target_key: str,
+    target_id: str,
+    body: Dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "actor_id": params.get("actor_id") or params.get("operator_id"),
+        "action_id": action_id,
+        "target_key": target_key,
+        "target_id": target_id,
+        "idempotency_key": params.get("idempotency_key") or params.get("idempotencyKey"),
+        "stage": params.get("stage") or "paper",
+        "trace_id": params.get("trace_id") or body.get("trace_id"),
+        "audit_id": body.get("audit_id"),
+        "command_id": command_id,
+    }
+
+
+def _execute_runtime_repair_action(
+    command_id: str,
+    command_type: CommandType,
+    params: Dict[str, Any],
+    auth_token: Optional[str] = None,
+    mfa_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    action_id = command_type.value
+    path_template, required_keys, target_key = _RUNTIME_REPAIR_ACTION_PATHS[command_type]
+    confirm_token = _require_confirm_token(action_id, params)
+    target_values = _require_runtime_repair_target(action_id, params, required_keys)
+    target_id = target_values[target_key]
+    evidence = None
+    if command_type == CommandType.TERMINATE_STALE_PAPER_MONITORING_SESSION:
+        evidence = _require_staleness_evidence(action_id, params)
+
+    payload: Dict[str, Any] = {
+        "command_id": command_id,
+        "confirm_token": confirm_token,
+        "reason": params.get("reason") or "operator_runtime_repair",
+        "idempotency_key": params.get("idempotency_key") or params.get("idempotencyKey"),
+        "trace_id": params.get("trace_id"),
+        "actor_id": params.get("actor_id") or params.get("operator_id"),
+        "stage": params.get("stage") or "paper",
+    }
+    if evidence is not None:
+        payload["staleness_evidence"] = evidence
+
+    url = _runtime_repair_url(path_template.format(**target_values))
+    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+    audit_receipt = _runtime_repair_audit_receipt(
+        command_id=command_id,
+        action_id=action_id,
+        params=params,
+        target_key=target_key,
+        target_id=target_id,
+        body=body,
+    )
+    return {
+        "command_id": command_id,
+        "action_id": action_id,
+        "dispatch_path": "runtime_manager_repair_api",
+        "status": body.get("status", "accepted"),
+        "runtime_id": body.get("runtime_id") or params.get("runtime_id"),
+        "session_id": body.get("session_id") or params.get("session_id"),
+        "target_id": target_id,
+        "audit_id": body.get("audit_id"),
+        "audit_receipt": audit_receipt,
+        "telemetry_projection": body.get("telemetry_projection"),
+        "heartbeat_freshness": body.get("heartbeat_freshness"),
+        "success_condition": "heartbeat_freshness",
+        "live_broker_side_effects": False,
+        "capital_authority_granted": False,
+    }
+
+
+def _execute_restart_paper_runtime(
+    command_id: str, params: Dict[str, Any],
+    auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    return _execute_runtime_repair_action(
+        command_id,
+        CommandType.RESTART_PAPER_RUNTIME,
+        params,
+        auth_token=auth_token,
+        mfa_token=mfa_token,
+    )
+
+
+def _execute_restart_telemetry_bridge(
+    command_id: str, params: Dict[str, Any],
+    auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    return _execute_runtime_repair_action(
+        command_id,
+        CommandType.RESTART_TELEMETRY_BRIDGE,
+        params,
+        auth_token=auth_token,
+        mfa_token=mfa_token,
+    )
+
+
+def _execute_terminate_stale_paper_monitoring_session(
+    command_id: str, params: Dict[str, Any],
+    auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    return _execute_runtime_repair_action(
+        command_id,
+        CommandType.TERMINATE_STALE_PAPER_MONITORING_SESSION,
+        params,
+        auth_token=auth_token,
+        mfa_token=mfa_token,
+    )
+
+
+def _execute_start_paper_monitoring_session(
+    command_id: str, params: Dict[str, Any],
+    auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    return _execute_runtime_repair_action(
+        command_id,
+        CommandType.START_PAPER_MONITORING_SESSION,
+        params,
+        auth_token=auth_token,
+        mfa_token=mfa_token,
+    )
+
+
+def _execute_probe_telemetry_ingest(
+    command_id: str, params: Dict[str, Any],
+    auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    return _execute_runtime_repair_action(
+        command_id,
+        CommandType.PROBE_TELEMETRY_INGEST,
+        params,
+        auth_token=auth_token,
+        mfa_token=mfa_token,
+    )
+
+
 def _execute_bff_action_adapter(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
@@ -779,6 +1000,11 @@ _EXECUTORS = {
     CommandType.ADVANCE_LIFECYCLE: _execute_advance_lifecycle,
     CommandType.APPROVE_POOL: _execute_approve_pool,
     CommandType.START_RUNTIME: _execute_start_runtime,
+    CommandType.RESTART_PAPER_RUNTIME: _execute_restart_paper_runtime,
+    CommandType.RESTART_TELEMETRY_BRIDGE: _execute_restart_telemetry_bridge,
+    CommandType.TERMINATE_STALE_PAPER_MONITORING_SESSION: _execute_terminate_stale_paper_monitoring_session,
+    CommandType.START_PAPER_MONITORING_SESSION: _execute_start_paper_monitoring_session,
+    CommandType.PROBE_TELEMETRY_INGEST: _execute_probe_telemetry_ingest,
     CommandType.APPROVE_DEPLOYMENT: _execute_approve_deployment,
     CommandType.APPROVE_DECISION: _execute_approve_decision,
     CommandType.REJECT_DECISION: _execute_reject_decision,

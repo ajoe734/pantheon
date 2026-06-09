@@ -48,6 +48,22 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Claude2"], 1)
         self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["claude2"], 1)
 
+    def test_antigravity_workers_are_in_dispatcher_pool(self) -> None:
+        config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
+
+        ready_dispatcher = config["ready_dispatcher"]
+
+        self.assertIn("antigravity", config["agents"])
+        self.assertIn("antigravity2", config["agents"])
+        self.assertEqual(config["providers"]["antigravity"]["delivery_mode"], "antigravity")
+        self.assertEqual(config["providers"]["antigravity2"]["delivery_mode"], "antigravity")
+        self.assertEqual(ready_dispatcher["target_workload"]["Antigravity"], 5)
+        self.assertEqual(ready_dispatcher["target_workload"]["Antigravity2"], 5)
+        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Antigravity"], 1)
+        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Antigravity2"], 1)
+        self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["antigravity"], 1)
+        self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["antigravity2"], 1)
+
 
 class DetectWorkerFailureTests(unittest.TestCase):
     def _worker_for_log(self, content: str) -> dict[str, str]:
@@ -341,6 +357,19 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertEqual(result["kind"], "quota_terminal")
         self.assertFalse(result["transient"])
 
+    def test_classifies_claude_weekly_rate_limit_as_terminal_quota(self) -> None:
+        config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
+        worker = {"provider": "claude"}
+
+        result = supervisor.classify_worker_failure(
+            config,
+            worker,
+            "rate_limit: You've hit your weekly limit · resets Jun 8, 12pm (UTC)",
+        )
+
+        self.assertEqual(result["kind"], "quota_terminal")
+        self.assertFalse(result["transient"])
+
     def test_detects_codex_usage_limit_line_as_worker_failure(self) -> None:
         worker = self._worker_for_log(
             "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 7:00 PM.\n"
@@ -349,6 +378,14 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertEqual(
             supervisor.detect_worker_failure(worker),
             "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 7:00 PM.",
+        )
+
+    def test_detects_claude_weekly_rate_limit_line_as_worker_failure(self) -> None:
+        worker = self._worker_for_log("rate_limit: You've hit your weekly limit · resets Jun 8, 12pm (UTC)\n")
+
+        self.assertEqual(
+            supervisor.detect_worker_failure(worker),
+            "rate_limit: You've hit your weekly limit · resets Jun 8, 12pm (UTC)",
         )
 
     def test_classifies_gemini_auth_failure(self) -> None:
@@ -441,6 +478,17 @@ class DetectWorkerFailureTests(unittest.TestCase):
         )
 
         self.assertEqual(hint, datetime(2026, 5, 8, 20, 40, 0, tzinfo=timezone.utc))
+
+    def test_parse_quota_retry_hint_claude_month_day_utc(self) -> None:
+        from datetime import datetime, timezone
+
+        now = datetime(2026, 6, 7, 14, 11, 0, tzinfo=timezone.utc)
+        hint = supervisor.parse_quota_retry_hint(
+            "rate_limit: You've hit your weekly limit · resets Jun 8, 12pm (UTC)",
+            now=now,
+        )
+
+        self.assertEqual(hint, datetime(2026, 6, 8, 12, 0, 0, tzinfo=timezone.utc))
 
     def test_parse_quota_retry_hint_codex_full_date(self) -> None:
         from datetime import datetime, timezone
@@ -676,6 +724,90 @@ class DetectWorkerFailureTests(unittest.TestCase):
         write_activity_log.assert_called_once()
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "provider_dispatch_resumed")
         self.assertEqual(write_activity_log.call_args.args[1]["provider"], "codex2")
+
+    def test_auth_recovery_clears_only_auth_guardrails_for_provider_group(self) -> None:
+        config = {
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+            "agents": {
+                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
+                "codex2_1": {
+                    "id": "codex2_1",
+                    "display_name": "Codex2",
+                    "provider": "codex2-1",
+                    "dispatch_slot_for": "codex2",
+                },
+                "codex2_2": {
+                    "id": "codex2_2",
+                    "display_name": "Codex2",
+                    "provider": "codex2-2",
+                    "dispatch_slot_for": "codex2",
+                },
+                "gemini": {"id": "gemini", "display_name": "Gemini", "provider": "gemini"},
+            },
+            "providers": {
+                "codex2": {"delivery_mode": "codex", "quota_group": "codex2"},
+                "codex2-1": {"delivery_mode": "codex", "quota_group": "codex2"},
+                "codex2-2": {"delivery_mode": "codex", "quota_group": "codex2"},
+                "gemini": {"delivery_mode": "gemini", "quota_group": "gemini"},
+            },
+        }
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex2": {"pause_kind": "auth", "task_id": "OPS-AUTH", "worker_run_id": "codex-run"},
+                    "gemini": {"pause_kind": "capacity_retryable", "task_id": "OPS-CAP", "worker_run_id": "gemini-run"},
+                },
+                "task_failure_streaks": {
+                    "OPS-AUTH:codex2_1": {
+                        "task_id": "OPS-AUTH",
+                        "provider": "codex2_1",
+                        "last_failure_kind": "auth",
+                        "last_reason": "token_invalidated",
+                    },
+                    "OPS-AUTH2:codex2": {
+                        "task_id": "OPS-AUTH2",
+                        "provider": "codex2",
+                        "last_failure_kind": "",
+                        "last_reason": "not authenticated",
+                    },
+                    "OPS-QUOTA:codex2_2": {
+                        "task_id": "OPS-QUOTA",
+                        "provider": "codex2_2",
+                        "last_failure_kind": "quota_terminal",
+                        "last_reason": "402 You have no quota",
+                    },
+                    "OPS-GEMINI:gemini": {
+                        "task_id": "OPS-GEMINI",
+                        "provider": "gemini",
+                        "last_failure_kind": "auth",
+                        "last_reason": "not authenticated",
+                    },
+                },
+            }
+        }
+        previous = {"providers": {"codex2-1": {"auth_ready": False}}}
+        current = {
+            "providers": {
+                "codex2-1": {
+                    "auth_ready": True,
+                    "last_auth_probe_at": "2026-06-06T12:00:00Z",
+                    "auth_method": "codex_exec_oauth",
+                }
+            }
+        }
+
+        with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
+            changed = supervisor.reconcile_provider_auth_recovery(config, state, previous, current)
+
+        self.assertTrue(changed)
+        self.assertNotIn("codex2", state["provider_guardrails"]["dispatch_pauses"])
+        self.assertIn("gemini", state["provider_guardrails"]["dispatch_pauses"])
+        streaks = state["provider_guardrails"]["task_failure_streaks"]
+        self.assertNotIn("OPS-AUTH:codex2_1", streaks)
+        self.assertNotIn("OPS-AUTH2:codex2", streaks)
+        self.assertIn("OPS-QUOTA:codex2_2", streaks)
+        self.assertIn("OPS-GEMINI:gemini", streaks)
+        self.assertGreaterEqual(write_activity_log.call_count, 2)
 
 
 class ProcessQueueDispatchGuardTests(unittest.TestCase):
@@ -2799,6 +2931,88 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(queued_event["task_id"], "WB-011")
         self.assertEqual(queued_event["target_agent"], "Codex")
         self.assertEqual(queued_event["reason"], "owned_ready_dispatch")
+
+    def test_agent_can_take_task_blocks_auth_down_provider(self) -> None:
+        config = {
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
+            },
+        }
+        report = {"providers": {"codex": {"auth_ready": True}, "codex2": {"auth_ready": False}}}
+        task = {"id": "T1", "status": "todo", "owner": "Codex2"}
+        with mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=report):
+            self.assertTrue(supervisor.agent_can_take_task(config, "Codex", task))
+            self.assertFalse(supervisor.agent_can_take_task(config, "Codex2", task))
+
+    def test_agent_can_take_task_allows_when_capabilities_unknown(self) -> None:
+        # A missing/None capability must NOT block (avoid reassignment churn).
+        config = {"agents": {"codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"}}}
+        task = {"id": "T1", "status": "todo", "owner": "Codex2"}
+        with mock.patch.object(supervisor, "_cached_provider_capabilities", return_value={"providers": {}}):
+            self.assertTrue(supervisor.agent_can_take_task(config, "Codex2", task))
+
+    def test_normalize_reassigns_todo_owned_by_auth_down_agent(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "worker_reassignment": {
+                "eligible_statuses": ["todo", "in_progress", "review", "review_approved"],
+                "owner_fallbacks": {"Codex2": ["Codex"]},
+                "reviewer_fallbacks": {"Codex2": ["Codex"]},
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+            },
+            "providers": {},
+        }
+        report = {
+            "providers": {
+                "codex": {"auth_ready": True},
+                "codex2": {"auth_ready": False},
+                "claude": {"auth_ready": True},
+            }
+        }
+        task = {"id": "OPS-RTEL-003", "status": "todo", "owner": "Codex2", "reviewer": "Claude", "depends_on": []}
+        with (
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=report),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.normalize_mainline_task_assignment(config, task)
+
+        self.assertTrue(changed)
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "OPS-RTEL-003")
+        self.assertEqual(kwargs["new_owner"], "Codex")
+        self.assertEqual(kwargs["new_reviewer"], "Claude")
+
+    def test_normalize_does_not_reassign_when_owner_auth_ready(self) -> None:
+        config = {
+            "schema": {"tasks_path": "tasks", "task_id_field": "id", "assignee_field": "owner", "reviewer_field": "reviewer"},
+            "worker_reassignment": {"eligible_statuses": ["todo"], "owner_fallbacks": {"Codex": ["Claude"]}},
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+            },
+            "providers": {},
+        }
+        report = {"providers": {"codex": {"auth_ready": True}, "claude": {"auth_ready": True}}}
+        task = {"id": "OK-1", "status": "todo", "owner": "Codex", "reviewer": "Claude", "depends_on": []}
+        with (
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=report),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.normalize_mainline_task_assignment(config, task)
+        self.assertFalse(changed)
+        persist.assert_not_called()
 
     def test_dispatcher_reassigns_mainline_qwen_reviewer_before_dispatch(self) -> None:
         config = {
@@ -6879,6 +7093,85 @@ class WorkerReassignmentTests(unittest.TestCase):
 
         self.assertEqual(reassigned_to, "Codex2")
         self.assertEqual(persist.call_args.kwargs["new_reviewer"], "Codex2")
+
+    def test_failure_streak_sweep_reassigns_claude_weekly_limit_review(self) -> None:
+        config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "after_attempts": 2,
+                "reviewer_fallbacks": {
+                    "Claude": ["Codex", "Codex2"],
+                },
+            },
+            "agents": {
+                "claude": {"display_name": "Claude", "provider": "claude"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+                "codex2": {"display_name": "Codex2", "provider": "codex2"},
+            },
+        }
+        state = {
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    "MGMT-AI-LIVE-BRIDGE-SMOKE-20260607101732:claude": {
+                        "task_id": "MGMT-AI-LIVE-BRIDGE-SMOKE-20260607101732",
+                        "provider": "claude",
+                        "count": 2,
+                        "last_failure_kind": "terminal",
+                        "last_reason": "rate_limit: You've hit your weekly limit · resets Jun 8, 12pm (UTC)",
+                    }
+                }
+            }
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "MGMT-AI-LIVE-BRIDGE-SMOKE-20260607101732",
+                    "status": "review",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.maybe_reassign_tasks_from_failure_streaks(config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(persist.call_args.kwargs["new_owner"], "Codex")
+        self.assertEqual(persist.call_args.kwargs["new_reviewer"], "Codex2")
+        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
+
+    def test_failure_streak_sweep_waits_for_threshold(self) -> None:
+        config = {
+            "worker_reassignment": {"enabled": True, "after_attempts": 2},
+            "agents": {
+                "claude": {"display_name": "Claude", "provider": "claude"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+            },
+        }
+        state = {
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    "P3-004:claude": {
+                        "task_id": "P3-004",
+                        "provider": "claude",
+                        "count": 1,
+                        "last_failure_kind": "terminal",
+                        "last_reason": "rate_limit: You've hit your weekly limit · resets Jun 8, 12pm (UTC)",
+                    }
+                }
+            }
+        }
+
+        with mock.patch.object(supervisor, "persist_task_reassignment") as persist:
+            changed = supervisor.maybe_reassign_tasks_from_failure_streaks(config, state)
+
+        self.assertFalse(changed)
+        persist.assert_not_called()
 
     def test_reassigns_owned_task_to_new_owner_after_repeated_failure(self) -> None:
         worker = {

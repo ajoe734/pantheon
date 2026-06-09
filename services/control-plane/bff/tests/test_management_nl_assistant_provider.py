@@ -43,6 +43,35 @@ class FakeProviderClient:
             raise self.exc
         return self.result
 
+    def get_assistant_readiness(self, **_kwargs: Any) -> dict[str, Any]:
+        return {
+            "provider": "codex_cli",
+            "runtime": "openclaw_gateway_cli_mount",
+            "ready": True,
+            "status": "ready",
+            "capabilities": {"read": True, "repairWrite": True},
+        }
+
+    def get_tool_policy(self) -> dict[str, Any]:
+        return {
+            "allowed_tools": ["assistant.command"],
+            "allowed_workflows": [],
+            "assistant_command_tool": "assistant.command",
+            "default_posture": "deny_all",
+            "always_blocked_tools": ["broker_order", "live_order", "paper_order"],
+            "always_blocked_tool_prefixes": ["broker.", "live.", "paper.", "capital."],
+            "always_blocked_workflow_prefixes": ["broker.", "live.", "paper.", "capital."],
+        }
+
+    def list_effective_tools(self, **kwargs: Any) -> dict[str, Any]:
+        return {
+            "status": "degraded",
+            "upstream_status": "degraded",
+            "agent_id": kwargs.get("agent_id") or "management-ai",
+            "policy_allowed_tools": ["assistant.command"],
+            "effective_tools": [],
+        }
+
 
 class FakeHttpResponse:
     def __init__(self, payload: dict[str, Any], status_code: int = 200) -> None:
@@ -378,6 +407,107 @@ def test_openclaw_client_uses_assistant_provider_timeout_by_default(monkeypatch)
     assert recorded["timeout"] == 75.0
 
 
+def test_openclaw_client_reads_assistant_provider_readiness_with_auth_probe(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
+    recorded: dict[str, Any] = {}
+
+    def fake_urlopen(request, timeout):
+        recorded["url"] = request.full_url
+        recorded["timeout"] = timeout
+        return FakeHttpResponse(
+            {
+                "provider": "codex_cli",
+                "ready": True,
+                "status": "ready",
+            }
+        )
+
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen", fake_urlopen):
+        result = OpenClawOpsClient(timeout_seconds=1.5).get_assistant_readiness(
+            provider="codex_cli",
+            auth_probe=True,
+        )
+
+    assert result["status"] == "ready"
+    assert recorded["url"] == (
+        "http://openclaw-adapter:8104/api/openclaw-adapter/assistant/readiness/codex_cli?auth_probe=true"
+    )
+    assert recorded["timeout"] == 1.5
+
+
+def test_openclaw_client_starts_provider_reauth_device_flow(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
+    monkeypatch.setenv("PANTHEON_ASSISTANT_REAUTH_TIMEOUT_SECONDS", "4.0")
+    recorded: dict[str, Any] = {}
+
+    def fake_urlopen(request, timeout):
+        recorded["url"] = request.full_url
+        recorded["headers"] = dict(request.header_items())
+        recorded["body"] = json.loads(request.data.decode("utf-8"))
+        recorded["timeout"] = timeout
+        return FakeHttpResponse(
+            {
+                "status": "ok",
+                "data": {
+                    "reauth_session_id": "codex_reauth_1",
+                    "status": "pending",
+                    "verification_uri": "https://auth.openai.com/device",
+                    "user_code": "ABCD-EFGH",
+                },
+            },
+            status_code=202,
+        )
+
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen", fake_urlopen):
+        result = OpenClawOpsClient(timeout_seconds=1.5).start_assistant_provider_reauth(
+            provider="codex",
+            payload={"reason": "expired"},
+            operator_id="operator-1",
+            trace_id="trace-reauth-1",
+        )
+
+    assert result["status"] == "ok"
+    assert recorded["url"] == (
+        "http://openclaw-adapter:8104/api/openclaw-adapter/assistant/providers/codex/reauth"
+    )
+    assert recorded["headers"]["X-operator-id"] == "operator-1"
+    assert recorded["headers"]["X-trace-id"] == "trace-reauth-1"
+    assert recorded["body"] == {"reason": "expired", "provider": "codex"}
+    assert recorded["timeout"] == 4.0
+
+
+def test_openclaw_client_reads_provider_reauth_status(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
+    recorded: dict[str, Any] = {}
+
+    def fake_urlopen(request, timeout):
+        recorded["url"] = request.full_url
+        recorded["headers"] = dict(request.header_items())
+        return FakeHttpResponse(
+            {
+                "status": "ok",
+                "data": {
+                    "reauth_session_id": "codex_reauth_1",
+                    "status": "completed",
+                    "readiness": {"ready": True},
+                },
+            }
+        )
+
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen", fake_urlopen):
+        result = OpenClawOpsClient(timeout_seconds=1.5).get_assistant_provider_reauth_status(
+            provider="codex",
+            session_id="codex_reauth_1",
+            operator_id="operator-1",
+        )
+
+    assert result["data"]["status"] == "completed"
+    assert recorded["url"] == (
+        "http://openclaw-adapter:8104/api/openclaw-adapter/assistant/providers/codex/reauth/codex_reauth_1"
+    )
+    assert recorded["headers"]["X-operator-id"] == "operator-1"
+
+
 def test_provider_disabled_returns_deterministic_answer_and_context_pack(tmp_path, monkeypatch) -> None:
     original_store = bff_main.read_store
     fake = FakeProviderClient()
@@ -590,6 +720,257 @@ def test_management_nl_context_pack_reflects_active_control_mode(tmp_path, monke
         management_context = context_pack["backend"]["management_nl"]["data"]
         assert management_context["controlMode"]["active"] is True
         assert management_context["controlMode"]["mode"] == "kernel_debug"
+    finally:
+        bff_main.read_store = original_store
+        bff_main._ASSISTANT_CONTROL_MODE_STORE = original_control_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+        bff_main._sse_buffers["ask"].clear()
+
+
+def test_management_nl_context_pack_includes_orchestrator_status_for_system_questions(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    original_store = bff_main.read_store
+    status_root = tmp_path / "status-root"
+    orchestrator_dir = status_root / ".orchestrator"
+    orchestrator_dir.mkdir(parents=True)
+    _write_json(
+        status_root / "ai-status.json",
+        {
+            "project": "pantheon",
+            "sprint": "status-context",
+            "objective": "Expose supervisor state to Management AI",
+            "tasks": [
+                {
+                    "id": "MGMT-AI-STATUS",
+                    "title": "Expose orchestrator status",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                    "status": "in_progress",
+                }
+            ],
+        },
+    )
+    _write_json(
+        orchestrator_dir / "state.json",
+        {
+            "supervisor": {
+                "pid": 4242,
+                "lifecycle": "running",
+                "last_heartbeat_at": "2026-06-07T09:00:00Z",
+            },
+            "workers": {},
+            "queue": {"events": {}},
+            "assistant_dev_bridge": {
+                "last_drain_at": "2026-06-07T09:01:00Z",
+                "last_result": {"status": "drained", "errorCount": 0},
+            },
+        },
+    )
+    _write_json(orchestrator_dir / "github-bus-state.json", {"tasks": {}})
+    fake = FakeProviderClient()
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "codex_cli")
+        monkeypatch.setenv("PANTHEON_STATUS_ROOT", str(status_root))
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        client = _seeded_client(tmp_path, monkeypatch)
+
+        resp = client.post(
+            "/bff/management/nl/ask",
+            json={
+                "question": "Can you see the supervisor status?",
+                "focus": "cockpit",
+                "sessionId": "mgmt-orchestrator-status-context",
+                "ui": {"currentRoute": "/management/cockpit", "availableUiActions": []},
+            },
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-orchestrator-context"},
+        )
+
+        assert resp.status_code == 202, resp.text
+        context_pack = fake.calls[0]["context_pack"]
+        orchestrator_context = context_pack["backend"]["orchestrator_status"]["data"]
+        assert orchestrator_context["project"] == "pantheon"
+        assert orchestrator_context["taskCount"] == 1
+        assert orchestrator_context["supervisor"]["lifecycle"] == "running"
+        assert orchestrator_context["supervisor"]["pid"] == 4242
+        assert orchestrator_context["assistantDevBridge"]["lastDrainAt"] == "2026-06-07T09:01:00Z"
+        assert orchestrator_context["providerReadiness"]["status"] == "ready"
+        assert orchestrator_context["openclawToolPolicy"]["status"] == "ready"
+        assert orchestrator_context["openclawToolPolicy"]["assistantCommandAllowed"] is True
+        assert orchestrator_context["openclawToolPolicy"]["allowedTools"] == ["assistant.command"]
+        assert orchestrator_context["openclawToolPolicy"]["effectiveStatus"] == "degraded"
+        assert {ref["path"] for ref in orchestrator_context["sourceRefs"]} == {
+            "ai-status.json",
+            ".orchestrator/state.json",
+            ".orchestrator/github-bus-state.json",
+        }
+        source_ids = {
+            source.get("sourceId") or source.get("source_id")
+            for source in context_pack["sources"]
+        }
+        assert "orchestrator_status" in source_ids
+        assert (
+            "Use backend.orchestrator_status.data for supervisor"
+            in fake.calls[0]["prompt"]
+        )
+    finally:
+        bff_main.read_store = original_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+        bff_main._sse_buffers["ask"].clear()
+
+
+def test_management_nl_provider_uses_active_kernel_debug_mode(tmp_path, monkeypatch) -> None:
+    original_store = bff_main.read_store
+    original_control_store = bff_main._ASSISTANT_CONTROL_MODE_STORE
+    control_store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
+    control_store.activate(
+        actor_id="asst-bff-002",
+        mode=AssistantMode.KERNEL_DEBUG,
+        capabilities=["assistant.kernel.debug"],
+        reason="debug management AI through OpenClaw",
+        passphrase="control phrase ok",
+        ttl_seconds=900,
+        idle_ttl_seconds=120,
+    )
+    fake = FakeProviderClient()
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "codex_cli")
+        monkeypatch.setattr(bff_main, "_ASSISTANT_CONTROL_MODE_STORE", control_store)
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        monkeypatch.setattr(
+            bff_main,
+            "_extract_identity",
+            lambda authorization: _kernel_operator_identity(),
+        )
+        client = _seeded_client(tmp_path, monkeypatch)
+
+        resp = client.post(
+            "/bff/management/nl/ask",
+            json={
+                "question": "Use OpenClaw to inspect the current assistant debug context.",
+                "sessionId": "mgmt-kernel-debug-provider",
+                "ui": {"currentRoute": "/management/cockpit", "availableUiActions": []},
+            },
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-provider-kernel-debug"},
+        )
+
+        assert resp.status_code == 202, resp.text
+        body = resp.json()
+        assert body["data"]["controlMode"]["active"] is True
+        assert body["data"]["providerStatus"]["mode"] == "kernel_debug"
+        call = fake.calls[0]
+        assert call["mode"] == "kernel_debug"
+        assert call["metadata"]["control_mode"]["active"] is True
+        assert call["metadata"]["control_mode"]["mode"] == "kernel_debug"
+        assert "You are operating in kernel_debug mode through OpenClaw/Codex." in call["prompt"]
+        assert "read-only workspace" in call["prompt"]
+        assert "You are operating in user mode." not in call["prompt"]
+    finally:
+        bff_main.read_store = original_store
+        bff_main._ASSISTANT_CONTROL_MODE_STORE = original_control_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+        bff_main._sse_buffers["ask"].clear()
+
+
+def test_management_nl_kernel_repair_passes_openclaw_task_metadata(tmp_path, monkeypatch) -> None:
+    original_store = bff_main.read_store
+    original_control_store = bff_main._ASSISTANT_CONTROL_MODE_STORE
+    control_store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
+    control_store.activate(
+        actor_id="asst-bff-002",
+        mode=AssistantMode.KERNEL_REPAIR,
+        capabilities=["assistant.kernel.repair"],
+        reason="repair management AI through OpenClaw task worktree",
+        passphrase="control phrase ok",
+        ttl_seconds=900,
+        idle_ttl_seconds=120,
+    )
+    fake = FakeProviderClient(
+        result={
+            "status": "ok",
+            "data": {
+                "provider": "codex_cli",
+                "status": "completed",
+                "output": {
+                    "json_events": [{"final": "Repair worktree is ready for scoped file edits."}],
+                    "sandbox": "workspace-write",
+                    "workspace_class": "task_worktree",
+                    "repair_workflow": {
+                        "task_id": "ASST-REPAIR-123",
+                        "branch": "task/ASST-REPAIR-123",
+                        "merge_target": "dev",
+                    },
+                },
+            },
+        }
+    )
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "codex_cli")
+        monkeypatch.setattr(bff_main, "_ASSISTANT_CONTROL_MODE_STORE", control_store)
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        monkeypatch.setattr(
+            bff_main,
+            "_extract_identity",
+            lambda authorization: _kernel_operator_identity(capabilities=["assistant.kernel.repair"]),
+        )
+        client = _seeded_client(tmp_path, monkeypatch)
+
+        resp = client.post(
+            "/bff/management/nl/ask",
+            json={
+                "question": "Update the assistant integration files according to this repair task.",
+                "sessionId": "mgmt-kernel-repair-provider",
+                "openclaw": {
+                    "repair": {
+                        "taskId": "ASST-REPAIR-123",
+                        "taskWorktree": "/srv/pantheon-assistant/worktrees/asst-repair-123",
+                        "declaredScope": [
+                            "services/control-plane/bff/main.py",
+                            "services/control-plane/bff/tests/test_management_nl_assistant_provider.py",
+                        ],
+                        "expectedBranch": "task/ASST-REPAIR-123",
+                        "mergeTarget": "dev",
+                        "requireClean": True,
+                        "repoKey": "pantheon",
+                    }
+                },
+                "ui": {"currentRoute": "/management/cockpit", "availableUiActions": []},
+            },
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-provider-kernel-repair"},
+        )
+
+        assert resp.status_code == 202, resp.text
+        body = resp.json()
+        provider_status = body["data"]["providerStatus"]
+        assert provider_status["mode"] == "kernel_repair"
+        assert provider_status["sandbox"] == "workspace-write"
+        assert provider_status["workspaceClass"] == "task_worktree"
+        assert provider_status["repairWorkflow"]["task_id"] == "ASST-REPAIR-123"
+        call = fake.calls[0]
+        assert call["mode"] == "kernel_repair"
+        assert call["metadata"]["task_id"] == "ASST-REPAIR-123"
+        assert call["metadata"]["task_worktree"] == "/srv/pantheon-assistant/worktrees/asst-repair-123"
+        assert call["metadata"]["declared_scope"] == [
+            "services/control-plane/bff/main.py",
+            "services/control-plane/bff/tests/test_management_nl_assistant_provider.py",
+        ]
+        assert call["metadata"]["expected_branch"] == "task/ASST-REPAIR-123"
+        assert call["metadata"]["merge_target"] == "dev"
+        assert call["metadata"]["repo_key"] == "pantheon"
+        assert call["metadata"]["require_clean"] is True
+        assert call["metadata"]["repair_metadata_source"] == "management_nl_openclaw_payload"
+        assert "You are operating in kernel_repair mode through OpenClaw/Codex." in call["prompt"]
+        assert "workspace-write" in call["prompt"]
     finally:
         bff_main.read_store = original_store
         bff_main._ASSISTANT_CONTROL_MODE_STORE = original_control_store

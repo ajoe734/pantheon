@@ -1,5 +1,10 @@
 # Backend Dev Full-Service Gap Inventory - 2026-04-29
 
+Historical note: this inventory captured the pre-Benjamin dev environment on
+2026-04-29. VM names and commit state below are historical, not current
+operating defaults. For current non-prod deployment, use `nonprod-ci-cd.md` and
+`nonprod-development-workflow.md`.
+
 This inventory distinguishes the current dev VM state from the current
 `backend-dev-publish-20260429` branch state, and defines what must be fixed or
 deployed before dev can be treated as the environment that runs every safe

@@ -1,9 +1,10 @@
-# Caddy provisioning for BFF VMs
+# Caddy provisioning for non-prod ingress
 
-Each non-prod BFF VM runs **Caddy** as the public HTTPS reverse proxy in front of
-the operator-bff upstream. Caddy terminates TLS using Let's Encrypt certs issued
-automatically for an [`sslip.io`](https://sslip.io) hostname that encodes the VM's
-static IP (e.g. `pantheon-lupin-dev-bff.35.201.239.38.sslip.io`).
+Each non-prod ingress VM runs **Caddy** as public HTTPS termination. Dev serves
+both the operator-bff reverse proxy and the Pantheon-owned static frontend.
+Caddy terminates TLS using Let's Encrypt certs issued automatically for
+[`sslip.io`](https://sslip.io) hostnames that encode the VM's static IP (e.g.
+`pantheon-lupin-dev-bff.35.201.239.38.sslip.io`).
 
 ## Why this directory exists
 
@@ -22,9 +23,9 @@ artifact so the breakage stops recurring on every rebuild/cutover.
 
 | File | Purpose |
 |---|---|
-| `dev.Caddyfile.tmpl` | dev BFF — upstream `127.0.0.1:18001` |
+| `dev.Caddyfile.tmpl` | dev BFF upstream `127.0.0.1:18001` + static FE root |
 | `staging.Caddyfile.tmpl` | staging-live BFF — upstream `127.0.0.1:38001` |
-| `sync-caddy.sh` | render `__BFF_HOST__` → push to VM → validate → reload → verify `/health` |
+| `sync-caddy.sh` | render BFF/FE host placeholders → push to VM → validate → reload → verify |
 
 ## Usage
 
@@ -33,7 +34,9 @@ artifact so the breakage stops recurring on every rebuild/cutover.
 deploy/caddy/sync-caddy.sh \
   lupin@35.201.239.38 \
   pantheon-lupin-dev-bff.35.201.239.38.sslip.io \
-  deploy/caddy/dev.Caddyfile.tmpl
+  deploy/caddy/dev.Caddyfile.tmpl \
+  pantheon-lupin-dev-fe.35.201.239.38.sslip.io \
+  /var/www/pantheon-dev-fe
 
 # staging-live
 deploy/caddy/sync-caddy.sh \

@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "ASST-SKILL-001",
+  "archived_at": "2026-06-08T14:44:07Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASST-SKILL-001",
+    "title": "Define assistant-skill descriptor schema and effective-catalog resolver",
+    "summary_zh": "定義 assistant-skill descriptor（id/title/surface/mode_gate/role/confirm_policy/input_schema/handler_ref/result_surface），並讓 OpenClaw tool/workflow policy 以 deny-by-default 解析每個 operator/agent/mode 的 effective skills，沿用既有 /api/openclaw-adapter/tools 發現端點，不另建 registry。",
+    "phase": "EPIC ASST-SKILL / Descriptor + catalog foundation",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/decisions/assistant-capability-skill-catalog-ownership.md;services/openclaw-gateway-adapter/tool_workflow_bridge.py;services/openclaw-gateway-adapter/main.py;services/control-plane/bff/openclaw_ops_client.py;services/control-plane/bff/BFF_COMMAND_API_CONTRACT.md"
+    ],
+    "acceptance": [
+      "Descriptor schema covers id title surface mode_gate role confirm_policy input_schema handler_ref result_surface;Effective-skill resolution is deny-by-default and reuses the existing tool/workflow policy layer;GET /api/openclaw-adapter/tools returns effective descriptors per operator/agent/mode;Unknown or disallowed skills fail closed;No second registry or gateway is introduced;Tests cover allow",
+      "deny",
+      "and per-mode differentiation"
+    ],
+    "next": "Done: implementation merged in PR #1160 (a5a4ea77162fdcb8f16f433f829bf06484b0d0b5), reviewer approval/closeout records merged in PR #1161 (a614472e0982bd19ee1de3b50c9ae93308ba5db5); local focused tests and GitHub checks passed.",
+    "last_update": "2026-06-08T14:44:07Z",
+    "auto_created_by": "dispatch_assistant_skill_catalog_2026-06-08",
+    "review_notes_zh": [
+      "審查通過：descriptor schema 完整涵蓋 9 個必要欄位，deny-by-default 沿用既有 policy layer，GET /api/openclaw-adapter/tools 正確回傳 effective_skills，無第二 registry，測試涵蓋 allow/deny/per-mode 分化。"
+    ],
+    "review_file": "docs/decisions/asst-skill-001-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-08T14:44:07Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/asst-skill-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/ASST-SKILL-001",
+      "git_clean_required": false,
+      "commit": "a220d10201b4656185b01737536ccfd3f7b329e7",
+      "commit_subject": "ASST-SKILL-001: finalize review approval",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "ASST-SKILL-001",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m pytest services/openclaw-gateway-adapter/test_tool_workflow_bridge.py -q; python3 -m pytest services/control-plane/bff/test_openclaw_ops_surface.py -q; python3 -m pytest services/control-plane/bff/assistant/tests/test_orchestrator_status.py -q; python3 -m py_compile services/openclaw-gateway-adapter/tool_workflow_bridge.py services/openclaw-gateway-adapter/main.py services/control-plane/bff/openclaw_ops_client.py services/control-plane/bff/read_store.py services/control-plane/bff/main.py; git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/ASST-SKILL-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "a614472e0982bd19ee1de3b50c9ae93308ba5db5",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASST-SKILL-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implementation merged in PR #1160 (merge commit a5a4ea77162fdcb8f16f433f829bf06484b0d0b5; head 0cb63a68b74be9b314885a483d1584afbd800f7c). Local validation passed and GitHub checks passed. Please review/approve so owner can run done closeout.",
+      "status": "done",
+      "created_at": "2026-06-08T14:29:27Z",
+      "resolved_at": "2026-06-08T14:35:35Z"
+    },
+    {
+      "task_id": "ASST-SKILL-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All acceptance criteria met: descriptor schema complete, deny-by-default resolver via existing policy layer, effective_skills returned per mode/role, no second registry, tests cover allow/deny/per-mode. Returned to Codex for done closeout.",
+      "status": "done",
+      "created_at": "2026-06-08T14:35:35Z",
+      "resolved_at": "2026-06-08T14:44:08Z"
+    }
+  ],
+  "blockers": []
+}

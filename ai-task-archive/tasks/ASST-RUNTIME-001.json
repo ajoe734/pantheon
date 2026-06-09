@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "task_id": "ASST-RUNTIME-001",
+  "archived_at": "2026-06-09T00:58:27Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "ASST-RUNTIME-001",
+    "title": "Define governed runtime recovery actions for paper runtime and telemetry",
+    "summary_zh": "把 stale paper runtime、monitoring session、telemetry bridge/ingest recovery 變成 BFF/action catalog 可治理的 action，而不是靠口頭建議。",
+    "phase": "Sprint ASST-RUNTIME / Runtime repair action catalog",
+    "owner": "Gemini",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "ASST-CTRL-002"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/CONTROL_MODE_REPAIR_EXECUTION_TASKS_2026-06-06.md;OPERATOR_ACCEPTANCE_MATRIX.md;services/control-plane/bff/BFF_API_CONTRACT.md;services/control-plane/bff/action_catalog.py;services/control-plane/bff/models.py;docs/deployment/runtime-repair-control-mode-2026-06-06.md"
+    ],
+    "acceptance": [
+      "actions RestartPaperRuntime RestartTelemetryBridge TerminateStalePaperMonitoringSession StartPaperMonitoringSession and ProbeTelemetryIngest are specified;each action declares required role/capability confirmation idempotency audit and BFF-down fallback;each action states read-only restart-only or session-mutating scope;no action grants live broker or capital authority;contract states heartbeat freshness is the first recovery success condition even when totalTrades remains zero"
+    ],
+    "next": "Superseded by OPS-STATE-CLOSEOUT-CLEANUP-20260609 delivery: runtime repair action catalog now registers RestartPaperRuntime, RestartTelemetryBridge, TerminateStalePaperMonitoringSession, StartPaperMonitoringSession, and ProbeTelemetryIngest as high-risk confirmed idempotent runtime_operator actions; docs/deployment/runtime-repair-control-mode-2026-06-06.md records BFF-down fallback and heartbeat-freshness success semantics.",
+    "last_update": "2026-06-09T00:58:27Z",
+    "task_class": "assistant_control_runtime_repair",
+    "auto_created_by": "dispatch_assistant_control_mode_repair_2026-06-06",
+    "auto_generated": true,
+    "terminal_outcome": "superseded",
+    "superseded_by": "OPS-STATE-CLOSEOUT-CLEANUP-20260609"
+  },
+  "handoffs": [],
+  "blockers": []
+}

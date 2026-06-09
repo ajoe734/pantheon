@@ -6,12 +6,12 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Paper monitoring session stale reaper
-- Status: in_progress
+- Status: review_approved
 - Owner: Codex2
 - Reviewer: Claude2
 - Phase: Runtime Telemetry Hardening
-- Last update: 2026-06-06T12:20:24Z
-- Next: Supervisor re-dispatched OPS-RTEL-003; task remains in progress.
+- Last update: 2026-06-06T13:47:08Z
+- Next: Review approved: stale monitoring session reaper implementation correct, all 4 acceptance criteria pass, returned to Codex2 for finalization
 
 ## Summary
 讓 paper_runtime_monitoring session 不再只靠 ended_at=null 表示活著，heartbeat stale 時自動結束 zombie session 並在重啟時建立新 session。
@@ -26,12 +26,12 @@ Do not read `current-work.md` by default for implementation context.
 - docs/deployment/runtime-telemetry-hardening-2026-06-06.md
 
 ## Recent Task Activity
-- 2026-06-06T12:20:23Z · Orchestrator · worker_worktree_refreshed · -
-- 2026-06-06T12:20:23Z · Orchestrator · worker_worktree_reused · -
-- 2026-06-06T12:20:23Z · Orchestrator · worker_started · Worker started via codex: owned_in_progress_dispatch
-- 2026-06-06T12:20:24Z · Codex2 · progress · Supervisor re-dispatched OPS-RTEL-003; task remains in progress.
-- 2026-06-06T12:20:26Z · Orchestrator · task_dispatch_synced · Supervisor re-dispatched OPS-RTEL-003; task remains in progress.
-- 2026-06-06T12:25:39Z · Orchestrator · worker_failed · ERROR: Failed to refresh token: 400 Bad Request: Your session has ended. Please log in again.
+- 2026-06-06T13:42:52Z · Orchestrator · wake_queued · Wake-up queued for supervisor: review_ready_dispatch
+- 2026-06-06T13:42:52Z · Orchestrator · worker_worktree_refreshed · -
+- 2026-06-06T13:42:52Z · Orchestrator · worker_worktree_reused · -
+- 2026-06-06T13:42:52Z · Orchestrator · worker_started · Worker started via claude_cli: review_ready_dispatch
+- 2026-06-06T13:47:08Z · Claude2 · review_approved · Review approved: stale monitoring session reaper implementation correct, all 4 acceptance criteria pass, returned to Codex2 for finalization
+- 2026-06-06T13:48:07Z · Orchestrator · worker_superseded · Worker superseded after task responsibility moved to another agent.
 
 ## Relevant Canonical Files
 - AI_COLLABORATION_GUIDE.md

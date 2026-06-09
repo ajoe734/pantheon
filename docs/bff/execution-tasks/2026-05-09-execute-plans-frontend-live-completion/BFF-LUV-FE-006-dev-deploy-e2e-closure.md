@@ -4,6 +4,17 @@ Priority: P0
 
 Owner lane: release closure / dev deployment / end-to-end acceptance
 
+## Superseded Dev Hosting Note - 2026-06-08
+
+The 2026-05-10 closure below records the historical Lovable-hosted dev
+verification at that time. It is not the current Pantheon dev frontend hosting
+rule.
+
+Current rule: build and serve `ajoe734/execute-plans` from Pantheon-owned dev
+infrastructure. Do not wait for or validate against Lovable publish state when
+accepting Pantheon dev FE work. Use
+`docs/frontend/execute-plans-dev-hosting.md` as the canonical runbook.
+
 Repos:
 
 - `/home/lupin/code/execute-plans`

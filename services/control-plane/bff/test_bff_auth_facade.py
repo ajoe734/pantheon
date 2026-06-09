@@ -224,6 +224,25 @@ class TestExtractIdentityStub:
         assert "admin" in identity.roles
         assert identity.mfa_verified is True
 
+    def test_colon_format_accepts_explicit_stub_capabilities(self):
+        identity = self._call("Bearer op-admin:admin,operator:mfa:assistant.kernel.debug,audit.read")
+        assert identity.operator_id == "op-admin"
+        assert identity.mfa_verified is True
+        assert identity.claims["capabilities"] == ["assistant.kernel.debug", "audit.read"]
+
+    def test_stub_capabilities_can_be_supplied_by_dev_env(self):
+        with patch.dict(
+            os.environ,
+            {"PANTHEON_BFF_STUB_CAPABILITIES": "assistant.kernel.debug, assistant.kernel.repair"},
+            clear=False,
+        ):
+            identity = self._call("Bearer op-admin:admin:mfa:assistant.kernel.debug")
+
+        assert identity.claims["capabilities"] == [
+            "assistant.kernel.debug",
+            "assistant.kernel.repair",
+        ]
+
     def test_colon_format_multiple_roles(self):
         identity = self._call("Bearer op-multi:operator,reviewer")
         assert "operator" in identity.roles

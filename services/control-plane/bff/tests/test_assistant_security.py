@@ -52,6 +52,9 @@ def _control_mode_client(
     roles: list[str] | None = None,
     capabilities: list[str] | None = None,
     mfa_verified: bool = False,
+    prepare_repair_worktree=None,
+    provider_reauth=None,
+    provider_reauth_status=None,
 ) -> TestClient:
     identity = _AssistantSecurityIdentity(
         roles=roles,
@@ -64,6 +67,9 @@ def _control_mode_client(
         extract_identity=lambda _authorization: identity,
         require_read_role=lambda _identity: None,
         control_mode_store=store,
+        prepare_repair_worktree=prepare_repair_worktree,
+        provider_reauth=provider_reauth,
+        provider_reauth_status=provider_reauth_status,
     )
     app = FastAPI()
     app.include_router(router)
@@ -334,6 +340,246 @@ def test_control_mode_passphrase_change_requires_admin_plus_mfa() -> None:
     assert mfa_resp.status_code == 403
     assert mfa_resp.json()["detail"]["error"]["details"]["field"] == "mfa"
     assert store.configured() is False
+
+
+def test_repair_worktree_prepare_requires_active_kernel_repair(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+    calls = []
+
+    def prepare(payload, operator_id, trace_id):
+        calls.append((payload, operator_id, trace_id))
+        return {"status": "ok"}
+
+    store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
+    client = _control_mode_client(
+        store,
+        roles=["operator"],
+        capabilities=["assistant.kernel.debug", "assistant.kernel.repair"],
+        mfa_verified=True,
+        prepare_repair_worktree=prepare,
+    )
+
+    resp = client.post(
+        "/bff/assistant/repair-worktrees/prepare",
+        json={"declaredScope": ["services/control-plane/bff"]},
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["error"]["details"]["reason"] == "not_active"
+    assert calls == []
+
+    activate_resp = client.post(
+        "/bff/assistant/control-mode/activate",
+        json={
+            "passphrase": "control phrase ok",
+            "mode": "kernel_debug",
+            "reason": "debug only",
+        },
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert activate_resp.status_code == 202, activate_resp.text
+
+    debug_resp = client.post(
+        "/bff/assistant/repair-worktrees/prepare",
+        json={"declaredScope": ["services/control-plane/bff"]},
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+
+    assert debug_resp.status_code == 409
+    assert debug_resp.json()["detail"]["error"]["details"]["reason"] == "kernel_repair_required"
+    assert calls == []
+
+
+def test_repair_worktree_prepare_delegates_to_openclaw_adapter(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+    calls = []
+
+    def prepare(payload, operator_id, trace_id):
+        calls.append((payload, operator_id, trace_id))
+        return {
+            "status": "ok",
+            "data": {
+                "repair": {
+                    "task_id": payload["task_id"],
+                    "task_worktree": "/srv/pantheon-assistant/worktrees/test",
+                    "declared_scope": payload["declared_scope"],
+                    "expected_branch": payload["expected_branch"],
+                    "remote": "origin",
+                    "merge_target": "dev",
+                    "require_clean": True,
+                }
+            },
+        }
+
+    store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
+    client = _control_mode_client(
+        store,
+        roles=["operator"],
+        capabilities=["assistant.kernel.repair"],
+        mfa_verified=True,
+        prepare_repair_worktree=prepare,
+    )
+    activate_resp = client.post(
+        "/bff/assistant/control-mode/activate",
+        json={
+            "passphrase": "control phrase ok",
+            "mode": "kernel_repair",
+            "reason": "prepare repair worktree",
+        },
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert activate_resp.status_code == 202, activate_resp.text
+
+    resp = client.post(
+        "/bff/assistant/repair-worktrees/prepare",
+        json={
+            "taskId": "MGMT-AI-REPAIR-TEST",
+            "repoKey": "execute-plans",
+            "declaredScope": "services/control-plane/bff,services/openclaw-gateway-adapter",
+            "expectedBranch": "task/MGMT-AI-REPAIR-TEST",
+            "traceId": "trace-repair-1",
+        },
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+
+    assert resp.status_code == 201, resp.text
+    assert len(calls) == 1
+    payload, operator_id, trace_id = calls[0]
+    assert operator_id == "op-security"
+    assert trace_id == "trace-repair-1"
+    assert payload["task_id"] == "MGMT-AI-REPAIR-TEST"
+    assert payload["repo_key"] == "execute-plans"
+    assert payload["declared_scope"] == [
+        "services/control-plane/bff",
+        "services/openclaw-gateway-adapter",
+    ]
+    assert payload["expected_branch"] == "task/MGMT-AI-REPAIR-TEST"
+    assert payload["control_mode"]["mode"] == "kernel_repair"
+    assert resp.json()["data"]["repair"]["task_id"] == "MGMT-AI-REPAIR-TEST"
+    assert resp.json()["meta"]["openclawAdapterStatus"] == "ok"
+
+
+def test_provider_reauth_requires_active_kernel_debug_or_repair(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+    calls = []
+
+    def reauth(payload, operator_id, trace_id):
+        calls.append((payload, operator_id, trace_id))
+        return {"status": "ok", "data": {"status": "pending"}}
+
+    store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
+    client = _control_mode_client(
+        store,
+        roles=["operator"],
+        capabilities=["assistant.kernel.observe", "assistant.kernel.debug"],
+        mfa_verified=True,
+        provider_reauth=reauth,
+    )
+
+    inactive_resp = client.post(
+        "/bff/assistant/provider/reauth",
+        json={"provider": "codex"},
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert inactive_resp.status_code == 409
+    assert inactive_resp.json()["detail"]["error"]["details"]["reason"] == "not_active"
+
+    observe_resp = client.post(
+        "/bff/assistant/control-mode/activate",
+        json={
+            "passphrase": "control phrase ok",
+            "mode": "kernel_observe",
+            "reason": "observe only",
+        },
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert observe_resp.status_code == 202, observe_resp.text
+
+    denied_resp = client.post(
+        "/bff/assistant/provider/reauth",
+        json={"provider": "codex"},
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert denied_resp.status_code == 409
+    assert denied_resp.json()["detail"]["error"]["details"]["reason"] == "kernel_debug_or_repair_required"
+    assert calls == []
+
+
+def test_provider_reauth_delegates_to_openclaw_adapter(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+    calls = []
+
+    def reauth(payload, operator_id, trace_id):
+        calls.append((payload, operator_id, trace_id))
+        return {
+            "status": "ok",
+            "data": {
+                "reauth_session_id": "codex_reauth_1",
+                "status": "pending",
+                "verification_uri": "https://auth.openai.com/device",
+                "user_code": "ABCD-EFGH",
+                "credential_exchange": {
+                    "bff_handles_credentials": False,
+                    "frontend_handles_credentials": False,
+                },
+            },
+        }
+
+    def reauth_status(provider, session_id, operator_id):
+        return {
+            "status": "ok",
+            "data": {
+                "reauth_session_id": session_id,
+                "provider": provider,
+                "status": "completed",
+                "readiness": {"ready": True},
+                "operator": operator_id,
+            },
+        }
+
+    store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
+    client = _control_mode_client(
+        store,
+        roles=["operator"],
+        capabilities=["assistant.kernel.debug"],
+        mfa_verified=True,
+        provider_reauth=reauth,
+        provider_reauth_status=reauth_status,
+    )
+    activate_resp = client.post(
+        "/bff/assistant/control-mode/activate",
+        json={
+            "passphrase": "control phrase ok",
+            "mode": "kernel_debug",
+            "reason": "reauth provider",
+        },
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert activate_resp.status_code == 202, activate_resp.text
+
+    resp = client.post(
+        "/bff/assistant/provider/reauth",
+        json={"provider": "codex", "reason": "expired", "traceId": "trace-reauth-1"},
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert resp.status_code == 202, resp.text
+    assert len(calls) == 1
+    payload, operator_id, trace_id = calls[0]
+    assert operator_id == "op-security"
+    assert trace_id == "trace-reauth-1"
+    assert payload["provider"] == "codex"
+    assert payload["control_mode"]["mode"] == "kernel_debug"
+    assert resp.json()["data"]["verification_uri"] == "https://auth.openai.com/device"
+    assert resp.json()["data"]["credential_exchange"]["bff_handles_credentials"] is False
+
+    status_resp = client.get(
+        "/bff/assistant/provider/reauth/codex_reauth_1?provider=codex",
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert status_resp.status_code == 200
+    assert status_resp.json()["data"]["status"] == "completed"
+    assert status_resp.json()["data"]["operator"] == "op-security"
 
 
 # ---------------------------------------------------------------------------
