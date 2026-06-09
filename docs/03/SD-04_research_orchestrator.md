@@ -23,6 +23,10 @@ StrategySpec
 ```
 
 研究結果只能產生 `CandidateArtifact` 或 `AllocationPolicyArtifact`，不得直接部署到 execution runtime。
+Agora / Trainer / trader feedback 形成的 persona lessons、correction traces、preference
+pairs、trader trajectories 與 shadow imitation candidates 也屬於 research / learning plane。
+它們可以進 rapid eval、OOS、paper-shadow 或 experiment，但不能直接改 running artifact
+或 live LEAN runtime。
 
 ---
 

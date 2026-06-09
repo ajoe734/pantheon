@@ -360,6 +360,7 @@ telemetry stream
 10. `Lean` upstream code may be cherry-picked into `pantheon-lean`, but not used as parallel production execution substrate without a separate migration decision.
 11. Execution request handling must be idempotent by deployment_plan_id and trace_id.
 12. Kill switch / safe mode fast path may bypass normal approval latency but must still emit action and audit events.
+13. LEAN runtime must not perform persona discussion, conflict arbitration, artifact synthesis, governance approval, policy learning, or shadow imitation training. Those belong to the pre-LEAN control plane and research / learning plane.
 
 ---
 
