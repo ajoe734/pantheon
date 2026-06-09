@@ -41,6 +41,7 @@ GET  /api/openclaw-adapter/broker/audit              — paper intent/result aud
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import urllib.error
 import urllib.request
@@ -60,6 +61,7 @@ from session_lifecycle import (
     SessionRecord,
 )
 from tool_workflow_bridge import (
+    ASSISTANT_PROVIDER_REAUTH_TOOL_NAME,
     BridgeAuditLog,
     BridgeError,
     ToolPolicy,
@@ -678,6 +680,14 @@ class AssistantProviderInvokeRequest(BaseModel):
 
 class AssistantProviderReauthRequest(BaseModel):
     provider: str = "codex"
+    mode: Optional[str] = None
+    operator_role: Optional[str] = None
+    operatorRole: Optional[str] = None
+    confirmed: Optional[Any] = None
+    confirm_token: Optional[str] = None
+    confirmToken: Optional[str] = None
+    control_mode: Optional[Dict[str, Any]] = None
+    controlMode: Optional[Dict[str, Any]] = None
     reason: Optional[str] = None
     capture_timeout_seconds: Optional[int] = None
     captureTimeoutSeconds: Optional[int] = None
@@ -781,6 +791,8 @@ def start_assistant_provider_reauth(
     provider: str,
     req: AssistantProviderReauthRequest,
     x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+    x_operator_role: Optional[str] = Header(default=None, alias="X-Operator-Role"),
+    x_assistant_mode: Optional[str] = Header(default=None, alias="X-Assistant-Mode"),
     x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
 ) -> JSONResponse:
     if not x_operator_id or not x_operator_id.strip():
@@ -802,6 +814,24 @@ def start_assistant_provider_reauth(
                 "message": "Provider reauth is currently supported only for codex.",
             },
         )
+    try:
+        _BRIDGE.authorize_assistant_skill(
+            skill_id=ASSISTANT_PROVIDER_REAUTH_TOOL_NAME,
+            operator_id=x_operator_id.strip(),
+            mode=req.mode or x_assistant_mode or _mode_from_control_mode(req.control_mode or req.controlMode),
+            operator_role=req.operator_role or req.operatorRole or x_operator_role,
+            confirmed=req.confirmed is True,
+            confirm_token=req.confirm_token or req.confirmToken,
+            control_mode=req.control_mode or req.controlMode,
+            trace_id=x_trace_id,
+            request_type="assistant_provider_reauth",
+            audit_extra={
+                "provider": normalized,
+                "reason_hash": _audit_value_hash(req.reason),
+            },
+        )
+    except BridgeError as exc:
+        return _bridge_error_response(exc)
     try:
         result = _CODEX_PROVIDER.start_device_reauth(
             operator_id=x_operator_id.strip(),
@@ -1176,6 +1206,23 @@ def _bridge_error_response(exc: BridgeError) -> JSONResponse:
     return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
 
 
+def _mode_from_control_mode(control_mode: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not isinstance(control_mode, dict):
+        return None
+    mode = str(control_mode.get("mode") or "").strip()
+    return mode or None
+
+
+def _audit_value_hash(value: Any) -> Optional[str]:
+    if value in (None, ""):
+        return None
+    try:
+        blob = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    except Exception:
+        blob = repr(value).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()[:16]
+
+
 def _upstream_client_or_none() -> Optional[OpenClawUpstreamClient]:
     if not OPENCLAW_GATEWAY_URL:
         return None
@@ -1203,11 +1250,27 @@ class ToolInvokeRequest(BaseModel):
     session_id: str
     tool_name: str
     args: Optional[Any] = None
+    mode: Optional[str] = None
+    operator_role: Optional[str] = None
+    operatorRole: Optional[str] = None
+    confirmed: Optional[Any] = None
+    confirm_token: Optional[str] = None
+    confirmToken: Optional[str] = None
+    control_mode: Optional[Dict[str, Any]] = None
+    controlMode: Optional[Dict[str, Any]] = None
 
 
 class WorkflowTriggerRequest(BaseModel):
     workflow_ref: str
     context: Optional[Any] = None
+    mode: Optional[str] = None
+    operator_role: Optional[str] = None
+    operatorRole: Optional[str] = None
+    confirmed: Optional[Any] = None
+    confirm_token: Optional[str] = None
+    confirmToken: Optional[str] = None
+    control_mode: Optional[Dict[str, Any]] = None
+    controlMode: Optional[Dict[str, Any]] = None
 
 
 @app.post("/api/openclaw-adapter/search/query")
@@ -1294,6 +1357,8 @@ def list_tools(
 def invoke_tool(
     req: ToolInvokeRequest,
     x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+    x_operator_role: Optional[str] = Header(default=None, alias="X-Operator-Role"),
+    x_assistant_mode: Optional[str] = Header(default=None, alias="X-Assistant-Mode"),
     x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
 ) -> JSONResponse:
     if not x_operator_id:
@@ -1311,6 +1376,11 @@ def invoke_tool(
             tool_name=req.tool_name,
             args=req.args,
             operator_id=x_operator_id,
+            mode=req.mode or x_assistant_mode or _mode_from_control_mode(req.control_mode or req.controlMode),
+            operator_role=req.operator_role or req.operatorRole or x_operator_role,
+            confirmed=req.confirmed is True,
+            confirm_token=req.confirm_token or req.confirmToken,
+            control_mode=req.control_mode or req.controlMode,
             trace_id=x_trace_id,
             upstream=_upstream_client_or_none(),
         )
@@ -1323,6 +1393,8 @@ def invoke_tool(
 def trigger_workflow(
     req: WorkflowTriggerRequest,
     x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+    x_operator_role: Optional[str] = Header(default=None, alias="X-Operator-Role"),
+    x_assistant_mode: Optional[str] = Header(default=None, alias="X-Assistant-Mode"),
     x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
 ) -> JSONResponse:
     if not x_operator_id:
@@ -1339,6 +1411,11 @@ def trigger_workflow(
             workflow_ref=req.workflow_ref,
             context=req.context,
             operator_id=x_operator_id,
+            mode=req.mode or x_assistant_mode or _mode_from_control_mode(req.control_mode or req.controlMode),
+            operator_role=req.operator_role or req.operatorRole or x_operator_role,
+            confirmed=req.confirmed is True,
+            confirm_token=req.confirm_token or req.confirmToken,
+            control_mode=req.control_mode or req.controlMode,
             trace_id=x_trace_id,
             upstream=_upstream_client_or_none(),
         )

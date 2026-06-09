@@ -262,6 +262,18 @@ class PolicyDecision:
     policy_class: str  # "always_blocked" | "not_in_allowlist" | "allowlist" | "deny_all"
 
 
+@dataclasses.dataclass(frozen=True)
+class SkillAdmissionDecision:
+    allowed: bool
+    reason: str
+    policy_class: str  # "allowed" | "mode_denied" | "role_denied" | "confirmation_required"
+    descriptor: AssistantSkillDescriptor
+    mode: str
+    operator_role: str
+    confirmation_required: bool = False
+    confirmation_marker: Optional[str] = None
+
+
 class ToolPolicy:
     """Evaluates whether a tool or workflow invocation is allowed.
 
@@ -581,6 +593,109 @@ def _descriptor_effective(
     return mode_allowed and _role_allowed(required_role=descriptor.role, operator_role=operator_role)
 
 
+def _control_mode_confirmation_marker(control_mode: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not isinstance(control_mode, dict):
+        return None
+    activation_id = str(
+        control_mode.get("activation_id")
+        or control_mode.get("activationId")
+        or control_mode.get("id")
+        or ""
+    ).strip()
+    active = control_mode.get("active") is True
+    if active or activation_id:
+        return "active_control_mode"
+    return None
+
+
+def _confirmation_marker(
+    *,
+    descriptor: AssistantSkillDescriptor,
+    confirmed: Any = False,
+    confirm_token: Optional[str] = None,
+    control_mode: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    policy = descriptor.confirm_policy
+    if not bool(policy.get("required")):
+        return None
+    if isinstance(confirm_token, str) and confirm_token.strip():
+        return "confirm_token"
+    if confirmed is True:
+        return "operator_confirmed"
+    policy_name = str(policy.get("policy") or "")
+    if "control_mode" in policy_name:
+        return _control_mode_confirmation_marker(control_mode)
+    return None
+
+
+def _evaluate_descriptor_admission(
+    descriptor: AssistantSkillDescriptor,
+    *,
+    mode: Optional[str],
+    operator_role: Optional[str],
+    confirmed: Any = False,
+    confirm_token: Optional[str] = None,
+    control_mode: Optional[Dict[str, Any]] = None,
+) -> SkillAdmissionDecision:
+    resolved_mode = _normalize_mode(mode)
+    resolved_operator_role = _normalize_operator_role(operator_role)
+    allowed_modes = descriptor.mode_gate.get("allowed_modes")
+    allowed_mode_set = {str(item) for item in allowed_modes} if isinstance(allowed_modes, list) else set()
+    if resolved_mode not in allowed_mode_set:
+        return SkillAdmissionDecision(
+            allowed=False,
+            reason=(
+                f"Skill '{descriptor.id}' is not allowed in mode '{resolved_mode}'. "
+                f"Allowed modes: {sorted(allowed_mode_set)}."
+            ),
+            policy_class="mode_denied",
+            descriptor=descriptor,
+            mode=resolved_mode,
+            operator_role=resolved_operator_role,
+            confirmation_required=bool(descriptor.confirm_policy.get("required")),
+        )
+    if not _role_allowed(required_role=descriptor.role, operator_role=resolved_operator_role):
+        return SkillAdmissionDecision(
+            allowed=False,
+            reason=(
+                f"Skill '{descriptor.id}' requires role '{descriptor.role}' and "
+                f"operator role '{resolved_operator_role}' is not sufficient."
+            ),
+            policy_class="role_denied",
+            descriptor=descriptor,
+            mode=resolved_mode,
+            operator_role=resolved_operator_role,
+            confirmation_required=bool(descriptor.confirm_policy.get("required")),
+        )
+    marker = _confirmation_marker(
+        descriptor=descriptor,
+        confirmed=confirmed,
+        confirm_token=confirm_token,
+        control_mode=control_mode,
+    )
+    confirmation_required = bool(descriptor.confirm_policy.get("required"))
+    if confirmation_required and marker is None:
+        return SkillAdmissionDecision(
+            allowed=False,
+            reason=f"Skill '{descriptor.id}' requires explicit confirmation metadata.",
+            policy_class="confirmation_required",
+            descriptor=descriptor,
+            mode=resolved_mode,
+            operator_role=resolved_operator_role,
+            confirmation_required=True,
+        )
+    return SkillAdmissionDecision(
+        allowed=True,
+        reason=f"Skill '{descriptor.id}' passed descriptor mode, role, and confirmation gates.",
+        policy_class="allowed",
+        descriptor=descriptor,
+        mode=resolved_mode,
+        operator_role=resolved_operator_role,
+        confirmation_required=confirmation_required,
+        confirmation_marker=marker,
+    )
+
+
 def _upstream_tool_metadata(raw_tools: Optional[List[Dict[str, Any]]]) -> Dict[str, Dict[str, Any]]:
     metadata: Dict[str, Dict[str, Any]] = {}
     for raw in raw_tools or []:
@@ -671,6 +786,11 @@ class ToolWorkflowBridge:
         tool_name: str,
         args: Any,
         operator_id: str,
+        mode: Optional[str] = None,
+        operator_role: Optional[str] = None,
+        confirmed: Any = False,
+        confirm_token: Optional[str] = None,
+        control_mode: Optional[Dict[str, Any]] = None,
         trace_id: Optional[str] = None,
         upstream: Any = None,
     ) -> Dict[str, Any]:
@@ -691,6 +811,15 @@ class ToolWorkflowBridge:
 
         trace_id = trace_id or self._trace_id_factory()
         decision = self._policy.evaluate_tool(tool_name)
+        descriptor = _tool_skill_descriptor(tool_name)
+        admission = _evaluate_descriptor_admission(
+            descriptor,
+            mode=mode,
+            operator_role=operator_role,
+            confirmed=confirmed,
+            confirm_token=confirm_token,
+            control_mode=control_mode,
+        )
 
         base_entry: Dict[str, Any] = {
             "request_type": "tool_invoke",
@@ -698,10 +827,19 @@ class ToolWorkflowBridge:
             "operator_id": operator_id,
             "session_id": session_id,
             "tool_name": tool_name,
+            "descriptor_id": descriptor.id,
+            "descriptor_surface": descriptor.surface,
+            "mode": admission.mode,
+            "operator_role": admission.operator_role,
             "args_hash": _args_hash(args),
             "policy_decision": "allowed" if decision.allowed else "denied",
             "policy_class": decision.policy_class,
             "policy_reason": decision.reason,
+            "skill_policy_decision": "allowed" if admission.allowed else "denied",
+            "skill_policy_class": admission.policy_class,
+            "skill_policy_reason": admission.reason,
+            "confirmation_required": admission.confirmation_required,
+            "confirmation_marker": admission.confirmation_marker,
         }
 
         if not decision.allowed:
@@ -710,7 +848,26 @@ class ToolWorkflowBridge:
                 "BRIDGE_TOOL_DENIED",
                 decision.reason,
                 status_code=403,
-                details={"tool_name": tool_name, "policy_class": decision.policy_class},
+                details={
+                    "tool_name": tool_name,
+                    "policy_layer": "openclaw_tool_policy",
+                    "policy_class": decision.policy_class,
+                },
+            )
+        if not admission.allowed:
+            self._audit.record({**base_entry, "outcome": "denied"})
+            status_code = 422 if admission.policy_class == "confirmation_required" else 403
+            raise BridgeError(
+                "BRIDGE_SKILL_DENIED",
+                admission.reason,
+                status_code=status_code,
+                details={
+                    "skill_id": tool_name,
+                    "policy_layer": "assistant_skill_descriptor_policy",
+                    "policy_class": admission.policy_class,
+                    "mode": admission.mode,
+                    "operator_role": admission.operator_role,
+                },
             )
 
         if upstream is None:
@@ -722,7 +879,6 @@ class ToolWorkflowBridge:
                 retryable=False,
             )
 
-        self._audit.record({**base_entry, "outcome": "pending"})
         try:
             result = upstream.invoke_tool(
                 session_id=session_id,
@@ -756,6 +912,11 @@ class ToolWorkflowBridge:
         workflow_ref: str,
         context: Any,
         operator_id: str,
+        mode: Optional[str] = None,
+        operator_role: Optional[str] = None,
+        confirmed: Any = False,
+        confirm_token: Optional[str] = None,
+        control_mode: Optional[Dict[str, Any]] = None,
         trace_id: Optional[str] = None,
         upstream: Any = None,
     ) -> Dict[str, Any]:
@@ -773,16 +934,34 @@ class ToolWorkflowBridge:
 
         trace_id = trace_id or self._trace_id_factory()
         decision = self._policy.evaluate_workflow(workflow_ref)
+        descriptor = _workflow_skill_descriptor(workflow_ref)
+        admission = _evaluate_descriptor_admission(
+            descriptor,
+            mode=mode,
+            operator_role=operator_role,
+            confirmed=confirmed,
+            confirm_token=confirm_token,
+            control_mode=control_mode,
+        )
 
         base_entry: Dict[str, Any] = {
             "request_type": "workflow_trigger",
             "trace_id": trace_id,
             "operator_id": operator_id,
             "workflow_ref": workflow_ref,
+            "descriptor_id": descriptor.id,
+            "descriptor_surface": descriptor.surface,
+            "mode": admission.mode,
+            "operator_role": admission.operator_role,
             "context_hash": _args_hash(context),
             "policy_decision": "allowed" if decision.allowed else "denied",
             "policy_class": decision.policy_class,
             "policy_reason": decision.reason,
+            "skill_policy_decision": "allowed" if admission.allowed else "denied",
+            "skill_policy_class": admission.policy_class,
+            "skill_policy_reason": admission.reason,
+            "confirmation_required": admission.confirmation_required,
+            "confirmation_marker": admission.confirmation_marker,
         }
 
         if not decision.allowed:
@@ -791,7 +970,26 @@ class ToolWorkflowBridge:
                 "BRIDGE_WORKFLOW_DENIED",
                 decision.reason,
                 status_code=403,
-                details={"workflow_ref": workflow_ref, "policy_class": decision.policy_class},
+                details={
+                    "workflow_ref": workflow_ref,
+                    "policy_layer": "openclaw_workflow_policy",
+                    "policy_class": decision.policy_class,
+                },
+            )
+        if not admission.allowed:
+            self._audit.record({**base_entry, "outcome": "denied"})
+            status_code = 422 if admission.policy_class == "confirmation_required" else 403
+            raise BridgeError(
+                "BRIDGE_SKILL_DENIED",
+                admission.reason,
+                status_code=status_code,
+                details={
+                    "skill_id": descriptor.id,
+                    "policy_layer": "assistant_skill_descriptor_policy",
+                    "policy_class": admission.policy_class,
+                    "mode": admission.mode,
+                    "operator_role": admission.operator_role,
+                },
             )
 
         if upstream is None:
@@ -803,7 +1001,6 @@ class ToolWorkflowBridge:
                 retryable=False,
             )
 
-        self._audit.record({**base_entry, "outcome": "pending"})
         try:
             result = upstream.trigger_workflow(
                 workflow_ref=workflow_ref,
@@ -840,6 +1037,10 @@ class ToolWorkflowBridge:
         argv: List[Any],
         command_class: Optional[str] = None,
         cwd: Optional[str] = None,
+        operator_role: Optional[str] = None,
+        confirmed: Any = False,
+        confirm_token: Optional[str] = None,
+        control_mode: Optional[Dict[str, Any]] = None,
         trace_id: Optional[str] = None,
         command_id: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -860,6 +1061,15 @@ class ToolWorkflowBridge:
         normalized_argv = [str(arg) for arg in argv if str(arg) != ""]
 
         tool_decision = self._policy.evaluate_tool(ASSISTANT_COMMAND_TOOL_NAME)
+        descriptor = _tool_skill_descriptor(ASSISTANT_COMMAND_TOOL_NAME)
+        admission = _evaluate_descriptor_admission(
+            descriptor,
+            mode=mode,
+            operator_role=operator_role,
+            confirmed=confirmed,
+            confirm_token=confirm_token,
+            control_mode=control_mode,
+        )
         base_entry: Dict[str, Any] = {
             "event_type": "assistant.command.denied",
             "request_type": "assistant_command",
@@ -868,7 +1078,8 @@ class ToolWorkflowBridge:
             "trace_id": trace_id,
             "operator_id": operator_id,
             "session_id": session_id,
-            "mode": str(getattr(mode, "value", mode) or ""),
+            "mode": admission.mode,
+            "operator_role": admission.operator_role,
             "command_class": command_class,
             "argv_hash": command_argv_hash(normalized_argv),
             "argv_head": normalized_argv[0] if normalized_argv else None,
@@ -878,6 +1089,13 @@ class ToolWorkflowBridge:
             "policy_decision": "allowed" if tool_decision.allowed else "denied",
             "policy_class": tool_decision.policy_class,
             "policy_reason": tool_decision.reason,
+            "descriptor_id": descriptor.id,
+            "descriptor_surface": descriptor.surface,
+            "skill_policy_decision": "allowed" if admission.allowed else "denied",
+            "skill_policy_class": admission.policy_class,
+            "skill_policy_reason": admission.reason,
+            "confirmation_required": admission.confirmation_required,
+            "confirmation_marker": admission.confirmation_marker,
         }
         if not tool_decision.allowed:
             self._audit.record(base_entry)
@@ -889,6 +1107,26 @@ class ToolWorkflowBridge:
                     "broker_tool": ASSISTANT_COMMAND_TOOL_NAME,
                     "policy_layer": "openclaw_tool_policy",
                     "policy_class": tool_decision.policy_class,
+                },
+            )
+        if not admission.allowed:
+            self._audit.record({
+                **base_entry,
+                "policy_layer": "assistant_skill_descriptor_policy",
+                "policy_class": admission.policy_class,
+                "policy_reason": admission.reason,
+            })
+            status_code = 422 if admission.policy_class == "confirmation_required" else 403
+            raise BridgeError(
+                "BRIDGE_ASSISTANT_COMMAND_DENIED",
+                admission.reason,
+                status_code=status_code,
+                details={
+                    "broker_tool": ASSISTANT_COMMAND_TOOL_NAME,
+                    "policy_layer": "assistant_skill_descriptor_policy",
+                    "policy_class": admission.policy_class,
+                    "mode": admission.mode,
+                    "operator_role": admission.operator_role,
                 },
             )
 
@@ -908,6 +1146,8 @@ class ToolWorkflowBridge:
                 "broker_tool": ASSISTANT_COMMAND_TOOL_NAME,
                 "tool_policy_class": tool_decision.policy_class,
                 "policy_layer": "assistant_command_policy",
+                "operator_role": admission.operator_role,
+                "skill_policy_class": admission.policy_class,
             },
         )
         self._audit.record(entry)
@@ -936,6 +1176,116 @@ class ToolWorkflowBridge:
             "policy_class": decision.policy_class,
             "reason": decision.reason,
             "note": "Command authorization only; execution is handled by a separate broker runner.",
+        }
+
+    def authorize_assistant_skill(
+        self,
+        *,
+        skill_id: str,
+        operator_id: str,
+        mode: Optional[str] = None,
+        operator_role: Optional[str] = None,
+        confirmed: Any = False,
+        confirm_token: Optional[str] = None,
+        control_mode: Optional[Dict[str, Any]] = None,
+        trace_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        request_type: str = "assistant_skill_invoke",
+        audit_extra: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Authorize an adapter-owned assistant skill before a BFF handler runs.
+
+        This is the common admission path for skills whose descriptor
+        ``handler_ref`` points at an existing BFF/adapter route rather than an
+        upstream OpenClaw tool call.
+        """
+        if not operator_id:
+            raise BridgeError("BRIDGE_OPERATOR_REQUIRED", "operator_id is required.", status_code=401)
+        if not skill_id:
+            raise BridgeError("BRIDGE_SKILL_ID_REQUIRED", "skill_id is required.", status_code=400)
+
+        trace_id = trace_id or self._trace_id_factory()
+        tool_decision = self._policy.evaluate_tool(skill_id)
+        descriptor = _tool_skill_descriptor(skill_id)
+        admission = _evaluate_descriptor_admission(
+            descriptor,
+            mode=mode,
+            operator_role=operator_role,
+            confirmed=confirmed,
+            confirm_token=confirm_token,
+            control_mode=control_mode,
+        )
+        base_entry: Dict[str, Any] = {
+            "request_type": request_type,
+            "trace_id": trace_id,
+            "operator_id": operator_id,
+            "session_id": session_id,
+            "skill_id": skill_id,
+            "descriptor_id": descriptor.id,
+            "descriptor_surface": descriptor.surface,
+            "mode": admission.mode,
+            "operator_role": admission.operator_role,
+            "policy_layer": "openclaw_tool_policy",
+            "policy_decision": "allowed" if tool_decision.allowed else "denied",
+            "policy_class": tool_decision.policy_class,
+            "policy_reason": tool_decision.reason,
+            "skill_policy_decision": "allowed" if admission.allowed else "denied",
+            "skill_policy_class": admission.policy_class,
+            "skill_policy_reason": admission.reason,
+            "confirmation_required": admission.confirmation_required,
+            "confirmation_marker": admission.confirmation_marker,
+        }
+        if audit_extra:
+            base_entry.update(audit_extra)
+        if not tool_decision.allowed:
+            self._audit.record({**base_entry, "outcome": "denied"})
+            raise BridgeError(
+                "BRIDGE_SKILL_DENIED",
+                tool_decision.reason,
+                status_code=403,
+                details={
+                    "skill_id": skill_id,
+                    "policy_layer": "openclaw_tool_policy",
+                    "policy_class": tool_decision.policy_class,
+                },
+            )
+        if not admission.allowed:
+            self._audit.record({
+                **base_entry,
+                "policy_layer": "assistant_skill_descriptor_policy",
+                "policy_class": admission.policy_class,
+                "policy_reason": admission.reason,
+                "outcome": "denied",
+            })
+            status_code = 422 if admission.policy_class == "confirmation_required" else 403
+            raise BridgeError(
+                "BRIDGE_SKILL_DENIED",
+                admission.reason,
+                status_code=status_code,
+                details={
+                    "skill_id": skill_id,
+                    "policy_layer": "assistant_skill_descriptor_policy",
+                    "policy_class": admission.policy_class,
+                    "mode": admission.mode,
+                    "operator_role": admission.operator_role,
+                },
+            )
+
+        self._audit.record({
+            **base_entry,
+            "policy_layer": "assistant_skill_descriptor_policy",
+            "policy_class": admission.policy_class,
+            "policy_reason": admission.reason,
+            "outcome": "allowed",
+        })
+        return {
+            "status": "allowed",
+            "trace_id": trace_id,
+            "skill_id": skill_id,
+            "mode": admission.mode,
+            "operator_role": admission.operator_role,
+            "confirmation_marker": admission.confirmation_marker,
+            "descriptor": descriptor.to_dict(),
         }
 
     def list_effective_tools(

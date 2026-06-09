@@ -5,6 +5,7 @@ import importlib
 import os
 from pathlib import Path
 import sys
+import tempfile
 import types
 import unittest
 from unittest.mock import MagicMock, patch
@@ -347,15 +348,33 @@ class TestCapabilities(unittest.TestCase):
                 "frontend_handles_credentials": False,
             },
         }
+        bridge = adapter_main.ToolWorkflowBridge(
+            policy=adapter_main.ToolPolicy(
+                allowed_tools=[adapter_main.ASSISTANT_PROVIDER_REAUTH_TOOL_NAME]
+            ),
+            audit_log=adapter_main.BridgeAuditLog(path=tempfile.mktemp(suffix=".jsonl")),
+            trace_id_factory=lambda: "trace-reauth-1",
+        )
         with patch.object(
             adapter_main._CODEX_PROVIDER,
             "start_device_reauth",
             return_value=fake_payload,
-        ) as start:
+        ) as start, patch.object(adapter_main, "_BRIDGE", bridge):
             resp = client.post(
                 "/api/openclaw-adapter/assistant/providers/codex/reauth",
-                json={"reason": "expired", "captureTimeoutSeconds": 3},
-                headers={"X-Operator-Id": "op-1", "X-Trace-Id": "trace-reauth-1"},
+                json={
+                    "reason": "expired",
+                    "captureTimeoutSeconds": 3,
+                    "mode": "kernel_debug",
+                    "operator_role": "operator",
+                    "control_mode": {"active": True, "mode": "kernel_debug", "activation_id": "act-1"},
+                },
+                headers={
+                    "X-Operator-Id": "op-1",
+                    "X-Trace-Id": "trace-reauth-1",
+                    "X-Operator-Role": "operator",
+                    "X-Assistant-Mode": "kernel_debug",
+                },
             )
 
         self.assertEqual(resp.status_code, 202)
@@ -371,6 +390,31 @@ class TestCapabilities(unittest.TestCase):
             poll_interval_seconds=None,
             max_wait_seconds=None,
         )
+        entries = bridge._audit.read()  # noqa: SLF001 - test asserts route admission audit.
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["request_type"], "assistant_provider_reauth")
+        self.assertEqual(entries[0]["outcome"], "allowed")
+
+    def test_assistant_codex_reauth_fails_closed_when_skill_not_allowlisted(self):
+        bridge = adapter_main.ToolWorkflowBridge(
+            policy=adapter_main.ToolPolicy(allowed_tools=[]),
+            audit_log=adapter_main.BridgeAuditLog(path=tempfile.mktemp(suffix=".jsonl")),
+        )
+        with patch.object(adapter_main._CODEX_PROVIDER, "start_device_reauth") as start, patch.object(adapter_main, "_BRIDGE", bridge):
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/codex/reauth",
+                json={
+                    "reason": "expired",
+                    "mode": "kernel_debug",
+                    "operator_role": "operator",
+                    "control_mode": {"active": True, "mode": "kernel_debug", "activation_id": "act-1"},
+                },
+                headers={"X-Operator-Id": "op-1", "X-Operator-Role": "operator"},
+            )
+
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.json()["error_code"], "BRIDGE_SKILL_DENIED")
+        start.assert_not_called()
 
     def test_assistant_codex_reauth_requires_operator(self):
         with patch.object(adapter_main._CODEX_PROVIDER, "start_device_reauth") as start:

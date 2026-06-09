@@ -569,6 +569,10 @@ def test_provider_reauth_delegates_to_openclaw_adapter(monkeypatch) -> None:
     assert operator_id == "op-security"
     assert trace_id == "trace-reauth-1"
     assert payload["provider"] == "codex"
+    assert payload["mode"] == "kernel_debug"
+    assert payload["operator_role"] == "operator"
+    assert payload["confirmed"] is True
+    assert payload["control_mode"]["active"] is True
     assert payload["control_mode"]["mode"] == "kernel_debug"
     assert resp.json()["data"]["verification_uri"] == "https://auth.openai.com/device"
     assert resp.json()["data"]["credential_exchange"]["bff_handles_credentials"] is False
@@ -580,6 +584,57 @@ def test_provider_reauth_delegates_to_openclaw_adapter(monkeypatch) -> None:
     assert status_resp.status_code == 200
     assert status_resp.json()["data"]["status"] == "completed"
     assert status_resp.json()["data"]["operator"] == "op-security"
+
+
+def test_provider_reauth_response_redacts_adapter_credential_leak(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+
+    def reauth(payload, operator_id, trace_id):
+        return {
+            "status": "ok",
+            "data": {
+                "reauth_session_id": "codex_reauth_leak",
+                "status": "pending",
+                "verification_uri": "https://auth.openai.com/device",
+                "user_code": "ABCD-EFGH",
+                "access_token": "provider-token-should-not-leak",
+                "refresh_token": "refresh-token-should-not-leak",
+                "credential_mount_path": "/srv/pantheon-assistant/.codex/auth.json",
+            },
+        }
+
+    store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
+    client = _control_mode_client(
+        store,
+        roles=["operator"],
+        capabilities=["assistant.kernel.debug"],
+        mfa_verified=True,
+        provider_reauth=reauth,
+    )
+    activate_resp = client.post(
+        "/bff/assistant/control-mode/activate",
+        json={
+            "passphrase": "control phrase ok",
+            "mode": "kernel_debug",
+            "reason": "reauth provider",
+        },
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert activate_resp.status_code == 202, activate_resp.text
+
+    resp = client.post(
+        "/bff/assistant/provider/reauth",
+        json={"provider": "codex", "reason": "expired"},
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+
+    assert resp.status_code == 202, resp.text
+    rendered = repr(resp.json())
+    assert "provider-token-should-not-leak" not in rendered
+    assert "refresh-token-should-not-leak" not in rendered
+    assert "/srv/pantheon-assistant/.codex" not in rendered
+    assert "[REDACTED_TOKEN]" in rendered
+    assert "[REDACTED_PROVIDER_SESSION_PATH]" in rendered
 
 
 # ---------------------------------------------------------------------------

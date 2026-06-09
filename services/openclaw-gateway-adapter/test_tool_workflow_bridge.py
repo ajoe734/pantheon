@@ -463,10 +463,11 @@ class TestToolInvoke(unittest.TestCase):
         )
         bridge.invoke_tool(session_id="s1", tool_name="search", args={}, operator_id="op1", upstream=FakeUpstream())
         entries = audit.read()
-        self.assertGreaterEqual(len(entries), 1)
+        self.assertEqual(len(entries), 1)
         last = entries[-1]
         self.assertEqual(last["tool_name"], "search")
         self.assertEqual(last["outcome"], "ok")
+        self.assertEqual(last["skill_policy_class"], "allowed")
 
     def test_audit_trail_written_on_denied_invoke(self):
         policy = ToolPolicy(allowed_tools=[])
@@ -486,8 +487,92 @@ class TestToolInvoke(unittest.TestCase):
         with self.assertRaises(BridgeError):
             bridge.invoke_tool(session_id="s1", tool_name="search", args={}, operator_id="op1", upstream=FakeUpstream(fail=True))
         entries = audit.read()
-        outcomes = [e["outcome"] for e in entries]
-        self.assertIn("upstream_error", outcomes)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["outcome"], "upstream_error")
+
+    def test_invoke_user_mode_denied_by_descriptor_before_upstream(self):
+        policy = ToolPolicy(allowed_tools=["search"])
+        audit = BridgeAuditLog(path=tempfile.mktemp(suffix=".jsonl"))
+        bridge = ToolWorkflowBridge(policy=policy, audit_log=audit, trace_id_factory=lambda: "t")
+        upstream = FakeUpstream()
+
+        with self.assertRaises(BridgeError) as ctx:
+            bridge.invoke_tool(
+                session_id="s1",
+                tool_name="search",
+                args={},
+                operator_id="op1",
+                mode="user",
+                operator_role="operator",
+                upstream=upstream,
+            )
+
+        self.assertEqual(ctx.exception.error_code, "BRIDGE_SKILL_DENIED")
+        self.assertEqual(ctx.exception.details["policy_layer"], "assistant_skill_descriptor_policy")
+        self.assertEqual(ctx.exception.details["policy_class"], "mode_denied")
+        self.assertEqual(upstream.calls, [])
+        entries = audit.read()
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["skill_policy_class"], "mode_denied")
+        self.assertEqual(entries[0]["outcome"], "denied")
+
+    def test_invoke_viewer_role_denied_by_descriptor_before_upstream(self):
+        policy = ToolPolicy(allowed_tools=["search"])
+        audit = BridgeAuditLog(path=tempfile.mktemp(suffix=".jsonl"))
+        bridge = ToolWorkflowBridge(policy=policy, audit_log=audit, trace_id_factory=lambda: "t")
+        upstream = FakeUpstream()
+
+        with self.assertRaises(BridgeError) as ctx:
+            bridge.invoke_tool(
+                session_id="s1",
+                tool_name="search",
+                args={},
+                operator_id="op1",
+                mode="kernel_debug",
+                operator_role="viewer",
+                upstream=upstream,
+            )
+
+        self.assertEqual(ctx.exception.details["policy_class"], "role_denied")
+        self.assertEqual(upstream.calls, [])
+
+    def test_provider_reauth_skill_requires_confirmation_metadata(self):
+        policy = ToolPolicy(allowed_tools=[ASSISTANT_PROVIDER_REAUTH_TOOL_NAME])
+        audit = BridgeAuditLog(path=tempfile.mktemp(suffix=".jsonl"))
+        bridge = ToolWorkflowBridge(policy=policy, audit_log=audit, trace_id_factory=lambda: "t")
+
+        with self.assertRaises(BridgeError) as ctx:
+            bridge.authorize_assistant_skill(
+                skill_id=ASSISTANT_PROVIDER_REAUTH_TOOL_NAME,
+                operator_id="op1",
+                mode="kernel_debug",
+                operator_role="operator",
+            )
+
+        self.assertEqual(ctx.exception.error_code, "BRIDGE_SKILL_DENIED")
+        self.assertEqual(ctx.exception.status_code, 422)
+        self.assertEqual(ctx.exception.details["policy_class"], "confirmation_required")
+        self.assertEqual(audit.read()[0]["outcome"], "denied")
+
+    def test_provider_reauth_skill_allows_active_control_mode_confirmation(self):
+        policy = ToolPolicy(allowed_tools=[ASSISTANT_PROVIDER_REAUTH_TOOL_NAME])
+        audit = BridgeAuditLog(path=tempfile.mktemp(suffix=".jsonl"))
+        bridge = ToolWorkflowBridge(policy=policy, audit_log=audit, trace_id_factory=lambda: "t")
+
+        result = bridge.authorize_assistant_skill(
+            skill_id=ASSISTANT_PROVIDER_REAUTH_TOOL_NAME,
+            operator_id="op1",
+            mode="kernel_debug",
+            operator_role="operator",
+            control_mode={"active": True, "mode": "kernel_debug", "activation_id": "act-1"},
+        )
+
+        self.assertEqual(result["status"], "allowed")
+        self.assertEqual(result["confirmation_marker"], "active_control_mode")
+        entries = audit.read()
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["outcome"], "allowed")
+        self.assertNotIn("access_token", json.dumps(entries[0]))
 
 
 class TestWorkflowTrigger(unittest.TestCase):
@@ -501,7 +586,15 @@ class TestWorkflowTrigger(unittest.TestCase):
     def test_trigger_allowed_workflow(self):
         bridge, _ = _make_bridge(allowed_workflows=["research.scan"])
         upstream = FakeUpstream()
-        result = bridge.trigger_workflow(workflow_ref="research.scan", context={"x": 1}, operator_id="op1", upstream=upstream)
+        result = bridge.trigger_workflow(
+            workflow_ref="research.scan",
+            context={"x": 1},
+            operator_id="op1",
+            mode="kernel_repair",
+            operator_role="operator",
+            confirm_token="tok-workflow",
+            upstream=upstream,
+        )
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["workflow_ref"], "research.scan")
         self.assertEqual(result["job_id"], "job-123")
@@ -533,13 +626,30 @@ class TestWorkflowTrigger(unittest.TestCase):
     def test_trigger_upstream_not_configured(self):
         bridge, _ = _make_bridge(allowed_workflows=["research.scan"])
         with self.assertRaises(BridgeError) as ctx:
-            bridge.trigger_workflow(workflow_ref="research.scan", context={}, operator_id="op1", upstream=None)
+            bridge.trigger_workflow(
+                workflow_ref="research.scan",
+                context={},
+                operator_id="op1",
+                mode="kernel_repair",
+                operator_role="operator",
+                confirm_token="tok-workflow",
+                upstream=None,
+            )
         self.assertEqual(ctx.exception.error_code, "BRIDGE_UPSTREAM_NOT_CONFIGURED")
 
     def test_trigger_operator_context_passed_to_upstream(self):
         bridge, _ = _make_bridge(allowed_workflows=["research.scan"])
         upstream = FakeUpstream()
-        bridge.trigger_workflow(workflow_ref="research.scan", context={}, operator_id="op-bob", trace_id="trace-wf", upstream=upstream)
+        bridge.trigger_workflow(
+            workflow_ref="research.scan",
+            context={},
+            operator_id="op-bob",
+            mode="kernel_repair",
+            operator_role="operator",
+            confirm_token="tok-workflow",
+            trace_id="trace-wf",
+            upstream=upstream,
+        )
         ctx = upstream.calls[0]["operator_context"]
         self.assertEqual(ctx["pantheon_operator_id"], "op-bob")
         self.assertEqual(ctx["pantheon_trace_id"], "trace-wf")
@@ -548,13 +658,50 @@ class TestWorkflowTrigger(unittest.TestCase):
         policy = ToolPolicy(allowed_workflows=["research.scan"])
         audit = BridgeAuditLog(path=tempfile.mktemp(suffix=".jsonl"))
         bridge = ToolWorkflowBridge(policy=policy, audit_log=audit)
-        bridge.trigger_workflow(workflow_ref="research.scan", context={}, operator_id="op1", upstream=FakeUpstream())
+        bridge.trigger_workflow(
+            workflow_ref="research.scan",
+            context={},
+            operator_id="op1",
+            mode="kernel_repair",
+            operator_role="operator",
+            confirm_token="tok-workflow",
+            upstream=FakeUpstream(),
+        )
         entries = audit.read()
         wf_entries = [e for e in entries if e.get("request_type") == "workflow_trigger"]
-        self.assertGreaterEqual(len(wf_entries), 1)
+        self.assertEqual(len(wf_entries), 1)
         last = wf_entries[-1]
         self.assertEqual(last["workflow_ref"], "research.scan")
         self.assertEqual(last["outcome"], "ok")
+        self.assertEqual(last["confirmation_marker"], "confirm_token")
+
+    def test_trigger_workflow_requires_repair_mode_and_confirmation(self):
+        policy = ToolPolicy(allowed_workflows=["research.scan"])
+        audit = BridgeAuditLog(path=tempfile.mktemp(suffix=".jsonl"))
+        bridge = ToolWorkflowBridge(policy=policy, audit_log=audit)
+
+        with self.assertRaises(BridgeError) as mode_ctx:
+            bridge.trigger_workflow(
+                workflow_ref="research.scan",
+                context={},
+                operator_id="op1",
+                mode="kernel_debug",
+                operator_role="operator",
+                confirm_token="tok-workflow",
+                upstream=FakeUpstream(),
+            )
+        self.assertEqual(mode_ctx.exception.details["policy_class"], "mode_denied")
+
+        with self.assertRaises(BridgeError) as confirm_ctx:
+            bridge.trigger_workflow(
+                workflow_ref="research.scan",
+                context={},
+                operator_id="op1",
+                mode="kernel_repair",
+                operator_role="operator",
+                upstream=FakeUpstream(),
+            )
+        self.assertEqual(confirm_ctx.exception.details["policy_class"], "confirmation_required")
 
     def test_trigger_denied_audit_trail(self):
         policy = ToolPolicy(allowed_workflows=[])
