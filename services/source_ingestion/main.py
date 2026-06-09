@@ -48,6 +48,16 @@ from .active_universe import (
     UniverseTier,
     build_active_universe_update_plan,
 )
+from .registry.proposals import (
+    ProposalStatus,
+    ProposalType,
+    ProposedSourceInfo,
+    SourceChangeProposal,
+    SourceChangeProposalError,
+    SourceChangeProposalStore,
+    SourceKind,
+)
+from .registry.llm_proposal_adapter import LLMSourceProposalAdapter
 from .connectors import (
     AuthType,
     ConnectorMode,
@@ -79,6 +89,7 @@ def _resolve_data_dir() -> Path:
 
 
 DATA_DIR = _resolve_data_dir()
+PROPOSAL_STORE_PATH = Path(os.getenv("SOURCE_INGEST_PROPOSAL_STORE_PATH", str(DATA_DIR / "source_change_proposals.jsonl")))
 SCHEDULE_STORE_PATH = Path(os.getenv("SOURCE_INGEST_STORE_PATH", str(DATA_DIR / "ingest_schedule.jsonl")))
 CONNECTOR_STORE_PATH = Path(os.getenv("SOURCE_INGEST_CONNECTOR_STORE_PATH", str(DATA_DIR / "connector_config.jsonl")))
 SOURCE_EVIDENCE_STORE_PATH = Path(os.getenv("SOURCE_INGEST_EVIDENCE_STORE_PATH", str(DATA_DIR / "source_evidence.jsonl")))
@@ -96,6 +107,8 @@ PRODUCTION_POSTURE = require_source_search_posture("source-ingest")
 
 app = FastAPI(title="Pantheon Source Ingest Service", version="0.1.0")
 manager = IngestManager()
+proposal_store = SourceChangeProposalStore.from_jsonl(PROPOSAL_STORE_PATH)
+llm_proposal_adapter = LLMSourceProposalAdapter(proposal_store)
 store = JsonlIngestScheduleStore(SCHEDULE_STORE_PATH)
 connector_store = JsonlConfiguredConnectorStore(CONNECTOR_STORE_PATH)
 schedule_config_store = JsonlConnectorScheduleStore(CONNECTOR_SCHEDULE_CONFIG_PATH)
@@ -1498,3 +1511,266 @@ def run_scheduled_connectors(request: RunScheduledRequest | None = None) -> dict
 @app.get("/api/source-ingest/audit")
 def list_audit() -> dict[str, Any]:
     return {"actions": _load_audit_actions()}
+
+
+# ---------------------------------------------------------------------------
+# LLM Source-Change Proposal routes (DATASTRAT-PROPOSAL-006)
+# ---------------------------------------------------------------------------
+# Design invariant: LLM agents may only create draft proposals through the
+# /api/source-change-proposals POST endpoint.  All approval and apply
+# transitions require an explicit operator-gated action endpoint.
+# ---------------------------------------------------------------------------
+
+class ProposedSourceBody(StrictBaseModel):
+    source_id: str
+    source_kind: str
+    provider: str
+    source_class: str
+    license_scope: str
+    allowed_use: list[str]
+    homepage_url: str | None = None
+    docs_url: str | None = None
+    entitlement_required: bool = False
+    entitlement_tags: list[str] = Field(default_factory=list)
+    expected_datasets: list[str] = Field(default_factory=list)
+    update_frequency: str | None = None
+    cost_notes: str | None = None
+
+
+class ProposalRiskBody(StrictBaseModel):
+    risk_type: str
+    severity: str
+    note: str
+
+
+class CreateProposalRequest(StrictBaseModel):
+    proposal_type: str
+    source_kind: str
+    rationale: str
+    proposed_by: dict[str, Any]
+    target_source_id: str | None = None
+    proposed_source: ProposedSourceBody | None = None
+    expected_value: dict[str, Any] = Field(default_factory=dict)
+    risks: list[ProposalRiskBody] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class LLMProposalRequest(StrictBaseModel):
+    """LLM-originated proposal — always creates a draft via the adapter."""
+    proposal_type: str
+    source_kind: str
+    rationale: str
+    agent_id: str
+    trace_id: str | None = None
+    target_source_id: str | None = None
+    proposed_source: ProposedSourceBody | None = None
+    expected_value: dict[str, Any] = Field(default_factory=dict)
+    risks: list[ProposalRiskBody] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+def _proposal_to_response(proposal: SourceChangeProposal) -> dict[str, Any]:
+    return proposal.to_dict()
+
+
+@app.get("/api/source-change-proposals")
+def list_proposals(
+    status: str | None = None,
+    proposal_type: str | None = None,
+    source_kind: str | None = None,
+) -> dict[str, Any]:
+    try:
+        proposals = proposal_store.list(
+            status=status if status else None,
+            proposal_type=proposal_type if proposal_type else None,
+            source_kind=source_kind if source_kind else None,
+        )
+    except (SourceChangeProposalError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"proposals": [_proposal_to_response(p) for p in proposals]}
+
+
+@app.post("/api/source-change-proposals", status_code=201)
+def create_proposal(request: CreateProposalRequest) -> dict[str, Any]:
+    """Create a new source-change proposal (draft only).
+
+    Operator or LLM callers that need to enforce the draft-only restriction
+    should use /api/source-change-proposals/llm-draft instead.
+    """
+    try:
+        proposed_source = None
+        if request.proposed_source is not None:
+            proposed_source = ProposedSourceInfo.from_dict(request.proposed_source.model_dump())
+        from .registry.proposals import ProposalRisk
+        risks = [ProposalRisk(risk_type=r.risk_type, severity=r.severity, note=r.note)
+                 for r in request.risks]
+        proposal = SourceChangeProposal(
+            proposal_id=f"prop-{re.sub(r'[^a-z0-9]', '-', request.rationale[:20].lower())}-{sha256(request.rationale.encode()).hexdigest()[:8]}",
+            proposal_type=request.proposal_type,
+            source_kind=request.source_kind,
+            rationale=request.rationale,
+            proposed_by=request.proposed_by,
+            status=ProposalStatus.DRAFT.value,
+            target_source_id=request.target_source_id,
+            proposed_source=proposed_source,
+            expected_value=request.expected_value,
+            risks=risks,
+            evidence_refs=request.evidence_refs,
+            metadata=request.metadata,
+        )
+        created = proposal_store.create_draft(proposal)
+        return _proposal_to_response(created)
+    except SourceChangeProposalError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/source-change-proposals/llm-draft", status_code=201)
+def create_llm_draft_proposal(request: LLMProposalRequest) -> dict[str, Any]:
+    """LLM-originated proposal.  The adapter enforces draft-only status."""
+    try:
+        pt = ProposalType(request.proposal_type)
+        sk = SourceKind(request.source_kind)
+        proposed_source_data = request.proposed_source.model_dump() if request.proposed_source else None
+        risks_data = [r.model_dump() for r in request.risks]
+        if pt == ProposalType.ADD_DATA_SOURCE:
+            proposal = llm_proposal_adapter.propose_add_data_source(
+                agent_id=request.agent_id,
+                proposed_source=proposed_source_data or {},
+                rationale=request.rationale,
+                trace_id=request.trace_id,
+                expected_value=request.expected_value or None,
+                risks=risks_data or None,
+                evidence_refs=request.evidence_refs or None,
+                metadata=request.metadata or None,
+            )
+        elif pt == ProposalType.ADD_STRATEGY_SEED_SOURCE:
+            proposal = llm_proposal_adapter.propose_add_strategy_seed_source(
+                agent_id=request.agent_id,
+                proposed_source=proposed_source_data or {},
+                rationale=request.rationale,
+                trace_id=request.trace_id,
+                expected_value=request.expected_value or None,
+                risks=risks_data or None,
+                evidence_refs=request.evidence_refs or None,
+                metadata=request.metadata or None,
+            )
+        elif pt == ProposalType.DISABLE_SOURCE:
+            proposal = llm_proposal_adapter.propose_disable_source(
+                agent_id=request.agent_id,
+                target_source_id=request.target_source_id or "",
+                source_kind=sk.value,
+                rationale=request.rationale,
+                trace_id=request.trace_id,
+                risks=risks_data or None,
+                evidence_refs=request.evidence_refs or None,
+                metadata=request.metadata or None,
+            )
+        elif pt == ProposalType.RETIRE_SOURCE:
+            proposal = llm_proposal_adapter.propose_retire_source(
+                agent_id=request.agent_id,
+                target_source_id=request.target_source_id or "",
+                source_kind=sk.value,
+                rationale=request.rationale,
+                trace_id=request.trace_id,
+                risks=risks_data or None,
+                evidence_refs=request.evidence_refs or None,
+                metadata=request.metadata or None,
+            )
+        elif pt == ProposalType.REPLACE_SOURCE:
+            replacement_id = str(request.metadata.get("replacement_source_id") or "")
+            proposal = llm_proposal_adapter.propose_replace_source(
+                agent_id=request.agent_id,
+                target_source_id=request.target_source_id or "",
+                source_kind=sk.value,
+                rationale=request.rationale,
+                replacement_source_id=replacement_id,
+                trace_id=request.trace_id,
+                risks=risks_data or None,
+                evidence_refs=request.evidence_refs or None,
+                metadata={k: v for k, v in request.metadata.items() if k != "replacement_source_id"},
+            )
+        elif pt == ProposalType.CHANGE_SCHEDULE:
+            schedule_change = dict(request.metadata.get("schedule_change") or {})
+            proposal = llm_proposal_adapter.propose_change_schedule(
+                agent_id=request.agent_id,
+                target_source_id=request.target_source_id or "",
+                source_kind=sk.value,
+                rationale=request.rationale,
+                schedule_change=schedule_change,
+                trace_id=request.trace_id,
+                risks=risks_data or None,
+                evidence_refs=request.evidence_refs or None,
+                metadata={k: v for k, v in request.metadata.items() if k != "schedule_change"},
+            )
+        elif pt == ProposalType.REQUEST_VENDOR_QUOTE:
+            proposal = llm_proposal_adapter.propose_request_vendor_quote(
+                agent_id=request.agent_id,
+                source_kind=sk.value,
+                rationale=request.rationale,
+                proposed_source=proposed_source_data,
+                trace_id=request.trace_id,
+                evidence_refs=request.evidence_refs or None,
+                metadata=request.metadata or None,
+            )
+        else:
+            raise SourceChangeProposalError(f"Unsupported proposal_type for LLM draft: {pt.value}")
+        return _proposal_to_response(proposal)
+    except SourceChangeProposalError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/source-change-proposals/{proposal_id}")
+def get_proposal(proposal_id: str) -> dict[str, Any]:
+    proposal = proposal_store.get(proposal_id)
+    if proposal is None:
+        raise HTTPException(status_code=404, detail="proposal not found")
+    return _proposal_to_response(proposal)
+
+
+@app.post("/api/source-change-proposals/{proposal_id}/actions/submit")
+def submit_proposal(proposal_id: str) -> dict[str, Any]:
+    try:
+        return _proposal_to_response(proposal_store.submit(proposal_id))
+    except SourceChangeProposalError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/source-change-proposals/{proposal_id}/actions/approve")
+def approve_proposal(proposal_id: str) -> dict[str, Any]:
+    try:
+        return _proposal_to_response(proposal_store.approve(proposal_id))
+    except SourceChangeProposalError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/source-change-proposals/{proposal_id}/actions/reject")
+def reject_proposal(proposal_id: str) -> dict[str, Any]:
+    try:
+        return _proposal_to_response(proposal_store.reject(proposal_id))
+    except SourceChangeProposalError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+class ApplyProposalRequest(StrictBaseModel):
+    change_ref: str | None = None
+
+
+@app.post("/api/source-change-proposals/{proposal_id}/actions/apply")
+def apply_proposal(proposal_id: str, request: ApplyProposalRequest | None = None) -> dict[str, Any]:
+    try:
+        change_ref = request.change_ref if request else None
+        return _proposal_to_response(proposal_store.apply(proposal_id, change_ref=change_ref))
+    except SourceChangeProposalError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/source-change-proposals/{proposal_id}/actions/retire")
+def retire_proposal(proposal_id: str) -> dict[str, Any]:
+    try:
+        return _proposal_to_response(proposal_store.retire(proposal_id))
+    except SourceChangeProposalError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
