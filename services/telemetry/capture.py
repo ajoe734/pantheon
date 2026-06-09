@@ -3,7 +3,7 @@ Core telemetry capture logic for execution events.
 
 TelemetryCapture manages the capture, validation, and storage of execution
 telemetry events including pnl snapshots, drawdown observations, slippage,
-and fill information. It maintains separate streams for paper and live execution.
+and fill information. It maintains separate streams by canonical execution mode.
 """
 
 from __future__ import annotations
@@ -40,9 +40,11 @@ class RollbackActionType(str, Enum):
 
 
 class ExecutionMode(str, Enum):
-    """Enum for execution modes (paper vs live)."""
+    """Enum for canonical runtime execution modes."""
     PAPER = "paper"
+    CANARY = "canary"
     LIVE = "live"
+    FROZEN = "frozen"
 
 
 class EventType(str, Enum):
@@ -125,11 +127,8 @@ class TelemetryCapture:
         if self.schema_path:
             self._load_schema()
 
-        # In-memory buffers by mode
-        self.events = {
-            ExecutionMode.PAPER: [],
-            ExecutionMode.LIVE: [],
-        }
+        # In-memory buffers by canonical runtime execution mode.
+        self.events = {mode: [] for mode in ExecutionMode}
 
     def _load_schema(self) -> None:
         """Load and parse JSON schema."""
@@ -700,21 +699,13 @@ class TelemetryCapture:
             # Legacy fallback: derive from execution_mode
             deployment_stage = mode.value
 
-        # Derive execution_mode alias from deployment_stage for backward compat
-        if deployment_stage in ("canary", "live"):
-            execution_mode_alias = "live"
-        elif deployment_stage == "frozen":
-            # frozen is a governance stage, not an execution mode;
-            # map to "paper" since frozen bindings are not actively trading
-            execution_mode_alias = "paper"
-        else:
-            execution_mode_alias = deployment_stage
+        execution_mode = _execution_mode_for_stage(deployment_stage)
 
         event: dict[str, Any] = {
             "event_id": str(uuid.uuid4()),
             "event_type": event_type.value,
             "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-            "execution_mode": execution_mode_alias,
+            "execution_mode": execution_mode,
             "environment": deployment_stage,
             "deployment_stage": deployment_stage,
             "target": {
@@ -766,13 +757,7 @@ class TelemetryCapture:
                 event["authority_refs"] = authority_refs
             # environment MUST equal deployment_stage per TEL-001A evidence contract
             event["environment"] = event["deployment_stage"]
-            # Update execution_mode alias to match deployment_stage
-            if event["deployment_stage"] in ("canary", "live"):
-                event["execution_mode"] = "live"
-            elif event["deployment_stage"] == "frozen":
-                event["execution_mode"] = "paper"
-            else:
-                event["execution_mode"] = event["deployment_stage"]
+            event["execution_mode"] = _execution_mode_for_stage(event["deployment_stage"])
 
         # Rollback lineage evidence (Evidence E-5)
         if rollback_parent is not None:
@@ -816,7 +801,11 @@ class TelemetryCapture:
             log.error(f"Event validation failed; skipping storage: {event.get('event_id')}")
             return False
 
-        self.events[mode].append(event)
+        try:
+            storage_mode = ExecutionMode(event.get("execution_mode", mode.value))
+        except ValueError:
+            storage_mode = mode
+        self.events[storage_mode].append(event)
 
         if self.storage_dir:
             self._persist_event(event)
@@ -854,7 +843,10 @@ class TelemetryCapture:
         if mode is not None:
             return self.events[mode]
 
-        return self.events[ExecutionMode.PAPER] + self.events[ExecutionMode.LIVE]
+        all_events: list[dict[str, Any]] = []
+        for stored_events in self.events.values():
+            all_events.extend(stored_events)
+        return all_events
 
     def get_paper_events(self) -> list[dict[str, Any]]:
         """Get paper trading events."""
@@ -863,6 +855,14 @@ class TelemetryCapture:
     def get_live_events(self) -> list[dict[str, Any]]:
         """Get live trading events."""
         return self.events[ExecutionMode.LIVE]
+
+    def get_canary_events(self) -> list[dict[str, Any]]:
+        """Get canary trading events."""
+        return self.events[ExecutionMode.CANARY]
+
+    def get_frozen_events(self) -> list[dict[str, Any]]:
+        """Get frozen-stage events."""
+        return self.events[ExecutionMode.FROZEN]
 
     def clear_events(self, mode: Optional[ExecutionMode] = None) -> None:
         """
@@ -876,5 +876,10 @@ class TelemetryCapture:
         if mode is not None:
             self.events[mode].clear()
         else:
-            self.events[ExecutionMode.PAPER].clear()
-            self.events[ExecutionMode.LIVE].clear()
+            for stored_events in self.events.values():
+                stored_events.clear()
+
+
+def _execution_mode_for_stage(deployment_stage: Any) -> str:
+    stage = str(deployment_stage or "").strip().lower()
+    return stage

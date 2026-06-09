@@ -21,6 +21,7 @@ def _checksum(payload: bytes) -> str:
 
 _STAGE_TO_ARTIFACT_STATE = {
     "paper": "approved",
+    "canary": "approved",
     "live": "approved",
     "candidate": "candidate",
     "retired": "retired",
@@ -42,7 +43,7 @@ def build_metadata(state: str = "paper") -> dict:
         },
         "created_at": "2026-04-06T12:00:00Z",
     }
-    if state == "live":
+    if state in ("canary", "live"):
         metadata["approved_at"] = "2026-04-06T12:05:00Z"
         metadata["approver"] = "risk-committee"
         metadata["rollback"] = {
@@ -149,6 +150,15 @@ class TestArtifactLoader(unittest.TestCase):
         with self.assertRaises(ArtifactLoadError):
             loader.load("strat-001", "1.2.3", ExecutionMode.PAPER)
 
+    def test_loads_canary_artifact_for_canary_mode(self):
+        loader = self._build_loader(build_metadata(state="canary"))
+
+        loaded = loader.load("strat-001", "1.2.3", ExecutionMode.CANARY)
+
+        self.assertEqual(loaded.metadata["deployment_stage"], "canary")
+        self.assertEqual(loaded.metadata["artifact_state"], "approved")
+        self.assertEqual(loaded.metadata["rollback"]["target_version"], "1.2.2")
+
     def test_rejects_live_artifact_without_rollback(self):
         metadata = build_metadata(state="live")
         metadata.pop("rollback")
@@ -156,6 +166,14 @@ class TestArtifactLoader(unittest.TestCase):
 
         with self.assertRaises(ArtifactLoadError):
             loader.load("strat-001", "1.2.3", ExecutionMode.LIVE)
+
+    def test_rejects_canary_artifact_without_rollback(self):
+        metadata = build_metadata(state="canary")
+        metadata.pop("rollback")
+        loader = self._build_loader(metadata)
+
+        with self.assertRaisesRegex(ArtifactLoadError, "canary artifact metadata requires"):
+            loader.load("strat-001", "1.2.3", ExecutionMode.CANARY)
 
     def test_rejects_checksum_mismatch(self):
         metadata = build_metadata()

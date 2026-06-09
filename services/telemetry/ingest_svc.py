@@ -407,10 +407,18 @@ class TelemetryIngestService:
         if missing:
             return False, f"Missing binding identity fields: {missing} (Evidence E-1)"
 
-        # E-2: Deployment stage proof (field presence + enum)
+        # E-2: Deployment stage and execution mode proof (field presence + enum)
         deployment_stage = event.get("deployment_stage")
         if not deployment_stage or deployment_stage not in ("paper", "canary", "live", "frozen"):
             return False, f"Invalid deployment_stage: {deployment_stage} (Evidence E-2)"
+        execution_mode = event.get("execution_mode")
+        if not execution_mode or execution_mode not in ("paper", "canary", "live", "frozen"):
+            return False, f"Invalid execution_mode: {execution_mode} (Evidence E-2)"
+        if execution_mode != deployment_stage:
+            return False, (
+                f"execution_mode/deployment_stage mismatch: execution_mode {execution_mode!r} must match deployment_stage "
+                f"{deployment_stage!r} (Evidence E-2)"
+            )
 
         # E-3: Governance admissibility
         if not event.get("plan_id") or not event.get("persona_capital_binding_id"):
@@ -460,6 +468,12 @@ class TelemetryIngestService:
                 return False, (
                     f"deployment_stage {deployment_stage!r} does not match binding "
                     f"deployment_mode {binding_mode!r} (Evidence E-2)"
+                )
+            binding_execution_mode = getattr(binding, "execution_mode", None) or binding_mode
+            if execution_mode != binding_execution_mode:
+                return False, (
+                    f"execution_mode {execution_mode!r} does not match binding "
+                    f"execution_mode {binding_execution_mode!r} (Evidence E-2)"
                 )
 
             # E-4: Temporal window — event.created_at must fall within

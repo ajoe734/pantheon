@@ -762,6 +762,7 @@ class RuntimeManagerService:
         rollback_parent = request.get("rollback_parent")
         rollback_action_type = request.get("rollback_action_type")
         binding_metadata = dict(request.get("metadata") or {}) if isinstance(request.get("metadata"), dict) else {}
+        execution_mode = str(request.get("execution_mode") or target_stage).strip().lower()
         if request.get("strategy_id"):
             binding_metadata.setdefault("strategy_id", str(request.get("strategy_id")))
 
@@ -802,6 +803,18 @@ class RuntimeManagerService:
             raise RuntimeManagerError(
                 f"target_stage={target_stage!r} is not a valid DeploymentMode. "
                 f"Must be one of {[e.value for e in DeploymentMode]}."
+            )
+        try:
+            DeploymentMode(execution_mode)
+        except ValueError:
+            raise RuntimeManagerError(
+                f"execution_mode={execution_mode!r} is not a valid DeploymentMode. "
+                f"Must be one of {[e.value for e in DeploymentMode]}."
+            )
+        if execution_mode != target_stage:
+            raise RuntimeManagerError(
+                f"execution_mode={execution_mode!r} must equal target_stage={target_stage!r}. "
+                "Canary runtime bindings must not be collapsed into live."
             )
 
         # Pre-condition 6: rollback fields consistency
@@ -846,6 +859,7 @@ class RuntimeManagerService:
             artifact_id=artifact_id,
             artifact_version=artifact_version,
             deployment_mode=target_stage,
+            execution_mode=execution_mode,
             effective_at=utc_now(),
             status=RuntimeBindingStatus.ACTIVE.value,
             plan_id=plan_id,

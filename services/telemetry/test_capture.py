@@ -68,13 +68,12 @@ class TestTelemetryCapture(unittest.TestCase):
         )
 
         self.assertTrue(result)
-        events = self.capture.get_paper_events()
+        events = self.capture.get_canary_events()
         self.assertEqual(len(events), 1)
 
         event = events[0]
         self.assertEqual(event["event_type"], EventType.PNL_SNAPSHOT.value)
-        # canary -> live alias
-        self.assertEqual(event["execution_mode"], "live")
+        self.assertEqual(event["execution_mode"], "canary")
         self.assertEqual(event["target"]["strategy_id"], "test_strategy")
         self.assertEqual(event["metrics"]["pnl"], 100.50)
 
@@ -87,11 +86,11 @@ class TestTelemetryCapture(unittest.TestCase):
         )
 
         self.assertTrue(result)
-        events = self.capture.get_live_events()
+        events = self.capture.get_canary_events()
         self.assertEqual(len(events), 1)
 
         event = events[0]
-        self.assertEqual(event["execution_mode"], "live")
+        self.assertEqual(event["execution_mode"], "canary")
         self.assertEqual(event["metrics"]["pnl"], -50.25)
 
     def test_capture_drawdown(self):
@@ -103,7 +102,7 @@ class TestTelemetryCapture(unittest.TestCase):
         )
 
         self.assertTrue(result)
-        events = self.capture.get_events(ExecutionMode.PAPER)
+        events = self.capture.get_events(ExecutionMode.CANARY)
         self.assertEqual(len(events), 1)
 
         event = events[0]
@@ -121,7 +120,7 @@ class TestTelemetryCapture(unittest.TestCase):
         )
 
         self.assertTrue(result)
-        events = self.capture.get_live_events()
+        events = self.capture.get_canary_events()
         self.assertEqual(len(events), 1)
 
         event = events[0]
@@ -141,7 +140,7 @@ class TestTelemetryCapture(unittest.TestCase):
         )
 
         self.assertTrue(result)
-        events = self.capture.get_paper_events()
+        events = self.capture.get_canary_events()
         self.assertEqual(len(events), 1)
 
         event = events[0]
@@ -160,7 +159,7 @@ class TestTelemetryCapture(unittest.TestCase):
         )
 
         self.assertTrue(result)
-        events = self.capture.get_live_events()
+        events = self.capture.get_canary_events()
         self.assertEqual(len(events), 1)
 
         event = events[0]
@@ -170,12 +169,13 @@ class TestTelemetryCapture(unittest.TestCase):
 
     def test_paper_and_live_separation(self):
         """Test that paper and live events are kept separate."""
-        self.capture.capture_pnl(ExecutionMode.PAPER, "strat_1", 100.0)
-        self.capture.capture_pnl(ExecutionMode.LIVE, "strat_1", 200.0)
-        self.capture.capture_pnl(ExecutionMode.PAPER, "strat_1", 150.0)
+        capture = TelemetryCapture()
+        capture.capture_pnl(ExecutionMode.PAPER, "strat_1", 100.0)
+        capture.capture_pnl(ExecutionMode.LIVE, "strat_1", 200.0)
+        capture.capture_pnl(ExecutionMode.PAPER, "strat_1", 150.0)
 
-        paper = self.capture.get_paper_events()
-        live = self.capture.get_live_events()
+        paper = capture.get_paper_events()
+        live = capture.get_live_events()
 
         self.assertEqual(len(paper), 2)
         self.assertEqual(len(live), 1)
@@ -197,7 +197,7 @@ class TestTelemetryCapture(unittest.TestCase):
         self.capture.capture_pnl(ExecutionMode.PAPER, "strat_1", 100.0)
         self.capture.capture_pnl(ExecutionMode.PAPER, "strat_1", 200.0)
 
-        events = self.capture.get_paper_events()
+        events = self.capture.get_canary_events()
         ids = [e["event_id"] for e in events]
 
         self.assertEqual(len(ids), 2)
@@ -207,19 +207,20 @@ class TestTelemetryCapture(unittest.TestCase):
         """Test that events have ISO8601 timestamps."""
         self.capture.capture_pnl(ExecutionMode.PAPER, "strat_1", 100.0)
 
-        event = self.capture.get_paper_events()[0]
+        event = self.capture.get_canary_events()[0]
         self.assertIn("created_at", event)
         self.assertTrue(event["created_at"].endswith("Z"))
 
     def test_clear_paper_events(self):
         """Test clearing paper events."""
-        self.capture.capture_pnl(ExecutionMode.PAPER, "strat_1", 100.0)
-        self.capture.capture_pnl(ExecutionMode.LIVE, "strat_1", 200.0)
+        capture = TelemetryCapture()
+        capture.capture_pnl(ExecutionMode.PAPER, "strat_1", 100.0)
+        capture.capture_pnl(ExecutionMode.LIVE, "strat_1", 200.0)
 
-        self.capture.clear_events(ExecutionMode.PAPER)
+        capture.clear_events(ExecutionMode.PAPER)
 
-        paper = self.capture.get_paper_events()
-        live = self.capture.get_live_events()
+        paper = capture.get_paper_events()
+        live = capture.get_live_events()
 
         self.assertEqual(len(paper), 0)
         self.assertEqual(len(live), 1)
@@ -238,17 +239,16 @@ class TestTelemetryCapture(unittest.TestCase):
         """Test that events are written to disk."""
         self.capture.capture_pnl(ExecutionMode.PAPER, "strat_1", 100.0)
 
-        # canary binding → execution_mode=live, so events persist to live/
-        live_dir = Path(self.storage_dir) / "live"
-        self.assertTrue(live_dir.exists())
+        canary_dir = Path(self.storage_dir) / "canary"
+        self.assertTrue(canary_dir.exists())
 
-        event_files = list(live_dir.glob("*.json"))
+        event_files = list(canary_dir.glob("*.json"))
         self.assertEqual(len(event_files), 1)
 
         with open(event_files[0], "r") as f:
             data = json.load(f)
 
-        self.assertEqual(data["execution_mode"], "live")  # canary -> live
+        self.assertEqual(data["execution_mode"], "canary")
         self.assertEqual(data["metrics"]["pnl"], 100.0)
 
 
@@ -258,7 +258,9 @@ class TestExecutionMode(unittest.TestCase):
     def test_enum_values(self):
         """Test enum values."""
         self.assertEqual(ExecutionMode.PAPER.value, "paper")
+        self.assertEqual(ExecutionMode.CANARY.value, "canary")
         self.assertEqual(ExecutionMode.LIVE.value, "live")
+        self.assertEqual(ExecutionMode.FROZEN.value, "frozen")
 
 
 class TestEventType(unittest.TestCase):
@@ -289,7 +291,7 @@ class TestGovernedLinkageFields(unittest.TestCase):
         }
 
         capture.capture_pnl(ExecutionMode.PAPER, 'test_strategy', 100.0, metadata=metadata)
-        event = capture.get_paper_events()[0]
+        event = capture.get_canary_events()[0]
 
         self.assertEqual(event['target']['strategy_id'], 'test_strategy')
         self.assertEqual(event['target']['registry_id'], 'reg-123')
@@ -410,7 +412,7 @@ class TestBindingStageEvidence(unittest.TestCase):
         )
         capture.capture_pnl(ExecutionMode.PAPER, "test_strategy", 100.0)
 
-        event = capture.get_paper_events()[0]
+        event = capture.get_canary_events()[0]
 
         # Evidence E-1: Binding identity proof
         self.assertEqual(event["binding_id"], FULL_BINDING_CONTEXT["binding_id"])
@@ -435,7 +437,7 @@ class TestBindingStageEvidence(unittest.TestCase):
         )
         capture.capture_heartbeat(ExecutionMode.PAPER, "test_strategy")
 
-        event = capture.get_paper_events()[0]
+        event = capture.get_canary_events()[0]
         self.assertEqual(event["authority_refs"]["workspace_ref"], "workspace-paper-alpha")
         self.assertEqual(event["authority_refs"]["auth_profile_ref"], "auth-profile-paper-alpha")
         self.assertEqual(event["authority_refs"]["write_owner"], "runtime-manager")
@@ -448,13 +450,13 @@ class TestBindingStageEvidence(unittest.TestCase):
         )
         capture.capture_pnl(ExecutionMode.PAPER, "test_strategy", 100.0)
 
-        event = capture.get_paper_events()[0]
+        event = capture.get_canary_events()[0]
         self.assertEqual(event["environment"], event["deployment_stage"])
         self.assertEqual(event["environment"], "canary")
 
-    def test_execution_mode_alias_from_deployment_stage(self):
-        """execution_mode is derived from deployment_stage (canary|live -> live)."""
-        # canary -> live
+    def test_execution_mode_from_deployment_stage(self):
+        """execution_mode is derived 1:1 from deployment_stage."""
+        # canary -> canary
         ctx = FULL_BINDING_CONTEXT.copy()
         ctx["deployment_stage"] = "canary"
         capture = TelemetryCapture(
@@ -462,7 +464,7 @@ class TestBindingStageEvidence(unittest.TestCase):
             binding_context=ctx,
         )
         capture.capture_pnl(ExecutionMode.PAPER, "strat", 0.0)
-        self.assertEqual(capture.get_paper_events()[0]["execution_mode"], "live")
+        self.assertEqual(capture.get_canary_events()[0]["execution_mode"], "canary")
 
         # paper -> paper
         ctx["deployment_stage"] = "paper"
@@ -471,10 +473,10 @@ class TestBindingStageEvidence(unittest.TestCase):
             binding_context=ctx,
         )
         capture2.capture_pnl(ExecutionMode.LIVE, "strat", 0.0)
-        self.assertEqual(capture2.get_live_events()[0]["execution_mode"], "paper")
+        self.assertEqual(capture2.get_paper_events()[0]["execution_mode"], "paper")
 
-    def test_frozen_deployment_stage_maps_to_paper_mode(self):
-        """TEL-001 Fix #3: frozen stage must map to paper execution_mode, not 'frozen'."""
+    def test_frozen_deployment_stage_uses_frozen_execution_mode(self):
+        """Frozen stage remains explicit instead of being collapsed into paper."""
         ctx = FULL_BINDING_CONTEXT.copy()
         ctx["deployment_stage"] = "frozen"
         capture = TelemetryCapture(
@@ -483,13 +485,12 @@ class TestBindingStageEvidence(unittest.TestCase):
         )
         ok = capture.capture_pnl(ExecutionMode.LIVE, "strat", 1.0)
         self.assertTrue(ok, "frozen stage should produce valid events")
-        events = capture.get_live_events()
-        # Note: stored in LIVE buffer because mode=LIVE, but execution_mode alias = "paper"
+        events = capture.get_frozen_events()
         self.assertEqual(len(events), 1)
         event = events[0]
         self.assertEqual(event["deployment_stage"], "frozen")
         self.assertEqual(event["environment"], "frozen")
-        self.assertEqual(event["execution_mode"], "paper")
+        self.assertEqual(event["execution_mode"], "frozen")
 
     def test_no_binding_context_rejected_by_canonical_schema(self):
         """Without binding_context, canonical schema rejects events (all binding fields required)."""
@@ -521,7 +522,7 @@ class TestBindingStageEvidence(unittest.TestCase):
             rollback_action_type=RollbackActionType.PAUSE_THEN_REPLACE,
         )
 
-        event = capture.get_live_events()[0]
+        event = capture.get_canary_events()[0]
         self.assertEqual(event["event_type"], "rollback_started")
         self.assertEqual(event["rollback_parent"], "old-binding-id-uuid")
         self.assertEqual(event["rollback_action_type"], "pause_then_replace")
@@ -542,7 +543,7 @@ class TestBindingStageEvidence(unittest.TestCase):
                 rollback_parent="parent-uuid",
                 rollback_action_type=action_type,
             )
-            event = capture.get_live_events()[0]
+            event = capture.get_canary_events()[0]
             self.assertEqual(event["rollback_action_type"], action_type.value)
 
     def test_deploy_events(self):
@@ -555,7 +556,7 @@ class TestBindingStageEvidence(unittest.TestCase):
         capture.capture_deploy_started(ExecutionMode.LIVE, "strat")
         capture.capture_deploy_completed(ExecutionMode.LIVE, "strat")
 
-        events = capture.get_live_events()
+        events = capture.get_canary_events()
         self.assertEqual(len(events), 2)
         self.assertEqual(events[0]["event_type"], "deploy_started")
         self.assertEqual(events[1]["event_type"], "deploy_completed")
@@ -577,7 +578,7 @@ class TestBindingStageEvidence(unittest.TestCase):
             metadata={"reason": "drawdown_exceeded"},
         )
 
-        event = capture.get_live_events()[0]
+        event = capture.get_canary_events()[0]
         self.assertEqual(event["event_type"], "kill_switch_action")
         self.assertEqual(event["binding_id"], FULL_BINDING_CONTEXT["binding_id"])
         self.assertGreater(len(event["metrics"]), 0)
@@ -590,7 +591,7 @@ class TestBindingStageEvidence(unittest.TestCase):
         )
         capture.capture_heartbeat(ExecutionMode.LIVE, "strat")
 
-        event = capture.get_live_events()[0]
+        event = capture.get_canary_events()[0]
         self.assertEqual(event["event_type"], "heartbeat")
         self.assertEqual(event["deployment_stage"], "canary")
         self.assertGreater(len(event["metrics"]), 0)
@@ -637,7 +638,7 @@ class TestBindingStageEvidence(unittest.TestCase):
             )
         )
 
-        events = capture.get_live_events()
+        events = capture.get_canary_events()
         self.assertEqual([event["event_type"] for event in events], [
             "order_submitted",
             "order_canceled",

@@ -55,6 +55,7 @@ class _BindingStore:
             plan_id="plan-tel001-rb",
             persona_capital_binding_id="pcb-tel001-rb",
             deployment_mode="paper",
+            execution_mode="paper",
             effective_at="2026-05-16T00:00:00Z",
             retired_at=None,
         )
@@ -152,6 +153,7 @@ class TelemetryEventRebaselineSchemaTest(unittest.TestCase):
 
         self.assertEqual(schema["title"], "TelemetryEvent")
         self.assertEqual(schema["$id"], "https://pantheon/telemetry-event/v2")
+        self.assertIn("canary", schema["properties"]["execution_mode"]["enum"])
         for field in (
             "binding_id",
             "runtime_id",
