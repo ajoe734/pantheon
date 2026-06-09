@@ -5175,6 +5175,41 @@ def agent_provider_auth_blocked(
     return capability.get("auth_ready") is False
 
 
+def agent_is_known(config: dict[str, Any], agent_name: str | None) -> bool:
+    """True if the name maps to an agent in the roster (display name or id).
+
+    A task owner/reviewer that is NOT in the roster (e.g. a stale "Gemini2"
+    left by an old dispatch script after the gemini->antigravity migration) can
+    never run, so it must be treated as unable-to-take and reassigned.
+    """
+    name = str(agent_name or "").strip()
+    if not name:
+        return False
+    if name in known_agent_display_names(config):
+        return True
+    agent_id = normalize_agent_id(name)
+    return bool(agent_id and agent_id in (config.get("agents", {}) or {}))
+
+
+def default_reassignment_candidates(config: dict[str, Any], exclude: set[str] | None = None) -> list[str]:
+    """Roster-ordered healthy fallback owners, used when an unavailable owner
+    has no specific owner_fallbacks entry (e.g. a phantom owner)."""
+    exclude_cf = {str(x).strip().casefold() for x in (exclude or set()) if str(x).strip()}
+    sidecar_cf = {s.casefold() for s in sidecar_only_agent_names(config)}
+    out: list[str] = []
+    for agent_id, agent in (config.get("agents", {}) or {}).items():
+        name = str(agent.get("display_name") or agent.get("name") or agent_id).strip()
+        if not name:
+            continue
+        cf = name.casefold()
+        if cf in exclude_cf or cf in sidecar_cf:
+            continue
+        if agent_dispatch_disabled(config, name):
+            continue
+        out.append(name)
+    return out
+
+
 def agent_can_take_task(config: dict[str, Any], agent_name: str | None, task: dict[str, Any] | None) -> bool:
     name = str(agent_name or "").strip()
     if not name:
@@ -5182,6 +5217,8 @@ def agent_can_take_task(config: dict[str, Any], agent_name: str | None, task: di
     if agent_dispatch_disabled(config, name):
         return False
     if agent_provider_auth_blocked(config, name):
+        return False
+    if not agent_is_known(config, name):
         return False
     if not isinstance(task, dict) or task_is_sidecar(task):
         return True
@@ -7607,6 +7644,8 @@ def normalize_mainline_task_assignment(config: dict[str, Any], task: dict[str, A
 
     if owner and not owner_allowed:
         owner_candidates = normalized_mapping_values(settings.get("owner_fallbacks", {}), owner)
+        if not owner_candidates:
+            owner_candidates = default_reassignment_candidates(config, exclude={owner, reviewer})
         replacement_owner = first_viable_agent(config, owner_candidates, exclude={owner, reviewer}, task=task)
         if not replacement_owner:
             return False
