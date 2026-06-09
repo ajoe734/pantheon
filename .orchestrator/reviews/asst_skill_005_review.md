@@ -1,7 +1,7 @@
 # Review: ASST-SKILL-005 — assistant.provider.reauth device-flow skill
 
-Reviewer: Claude  
-Date: 2026-06-09  
+Reviewer: Claude
+Date: 2026-06-09
 Status: **APPROVED**
 
 ## Scope Reviewed

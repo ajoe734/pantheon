@@ -18,6 +18,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Merged delivery reviewed: PR #1183 / merge commit `fabc64ae954994e9dd7f0cfb5f3614a0773c13ac`
 - Focused validation:
   - `git diff --check`
+  - `git diff --check origin/dev...HEAD`
   - `python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge`
   - `python3 -m py_compile services/openclaw-gateway-adapter/assistant_codex_provider.py services/openclaw-gateway-adapter/main.py services/openclaw-gateway-adapter/tool_workflow_bridge.py services/control-plane/bff/assistant/routes.py services/control-plane/bff/openclaw_ops_client.py`
   - `python3 -m pytest services/openclaw-gateway-adapter/tests/test_assistant_codex_provider.py -q`
