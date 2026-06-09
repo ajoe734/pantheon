@@ -1052,3 +1052,79 @@ def test_tool_execute_route_boolean_true_passes_medium_risk_gate(tmp_path) -> No
     assert resp.status_code == 201
     data = resp.json()["data"]
     assert data["confirmation_marker"] == "operator_confirmed"
+
+
+# ---------------------------------------------------------------------------
+# ASST-SKILL-006 EPIC regression
+# These tests pin the four invariants that must hold after the gating/audit
+# consolidation: deny-first, fail-closed, one audit per invoke, no credential leak.
+# ---------------------------------------------------------------------------
+
+def test_epic_deny_first_empty_allowlist_returns_403() -> None:
+    """EPIC deny-first: non-allowlisted action_id is always denied with 403."""
+    client = TestClient(bff_main.app)
+    for action_id in ("ActivateKillSwitch", "LiquidateAll", "HardRollback", "StartRuntime"):
+        resp = client.post(
+            "/bff/assistant/tools/execute",
+            json={"action_id": action_id, "entity_type": "Unknown", "params": {}},
+            headers=OPERATOR_TOOL_HEADERS,
+        )
+        assert resp.status_code == 403, f"Expected 403 for {action_id!r}, got {resp.status_code}"
+
+
+def test_epic_unauthorized_skill_fail_closed() -> None:
+    """EPIC fail-closed: unknown action_id not in allowlist never admits execution."""
+    import pytest
+
+    for action_id in ("shell", "exec", "bash", "arbitrary.tool", "broker.submit"):
+        with pytest.raises(ToolNotAllowedError):
+            execute_governed_tool(
+                action_id=action_id,
+                entity_type="Unknown",
+                params={},
+                actor_id="op-001",
+                actor_roles=["operator"],
+            )
+
+
+def test_epic_one_audit_entry_per_execute_invoke() -> None:
+    """EPIC one audit per invoke: every execute call produces a ToolReceipt with source tag."""
+    receipt = execute_governed_tool(
+        action_id="AuditExport",
+        entity_type="AuditExport",
+        params={},
+        actor_id="op-001",
+        actor_roles=["operator"],
+        trace_id="epic-audit-trace-001",
+    )
+    assert receipt.source == "assistant_tool_contract"
+    assert receipt.trace_id == "epic-audit-trace-001"
+    assert receipt.receipt_id.startswith("asst-receipt-")
+    assert receipt.executed_at
+
+    from assistant.tool_contracts import tool_receipt_to_dict
+    d = tool_receipt_to_dict(receipt)
+    assert d["source"] == "assistant_tool_contract"
+    assert d["trace_id"] == "epic-audit-trace-001"
+
+
+def test_epic_provider_credentials_not_in_receipt(monkeypatch) -> None:
+    """EPIC no credential leak: ToolReceipt result must not contain raw credential fields."""
+    receipt = execute_governed_tool(
+        action_id="AuditExport",
+        entity_type="AuditExport",
+        params={"export_format": "csv"},
+        actor_id="op-001",
+        actor_roles=["operator"],
+    )
+    from assistant.tool_contracts import tool_receipt_to_dict
+    rendered = repr(tool_receipt_to_dict(receipt))
+    for forbidden in (
+        "access_token",
+        "refresh_token",
+        "credential_mount_path",
+        ".codex/auth.json",
+        "CODEX_HOME",
+        "-----BEGIN PRIVATE KEY-----",
+    ):
+        assert forbidden not in rendered, f"Credential field {forbidden!r} must not appear in receipt"
