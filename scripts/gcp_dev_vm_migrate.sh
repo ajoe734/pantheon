@@ -6,9 +6,9 @@
 
 set -euo pipefail
 
-PROJECT_ID="${PROJECT_ID:-pantheon-493602}"
+PROJECT_ID="${PROJECT_ID:-pantheon-benjamin-20260528}"
 ZONE="${ZONE:-asia-east1-b}"
-VM_NAME="${VM_NAME:-pantheon-dev-vm1}"
+VM_NAME="${VM_NAME:-pantheon-lupin-dev}"
 MACHINE_TYPE="${MACHINE_TYPE:-e2-highmem-4}"
 BOOT_DISK_SIZE="${BOOT_DISK_SIZE:-100GB}"
 BOOT_DISK_TYPE="${BOOT_DISK_TYPE:-pd-balanced}"
@@ -17,7 +17,7 @@ IMAGE_FAMILY="${IMAGE_FAMILY:-ubuntu-2404-lts-amd64}"
 NETWORK="${NETWORK:-default}"
 PROVISIONING_MODEL="${PROVISIONING_MODEL:-STANDARD}"
 SPOT_TERMINATION_ACTION="${SPOT_TERMINATION_ACTION:-STOP}"
-REMOTE_USER="${REMOTE_USER:-edna}"
+REMOTE_USER="${REMOTE_USER:-lupin}"
 SOURCE_DIR="${SOURCE_DIR:-/home/lupin/code/pantheon}"
 REMOTE_DIR="${REMOTE_DIR:-/home/${REMOTE_USER}/code/pantheon}"
 BACKUP_ROOT="${BACKUP_ROOT:-/tmp/pantheon-dev-vm-migration}"
@@ -32,15 +32,15 @@ Usage:
   bash scripts/gcp_dev_vm_migrate.sh [options]
 
 Options are supplied as environment variables:
-  PROJECT_ID          GCP project. Default: pantheon-493602
+  PROJECT_ID          GCP project. Default: pantheon-benjamin-20260528
   ZONE                GCP zone. Default: asia-east1-b
-  VM_NAME             Dev VM name. Default: pantheon-dev-vm1
+  VM_NAME             Dev VM name. Default: pantheon-lupin-dev
   MACHINE_TYPE        Dev VM machine type. Default: e2-highmem-4
   BOOT_DISK_SIZE      Boot disk size. Default: 100GB
   PROVISIONING_MODEL  STANDARD or SPOT. Default: STANDARD
   SPOT_TERMINATION_ACTION
                       STOP or DELETE when PROVISIONING_MODEL=SPOT. Default: STOP
-  REMOTE_USER         Linux user on the VM. Default: edna
+  REMOTE_USER         Linux user on the VM. Default: lupin
   SOURCE_DIR          Local Pantheon repo path. Default: /home/lupin/code/pantheon
   REMOTE_DIR          Remote Pantheon repo path. Default: /home/lupin/code/pantheon
   SKIP_CREATE=true    Do not create the VM; only migrate/start.
@@ -52,7 +52,7 @@ Options are supplied as environment variables:
 
 Examples:
   bash scripts/gcp_dev_vm_migrate.sh
-  VM_NAME=pantheon-dev-vm1 MACHINE_TYPE=e2-standard-4 bash scripts/gcp_dev_vm_migrate.sh
+  VM_NAME=pantheon-lupin-dev MACHINE_TYPE=e2-standard-4 bash scripts/gcp_dev_vm_migrate.sh
 EOF
 }
 

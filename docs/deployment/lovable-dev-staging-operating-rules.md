@@ -113,7 +113,7 @@ Staging-live Lovable project:
 
 ```env
 VITE_PANTHEON_ENV=staging-live
-VITE_BFF_BASE_URL=https://pantheon-staging-bff.34.81.225.122.sslip.io
+VITE_BFF_BASE_URL=https://pantheon-lupin-staging-bff.104.155.223.192.sslip.io
 VITE_PANTHEON_LIVE_BROKER_ENABLED=true
 ```
 
@@ -151,7 +151,7 @@ Current BFF HTTPS URLs:
 
 ```text
 https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io
-https://pantheon-staging-bff.34.81.225.122.sslip.io
+https://pantheon-lupin-staging-bff.104.155.223.192.sslip.io
 ```
 
 Current Pantheon-owned dev FE URL:
@@ -163,7 +163,7 @@ https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io
 BFF CORS must be one-to-one:
 
 ```env
-# dev BFF on pantheon-dev-vm1
+# dev BFF on pantheon-lupin-dev
 PANTHEON_BFF_CORS_ORIGINS=https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io
 PANTHEON_BFF_AUTH_STUB=false
 PANTHEON_BFF_AUTH_MODE=strict
@@ -174,7 +174,7 @@ PANTHEON_BFF_OIDC_CLIENT_ID=<dev-client-id>
 PANTHEON_BFF_OIDC_CLIENT_SECRET=<dev-client-secret>
 PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS=900
 
-# staging BFF on pantheon-taiwan
+# staging BFF on pantheon-lupin-staging-control
 PANTHEON_BFF_CORS_ORIGINS=https://pantheon-ai-system-front-staging-live.lovable.app
 PANTHEON_BFF_AUTH_STUB=false
 ```
@@ -267,7 +267,7 @@ All must be true before staging-live publish/update:
 - staging BFF has a browser-reachable HTTPS URL
 - staging Lovable env uses `VITE_PANTHEON_ENV=staging-live`
 - staging Lovable env uses
-  `VITE_BFF_BASE_URL=https://pantheon-staging-bff.34.81.225.122.sslip.io`
+  `VITE_BFF_BASE_URL=https://pantheon-lupin-staging-bff.104.155.223.192.sslip.io`
 - staging BFF CORS allows only the staging Lovable origin
 - operator auth works
 - BFF health is green
@@ -288,7 +288,7 @@ Frontend rollback options:
 Backend stop option:
 
 ```bash
-gcloud compute ssh edna@pantheon-taiwan --zone=asia-east1-b --project=pantheon-493602 -- \
+gcloud compute ssh lupin@pantheon-lupin-staging-control --zone=asia-east1-b --project=pantheon-benjamin-20260528 -- \
   'cd /home/lupin/code/pantheon && docker compose -f docker-compose.control.yml stop operator-bff'
 ```
 

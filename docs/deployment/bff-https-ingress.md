@@ -24,8 +24,8 @@ Current ingress uses:
 
 | Environment | VM | Static IP | HTTPS BFF URL | Local upstream |
 | --- | --- | --- | --- | --- |
-| dev | `pantheon-dev-vm1` | `35.201.239.38` | `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io` | `127.0.0.1:18001` |
-| staging-live | `pantheon-taiwan` | `34.81.225.122` | `https://pantheon-staging-bff.34.81.225.122.sslip.io` | `127.0.0.1:38001` |
+| dev | `pantheon-lupin-dev` | `35.201.239.38` | `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io` | `127.0.0.1:18001` |
+| staging-live | `pantheon-lupin-staging-control` | `104.155.223.192` | `https://pantheon-lupin-staging-bff.104.155.223.192.sslip.io` | `127.0.0.1:38001` |
 
 Current dev FE URL:
 
@@ -39,15 +39,15 @@ Static addresses:
 
 ```bash
 gcloud compute addresses list \
-  --project=pantheon-493602 \
-  --filter='name=(pantheon-dev-vm1-ip pantheon-staging-vm1-ip)' \
+  --project=pantheon-benjamin-20260528 \
+  --filter='name=(pantheon-lupin-dev-ip pantheon-staging-vm1-ip)' \
   --format='table(name,region.basename(),address,status,users)'
 ```
 
 Expected:
 
-- `pantheon-dev-vm1-ip`: `35.201.239.38`
-- `pantheon-staging-vm1-ip`: `34.81.225.122`
+- `pantheon-lupin-dev-ip`: `35.201.239.38`
+- `pantheon-staging-vm1-ip`: `104.155.223.192`
 
 Firewall rules:
 
@@ -57,7 +57,7 @@ Firewall rules:
 
 ## Caddy Configuration
 
-Dev Caddyfile on `pantheon-dev-vm1`:
+Dev Caddyfile on `pantheon-lupin-dev`:
 
 ```caddyfile
 pantheon-lupin-dev-bff.35.201.239.38.sslip.io {
@@ -72,14 +72,14 @@ pantheon-lupin-dev-fe.35.201.239.38.sslip.io {
 }
 ```
 
-Staging VM1 Caddyfile on `pantheon-taiwan`:
+Staging VM1 Caddyfile on `pantheon-lupin-staging-control`:
 
 ```caddyfile
 {
     auto_https disable_redirects
 }
 
-https://pantheon-staging-bff.34.81.225.122.sslip.io {
+https://pantheon-lupin-staging-bff.104.155.223.192.sslip.io {
     encode zstd gzip
     reverse_proxy 127.0.0.1:38001
 }
@@ -94,7 +94,7 @@ Public HTTPS health:
 
 ```bash
 curl -fsS https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/health
-curl -fsS https://pantheon-staging-bff.34.81.225.122.sslip.io/health
+curl -fsS https://pantheon-lupin-staging-bff.104.155.223.192.sslip.io/health
 ```
 
 CORS preflight:
@@ -106,7 +106,7 @@ curl -sS -D - -o /tmp/dev-cors-body \
   -H 'Access-Control-Request-Method: GET'
 
 curl -sS -D - -o /tmp/staging-cors-body \
-  -X OPTIONS https://pantheon-staging-bff.34.81.225.122.sslip.io/health \
+  -X OPTIONS https://pantheon-lupin-staging-bff.104.155.223.192.sslip.io/health \
   -H 'Origin: https://pantheon-ai-system-front-staging-live.lovable.app' \
   -H 'Access-Control-Request-Method: GET'
 ```
@@ -135,7 +135,7 @@ Staging-live Lovable project:
 
 ```env
 VITE_PANTHEON_ENV=staging-live
-VITE_BFF_BASE_URL=https://pantheon-staging-bff.34.81.225.122.sslip.io
+VITE_BFF_BASE_URL=https://pantheon-lupin-staging-bff.104.155.223.192.sslip.io
 VITE_PANTHEON_LIVE_BROKER_ENABLED=true
 ```
 

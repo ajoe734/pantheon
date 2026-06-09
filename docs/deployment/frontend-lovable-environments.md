@@ -89,7 +89,7 @@ Staging-live Lovable app:
 
 ```env
 VITE_PANTHEON_ENV=staging-live
-VITE_BFF_BASE_URL=https://pantheon-staging-bff.34.81.225.122.sslip.io
+VITE_BFF_BASE_URL=https://pantheon-lupin-staging-bff.104.155.223.192.sslip.io
 VITE_PANTHEON_LIVE_BROKER_ENABLED=true
 ```
 
@@ -102,7 +102,7 @@ Current BFFs are healthy on public HTTPS endpoints:
 
 - dev BFF: `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io`
 - staging-live BFF on VM1:
-  `https://pantheon-staging-bff.34.81.225.122.sslip.io`
+  `https://pantheon-lupin-staging-bff.104.155.223.192.sslip.io`
 
 Internal or VM-local endpoints remain:
 
