@@ -316,6 +316,25 @@ def test_registry_exposes_connector_status_policy_and_provider_examples(client) 
         "static_records",
         "external_feed",
     }
+    catalog = body["financial_data_source_catalog"]
+    assert catalog["schema_version"] == "financial_data_source_catalog.v1"
+    assert catalog["summary"]["data_source_count"] == 6
+    assert "FinMind" in catalog["summary"]["providers"]
+    assert body["active_universe_policy"]["schema_version"] == "active_universe_scheduling_policy.v1"
+
+
+def test_financial_data_source_catalog_endpoint_exposes_templates(client) -> None:
+    test_client, _, _ = client
+
+    response = test_client.get("/api/source-ingest/data-sources/financial-catalog")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    template_ids = {template["template_id"] for template in body["config_templates"]}
+    assert body["catalog_status"] == "template_only_not_live_ingestion_claim"
+    assert "template-tw-mops-official-disclosures" in template_ids
+    assert "template-us-sec-edgar-filings" in template_ids
+    assert body["active_universe_policy"]["summary"]["archive_baseline_rule_count"] >= 3
 
 
 def test_external_http_feed_is_allowlisted_bounded_and_preserves_license_access_scope(client) -> None:

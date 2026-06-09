@@ -4,6 +4,10 @@ These two registries enforce the semantic boundary between data supply sources
 (market, filing, news, macro) and strategy idea/seed sources (papers, repos,
 internal notes, alpha DBs).  The underlying source_ingestion connector plane
 is unchanged; the registries add product-level classification on top.
+
+The LLM proposal governance layer lives in ``proposals`` and
+``llm_proposal_adapter``.  LLM agents interact only through
+``LLMSourceProposalAdapter``; they may not mutate any registry entry directly.
 """
 
 from .data_source_registry import (
@@ -26,6 +30,17 @@ from .connector_projection import (
     project_to_data_source,
     project_to_strategy_seed_source,
 )
+from .proposals import (
+    ProposalRisk,
+    ProposalStatus,
+    ProposalType,
+    ProposedSourceInfo,
+    SourceChangeProposal,
+    SourceChangeProposalError,
+    SourceChangeProposalStore,
+    SourceKind,
+)
+from .llm_proposal_adapter import LLMSourceProposalAdapter
 
 __all__ = [
     "DataSourceEntry",
@@ -42,4 +57,13 @@ __all__ = [
     "natural_role",
     "project_to_data_source",
     "project_to_strategy_seed_source",
+    "ProposalRisk",
+    "ProposalStatus",
+    "ProposalType",
+    "ProposedSourceInfo",
+    "SourceChangeProposal",
+    "SourceChangeProposalError",
+    "SourceChangeProposalStore",
+    "SourceKind",
+    "LLMSourceProposalAdapter",
 ]

@@ -14157,6 +14157,8 @@ class ReadSurfaceStore:
                 "source": "missing",
                 "connectors": [],
                 "provider_examples": [],
+                "financial_data_source_catalog": None,
+                "active_universe_policy": None,
             }
         available, payload = _http_json_get(base_url, "/api/source-ingest/registry")
         if not available or not isinstance(payload, dict):
@@ -14164,18 +14166,71 @@ class ReadSurfaceStore:
                 "source": "unavailable",
                 "connectors": [],
                 "provider_examples": [],
+                "financial_data_source_catalog": None,
+                "active_universe_policy": None,
             }
         connectors = payload.get("connectors") if isinstance(payload.get("connectors"), list) else []
         provider_examples = (
             payload.get("provider_examples") if isinstance(payload.get("provider_examples"), list) else []
         )
         policy_registry = payload.get("policy_registry") if isinstance(payload.get("policy_registry"), dict) else None
+        financial_catalog = (
+            payload.get("financial_data_source_catalog")
+            if isinstance(payload.get("financial_data_source_catalog"), dict)
+            else None
+        )
+        active_universe_policy = (
+            payload.get("active_universe_policy")
+            if isinstance(payload.get("active_universe_policy"), dict)
+            else None
+        )
+        if active_universe_policy is None and isinstance(financial_catalog, dict):
+            nested_policy = financial_catalog.get("active_universe_policy")
+            if isinstance(nested_policy, dict):
+                active_universe_policy = nested_policy
         return {
             "source": "service_client",
             "schema_version": payload.get("schema_version"),
             "connectors": json.loads(json.dumps(connectors)),
             "provider_examples": json.loads(json.dumps(provider_examples)),
             "policy_registry": json.loads(json.dumps(policy_registry)) if policy_registry else None,
+            "financial_data_source_catalog": json.loads(json.dumps(financial_catalog)) if financial_catalog else None,
+            "active_universe_policy": json.loads(json.dumps(active_universe_policy)) if active_universe_policy else None,
+        }
+
+    def get_source_change_proposals(
+        self,
+        *,
+        status: Optional[str] = None,
+        proposal_type: Optional[str] = None,
+        source_kind: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Read source-change proposals from the source-ingest service.
+
+        BFF is read-only: this method never mutates proposal state.  All
+        lifecycle transitions go through operator-gated action endpoints on
+        the source-ingest service directly.
+        """
+        base_url = self._source_ingest_service_url()
+        if not base_url:
+            return {"source": "missing", "proposals": []}
+        path = "/api/source-change-proposals"
+        params: list[str] = []
+        if status:
+            params.append(f"status={status}")
+        if proposal_type:
+            params.append(f"proposal_type={proposal_type}")
+        if source_kind:
+            params.append(f"source_kind={source_kind}")
+        if params:
+            path = path + "?" + "&".join(params)
+        available, payload = _http_json_get(base_url, path)
+        if not available or not isinstance(payload, dict):
+            return {"source": "unavailable", "proposals": []}
+        proposals = payload.get("proposals") if isinstance(payload.get("proposals"), list) else []
+        return {
+            "source": "service_client",
+            "proposals": json.loads(json.dumps(proposals)),
         }
 
     # ---------------------------------------------------------------------- #
@@ -14201,6 +14256,8 @@ class ReadSurfaceStore:
                 "source": "missing",
                 "connector_health": [],
                 "policy_registry": None,
+                "financial_data_source_catalog": None,
+                "active_universe_policy": None,
                 "crawl_runs": [],
                 "dlq": [],
                 "frontier": [],
@@ -14218,6 +14275,9 @@ class ReadSurfaceStore:
                     "external_allowlist_policy_count": 0,
                     "pit_policy_count": 0,
                     "scheduled_policy_count": 0,
+                    "financial_data_source_count": 0,
+                    "financial_data_source_template_count": 0,
+                    "active_universe_rule_count": 0,
                     "search_refresh_notification_configured": False,
                 },
             }
@@ -14226,6 +14286,8 @@ class ReadSurfaceStore:
         avail_reg, payload_reg = _http_json_get(base_url, "/api/source-ingest/registry")
         connectors: List[Dict[str, Any]] = []
         policy_registry: Optional[Dict[str, Any]] = None
+        financial_catalog: Optional[Dict[str, Any]] = None
+        active_universe_policy: Optional[Dict[str, Any]] = None
         if avail_reg and isinstance(payload_reg, dict):
             raw = payload_reg.get("connectors")
             if isinstance(raw, list):
@@ -14233,6 +14295,16 @@ class ReadSurfaceStore:
             raw_policy = payload_reg.get("policy_registry")
             if isinstance(raw_policy, dict):
                 policy_registry = json.loads(json.dumps(raw_policy))
+            raw_catalog = payload_reg.get("financial_data_source_catalog")
+            if isinstance(raw_catalog, dict):
+                financial_catalog = json.loads(json.dumps(raw_catalog))
+            raw_active_policy = payload_reg.get("active_universe_policy")
+            if isinstance(raw_active_policy, dict):
+                active_universe_policy = json.loads(json.dumps(raw_active_policy))
+            if active_universe_policy is None and isinstance(financial_catalog, dict):
+                raw_nested_policy = financial_catalog.get("active_universe_policy")
+                if isinstance(raw_nested_policy, dict):
+                    active_universe_policy = json.loads(json.dumps(raw_nested_policy))
 
         # crawl runs
         runs_path = "/api/source-ingest/jobs"
@@ -14290,10 +14362,18 @@ class ReadSurfaceStore:
                 degraded_connector_count += 1
         registry_summary = policy_registry.get("summary", {}) if isinstance(policy_registry, dict) else {}
         default_guards = policy_registry.get("default_guards", {}) if isinstance(policy_registry, dict) else {}
+        financial_catalog_summary = (
+            financial_catalog.get("summary", {}) if isinstance(financial_catalog, dict) else {}
+        )
+        active_universe_summary = (
+            active_universe_policy.get("summary", {}) if isinstance(active_universe_policy, dict) else {}
+        )
         return {
             "source": "service_client" if service_available else "unavailable",
             "connector_health": connectors,
             "policy_registry": policy_registry,
+            "financial_data_source_catalog": financial_catalog,
+            "active_universe_policy": active_universe_policy,
             "crawl_runs": crawl_runs,
             "dlq": dlq_entries,
             "frontier": frontier,
@@ -14311,6 +14391,11 @@ class ReadSurfaceStore:
                 "external_allowlist_policy_count": int(registry_summary.get("external_allowlist_policy_count") or 0),
                 "pit_policy_count": int(registry_summary.get("pit_policy_count") or 0),
                 "scheduled_policy_count": int(registry_summary.get("scheduled_policy_count") or 0),
+                "financial_data_source_count": int(financial_catalog_summary.get("data_source_count") or 0),
+                "financial_data_source_template_count": int(
+                    financial_catalog_summary.get("config_template_count") or 0
+                ),
+                "active_universe_rule_count": int(active_universe_summary.get("rule_count") or 0),
                 "search_refresh_notification_configured": bool(
                     default_guards.get("search_refresh_notification_configured")
                 ),
