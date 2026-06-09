@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -59,7 +61,7 @@ class FakeMounts:
         return {"codex": self.validation}
 
 
-def _provider(tmp_path: Path, run_func, *, env=None, mount=None) -> AssistantCodexProvider:
+def _provider(tmp_path: Path, run_func, *, env=None, mount=None, popen_func=None) -> AssistantCodexProvider:
     (tmp_path / "read-only").mkdir(parents=True, exist_ok=True)
     environ = {
         "PANTHEON_ASSISTANT_CODEX_BIN": "codex",
@@ -72,10 +74,33 @@ def _provider(tmp_path: Path, run_func, *, env=None, mount=None) -> AssistantCod
         environ=environ,
         mounts=FakeMounts(mount or _ready_mount()),
         run_func=run_func,
+        popen_func=popen_func,
         which_func=lambda _: "/usr/bin/codex",
         audit_log=AssistantProviderAuditLog(tmp_path / "provider-audit.jsonl", clock=_clock),
         clock=_clock,
     )
+
+
+class FakeDeviceAuthProcess:
+    def __init__(self, stdout: str, stderr: str = "") -> None:
+        self.stdout = io.StringIO(stdout)
+        self.stderr = io.StringIO(stderr)
+        self.returncode = None
+        self.terminated = False
+
+    def poll(self):
+        return self.returncode
+
+    def terminate(self):
+        self.terminated = True
+        self.returncode = 0
+
+    def wait(self, timeout=None):
+        self.returncode = 0
+        return self.returncode
+
+    def kill(self):
+        self.returncode = -9
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -185,6 +210,77 @@ def test_readiness_degraded_when_mount_fails(tmp_path: Path) -> None:
     assert result["status"] == "degraded"
     assert result["degraded_reason"] == "codex_mount_missing_host_mount"
     assert result["auth_status"] == "mount_unavailable"
+
+
+def test_device_reauth_captures_code_and_reprobes_readiness(tmp_path: Path) -> None:
+    popen_calls = []
+    process = FakeDeviceAuthProcess(
+        "Open https://auth.openai.com/device in your browser\n"
+        "Enter code: ABCD-EFGH\n"
+    )
+
+    def fake_popen(cmd, **kwargs):
+        popen_calls.append((cmd, kwargs))
+        return process
+
+    def fake_run(cmd, **kwargs):
+        if cmd == ["/usr/bin/codex", "--version"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="codex 1.2.3\n", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout='{"final":"ok"}\n', stderr="")
+
+    provider = _provider(tmp_path, fake_run, popen_func=fake_popen)
+    result = provider.start_device_reauth(
+        operator_id="op-1",
+        trace_id="trace-reauth-1",
+        capture_timeout_seconds=3,
+        poll_interval_seconds=1,
+        max_wait_seconds=30,
+    )
+
+    assert result["provider"] == "codex_cli"
+    assert result["verification_uri"] == "https://auth.openai.com/device"
+    assert result["user_code"] == "ABCD-EFGH"
+    assert result["credential_exchange"]["bff_handles_credentials"] is False
+    assert result["credential_exchange"]["frontend_handles_credentials"] is False
+    assert result["credential_exchange"]["provider_cli_writes_mount"] is True
+
+    cmd, kwargs = popen_calls[0]
+    assert cmd == ["/usr/bin/codex", "login", "--device-auth"]
+    assert kwargs["env"]["CODEX_HOME"] == "/home/pantheon-assistant/.codex"
+
+    status = result
+    for _ in range(20):
+        status = provider.reauth_status(result["reauth_session_id"])
+        if status["status"] == "completed":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "completed"
+    assert status["readiness"]["ready"] is True
+    assert process.terminated is True
+
+
+def test_device_reauth_requires_writable_mount(tmp_path: Path) -> None:
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 0, stdout="codex 1.2.3\n", stderr="")
+
+    read_only_mount = CredentialMountValidation(
+        provider="codex",
+        ready=True,
+        status="ready",
+        configured=True,
+        host_source="dedicated_service_user",
+        container_target="codex_home",
+        mount_mode="ro",
+        owner_check="matched",
+    )
+    provider = _provider(tmp_path, fake_run, mount=read_only_mount)
+
+    with pytest.raises(CodexProviderError) as exc_info:
+        provider.start_device_reauth(operator_id="op-1")
+
+    assert exc_info.value.code == "CODEX_REAUTH_MOUNT_READ_ONLY"
+    assert exc_info.value.status_code == 409
 
 
 def test_invoke_uses_read_only_workspace_by_default(tmp_path: Path) -> None:

@@ -404,7 +404,7 @@ This is intentional: gating discipline is in CI, not in human review
 | `.github/workflows/nightly-publish-cut.yml`| cron `0 3 * * *` + `workflow_dispatch`                                    | Cut `publish/v<YYYY>.<MM>.<DD>.<N>` from `dev` if it advanced and release discipline passes |
 | `.github/workflows/publish-promote.yml`    | cron hourly + `release/v*` push + `workflow_dispatch`                    | Open `promote/<v>` PR after soak; auto-merge             |
 | `.github/workflows/master-release.yml`     | push on `master`                                                         | Tag `prod/<v>` on promote merges; tag hotfix merges      |
-| `.github/workflows/nonprod-deploy.yml`     | push on `publish/v*` + `workflow_dispatch`                               | Auto-deploy dev VM from latest publish; manual staging   |
+| `.github/workflows/nonprod-deploy.yml`     | push on `publish/v*`, push on `master`, and `workflow_dispatch`           | Auto-deploy dev from publish and staging-live from master |
 | `.github/workflows/orchestrator-sync.yml`  | push/tag/PR labeled                                                      | POST git event to orchestrator webhook (no-op without SYNC_URL) |
 
 ---

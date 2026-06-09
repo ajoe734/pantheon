@@ -24,7 +24,7 @@ def test_compose_wires_openclaw_gateway_adapter_without_broker_activation() -> N
     assert adapter["environment"]["OPENCLAW_CAPITAL_BINDING_ENABLED"] == "false"
     assert (
         adapter["environment"]["OPENCLAW_ALLOWED_TOOLS"]
-        == "${OPENCLAW_ALLOWED_TOOLS:-assistant.command,assistant.sa_sd.generate}"
+        == "${OPENCLAW_ALLOWED_TOOLS:-assistant.command,assistant.sa_sd.generate,assistant.openclaw.ask,assistant.control_mode.status,assistant.transcript.resync,assistant.orchestrator.status}"
     )
     assert adapter["ports"] == ["${OPENCLAW_GATEWAY_ADAPTER_PORT:-18104}:8104"]
     assert adapter["cap_add"] == ["SYS_ADMIN"]

@@ -48566,6 +48566,38 @@ def _assistant_prepare_repair_worktree(
         raise _openclaw_client_error(exc) from exc
 
 
+def _assistant_provider_reauth(
+    payload: Dict[str, Any],
+    operator_id: str,
+    trace_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    provider = str(payload.get("provider") or "codex").strip() or "codex"
+    try:
+        return OpenClawOpsClient().start_assistant_provider_reauth(
+            provider=provider,
+            payload=payload,
+            operator_id=operator_id or "management-ai",
+            trace_id=trace_id,
+        )
+    except OpenClawOpsClientError as exc:
+        raise _openclaw_client_error(exc) from exc
+
+
+def _assistant_provider_reauth_status(
+    provider: str,
+    session_id: str,
+    operator_id: str,
+) -> Dict[str, Any]:
+    try:
+        return OpenClawOpsClient().get_assistant_provider_reauth_status(
+            provider=provider or "codex",
+            session_id=session_id,
+            operator_id=operator_id or "management-ai",
+        )
+    except OpenClawOpsClientError as exc:
+        raise _openclaw_client_error(exc) from exc
+
+
 def _include_assistant_routes() -> None:
     global _ASSISTANT_SESSION_STORE, _ASSISTANT_TRANSCRIPT_STORE, _ASSISTANT_CONTROL_MODE_STORE
     from assistant.control_mode import ControlModeStore
@@ -48595,6 +48627,8 @@ def _include_assistant_routes() -> None:
             openclaw_tool_policy=_assistant_openclaw_tool_policy,
             openclaw_effective_tools=_assistant_openclaw_effective_tools,
             prepare_repair_worktree=_assistant_prepare_repair_worktree,
+            provider_reauth=_assistant_provider_reauth,
+            provider_reauth_status=_assistant_provider_reauth_status,
         )
     )
 

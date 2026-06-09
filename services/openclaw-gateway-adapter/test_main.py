@@ -335,6 +335,74 @@ class TestCapabilities(unittest.TestCase):
         self.assertEqual(body["status"], "ok")
         self.assertEqual(body["data"][0]["provider"], "codex_cli")
 
+    def test_assistant_codex_reauth_starts_device_flow(self):
+        fake_payload = {
+            "reauth_session_id": "codex_reauth_1",
+            "provider": "codex_cli",
+            "status": "pending",
+            "verification_uri": "https://auth.openai.com/device",
+            "user_code": "ABCD-EFGH",
+            "credential_exchange": {
+                "bff_handles_credentials": False,
+                "frontend_handles_credentials": False,
+            },
+        }
+        with patch.object(
+            adapter_main._CODEX_PROVIDER,
+            "start_device_reauth",
+            return_value=fake_payload,
+        ) as start:
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/codex/reauth",
+                json={"reason": "expired", "captureTimeoutSeconds": 3},
+                headers={"X-Operator-Id": "op-1", "X-Trace-Id": "trace-reauth-1"},
+            )
+
+        self.assertEqual(resp.status_code, 202)
+        body = resp.json()
+        self.assertEqual(body["status"], "ok")
+        self.assertEqual(body["data"]["verification_uri"], "https://auth.openai.com/device")
+        self.assertEqual(body["data"]["user_code"], "ABCD-EFGH")
+        start.assert_called_once_with(
+            operator_id="op-1",
+            trace_id="trace-reauth-1",
+            reason="expired",
+            capture_timeout_seconds=3,
+            poll_interval_seconds=None,
+            max_wait_seconds=None,
+        )
+
+    def test_assistant_codex_reauth_requires_operator(self):
+        with patch.object(adapter_main._CODEX_PROVIDER, "start_device_reauth") as start:
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/codex/reauth",
+                json={"reason": "expired"},
+            )
+
+        self.assertEqual(resp.status_code, 401)
+        self.assertEqual(resp.json()["error_code"], "OPERATOR_REQUIRED")
+        start.assert_not_called()
+
+    def test_assistant_codex_reauth_status_returns_session(self):
+        with patch.object(
+            adapter_main._CODEX_PROVIDER,
+            "reauth_status",
+            return_value={
+                "reauth_session_id": "codex_reauth_1",
+                "provider": "codex_cli",
+                "status": "completed",
+                "readiness": {"ready": True},
+            },
+        ) as status:
+            resp = client.get(
+                "/api/openclaw-adapter/assistant/providers/codex/reauth/codex_reauth_1",
+                headers={"X-Operator-Id": "op-1"},
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["data"]["status"], "completed")
+        status.assert_called_once_with("codex_reauth_1")
+
     def test_assistant_codex_invoke_passes_through_runtime(self):
         fake_result = types.SimpleNamespace(
             provider="codex_cli",
