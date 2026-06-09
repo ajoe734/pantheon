@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Add provider re-auth as device-flow skill assistant.provider.reauth
-- Status: in_progress
+- Status: review
 - Owner: Codex
 - Reviewer: Claude
-- Next: Implemented provider reauth surfaces; adding tests and validation
+- Next: PR #1183 merged into dev at fabc64ae954994e9dd7f0cfb5f3614a0773c13ac; waiting for Claude review_approved before owner can run done.
 
 ## Summary
-新增 assistant.provider.reauth skill（kernel + control-mode gated）：adapter 以 service-user mount 的 CODEX_HOME 跑 codex login --device-auth，擷取 verification_uri/user_code 回前端、背景輪詢直到 token 寫入掛載目錄、成功後自動 re-probe readiness。憑證只在 operator 瀏覽器與 IdP 間交換，不經 BFF/FE。先做 device-auth headless 擷取 spike。
+新增 assistant.provider.reauth skill：以 service-user CODEX_HOME 執行 codex login --device-auth，安全回傳 verification_uri/user_code，背景追蹤登入完成並重新 probe readiness。
