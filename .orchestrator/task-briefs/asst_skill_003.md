@@ -16,6 +16,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 - Reviewed artifact: `docs/decisions/asst-skill-003-review.md`
 - Merged delivery reviewed: PR #1177 / merge commit `ae0c12ed`
+- Finalization PR merged: PR #1179 / merge commit `3597d9c4a8aa916351c6b20dd53d2ca193b2e5da`
 - Focused validation:
   - `git diff --check`
   - `python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge`
