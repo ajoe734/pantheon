@@ -149,6 +149,34 @@ class SupervisorWatchdogTests(unittest.TestCase):
         self.addCleanup(handle.close)
         return handle
 
+    def test_start_supervisor_pins_status_root_from_config(self) -> None:
+        # Regression: the supervisor runs from the dev-root checkout but must
+        # resolve the task archive against the canonical worktree named in
+        # config.paths.status_file, or freshly-archived dependencies read as
+        # "missing" and ready-dispatch stalls to a single worker.
+        # docs/decisions/supervisor-status-root-split-brain-2026-06-09.md
+        status_file = self.root / "canonical" / "ai-status.json"
+        status_file.parent.mkdir(parents=True, exist_ok=True)
+        self.config["paths"]["status_file"] = str(status_file)
+        captured = {}
+
+        class _FakeProc:
+            pid = 4242
+
+        def _fake_popen(command, **kwargs):
+            captured["env"] = kwargs.get("env")
+            return _FakeProc()
+
+        now = datetime(2026, 6, 9, 12, 0, 0, tzinfo=timezone.utc)
+        with mock.patch.object(supervisor_watchdog.subprocess, "Popen", _fake_popen):
+            pid, _log_path = supervisor_watchdog.start_supervisor(self.config, {}, now)
+        self.assertEqual(pid, 4242)
+        self.assertIsNotNone(captured["env"])
+        self.assertEqual(
+            captured["env"].get("PANTHEON_STATUS_ROOT"),
+            str(status_file.parent),
+        )
+
     def test_supervisor_lock_held_true_when_locked(self) -> None:
         self.hold_lock()
         self.assertTrue(supervisor_watchdog.supervisor_lock_held(self.config))
