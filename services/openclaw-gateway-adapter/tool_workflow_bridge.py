@@ -36,11 +36,17 @@ from assistant_command_policy import (
 
 
 ASSISTANT_SKILL_DESCRIPTOR_SCHEMA_VERSION = "assistant_skill_descriptor.v1"
+ASSISTANT_SA_SD_GENERATE_TOOL_NAME = "assistant.sa_sd.generate"
 _DEFAULT_EFFECTIVE_SKILL_MODE = "kernel_debug"
 _DEFAULT_OPERATOR_ROLE = "operator"
 _TOOL_SKILL_MODES = ("kernel_debug", "kernel_repair")
 _ASSISTANT_COMMAND_SKILL_MODES = ("kernel_observe", "kernel_debug", "kernel_repair")
+_ASSISTANT_SA_SD_GENERATE_SKILL_MODES = ("kernel_debug", "kernel_repair")
 _WORKFLOW_SKILL_MODES = ("kernel_repair",)
+_ADAPTER_OWNED_ASSISTANT_TOOLS = frozenset({
+    ASSISTANT_COMMAND_TOOL_NAME,
+    ASSISTANT_SA_SD_GENERATE_TOOL_NAME,
+})
 _OPERATOR_ROLE_ALIASES = {
     "admin": "admin",
     "approver": "approver",
@@ -354,6 +360,37 @@ def _tool_skill_descriptor(
     upstream_metadata: Optional[Dict[str, Any]] = None,
 ) -> AssistantSkillDescriptor:
     metadata = upstream_metadata or {}
+    if tool_name == ASSISTANT_SA_SD_GENERATE_TOOL_NAME:
+        return AssistantSkillDescriptor(
+            id=tool_name,
+            title="Generate SA/SD",
+            surface="assistant_command",
+            mode_gate=_mode_gate(_ASSISTANT_SA_SD_GENERATE_SKILL_MODES),
+            role="operator",
+            confirm_policy={
+                "required": False,
+                "note": "Generates assistant SA/SD and optional task packet through the BFF dev-docs handler.",
+            },
+            input_schema={
+                "type": "object",
+                "required": ["conversationId", "featureSummary"],
+                "properties": {
+                    "conversationId": {"type": "string"},
+                    "featureSummary": {"type": "string"},
+                    "affectedModules": {"type": "array", "items": {"type": "string"}},
+                    "proposedOwner": {"type": "string"},
+                    "proposedReviewer": {"type": "string"},
+                    "archive": {"type": "boolean"},
+                    "emitTaskPacket": {"type": "boolean"},
+                    "contextPack": {"type": "object", "additionalProperties": True},
+                    "contextPackRequest": {"type": "object", "additionalProperties": True},
+                    "extraContext": {"type": "object", "additionalProperties": True},
+                },
+                "additionalProperties": True,
+            },
+            handler_ref="bff.route:POST /bff/assistant/dev-docs/generate",
+            result_surface="assistant_dev_docs_packet",
+        )
     if tool_name == ASSISTANT_COMMAND_TOOL_NAME:
         return AssistantSkillDescriptor(
             id=tool_name,
@@ -433,6 +470,10 @@ def _upstream_tool_metadata(raw_tools: Optional[List[Dict[str, Any]]]) -> Dict[s
             if name:
                 metadata[name] = {"name": name}
     return metadata
+
+
+def _is_adapter_owned_assistant_tool(tool_name: str) -> bool:
+    return tool_name in _ADAPTER_OWNED_ASSISTANT_TOOLS
 
 
 # ---------------------------------------------------------------------------
@@ -834,7 +875,19 @@ class ToolWorkflowBridge:
         if upstream_tools is not None:
             upstream_names = set(upstream_metadata)
             if executable_policy_tools:
-                effective = sorted(frozenset(executable_policy_tools) & upstream_names)
+                adapter_owned = [
+                    tool_name
+                    for tool_name in executable_policy_tools
+                    if _is_adapter_owned_assistant_tool(tool_name)
+                ]
+                upstream_backed = sorted(
+                    frozenset(
+                        tool_name
+                        for tool_name in executable_policy_tools
+                        if not _is_adapter_owned_assistant_tool(tool_name)
+                    ) & upstream_names
+                )
+                effective = sorted(frozenset([*adapter_owned, *upstream_backed]))
             else:
                 effective = []
         else:
