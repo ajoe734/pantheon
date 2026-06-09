@@ -54,6 +54,11 @@ export interface AssistantDevBridgeTaskPacketRequest {
   mode?: string;
 }
 
+export interface AssistantCatalogRoute {
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  path: string;
+}
+
 function resolvedBase(baseUrl?: string): string {
   if (baseUrl) return baseUrl.replace(/\/+$/, "");
   if (typeof window !== "undefined" && window.location && window.location.origin) {
@@ -109,6 +114,59 @@ async function postJson<T>(
     body: JSON.stringify(body),
   });
   return parseJsonResponse<T>(res, url, "POST");
+}
+
+async function requestJson<T>(
+  method: AssistantCatalogRoute["method"],
+  path: string,
+  body?: Record<string, unknown>,
+  baseUrl?: string,
+  idempotencyPrefix?: string,
+): Promise<T> {
+  const base = resolvedBase(baseUrl);
+  const url = `${base}${path}`;
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+  };
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  if (idempotencyPrefix) {
+    headers["Idempotency-Key"] = idempotencyKey(idempotencyPrefix);
+  }
+  const res = await fetch(url, {
+    method,
+    credentials: "include",
+    headers,
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  });
+  return parseJsonResponse<T>(res, url, method);
+}
+
+export function assistantCatalogRouteFromHandlerRef(handlerRef?: string | null): AssistantCatalogRoute | null {
+  const value = String(handlerRef ?? "").trim();
+  const match = /^bff\.route:(GET|POST|PUT|PATCH|DELETE)\s+(\S+)$/i.exec(value);
+  if (!match) return null;
+  const method = match[1].toUpperCase() as AssistantCatalogRoute["method"];
+  const path = match[2];
+  if (!path.startsWith("/bff/")) return null;
+  return { method, path };
+}
+
+export function invokeAssistantCatalogRoute(
+  handlerRef: string,
+  body: Record<string, unknown>,
+  baseUrl?: string,
+): Promise<Record<string, unknown>> {
+  const route = assistantCatalogRouteFromHandlerRef(handlerRef);
+  if (!route) {
+    throw new Error("Assistant skill handler is not a frontend-routable BFF route.");
+  }
+  return requestJson(
+    route.method,
+    route.path,
+    route.method === "GET" ? undefined : body,
+    baseUrl,
+    "assistant-catalog",
+  );
 }
 
 export function postManagementAssistantAsk(
