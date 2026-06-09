@@ -1022,7 +1022,8 @@
     "nightly_publish": {
       "enabled": true,
       "cron_utc": "0 3 * * *",
-      "version_format": "vYYYY.WW.0",
+      "version_format": "vYYYY.MM.DD.N",
+      "release_state_file": ".orchestrator/release-state.json",
       "skip_if_no_new_commits": true
     },
     "promote": {
