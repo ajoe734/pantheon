@@ -696,6 +696,53 @@ EOF
         self.assertEqual(report["providers"]["antigravity2"]["paths"]["home"], os.path.expanduser("~/.gemini-agy2"))
         self.assertEqual(report["providers"]["antigravity2"]["settings"]["antigravity.print_timeout"], "15m")
 
+    def test_antigravity_probe_ready_requires_nonempty_output(self) -> None:
+        # `agy --prompt` exits 0 with empty output when the OAuth token is
+        # revoked, so a clean exit code alone must NOT be treated as ready.
+        ready, error, status = provider_permissions._antigravity_probe_ready(0, "", "")
+        self.assertFalse(ready)
+        self.assertEqual(status, "empty_output")
+        self.assertIsNotNone(error)
+
+        ready, error, status = provider_permissions._antigravity_probe_ready(0, "OK", "OK")
+        self.assertTrue(ready)
+        self.assertIsNone(error)
+        self.assertEqual(status, "ready")
+
+        ready, _error, status = provider_permissions._antigravity_probe_ready(
+            0, "", "error getting token source: You are not logged into Antigravity."
+        )
+        self.assertFalse(ready)
+        self.assertEqual(status, "not_logged_in")
+
+        ready, _error, status = provider_permissions._antigravity_probe_ready(1, "", "boom")
+        self.assertFalse(ready)
+        self.assertEqual(status, "exit_1")
+
+        ready, _error, status = provider_permissions._antigravity_probe_ready(
+            0, "", "Individual quota reached. Contact your administrator to enable overages."
+        )
+        self.assertFalse(ready)
+        self.assertEqual(status, "quota_reached")
+
+    def test_antigravity_auth_probe_not_ready_on_silent_exit_zero(self) -> None:
+        config = {
+            "providers": {"antigravity": {"antigravity": {"cli": "agy"}}},
+        }
+        token = Path(os.path.expanduser("~/x-token"))
+        silent = subprocess.CompletedProcess(args=["agy"], returncode=0, stdout="", stderr="")
+        with (
+            mock.patch.object(
+                provider_permissions, "_antigravity_auth_metadata",
+                return_value={"oauth_token_exists": True, "gemini_api_key_present": False, "oauth_token": str(token)},
+            ),
+            mock.patch.object(provider_permissions, "_previous_provider_auth_probe", return_value=None),
+            mock.patch.object(provider_permissions, "run_command", return_value=silent),
+        ):
+            record = provider_permissions._antigravity_auth_probe(config, "antigravity", "/usr/bin/agy")
+        self.assertFalse(record["ready"])
+        self.assertEqual(record["status"], "empty_output")
+
     def test_force_push_is_denied(self) -> None:
         command = "git push --force origin HEAD"
 
