@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-06-09T04:40:16Z",
+  "updated_at": "2026-06-09T06:25:15Z",
   "counts": {
-    "total": 1414,
-    "completed": 1391,
+    "total": 1415,
+    "completed": 1392,
     "superseded": 23
   },
   "recent_terminal_ids": [
+    "ASST-SKILL-005",
     "ASST-SKILL-003",
     "ASST-SKILL-002",
     "ASST-SKILL-001",
@@ -25,7 +26,6 @@
     "MGMT-AI-PERSIST-P0-STORE-001",
     "ASST-INTEG-006",
     "ASST-INTEG-003",
-    "ASST-INTEG-005",
-    "ASST-INTEG-002"
+    "ASST-INTEG-005"
   ]
 }
