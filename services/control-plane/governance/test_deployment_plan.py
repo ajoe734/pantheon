@@ -140,6 +140,44 @@ class TestDeploymentPlanCreation(unittest.TestCase):
         self.assertEqual(plan.scale.capital_scale_pct, 5.0)
         self.assertEqual(plan.scale.gross_scale_pct, 25.0)
 
+    def test_risk_policy_rejection_blocks_plan_creation(self):
+        with self.assertRaisesRegex(DeploymentPlanError, "RiskPolicy"):
+            self.planner.create_plan(
+                plan_id="plan-canary-risk-reject",
+                approval_decision_id="approval-001",
+                approval_decision=approved_decision(),
+                registry_entry=approved_registry_entry(stage="paper"),
+                capital_pool_id="pool-001",
+                sponsor_persona_id="persona-ops",
+                target_stage=DeploymentStage.CANARY,
+                rollback=rollback_ref(),
+                risk_policy={
+                    "risk_policy_id": "risk-main",
+                    "max_canary_capital_scale_pct": 2.0,
+                    "max_canary_gross_scale_pct": 10.0,
+                },
+            )
+
+    def test_risk_policy_pass_is_recorded_in_plan_metadata(self):
+        plan = self.planner.create_plan(
+            plan_id="plan-canary-risk-pass",
+            approval_decision_id="approval-001",
+            approval_decision=approved_decision(),
+            registry_entry=approved_registry_entry(stage="paper"),
+            capital_pool_id="pool-001",
+            sponsor_persona_id="persona-ops",
+            target_stage=DeploymentStage.CANARY,
+            rollback=rollback_ref(),
+            risk_policy={
+                "risk_policy_id": "risk-main",
+                "max_canary_capital_scale_pct": 5.0,
+                "max_canary_gross_scale_pct": 25.0,
+            },
+        )
+
+        assert plan.metadata is not None
+        self.assertEqual(plan.metadata["risk_policy_evaluation"]["decision"], "allowed")
+
     def test_create_live_plan(self):
         plan = self.planner.create_plan(
             plan_id="plan-live-001",

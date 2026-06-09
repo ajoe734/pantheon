@@ -25,8 +25,22 @@ Usage
 from __future__ import annotations
 
 import uuid
+import sys
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from services.capital.risk_policy import (
+    RiskPolicy,
+    RiskPolicyEvaluation,
+    RiskPolicyEvaluationContext,
+    RiskPolicyEvaluator,
+    RiskPolicyTargetType,
+)
 
 from .conflict_classifier import classify_allocation_conflicts
 from .models import (
@@ -74,34 +88,69 @@ class PoolRiskPolicy:
         forbidden_strategy_families: Optional[set] = None,
         max_single_weight: float = 1.0,
         custom_veto_fn: Optional[Callable[[PersonaAllocationProposal], Optional[str]]] = None,
+        risk_policy: Optional[RiskPolicy | Mapping[str, Any]] = None,
+        evaluator: Optional[RiskPolicyEvaluator] = None,
     ) -> None:
         self.forbidden_asset_classes = forbidden_asset_classes or set()
         self.forbidden_strategy_families = forbidden_strategy_families or set()
         self.max_single_weight = max_single_weight
         self.custom_veto_fn = custom_veto_fn
+        self._evaluator = evaluator or RiskPolicyEvaluator()
+        self._risk_policy = (
+            risk_policy
+            if isinstance(risk_policy, RiskPolicy)
+            else RiskPolicy.from_mapping(risk_policy)
+            if risk_policy is not None
+            else RiskPolicy(
+                risk_policy_id="optimizer-pool-risk-policy",
+                max_single_name_weight=max_single_weight,
+                forbidden_asset_classes=tuple(sorted(self.forbidden_asset_classes)),
+                forbidden_strategy_families=tuple(sorted(self.forbidden_strategy_families)),
+            )
+        )
 
     def veto_reason(self, proposal: PersonaAllocationProposal) -> Optional[str]:
         """
         Return a VetoReason string if this proposal should be hard-vetoed,
         or None if it passes.
         """
-        # Asset classes may be projected into metadata by upstream proposal normalization.
-        asset_classes = proposal.metadata.get("asset_classes", [])
-        for asset_class in asset_classes:
-            if asset_class in self.forbidden_asset_classes:
-                return VetoReason.FORBIDDEN_ASSET_CLASS.value
-        # Check target_weights for single-position limit
-        for sym, w in proposal.target_weights.items():
-            if w > self.max_single_weight:
-                return VetoReason.POOL_RISK_POLICY.value
-        # Check forbidden strategy families in proposal metadata
-        strat_family = proposal.metadata.get("strategy_family", "")
-        if strat_family in self.forbidden_strategy_families:
-            return VetoReason.FORBIDDEN_STRATEGY_FAMILY.value
-        # Custom veto logic
+        evaluation = self._evaluator.evaluate(
+            self._risk_policy,
+            RiskPolicyEvaluationContext(
+                target_type=RiskPolicyTargetType.ALLOCATION_PROPOSAL.value,
+                target_id=proposal.proposal_id,
+                capital_pool_id=proposal.capital_pool_id,
+                stage=proposal.scope_ref,
+                risk_policy_ref=proposal.metadata.get("risk_policy_ref"),
+                target_weights=dict(proposal.target_weights),
+                asset_classes=tuple(proposal.metadata.get("asset_classes", [])),
+                strategy_family=proposal.metadata.get("strategy_family"),
+                gross_exposure=proposal.metadata.get("gross_exposure"),
+                net_exposure=proposal.metadata.get("net_exposure"),
+                leverage=proposal.metadata.get("leverage"),
+                turnover=proposal.metadata.get("turnover"),
+                sector_exposures=proposal.metadata.get("sector_exposures", {}),
+                factor_exposures=proposal.metadata.get("factor_exposures", {}),
+                liquidity=proposal.metadata.get("liquidity", {}),
+                metadata=proposal.metadata,
+            ),
+        )
+        if evaluation.rejected:
+            return _optimizer_veto_reason(evaluation)
         if self.custom_veto_fn is not None:
             return self.custom_veto_fn(proposal)
         return None
+
+
+def _optimizer_veto_reason(evaluation: RiskPolicyEvaluation) -> str:
+    for check in evaluation.checks:
+        if check.status != "failed":
+            continue
+        if check.code == "forbidden_asset_class":
+            return VetoReason.FORBIDDEN_ASSET_CLASS.value
+        if check.code == "forbidden_strategy_family":
+            return VetoReason.FORBIDDEN_STRATEGY_FAMILY.value
+    return VetoReason.POOL_RISK_POLICY.value
 
 
 # ---------------------------------------------------------------------------

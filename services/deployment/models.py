@@ -120,6 +120,8 @@ class CreateDeploymentPlanRequest(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
     supersedes_plan_id: Optional[str] = None
     status: PlanStatusBody = PlanStatusBody.APPROVED
+    risk_policy: Optional[Dict[str, Any]] = None
+    risk_policy_context: Optional[Dict[str, Any]] = None
 
 
 class ValidateDeploymentPlanResponse(BaseModel):
