@@ -80,6 +80,8 @@ from .ingest_manager import IngestManager
 from .pg_store import build_source_evidence_repository
 from .policy_registry import crawler_policy_for_connector, policy_registry_payload
 from .scheduler import IngestBatch, IngestionScheduler, JsonlIngestScheduleStore
+from .source_health import SourceHealth, SourceHealthError, SourceHealthStore, SourceUsageDaily, SourceUsageDailyStore
+from .retirement_engine import RecommendationType, RetirementRecommendation, compute_recommendations
 
 
 def _resolve_data_dir() -> Path:
@@ -96,6 +98,8 @@ SOURCE_EVIDENCE_STORE_PATH = Path(os.getenv("SOURCE_INGEST_EVIDENCE_STORE_PATH",
 DLQ_STORE_PATH = Path(os.getenv("SOURCE_INGEST_DLQ_PATH", str(DATA_DIR / "source_ingest_dlq.jsonl")))
 AUDIT_STORE_PATH = Path(os.getenv("SOURCE_INGEST_AUDIT_PATH", str(DATA_DIR / "source_ingest_audit.jsonl")))
 CONNECTOR_SCHEDULE_CONFIG_PATH = Path(os.getenv("SOURCE_INGEST_SCHEDULE_CONFIG_PATH", str(DATA_DIR / "connector_schedule.jsonl")))
+SOURCE_HEALTH_STORE_PATH = Path(os.getenv("SOURCE_INGEST_HEALTH_STORE_PATH", str(DATA_DIR / "source_health.jsonl")))
+SOURCE_USAGE_STORE_PATH = Path(os.getenv("SOURCE_INGEST_USAGE_STORE_PATH", str(DATA_DIR / "source_usage_daily.jsonl")))
 SOURCE_RECORD_SCHEMA_PATH = Path(__file__).with_name("source_record.schema.json")
 MAX_RECORDS_PER_JOB = int(os.getenv("SOURCE_INGEST_MAX_RECORDS", "100"))
 SCHEDULER_MAX_CONCURRENCY = max(1, int(os.getenv("SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY", "2")))
@@ -119,6 +123,8 @@ dead_letter_queue = DeadLetterQueue(DLQ_STORE_PATH)
 dead_letter_queue.load_from_spill()
 scheduler = IngestionScheduler(manager=manager, store=store, dead_letter_queue=dead_letter_queue)
 replay_processor = DeadLetterReplayProcessor(schema_registry=SchemaRegistry())
+source_health_store = SourceHealthStore.from_jsonl(SOURCE_HEALTH_STORE_PATH)
+source_usage_store = SourceUsageDailyStore.from_jsonl(SOURCE_USAGE_STORE_PATH)
 register_fastapi_health_routes(
     app,
     "pantheon-source-ingest",
@@ -1774,3 +1780,170 @@ def retire_proposal(proposal_id: str) -> dict[str, Any]:
         return _proposal_to_response(proposal_store.retire(proposal_id))
     except SourceChangeProposalError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# Source health and usage routes (DATASTRAT-USAGE-007)
+# ---------------------------------------------------------------------------
+
+
+class UpsertHealthRequest(StrictBaseModel):
+    source_id: str
+    source_kind: str
+    status: str = "ok"
+    last_success_at: str | None = None
+    last_failure_at: str | None = None
+    latest_watermark: str | None = None
+    row_count_last_run: int = 0
+    rejected_count_last_run: int = 0
+    schema_hash: str | None = None
+    staleness_seconds: int | None = None
+    error_rate_7d: float = 0.0
+    cost_estimate_30d: float | None = None
+    metadata: dict[str, Any] = {}
+
+
+class UpsertUsageRequest(StrictBaseModel):
+    date: str
+    source_id: str
+    source_kind: str
+    ingest_run_count: int = 0
+    query_count: int = 0
+    search_hit_count: int = 0
+    persona_match_count: int = 0
+    strategy_seed_yield_count: int = 0
+    strategy_promotion_count: int = 0
+    experiment_dependency_count: int = 0
+    active_strategy_dependency_count: int = 0
+    cost_estimate: float | None = None
+
+
+@app.get("/api/source-ingest/health")
+def list_source_health(source_kind: str | None = None) -> dict[str, Any]:
+    """List source health records, optionally filtered by source_kind."""
+    records = source_health_store.list(source_kind=source_kind)
+    return {
+        "health_records": [r.to_dict() for r in records],
+        "count": len(records),
+    }
+
+
+@app.get("/api/source-ingest/health/{source_id}")
+def get_source_health(source_id: str) -> dict[str, Any]:
+    health = source_health_store.get(source_id)
+    if health is None:
+        raise HTTPException(status_code=404, detail=f"No health record for source: {source_id}")
+    return health.to_dict()
+
+
+@app.put("/api/source-ingest/health/{source_id}", status_code=200)
+def upsert_source_health(source_id: str, request: UpsertHealthRequest) -> dict[str, Any]:
+    if request.source_id != source_id:
+        raise HTTPException(status_code=400, detail="source_id in body must match path parameter")
+    try:
+        health = SourceHealth.from_dict(request.model_dump())
+        source_health_store.upsert(health)
+        return health.to_dict()
+    except SourceHealthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/source-ingest/usage")
+def list_source_usage(
+    source_id: str | None = None,
+    source_kind: str | None = None,
+    date: str | None = None,
+) -> dict[str, Any]:
+    """List daily usage records, optionally filtered."""
+    records = source_usage_store.list(source_id=source_id, source_kind=source_kind, date=date)
+    return {
+        "usage_records": [r.to_dict() for r in records],
+        "count": len(records),
+    }
+
+
+@app.post("/api/source-ingest/usage", status_code=201)
+def upsert_source_usage(request: UpsertUsageRequest) -> dict[str, Any]:
+    """Upsert a daily usage record for a source."""
+    try:
+        record = SourceUsageDaily.from_dict(request.model_dump())
+        source_usage_store.upsert(record)
+        return record.to_dict()
+    except SourceHealthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/source-ingest/health/{source_id}/usage-aggregate")
+def get_source_usage_aggregate(source_id: str, days: int = 30) -> dict[str, Any]:
+    """Aggregate usage for one source over the most recent N days."""
+    return source_usage_store.aggregate_for_source(source_id, days=max(1, min(days, 365)))
+
+
+@app.get("/api/source-ingest/retirement-recommendations")
+def list_retirement_recommendations(
+    source_kind: str | None = None,
+    low_usage_threshold: int = 5,
+    high_failure_threshold: float = 0.5,
+    high_cost_threshold_30d: float = 1000.0,
+    low_yield_threshold: int = 1,
+    observation_window_days: int = 30,
+) -> dict[str, Any]:
+    """Compute retirement recommendations for all tracked sources.
+
+    Recommendations are pure computations over stored health and usage data.
+    They do not mutate any state. To act on a recommendation, create a
+    SourceChangeProposal through /api/source-change-proposals.
+    """
+    health_records = source_health_store.list(source_kind=source_kind)
+    recommendations = compute_recommendations(
+        health_records,
+        lambda sid: source_usage_store.aggregate_for_source(sid),
+        low_usage_threshold=low_usage_threshold,
+        high_failure_threshold=high_failure_threshold,
+        high_cost_threshold_30d=high_cost_threshold_30d,
+        low_yield_threshold=low_yield_threshold,
+        observation_window_seconds=observation_window_days * 86400,
+    )
+    return {
+        "recommendations": [r.to_dict() for r in recommendations],
+        "count": len(recommendations),
+        "summary": {
+            rt.value: sum(1 for r in recommendations if r.recommendation == rt)
+            for rt in RecommendationType
+        },
+    }
+
+
+@app.get("/api/source-ingest/health-usage-snapshot")
+def get_health_usage_snapshot() -> dict[str, Any]:
+    """Composite snapshot of source health, usage aggregates, and retirement recommendations.
+
+    Designed to be consumed by the BFF ops surface without requiring
+    multiple round-trips. Returns health records enriched with their
+    30-day usage aggregate and computed recommendation.
+    """
+    health_records = source_health_store.list()
+    recommendations = compute_recommendations(
+        health_records,
+        lambda sid: source_usage_store.aggregate_for_source(sid),
+    )
+    rec_map = {r.source_id: r for r in recommendations}
+
+    enriched: list[dict[str, Any]] = []
+    for health in health_records:
+        rec = rec_map.get(health.source_id)
+        usage = source_usage_store.aggregate_for_source(health.source_id)
+        enriched.append({
+            "health": health.to_dict(),
+            "usage_aggregate_30d": usage,
+            "recommendation": rec.to_dict() if rec else None,
+        })
+
+    return {
+        "source_count": len(enriched),
+        "sources": enriched,
+        "recommendation_summary": {
+            rt.value: sum(1 for r in recommendations if r.recommendation == rt)
+            for rt in RecommendationType
+        },
+    }
