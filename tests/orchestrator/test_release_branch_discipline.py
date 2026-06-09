@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -191,6 +192,55 @@ def test_archived_done_task_requires_closeout_delivery_metadata(tmp_path: Path) 
     assert report["ok"] is False
     assert "task OPS-WAVE-004-V2 delivery metadata is missing commit" in report["errors"]
     assert "task OPS-WAVE-004-V2 delivery metadata is missing commit trailers" in report["errors"]
+
+
+def test_per_task_release_state_supersedes_legacy_wave_state() -> None:
+    state = _state_with_wave_history(
+        [
+            _event("2026-05-17T05:23:05Z", "open", "2026-W21"),
+            _event("2026-05-17T05:42:47Z", "close", "2026-W21"),
+            _event("2026-05-17T05:46:59Z", "open", "2026-W22"),
+            _event("2026-05-17T05:47:39Z", "close", "2026-W22"),
+            _event("2026-05-17T07:02:39Z", "open", "2026-W25"),
+        ]
+    )
+    state["tasks"] = [
+        {"id": "ASST-CTRL-001", "status": "todo"},
+        {"id": "ASST-RUNTIME-001", "status": "todo"},
+    ]
+
+    report = release_branch_discipline.build_release_discipline_report(
+        state,
+        config={
+            "branch_workflow": {
+                "publish_branch_prefix": "publish/",
+                "release_tag_prefix": "release/",
+                "nightly_publish": {"version_format": "vYYYY.WW.0"},
+            }
+        },
+        release_state={"mode": "per_task", "version_format": "vYYYY.MM.DD.N"},
+        now=datetime(2026, 6, 9, 4, 0, tzinfo=timezone.utc),
+        existing_versions=["v2026.06.09.0", "v2026.06.08.0", "v2026.25.0"],
+    )
+
+    assert report["ok"] is True
+    assert report["release_state_mode"] == "per_task"
+    assert report["version"] == "v2026.06.09.1"
+    assert report["publish_branch"] == "publish/v2026.06.09.1"
+    assert report["release_tag"] == "release/v2026.06.09.1"
+    assert report["checks"]["legacy_wave_state"]["skipped"] is True
+    assert report["checks"]["task_board_closeout"]["skipped"] is True
+    assert not any("2026-W23" in error for error in report["errors"])
+    assert not any("ASST-CTRL-001" in error for error in report["errors"])
+
+
+def test_next_daily_publish_version_starts_at_zero() -> None:
+    version = release_branch_discipline.next_daily_publish_version(
+        now=datetime(2026, 6, 9, 4, 0, tzinfo=timezone.utc),
+        existing_versions=["v2026.06.08.0", "v2026.25.0"],
+    )
+
+    assert version == "v2026.06.09.0"
 
 
 def test_publish_version_round_trip() -> None:
