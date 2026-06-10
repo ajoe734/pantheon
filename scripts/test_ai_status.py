@@ -241,6 +241,36 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
         self.assertIn("`Task-ID: ...`", message)
         self.assertIn("`Reviewer: ...`", message)
 
+    def test_collect_done_delivery_metadata_skips_trailers_for_merge_commit(self) -> None:
+        responses = iter(
+            [
+                "task/REG-002",
+                "merge123",
+                "Merge pull request #1259 from ajoe734/task/REG-002",
+                "REG-002: deliver reviewed task\n",
+                "GitHub",
+                "noreply@github.com",
+                "",
+                "",
+            ]
+        )
+        task = {
+            "id": "REG-002",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "status": "review_approved",
+        }
+
+        with (
+            mock.patch.dict(os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False),
+            mock.patch.object(ai_status, "run_git_command", side_effect=lambda *args, **kwargs: next(responses)),
+        ):
+            delivery = ai_status.collect_done_delivery_metadata(task, "Codex")
+
+        self.assertEqual(delivery["commit"], "merge123")
+        self.assertEqual(delivery["commit_trailer_skip_reason"], "Merge")
+        self.assertTrue(delivery["commit_trailer_check_skipped"])
+
     def test_collect_done_delivery_metadata_uses_execute_plans_artifact_repo(self) -> None:
         responses = iter(
             [
