@@ -282,12 +282,23 @@ def cmd_open_prs(_args: argparse.Namespace) -> int:
                 f"Promote {version} to {main_branch}",
                 "--body",
                 body,
-                "--label",
-                promote_label,
             ],
             check=True,
             cwd=ROOT,
         )
+        if promote_label:
+            subprocess.run(
+                [
+                    "gh",
+                    "pr",
+                    "edit",
+                    promote_branch,
+                    "--add-label",
+                    promote_label,
+                ],
+                check=False,
+                cwd=ROOT,
+            )
         # Enable auto-merge so the PR auto-completes once branch-protection
         # status checks (Commit trailers / Runtime mirror guard / Smoke
         # acceptance) come back green. Non-fatal if auto-merge is unavailable.
