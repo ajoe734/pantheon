@@ -195,10 +195,25 @@ def _approval_proposal(payload: Mapping[str, Any], decision_type: str) -> Approv
             raise SponsorDecisionBridgeError(
                 "handoff_id is required for high-risk allocation_policy approval proposal"
             )
-        existing_types = {r.get("ref_type") for r in evidence if isinstance(r, dict)}
-        if "committee_memo" not in existing_types:
+        existing_memo = [r for r in evidence if isinstance(r, dict) and r.get("ref_type") == "committee_memo"]
+        existing_handoff = [r for r in evidence if isinstance(r, dict) and r.get("ref_type") == "service_handoff"]
+        if existing_memo:
+            wrong = [r for r in existing_memo if r.get("ref_id") != committee_id]
+            if wrong:
+                raise SponsorDecisionBridgeError(
+                    f"mismatched committee_memo ref: expected {committee_id!r}, "
+                    f"found {wrong[0].get('ref_id')!r}"
+                )
+        else:
             evidence = [{"ref_type": "committee_memo", "ref_id": committee_id}] + evidence
-        if "service_handoff" not in existing_types:
+        if existing_handoff:
+            wrong = [r for r in existing_handoff if r.get("ref_id") != handoff_id]
+            if wrong:
+                raise SponsorDecisionBridgeError(
+                    f"mismatched service_handoff ref: expected {handoff_id!r}, "
+                    f"found {wrong[0].get('ref_id')!r}"
+                )
+        else:
             evidence = evidence + [{"ref_type": "service_handoff", "ref_id": handoff_id}]
 
     return ApprovalDecisionProposal(

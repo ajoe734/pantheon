@@ -282,3 +282,26 @@ def test_bridge_allocation_policy_medium_risk_no_consultation_required() -> None
     ref_types = [r["ref_type"] for r in payload["evidence_refs"]]
     assert "committee_memo" not in ref_types
     assert "service_handoff" not in ref_types
+
+
+def test_bridge_allocation_policy_high_risk_mismatched_committee_memo_rejected() -> None:
+    payload = _allocation_policy_sponsor_decision(
+        committee_id="committee-expected",
+        handoff_id="gh-expected",
+        evidence_refs=[{"ref_type": "committee_memo", "ref_id": "memo-wrong"}],
+    )
+    with pytest.raises(SponsorDecisionBridgeError, match="mismatched committee_memo"):
+        bridge(payload)
+
+
+def test_bridge_allocation_policy_high_risk_mismatched_service_handoff_rejected() -> None:
+    payload = _allocation_policy_sponsor_decision(
+        committee_id="committee-expected",
+        handoff_id="gh-expected",
+        evidence_refs=[
+            {"ref_type": "committee_memo", "ref_id": "committee-expected"},
+            {"ref_type": "service_handoff", "ref_id": "gh-wrong"},
+        ],
+    )
+    with pytest.raises(SponsorDecisionBridgeError, match="mismatched service_handoff"):
+        bridge(payload)
