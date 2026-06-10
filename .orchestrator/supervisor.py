@@ -100,6 +100,8 @@ WORKER_FAILURE_PATTERNS = (
     re.compile(r'"type"\s*:\s*"rate_limit_event"', re.IGNORECASE),
     re.compile(r'"error"\s*:\s*"authentication_failed"', re.IGNORECASE),
     re.compile(r"quota exceeded", re.IGNORECASE),
+    re.compile(r"quota_exceeded", re.IGNORECASE),
+    re.compile(r"exceeded your .*quota", re.IGNORECASE),
     re.compile(r"free daily quota has been reached", re.IGNORECASE),
     re.compile(r"you have no quota", re.IGNORECASE),
     re.compile(r"^Failed to authenticate\b", re.IGNORECASE),
@@ -824,8 +826,13 @@ def log_runtime_summary(
         console_log("queue: empty", quiet=quiet)
 
 
-def load_provider_report(config: dict[str, Any]) -> dict[str, Any]:
-    if config.get("supervisor", {}).get("auto_refresh_provider_capabilities", True):
+def load_provider_report(config: dict[str, Any], *, refresh: bool | None = None) -> dict[str, Any]:
+    should_refresh = (
+        bool(refresh)
+        if refresh is not None
+        else bool(config.get("supervisor", {}).get("auto_refresh_provider_capabilities", True))
+    )
+    if should_refresh:
         report = build_provider_capabilities(config)
         write_provider_capabilities(config, report=report)
         return report
@@ -4271,6 +4278,8 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         "no quota",
         "you have no quota",
         "quota exceeded",
+        "quota_exceeded",
+        "exceeded your monthly quota",
         "free daily quota has been reached",
         "free tier quota exceeded",
         "quota will reset after",
@@ -9655,7 +9664,7 @@ def claim_next_task_for_agent(
         agent_name=display_name_for(config, agent_id),
         task_id=release_task_id,
     )
-    provider_report = load_provider_report(config)
+    provider_report = load_provider_report(config, refresh=False)
     changed = expire_provider_dispatch_pauses(config, state) or changed
     changed = reconcile_queue_records(config, state) or changed
     changed = prune_event_queue(config, state) or changed
