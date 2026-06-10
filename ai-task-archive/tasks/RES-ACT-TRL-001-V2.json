@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "task_id": "RES-ACT-TRL-001-V2",
+  "archived_at": "2026-05-20T07:09:15Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "RES-ACT-TRL-001-V2",
+    "title": "TRL runtime preference-data proof and DPO real-backend evidence",
+    "summary_zh": "Adapter-specific child: TRL preference dataset proof + DPO real-backend install/config evidence. Parent: RES-ACT-001-V2.",
+    "phase": "Phase 8 / EPIC-RES-ACT",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "RES-ACT-001-V2"
+    ],
+    "artifacts": [
+      "integrations/trl/preference_data_proof.md",
+      "integrations/trl/dpo_backend_evidence.md"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner finalized approved TRL proof closeout. PR #347 merged into dev as 68f8a701223bea71116305f6a8b89505115141dc; HEAD aca628d5f23d3e049e4db548afef5e97f6a21eed. Verification: pytest -q tests/governance/test_trl_proof_artifacts.py (5 passed); required GitHub checks passed.",
+    "last_update": "2026-05-20T07:09:15Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：preference_data_proof 正確映射 ProductionDataProof.v1，fail-closed 行為完整記錄，5 個 governance 測試全通過"
+    ],
+    "review_file": "support/reviews/RES-ACT-TRL-001-V2-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T07:09:15Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/res-act-trl-001-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/RES-ACT-TRL-001-V2",
+      "git_clean_required": false,
+      "commit": "aca628d5f23d3e049e4db548afef5e97f6a21eed",
+      "commit_subject": "RES-ACT-TRL-001-V2: refresh closeout after dev merge",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "RES-ACT-TRL-001-V2",
+        "Reviewer": "Claude",
+        "Verified": "pytest -q tests/governance/test_trl_proof_artifacts.py — 5 passed"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/RES-ACT-TRL-001-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "68f8a701223bea71116305f6a8b89505115141dc",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "RES-ACT-TRL-001-V2",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Ready for review: PR #308 merged into dev as 200e036c8c8378f556e9e082c6f7c52f2cebb0c5. Task commit 6a94e46a adds integrations/trl/preference_data_proof.md, integrations/trl/dpo_backend_evidence.md, and tests/governance/test_trl_proof_artifacts.py. Local validation: focused TRL proof test 5 passed; production_data/admission/disclosure/TRL proof suite 20 passed; py_compile passed. Please review and approve via ai-status.sh approve if acceptable.",
+      "status": "done",
+      "created_at": "2026-05-20T03:10:53Z",
+      "resolved_at": "2026-05-20T03:58:22Z"
+    },
+    {
+      "task_id": "RES-ACT-TRL-001-V2",
+      "from": "Gemini",
+      "to": "Copilot",
+      "message": "Chair reassigned review from Gemini to Copilot: Gemini review dispatch is quota-blocked; this merged research evidence review should move to idle Copilot.",
+      "status": "done",
+      "created_at": "2026-05-20T03:58:22Z",
+      "resolved_at": "2026-05-20T06:54:34Z"
+    },
+    {
+      "task_id": "RES-ACT-TRL-001-V2",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Chair reassigned review from Copilot to Claude: Copilot quota is blocking the review backlog; Claude is available for governance/evidence review work.",
+      "status": "done",
+      "created_at": "2026-05-20T06:54:34Z",
+      "resolved_at": "2026-05-20T06:56:09Z"
+    },
+    {
+      "task_id": "RES-ACT-TRL-001-V2",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: TRL preference-data proof and DPO backend evidence are accurate, fail-closed, and backed by 5 passing governance tests. Returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-20T06:56:09Z",
+      "resolved_at": "2026-05-20T07:09:16Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "task_id": "ASST-INTEG-008",
+  "archived_at": "2026-06-04T23:28:45Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASST-INTEG-008",
+    "title": "Prepare execution-plans FE context registry and stale-session UX follow-up",
+    "summary_zh": "產出跨 repo FE follow-up brief：assistant-readable form registry、BFF 404 stale session UX、SSE degraded 診斷；本任務不直接修改 FE。",
+    "phase": "Sprint ASST-INTEG / FE follow-up brief",
+    "owner": "Codex2",
+    "reviewer": "Copilot",
+    "status": "done",
+    "depends_on": [
+      "ASST-INTEG-001",
+      "ASST-INTEG-002"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;docs/05-ui;docs/pantheon-handoffs;.orchestrator/task-briefs"
+    ],
+    "acceptance": [
+      "FE brief specifies route form table filter selected-row and validator context;Brief preserves BFF conversation readback as source of truth;Brief covers BFF 404 stale local-only session recovery;Brief covers SSE failure diagnosis by auth network path or server stream;No execution-plans code is changed by this dispatch task"
+    ],
+    "next": "PR #842 merged into dev; FE follow-up brief published and verified. Closing stale active ASST-INTEG-008 row.",
+    "last_update": "2026-06-04T23:28:45Z",
+    "task_class": "assistant_integration",
+    "auto_created_by": "dispatch_assistant_existing_architecture_2026-06-03",
+    "auto_generated": true,
+    "terminal_outcome": "completed",
+    "review_notes_zh": [
+      "PR #842 已於 2026-06-03T15:04:44Z merge，交付 ASST-INTEG-008 FE follow-up brief。",
+      "驗收項目已由 FRONTEND_CHANGE_SPEC.md 覆蓋：UI context registry、BFF readback source-of-truth、stale local session UX、SSE diagnostic classifier、且不修改 execute-plans code。"
+    ],
+    "delivery": {
+      "recorded_at": "2026-06-04T23:28:45Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/ASST-INTEG-008",
+      "git_clean_required": false,
+      "commit": "492cb80cd34bad0cbd47dccba0fa024ae5a2faae",
+      "commit_subject": "ASST-INTEG-008: add FE follow-up brief",
+      "commit_author": {
+        "name": "Codex2",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "FE follow-up handoff docs for assistant UI context, stale-session UX, and SSE diagnostics.",
+        "Not changing": "execute-plans implementation, BFF runtime code, provider routing, or assistant security policy.",
+        "Composes with": "ASST-INTEG-001 durable conversation truth and ASST-INTEG-002 context mesh; intended for a later cross-repo execute-plans task.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "ASST-INTEG-008",
+        "Reviewer": "Copilot",
+        "Verified": "git diff --check; git diff --no-index --check /dev/null docs/pantheon-handoffs/ASST-INTEG-008-execution-plans-assistant-follow-up/FRONTEND_CHANGE_SPEC.md"
+      },
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/ASST-INTEG-008",
+      "push_status": "pushed",
+      "pull_request": 842,
+      "pull_request_url": "https://github.com/ajoe734/pantheon/pull/842",
+      "branch_head": "fa8214a19812775f44266cb5748553cd72e9a8b8",
+      "merge_commit": "2645c5423a9d8f5fa70fd6d46556d6fe1242d414",
+      "merged_at": "2026-06-03T15:04:44Z",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [],
+  "blockers": []
+}

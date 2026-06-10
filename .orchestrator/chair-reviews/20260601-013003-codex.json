@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "ASST-OCGW-002 is blocked on unsafe push/auth closeout and downstream todo work depends on it.",
+  "blocked_by": [
+    "ASST-OCGW-002 is blocked after review approval on PR push/auth closeout; its task worktree is dirty, ahead 3, and behind 12, so no safe sidecar wave or normal push approval is available."
+  ],
+  "blocked_sidecar_parents": [
+    "ASST-OCGW-002",
+    "ASST-OCGW-003",
+    "ASST-OCGW-004"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "ASST-OCGW-002",
+    "OPS-ASST-OCGW-002-PUSH-AUTH-20260601",
+    "PR-682",
+    "PR-688",
+    "PR-695",
+    "PR-698",
+    "PR-705"
+  ]
+}

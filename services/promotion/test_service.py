@@ -234,6 +234,33 @@ def test_create_deployment_persists_extensions_and_supports_listing_filters(clie
     assert listed["metadata"]["release_train"] == "paper-wave-a"
 
 
+def test_create_deployment_rejects_risk_policy_violation(client):
+    test_client, _ = client
+    _approved_approval(test_client)
+
+    response = test_client.post(
+        "/api/v1/deployments",
+        json=_deployment_payload(
+            plan_id="dp-risk-reject",
+            current_stage="paper",
+            target_stage="canary",
+            scale={
+                "capital_scale_pct": 5.0,
+                "gross_scale_pct": 25.0,
+                "ramp_schedule": ["T+0:5"],
+            },
+            risk_policy={
+                "risk_policy_id": "risk-main",
+                "max_canary_capital_scale_pct": 2.0,
+                "max_canary_gross_scale_pct": 10.0,
+            },
+        ),
+    )
+
+    assert response.status_code == 422
+    assert "RiskPolicy" in response.json()["detail"]
+
+
 def test_create_deployment_requires_decided_matching_approval(client):
     test_client, _ = client
     created = test_client.post("/api/v1/approvals", json=_approval_payload())

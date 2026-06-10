@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "task_id": "LSP-003-V2",
+  "archived_at": "2026-05-19T15:47:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LSP-003-V2",
+    "title": "Hosted bundle hash recorder",
+    "summary_zh": "Script fetches deployed bundles (index.html + JS chunks) and records SHA-256 hashes into the audit packet.",
+    "phase": "Phase 8 / EPIC-LSP",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "scripts/lovable/capture_bundle_hashes.py",
+      "tests/lovable/test_capture_bundle_hashes.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Done: hosted bundle hash recorder merged via PR #213; owner closeout evidence merged via PR #226 (merge 34aa017df5c831c1aa6d140815c4ac62a7d36a15); verification py_compile OK, pytest test_capture_bundle_hashes 3 passed, git diff --check OK.",
+    "last_update": "2026-05-19T15:47:57Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：bundle hash recorder 實作正確，TypedDict 合約清晰，依賴注入確保測試確定性，BFS + seen set 防止遞迴迴圈，write_audit_packet 合併不覆蓋既有 key；3 tests passed pytest -q; py_compile OK; whitespace check OK。非阻塞小注：line 172 pragma 標注不準，queue.pop(0) 可改 deque（均不影響正確性）。PR #213 已合入 dev。"
+    ],
+    "review_file": "support/evidence/LSP-003-V2/claude_review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T15:47:57Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/lsp-003-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LSP-003-V2",
+      "git_clean_required": false,
+      "commit": "94eb035eec51c8beaff7ffe63236c1fa9c71e20b",
+      "commit_subject": "LSP-003-V2: refresh closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "LSP-003-V2",
+        "Reviewer": "Claude",
+        "Verified": "py_compile OK; pytest test_capture_bundle_hashes 3 passed; git diff --check OK"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LSP-003-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "34aa017df5c831c1aa6d140815c4ac62a7d36a15",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LSP-003-V2",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for Claude review: PR #213 merged into dev at 2026-05-19T15:24:17Z (merge commit 3f8fab29e86af7ff38c2cb629dc64fdce84ac9f1). Scope: scripts/lovable/capture_bundle_hashes.py and tests/lovable/test_capture_bundle_hashes.py. Local verification: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q -p no:cacheprovider tests/lovable/test_capture_bundle_hashes.py; PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/lovable/capture_bundle_hashes.py tests/lovable/test_capture_bundle_hashes.py; git diff --check origin/dev...HEAD -- scripts/lovable/capture_bundle_hashes.py tests/lovable/test_capture_bundle_hashes.py. Branch CI Gate passed on PR #213.",
+      "status": "done",
+      "created_at": "2026-05-19T15:24:43Z",
+      "resolved_at": "2026-05-19T15:30:38Z"
+    },
+    {
+      "task_id": "LSP-003-V2",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved and returned to Codex2 for closeout. All 3 tests pass, py_compile clean, whitespace check clean. Implementation is correct: typed contract, DI fetcher, recursive BFS chunk discovery with cycle guard, proper audit-packet merge semantics.",
+      "status": "done",
+      "created_at": "2026-05-19T15:30:38Z",
+      "resolved_at": "2026-05-19T15:47:58Z"
+    }
+  ],
+  "blockers": []
+}

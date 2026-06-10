@@ -85,13 +85,22 @@ class GitHubBusCommandTests(unittest.TestCase):
             mock.patch.object(
                 github_bus,
                 "gh_json",
-                return_value=[
+                side_effect=[
+                    [
+                        {
+                            "id": 999,
+                            "state": "APPROVED",
+                            "body": "looks good",
+                            "user": {"login": "ajoe734"},
+                        }
+                    ],
                     {
-                        "id": 999,
-                        "state": "APPROVED",
-                        "body": "looks good",
-                        "user": {"login": "ajoe734"},
-                    }
+                        "statusCheckRollup": [],
+                        "mergeStateStatus": "CLEAN",
+                        "mergeable": "MERGEABLE",
+                        "state": "OPEN",
+                        "mergedAt": None,
+                    },
                 ],
             ),
             mock.patch.object(github_bus, "run_ai_status") as run_ai_status,
@@ -132,8 +141,9 @@ class GitHubBusCommandTests(unittest.TestCase):
             changed = github_bus.poll_pr_reviews(self.config, bus_state, status, "ajoe734/pantheon")
 
         self.assertFalse(changed)
+        review_calls = [call.args[0][-1] for call in gh_json.call_args_list if call.args[0][0] == "api"]
         self.assertEqual(
-            [call.args[0][-1] for call in gh_json.call_args_list],
+            review_calls,
             [
                 "repos/ajoe734/pantheon/pulls/11/reviews?per_page=100",
                 "repos/ajoe734/pantheon/pulls/12/reviews?per_page=100",
@@ -145,8 +155,9 @@ class GitHubBusCommandTests(unittest.TestCase):
             changed = github_bus.poll_pr_reviews(self.config, bus_state, status, "ajoe734/pantheon")
 
         self.assertFalse(changed)
+        review_calls = [call.args[0][-1] for call in gh_json.call_args_list if call.args[0][0] == "api"]
         self.assertEqual(
-            [call.args[0][-1] for call in gh_json.call_args_list],
+            review_calls,
             ["repos/ajoe734/pantheon/pulls/13/reviews?per_page=100"],
         )
         self.assertEqual(bus_state["poll_cursors"]["pr_reviews"], 0)

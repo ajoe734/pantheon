@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "BFF-INFRA-PATH-DEDUPE-001",
+  "archived_at": "2026-05-25T09:13:37Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-INFRA-PATH-DEDUPE-001",
+    "title": "Dedupe 12 snake_case duplicate route families per CANONICAL_PATH_NAMING decisions",
+    "summary_zh": null,
+    "phase": "Sprint BFF-DELTA-V3 / EPIC-BFF-DELTA-V3-INFRA",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-25_delta_v3/CANONICAL_PATH_NAMING.md;docs/04/pantheon_bff_api_gap_2026-05-25_delta_v3/BFF_API_GAP_delta_v3_spec.md;execute-plans/.lovable/audits/bff-backend-gap-2026-05-25-delta-v4.md;services/control-plane/bff/main.py;services/control-plane/bff/tests/test_bff_path_dedupe.py"
+    ],
+    "acceptance": [
+      "Audit services/control-plane/bff/main.py for duplicate route registrations matching the 12 families listed in v3 audit (personas pools deployments rebalances incidents runtimes skills tools mcp-servers vs mcp/servers mcp-tools vs mcp/tools ranking-formulas vs ranking/formulas strategy actions);For path-parameter duplicates (e.g. /bff/personas/{id} AND /bff/personas/{persona_id} producing same URL pattern) apply CANONICAL_PATH_NAMING.md decision A2: keep snake_case declaration and remove the legacy short-form decorator;For genuine URL duplicates with different path segments (e.g. /bff/mcp-servers/* vs /bff/mcp/servers/* and /bff/ranking-formulas vs /bff/ranking/formulas) keep the form FE currently uses per CANONICAL_PATH_NAMING.md Section 1 and serve HTTP 410 Gone with deprecation header on the alternate form;Each removed/410 route has matching pytest case asserting deprecation behavior;Update CANONICAL_PATH_NAMING.md Section 2 with the dedupe action log entry per family (kept canonical removed alias deprecation header timestamp);Live verification after redeploy: curl each of 12 canonical paths returns 200 (or expected status) and each deprecated alternate returns 410 with X-Deprecated header;Do not mark done if any canonical path 404 or any deprecated path still 200 instead of 410"
+    ],
+    "next": "Owner finalized after PR #580 merged route dedupe at a72b2fba7722d04d2ec9675b59a63ac45c96dc57 and PR #583 merged closeout artifacts at 4c945a889716c517918cdcce06a28eea09a1c58a; verified py_compile, path_dedupe pytest, and git diff --check.",
+    "last_update": "2026-05-25T09:13:37Z",
+    "review_notes_zh": [
+      "審查通過：所有12條路由家族均已正確處理，4項回歸測試全部通過，邊界合規，文件更新完整"
+    ],
+    "review_file": "support/reviews/BFF-INFRA-PATH-DEDUPE-001-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-25T09:13:37Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-infra-path-dedupe-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-INFRA-PATH-DEDUPE-001",
+      "git_clean_required": false,
+      "commit": "c9558f0b44c82d581c87c0e5db9e4957b05ac774",
+      "commit_subject": "BFF-INFRA-PATH-DEDUPE-001: record review closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped review artifact and generated task brief closeout state.",
+        "Not changing": "BFF route behavior, canonical path docs, runtime/deployment config, or live environment configuration.",
+        "Composes with": "PR #580 merge a72b2fba7722d04d2ec9675b59a63ac45c96dc57 and code commit 0cc244e9034de139922b85de1c80fabca09e9e11.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-INFRA-PATH-DEDUPE-001",
+        "Reviewer": "Claude",
+        "Verified": "py_compile main/test; pytest path_dedupe; git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-INFRA-PATH-DEDUPE-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "4c945a889716c517918cdcce06a28eea09a1c58a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-INFRA-PATH-DEDUPE-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "PR #580 merged into dev at a72b2fba7722d04d2ec9675b59a63ac45c96dc57; code commit 0cc244e9034de139922b85de1c80fabca09e9e11. Please review/approve lifecycle so owner can run final done closeout.",
+      "status": "done",
+      "created_at": "2026-05-25T08:55:53Z",
+      "resolved_at": "2026-05-25T09:01:25Z"
+    },
+    {
+      "task_id": "BFF-INFRA-PATH-DEDUPE-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 12 route families deduplicated, 4 regression tests pass, boundary-compliant. Returning to owner for done closeout.",
+      "status": "done",
+      "created_at": "2026-05-25T09:01:25Z",
+      "resolved_at": "2026-05-25T09:13:38Z"
+    }
+  ],
+  "blockers": []
+}

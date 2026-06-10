@@ -77,12 +77,28 @@ def _deployment_plan(**overrides):
         "approval_decision_id": "appr-001",
         "artifact_id": "art-alpha",
         "artifact_version": "1.0.0",
+        "artifact_state": "approved",
         "artifact_checksum": "sha256:alpha",
         "strategy_id": "strat-alpha",
         "capital_pool_id": "pool-paper-001",
         "target_stage": "paper",
         "runtime_role": "paper",
         "runtime_config_ref": "/workspace/lean/Launcher/config.json",
+        "runtime_config_status": "approved",
+        "risk_policy_ref": "risk-policy-paper-001",
+        "risk_policy_evaluation": {
+            "risk_policy_id": "risk-policy-paper-001",
+            "risk_policy_version": "v1",
+            "capital_pool_id": "pool-paper-001",
+            "target_type": "runtime_launch",
+            "target_id": "dp-paper-001",
+            "decision": "allowed",
+            "checks": [],
+            "blocking_reasons": [],
+            "warnings": [],
+            "evaluated_at": "2026-06-09T00:00:00Z",
+            "trace_id": "trace-risk-policy-paper-001",
+        },
     }
     payload.update(overrides)
     return payload

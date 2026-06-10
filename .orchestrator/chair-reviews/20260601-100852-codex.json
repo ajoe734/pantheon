@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Underutilization remains low, no global blocker is present, and Claude2 review slots can be safely rerouted.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [
+    {
+      "task_id": "ASST-OCGW-005",
+      "role": "reviewer",
+      "from": "Claude2",
+      "to": "Codex2",
+      "reason": "Claude2 is manually dispatch-paused until 2026-06-04T00:00:00Z; ASST-OCGW-005 is todo, owner is Gemini, and Codex2 is not paused or the owner."
+    },
+    {
+      "task_id": "ASST-FE-002",
+      "role": "reviewer",
+      "from": "Claude2",
+      "to": "Codex",
+      "reason": "Claude2 is manually dispatch-paused until 2026-06-04T00:00:00Z; ASST-FE-002 is todo, owner is Copilot, and Codex is not paused or the owner."
+    }
+  ],
+  "recommended_focus": [
+    "ASST-OCGW-003",
+    "ASST-OCGW-004",
+    "OPS-CHAIR-PR-HYGIENE"
+  ]
+}

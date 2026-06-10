@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "No live execution blockers, pending approvals, provider pauses, review dwell, or active sidecar pressure were found.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "OPS-CLOSE-STALE-BLOCKERS",
+    "OPS-VERIFY-BFF-B2-001-EXECUTE-PLANS-METADATA",
+    "OPS-RETIRE-MERGED-TASK-BRANCHES"
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Idle workers and runnable backlog exist; ASST-OCGW-001 is quarantined for Gemini quota and dirty-worktree recovery.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "ASST-OCGW-001"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "ASST-OCGW-001",
+    "OPS-GEMINI-QUOTA-GUARD-20260531",
+    "OPS-PROMOTE-PIPELINE-20260531",
+    "OPS-NIGHTLY-PUBLISH-CUT-20260531",
+    "PR-688"
+  ]
+}

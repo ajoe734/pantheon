@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "task_id": "HA-010-V2",
+  "archived_at": "2026-05-20T05:07:53Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "HA-010-V2",
+    "title": "Failover demo",
+    "summary_zh": "Demo + evidence packet: trigger failover from replica A to replica B; assert RTO/RPO met; assert in-flight commands either succeed or fail closed (no silent loss).",
+    "phase": "Phase 8 / EPIC-BFF-HA",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "HA-001-V2",
+      "HA-003-V2",
+      "HA-007-V2"
+    ],
+    "artifacts": [
+      "scripts/bff/failover_demo.sh",
+      "support/evidence/bff-ha-failover-demo/README.md"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Closed after PR #327 merged closeout evidence (merge f7ea3f64902ac91ae743b567b489117424d56cc0). Verified bash -n scripts/bff/failover_demo.sh and pytest -q tests/bff/test_failover_demo.py (4 passed); implementation PR #297 merge a7ef7e48 remains the approved failover demo delivery.",
+    "last_update": "2026-05-20T05:07:53Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：failover demo 6 條 assertion 齊全，RTO/RPO 數字在 dev SLA 內，fail-closed 與 no-silent-loss 行為有 in-process pytest 4/4 覆蓋，邊界限制（無 production topology 變動、無 live broker、無 L1 policy 更動）正確執行"
+    ],
+    "review_file": "support/evidence/bff-ha-failover-demo/review-ha-010-v2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T05:07:53Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ha-010-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/HA-010-V2",
+      "git_clean_required": false,
+      "commit": "8435c5afab627c379749937d7e90805f3795bbff",
+      "commit_subject": "HA-010-V2: record review approval",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "support/evidence/bff-ha-failover-demo/review-ha-010-v2.md closeout record for Claude approval of the failover demo evidence.",
+        "Not changing": "failover demo implementation, in-process tests, canonical L1 policy, deployment topology, or live broker/capital behavior.",
+        "Composes with": "PR #297 merge a7ef7e48 and HA-010-V2 owner closeout before ai-status done.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "HA-010-V2",
+        "Reviewer": "Claude",
+        "Verified": "bash -n scripts/bff/failover_demo.sh; pytest -q tests/bff/test_failover_demo.py"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/HA-010-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "f7ea3f64902ac91ae743b567b489117424d56cc0",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "HA-010-V2",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: implementation is merged via PR #297 (merge a7ef7e48). Verified bash -n scripts/bff/failover_demo.sh; pytest -q tests/bff/test_failover_demo.py (4 passed); full demo PASS with RTO 0.111s, RPO 0, no silent loss at /tmp/ha-010-v2-codex-run/failover-demo.json.",
+      "status": "done",
+      "created_at": "2026-05-20T01:58:43Z",
+      "resolved_at": "2026-05-20T04:57:20Z"
+    },
+    {
+      "task_id": "HA-010-V2",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 6 assertion rows pass, RTO 0.111s and RPO 0 both within dev SLA, fail-closed and no-silent-loss verified by in-process tests (4/4), boundary constraints correctly enforced. Returning to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-05-20T04:57:20Z",
+      "resolved_at": "2026-05-20T05:07:54Z"
+    }
+  ],
+  "blockers": []
+}

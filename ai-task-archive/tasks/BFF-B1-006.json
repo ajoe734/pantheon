@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "task_id": "BFF-B1-006",
+  "archived_at": "2026-05-23T07:20:17Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-B1-006",
+    "title": "POST /bff/logout clear session",
+    "summary_zh": null,
+    "phase": "Sprint BFF-1 / EPIC-BFF-GAP-P0",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BFF-B1-003"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#11-session-bootstrap",
+      "services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "Clears cookie or invalidates session",
+      "idempotent on repeat call",
+      "/bff/me afterwards returns 401"
+    ],
+    "next": "Owner finalized BFF-B1-006: /bff/logout session invalidation merged in PR #420 (ef20b034), closeout evidence merged in PR #433 (2da8be9f), focused pytest passed: 25 tests.",
+    "last_update": "2026-05-23T07:20:17Z",
+    "review_notes_zh": [
+      "審查通過：POST /bff/logout 正確以 401 SESSION_LOGGED_OUT 拒絕後續 /bff/me、清除 pantheon_session cookie、並將冪等鍵作用域限縮至 session；25 個 pytest 全通過，PR #420 已 merge 至 dev"
+    ],
+    "review_file": "support/reviews/BFF-B1-006-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T07:20:17Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-b1-006",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-B1-006",
+      "git_clean_required": false,
+      "commit": "c9e4398618e2f9c19a61cd09c9732401460743cc",
+      "commit_subject": "BFF-B1-006: record review closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "BFF-B1-006 closeout evidence, generated task brief, and Claude review note.",
+        "Not changing": "/bff/logout implementation already merged via PR #420, canonical architecture, or neighboring BFF tasks.",
+        "Composes with": "PR #420 merge commit ef20b034 and the current dev BFF session/logout surface.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-B1-006",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m pytest services/control-plane/bff/tests/test_bff_logout.py services/control-plane/bff/test_bff_session_auth_me_contract.py -q (25 passed); gh pr view 420 --json number,state,mergedAt,mergeCommit,statusCheckRollup (MERGED, checks SUCCESS)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-B1-006",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "2da8be9f07eb53946bbf5ccf2f1766522345e038",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-B1-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation complete. 6 tests cover: authenticated logout 200, session state reflection in GET /bff/me, anonymous 401, idempotency replay, idempotency conflict 409, logged_out_at / fresh=false. Spec §17 added to BFF_API_GAP_final_integration_spec.md. All 6 tests pass. PR #420 open with auto-merge.",
+      "status": "done",
+      "created_at": "2026-05-23T06:25:28Z",
+      "resolved_at": "2026-05-23T06:31:17Z"
+    },
+    {
+      "task_id": "BFF-B1-006",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review changes requested: current PR proves POST /bff/logout returns 200 and subsequent GET /bff/me returns a logged_out DTO, but durable acceptance still requires clearing cookie or invalidating session and /bff/me afterwards returning 401. Please either implement and test that acceptance, including cookie/session invalidation, or update the task acceptance/spec through the task workflow with rationale before re-handoff.",
+      "status": "done",
+      "created_at": "2026-05-23T06:31:17Z",
+      "resolved_at": "2026-05-23T06:31:17Z"
+    },
+    {
+      "task_id": "BFF-B1-006",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-23T06:53:15Z",
+      "resolved_at": "2026-05-23T06:53:16Z"
+    },
+    {
+      "task_id": "BFF-B1-006",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Implemented reviewer-requested logout acceptance: POST /bff/logout now invalidates the caller session for subsequent /bff/me 401, clears pantheon_session cookie, and keeps logout idempotency session-scoped. PR #420 merged to dev at ef20b034 after GitHub Branch CI Gate passed; local focused pytest suites passed.",
+      "status": "done",
+      "created_at": "2026-05-23T07:08:06Z",
+      "resolved_at": "2026-05-23T07:11:29Z"
+    },
+    {
+      "task_id": "BFF-B1-006",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: logout invalidates session with 401, clears cookie, scopes idempotency per-session. 25 tests passed. PR #420 merged to dev. Returning to owner Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-05-23T07:11:29Z",
+      "resolved_at": "2026-05-23T07:20:18Z"
+    }
+  ],
+  "blockers": []
+}

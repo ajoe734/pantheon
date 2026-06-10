@@ -1,12 +1,16 @@
 # BFF HTTPS Ingress
 
-Status date: 2026-04-27
+Status date: 2026-06-08
 
 ## Purpose
 
-Lovable-hosted frontends run on HTTPS origins, so the browser must call BFFs
-through HTTPS as well. Raw internal IPs and unsecured VM ports are not valid for
-`VITE_BFF_BASE_URL`.
+Pantheon-owned and external browser frontends run on HTTPS origins, so the
+browser must call BFFs through HTTPS as well. Raw internal IPs and unsecured VM
+ports are not valid for `VITE_BFF_BASE_URL`.
+
+For current dev frontend hosting, read
+`docs/frontend/execute-plans-dev-hosting.md` first. Lovable URLs in this file
+are legacy/staging-live context, not the dev frontend acceptance source.
 
 Current ingress uses:
 
@@ -20,8 +24,14 @@ Current ingress uses:
 
 | Environment | VM | Static IP | HTTPS BFF URL | Local upstream |
 | --- | --- | --- | --- | --- |
-| dev | `pantheon-dev-vm1` | `35.236.178.81` | `https://pantheon-dev-bff.35.236.178.81.sslip.io` | `127.0.0.1:18001` |
-| staging-live | `pantheon-taiwan` | `34.81.225.122` | `https://pantheon-staging-bff.34.81.225.122.sslip.io` | `127.0.0.1:38001` |
+| dev | `pantheon-lupin-dev` | `35.201.239.38` | `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io` | `127.0.0.1:18001` |
+| staging-live | `pantheon-lupin-staging-control` | `104.155.223.192` | `https://pantheon-lupin-staging-bff.104.155.223.192.sslip.io` | `127.0.0.1:38001` |
+
+Current dev FE URL:
+
+```text
+https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io
+```
 
 ## GCP Resources
 
@@ -29,15 +39,15 @@ Static addresses:
 
 ```bash
 gcloud compute addresses list \
-  --project=pantheon-493602 \
-  --filter='name=(pantheon-dev-vm1-ip pantheon-staging-vm1-ip)' \
+  --project=pantheon-benjamin-20260528 \
+  --filter='name=(pantheon-lupin-dev-ip pantheon-staging-vm1-ip)' \
   --format='table(name,region.basename(),address,status,users)'
 ```
 
 Expected:
 
-- `pantheon-dev-vm1-ip`: `35.236.178.81`
-- `pantheon-staging-vm1-ip`: `34.81.225.122`
+- `pantheon-lupin-dev-ip`: `35.201.239.38`
+- `pantheon-staging-vm1-ip`: `104.155.223.192`
 
 Firewall rules:
 
@@ -47,27 +57,29 @@ Firewall rules:
 
 ## Caddy Configuration
 
-Dev Caddyfile on `pantheon-dev-vm1`:
+Dev Caddyfile on `pantheon-lupin-dev`:
 
 ```caddyfile
-{
-    auto_https disable_redirects
+pantheon-lupin-dev-bff.35.201.239.38.sslip.io {
+    reverse_proxy 127.0.0.1:18001
 }
 
-https://pantheon-dev-bff.35.236.178.81.sslip.io {
+pantheon-lupin-dev-fe.35.201.239.38.sslip.io {
+    root * /var/www/pantheon-dev-fe
     encode zstd gzip
-    reverse_proxy 127.0.0.1:18001
+    try_files {path} /index.html
+    file_server
 }
 ```
 
-Staging VM1 Caddyfile on `pantheon-taiwan`:
+Staging VM1 Caddyfile on `pantheon-lupin-staging-control`:
 
 ```caddyfile
 {
     auto_https disable_redirects
 }
 
-https://pantheon-staging-bff.34.81.225.122.sslip.io {
+https://pantheon-lupin-staging-bff.104.155.223.192.sslip.io {
     encode zstd gzip
     reverse_proxy 127.0.0.1:38001
 }
@@ -81,49 +93,54 @@ important because staging VM1 already has nginx listening on `80`.
 Public HTTPS health:
 
 ```bash
-curl -fsS https://pantheon-dev-bff.35.236.178.81.sslip.io/health
-curl -fsS https://pantheon-staging-bff.34.81.225.122.sslip.io/health
+curl -fsS https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/health
+curl -fsS https://pantheon-lupin-staging-bff.104.155.223.192.sslip.io/health
 ```
 
 CORS preflight:
 
 ```bash
 curl -sS -D - -o /tmp/dev-cors-body \
-  -X OPTIONS https://pantheon-dev-bff.35.236.178.81.sslip.io/health \
-  -H 'Origin: https://pantheon-ai-system-front-dev.lovable.app' \
+  -X OPTIONS https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/health \
+  -H 'Origin: https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io' \
   -H 'Access-Control-Request-Method: GET'
 
 curl -sS -D - -o /tmp/staging-cors-body \
-  -X OPTIONS https://pantheon-staging-bff.34.81.225.122.sslip.io/health \
+  -X OPTIONS https://pantheon-lupin-staging-bff.104.155.223.192.sslip.io/health \
   -H 'Origin: https://pantheon-ai-system-front-staging-live.lovable.app' \
   -H 'Access-Control-Request-Method: GET'
 ```
 
 Expected `access-control-allow-origin` values:
 
-- dev: `https://pantheon-ai-system-front-dev.lovable.app`
+- dev: `https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io`
 - staging-live: `https://pantheon-ai-system-front-staging-live.lovable.app`
 
-## Lovable Values
+## Dev Frontend Values
 
-Dev Lovable project:
+Current `execute-plans` dev build:
 
 ```env
 VITE_PANTHEON_ENV=dev
-VITE_BFF_BASE_URL=https://pantheon-dev-bff.35.236.178.81.sslip.io
+VITE_BFF_MODE=live
+VITE_BFF_BASE_URL=https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io
+VITE_BFF_FALLBACK=strict
+VITE_BFF_REAL_WRITES=false
 VITE_PANTHEON_LIVE_BROKER_ENABLED=false
 ```
+
+Legacy Lovable dev values are not the current Pantheon dev deployment target.
 
 Staging-live Lovable project:
 
 ```env
 VITE_PANTHEON_ENV=staging-live
-VITE_BFF_BASE_URL=https://pantheon-staging-bff.34.81.225.122.sslip.io
+VITE_BFF_BASE_URL=https://pantheon-lupin-staging-bff.104.155.223.192.sslip.io
 VITE_PANTHEON_LIVE_BROKER_ENABLED=true
 ```
 
-Changing Lovable `VITE_` values requires rebuilding and republishing the
-Lovable project.
+Changing staging-live Lovable `VITE_` values requires rebuilding and
+republishing the Lovable project.
 
 ## Operational Notes
 

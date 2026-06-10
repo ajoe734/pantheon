@@ -1,0 +1,670 @@
+{
+  "demo_packet": {
+    "broker_subaccount_ref": "broker-subaccount://ep5/kill-switch-demo/no-live-routing",
+    "capital_pool_id": "capital-pool-ep5-demo",
+    "demo_id": "ks-demo-ep5-008",
+    "demo_stage": "canary",
+    "deployment_plan_ref": "deployment-plan-ep5-kill-switch-demo",
+    "drills": [
+      {
+        "dispatch_response": {
+          "audit_entry": {
+            "action_type": "pause",
+            "actor_id": "operator-ep5-demo",
+            "audit_id": "audit-2e025fa2a9b3",
+            "audited_at": "2026-05-20T01:53:32Z",
+            "binding_id": "rb-130009e4da064175b9eb02488b401874",
+            "capital_pool_id": "capital-pool-ep5-demo",
+            "command_id": "ks-d271afbe618e",
+            "emergency_class": "hard",
+            "outcome_note": "hard emergency: operator_emergency_stop -> pause; safe mode normal -> paused",
+            "reason": "operator_emergency_stop",
+            "safe_mode_after": "paused",
+            "safe_mode_before": "normal",
+            "trigger_id": "trig-cffd29960707"
+          },
+          "binding_action": {
+            "action": "pause",
+            "binding": {
+              "artifact_id": "artifact-ep5-demo",
+              "artifact_version": "1.0.0",
+              "binding_id": "rb-130009e4da064175b9eb02488b401874",
+              "capital_pool_id": "capital-pool-ep5-demo",
+              "deployment_mode": "canary",
+              "effective_at": "2026-05-20T01:53:32Z",
+              "metadata": {
+                "activation_gate": {
+                  "allowed_deployment_scope": "canary",
+                  "broker_sandbox_smoke_ref": "support/evidence/EP5-008-V2/broker-sandbox-smoke.json",
+                  "capital_scale_pct": 5.0,
+                  "gross_scale_pct": 25.0,
+                  "human_gate_packet_ref": "support/evidence/EP5-008-V2/human-gate-demo.json",
+                  "operator_approval_ref": "support/evidence/EP5-008-V2/operator-demo-approval.json",
+                  "persona_capital_binding_id": "pcb-ep5-demo",
+                  "promotion_gate_decision_id": "promotion-gate-deployment-plan-ep5-kill-switch-demo",
+                  "risk_owner_approval_ref": "support/evidence/EP5-008-V2/risk-owner-demo-approval.json",
+                  "target_stage": "canary"
+                }
+              },
+              "persona_capital_binding_id": "pcb-ep5-demo",
+              "plan_id": "deployment-plan-ep5-kill-switch-demo",
+              "runtime_id": "rt-ep5-kill-switch-demo",
+              "status": "paused"
+            }
+          },
+          "command": {
+            "action_type": "pause",
+            "actor_id": "operator-ep5-demo",
+            "binding_id": "rb-130009e4da064175b9eb02488b401874",
+            "bypass_review_queue": true,
+            "capital_pool_id": "capital-pool-ep5-demo",
+            "command_id": "ks-d271afbe618e",
+            "dispatch_path": "runtime_manager_fast_path",
+            "emergency_class": "hard",
+            "issued_at": "2026-05-20T01:53:32Z",
+            "metadata": {
+              "broker_subaccount_ref": "broker-subaccount://ep5/kill-switch-demo/no-live-routing",
+              "demo_harness": "EP5-008-V2",
+              "environment": "canary",
+              "foundation_command_id": "cmd-550b986546ed4a5b8a39a520916fb0a2",
+              "foundation_correlation_id": "trace-0820061a76ae4918aa5d415b2487a81f",
+              "foundation_trace_id": "trace-0820061a76ae4918aa5d415b2487a81f",
+              "no_live_broker_dispatch": true,
+              "target_stage": "canary",
+              "trigger_reason": "operator_emergency_stop"
+            },
+            "priority": 1,
+            "trigger_id": "trig-cffd29960707"
+          },
+          "foundation": {
+            "audit_action": {
+              "action_id": "audit-f746c6df76c248fb94c1ac51788613ea",
+              "action_type": "runtime_manager.kill_switch.accepted",
+              "actor_ref": {
+                "actor_id": "operator-ep5-demo",
+                "actor_type": "user",
+                "roles": []
+              },
+              "correlation_id": "trace-0820061a76ae4918aa5d415b2487a81f",
+              "environment": {
+                "name": "canary",
+                "timezone": "UTC"
+              },
+              "metadata": {
+                "path": "RuntimeManagerService.execute_kill_switch"
+              },
+              "payload_checksum": "37f386fbd5dab624ab7b759092052a1640a609d0a5c626e5a922cd1cbac1297b",
+              "policy_decision_ref": "poldec-9fd4c6d5738a4a578dbcdc7f920ae754",
+              "reason": "operator_emergency_stop",
+              "target_ref": "CapitalPool:capital-pool-ep5-demo",
+              "timestamp": "2026-05-20T01:53:32Z",
+              "trace_id": "trace-0820061a76ae4918aa5d415b2487a81f"
+            },
+            "command_envelope": {
+              "actor_ref": {
+                "actor_id": "operator-ep5-demo",
+                "actor_type": "user",
+                "roles": []
+              },
+              "authority_scope": {
+                "action": "runtime_manager.kill_switch.dispatch",
+                "attributes": {},
+                "capital_pool_id": "capital-pool-ep5-demo",
+                "environment": {
+                  "name": "canary",
+                  "timezone": "UTC"
+                },
+                "runtime_id": "rb-130009e4da064175b9eb02488b401874",
+                "target_id": "capital-pool-ep5-demo",
+                "target_ref": "CapitalPool:capital-pool-ep5-demo",
+                "target_type": "CapitalPool"
+              },
+              "command_id": "cmd-550b986546ed4a5b8a39a520916fb0a2",
+              "command_type": "runtime_manager.kill_switch.dispatch",
+              "idempotency_key": "deployment-plan-ep5-kill-switch-demo:rb-130009e4da064175b9eb02488b401874:pause",
+              "payload": {
+                "action_override": "pause",
+                "binding_id": "rb-130009e4da064175b9eb02488b401874",
+                "capital_pool_id": "capital-pool-ep5-demo",
+                "context": {
+                  "broker_subaccount_ref": "broker-subaccount://ep5/kill-switch-demo/no-live-routing",
+                  "demo_harness": "EP5-008-V2",
+                  "environment": "canary",
+                  "no_live_broker_dispatch": true,
+                  "target_stage": "canary"
+                },
+                "fallback_artifact_id": null,
+                "fallback_artifact_version": null,
+                "operation": "runtime_manager.kill_switch.dispatch",
+                "reason": "operator_emergency_stop",
+                "severity": null
+              },
+              "requested_at": "2026-05-20T01:53:32Z",
+              "schema_version": "command_envelope.v1",
+              "trace": {
+                "actor_ref": {
+                  "actor_id": "operator-ep5-demo",
+                  "actor_type": "user",
+                  "roles": []
+                },
+                "correlation_id": "trace-0820061a76ae4918aa5d415b2487a81f",
+                "created_at": "2026-05-20T01:53:32Z",
+                "environment": {
+                  "name": "canary",
+                  "timezone": "UTC"
+                },
+                "idempotency_key": "deployment-plan-ep5-kill-switch-demo:rb-130009e4da064175b9eb02488b401874:pause",
+                "schema_version": "trace_context.v1",
+                "source_system": "runtime-manager",
+                "trace_id": "trace-0820061a76ae4918aa5d415b2487a81f"
+              }
+            },
+            "idempotency_record": {
+              "first_seen_at": "2026-05-20T01:53:32Z",
+              "idempotency_key": "deployment-plan-ep5-kill-switch-demo:rb-130009e4da064175b9eb02488b401874:pause",
+              "last_seen_at": "2026-05-20T01:53:32Z",
+              "operation_type": "runtime_manager.kill_switch.dispatch",
+              "request_hash": "37f386fbd5dab624ab7b759092052a1640a609d0a5c626e5a922cd1cbac1297b",
+              "result_ref": "kill_switch:ks-d271afbe618e",
+              "status": "succeeded",
+              "target_ref": "CapitalPool:capital-pool-ep5-demo",
+              "trace_id": "trace-0820061a76ae4918aa5d415b2487a81f"
+            },
+            "policy_decision": {
+              "action": "runtime_manager.kill_switch.dispatch",
+              "actor_ref": {
+                "actor_id": "operator-ep5-demo",
+                "actor_type": "user",
+                "roles": []
+              },
+              "decision": "allow",
+              "decision_id": "poldec-9fd4c6d5738a4a578dbcdc7f920ae754",
+              "environment": {
+                "name": "canary",
+                "timezone": "UTC"
+              },
+              "evaluated_at": "2026-05-20T01:53:32Z",
+              "policy_id": "runtime-manager.kill-switch.fast-path",
+              "policy_version": "2026-04-27",
+              "reasons": [],
+              "target_ref": "CapitalPool:capital-pool-ep5-demo",
+              "trace_id": "trace-0820061a76ae4918aa5d415b2487a81f"
+            },
+            "trace_context": {
+              "actor_ref": {
+                "actor_id": "operator-ep5-demo",
+                "actor_type": "user",
+                "roles": []
+              },
+              "correlation_id": "trace-0820061a76ae4918aa5d415b2487a81f",
+              "created_at": "2026-05-20T01:53:32Z",
+              "environment": {
+                "name": "canary",
+                "timezone": "UTC"
+              },
+              "idempotency_key": "deployment-plan-ep5-kill-switch-demo:rb-130009e4da064175b9eb02488b401874:pause",
+              "schema_version": "trace_context.v1",
+              "source_system": "runtime-manager",
+              "trace_id": "trace-0820061a76ae4918aa5d415b2487a81f"
+            }
+          },
+          "safe_mode_after": "paused",
+          "telemetry_ack": {
+            "ack_id": "ks-telemetry-ack:ks-d271afbe618e",
+            "ack_received": true,
+            "ack_required": true,
+            "ack_status": "acknowledged",
+            "ack_version": "2026-05-01",
+            "action_type": "pause",
+            "audit_action_ref": "audit-f746c6df76c248fb94c1ac51788613ea",
+            "audit_id": "audit-2e025fa2a9b3",
+            "binding_id": "rb-130009e4da064175b9eb02488b401874",
+            "capital_pool_id": "capital-pool-ep5-demo",
+            "capital_state_recorded": true,
+            "command_id": "ks-d271afbe618e",
+            "correlation_id": "trace-0820061a76ae4918aa5d415b2487a81f",
+            "event_type": "kill_switch_action",
+            "fail_closed": false,
+            "reason": "runtime binding follow-through recorded before ack",
+            "runtime_binding_id": "rb-130009e4da064175b9eb02488b401874",
+            "runtime_id": "rt-ep5-kill-switch-demo",
+            "runtime_state_recorded": true,
+            "runtime_status_after": "paused",
+            "safe_mode_after": "paused",
+            "telemetry_event_type": "kill_switch_action",
+            "trace_id": "trace-0820061a76ae4918aa5d415b2487a81f"
+          }
+        },
+        "label": "pause-drill"
+      }
+    ],
+    "operator_id": "operator-ep5-demo",
+    "runtime_binding_id": "rb-130009e4da064175b9eb02488b401874"
+  },
+  "harness_id": "ks-demo-ep5-008",
+  "harness_version": "2026-05-20.EP5-008.kill-switch-harness",
+  "kill_switch_demo_completed": true,
+  "kill_switch_demo_evidence": {
+    "blocking_reasons": [],
+    "broker_subaccount_ref": "broker-subaccount://ep5/kill-switch-demo/no-live-routing",
+    "capital_pool_id": "capital-pool-ep5-demo",
+    "covered_actions": [
+      "pause"
+    ],
+    "demo_stage": "canary",
+    "deployment_plan_ref": "deployment-plan-ep5-kill-switch-demo",
+    "drills": [
+      {
+        "ack_status": "acknowledged",
+        "action_type": "pause",
+        "audit_id": "audit-2e025fa2a9b3",
+        "capital_pool_id": "capital-pool-ep5-demo",
+        "command_id": "ks-d271afbe618e",
+        "evidence_refs": [
+          "ks-d271afbe618e",
+          "audit-2e025fa2a9b3",
+          "rb-130009e4da064175b9eb02488b401874",
+          "capital-pool-ep5-demo",
+          "paused"
+        ],
+        "label": "pause-drill",
+        "runtime_binding_id": "rb-130009e4da064175b9eb02488b401874",
+        "runtime_status_after": "paused",
+        "safe_mode_after": "paused"
+      }
+    ],
+    "errors": [],
+    "evidence_id": "kill-switch-demo-21e5e61b3ed15e62",
+    "operator_id": "operator-ep5-demo",
+    "passed": true,
+    "promotion_eligible": true,
+    "required_action_groups": [
+      [
+        "pause",
+        "risk_off"
+      ]
+    ],
+    "runtime_binding_id": "rb-130009e4da064175b9eb02488b401874",
+    "source": "2026-05-19 blueprint supplement Part B5",
+    "version": "1.0"
+  },
+  "live_capital_side_effects": false,
+  "promotion_readiness_packet": {
+    "approval": {
+      "operator": {
+        "recorded": false,
+        "required": false,
+        "role": "operator",
+        "state": "not_required"
+      },
+      "records": [],
+      "risk_owner": {
+        "recorded": false,
+        "required": false,
+        "role": "risk_owner",
+        "state": "not_required"
+      }
+    },
+    "blocking_reasons": [],
+    "can_proceed": true,
+    "depends_on_tasks": [
+      "EP5-001-V2"
+    ],
+    "evidence": {
+      "gate_results": [
+        {
+          "gate": "canary_runtime_started",
+          "note": "runtime_id=rt-ep5-kill-switch-demo reached started state",
+          "source_ref": "canary_run:canary-run-ks-demo-001",
+          "status": "pass"
+        },
+        {
+          "gate": "runtime_heartbeat_received",
+          "note": "heartbeat_count=1",
+          "source_ref": "canary_run:canary-run-ks-demo-001",
+          "status": "pass"
+        },
+        {
+          "gate": "order_route_mode",
+          "note": "order_route_mode='validate_only' is paper-safe",
+          "source_ref": "canary_run:canary-run-ks-demo-001",
+          "status": "pass"
+        },
+        {
+          "gate": "telemetry_ingested",
+          "note": "telemetry_event_count=1",
+          "source_ref": "canary_run:canary-run-ks-demo-001",
+          "status": "pass"
+        }
+      ],
+      "missing": [],
+      "provided": [
+        {
+          "description": "runtime_id=rt-ep5-kill-switch-demo reached started state",
+          "key": "canary_runtime_started",
+          "source_task_id": "EP5-006-V2",
+          "status": "pass"
+        },
+        {
+          "description": "heartbeat_count=1",
+          "key": "runtime_heartbeat_received",
+          "source_task_id": "EP5-006-V2",
+          "status": "pass"
+        },
+        {
+          "description": "order_route_mode='validate_only' is paper-safe",
+          "key": "order_route_mode",
+          "source_task_id": "EP5-006-V2",
+          "status": "pass"
+        },
+        {
+          "description": "telemetry_event_count=1",
+          "key": "telemetry_ingested",
+          "source_task_id": "EP5-006-V2",
+          "status": "pass"
+        }
+      ],
+      "required": [
+        "canary_runtime_started",
+        "runtime_heartbeat_received",
+        "order_route_mode",
+        "telemetry_ingested"
+      ]
+    },
+    "extensions": {
+      "canary_run_result": "pass",
+      "finished_at": "2026-05-20T01:53:32Z",
+      "heartbeat_count": 1,
+      "order_route_mode": "validate_only",
+      "started_at": "2026-05-20T01:53:32Z",
+      "telemetry_event_count": 1
+    },
+    "flags": {
+      "broker_production_live_enabled": false,
+      "canary_runtime_started": true,
+      "deployment_stage_is_canary": true,
+      "live_capital_side_effects": false,
+      "order_route_mode": true,
+      "runtime_heartbeat_received": true,
+      "telemetry_ingested": true
+    },
+    "generated_at": "2026-05-20T01:53:32Z",
+    "generated_by": "EP5-006-V2/dry_run",
+    "packet_id": "prp-ks-demo-001",
+    "reason": "EP5 canary proof passed for persona='persona-ep5-demo' run='canary-run-ks-demo-001': all four proof flags satisfied, fail-closed invariants hold",
+    "schema_version": "PromotionReadinessPacket.v2",
+    "source_task_id": "EP5-006-V2",
+    "target": {
+      "deployment_stage": "canary",
+      "environment": "canary",
+      "persona_id": "persona-ep5-demo",
+      "runtime_id": "rt-ep5-kill-switch-demo",
+      "target_id": "canary-run-ks-demo-001",
+      "target_type": "canary_run"
+    }
+  },
+  "proof_packet": {
+    "ended_at": "2026-05-20T01:53:32Z",
+    "environment": "canary",
+    "packet_id": "ep5-proof-ks-demo-001",
+    "packet_version": "2026-05-19.A2.2.dry-run",
+    "promotion_readiness_packet_id": "prp-ks-demo-001",
+    "proof": {
+      "audit_events_recorded": true,
+      "canary_runtime_started": true,
+      "incident_path_tested": false,
+      "kill_switch_demo_completed": true,
+      "live_capital_side_effects": false,
+      "order_route_mode": "validate_only",
+      "rollback_drill_completed": false,
+      "runtime_heartbeat_received": true,
+      "telemetry_ingested": true
+    },
+    "result": {
+      "blocking_reasons": [],
+      "evidence_refs": [
+        "kill-switch-demo:kill-switch-demo-21e5e61b3ed15e62",
+        "runtime-manager-command:ks-d271afbe618e",
+        "runtime-manager-audit:audit-2e025fa2a9b3"
+      ],
+      "pass": true
+    },
+    "runtime": {
+      "artifact_id": "artifact-ep5-demo",
+      "deployment_plan_id": "deployment-plan-ep5-kill-switch-demo",
+      "runtime_binding_id": "rb-130009e4da064175b9eb02488b401874",
+      "runtime_id": "rt-ep5-kill-switch-demo"
+    },
+    "started_at": "2026-05-20T01:53:32Z",
+    "status": "passed"
+  },
+  "runtime_manager_response": {
+    "audit_entry": {
+      "action_type": "pause",
+      "actor_id": "operator-ep5-demo",
+      "audit_id": "audit-2e025fa2a9b3",
+      "audited_at": "2026-05-20T01:53:32Z",
+      "binding_id": "rb-130009e4da064175b9eb02488b401874",
+      "capital_pool_id": "capital-pool-ep5-demo",
+      "command_id": "ks-d271afbe618e",
+      "emergency_class": "hard",
+      "outcome_note": "hard emergency: operator_emergency_stop -> pause; safe mode normal -> paused",
+      "reason": "operator_emergency_stop",
+      "safe_mode_after": "paused",
+      "safe_mode_before": "normal",
+      "trigger_id": "trig-cffd29960707"
+    },
+    "binding_action": {
+      "action": "pause",
+      "binding": {
+        "artifact_id": "artifact-ep5-demo",
+        "artifact_version": "1.0.0",
+        "binding_id": "rb-130009e4da064175b9eb02488b401874",
+        "capital_pool_id": "capital-pool-ep5-demo",
+        "deployment_mode": "canary",
+        "effective_at": "2026-05-20T01:53:32Z",
+        "metadata": {
+          "activation_gate": {
+            "allowed_deployment_scope": "canary",
+            "broker_sandbox_smoke_ref": "support/evidence/EP5-008-V2/broker-sandbox-smoke.json",
+            "capital_scale_pct": 5.0,
+            "gross_scale_pct": 25.0,
+            "human_gate_packet_ref": "support/evidence/EP5-008-V2/human-gate-demo.json",
+            "operator_approval_ref": "support/evidence/EP5-008-V2/operator-demo-approval.json",
+            "persona_capital_binding_id": "pcb-ep5-demo",
+            "promotion_gate_decision_id": "promotion-gate-deployment-plan-ep5-kill-switch-demo",
+            "risk_owner_approval_ref": "support/evidence/EP5-008-V2/risk-owner-demo-approval.json",
+            "target_stage": "canary"
+          }
+        },
+        "persona_capital_binding_id": "pcb-ep5-demo",
+        "plan_id": "deployment-plan-ep5-kill-switch-demo",
+        "runtime_id": "rt-ep5-kill-switch-demo",
+        "status": "paused"
+      }
+    },
+    "command": {
+      "action_type": "pause",
+      "actor_id": "operator-ep5-demo",
+      "binding_id": "rb-130009e4da064175b9eb02488b401874",
+      "bypass_review_queue": true,
+      "capital_pool_id": "capital-pool-ep5-demo",
+      "command_id": "ks-d271afbe618e",
+      "dispatch_path": "runtime_manager_fast_path",
+      "emergency_class": "hard",
+      "issued_at": "2026-05-20T01:53:32Z",
+      "metadata": {
+        "broker_subaccount_ref": "broker-subaccount://ep5/kill-switch-demo/no-live-routing",
+        "demo_harness": "EP5-008-V2",
+        "environment": "canary",
+        "foundation_command_id": "cmd-550b986546ed4a5b8a39a520916fb0a2",
+        "foundation_correlation_id": "trace-0820061a76ae4918aa5d415b2487a81f",
+        "foundation_trace_id": "trace-0820061a76ae4918aa5d415b2487a81f",
+        "no_live_broker_dispatch": true,
+        "target_stage": "canary",
+        "trigger_reason": "operator_emergency_stop"
+      },
+      "priority": 1,
+      "trigger_id": "trig-cffd29960707"
+    },
+    "foundation": {
+      "audit_action": {
+        "action_id": "audit-f746c6df76c248fb94c1ac51788613ea",
+        "action_type": "runtime_manager.kill_switch.accepted",
+        "actor_ref": {
+          "actor_id": "operator-ep5-demo",
+          "actor_type": "user",
+          "roles": []
+        },
+        "correlation_id": "trace-0820061a76ae4918aa5d415b2487a81f",
+        "environment": {
+          "name": "canary",
+          "timezone": "UTC"
+        },
+        "metadata": {
+          "path": "RuntimeManagerService.execute_kill_switch"
+        },
+        "payload_checksum": "37f386fbd5dab624ab7b759092052a1640a609d0a5c626e5a922cd1cbac1297b",
+        "policy_decision_ref": "poldec-9fd4c6d5738a4a578dbcdc7f920ae754",
+        "reason": "operator_emergency_stop",
+        "target_ref": "CapitalPool:capital-pool-ep5-demo",
+        "timestamp": "2026-05-20T01:53:32Z",
+        "trace_id": "trace-0820061a76ae4918aa5d415b2487a81f"
+      },
+      "command_envelope": {
+        "actor_ref": {
+          "actor_id": "operator-ep5-demo",
+          "actor_type": "user",
+          "roles": []
+        },
+        "authority_scope": {
+          "action": "runtime_manager.kill_switch.dispatch",
+          "attributes": {},
+          "capital_pool_id": "capital-pool-ep5-demo",
+          "environment": {
+            "name": "canary",
+            "timezone": "UTC"
+          },
+          "runtime_id": "rb-130009e4da064175b9eb02488b401874",
+          "target_id": "capital-pool-ep5-demo",
+          "target_ref": "CapitalPool:capital-pool-ep5-demo",
+          "target_type": "CapitalPool"
+        },
+        "command_id": "cmd-550b986546ed4a5b8a39a520916fb0a2",
+        "command_type": "runtime_manager.kill_switch.dispatch",
+        "idempotency_key": "deployment-plan-ep5-kill-switch-demo:rb-130009e4da064175b9eb02488b401874:pause",
+        "payload": {
+          "action_override": "pause",
+          "binding_id": "rb-130009e4da064175b9eb02488b401874",
+          "capital_pool_id": "capital-pool-ep5-demo",
+          "context": {
+            "broker_subaccount_ref": "broker-subaccount://ep5/kill-switch-demo/no-live-routing",
+            "demo_harness": "EP5-008-V2",
+            "environment": "canary",
+            "no_live_broker_dispatch": true,
+            "target_stage": "canary"
+          },
+          "fallback_artifact_id": null,
+          "fallback_artifact_version": null,
+          "operation": "runtime_manager.kill_switch.dispatch",
+          "reason": "operator_emergency_stop",
+          "severity": null
+        },
+        "requested_at": "2026-05-20T01:53:32Z",
+        "schema_version": "command_envelope.v1",
+        "trace": {
+          "actor_ref": {
+            "actor_id": "operator-ep5-demo",
+            "actor_type": "user",
+            "roles": []
+          },
+          "correlation_id": "trace-0820061a76ae4918aa5d415b2487a81f",
+          "created_at": "2026-05-20T01:53:32Z",
+          "environment": {
+            "name": "canary",
+            "timezone": "UTC"
+          },
+          "idempotency_key": "deployment-plan-ep5-kill-switch-demo:rb-130009e4da064175b9eb02488b401874:pause",
+          "schema_version": "trace_context.v1",
+          "source_system": "runtime-manager",
+          "trace_id": "trace-0820061a76ae4918aa5d415b2487a81f"
+        }
+      },
+      "idempotency_record": {
+        "first_seen_at": "2026-05-20T01:53:32Z",
+        "idempotency_key": "deployment-plan-ep5-kill-switch-demo:rb-130009e4da064175b9eb02488b401874:pause",
+        "last_seen_at": "2026-05-20T01:53:32Z",
+        "operation_type": "runtime_manager.kill_switch.dispatch",
+        "request_hash": "37f386fbd5dab624ab7b759092052a1640a609d0a5c626e5a922cd1cbac1297b",
+        "result_ref": "kill_switch:ks-d271afbe618e",
+        "status": "succeeded",
+        "target_ref": "CapitalPool:capital-pool-ep5-demo",
+        "trace_id": "trace-0820061a76ae4918aa5d415b2487a81f"
+      },
+      "policy_decision": {
+        "action": "runtime_manager.kill_switch.dispatch",
+        "actor_ref": {
+          "actor_id": "operator-ep5-demo",
+          "actor_type": "user",
+          "roles": []
+        },
+        "decision": "allow",
+        "decision_id": "poldec-9fd4c6d5738a4a578dbcdc7f920ae754",
+        "environment": {
+          "name": "canary",
+          "timezone": "UTC"
+        },
+        "evaluated_at": "2026-05-20T01:53:32Z",
+        "policy_id": "runtime-manager.kill-switch.fast-path",
+        "policy_version": "2026-04-27",
+        "reasons": [],
+        "target_ref": "CapitalPool:capital-pool-ep5-demo",
+        "trace_id": "trace-0820061a76ae4918aa5d415b2487a81f"
+      },
+      "trace_context": {
+        "actor_ref": {
+          "actor_id": "operator-ep5-demo",
+          "actor_type": "user",
+          "roles": []
+        },
+        "correlation_id": "trace-0820061a76ae4918aa5d415b2487a81f",
+        "created_at": "2026-05-20T01:53:32Z",
+        "environment": {
+          "name": "canary",
+          "timezone": "UTC"
+        },
+        "idempotency_key": "deployment-plan-ep5-kill-switch-demo:rb-130009e4da064175b9eb02488b401874:pause",
+        "schema_version": "trace_context.v1",
+        "source_system": "runtime-manager",
+        "trace_id": "trace-0820061a76ae4918aa5d415b2487a81f"
+      }
+    },
+    "safe_mode_after": "paused",
+    "telemetry_ack": {
+      "ack_id": "ks-telemetry-ack:ks-d271afbe618e",
+      "ack_received": true,
+      "ack_required": true,
+      "ack_status": "acknowledged",
+      "ack_version": "2026-05-01",
+      "action_type": "pause",
+      "audit_action_ref": "audit-f746c6df76c248fb94c1ac51788613ea",
+      "audit_id": "audit-2e025fa2a9b3",
+      "binding_id": "rb-130009e4da064175b9eb02488b401874",
+      "capital_pool_id": "capital-pool-ep5-demo",
+      "capital_state_recorded": true,
+      "command_id": "ks-d271afbe618e",
+      "correlation_id": "trace-0820061a76ae4918aa5d415b2487a81f",
+      "event_type": "kill_switch_action",
+      "fail_closed": false,
+      "reason": "runtime binding follow-through recorded before ack",
+      "runtime_binding_id": "rb-130009e4da064175b9eb02488b401874",
+      "runtime_id": "rt-ep5-kill-switch-demo",
+      "runtime_state_recorded": true,
+      "runtime_status_after": "paused",
+      "safe_mode_after": "paused",
+      "telemetry_event_type": "kill_switch_action",
+      "trace_id": "trace-0820061a76ae4918aa5d415b2487a81f"
+    }
+  },
+  "status": "passed"
+}

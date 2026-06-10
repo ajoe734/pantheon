@@ -1,0 +1,134 @@
+{
+  "version": 1,
+  "task_id": "EP5-004-V2",
+  "archived_at": "2026-05-19T18:33:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EP5-004-V2",
+    "title": "HumanGateDecision lifecycle operations",
+    "summary_zh": "Expanded HumanGateDecision lifecycle operations: revoke, expire, withdraw, supersede, recompute can_proceed, TTL enforcement, and blocking reason updates.",
+    "phase": "Phase 8 / EPIC-EP5",
+    "owner": "Codex2",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "EP5-003-V2"
+    ],
+    "artifacts": [
+      "services/governance/promotion_readiness/revoke_expire.py",
+      "services/governance/human_gate/signature_lifecycle.py",
+      "tests/governance/test_revoke_expire.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "PR #272 merged lifecycle implementation to dev at f34de4ebc952455a84f12ee8ae11a1cf929bb24c; PR #276 merged closeout refresh to dev at 0acfb5b511e2c55e40307761cdd5a011634c6506; verification: pytest -q tests/governance/test_revoke_expire.py (37 passed), py_compile lifecycle/store modules, git diff --check, GitHub Branch CI Gate passed.",
+    "last_update": "2026-05-19T18:33:18Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：37 tests passed，pure/store 分層清晰，所有 lifecycle ops 正確實作",
+      "後續追蹤：enforce_ttl_for_all 直接存取 store._items（私有屬性），建議後續新增 HumanGateDecisionStore.all() 公開迭代 API"
+    ],
+    "review_file": "support/evidence/EP5-004-V2/review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T18:33:18Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ep5-004-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/EP5-004-V2",
+      "git_clean_required": false,
+      "commit": "7c8e473b45fc56109153330ecf664640f598dd02",
+      "commit_subject": "EP5-004-V2: refresh closeout after merge",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "EP5-004-V2",
+        "Reviewer": "Claude2",
+        "Verified": "pytest -q tests/governance/test_revoke_expire.py after dev merge; git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/EP5-004-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "0acfb5b511e2c55e40307761cdd5a011634c6506",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EP5-004-V2",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Helper-claimed by Claude2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-19T17:14:50Z",
+      "resolved_at": "2026-05-19T17:14:57Z"
+    },
+    {
+      "task_id": "EP5-004-V2",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-19T18:07:02Z",
+      "resolved_at": "2026-05-19T18:07:11Z"
+    },
+    {
+      "task_id": "EP5-004-V2",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Ready for review: PR #272 contains HumanGateDecision lifecycle helpers and tests. Local validation passed: pytest revoke_expire; pytest signoff_api+revoke_expire+human_gate_projection; py_compile lifecycle modules; git diff --check.",
+      "status": "done",
+      "created_at": "2026-05-19T18:14:27Z",
+      "resolved_at": "2026-05-19T18:19:31Z"
+    },
+    {
+      "task_id": "EP5-004-V2",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Review approved: 37 tests pass, lifecycle operations correct, pure/store separation clean. Returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-05-19T18:19:31Z",
+      "resolved_at": "2026-05-19T18:21:47Z"
+    },
+    {
+      "task_id": "EP5-004-V2",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Ready for review: PR #272 contains HumanGateDecision lifecycle helpers and tests. Local validation passed.",
+      "status": "done",
+      "created_at": "2026-05-19T18:21:49Z",
+      "resolved_at": "2026-05-19T18:21:59Z"
+    },
+    {
+      "task_id": "EP5-004-V2",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Review approved: 37 tests pass, lifecycle operations correct, pure/store separation clean. Returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-05-19T18:21:59Z",
+      "resolved_at": "2026-05-19T18:33:19Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Idle agents exist and no global provider, approval, or PR blocker is present.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "BFF-B6-002"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "BFF-B6-002"
+  ]
+}

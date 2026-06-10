@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +33,18 @@ CODEX_CONFIG_PATH = Path.home() / ".codex" / "config.toml"
 EXTENSIONS_DIR = Path.home() / ".vscode-server" / "extensions"
 COPILOT_CONFIG_DIR = Path.home() / ".copilot"
 COPILOT_CONFIG_PATH = COPILOT_CONFIG_DIR / "config.json"
+ANTIGRAVITY_OAUTH_TOKEN_REL = Path(".gemini") / "antigravity-cli" / "antigravity-oauth-token"
+AUTH_PROBE_DEFAULT_INTERVAL_SECONDS = 900
+AUTH_PROBE_FAILED_INTERVAL_SECONDS = 60
+AUTH_PROBE_DEFAULT_TIMEOUT_SECONDS = 45
+AUTH_PROBE_PROMPT = "Reply exactly: OK"
+AUTH_ERROR_MAX_CHARS = 600
+CODEX_INHERITED_SESSION_ENV = (
+    "CODEX_THREAD_ID",
+    "CODEX_SESSION_ID",
+    "CODEX_CONVERSATION_ID",
+    "CODEX_PARENT_THREAD_ID",
+)
 
 
 def _find_extension(prefix: str) -> tuple[Path | None, str | None]:
@@ -82,6 +96,59 @@ def _gemini_runtime_env(config: dict[str, Any] | None = None, provider_id: str =
     return env
 
 
+def _codex_runtime_env(config: dict[str, Any] | None = None, provider_id: str = "codex") -> dict[str, str]:
+    base_env = dict(os.environ)
+    env = dict(base_env)
+    provider = (config or {}).get("providers", {}).get(provider_id, {}) or {}
+    for block_name in ("runtime", "codex"):
+        block = provider.get(block_name, {}) or {}
+        for key, value in (block.get("env", {}) or {}).items():
+            if value is None:
+                continue
+            env[str(key)] = os.path.expanduser(str(value))
+    for key in CODEX_INHERITED_SESSION_ENV:
+        env.pop(key, None)
+
+    codex_settings = provider.get("codex", {}) or {}
+    api_key_env = str(codex_settings.get("api_key_env") or "").strip()
+    if api_key_env:
+        api_key_value = env.get(api_key_env) or base_env.get(api_key_env) or ""
+        if api_key_value:
+            env["OPENAI_API_KEY"] = api_key_value
+    else:
+        env.pop("OPENAI_API_KEY", None)
+    codex_home = str(codex_settings.get("codex_home") or codex_settings.get("config_home") or "").strip()
+    if codex_home:
+        env["CODEX_HOME"] = os.path.expanduser(codex_home)
+    return env
+
+
+def _antigravity_home(config: dict[str, Any] | None = None, provider_id: str = "antigravity") -> Path:
+    provider = ((config or {}).get("providers", {}).get(provider_id, {}) or {}).get("antigravity", {}) or {}
+    home = str(provider.get("config_home") or provider.get("home") or "").strip()
+    return Path(os.path.expanduser(home)) if home else Path.home()
+
+
+def _antigravity_oauth_token_path(config: dict[str, Any] | None = None, provider_id: str = "antigravity") -> Path:
+    return _antigravity_home(config, provider_id) / ANTIGRAVITY_OAUTH_TOKEN_REL
+
+
+def _antigravity_runtime_env(config: dict[str, Any] | None = None, provider_id: str = "antigravity") -> dict[str, str]:
+    env = dict(os.environ)
+    provider = (config or {}).get("providers", {}).get(provider_id, {}) or {}
+    for block_name in ("runtime", "antigravity"):
+        block = provider.get(block_name, {}) or {}
+        for key, value in (block.get("env", {}) or {}).items():
+            if value is None:
+                continue
+            env[str(key)] = os.path.expanduser(str(value))
+    home = _antigravity_home(config, provider_id)
+    if home != Path.home():
+        env["ANTIGRAVITY_HOME"] = str(home)
+        env["HOME"] = str(home)
+    return env
+
+
 def _codex_home(config: dict[str, Any] | None = None, provider_id: str = "codex") -> Path:
     provider = ((config or {}).get("providers", {}).get(provider_id, {}) or {}).get("codex", {}) or {}
     home = str(provider.get("codex_home") or provider.get("config_home") or "").strip()
@@ -92,6 +159,10 @@ def _codex_config_path(config: dict[str, Any] | None = None, provider_id: str = 
     return _codex_home(config, provider_id) / "config.toml"
 
 
+def _codex_auth_path(config: dict[str, Any] | None = None, provider_id: str = "codex") -> Path:
+    return _codex_home(config, provider_id) / "auth.json"
+
+
 def _gemini_settings(config: dict[str, Any] | None = None, provider_id: str = "gemini") -> dict[str, Any]:
     return load_json(_gemini_settings_path(config, provider_id), default={}) or {}
 
@@ -99,6 +170,127 @@ def _gemini_settings(config: dict[str, Any] | None = None, provider_id: str = "g
 def _truthy_env(name: str, env: dict[str, str] | None = None) -> bool:
     source = env if env is not None else os.environ
     return source.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _auth_probe_settings(config: dict[str, Any] | None = None, provider_id: str | None = None) -> dict[str, Any]:
+    config = config or {}
+    settings = dict(config.get("provider_auth") or {})
+    provider_settings = (config.get("providers", {}).get(provider_id or "", {}) or {}).get("auth_probe", {}) or {}
+    settings.update(provider_settings)
+    settings.setdefault("probe_interval_seconds", AUTH_PROBE_DEFAULT_INTERVAL_SECONDS)
+    settings.setdefault("failed_probe_interval_seconds", AUTH_PROBE_FAILED_INTERVAL_SECONDS)
+    settings.setdefault("probe_timeout_seconds", AUTH_PROBE_DEFAULT_TIMEOUT_SECONDS)
+    settings.setdefault("probe_prompt", AUTH_PROBE_PROMPT)
+    settings.setdefault("enabled", True)
+    return settings
+
+
+def _parse_auth_probe_time(value: Any) -> datetime | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _previous_provider_auth_probe(config: dict[str, Any], provider_id: str) -> dict[str, Any]:
+    try:
+        previous_report = load_json(config_path(config, "provider_capabilities"), default={}) or {}
+    except (KeyError, OSError, TypeError):
+        return {}
+    previous_provider = ((previous_report.get("providers") or {}).get(provider_id) or {})
+    if not isinstance(previous_provider, dict):
+        return {}
+    probe = previous_provider.get("auth_probe")
+    if isinstance(probe, dict) and probe:
+        return dict(probe)
+    if previous_provider.get("last_auth_probe_at"):
+        return {
+            "ready": previous_provider.get("auth_ready"),
+            "error": previous_provider.get("auth_error"),
+            "checked_at": previous_provider.get("last_auth_probe_at"),
+            "method": previous_provider.get("auth_method"),
+            "source": "legacy_provider_capabilities",
+        }
+    return {}
+
+
+def _auth_probe_due(config: dict[str, Any], provider_id: str, previous: dict[str, Any]) -> bool:
+    settings = _auth_probe_settings(config, provider_id)
+    if not to_bool(settings.get("enabled", True)):
+        return False
+    if _truthy_env("PANTHEON_PROVIDER_AUTH_PROBE_FORCE"):
+        return True
+    checked_at = _parse_auth_probe_time(previous.get("checked_at") or previous.get("last_auth_probe_at"))
+    if checked_at is None:
+        return True
+    interval_key = "failed_probe_interval_seconds" if previous.get("ready") is False else "probe_interval_seconds"
+    try:
+        interval_seconds = int(settings.get(interval_key, AUTH_PROBE_DEFAULT_INTERVAL_SECONDS))
+    except (TypeError, ValueError):
+        interval_seconds = AUTH_PROBE_DEFAULT_INTERVAL_SECONDS
+    if interval_seconds <= 0:
+        return True
+    return (datetime.now(timezone.utc) - checked_at).total_seconds() >= interval_seconds
+
+
+def _auth_probe_record(
+    provider_id: str,
+    kind: str,
+    *,
+    ready: bool,
+    method: str,
+    error: str | None = None,
+    status: str | None = None,
+    source: str = "live",
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    checked_at = utc_now()
+    record: dict[str, Any] = {
+        "provider": provider_id,
+        "kind": kind,
+        "ready": bool(ready),
+        "status": status or ("ready" if ready else "not_ready"),
+        "method": method,
+        "error": error,
+        "checked_at": checked_at,
+        "last_auth_probe_at": checked_at,
+        "source": source,
+    }
+    if metadata:
+        record["metadata"] = metadata
+    return record
+
+
+def _reuse_auth_probe(provider_id: str, kind: str, previous: dict[str, Any], *, method: str) -> dict[str, Any]:
+    record = dict(previous)
+    record.setdefault("provider", provider_id)
+    record.setdefault("kind", kind)
+    record.setdefault("method", method)
+    record.setdefault("status", "ready" if record.get("ready") is True else "not_ready")
+    record.setdefault("source", "cached")
+    if record.get("checked_at") and not record.get("last_auth_probe_at"):
+        record["last_auth_probe_at"] = record.get("checked_at")
+    if record.get("last_auth_probe_at") and not record.get("checked_at"):
+        record["checked_at"] = record.get("last_auth_probe_at")
+    record["source"] = "cached"
+    return record
+
+
+def _compact_auth_error(output: str | None) -> str | None:
+    text = " ".join(str(output or "").split())
+    if not text:
+        return None
+    if len(text) > AUTH_ERROR_MAX_CHARS:
+        return f"{text[:AUTH_ERROR_MAX_CHARS]}..."
+    return text
 
 
 def _gemini_env_auth_type(env: dict[str, str] | None = None) -> str | None:
@@ -150,6 +342,263 @@ def _gemini_auth_ready(
         gcloud = command_exists("gcloud")
         return bool(gcloud) and run_command([gcloud, "auth", "application-default", "print-access-token"]).returncode == 0
     return False
+
+
+def _codex_auth_metadata(config: dict[str, Any], provider_id: str, env: dict[str, str]) -> dict[str, Any]:
+    auth_path = _codex_auth_path(config, provider_id)
+    payload = load_json(auth_path, default={}) if auth_path.exists() else {}
+    if not isinstance(payload, dict):
+        payload = {}
+    tokens = payload.get("tokens") if isinstance(payload.get("tokens"), dict) else {}
+    api_key_env = str(((config.get("providers", {}).get(provider_id, {}) or {}).get("codex", {}) or {}).get("api_key_env") or "").strip()
+    metadata = {
+        "auth_file": str(auth_path),
+        "auth_file_exists": auth_path.exists(),
+        "api_key_env": api_key_env or None,
+        "api_key_env_present": bool(api_key_env and env.get("OPENAI_API_KEY")),
+        "has_access_token": bool(tokens.get("access_token") or payload.get("access_token")),
+        "has_refresh_token": bool(tokens.get("refresh_token") or payload.get("refresh_token")),
+        "expires_at": tokens.get("expires_at") or payload.get("expires_at"),
+    }
+    return metadata
+
+
+def _codex_auth_probe(config: dict[str, Any], provider_id: str, binary: str | None) -> dict[str, Any]:
+    env = _codex_runtime_env(config, provider_id)
+    metadata = _codex_auth_metadata(config, provider_id, env)
+    if not binary:
+        return _auth_probe_record(
+            provider_id,
+            "codex",
+            ready=False,
+            method="codex_exec",
+            error="Codex CLI is not installed.",
+            status="cli_missing",
+            metadata=metadata,
+        )
+    if not metadata.get("api_key_env_present") and not metadata.get("auth_file_exists"):
+        api_key_note = (
+            f" Configured API key env {metadata.get('api_key_env')} is not present."
+            if metadata.get("api_key_env")
+            else ""
+        )
+        return _auth_probe_record(
+            provider_id,
+            "codex",
+            ready=False,
+            method="codex_auth_file",
+            error=f"Codex auth.json is missing and no API key is available.{api_key_note}",
+            status="auth_material_missing",
+            metadata=metadata,
+        )
+
+    previous = _previous_provider_auth_probe(config, provider_id)
+    method = "codex_exec_api_key" if metadata.get("api_key_env_present") else "codex_exec_oauth"
+    if previous and not _auth_probe_due(config, provider_id, previous):
+        return _reuse_auth_probe(provider_id, "codex", previous, method=method)
+
+    settings = _auth_probe_settings(config, provider_id)
+    prompt = str(settings.get("probe_prompt") or AUTH_PROBE_PROMPT)
+    timeout = float(settings.get("probe_timeout_seconds") or AUTH_PROBE_DEFAULT_TIMEOUT_SECONDS)
+    command = [
+        binary,
+        "exec",
+        "-C",
+        str(ROOT),
+        "-c",
+        'ask_for_approval="never"',
+        "-s",
+        "read-only",
+        "--skip-git-repo-check",
+        prompt,
+    ]
+    try:
+        result = run_command(command, timeout=timeout, env=env)
+    except subprocess.TimeoutExpired:
+        return _auth_probe_record(
+            provider_id,
+            "codex",
+            ready=False,
+            method=method,
+            error=f"Codex auth probe timed out after {timeout:g}s.",
+            status="probe_timeout",
+            metadata=metadata,
+        )
+    except OSError as exc:
+        return _auth_probe_record(
+            provider_id,
+            "codex",
+            ready=False,
+            method=method,
+            error=f"{type(exc).__name__}: {exc}",
+            status="probe_error",
+            metadata=metadata,
+        )
+    output = "\n".join(part for part in (result.stdout, result.stderr) if part)
+    return _auth_probe_record(
+        provider_id,
+        "codex",
+        ready=result.returncode == 0,
+        method=method,
+        error=None if result.returncode == 0 else _compact_auth_error(output),
+        status="ready" if result.returncode == 0 else f"exit_{result.returncode}",
+        metadata=metadata,
+    )
+
+
+def _claude_auth_probe(config: dict[str, Any], provider_id: str, binary: str | None, env: dict[str, str]) -> dict[str, Any]:
+    metadata = {
+        "credentials": str(claude_credentials_path(env)),
+        "credentials_exists": claude_credentials_path(env).exists(),
+        "home": env.get("HOME"),
+        "claude_config_dir": env.get("CLAUDE_CONFIG_DIR"),
+    }
+    if not binary:
+        return _auth_probe_record(
+            provider_id,
+            "claude",
+            ready=False,
+            method="claude_auth_status",
+            error="Claude CLI is not installed.",
+            status="cli_missing",
+            metadata=metadata,
+        )
+    previous = _previous_provider_auth_probe(config, provider_id)
+    if previous and not _auth_probe_due(config, provider_id, previous):
+        return _reuse_auth_probe(provider_id, "claude", previous, method="claude_auth_status_refresh")
+    ready = claude_auth_ready(binary, env=env, refresh_if_needed=True)
+    return _auth_probe_record(
+        provider_id,
+        "claude",
+        ready=ready,
+        method="claude_auth_status_refresh",
+        error=None if ready else "Claude CLI authentication is missing or OAuth refresh failed.",
+        status="ready" if ready else "auth_not_ready",
+        metadata=metadata,
+    )
+
+
+def _antigravity_auth_metadata(config: dict[str, Any], provider_id: str, env: dict[str, str]) -> dict[str, Any]:
+    token_path = _antigravity_oauth_token_path(config, provider_id)
+    return {
+        "oauth_token": str(token_path),
+        "oauth_token_exists": token_path.exists(),
+        "home": str(_antigravity_home(config, provider_id)),
+        "gemini_api_key_present": bool(env.get("GEMINI_API_KEY")),
+    }
+
+
+def _antigravity_probe_ready(returncode: int, stdout: str, combined: str) -> tuple[bool, str | None, str]:
+    """Decide whether an `agy --prompt` smoke probe proves non-interactive auth.
+
+    The Antigravity CLI exits 0 in print mode even when its OAuth token is
+    revoked or expired: it simply emits no output, and the
+    "You are not logged into Antigravity" notice only reaches the CLI's own
+    log file (never the probe's stdout/stderr). A clean exit code therefore is
+    not sufficient. Require a non-zero exit to fail, an exhausted-quota or
+    not-logged-in marker to fail, and non-empty stdout before declaring ready.
+    """
+    lowered = combined.lower()
+    if returncode != 0:
+        return False, _compact_auth_error(combined), f"exit_{returncode}"
+    if "quota reached" in lowered or "individual quota" in lowered:
+        return (
+            False,
+            "Antigravity account quota is exhausted; enable overages or wait for reset.",
+            "quota_reached",
+        )
+    if "not logged into antigravity" in lowered or "not authenticated" in lowered:
+        return (
+            False,
+            "Antigravity CLI is not logged in (silent print-mode failure).",
+            "not_logged_in",
+        )
+    if not stdout:
+        return (
+            False,
+            "Antigravity auth probe exited 0 but returned no output "
+            "(silent not-logged-in print-mode failure).",
+            "empty_output",
+        )
+    return True, None, "ready"
+
+
+def _antigravity_auth_probe(config: dict[str, Any], provider_id: str, binary: str | None) -> dict[str, Any]:
+    env = _antigravity_runtime_env(config, provider_id)
+    metadata = _antigravity_auth_metadata(config, provider_id, env)
+    if not binary:
+        return _auth_probe_record(
+            provider_id,
+            "antigravity",
+            ready=False,
+            method="agy_prompt",
+            error="Antigravity CLI (agy) is not installed.",
+            status="cli_missing",
+            metadata=metadata,
+        )
+    if not metadata.get("gemini_api_key_present") and not metadata.get("oauth_token_exists"):
+        return _auth_probe_record(
+            provider_id,
+            "antigravity",
+            ready=False,
+            method="antigravity_auth_material",
+            error="Antigravity OAuth token is missing and GEMINI_API_KEY is not present.",
+            status="auth_material_missing",
+            metadata=metadata,
+        )
+
+    previous = _previous_provider_auth_probe(config, provider_id)
+    method = "agy_prompt_api_key" if metadata.get("gemini_api_key_present") else "agy_prompt_oauth"
+    if previous and not _auth_probe_due(config, provider_id, previous):
+        return _reuse_auth_probe(provider_id, "antigravity", previous, method=method)
+
+    provider_settings = (config.get("providers", {}).get(provider_id, {}) or {}).get("antigravity", {}) or {}
+    settings = _auth_probe_settings(config, provider_id)
+    prompt = str(settings.get("probe_prompt") or AUTH_PROBE_PROMPT)
+    timeout = float(settings.get("probe_timeout_seconds") or AUTH_PROBE_DEFAULT_TIMEOUT_SECONDS)
+    command = [binary]
+    model = str(provider_settings.get("model") or "").strip()
+    if model:
+        command.extend(["--model", model])
+    print_timeout = str(settings.get("print_timeout") or provider_settings.get("probe_print_timeout") or "90s").strip()
+    if print_timeout:
+        command.extend(["--print-timeout", print_timeout])
+    command.extend(["--prompt", prompt])
+    try:
+        result = run_command(command, timeout=timeout, env=env)
+    except subprocess.TimeoutExpired:
+        return _auth_probe_record(
+            provider_id,
+            "antigravity",
+            ready=False,
+            method=method,
+            error=f"Antigravity auth probe timed out after {timeout:g}s.",
+            status="probe_timeout",
+            metadata=metadata,
+        )
+    except OSError as exc:
+        return _auth_probe_record(
+            provider_id,
+            "antigravity",
+            ready=False,
+            method=method,
+            error=f"{type(exc).__name__}: {exc}",
+            status="probe_error",
+            metadata=metadata,
+        )
+    output = "\n".join(part for part in (result.stdout, result.stderr) if part)
+    ready, error, status = _antigravity_probe_ready(
+        result.returncode, (result.stdout or "").strip(), output
+    )
+    return _auth_probe_record(
+        provider_id,
+        "antigravity",
+        ready=ready,
+        method=method,
+        error=error,
+        status=status,
+        metadata=metadata,
+    )
 
 
 def _read_text(path: Path) -> str:
@@ -511,7 +960,8 @@ def _claude_provider_report(
     provider_settings = config.get("providers", {}).get(provider_id, {}) or {}
     runtime_env = _provider_runtime_env(config, provider_id)
     provider_binary = _configured_provider_binary(config, provider_id, "runtime", "claude")
-    provider_auth_ready = claude_auth_ready(provider_binary, env=runtime_env, refresh_if_needed=False)
+    auth_probe = _claude_auth_probe(config, provider_id, provider_binary, runtime_env)
+    provider_auth_ready = bool(auth_probe.get("ready"))
     provider_home = str((provider_settings.get("runtime", {}) or {}).get("home") or "").strip()
     credentials_path = claude_credentials_path(runtime_env)
     installed = bool(provider_binary or claude_path or claude_local or credentials_path.exists())
@@ -539,6 +989,10 @@ def _claude_provider_report(
         "supports_auto_approve": bool(provider_binary and provider_auth_ready),
         "supports_defer_resume": bool(provider_binary),
         "auth_ready": provider_auth_ready,
+        "auth_error": auth_probe.get("error"),
+        "auth_method": auth_probe.get("method"),
+        "last_auth_probe_at": auth_probe.get("last_auth_probe_at") or auth_probe.get("checked_at"),
+        "auth_probe": auth_probe,
         "supported_models": claude_local.get("availableModels", []) or [],
         "selected_model": claude_local.get("model"),
         "applied": claude_applied,
@@ -643,6 +1097,66 @@ def _gemini_provider_report(
     }
 
 
+def _antigravity_provider_report(config: dict[str, Any], *, provider_id: str) -> dict[str, Any]:
+    provider_config = (config.get("providers", {}).get(provider_id, {}) or {})
+    antigravity_runtime = provider_config.get("antigravity", {}) or {}
+    selected_model = str(antigravity_runtime.get("model") or "").strip() or None
+    provider_binary = _configured_provider_binary(config, provider_id, "antigravity", "agy")
+    auth_probe = _antigravity_auth_probe(config, provider_id, provider_binary)
+    auth_ready = bool(auth_probe.get("ready"))
+    installed = bool(provider_binary)
+    notes = [
+        "Antigravity workers use the local `agy` CLI with the provider-specific HOME/profile.",
+        "The auth watchdog verifies non-interactive auth with a low-frequency `agy --prompt` smoke probe.",
+    ]
+    if provider_id != "antigravity":
+        notes.append(f"Provider `{provider_id}` uses its configured Antigravity CLI home/env profile when provided.")
+    return {
+        "installed": installed,
+        "host_layer": "CLI" if provider_binary else "unavailable",
+        "delivery_mode": provider_config.get("delivery_mode", "antigravity"),
+        "approval_mode": "dangerously_skip_permissions"
+        if (provider_config.get("approval", {}) or {}).get("dangerously_skip_permissions", True)
+        else "default",
+        "persistent_allow_supported": False,
+        "default_auto_approve_supported": True,
+        "full_access_supported": True,
+        "per_tool_allow_supported": False,
+        "local_cli_worker_supported": bool(provider_binary and auth_ready),
+        "vscode_link_supported": False,
+        "cloud_agent_supported": False,
+        "supports_auto_approve": bool(provider_binary and auth_ready),
+        "supports_defer_resume": False,
+        "supported_models": [selected_model] if selected_model else [],
+        "selected_model": selected_model,
+        "auth_ready": auth_ready,
+        "auth_error": auth_probe.get("error"),
+        "auth_method": auth_probe.get("method"),
+        "last_auth_probe_at": auth_probe.get("last_auth_probe_at") or auth_probe.get("checked_at"),
+        "auth_probe": auth_probe,
+        "applied": True,
+        "verified": "verified" if installed and auth_ready else ("partial" if installed else "unavailable"),
+        "version": None,
+        "paths": {
+            "binary": provider_binary,
+            "home": str(_antigravity_home(config, provider_id)),
+            "oauth_token": str(_antigravity_oauth_token_path(config, provider_id))
+            if _antigravity_oauth_token_path(config, provider_id).exists()
+            else None,
+        },
+        "settings": {
+            "antigravity.model": selected_model,
+            "antigravity.print_timeout": antigravity_runtime.get("print_timeout"),
+            "antigravity.include_directories": antigravity_runtime.get("include_directories"),
+            "approval.dangerously_skip_permissions": (provider_config.get("approval", {}) or {}).get(
+                "dangerously_skip_permissions", True
+            ),
+            "env.GEMINI_API_KEY": bool(_antigravity_runtime_env(config, provider_id).get("GEMINI_API_KEY")),
+        },
+        "notes": notes,
+    }
+
+
 def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any]:
     config = config or load_config()
     from adapters import build_adapter
@@ -674,7 +1188,6 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
     copilot_settings = config.get("providers", {}).get("copilot", {})
     copilot_model_preference = copilot_settings.get("model_preference", {})
     gemini_installed = bool(gemini_path or gemini_binary)
-    codex_installed = bool(openai_path or codex_binary)
     copilot_installed = bool(copilot_path or copilot_binary or gh_binary)
 
     claude_applied = (
@@ -736,6 +1249,18 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
             ]
         )
     )
+    antigravity_provider_ids = list(
+        dict.fromkeys(
+            [
+                "antigravity",
+                *[
+                    provider_id
+                    for provider_id, settings in (config.get("providers", {}) or {}).items()
+                    if provider_id != "antigravity" and (settings or {}).get("delivery_mode") == "antigravity"
+                ],
+            ]
+        )
+    )
     codex_provider_ids = list(
         dict.fromkeys(
             [
@@ -752,14 +1277,18 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
     def codex_provider_report(provider_id: str) -> dict[str, Any]:
         provider_settings = config.get("providers", {}).get(provider_id, {}) or {}
         profile = provider_settings.get("codex", {}) or codex_profile
+        provider_binary = _configured_provider_binary(config, provider_id, "codex", "codex") or codex_binary
+        auth_probe = _codex_auth_probe(config, provider_id, provider_binary)
+        auth_ready = bool(auth_probe.get("ready"))
+        installed = bool(openai_path or provider_binary)
         config_path_for_provider = _codex_config_path(config, provider_id)
         applied = (
             profile.get("ask_for_approval", "never") == "never"
             and profile.get("sandbox_mode", "workspace-write") == "workspace-write"
         )
         return {
-            "installed": codex_installed,
-            "host_layer": "CLI + VS Code extension" if openai_path and codex_binary else ("CLI" if codex_binary else "VS Code extension"),
+            "installed": installed,
+            "host_layer": "CLI + VS Code extension" if openai_path and provider_binary else ("CLI" if provider_binary else "VS Code extension"),
             "delivery_mode": "codex",
             "quota_group": provider_settings.get("quota_group"),
             "approval_mode": f"orchestrator:{profile.get('ask_for_approval', 'never')}",
@@ -767,31 +1296,39 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
             "default_auto_approve_supported": True,
             "full_access_supported": True,
             "per_tool_allow_supported": False,
-            "local_cli_worker_supported": bool(codex_binary),
+            "local_cli_worker_supported": bool(provider_binary and auth_ready),
             "vscode_link_supported": bool(openai_path),
             "cloud_agent_supported": False,
-            "supports_auto_approve": bool(codex_binary),
+            "supports_auto_approve": bool(provider_binary and auth_ready),
             "supports_defer_resume": False,
             "supported_models": [],
             "selected_model": None,
+            "auth_ready": auth_ready,
+            "auth_error": auth_probe.get("error"),
+            "auth_method": auth_probe.get("method"),
+            "last_auth_probe_at": auth_probe.get("last_auth_probe_at") or auth_probe.get("checked_at"),
+            "auth_probe": auth_probe,
             "applied": applied,
-            "verified": "partial" if codex_installed else "unavailable",
+            "verified": "verified" if installed and auth_ready else ("partial" if installed else "unavailable"),
             "version": openai_version,
             "paths": {
                 "extension": str(openai_path) if openai_path else None,
                 "config": str(config_path_for_provider),
                 "home": str(_codex_home(config, provider_id)),
-                "binary": codex_binary,
+                "auth": str(_codex_auth_path(config, provider_id)),
+                "binary": provider_binary,
             },
             "settings": {
                 "orchestrator.ask_for_approval": profile.get("ask_for_approval", "never"),
                 "orchestrator.sandbox_mode": profile.get("sandbox_mode", "workspace-write"),
                 "dangerously_bypass": profile.get("dangerously_bypass", False),
                 "codex.codex_home": profile.get("codex_home"),
+                "codex.api_key_env": profile.get("api_key_env"),
             },
             "notes": [
                 "Verified CLI flags from the locally installed Codex CLI help output.",
                 "No verified persistent approval config keys were found in local extension metadata, so auto-approve is applied per orchestrated run rather than globally.",
+                "The auth watchdog verifies non-interactive auth with a low-frequency read-only `codex exec` smoke probe.",
             ],
         }
 
@@ -840,6 +1377,7 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
                 )
                 for provider_id in gemini_provider_ids
             },
+            **{provider_id: _antigravity_provider_report(config, provider_id=provider_id) for provider_id in antigravity_provider_ids},
             **{provider_id: codex_provider_report(provider_id) for provider_id in codex_provider_ids},
             "copilot": {
                 "installed": copilot_installed,

@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "No pending approvals, no provider pauses, no fake in_progress tasks; idle capacity can support sidecars once the next parent wave is dispatched.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "PROD-WRITES-001-V2",
+    "LIVE-SCALE-001-V2"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "OPS-STALE-BLOCKERS-CLEANUP",
+    "OPS-ARCHIVE-INDEX-SYNC",
+    "OPS-CLOSEOUT-PUSH-STATUS-AUDIT",
+    "EPIC-GOV-DEPLOY-DISPATCH"
+  ]
+}

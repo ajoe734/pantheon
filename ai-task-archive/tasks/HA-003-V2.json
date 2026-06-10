@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "HA-003-V2",
+  "archived_at": "2026-05-19T17:32:10Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "HA-003-V2",
+    "title": "Degraded mode matrix implementation (Part D4)",
+    "summary_zh": "Implement the 7-row degraded mode matrix per Part D4: typed 503 responses, UI state, command guards. Strict mode: no silent fallback.",
+    "phase": "Phase 8 / EPIC-BFF-HA",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "HA-001-V2"
+    ],
+    "artifacts": [
+      "services/bff/ha/degraded_mode.py",
+      "tests/bff/test_degraded_mode.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Closed HA-003-V2 via PR #258; degraded mode matrix implementation, review evidence, and closeout evidence merged to dev at 678d558a9b014b2e062fa398a6032d18f97d10e5. Verified python3 -m pytest tests/bff/test_degraded_mode.py -v (9 passed).",
+    "last_update": "2026-05-19T17:32:10Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：7 行降級矩陣完整，strict_mode=True/fallback_allowed=False/http_status=503 全部正確，command guard 邏輯正確，fail-closed 語意到位，9 個測試全部通過"
+    ],
+    "review_file": "support/evidence/HA-003-V2/review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T17:32:10Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ha-003-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/HA-003-V2",
+      "git_clean_required": false,
+      "commit": "05f6065d24ec2c3f8d82c8ca16a131e9140f39d8",
+      "commit_subject": "HA-003-V2: refresh closeout after dev merge",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "support/evidence/HA-003-V2/closeout.md final owner closeout after origin/dev refresh.",
+        "Not changing": "degraded-mode runtime code, tests, L1 docs, or unrelated merged dev changes.",
+        "Composes with": "PR #258 and branch protection after task/HA-003-V2 catches up with dev.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "HA-003-V2",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m pytest tests/bff/test_degraded_mode.py -v (9 passed)"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/HA-003-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "678d558a9b014b2e062fa398a6032d18f97d10e5",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "HA-003-V2",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for review: commit 5d737503 adds services/bff/ha/degraded_mode.py and tests/bff/test_degraded_mode.py. Verified python3 -m pytest tests/bff/test_degraded_mode.py tests/bff/test_sla_targets.py (12 passed), plus git diff --check origin/dev..HEAD. Scope excludes L1 docs and route wiring.",
+      "status": "done",
+      "created_at": "2026-05-19T17:11:30Z",
+      "resolved_at": "2026-05-19T17:18:50Z"
+    },
+    {
+      "task_id": "HA-003-V2",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: degraded mode matrix meets Part D4 spec; all 9 tests pass; no L1 doc changes; returning to Codex2 for closeout.",
+      "status": "done",
+      "created_at": "2026-05-19T17:18:50Z",
+      "resolved_at": "2026-05-19T17:32:11Z"
+    }
+  ],
+  "blockers": []
+}

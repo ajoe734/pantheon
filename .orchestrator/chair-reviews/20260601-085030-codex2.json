@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Idle capacity exists with runnable root tasks and no global queue, approval, review, or provider blocker.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "ASST-KERNEL-002",
+    "ASST-OCGW-001",
+    "ASST-KERNEL-001"
+  ]
+}

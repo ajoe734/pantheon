@@ -55,7 +55,12 @@ build_tw_calendar_session = taiwan_reference_mod.build_tw_calendar_session
 build_tw_dataset_lineage_source = taiwan_reference_mod.build_tw_dataset_lineage_source
 build_tw_symbol_mapping_record = taiwan_reference_mod.build_tw_symbol_mapping_record
 build_shioaji_raw_dataset = taiwan_reference_mod.build_shioaji_raw_dataset
+build_mops_raw_dataset = taiwan_reference_mod.build_mops_raw_dataset
+build_tej_raw_dataset = taiwan_reference_mod.build_tej_raw_dataset
 build_tw_normalized_dataset = taiwan_reference_mod.build_tw_normalized_dataset
+build_tw_broker_top_row = taiwan_reference_mod.build_tw_broker_top_row
+build_tw_broker_top_normalized_dataset = taiwan_reference_mod.build_tw_broker_top_normalized_dataset
+build_tw_broker_top_feature_dataset = taiwan_reference_mod.build_tw_broker_top_feature_dataset
 join_tw_quote_with_reference = taiwan_reference_mod.join_tw_quote_with_reference
 build_us_security_master = us_reference_mod.build_us_security_master
 build_us_calendar_session = us_reference_mod.build_us_calendar_session
@@ -400,6 +405,37 @@ class TestTaiwanReferenceHelpers(unittest.TestCase):
         self.assertEqual(raw.source_class, "broker_execution")
         self.assertEqual(raw.metadata_json["provider"], "Shioaji")
 
+        mops_raw = build_mops_raw_dataset(
+            dataset_id="RAW-TW-MOPS-DISCLOSURES-20260424",
+            instrument_scope=["SEC-TW-2330-TWSE"],
+            coverage_start="2026-04-24",
+            coverage_end="2026-04-24",
+            ingest_time="2026-04-24T13:00:00Z",
+            storage_ref="gs://pantheon-data/raw/tw/mops/disclosures-20260424.jsonl",
+            checksum="sha256:ccc333",
+            route_ids=["t05st02", "t05st03", "t163sb01"],
+        )
+        valid, errors = RawDataset.validate(mops_raw)
+        self.assertTrue(valid, errors)
+        self.assertEqual(mops_raw.source_class, "official_reference")
+        self.assertEqual(mops_raw.metadata_json["provider"], "MOPS")
+        self.assertEqual(mops_raw.metadata_json["governed_role"], "tw_official_disclosure_truth")
+
+        tej_raw = build_tej_raw_dataset(
+            dataset_id="RAW-TW-TEJ-TRAIL-20260424",
+            instrument_scope=["SEC-TW-2330-TWSE"],
+            coverage_start="2026-04-24",
+            coverage_end="2026-04-24",
+            ingest_time="2026-04-24T13:05:00Z",
+            storage_ref="gs://pantheon-data/raw/tw/tej/trail-20260424.parquet",
+            checksum="sha256:ddd444",
+            dataset_codes=["TRAIL/TAPRCD", "TRAIL/TATINST1", "TRAIL/TAIM1A"],
+        )
+        valid, errors = RawDataset.validate(tej_raw)
+        self.assertTrue(valid, errors)
+        self.assertEqual(tej_raw.source_class, "research_grade")
+        self.assertTrue(tej_raw.metadata_json["does_not_replace_official_disclosure_truth"])
+
         norm = build_tw_normalized_dataset(
             dataset_id="NORM-TW-SHIOAJI-TICK-20260424-v1",
             parent_raw_dataset_id=raw.dataset_id,
@@ -414,6 +450,47 @@ class TestTaiwanReferenceHelpers(unittest.TestCase):
         self.assertTrue(valid, errors)
         self.assertEqual(norm.normalization_version, "tw-equity-v1")
         self.assertEqual(norm.metadata_json["source_role"], "broker_quote_plus_official_reference_join")
+
+    def test_build_tw_broker_top_row_and_lineage(self):
+        row = build_tw_broker_top_row(
+            date="2026-06-08",
+            symbol="2330",
+            source="Yahoo Taiwan Stock",
+            side="sell",
+            rank=1,
+            broker="國泰綜合",
+            buy_qty=335,
+            sell_qty=4354,
+            available_time="2026-06-08T06:00:00Z",
+            source_url="https://tw.stock.yahoo.com/quote/2330/broker-trading",
+        )
+        self.assertEqual(row["symbol_canonical"], "2330.TWSE")
+        self.assertEqual(row["net_qty"], -4019)
+        self.assertEqual(_validate_schema("tw_broker_top", row), [])
+
+        norm = build_tw_broker_top_normalized_dataset(
+            dataset_id="NORM-TW-BROKER-TOP-20260608-v1",
+            parent_raw_dataset_id="RAW-TW-YAHOO-BROKER-TOP-20260608",
+            storage_ref="gs://pantheon-data/norm/tw/broker-top/20260608-v1.parquet",
+            checksum="sha256:eee555",
+            symbol_mapping_version="tw-symbol-map-v1",
+            calendar_version="tw-calendar-2026-v1",
+            top_n=15,
+        )
+        valid, errors = NormalizedDataset.validate(norm)
+        self.assertTrue(valid, errors)
+        self.assertEqual(norm.normalization_version, "tw-broker-top-v1")
+        self.assertEqual(norm.metadata_json["table_name"], "tw_broker_top")
+
+        features = build_tw_broker_top_feature_dataset(
+            dataset_id="FEAT-TW-BROKER-TOP-20260608-v1",
+            parent_normalized_dataset_id=norm.dataset_id,
+            storage_ref="gs://pantheon-data/features/tw/broker-top/20260608-v1.parquet",
+            checksum="sha256:fff666",
+        )
+        valid, errors = FeatureDataset.validate(features)
+        self.assertTrue(valid, errors)
+        self.assertIn("top_broker_concentration", features.metadata_json["features"])
 
     def test_join_tw_quote_with_reference(self):
         rows = join_tw_quote_with_reference(

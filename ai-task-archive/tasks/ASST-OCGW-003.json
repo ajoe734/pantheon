@@ -1,0 +1,154 @@
+{
+  "version": 1,
+  "task_id": "ASST-OCGW-003",
+  "archived_at": "2026-06-02T00:57:06Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASST-OCGW-003",
+    "title": "Implement Codex provider through OpenClaw gateway",
+    "summary_zh": "實作 OpenClaw gateway 內的 Codex CLI provider，以 mounted service-user .codex 執行 non-interactive codex exec，支援 timeout redaction audit fallback。",
+    "phase": "Assistant OpenClaw Gateway Kernel/User Mode",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "ASST-KERNEL-002",
+      "ASST-KERNEL-003",
+      "ASST-OCGW-002"
+    ],
+    "artifacts": [
+      "services/openclaw-gateway-adapter/assistant_codex_provider.py",
+      "services/openclaw-gateway-adapter/assistant_provider_runtime.py",
+      "services/openclaw-gateway-adapter/main.py",
+      "services/openclaw-gateway-adapter/tests/test_assistant_codex_provider.py",
+      "scripts/openclaw-assistant-provider-smoke.sh"
+    ],
+    "acceptance": [
+      "invokes codex exec inside gateway container using mounted CODEX_HOME",
+      "read-only workspace is default outside repair mode",
+      "repair mode requires task worktree metadata",
+      "broad bypass flags are not used",
+      "tests cover ready degraded timeout and auth failure"
+    ],
+    "next": "Owner closeout complete: PR #754 implementation merged at 51b17a83; closeout PR #767 merged at 651771ec with Branch CI Gate green. Local validation: focused Codex/main suite 60 passed; bash -n smoke; py_compile provider/runtime/main; git diff --check scoped files.",
+    "last_update": "2026-06-02T00:57:06Z",
+    "source_documents": [
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/SA_assistant_kernel_user_mode.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/SD_assistant_kernel_user_mode.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md"
+    ],
+    "implementation_track": "assistant-openclaw-gateway-cli-mount",
+    "provider_runtime": "openclaw_gateway_cli_mount",
+    "credential_policy": "dedicated_service_user_oauth_mount",
+    "delivery_layer": "primary",
+    "review_notes_zh": [
+      "審查通過：PR #754 head f9336d19 已修正 operator spoofing；X-Operator-Id 會覆蓋 body metadata.operator_id，Codex provider 維持 read-only default、repair worktree gate、mounted CODEX_HOME、timeout/auth degraded handling 與 redacted audit path。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-02T00:57:06Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/asst-ocgw-003",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/ASST-OCGW-003",
+      "git_clean_required": false,
+      "commit": "623ab26b9b23c6b4a6c266ba1f06158c38167431",
+      "commit_subject": "ASST-OCGW-003: record owner closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Closeout record": "preserve the Codex2 review-approved handoff and owner validation before final done transition.",
+        "Owned layer": "task-scoped closeout context for ASST-OCGW-003.",
+        "Not changing": "Codex provider runtime implementation, gateway route behavior, smoke semantics, or canonical architecture docs.",
+        "Composes with": "PR #754 implementation branch at f9336d19 and the pending task-branch closeout PR into dev.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "ASST-OCGW-003",
+        "Reviewer": "Codex2",
+        "Verified": "PYTHONPATH=services/openclaw-gateway-adapter:services/control-plane/bff python3 -m pytest services/openclaw-gateway-adapter/tests/test_assistant_codex_provider.py services/openclaw-gateway-adapter/test_main.py -q (60 passed); bash -n scripts/openclaw-assistant-provider-smoke.sh; python3 -m py_compile assistant_codex_provider.py assistant_provider_runtime.py main.py; git diff --check scoped files"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/ASST-OCGW-003",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "651771ecb3922bfe6d83a26e2bc3fe7fedb8e0bc",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASST-OCGW-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for Claude review: Codex CLI provider implemented in OpenClaw gateway adapter. Draft PR #754 https://github.com/ajoe734/pantheon/pull/754 is open; head 558c35362566a9a62fba1fc6a3d8a12c795907a4 includes implementation commit db0a50aefe329cb00edaacabe31d88bd905f8faa plus latest dev merge. Verified locally: PYTHONPATH=services/openclaw-gateway-adapter:services/control-plane/bff python3 -m pytest services/openclaw-gateway-adapter -q (257 passed); py_compile provider/runtime/main; bash -n scripts/openclaw-assistant-provider-smoke.sh; git diff --check origin/dev...HEAD. GitHub checks pass: Commit trailers, Runtime mirror guard, Smoke acceptance. PR intentionally remains draft/no auto-merge until review_approved owner closeout.",
+      "status": "done",
+      "created_at": "2026-06-01T10:31:29Z",
+      "resolved_at": "2026-06-01T12:56:28Z"
+    },
+    {
+      "task_id": "ASST-OCGW-003",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Chair reassigned review from Claude to Codex2: Claude has two consecutive reviewer dispatch failures on ASST-OCGW-003 at 2026-06-01T10:59:57Z and 2026-06-01T11:05:01Z; Codex2 is the listed fallback target and is distinct from owner Codex.",
+      "status": "done",
+      "created_at": "2026-06-01T12:56:28Z",
+      "resolved_at": "2026-06-01T14:42:53Z"
+    },
+    {
+      "task_id": "ASST-OCGW-003",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review requested changes: require X-Operator-Id on Codex provider invocation before running codex exec, and update openclaw-assistant-provider-smoke.sh to run the Codex tiny non-interactive invoke/degraded fallback required by SD 10.3. Verified: pytest -q services/openclaw-gateway-adapter/tests/test_assistant_codex_provider.py services/openclaw-gateway-adapter/test_main.py -q passed (57 tests).",
+      "status": "done",
+      "created_at": "2026-06-01T14:42:53Z",
+      "resolved_at": "2026-06-01T14:42:53Z"
+    },
+    {
+      "task_id": "ASST-OCGW-003",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review after requested changes. PR #754 is ready (head f6b82833) with GitHub Commit trailers, Runtime mirror guard, and Smoke acceptance checks passing. Fix commit f6258577 requires non-empty X-Operator-Id/operator_id before Codex exec and extends smoke with Codex tiny invoke/degraded provider-error fallback. Local verification: pytest -q services/openclaw-gateway-adapter/tests/test_assistant_codex_provider.py services/openclaw-gateway-adapter/test_main.py -q; bash -n scripts/openclaw-assistant-provider-smoke.sh; git diff --check scoped files.",
+      "status": "done",
+      "created_at": "2026-06-01T15:06:36Z",
+      "resolved_at": "2026-06-01T23:45:01Z"
+    },
+    {
+      "task_id": "ASST-OCGW-003",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review requested changes: make X-Operator-Id authoritative for Codex invoke metadata instead of preserving caller-supplied metadata.operator_id; add regression test for body/header mismatch. PR comment: https://github.com/ajoe734/pantheon/pull/754#issuecomment-4597386521. Reviewer validation passed: pytest -q services/openclaw-gateway-adapter/tests/test_assistant_codex_provider.py services/openclaw-gateway-adapter/test_main.py -q (59 passed); bash -n scripts/openclaw-assistant-provider-smoke.sh; py_compile provider/runtime/main; git diff --check scoped files.",
+      "status": "done",
+      "created_at": "2026-06-01T23:45:01Z",
+      "resolved_at": "2026-06-01T23:45:01Z"
+    },
+    {
+      "task_id": "ASST-OCGW-003",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Addressed requested Codex operator spoofing fix in PR #754: X-Operator-Id now overrides body metadata.operator_id; regression test added. Pushed head f9336d19; Branch CI checks green. Local validation: pytest -q services/openclaw-gateway-adapter/tests/test_assistant_codex_provider.py services/openclaw-gateway-adapter/test_main.py -q (60 passed); bash -n scripts/openclaw-assistant-provider-smoke.sh; py_compile provider/runtime/main; git diff --check scoped files.",
+      "status": "done",
+      "created_at": "2026-06-02T00:35:01Z",
+      "resolved_at": "2026-06-02T00:43:28Z"
+    },
+    {
+      "task_id": "ASST-OCGW-003",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved for PR #754 at f9336d19. Verified: PYTHONPATH=services/openclaw-gateway-adapter:services/control-plane/bff python3 -m pytest services/openclaw-gateway-adapter -q (282 passed); focused Codex/main suite 60 passed; bash -n scripts/openclaw-assistant-provider-smoke.sh; python3 -m py_compile assistant_codex_provider.py assistant_provider_runtime.py main.py; git diff --check scoped files; Branch CI Gate green.",
+      "status": "done",
+      "created_at": "2026-06-02T00:43:28Z",
+      "resolved_at": "2026-06-02T00:57:07Z"
+    }
+  ],
+  "blockers": []
+}

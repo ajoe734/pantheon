@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Idle capacity exists and no global blocker is active; sidecars are approved for the next runnable parent.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "NEXT-WAVE-DISPATCH",
+    "OPS-BRANCH-RETIREMENT",
+    "OPS-GEMINI2-AUTH"
+  ]
+}

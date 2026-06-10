@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "task_id": "OSS-RLLIB-V2-001",
+  "archived_at": "2026-05-19T05:18:01Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-RLLIB-V2-001",
+    "title": "RLlib production PPO on TWSE trading env",
+    "summary_zh": "把 OSS-RLLIB-001 PPO skeleton 升級到 production：用 TWSE OHLCV 作為環境的 observation/action space，跑 ≥100 iter PPO，輸出 model_artifact 含 trained_policy 與 evaluation_summary，提交 registry admission packet。CPU-only。獨立檔案。",
+    "phase": "Sprint 8 / EPIC-OSS-V2",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "OSS-RLLIB-001",
+      "MGMT-QLIB-001"
+    ],
+    "artifacts": [
+      "services/research/rllib/production_ppo_run.py",
+      "services/research/rllib/twse_trading_env.py",
+      "services/research/rllib/test_production_ppo_run.py",
+      "services/research/rllib/registry_admission_packet.py",
+      "support/evidence/OSS-RLLIB-V2-001/admission_packet.json"
+    ],
+    "acceptance": [
+      "twse_trading_env.py defines a gymnasium-compatible env wrapping TWSE OHLCV (5-instrument universe) with discrete action space (hold long short)",
+      "production_ppo_run.py runs ≥ 100 PPO iterations CPU-only and asserts mean_reward improves vs random baseline",
+      "model_artifact registered with checksum and trained_policy_ref",
+      "admission_packet.json valid",
+      "test fixture trains ≥ 10 iterations and asserts loss decreases",
+      "pytest -q exit 0",
+      "no GPU no live broker"
+    ],
+    "next": "RLLIB closeout reconciled: PR #77, closeout evidence, Codex review approval, and safety properties are merged in origin/dev; local orphan finalization replaced by this reconciliation record.",
+    "last_update": "2026-05-19T05:18:01Z",
+    "review_notes_zh": [
+      "審查通過：RLLIB PR #77 已 merge；closeout commit 06066e4d 已在 origin/dev；focused pytest 21 passed；admission packet 與 safety properties 維持 no GPU/no live broker/no registry write。"
+    ],
+    "review_file": "support/evidence/OSS-RLLIB-V2-001/codex_reassignment_review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T05:18:01Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-finrl-rllib-reconcile",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/FINRL-RLLIB-RECONCILE-20260519",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 11,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/dev",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "7d21e88caedcb93e96f5116257a9e3d32866be16",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-RLLIB-V2-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Owner finalization evidence recorded; PR #77 merged and closeout commit 06066e4d verified in origin/dev.",
+      "status": "done",
+      "created_at": "2026-05-19T05:17:35Z",
+      "resolved_at": "2026-05-19T05:17:49Z"
+    },
+    {
+      "task_id": "OSS-RLLIB-V2-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved after reconciliation against merged PR #77 and closeout evidence.",
+      "status": "done",
+      "created_at": "2026-05-19T05:17:49Z",
+      "resolved_at": "2026-05-19T05:18:02Z"
+    }
+  ],
+  "blockers": []
+}

@@ -60,22 +60,28 @@ def test_command_response_requires_data() -> None:
 
 
 def test_final_error_envelope_and_codes_are_importable() -> None:
-    assert ErrorCode.CONFIRM_TOKEN_REQUIRED.value == "CONFIRM_TOKEN_REQUIRED"
-    assert ErrorCode.APPROVAL_REQUIRED.value == "APPROVAL_REQUIRED"
-    assert ErrorCode.TWO_MAN_REQUIRED.value == "TWO_MAN_REQUIRED"
+    assert ErrorCode.CONFIRMATION_REQUIRED.value == "CONFIRMATION_REQUIRED"
+    assert ErrorCode.HUMAN_GATE_PENDING.value == "HUMAN_GATE_PENDING"
+    assert ErrorCode.TWO_MAN_SIGNATURE_REQUIRED.value == "TWO_MAN_SIGNATURE_REQUIRED"
     assert ErrorCode.IDEMPOTENCY_CONFLICT.value == "IDEMPOTENCY_CONFLICT"
-    assert ErrorCode.SSE_REPLAY_UNAVAILABLE.value == "SSE_REPLAY_UNAVAILABLE"
+    assert ErrorCode.RESOURCE_CONFLICT.value == "RESOURCE_CONFLICT"
 
     envelope = BffErrorEnvelope(
         error=BffErrorPayload(
-            code=ErrorCode.APPROVAL_REQUIRED,
+            code=ErrorCode.HUMAN_GATE_PENDING,
+            i18nKey="errors.HUMAN_GATE_PENDING",
             message="Approval is required before this action can be accepted",
+            retryable=False,
+            userActionable=True,
         )
     )
     assert envelope.model_dump(mode="json") == {
         "error": {
-            "code": "APPROVAL_REQUIRED",
+            "code": "HUMAN_GATE_PENDING",
+            "i18nKey": "errors.HUMAN_GATE_PENDING",
             "message": "Approval is required before this action can be accepted",
+            "retryable": False,
+            "userActionable": True,
             "details": None,
         }
     }
@@ -136,7 +142,7 @@ def test_idempotency_conflict_uses_final_error_code() -> None:
 
             assert first.status_code == 202, first.text
             assert second.status_code == 409, second.text
-            detail = second.json()["detail"]
+            detail = second.json()
             assert detail["error"]["code"] == "IDEMPOTENCY_CONFLICT"
             assert detail["foundation_error"]["error_code"] == "IDEMPOTENCY_CONFLICT"
         finally:

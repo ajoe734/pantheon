@@ -12,6 +12,7 @@ worktree.
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -186,6 +187,8 @@ class WorkerCommitWrapperTests(unittest.TestCase):
         # Disable both pre-commit guards for clean test isolation.
         env.setdefault("PANTHEON_GENERATED_FILES_CHECK_DISABLED", "1")
         env.setdefault("PANTHEON_SCOPE_CHECK_DISABLED", "1")
+        if not env_extra or "PANTHEON_STATUS_ROOT" not in env_extra:
+            env["PANTHEON_STATUS_ROOT"] = str(root)
         return subprocess.run(
             [sys.executable, str(HERE / "worker_commit.py"), *args],
             cwd=root,
@@ -212,6 +215,8 @@ class WorkerCommitWrapperTests(unittest.TestCase):
         env = {**os.environ, **(env_extra or {})}
         env.setdefault("PANTHEON_GENERATED_FILES_CHECK_DISABLED", "1")
         env.setdefault("PANTHEON_SCOPE_CHECK_DISABLED", "1")
+        if not env_extra or "PANTHEON_STATUS_ROOT" not in env_extra:
+            env["PANTHEON_STATUS_ROOT"] = str(root)
         return subprocess.run(
             [sys.executable, str(root / "scripts" / "git" / "worker_commit.py"), *args],
             cwd=root,
@@ -242,6 +247,9 @@ class WorkerCommitWrapperTests(unittest.TestCase):
             last_files = _git(root, "show", "--name-only", "--format=", "HEAD").stdout.split()
             self.assertIn("kept.py", last_files)
             self.assertNotIn("leaked.py", last_files)
+            audit = json.loads((root / "ai-activity-log.jsonl").read_text().splitlines()[-1])
+            self.assertIn("message", audit)
+            self.assertIn("Worker commit", audit["message"])
         finally:
             import shutil; shutil.rmtree(root)
 
@@ -307,6 +315,145 @@ class WorkerCommitWrapperTests(unittest.TestCase):
             self.assertIn("from_a.py", _git(root, "diff", "--cached", "--name-only").stdout)
         finally:
             import shutil; shutil.rmtree(root)
+
+    def test_private_index_refreshes_default_index_in_isolated_worker_worktree(self) -> None:
+        root = self._setup_repo()
+        status_root = Path(tempfile.mkdtemp())
+        try:
+            (root / "from_worker.py").write_text("worker\n")
+            msg = root / "msg.txt"
+            msg.write_text("BAR-005: isolated worker\n\nLLM-Agent: B\nTask-ID: BAR-005\nReviewer: A\n")
+            proc = self._wrapper(
+                root,
+                "--task-id", "BAR-005",
+                "--message-file", str(msg),
+                "--scope", "from_worker.py",
+                "--index-file", str(root / ".git" / "index-worker"),
+                env_extra={"PANTHEON_STATUS_ROOT": str(status_root)},
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stderr + proc.stdout)
+            tracked_status = _git(root, "status", "--porcelain", "--untracked-files=no").stdout.strip()
+            self.assertEqual(tracked_status, "")
+            audit = json.loads((status_root / "ai-activity-log.jsonl").read_text().splitlines()[-1])
+            self.assertTrue(audit["default_index_refreshed"])
+            self.assertIsNone(audit["default_index_refresh_error"])
+        finally:
+            import shutil; shutil.rmtree(root); shutil.rmtree(status_root)
+
+    def test_directory_scope_does_not_force_add_ignored_children(self) -> None:
+        root = self._setup_repo()
+        try:
+            (root / ".gitignore").write_text("*.log\n")
+            (root / "src").mkdir()
+            (root / "src" / "kept.py").write_text("a\n")
+            (root / "src" / "debug.log").write_text("ignored\n")
+            msg = root / "msg.txt"
+            msg.write_text("BAR-003: directory scope\n\nLLM-Agent: B\nTask-ID: BAR-003\nReviewer: A\n")
+            proc = self._wrapper(
+                root,
+                "--task-id", "BAR-003",
+                "--message-file", str(msg),
+                "--scope", "src",
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stderr + proc.stdout)
+            last_files = _git(root, "show", "--name-only", "--format=", "HEAD").stdout.split()
+            self.assertIn("src/kept.py", last_files)
+            self.assertNotIn("src/debug.log", last_files)
+        finally:
+            import shutil; shutil.rmtree(root)
+
+    def test_explicit_ignored_file_scope_can_be_force_added(self) -> None:
+        root = self._setup_repo()
+        try:
+            (root / ".gitignore").write_text("ignored/\n")
+            (root / "ignored").mkdir()
+            (root / "ignored" / "artifact.txt").write_text("artifact\n")
+            msg = root / "msg.txt"
+            msg.write_text("BAR-004: ignored file\n\nLLM-Agent: B\nTask-ID: BAR-004\nReviewer: A\n")
+            proc = self._wrapper(
+                root,
+                "--task-id", "BAR-004",
+                "--message-file", str(msg),
+                "--scope", "ignored/artifact.txt",
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stderr + proc.stdout)
+            last_files = _git(root, "show", "--name-only", "--format=", "HEAD").stdout.split()
+            self.assertIn("ignored/artifact.txt", last_files)
+        finally:
+            import shutil; shutil.rmtree(root)
+
+    def test_tracked_ignored_file_scope_can_be_updated(self) -> None:
+        root = self._setup_repo()
+        try:
+            (root / ".gitignore").write_text("ignored/\n")
+            (root / "ignored").mkdir()
+            (root / "ignored" / "artifact.txt").write_text("old\n")
+            _git(root, "add", ".gitignore")
+            _git(root, "add", "-f", "ignored/artifact.txt")
+            _git(root, "commit", "-m", "Track ignored artifact")
+            (root / "ignored" / "artifact.txt").write_text("new\n")
+            msg = root / "msg.txt"
+            msg.write_text("BAR-005: tracked ignored file\n\nLLM-Agent: B\nTask-ID: BAR-005\nReviewer: A\n")
+            proc = self._wrapper(
+                root,
+                "--task-id", "BAR-005",
+                "--message-file", str(msg),
+                "--scope", "ignored/artifact.txt",
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stderr + proc.stdout)
+            committed = _git(root, "show", "HEAD:ignored/artifact.txt").stdout
+            self.assertEqual(committed, "new\n")
+        finally:
+            import shutil; shutil.rmtree(root)
+
+    def test_rejects_ignored_directory_scope(self) -> None:
+        root = self._setup_repo()
+        try:
+            (root / ".gitignore").write_text("ignored/\n")
+            (root / "ignored").mkdir()
+            (root / "ignored" / "artifact.txt").write_text("artifact\n")
+            msg = root / "msg.txt"
+            msg.write_text("BAR-006: ignored directory\n\nLLM-Agent: B\nTask-ID: BAR-006\nReviewer: A\n")
+            before = _git(root, "rev-parse", "HEAD").stdout.strip()
+            proc = self._wrapper(
+                root,
+                "--task-id", "BAR-006",
+                "--message-file", str(msg),
+                "--scope", "ignored",
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("Refusing to force-add ignored directory scope", proc.stderr)
+            after = _git(root, "rev-parse", "HEAD").stdout.strip()
+            self.assertEqual(before, after)
+        finally:
+            import shutil; shutil.rmtree(root)
+
+    def test_worker_commit_audit_respects_status_root(self) -> None:
+        root = self._setup_repo()
+        status_root = Path(tempfile.mkdtemp())
+        try:
+            (root / "kept.py").write_text("a\n")
+            msg = root / "msg.txt"
+            msg.write_text("BAR-003: worker audit\n\nLLM-Agent: B\nTask-ID: BAR-003\nReviewer: A\n")
+            proc = self._wrapper(
+                root,
+                "--task-id", "BAR-003",
+                "--message-file", str(msg),
+                "--scope", "kept.py",
+                "--llm-agent", "Codex2",
+                env_extra={"PANTHEON_STATUS_ROOT": str(status_root)},
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stderr + proc.stdout)
+            local_log = root / "ai-activity-log.jsonl"
+            status_log = status_root / "ai-activity-log.jsonl"
+            self.assertFalse(local_log.exists())
+            audit = json.loads(status_log.read_text(encoding="utf-8").splitlines()[-1])
+            self.assertEqual(audit["agent"], "Codex2")
+            self.assertEqual(audit["type"], "worker_commit")
+            self.assertEqual(audit["task_id"], "BAR-003")
+            self.assertIn("Worker commit", audit["message"])
+        finally:
+            import shutil; shutil.rmtree(root); shutil.rmtree(status_root)
 
 
 if __name__ == "__main__":

@@ -59,10 +59,14 @@ class SignalConsumer:
         store_client: Any,
         schema_path: str | pathlib.Path | None = None,
         rebalance_timeout_bars: int = _REBALANCE_TIMEOUT_BARS,
+        binding_id: str | None = None,
     ) -> None:
         self._store = store_client
         self._schema = self._load_schema(schema_path)
         self._rebalance_timeout = rebalance_timeout_bars
+        # When set, signals whose binding_id field doesn't match are discarded
+        # as a defense-in-depth layer on top of queue-key isolation.
+        self._binding_id: str | None = str(binding_id).strip() if binding_id else None
 
         # run_id → {"signals": [...], "bars_waited": int}
         self._rebalance_buffer: dict[str, dict] = defaultdict(
@@ -93,6 +97,8 @@ class SignalConsumer:
             if self._is_duplicate(signal):
                 continue
             if self._is_stale(signal, algo):
+                continue
+            if self._is_wrong_binding(signal):
                 continue
             if signal.get("run_id"):
                 self._buffer_rebalance(signal)
@@ -201,6 +207,26 @@ class SignalConsumer:
              return True
 
         return False
+
+    def _is_wrong_binding(self, signal: dict) -> bool:
+        """Defense-in-depth: discard signals routed to a different binding.
+
+        Only active when this consumer was constructed with a *binding_id*.
+        Signals that carry no ``binding_id`` field pass through regardless —
+        they predate the routing field and must not be silently dropped.
+        """
+        if not self._binding_id:
+            return False
+        signal_binding = str(signal.get("binding_id") or "").strip()
+        if not signal_binding:
+            return False
+        if signal_binding == self._binding_id:
+            return False
+        log.warning(
+            "[%s] Binding mismatch: expected %s, got %s — discarding",
+            signal.get("signal_id", "<unknown>"), self._binding_id, signal_binding,
+        )
+        return True
 
     # ------------------------------------------------------------------
     # Conflict resolution (same symbol, different signals)

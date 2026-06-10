@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Idle capacity exists and remaining blockers are scoped, not global.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "BLA-LIVE-001-V2",
+    "CBL-LIVE-001-V2",
+    "HA-PROD-001-V2"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SPRINT-8-CLOSEOUT",
+    "LOVABLE-STRICT-PUBLISH",
+    "OSS-QUANTLIB-V2-001",
+    "PR-225",
+    "PR-345",
+    "NIGHTLY-PUBLISH-CUT-20260520",
+    "OPS-TASK-BRANCH-RETIREMENT"
+  ]
+}

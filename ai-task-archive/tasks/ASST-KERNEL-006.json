@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "task_id": "ASST-KERNEL-006",
+  "archived_at": "2026-06-01T01:16:06Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASST-KERNEL-006",
+    "title": "Implement OpenClaw command broker observe/debug allowlists",
+    "summary_zh": "建立 OpenClaw tool/workflow policy 下的 kernel observe/debug command broker，allowlist 診斷命令並 deny destructive git DB mutation secret reads sudo broker/live capital and exfiltration。",
+    "phase": "Assistant OpenClaw Gateway Kernel/User Mode",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "ASST-KERNEL-002",
+      "ASST-OCGW-001"
+    ],
+    "artifacts": [
+      "services/openclaw-gateway-adapter/assistant_command_policy.py",
+      "services/openclaw-gateway-adapter/tool_workflow_bridge.py",
+      "services/openclaw-gateway-adapter/tests/test_assistant_command_policy.py",
+      "services/control-plane/bff/assistant/mode_policy.py"
+    ],
+    "acceptance": [
+      "user mode denies every command",
+      "kernel observe allows read probes and git status",
+      "kernel debug allows bounded health rg file-slice tests and sanitized logs",
+      "denylist blocks destructive and secret commands",
+      "every allow and deny is audited"
+    ],
+    "next": "PR #717 merged (de8d6eaa); command broker policy delivered, reviewed, verified with focused pytest, and owner closeout evidence recorded.",
+    "last_update": "2026-06-01T01:16:06Z",
+    "source_documents": [
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/SA_assistant_kernel_user_mode.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/SD_assistant_kernel_user_mode.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md"
+    ],
+    "implementation_track": "assistant-openclaw-gateway-cli-mount",
+    "provider_runtime": "openclaw_gateway_cli_mount",
+    "credential_policy": "dedicated_service_user_oauth_mount",
+    "delivery_layer": "primary",
+    "review_notes_zh": [
+      "審查通過：雙層政策設計（OpenClaw 工具政策 + 指令模式政策）正確實作，deny-by-default 確認，5 項驗收標準全部滿足",
+      "後續追蹤：ASST-KERNEL-007 需補齊 repair 模式的寫入/重啟 guardrail；rg validator 的 else 分支對 allowlist flag 有小型 parser quirk（不影響安全性）"
+    ],
+    "review_file": "support/reviews/ASST-KERNEL-006-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-01T01:16:06Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/asst-kernel-006",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/ASST-KERNEL-006",
+      "git_clean_required": false,
+      "commit": "38b55fdf5e40df265315a83cd0b412c934cd61ef",
+      "commit_subject": "ASST-KERNEL-006: record owner closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "ASST-KERNEL-006 task-scoped brief and owner closeout evidence for command broker policy finalization.",
+        "Not changing": "assistant command policy implementation, OpenClaw tool/workflow bridge behavior, BFF mode policy, repair write/restart guardrails, canonical architecture docs, provider runtime execution, or live broker/capital paths.",
+        "Composes with": "merged implementation PR #714, Claude review approval artifact d6c9e45e, and ai-status done archival from PANTHEON_STATUS_ROOT.",
+        "Verified": "python3 -m pytest services/openclaw-gateway-adapter/tests/test_assistant_command_policy.py -q (14 passed)",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "ASST-KERNEL-006",
+        "Reviewer": "Claude"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/ASST-KERNEL-006",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "de8d6eaa9b5994bbc7d694d1e0d5684470984944",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASST-KERNEL-006",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Implementation merged in PR #714 (merge b86c1333; task commit 2f62f2e0). Please review command broker allowlist/denylist and audit behavior. Verified: py_compile policy/bridge/mode files; pytest bridge command policy + tool workflow 72 passed; BFF assistant sessions/context/redaction 47 passed; full openclaw-gateway-adapter 246 passed.",
+      "status": "done",
+      "created_at": "2026-06-01T00:59:50Z",
+      "resolved_at": "2026-06-01T01:07:24Z"
+    },
+    {
+      "task_id": "ASST-KERNEL-006",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: two-layer command broker policy satisfies all 5 acceptance criteria; task returned to Codex2 for done closeout.",
+      "status": "done",
+      "created_at": "2026-06-01T01:07:24Z",
+      "resolved_at": "2026-06-01T01:16:06Z"
+    }
+  ],
+  "blockers": []
+}

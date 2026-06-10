@@ -1,0 +1,129 @@
+{
+  "version": 1,
+  "task_id": "EP5-001-V2",
+  "archived_at": "2026-05-19T16:05:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EP5-001-V2",
+    "title": "PromotionReadinessPacket schema (2026-05-19 supplement A2.1)",
+    "summary_zh": "Implement PromotionReadinessPacket data model with evidence/approval/flags/blocking_reasons subtrees per Part A2.1 of the 2026-05-19 design blueprint supplement.",
+    "phase": "Phase 8 / EPIC-EP5",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/governance/promotion_readiness/packet_model.py",
+      "tests/governance/test_promotion_readiness_packet.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner finalization: implementation merged in PR #227 at c306ed9a392d086a94ae3e1ceae8bb3c7f3bfd24; closeout evidence merged in PR #230 at 1342190ca2d91692e27dba32a527866bc6e55b2b; verified pytest -q tests/governance/test_promotion_readiness_packet.py (8 passed), git diff --check, and GitHub required checks passed.",
+    "last_update": "2026-05-19T16:05:26Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：PromotionReadinessPacket.v2 支援 A2.1 packet_version、target_environment、artifact/deployment/runtime/pool/policy refs、required_evidence mapping、approval.status enum、flags.can_proceed 與 string blocking_reasons；保留 v1 legacy packet 相容；fail-closed 測試覆蓋 required approval、evidence status、live/capital flags、blocking_reasons、pending approval.status。驗證：python3 -m py_compile services/governance/promotion_readiness/packet_model.py tests/governance/test_promotion_readiness_packet.py；pytest -q tests/governance/test_promotion_readiness_packet.py；pytest -q tests/governance；git diff --check。PR #227 已 merged at c306ed9a392d086a94ae3e1ceae8bb3c7f3bfd24。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T16:05:26Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ep5-001-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/EP5-001-V2",
+      "git_clean_required": false,
+      "commit": "570bf65be6417cea43f82d2db35c5e1dfea713e9",
+      "commit_subject": "EP5-001-V2: record closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "EP5-001-V2",
+        "Reviewer": "Codex2",
+        "Verified": "pytest -q tests/governance/test_promotion_readiness_packet.py; git diff --check"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/EP5-001-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "1342190ca2d91692e27dba32a527866bc6e55b2b",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EP5-001-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review: PR #214 adds PromotionReadinessPacket model with evidence/approval/flags/blocking_reasons subtrees and focused tests. Verified py_compile and pytest -q tests/governance/test_promotion_readiness_packet.py (4 passed).",
+      "status": "done",
+      "created_at": "2026-05-19T15:06:25Z",
+      "resolved_at": "2026-05-19T15:16:42Z"
+    },
+    {
+      "task_id": "EP5-001-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review changes requested on PR #214: validate_packet must fail closed on blocking evidence.provided statuses when can_proceed=true, add regression coverage, and fix git diff --check EOF blank lines in promotion_readiness __init__.py/test. Local py_compile and focused pytest passed; diff-check failed as noted.",
+      "status": "done",
+      "created_at": "2026-05-19T15:16:42Z",
+      "resolved_at": "2026-05-19T15:16:42Z"
+    },
+    {
+      "task_id": "EP5-001-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "PR #214 merged into dev at e39e81afe5f42e3569ee74f75f1c77f6075e61fe after fixing review feedback. Added fail-closed validation for non-passing evidence.provided statuses, regression coverage, and EOF whitespace cleanup. Verified: python3 -m py_compile services/governance/promotion_readiness/packet_model.py tests/governance/test_promotion_readiness_packet.py; pytest -q tests/governance/test_promotion_readiness_packet.py; git diff --check origin/dev...HEAD. Please approve via ai-status.",
+      "status": "done",
+      "created_at": "2026-05-19T15:30:04Z",
+      "resolved_at": "2026-05-19T15:37:59Z"
+    },
+    {
+      "task_id": "EP5-001-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review requested changes: packet_model does not accept or round-trip the 2026-05-19 supplement A2.1 shape. Please align schema/tests with packet_version, target_environment, artifact/deployment/runtime/pool/policy refs, required_evidence mapping, approval status enum, flags.can_proceed, and blocking_reasons string[] or explicitly document the normalized replacement with A2.1 round-trip coverage.",
+      "status": "done",
+      "created_at": "2026-05-19T15:37:59Z",
+      "resolved_at": "2026-05-19T15:37:59Z"
+    },
+    {
+      "task_id": "EP5-001-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "PR #227 merged at c306ed9a392d086a94ae3e1ceae8bb3c7f3bfd24; A2.1 packet_version/target_environment refs/required_evidence mapping/approval.status/flags.can_proceed/string blocking_reasons coverage ready for review.",
+      "status": "done",
+      "created_at": "2026-05-19T15:49:46Z",
+      "resolved_at": "2026-05-19T15:57:42Z"
+    },
+    {
+      "task_id": "EP5-001-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved by Codex2: A2.1 PromotionReadinessPacket schema and tests pass; PR #227 is merged at c306ed9a392d086a94ae3e1ceae8bb3c7f3bfd24. Return to Codex for owner finalization to done.",
+      "status": "done",
+      "created_at": "2026-05-19T15:57:42Z",
+      "resolved_at": "2026-05-19T16:05:27Z"
+    }
+  ],
+  "blockers": []
+}

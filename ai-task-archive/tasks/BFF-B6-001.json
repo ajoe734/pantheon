@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "task_id": "BFF-B6-001",
+  "archived_at": "2026-05-23T11:57:54Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-B6-001",
+    "title": "POST /bff/management/nl/ask Management NL endpoint",
+    "summary_zh": null,
+    "phase": "Sprint BFF-6 / EPIC-BFF-GAP-NL",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BFF-B3-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#b6--p2-management-natural-language-api",
+      "services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "Accepts spec section B6 input schema prompt pageContext intent",
+      "Returns data.summary bullets followups evidenceRefs refused provider",
+      "Frontend never calls model provider directly",
+      "BFF performs auth scope redaction context retrieval model provider call grounding audit"
+    ],
+    "next": "Owner finalized: PR #479 merged to dev at 2026-05-23T11:55:18Z. All 8 pytest tests pass. Closeout evidence at support/evidence/BFF-B6-001/closeout.md.",
+    "last_update": "2026-05-23T11:57:54Z",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T11:57:54Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-b6-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-B6-001",
+      "git_clean_required": false,
+      "commit": "4f7b614484bbf23470d494e4ef946a6bbe1005e4",
+      "commit_subject": "BFF-B6-001: record owner closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Verification": "pytest services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py",
+        "LLM-Agent": "Claude",
+        "Task-ID": "BFF-B6-001",
+        "Reviewer": "Codex",
+        "Verified": "pytest services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py -v -- 8 passed"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-B6-001",
+      "ahead": 0,
+      "behind": 5,
+      "push_status": "behind",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "1192589bb47d3dff0b85c0688294c34708f65afa",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-B6-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation complete. POST /bff/management/nl/ask added to services/control-plane/bff/main.py with 7 passing tests (all 6 acceptance criteria covered). PR #479 open with auto-merge enabled. Commit: de7b0d32. Verified: pytest 7 passed in 3.45s.",
+      "status": "done",
+      "created_at": "2026-05-23T11:09:39Z",
+      "resolved_at": "2026-05-23T11:27:08Z"
+    },
+    {
+      "task_id": "BFF-B6-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review blocker: focus=persona_fleet does not actually collect persona-fleet context because _mgmt_nl_collect_context calls _project_persona_fleet_payload without required args, then catches the TypeError as unavailable. PR #479 auto-merge disabled and blocker comment added. Please pass persona-fleet defaults and add regression coverage for persona_fleet sources/summary_context.",
+      "status": "done",
+      "created_at": "2026-05-23T11:27:08Z",
+      "resolved_at": "2026-05-23T11:27:08Z"
+    },
+    {
+      "task_id": "BFF-B6-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Fixed both review blockers: (1) persona_fleet TypeError — now passes state=None health=None page_token=None page_size=20 to _project_persona_fleet_payload; (2) contract source confirmed as question/focus/data.answer matching spec §B6 and test file; no other contract applies. All 8 acceptance tests pass (pytest -v). Commit 409eed29.",
+      "status": "done",
+      "created_at": "2026-05-23T11:35:59Z",
+      "resolved_at": "2026-05-23T11:39:35Z"
+    },
+    {
+      "task_id": "BFF-B6-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: HEAD 409eed29 fixes persona_fleet context collection, contract matches B6 spec question/focus/data.answer shape, and pytest tests/test_bff_b6_management_nl_ask.py -v passed 8/8. Owner must finalize PR/merge and mark done.",
+      "status": "done",
+      "created_at": "2026-05-23T11:39:35Z",
+      "resolved_at": "2026-05-23T11:57:55Z"
+    }
+  ],
+  "blockers": []
+}

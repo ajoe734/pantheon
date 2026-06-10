@@ -1,0 +1,158 @@
+{
+  "version": 1,
+  "task_id": "EP5-002-V2",
+  "archived_at": "2026-05-19T18:08:52Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EP5-002-V2",
+    "title": "Readiness validator + blocking_reasons",
+    "summary_zh": "Validator that takes a PromotionReadinessPacket and produces blocking_reasons. Missing evidence, missing approvals, expired/revoked approvals, conflicting flags all produce typed blocking_reasons.",
+    "phase": "Phase 8 / EPIC-EP5",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "EP5-001-V2"
+    ],
+    "artifacts": [
+      "services/governance/promotion_readiness/validator.py",
+      "tests/governance/test_promotion_readiness_validator.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "PromotionReadinessValidator with 7 typed blocking_reason categories implemented. 27/27 tests pass. PR #269 merged into dev.",
+    "last_update": "2026-05-19T18:08:52Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：validator.py 目前符合 packet_model 的 fail-closed 邏輯；evidence status 使用 not-in PASSING_STATUSES，required approval recorded=false 會阻擋，state=revoked 即使沒有 revoked_at 也會 emit approval_revoked；未修改 L1 canonical doc。驗證：python3 -m pytest tests/governance/test_promotion_readiness_validator.py tests/governance/test_promotion_readiness_packet.py -q；python3 -m pytest tests/governance -q。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T18:08:52Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ep5-002-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/EP5-002-V2",
+      "git_clean_required": false,
+      "commit": "08977cc49b0079ab407841c2611663d590d02547",
+      "commit_subject": "EP5-002-V2: refresh closeout after dev sync",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude2",
+        "Task-ID": "EP5-002-V2",
+        "Reviewer": "Codex",
+        "Verified": "pytest tests/governance/test_promotion_readiness_validator.py -q -> 27 passed"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/EP5-002-V2",
+      "ahead": 0,
+      "behind": 14,
+      "push_status": "behind",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "8c25014e389f67356a0400e2fec7fa811384bb7e",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EP5-002-V2",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Helper-claimed by Claude2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-19T16:11:14Z",
+      "resolved_at": "2026-05-19T16:11:24Z"
+    },
+    {
+      "task_id": "EP5-002-V2",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "EP5-002-V2 implementation complete. validator.py delivers validate_readiness(packet) -> list[BlockingReason] covering: missing evidence keys, non-passing evidence status, failing gates, unrecorded/expired/revoked approvals, unsafe fail-closed flags, and conflicting can_proceed. 20 validator tests + 36 total governance tests pass. PR #236 open with auto-merge. Please review services/governance/promotion_readiness/validator.py and tests/governance/test_promotion_readiness_validator.py.",
+      "status": "done",
+      "created_at": "2026-05-19T16:15:50Z",
+      "resolved_at": "2026-05-19T16:20:36Z"
+    },
+    {
+      "task_id": "EP5-002-V2",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review requested changes: validator.py only blocks evidence statuses listed in BLOCKING_STATUSES, but packet_model treats any status outside PASSING_STATUSES as blocking. Repro status='warning' returns no blocking_reason. Please switch evidence status check to not-in PASSING_STATUSES, add regression coverage, and refresh PR #236 from dev (currently BEHIND).",
+      "status": "done",
+      "created_at": "2026-05-19T16:20:36Z",
+      "resolved_at": "2026-05-19T16:20:36Z"
+    },
+    {
+      "task_id": "EP5-002-V2",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Fix applied: switched evidence status check from 'in BLOCKING_STATUSES' to 'not in PASSING_STATUSES' (matches packet_model.validate_packet). Removed unused BLOCKING_STATUSES import. Added regression coverage for warning/unknown/degraded statuses. 23 tests pass. PR #236 rebased onto dev and force-with-lease pushed — now MERGEABLE.",
+      "status": "done",
+      "created_at": "2026-05-19T16:30:54Z",
+      "resolved_at": "2026-05-19T16:36:40Z"
+    },
+    {
+      "task_id": "EP5-002-V2",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review requested changes: validator must emit missing_evidence for precomputed evidence.missing entries and approval_not_recorded whenever required approval recorded=false, even if state is passing; PR #236 comment records probes and verification.",
+      "status": "done",
+      "created_at": "2026-05-19T16:36:40Z",
+      "resolved_at": "2026-05-19T16:36:40Z"
+    },
+    {
+      "task_id": "EP5-002-V2",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Fixed both reviewer issues: (1) ev.missing loop condition was inverted — now emits missing_evidence for every key in ev.missing, deduplicating only keys already handled by the required-loop; (2) approval_not_recorded now fires whenever recorded=false regardless of state. Added 3 regression tests (26 passed). Commit d476e8d5.",
+      "status": "done",
+      "created_at": "2026-05-19T16:50:53Z",
+      "resolved_at": "2026-05-19T17:01:08Z"
+    },
+    {
+      "task_id": "EP5-002-V2",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review changes requested: validator.py should emit approval_revoked when a required approval has state='revoked' even if revoked_at is absent; packet_model.validate_packet already treats state revoked as a blocking approval. Existing pytest tests/governance/test_promotion_readiness_validator.py passed (26 passed), but add regression coverage for state-only revoked approval before re-handoff.",
+      "status": "done",
+      "created_at": "2026-05-19T17:01:08Z",
+      "resolved_at": "2026-05-19T17:01:08Z"
+    },
+    {
+      "task_id": "EP5-002-V2",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Re-review: validator.py now emits approval_revoked for state=revoked even when revoked_at is absent. Regression test test_required_approval_revoked_state_only_no_timestamp added. All 27 pytest tests pass (python3 -m pytest tests/governance/test_promotion_readiness_validator.py -q).",
+      "status": "done",
+      "created_at": "2026-05-19T17:11:30Z",
+      "resolved_at": "2026-05-19T17:17:46Z"
+    },
+    {
+      "task_id": "EP5-002-V2",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Approved after re-review: approval_revoked now covers state=revoked without revoked_at, regression coverage is present, and governance tests pass. Owner Claude2 should finalize the task through the PR/merge closeout flow.",
+      "status": "done",
+      "created_at": "2026-05-19T17:17:46Z",
+      "resolved_at": "2026-05-19T18:08:52Z"
+    }
+  ],
+  "blockers": []
+}

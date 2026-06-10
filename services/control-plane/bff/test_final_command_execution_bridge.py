@@ -292,7 +292,7 @@ def test_audit_and_v5_command_routes_write_domain_command_records() -> None:
                 "/bff/v5/interventions/intv-sem-002/decide",
                 "sem-002-v5-decide",
                 {"decision": "dismiss"},
-                "V5InterventionAction",
+                "DecideV5Intervention",
             ),
             (
                 "POST",
@@ -330,7 +330,7 @@ def test_audit_and_v5_command_routes_write_domain_command_records() -> None:
 
         assert [record["type"] for record in bff_main.command_store._get_all_commands()] == [
             "AuditExport",
-            "V5InterventionAction",
+            "DecideV5Intervention",
             "SentinelFindingStatus",
             "SentinelRemediationBuild",
             "SentinelRemediationExecute",

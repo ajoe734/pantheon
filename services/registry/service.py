@@ -345,6 +345,239 @@ async def advance_strategy_spec_state(registry_id: str, body: AdvanceRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+# -- AllocationPolicyArtifact registry facade (MPOS-P1-ART-001) ----------
+#
+# Registers an AllocationPolicyArtifact produced by optimizer-svc into the
+# registry governance lifecycle.  The registry does not import optimizer-svc;
+# the caller embeds the artifact payload inline and we extract the lineage
+# fields (provenance_refs → source_run_ids, conflict_resolution_log_id →
+# source_strategy_spec_id) to satisfy the registry lineage requirement.
+#
+# Key field mapping
+# -----------------
+#   artifact_type          = allocation_policy
+#   strategy_id            = capital_pool_id (pool-scoped strategy identity)
+#   lineage.source_run_ids = provenance_refs (PersonaAllocationProposal ids)
+#   lineage.source_strategy_spec_id = conflict_resolution_log_id
+#   evaluation_summary     = synthesis evidence: method, sponsor, risk, scope
+#   metadata               = full AllocationPolicyArtifact dict
+#   checksum               = sha256 of the artifact JSON (caller-supplied or computed)
+#   producer_run_id        = artifact_id from the optimizer run
+
+_ALLOC_POLICY_ARTIFACT_REQUIRED = [
+    "artifact_id",
+    "capital_pool_id",
+    "scope_ref",
+    "sponsor_persona_id",
+    "synthesis_method",
+    "target_weights",
+    "created_at",
+    "provenance_refs",
+    "conflict_resolution_log_id",
+]
+
+_SYNTHESIS_METHODS = {"weighted_fusion", "committee_override", "single_proposal"}
+
+
+class AllocationPolicyArtifactRegisterRequest(BaseModel):
+    """
+    Request body for POST /api/registry/allocation-policy-artifacts.
+
+    The caller embeds the full AllocationPolicyArtifact dict in
+    ``allocation_policy_artifact``.  ``version`` must be semver (e.g. "1.0.0").
+    ``registry_id`` is optional; one is generated if omitted.
+    ``checksum`` is optional; computed from the artifact JSON if omitted.
+    """
+    version: str
+    allocation_policy_artifact: dict[str, Any]
+    registry_id: Optional[str] = None
+    checksum: Optional[str] = None
+    metadata: Optional[dict[str, Any]] = None
+
+
+def _validate_alloc_policy_artifact(artifact: dict[str, Any]) -> None:
+    missing = [k for k in _ALLOC_POLICY_ARTIFACT_REQUIRED if not artifact.get(k)]
+    if missing:
+        raise RegistryError(
+            "AllocationPolicyArtifact is missing required fields: " + ", ".join(missing)
+        )
+    if artifact.get("synthesis_method") not in _SYNTHESIS_METHODS:
+        raise RegistryError(
+            f"allocation_policy_artifact.synthesis_method must be one of "
+            f"{sorted(_SYNTHESIS_METHODS)}, got {artifact.get('synthesis_method')!r}"
+        )
+    if not isinstance(artifact.get("provenance_refs"), list) or not artifact["provenance_refs"]:
+        raise RegistryError(
+            "allocation_policy_artifact.provenance_refs must be a non-empty list of proposal ids"
+        )
+    if not isinstance(artifact.get("target_weights"), dict) or not artifact["target_weights"]:
+        raise RegistryError(
+            "allocation_policy_artifact.target_weights must be a non-empty symbol-to-weight mapping"
+        )
+
+
+def _alloc_policy_register_payload(
+    body: AllocationPolicyArtifactRegisterRequest,
+) -> RegistryEntryCreate:
+    artifact = body.allocation_policy_artifact
+
+    _validate_alloc_policy_artifact(artifact)
+
+    capital_pool_id = str(artifact["capital_pool_id"]).strip()
+    if not capital_pool_id:
+        raise RegistryError("allocation_policy_artifact.capital_pool_id is required")
+
+    provenance_refs = list(artifact["provenance_refs"])
+    conflict_log_id = str(artifact["conflict_resolution_log_id"]).strip()
+
+    lineage = Lineage(
+        source_run_ids=provenance_refs,
+        source_strategy_spec_id=conflict_log_id or None,
+    )
+
+    artifact_json_bytes = json.dumps(
+        artifact, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    checksum = str(body.checksum or "").strip()
+    if not checksum:
+        import hashlib
+        checksum = f"sha256:{hashlib.sha256(artifact_json_bytes).hexdigest()}"
+
+    evaluation_summary: dict[str, Any] = {
+        "conflict_resolution_log_id": conflict_log_id,
+        "synthesis_method": artifact.get("synthesis_method"),
+        "sponsor_persona_id": artifact.get("sponsor_persona_id"),
+        "scope_ref": artifact.get("scope_ref"),
+    }
+    risk_budget = artifact.get("risk_budget")
+    if risk_budget is not None:
+        evaluation_summary["risk_budget"] = risk_budget
+
+    extra_metadata = dict(body.metadata or {})
+    extra_metadata["allocation_policy_artifact"] = artifact
+
+    storage_ref = StorageRef(
+        backend=StorageBackend.INLINE,
+        path="$.entry.metadata.allocation_policy_artifact",
+    )
+
+    return RegistryEntryCreate(
+        artifact_type=ArtifactType.ALLOCATION_POLICY,
+        strategy_id=capital_pool_id,
+        version=body.version,
+        artifact_state=ArtifactState.CANDIDATE,
+        lineage=lineage,
+        storage_ref=storage_ref,
+        checksum=checksum,
+        producer_run_id=str(artifact.get("artifact_id") or "").strip() or None,
+        evaluation_summary=evaluation_summary,
+        metadata=extra_metadata,
+    )
+
+
+def _ensure_alloc_policy_view(
+    view: RegistryEntryView, registry_id: str
+) -> RegistryEntryView:
+    if view.entry.artifact_type != ArtifactType.ALLOCATION_POLICY:
+        raise RegistryNotFoundError(
+            f"AllocationPolicyArtifact registry entry not found: {registry_id}"
+        )
+    return view
+
+
+@app.post(
+    "/api/registry/allocation-policy-artifacts",
+    response_model=RegistryEntryView,
+)
+async def register_allocation_policy_artifact(
+    payload: AllocationPolicyArtifactRegisterRequest,
+):
+    """
+    Register an AllocationPolicyArtifact produced by optimizer-svc.
+
+    The artifact enters the registry at ``candidate`` state because it already
+    carries a ConflictResolutionLog and provenance lineage from optimizer-svc;
+    it does not require a separate replication run.  Governance can then advance
+    it to ``approved`` via the standard advance endpoint before deployment planning.
+    """
+    artifact = payload.allocation_policy_artifact
+    capital_pool_id = str(artifact.get("capital_pool_id") or "").strip()
+    registry_id = (
+        payload.registry_id
+        or f"reg-alloc-policy-{capital_pool_id}-{payload.version}-{uuid.uuid4().hex[:8]}"
+    )
+    registry_service = get_registry_service()
+    try:
+        create_payload = _alloc_policy_register_payload(payload)
+        return registry_service.register(create_payload, registry_id)
+    except (RegistryError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get(
+    "/api/registry/allocation-policy-artifacts/{registry_id}",
+    response_model=RegistryEntryView,
+)
+async def get_allocation_policy_artifact_entry(registry_id: str):
+    """Read one AllocationPolicyArtifact registry entry."""
+    registry_service = get_registry_service()
+    try:
+        return _ensure_alloc_policy_view(
+            registry_service.get(registry_id), registry_id
+        )
+    except RegistryError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get(
+    "/api/registry/pools/{capital_pool_id}/allocation-policy-artifacts",
+    response_model=list[RegistryEntryView],
+)
+async def list_allocation_policy_artifacts(
+    capital_pool_id: str,
+    artifact_state: Optional[ArtifactState] = None,
+):
+    """
+    List AllocationPolicyArtifact registry entries for one capital pool.
+
+    strategy_id == capital_pool_id for allocation-policy artifacts.
+    """
+    views = [
+        view
+        for view in get_registry_service().list_by_strategy(capital_pool_id)
+        if view.entry.artifact_type == ArtifactType.ALLOCATION_POLICY
+    ]
+    if artifact_state is not None:
+        views = [view for view in views if view.entry.artifact_state == artifact_state]
+    return views
+
+
+@app.post(
+    "/api/registry/allocation-policy-artifacts/{registry_id}/advance",
+    response_model=RegistryEntryView,
+)
+async def advance_allocation_policy_artifact_state(
+    registry_id: str, body: AdvanceRequest
+):
+    """
+    Advance an AllocationPolicyArtifact entry through the governed artifact lifecycle.
+
+    candidate -> approved makes the artifact eligible for DeploymentPlan creation.
+    """
+    registry_service = get_registry_service()
+    try:
+        _ensure_alloc_policy_view(registry_service.get(registry_id), registry_id)
+        return registry_service.advance_artifact_state(
+            registry_id,
+            body.target_state,
+            approver=body.approver,
+        )
+    except RegistryNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RegistryError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 # -- Health ---------------------------------------------------------------
 
 @app.get("/health")

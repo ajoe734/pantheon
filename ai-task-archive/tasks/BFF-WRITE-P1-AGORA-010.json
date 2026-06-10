@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "BFF-WRITE-P1-AGORA-010",
+  "archived_at": "2026-05-29T09:17:29Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-WRITE-P1-AGORA-010",
+    "title": "POST /bff/agora/signals (method add - GET at main.py:19006)",
+    "summary_zh": null,
+    "phase": "Sprint BFF-WRITE-GAP / EPIC-WRITE-GAP-P1-AGORA",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_bff_write_gap_2026-05-28/BFF_WRITE_GAP_SPEC.md;execute-plans/.lovable/specs/be-requirements/BE_WRITE_GAP_SPEC_2026-05-28.md;services/control-plane/bff/main.py;services/control-plane/bff/test_bff_write_gap_2026_05_28.py"
+    ],
+    "acceptance": [
+      "Add POST alongside existing GET at main.py:19006 area;Body schema title plus body plus optional market plus optional tags plus optional linkedPersonaIds plus optional linkedStrategyIds plus optional severity (info|warn|alert);Returns 201 with id plus status=open plus createdAt;Error 422 on schema fail; 403 when caller below analyst role;SSE publishes on agora.signals plus agora.inbox;Audit chain appends agora.signal.create;Permission analyst or above;pytest case create_agora_signal covers happy path plus missing title plus role gate;Live verification after OPS task: probe row returns 201"
+    ],
+    "next": "POST /bff/agora/signals implemented (Codex2 PR #617); closeout PR #624 merged; 3 write-gap tests pass; py_compile OK.",
+    "last_update": "2026-05-29T09:17:29Z",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-29T09:17:29Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-write-p1-agora-010",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-WRITE-P1-AGORA-010",
+      "git_clean_required": false,
+      "commit": "7f6928b955a1b3203f76b94ce457981c70f3c41f",
+      "commit_subject": "BFF-WRITE-P1-AGORA-010: record owner closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-brief state file for BFF-WRITE-P1-AGORA-010",
+        "Not changing": "main.py route, test file (already merged via PR #617)",
+        "Composes with": "dev mainline (PR #617 already merged)",
+        "LLM-Agent": "Claude",
+        "Task-ID": "BFF-WRITE-P1-AGORA-010",
+        "Reviewer": "Claude2",
+        "Verified": "python3 -m pytest services/control-plane/bff/test_bff_write_gap_2026_05_28.py -q (3 passed); python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/read_store.py (OK)"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 7,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-WRITE-P1-AGORA-010",
+      "ahead": 0,
+      "behind": 14,
+      "push_status": "behind",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "ae1882877cdab0a2b2c97356b8791bb12c872b6d",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-WRITE-P1-AGORA-010",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Implementation merged via PR #617 (merge ea28fd21f2fd6d9264dee4d4e158ff887b8ed001; task commit a54d5eb7). Verified: python3 -m pytest services/control-plane/bff/test_bff_write_gap_2026_05_28.py -q; python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/read_store.py. Existing test_bff_agora_core_contract.py still has unrelated legacy failures around top-level error envelopes and fixture ordering. Please review POST /bff/agora/signals and approve or reopen.",
+      "status": "done",
+      "created_at": "2026-05-29T08:49:53Z",
+      "resolved_at": "2026-05-29T08:57:13Z"
+    },
+    {
+      "task_id": "BFF-WRITE-P1-AGORA-010",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Review approved. POST /bff/agora/signals satisfies Card P1-10: 201 create, 200 dry-run, 422 validation, 403 RBAC, idempotency replay, SSE publishes to agora.signals+agora.inbox, evidenceKind agora.signal.create. All 3 focused tests pass (pytest -q); py_compile clean. No regressions.",
+      "status": "done",
+      "created_at": "2026-05-29T08:57:13Z",
+      "resolved_at": "2026-05-29T09:04:15Z"
+    },
+    {
+      "task_id": "BFF-WRITE-P1-AGORA-010",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-05-29T09:04:16Z",
+      "resolved_at": "2026-05-29T09:17:29Z"
+    }
+  ],
+  "blockers": []
+}

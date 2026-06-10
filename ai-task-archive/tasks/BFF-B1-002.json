@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "task_id": "BFF-B1-002",
+  "archived_at": "2026-05-23T05:56:58Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-B1-002",
+    "title": "Fix /openapi.json 500; make Swagger/OpenAPI readable",
+    "summary_zh": null,
+    "phase": "Sprint BFF-1 / EPIC-BFF-GAP-P0",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#11-session-bootstrap;services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "GET /openapi.json returns 200 with valid OpenAPI 3 JSON;Anonymous request succeeds; CORS preflight passes;Schema includes /bff/* surface so FE generator works"
+    ],
+    "next": "Closed after PR #411 implemented the OpenAPI/CORS fix, PR #414 published review artifacts, and PR #415 merged final closeout evidence. Verified focused BFF tests: 21 passed; OpenAPI discoverability probe: 1 passed. Final merge commit cc8dca2d2a014cd02b96ed6ec18558a857ba2656.",
+    "last_update": "2026-05-23T05:56:58Z",
+    "review_notes_zh": [
+      "審查通過：兩條 action 路由均已正確設定 operationId 與 deprecated 標記，schema 可見且無衝突；expose_headers 正確加入；BFF-B1-001 的 CORS regex 與 140c41d5 UUID 在合併後完整保留；21 tests 通過；OpenAPI 可發現性驗證 PASS"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T05:56:58Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-b1-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-B1-002",
+      "git_clean_required": false,
+      "commit": "4b3c7e11c2b41caaf7a76802acc7db238b754047",
+      "commit_subject": "BFF-B1-002: record final closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-B1-002",
+        "Reviewer": "Claude",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/tests/test_actions_to_commands_adapter.py services/control-plane/bff/tests/test_auth_jwks_strict.py -q; PYTHONDONTWRITEBYTECODE=1 PYTHONWARNINGS=error python3 -m pytest services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_openapi_json_is_route_discoverable -q"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-B1-002",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "cc8dca2d2a014cd02b96ed6ec18558a857ba2656",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-B1-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-23T05:19:14Z",
+      "resolved_at": "2026-05-23T05:19:22Z"
+    },
+    {
+      "task_id": "BFF-B1-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: PR #411 merged into dev at aedf9dac4611db40d98c8d0d7d7a17176ed736d0. Task commit f25176a5dbc9e95b92080e020f170046f5774564 exposes /bff/actions/{entityType}/{entityId}/{actionId} in OpenAPI with unique operationId, keeps compact action adapter visible/deprecated, adds CORS expose headers, and updates BFF command contract/tests. Validation: py_compile task files passed; focused action/CORS/session/OpenAPI suite passed after dev refresh (41 passed); PYTHONWARNINGS=error OpenAPI discoverability passed; GitHub Commit trailers, Runtime mirror guard, and Smoke acceptance passed. Owner attempted done after merge but status lifecycle requires Claude review_approved first.",
+      "status": "done",
+      "created_at": "2026-05-23T05:31:05Z",
+      "resolved_at": "2026-05-23T05:41:31Z"
+    },
+    {
+      "task_id": "BFF-B1-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: PR #411 merged into dev at aedf9dac. Task commit f25176a5 exposes /bff/actions/{entityType}/{entityId}/{actionId} in OpenAPI with unique operationId, adds CORS expose_headers, updates BFF command contract and tests. 41 tests passed, PYTHONWARNINGS=error OpenAPI discoverability passed.",
+      "status": "done",
+      "created_at": "2026-05-23T05:41:40Z",
+      "resolved_at": "2026-05-23T05:41:53Z"
+    },
+    {
+      "task_id": "BFF-B1-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: OpenAPI action surface correct, CORS expose_headers added, BFF-B1-001 CORS regex intact after merge. 21 tests passed, OpenAPI discoverability verified. Returning to Codex for final closeout.",
+      "status": "done",
+      "created_at": "2026-05-23T05:41:53Z",
+      "resolved_at": "2026-05-23T05:56:59Z"
+    }
+  ],
+  "blockers": []
+}

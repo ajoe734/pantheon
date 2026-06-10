@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "No dispatch, approval, provider, or review blocker is active; sidecar approval is safe and pre-emptive while the catalog is empty.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "OPS-NIGHTLY-CUT-RECOVERY: nightly-publish-cut.yml failed on 2026-05-20, 2026-05-21, and 2026-05-22; latest run 26268341511 failed at Check if dev advanced and release/v2026.05.20.0 through release/v2026.05.22.0 are missing.",
+    "OPS-PROMOTE-RECOVERY: publish-promote.yml latest run 26270555146 failed at Open promote PRs; release/v2026.05.18.0 and release/v2026.05.19.0 remain past soak with no promote PR, no promote branch, and no daily prod tag.",
+    "OPS-ZOMBIE-BRANCH-CLEANUP: origin has 139 remote task/* branches and no open PRs; verify reachability from dev before deleting or archiving.",
+    "OPS-HUMAN-GATE-PREREQ-REPLAN: PROD-WRITES-001-V2 and LIVE-SCALE-001-V2 are valid blocked human gates but still reference superseded prerequisite task names.",
+    "OPS-BLOCKER-SYNC: clear stale blocker records for done tasks LOVABLE-STRICT-PUBLISH and OSS-QUANTLIB-V2-001."
+  ]
+}

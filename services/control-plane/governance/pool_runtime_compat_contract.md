@@ -1,7 +1,7 @@
 # Pool Runtime Compatibility Contract
 
 Task: `DEP-004`
-Status: implemented
+Status: accepted
 
 ## Purpose
 

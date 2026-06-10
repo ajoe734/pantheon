@@ -10,11 +10,14 @@ Dependencies: RT-001/RT-002 (RuntimeBinding/RuntimeManager) +
 
 from __future__ import annotations
 
+import importlib
 import importlib.util as _ilu
 import json
 import os
 import sys
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -23,6 +26,20 @@ if str(REPO_ROOT) not in sys.path:
 _EXEC_RUNTIME_MANAGER_DIR = REPO_ROOT / "services" / "execution" / "runtime-manager"
 
 FIXTURE_PATH = Path(__file__).with_name("fixtures") / "deployment_plan_for_runtime.json"
+
+
+def _lean_submodule_available() -> bool:
+    lean_algo_path = REPO_ROOT / "lean" / "Algorithm.Python"
+    if str(lean_algo_path) not in sys.path:
+        sys.path.insert(0, str(lean_algo_path))
+    try:
+        importlib.import_module("pantheon_algo.smoke_loader_test")
+        return True
+    except (ImportError, ModuleNotFoundError):
+        return False
+
+
+_LEAN_AVAILABLE = _lean_submodule_available()
 
 
 def _load_module_from_path(module_name: str, file_path: Path):
@@ -113,6 +130,10 @@ def test_runtime_manager_binds_deployment_plan_paper() -> None:
     assert retrieved.deployment_mode == "paper"
 
 
+@pytest.mark.skipif(
+    not _LEAN_AVAILABLE,
+    reason="LEAN submodule (lean/Algorithm.Python/pantheon_algo) not initialised",
+)
 def test_paper_run_fires_5_on_data_callbacks_and_records_at_least_1_fill() -> None:
     """LEAN smoke algorithm processes 5 synthetic trading days and records ≥ 1 fill."""
     result = run_algorithm_smoke()
@@ -130,6 +151,10 @@ def test_paper_run_fires_5_on_data_callbacks_and_records_at_least_1_fill() -> No
     assert result.loaded_metadata["strategy_id"] == SMOKE_STRATEGY_ID
 
 
+@pytest.mark.skipif(
+    not _LEAN_AVAILABLE,
+    reason="LEAN submodule (lean/Algorithm.Python/pantheon_algo) not initialised",
+)
 def test_broker_production_live_flag_stays_false_during_paper_run() -> None:
     """BROKER_PRODUCTION_LIVE_ENABLED must not be set or enabled during a paper run."""
     original_value = os.environ.get("BROKER_PRODUCTION_LIVE_ENABLED")
@@ -151,6 +176,10 @@ def test_deployment_plan_artifact_matches_smoke_algorithm_registry_id() -> None:
     assert plan["artifact_version"] == SMOKE_VERSION
 
 
+@pytest.mark.skipif(
+    not _LEAN_AVAILABLE,
+    reason="LEAN submodule (lean/Algorithm.Python/pantheon_algo) not initialised",
+)
 def test_e2e_fixture_binding_runtime_context_identity() -> None:
     """E2E: fixture DeploymentPlan -> RuntimeManager binding -> ArtifactLoader -> LEAN smoke.
 

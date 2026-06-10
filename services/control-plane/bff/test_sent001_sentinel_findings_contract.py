@@ -265,19 +265,30 @@ def test_sentinel_findings_combined_filters_no_match_returns_empty(monkeypatch):
 
 
 def test_sentinel_findings_no_filter_returns_all_records(monkeypatch):
-    """Without filters all non-loop incidents are returned as sentinel findings."""
+    """Without filters all non-loop incidents are returned as sentinel findings.
+
+    The list may also include additive ``persona_health`` findings emitted by
+    the HealthReasonCode rule engine (Card P2-16) for any degraded persona in
+    the store, so the incident-derived ids are asserted as a subset and any
+    extra ids are required to be persona_health rule-engine findings.
+    """
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     with _store() as client:
         r = client.get("/bff/v5/sentinel/findings", headers=HEADERS)
     assert r.status_code == 200, r.text
     items = r.json()["items"]
     ids = {item["id"] for item in items}
-    assert ids == {
+    incident_ids = {
         "sf-hiq-open-critical",
         "sf-risk-resolved-high",
         "sf-drift-dismissed-medium",
         "sf-anomaly-escalated-low",
-    }, f"unexpected ids: {ids}"
+    }
+    assert incident_ids <= ids, f"missing incident-derived ids: {incident_ids - ids}"
+    extra = [item for item in items if item["id"] not in incident_ids]
+    assert all(item.get("kind") == "persona_health" for item in extra), (
+        f"unexpected non-health extra findings: {extra}"
+    )
 
 
 # ---------------------------------------------------------------------------

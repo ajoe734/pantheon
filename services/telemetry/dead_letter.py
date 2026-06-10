@@ -246,6 +246,9 @@ class DeadLetterQueue:
         # Trim to max memory entries
         if len(self._entries) > self._max_memory_entries:
             self._entries = self._entries[-self._max_memory_entries:]
+        self._total_rejected += count
+        if self._total_rejected >= self._incident_threshold:
+            self._incident_fired = True
 
         log.info(f"DeadLetterQueue loaded {count} entries from spill file")
         return count

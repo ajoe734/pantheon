@@ -5,12 +5,12 @@ Covers:
   - Health endpoint
   - Submit + poll happy path (ApproveDeployment)
   - Command not found
-  - Missing Authorization header → INVALID_TOKEN
-  - Missing required params → INVALID_PARAMS
-  - Insufficient role → INSUFFICIENT_ROLE
-  - Kill-switch without MFA → MFA_REQUIRED
-  - Kill-switch with invalid scope → INVALID_PARAMS
-  - Concurrent modification detection → CONCURRENT_MODIFICATION
+  - Missing Authorization header -> AUTH_REQUIRED
+  - Missing required params -> VALIDATION_FAILED
+  - Insufficient role -> FORBIDDEN
+  - Kill-switch without MFA -> AUTH_REQUIRED
+  - Kill-switch with invalid scope -> VALIDATION_FAILED
+  - Concurrent modification detection -> RESOURCE_CONFLICT
   - Degraded read surface → staleness_warning in response
   - All eight command types submit successfully with correct roles
 """
@@ -84,6 +84,13 @@ class TestOperatorBFF(unittest.TestCase):
             os.path.join("/tmp/pantheon", "bff_test_seeded_read_surfaces.json"),
             allow_local_snapshot_fallback=True,
         )
+
+    def _assert_error_code(self, response, code: str) -> None:
+        body = response.json()
+        self.assertNotIn("detail", body)
+        self.assertEqual(body["error"]["code"], code)
+        self.assertIn("correlationId", body["meta"])
+        self.assertEqual(response.headers["X-Correlation-Id"], body["meta"]["correlationId"])
 
     # ---------------------------------------------------------------------- #
     # Health
@@ -251,12 +258,12 @@ class TestOperatorBFF(unittest.TestCase):
     def test_missing_auth_header_submit(self):
         r = _submit(self.client, token=None)
         self.assertEqual(r.status_code, 401, r.text)
-        self.assertEqual(r.json()["detail"]["error"]["code"], ErrorCode.INVALID_TOKEN.value)
+        self._assert_error_code(r, ErrorCode.AUTH_REQUIRED.value)
 
     def test_missing_auth_header_poll(self):
         r = self.client.get("/api/v1/operator/commands/fake-id")
         self.assertEqual(r.status_code, 401, r.text)
-        self.assertEqual(r.json()["detail"]["error"]["code"], ErrorCode.INVALID_TOKEN.value)
+        self._assert_error_code(r, ErrorCode.AUTH_REQUIRED.value)
 
     # ---------------------------------------------------------------------- #
     # Param validation
@@ -267,7 +274,7 @@ class TestOperatorBFF(unittest.TestCase):
             params={"deployment_plan_id": "dp-001"},  # missing approval_decision
         )
         self.assertEqual(r.status_code, 422, r.text)
-        self.assertEqual(r.json()["detail"]["error"]["code"], ErrorCode.INVALID_PARAMS.value)
+        self._assert_error_code(r, ErrorCode.VALIDATION_FAILED.value)
 
     def test_invalid_approval_decision_value(self):
         r = _submit(
@@ -275,7 +282,7 @@ class TestOperatorBFF(unittest.TestCase):
             params={"deployment_plan_id": "dp-001", "approval_decision": "maybe"},
         )
         self.assertEqual(r.status_code, 422, r.text)
-        self.assertEqual(r.json()["detail"]["error"]["code"], ErrorCode.INVALID_PARAMS.value)
+        self._assert_error_code(r, ErrorCode.VALIDATION_FAILED.value)
 
     # ---------------------------------------------------------------------- #
     # Role checks
@@ -284,7 +291,7 @@ class TestOperatorBFF(unittest.TestCase):
         # 'operator' role alone is not enough for ApproveDeployment
         r = _submit(self.client, OPERATOR_TOKEN)
         self.assertEqual(r.status_code, 403, r.text)
-        self.assertEqual(r.json()["detail"]["error"]["code"], ErrorCode.INSUFFICIENT_ROLE.value)
+        self._assert_error_code(r, ErrorCode.FORBIDDEN.value)
 
     def test_pause_runtime_insufficient_role(self):
         # 'approver' role alone is not listed for PauseRuntime (needs operator or admin)
@@ -300,7 +307,7 @@ class TestOperatorBFF(unittest.TestCase):
             headers=_command_headers(APPROVER_TOKEN),
         )
         self.assertEqual(r.status_code, 403, r.text)
-        self.assertEqual(r.json()["detail"]["error"]["code"], ErrorCode.INSUFFICIENT_ROLE.value)
+        self._assert_error_code(r, ErrorCode.FORBIDDEN.value)
 
     # ---------------------------------------------------------------------- #
     # Kill-switch: MFA required
@@ -318,7 +325,7 @@ class TestOperatorBFF(unittest.TestCase):
             headers=_command_headers(ADMIN_TOKEN),  # admin but no MFA
         )
         self.assertEqual(r.status_code, 403, r.text)
-        self.assertEqual(r.json()["detail"]["error"]["code"], ErrorCode.MFA_REQUIRED.value)
+        self._assert_error_code(r, ErrorCode.AUTH_REQUIRED.value)
 
     def test_kill_switch_with_mfa_succeeds(self):
         r = self.client.post(
@@ -347,7 +354,7 @@ class TestOperatorBFF(unittest.TestCase):
             headers=_command_headers(ADMIN_MFA_TOKEN),
         )
         self.assertEqual(r.status_code, 422, r.text)
-        self.assertEqual(r.json()["detail"]["error"]["code"], ErrorCode.INVALID_PARAMS.value)
+        self._assert_error_code(r, ErrorCode.VALIDATION_FAILED.value)
 
     # ---------------------------------------------------------------------- #
     # Concurrent modification detection
@@ -371,7 +378,7 @@ class TestOperatorBFF(unittest.TestCase):
             params={"deployment_plan_id": target_id, "approval_decision": "reject"},
         )
         self.assertEqual(r2.status_code, 409, r2.text)
-        self.assertEqual(r2.json()["detail"]["error"]["code"], ErrorCode.CONCURRENT_MODIFICATION.value)
+        self._assert_error_code(r2, ErrorCode.RESOURCE_CONFLICT.value)
 
     # ---------------------------------------------------------------------- #
     # Degraded read surface → staleness_warning

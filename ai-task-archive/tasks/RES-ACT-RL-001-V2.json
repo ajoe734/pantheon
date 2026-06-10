@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "task_id": "RES-ACT-RL-001-V2",
+  "archived_at": "2026-05-20T07:17:23Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "RES-ACT-RL-001-V2",
+    "title": "FinRL/RLlib no-order-route proof and research-only admission evidence",
+    "summary_zh": "Adapter-specific child: FinRL/RLlib no-order-route proof + research-only admission evidence. Parent: RES-ACT-001-V2.",
+    "phase": "Phase 8 / EPIC-RES-ACT",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "RES-ACT-001-V2"
+    ],
+    "artifacts": [
+      "integrations/finrl/no_order_route_proof.md",
+      "integrations/rllib/research_only_admission.md"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner finalized approved FinRL/RLlib no-order-route proof closeout after PR #348 merged to dev; validation: python3 -m pytest tests/governance/test_rl_proof_artifacts.py -v (6 passed).",
+    "last_update": "2026-05-20T07:17:23Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：FinRL/RLlib 兩份 proof artifact 結構正確，fail-closed 證據完整，no-order-route 管控欄位齊全",
+      "RLlib can_proceed=false 正確反映上游 PPO 後端未確認的 gate-closed 狀態",
+      "6 項 governance 測試全部通過（exit=0）",
+      "輕微：proof 文件 header 仍寫 Reviewer: Gemini（chair 改派前的版本），不影響功能正確性"
+    ],
+    "review_file": "support/reviews/RES-ACT-RL-001-V2-claude2-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T07:17:23Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/res-act-rl-001-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/RES-ACT-RL-001-V2",
+      "git_clean_required": false,
+      "commit": "a7699b989174ae6caefb65b5d22cc20bee9e24a8",
+      "commit_subject": "RES-ACT-RL-001-V2: record final approval evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped proof metadata, task brief review state, and review packet.",
+        "Not changing": "ProductionDataProof schema, research activation code, or L1 canonical policy.",
+        "Composes with": "merged PR #312 and parent RES-ACT-001-V2 proof schema.",
+        "Verified": "python3 -m pytest tests/governance/test_rl_proof_artifacts.py -v (6 passed)",
+        "LLM-Agent": "Codex",
+        "Task-ID": "RES-ACT-RL-001-V2",
+        "Reviewer": "Claude2"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/RES-ACT-RL-001-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "08233106b801bad6bab61a92b8e55a3426629381",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "RES-ACT-RL-001-V2",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Ready for review: PR #312 merged into dev as 6eb362b5adc6192d2ecc00a079a87dfc94b48239. Task commit 65360ff8 adds integrations/finrl/no_order_route_proof.md, integrations/rllib/research_only_admission.md, and tests/governance/test_rl_proof_artifacts.py. Local validation: RL proof focused test 6 passed; production_data/admission/disclosure/RL proof/no-order suite 24 passed; py_compile passed. Please review and approve via ai-status.sh approve if acceptable.",
+      "status": "done",
+      "created_at": "2026-05-20T03:25:59Z",
+      "resolved_at": "2026-05-20T03:58:25Z"
+    },
+    {
+      "task_id": "RES-ACT-RL-001-V2",
+      "from": "Gemini",
+      "to": "Copilot",
+      "message": "Chair reassigned review from Gemini to Copilot: Gemini review dispatch is quota-blocked; this merged research evidence review should move to idle Copilot.",
+      "status": "done",
+      "created_at": "2026-05-20T03:58:25Z",
+      "resolved_at": "2026-05-20T06:54:37Z"
+    },
+    {
+      "task_id": "RES-ACT-RL-001-V2",
+      "from": "Copilot",
+      "to": "Claude2",
+      "message": "Chair reassigned review from Copilot to Claude2: Copilot quota is blocking the review backlog; Claude2 can review without touching human-gate task state.",
+      "status": "done",
+      "created_at": "2026-05-20T06:54:37Z",
+      "resolved_at": "2026-05-20T07:04:49Z"
+    },
+    {
+      "task_id": "RES-ACT-RL-001-V2",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved: FinRL no-order-route proof and RLlib research-only admission evidence satisfy all acceptance criteria. All 6 governance tests pass. Returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-20T07:04:49Z",
+      "resolved_at": "2026-05-20T07:17:24Z"
+    }
+  ],
+  "blockers": []
+}

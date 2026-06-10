@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "task_id": "DATASTRAT-PROPOSAL-006",
+  "archived_at": "2026-06-09T14:58:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DATASTRAT-PROPOSAL-006",
+    "title": "Add governed LLM source-change proposal workflow",
+    "summary_zh": "新增 SourceChangeProposal model/store/API，讓 LLM 只能提出 add/disable/retire/replace/change_schedule/request_quote 草稿，不能直接改 source registry。",
+    "phase": "EPIC DATASTRAT / LLM proposal governance",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "DATASTRAT-REG-002"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_data_strategy_source_design_2026-06-09/DATA_STRATEGY_SOURCE_SYSTEM_DESIGN.md",
+      "services/source_ingestion",
+      "services/control-plane/bff"
+    ],
+    "acceptance": [
+      "Add SourceChangeProposal model and JSONL dev store",
+      "Add proposal APIs for list create submit approve reject apply",
+      "LLM adapter can write only draft proposals and never mutates registries directly",
+      "Approved proposal applies through audited registry lifecycle command",
+      "Rejected proposal has no side effects",
+      "Approval rules distinguish public paid credentialed and strategy seed sources"
+    ],
+    "next": "Owner finalized: Claude2 review approved all 6 acceptance criteria. 61 tests pass in test_proposal_governance.py. Design invariant §14.5 enforced — LLM draft boundary is structural. PR #1230 merged into dev.",
+    "last_update": "2026-06-09T14:58:57Z",
+    "auto_created_by": "codex_data_strategy_source_dispatch_2026-06-09",
+    "review_notes_zh": [
+      "審查通過：設計不變量 §14.5 確實執行，LLM 僅能建立草稿，不能直接改動 registry；61 個測試全部通過",
+      "後續追蹤：approve/apply route 尚未加 RBAC guard，但屬於本 task 範圍外"
+    ],
+    "review_file": ".orchestrator/review/DATASTRAT-PROPOSAL-006-review-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-09T14:58:57Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/datastrat-proposal-006",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/DATASTRAT-PROPOSAL-006",
+      "git_clean_required": false,
+      "commit": "6dc3546e8106e810d737a2516e3f1a7784a4fc65",
+      "commit_subject": "DATASTRAT-PROPOSAL-006: record closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "review artifact and closeout evidence record.",
+        "Not changing": "implementation files, proposal model, adapter, or API routes.",
+        "Composes with": "PR #1230 auto-merge into dev.",
+        "Design invariant §14.5 enforced": "LLM draft boundary is structural.",
+        "Follow-up noted (non-blocking)": "approve/apply RBAC guard deferred to",
+        "LLM-Agent": "Claude",
+        "Task-ID": "DATASTRAT-PROPOSAL-006",
+        "Reviewer": "Claude2",
+        "Verified": "61 tests pass (test_proposal_governance.py); CI green on PR #1230"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 17,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/DATASTRAT-PROPOSAL-006",
+      "ahead": 0,
+      "behind": 14,
+      "push_status": "behind",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "b7a4ef87361707dd75b8ed44348c9e9123978c59",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DATASTRAT-PROPOSAL-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation complete. PR #1230: https://github.com/ajoe734/pantheon/pull/1230\n\nDeliverables:\n- services/source_ingestion/registry/proposals.py: SourceChangeProposal model (immutable, lifecycle-enforced), ProposedSourceInfo, ProposalRisk, SourceChangeProposalStore (JSONL dev store). Design invariant §14.5 enforced: no code path can apply a proposal directly.\n- services/source_ingestion/registry/llm_proposal_adapter.py: LLMSourceProposalAdapter — draft-only boundary for all 7 proposal types. No submit/approve/apply methods on the adapter.\n- services/source_ingestion/registry/__init__.py: exports updated.\n- services/source_ingestion/main.py: PROPOSAL_STORE_PATH, store/adapter init, 8 new routes (list/create/get proposals, llm-draft, submit/approve/reject/apply/retire actions).\n- services/control-plane/bff/read_store.py: get_source_change_proposals() read-only from source-ingest service.\n- services/control-plane/bff/main.py: GET /api/v1/research/source-change-proposals.\n- services/source_ingestion/tests/test_proposal_governance.py: 61 tests covering model invariants, lifecycle, JSONL persistence, adapter isolation, registry non-mutation, full lifecycle flows.\n\nVerification: python3 -m pytest services/source_ingestion/tests/test_proposal_governance.py services/source_ingestion/tests/test_registry_split.py — 124 passed, 0 failed.",
+      "status": "done",
+      "created_at": "2026-06-09T14:07:04Z",
+      "resolved_at": "2026-06-09T14:14:48Z"
+    },
+    {
+      "task_id": "DATASTRAT-PROPOSAL-006",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review changes requested: apply endpoint only marks proposals applied from caller-supplied change_ref instead of executing audited registry lifecycle command, and approve endpoint does not enforce approval rules for public/paid/credentialed/strategy seed sources. See PR #1230 comment https://github.com/ajoe734/pantheon/pull/1230#issuecomment-4660669944",
+      "status": "done",
+      "created_at": "2026-06-09T14:14:48Z",
+      "resolved_at": "2026-06-09T14:14:48Z"
+    },
+    {
+      "task_id": "DATASTRAT-PROPOSAL-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation complete. PR #1230 open, all CI green. 61 proposal governance tests + 63 registry split tests pass (124 total). SourceChangeProposal model/store, LLMSourceProposalAdapter (draft-only boundary), 8 proposal API routes on source-ingest service, BFF read surface. Design invariant §14.5 enforced: LLM adapter cannot submit/approve/apply proposals directly.",
+      "status": "done",
+      "created_at": "2026-06-09T14:21:06Z",
+      "resolved_at": "2026-06-09T14:26:36Z"
+    },
+    {
+      "task_id": "DATASTRAT-PROPOSAL-006",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review not approved: approval rules are not enforced before approve/apply, invalid LLM risk entries are silently discarded, and generic create proposal IDs collide on repeated rationale. PR #1230 comment recorded: https://github.com/ajoe734/pantheon/pull/1230#issuecomment-4660774163. Validation run passed locally: python3 -m pytest services/source_ingestion/tests/test_proposal_governance.py services/source_ingestion/tests/test_registry_split.py -> 124 passed.",
+      "status": "done",
+      "created_at": "2026-06-09T14:26:36Z",
+      "resolved_at": "2026-06-09T14:26:36Z"
+    },
+    {
+      "task_id": "DATASTRAT-PROPOSAL-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation complete: SourceChangeProposal model/store, LLMSourceProposalAdapter, full lifecycle API (list/create/llm-draft/submit/approve/reject/apply/retire), and BFF read surface all landed in commit fdc138e8. 61/61 tests pass. LLM adapter enforces draft-only invariant; registry entries are never mutated by the adapter. Please review services/source_ingestion/registry/proposals.py, llm_proposal_adapter.py, main.py (proposal routes), and tests/test_proposal_governance.py.",
+      "status": "done",
+      "created_at": "2026-06-09T14:31:06Z",
+      "resolved_at": "2026-06-09T14:38:13Z"
+    },
+    {
+      "task_id": "DATASTRAT-PROPOSAL-006",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex to Claude2 after repeated Codex terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-06-09T14:38:13Z",
+      "resolved_at": "2026-06-09T14:42:57Z"
+    },
+    {
+      "task_id": "DATASTRAT-PROPOSAL-006",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved: all 6 acceptance criteria met, §14.5 invariant structurally enforced, 61 tests pass. Returning to Claude for finalization.",
+      "status": "done",
+      "created_at": "2026-06-09T14:42:57Z",
+      "resolved_at": "2026-06-09T14:58:57Z"
+    }
+  ],
+  "blockers": []
+}

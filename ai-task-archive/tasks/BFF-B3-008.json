@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "BFF-B3-008",
+  "archived_at": "2026-05-23T10:16:24Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-B3-008",
+    "title": "Readiness 5 endpoints: ep5 broker-live capital-binding-live bff-ha strict-publish",
+    "summary_zh": null,
+    "phase": "Sprint BFF-3 / EPIC-BFF-GAP-MGMT",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BFF-B2-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#b3--p1-management-aggregate-apis",
+      "execute-plans/src/lib/bff-v1/management.ts",
+      "services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "Implements all 5 readiness endpoints in spec section B3.1 rows B3-010..014",
+      "Composes M7 packets + evidence refs + broker BFF strict-publish status + human gates",
+      "FE readiness pages show real evidence and blockers"
+    ],
+    "next": "Owner finalized approved readiness aggregates after PR #462 merged to dev; verification: readiness 4/4, B3 aggregate 15/15, live-wiring 7/7.",
+    "last_update": "2026-05-23T10:16:24Z",
+    "review_notes_zh": [
+      "審查通過：五個 readiness 端點正確實作，fail-closed 語意保留，execute-plans 合約完整，所有 acceptance criteria 通過測試驗證"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T10:16:24Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-b3-008",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-B3-008",
+      "git_clean_required": false,
+      "repository_fallback": {
+        "from_repository_id": "execute_plans",
+        "missing_repository_path": "/tmp/pantheon-worker-worktrees/pantheon/execute-plans",
+        "reason": "non-Pantheon artifact repository local_path is unavailable; using Pantheon because the task also has Pantheon artifacts"
+      },
+      "commit": "ab61bf549aa2bdf32e0152b5c6a1acfeef22b412",
+      "commit_subject": "BFF-B3-008: merge latest dev for closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-B3-008",
+        "Reviewer": "Claude",
+        "Cross-Dir": "yes",
+        "Verified": "pytest -q services/control-plane/bff/tests/test_bff_b3_readiness.py (4 passed); pytest -q services/control-plane/bff/tests/test_bff_management_cockpit.py services/control-plane/bff/tests/test_bff_b3_persona_fleet.py services/control-plane/bff/tests/test_bff_b3_human_inbox.py services/control-plane/bff/tests/test_bff_b3_management_evidence.py services/control-plane/bff/tests/test_bff_b3_evolution_journal.py (15 passed); pytest -q services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py (7 passed, 3 warnings)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-B3-008",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "14cc8cc570f2ee1091ef371848c6bad6851923c4",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-B3-008",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: implemented five Management readiness endpoints (/ep5, /broker-live, /capital-binding-live, /bff-ha, /strict-publish), execute-plans path/types/client adapters, BFF gap spec, and focused tests. Branch task/BFF-B3-008 pushed at f6fa67d9. Verified py_compile, diff --check, readiness+final live-wiring tests (11 passed), and B3 aggregate suite (16 passed). No PR/merge yet; awaiting Claude review per lifecycle.",
+      "status": "done",
+      "created_at": "2026-05-23T09:38:50Z",
+      "resolved_at": "2026-05-23T09:44:34Z"
+    },
+    {
+      "task_id": "BFF-B3-008",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 5 acceptance criteria verified — readiness envelope shape, broker fail-closed gate, strict-publish blocker exposure, 401 auth guard, and execute-plans path/contract/adapter completeness. 4/4 readiness tests pass, 12/12 B3 aggregate tests pass, 7/7 live-wiring tests pass. Returning to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-05-23T09:44:34Z",
+      "resolved_at": "2026-05-23T10:16:25Z"
+    }
+  ],
+  "blockers": []
+}

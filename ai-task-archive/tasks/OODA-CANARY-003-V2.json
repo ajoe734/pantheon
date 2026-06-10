@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "task_id": "OODA-CANARY-003-V2",
+  "archived_at": "2026-05-19T16:30:30Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OODA-CANARY-003-V2",
+    "title": "Canary telemetry-to-evolution test",
+    "summary_zh": "End-to-end test: canary telemetry event → incident → postmortem → evolution proposal. Asserts live capital scope limited / human gate valid / validation errors empty.",
+    "phase": "Phase 8 / EPIC-OODA-CANARY",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "OODA-CANARY-001-V2"
+    ],
+    "artifacts": [
+      "tests/e2e/test_canary_telemetry_to_evolution.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Closed after PR #232 merged e2e test (6e7b3c22) and PR #239 merged closeout evidence (cd7b87bc). Verified py_compile, diff check, and focused OODA/canary pytest set: 21 passed.",
+    "last_update": "2026-05-19T16:30:30Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：新增 e2e 測試只涵蓋 task scope，完整串起 canary telemetry、IncidentCase、Postmortem、EvolutionDecisionProposal 與 closed CanaryOodaPacket，並包含 capital-scope / operator-gate fail-closed cases。",
+      "驗證：本地 branch 執行 103 tests passed；臨時 worktree merge origin/dev@6fdbe970 後同組 103 tests passed；git diff --check origin/dev...HEAD passed；未修改 L1 canonical docs。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T16:30:30Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ooda-canary-003-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OODA-CANARY-003-V2",
+      "git_clean_required": false,
+      "commit": "cc6956fb1237714907ec2bcacbedb3b1cae0aabd",
+      "commit_subject": "OODA-CANARY-003-V2: merge latest dev for closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "task branch closeout merge for OODA-CANARY-003-V2.",
+        "Not changing": "canary packet model, runtime services, incident/postmortem domain code, evolution bridge code, or L1 canonical docs.",
+        "Composes with": "PR #232 merged e2e test, PR #239 closeout evidence, and latest origin/dev.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "OODA-CANARY-003-V2",
+        "Reviewer": "Codex",
+        "Verified": "git diff --check --cached; PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile tests/e2e/test_canary_telemetry_to_evolution.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q tests/e2e/test_canary_telemetry_to_evolution.py tests/e2e/test_paper_run_to_evolution_decision.py tests/ooda/test_canary_packet_schema.py services/control-plane/ooda/test_paper_loop_packet.py (21 passed)"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OODA-CANARY-003-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "cd7b87bc7a805a84d08b263e408df226cc2658c6",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OODA-CANARY-003-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-19T15:44:24Z",
+      "resolved_at": "2026-05-19T15:44:33Z"
+    },
+    {
+      "task_id": "OODA-CANARY-003-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: PR #232 adds tests/e2e/test_canary_telemetry_to_evolution.py covering canary telemetry -> IncidentCase -> Postmortem -> EvolutionDecisionProposal -> closed CanaryOodaPacket, with happy path plus fail-closed capital-scope and operator-gate cases. Verification after merging latest origin/dev: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q tests/e2e/test_canary_telemetry_to_evolution.py tests/ooda/test_canary_packet_schema.py services/evolution/test_postmortem_bridge.py services/incident/test_incident.py (103 passed); git diff --check origin/dev...HEAD passed. No L1 canonical docs modified.",
+      "status": "done",
+      "created_at": "2026-05-19T16:10:02Z",
+      "resolved_at": "2026-05-19T16:15:15Z"
+    },
+    {
+      "task_id": "OODA-CANARY-003-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: no blocking findings. Verified canary telemetry-to-evolution e2e path plus fail-closed cases; owner Codex2 should finalize after PR branch refresh/merge handling.",
+      "status": "done",
+      "created_at": "2026-05-19T16:15:15Z",
+      "resolved_at": "2026-05-19T16:30:30Z"
+    }
+  ],
+  "blockers": []
+}

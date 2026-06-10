@@ -57,6 +57,12 @@ def test_prod_control_env_requires_staging_oidc_idp_posture() -> None:
     assert env["PANTHEON_BFF_MFA_REQUIRED"] == "true"
     assert set(env["PANTHEON_BFF_MFA_CLAIMS"].split(",")) >= {"amr", "acr", "mfa_verified"}
     assert set(env["PANTHEON_BFF_MFA_VALUES"].split(",")) >= {"mfa", "otp", "totp", "webauthn"}
+    assert env["PANTHEON_BFF_STUB_CAPABILITIES"] == ""
+    assert env["PANTHEON_STATUS_ROOT_HOST"]
+    assert env["PANTHEON_STATUS_ROOT_CONTAINER"] == "/workspace/status-root"
+    assert env["PANTHEON_ASSISTANT_KERNEL_ENABLED"] == "false"
+    assert env["PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH"] == "/data/bff/assistant-control-mode.json"
+    assert env["PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS"] == "300"
 
 
 def test_control_compose_forwards_bff_idp_env_with_stub_disabled_by_default() -> None:
@@ -65,6 +71,7 @@ def test_control_compose_forwards_bff_idp_env_with_stub_disabled_by_default() ->
     assert "PANTHEON_BFF_AUTH_STUB: ${PANTHEON_BFF_AUTH_STUB:-false}" in block
     assert "PANTHEON_BFF_AUTH_MODE: ${PANTHEON_BFF_AUTH_MODE:-strict}" in block
     assert "PANTHEON_BFF_JWT_SECRET: ${PANTHEON_BFF_JWT_SECRET:-}" in block
+    assert "PANTHEON_STATUS_ROOT: ${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}" in block
 
     for key in (
         "PANTHEON_BFF_JWKS_URI",
@@ -77,19 +84,25 @@ def test_control_compose_forwards_bff_idp_env_with_stub_disabled_by_default() ->
         "PANTHEON_BFF_MFA_REQUIRED",
         "PANTHEON_BFF_MFA_CLAIMS",
         "PANTHEON_BFF_MFA_VALUES",
+        "PANTHEON_BFF_STUB_CAPABILITIES",
+        "PANTHEON_ASSISTANT_KERNEL_ENABLED",
+        "PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH",
+        "PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS",
     ):
         assert f"{key}: ${{{key}:-" in block
+    assert "${PANTHEON_STATUS_ROOT_HOST:-.}:${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}:ro" in block
 
 
-def test_dev_compose_forwards_bff_auth_env_with_strict_default() -> None:
+def test_dev_compose_forwards_bff_auth_env_with_dev_stub_default() -> None:
     block = _operator_bff_block(DEV_COMPOSE)
 
-    assert "PANTHEON_BFF_AUTH_STUB: ${PANTHEON_BFF_AUTH_STUB:-false}" in block
-    assert "PANTHEON_BFF_AUTH_MODE: ${PANTHEON_BFF_AUTH_MODE:-strict}" in block
+    assert "PANTHEON_BFF_AUTH_STUB: ${PANTHEON_BFF_AUTH_STUB:-true}" in block
+    assert "PANTHEON_BFF_AUTH_MODE: ${PANTHEON_BFF_AUTH_MODE:-permissive}" in block
     assert "PANTHEON_BFF_JWT_SECRET: ${PANTHEON_BFF_JWT_SECRET:-}" in block
     assert "PANTHEON_BFF_JWT_ISSUER: ${PANTHEON_BFF_JWT_ISSUER:-}" in block
     assert "PANTHEON_BFF_JWT_AUDIENCE: ${PANTHEON_BFF_JWT_AUDIENCE:-}" in block
     assert "PANTHEON_BFF_DEFAULT_ROLE: ${PANTHEON_BFF_DEFAULT_ROLE:-operator}" in block
+    assert "PANTHEON_STATUS_ROOT: ${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}" in block
 
     for key in (
         "PANTHEON_BFF_JWKS_URI",
@@ -102,5 +115,10 @@ def test_dev_compose_forwards_bff_auth_env_with_strict_default() -> None:
         "PANTHEON_BFF_MFA_REQUIRED",
         "PANTHEON_BFF_MFA_CLAIMS",
         "PANTHEON_BFF_MFA_VALUES",
+        "PANTHEON_BFF_STUB_CAPABILITIES",
+        "PANTHEON_ASSISTANT_KERNEL_ENABLED",
+        "PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH",
+        "PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS",
     ):
         assert f"{key}: ${{{key}:-" in block
+    assert "${PANTHEON_STATUS_ROOT_HOST:-.}:${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}:ro" in block

@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Live BFF infra work has parallel support needs, idle capable workers remain, and no queue, approval, guardrail, or review blocker is active.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "BFF-INFRA-ENVELOPE-PACKD-FIELDS-001",
+    "BFF-INFRA-PATH-DEDUPE-001",
+    "PR-556-TRIAGE",
+    "OPS-CLEANUP-STALE-BLOCKERS-20260525"
+  ]
+}

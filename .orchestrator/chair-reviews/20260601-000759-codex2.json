@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Idle capacity and runnable assistant backlog exist; keep ASST-OCGW-001 single-owner while live handoff repair runs.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "ASST-OCGW-001"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "ASST-OCGW-001"
+  ]
+}

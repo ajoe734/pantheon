@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "No dispatch, approval, provider, or sidecar-saturation blocker; only human-gate tasks remain blocked.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "OPS-BFF-DELTA-V3-DISPATCH-20260525: rebase PR #556 on current dev; checks are green but mergeable is CONFLICTING and the PR has exceeded the 120-minute drift alarm.",
+    "OPS-PUBLISH-PIPELINE-REPAIR-20260525: fix nightly release discipline failures and publish_promote merge-commit identity/stderr handling; then manually rerun publish/promote.",
+    "OPS-BLOCKER-CLEANUP-20260525: clear phantom blockers and repair delivery metadata for LOVABLE-STRICT-PUBLISH, OSS-QUANTLIB-V2-001, and OSS-STAT-001-SIDECAR-ACCEPTANCE.",
+    "OPS-BRANCH-CLEANUP: audit 255 remote task/* branches and delete only heads proven merged or explicitly abandoned.",
+    "PROD-WRITES-001-V2 and LIVE-SCALE-001-V2: keep blocked pending explicit human signoffs and prerequisite evidence."
+  ]
+}

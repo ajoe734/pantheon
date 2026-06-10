@@ -12,6 +12,40 @@ sys.path.insert(0, os.path.dirname(__file__))
 from read_store import ReadSurfaceStore
 
 
+def test_kill_switch_status_reads_service_backed_store_when_fallback_disabled():
+    with tempfile.TemporaryDirectory() as td:
+        store_path = os.path.join(td, "read_surfaces.json")
+        kill_switch_path = Path(td) / "kill_switch.json"
+        kill_switch_path.write_text(json.dumps({
+            "current": {
+                "id": "current",
+                "active": False,
+                "active_freeze_orders": [],
+                "last_checked_at": "2026-06-03T08:00:00Z",
+                "last_confirmed_at": "2026-06-03T08:00:00Z",
+                "last_triggered_at": None,
+                "active_commands": [],
+                "secondary_path_available": True,
+                "safe_mode_status": "off",
+                "status": "armed",
+            }
+        }))
+        original_env = os.environ.get("PANTHEON_BFF_KILL_SWITCH_STORE")
+        os.environ["PANTHEON_BFF_KILL_SWITCH_STORE"] = str(kill_switch_path)
+        try:
+            store = ReadSurfaceStore(store_path, allow_local_snapshot_fallback=False)
+            assert store.dataset_source("kill_switch") == "service_store"
+            ks = store.get_kill_switch_status()
+            assert ks["status"] == "armed"
+            assert ks["safe_mode_status"] == "off"
+            assert ks["secondary_path_available"] is True
+        finally:
+            if original_env is None:
+                os.environ.pop("PANTHEON_BFF_KILL_SWITCH_STORE", None)
+            else:
+                os.environ["PANTHEON_BFF_KILL_SWITCH_STORE"] = original_env
+
+
 def test_store():
     with tempfile.TemporaryDirectory() as td:
         store_path = os.path.join(td, "read_surfaces.json")

@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "task_id": "ASST-INTEG-009",
+  "archived_at": "2026-06-04T13:57:22Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASST-INTEG-009",
+    "title": "Add security mode and tool-boundary regression suite for assistant integration",
+    "summary_zh": "補 user-mode contraction、control-mode TTL/passphrase、tool allowlist、redaction、provider credential non-exposure 的安全回歸。",
+    "phase": "Sprint ASST-INTEG / Security and mode regression",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "ASST-INTEG-003",
+      "ASST-INTEG-004",
+      "ASST-INTEG-006"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;services/control-plane/bff/tests/test_assistant_security.py;services/control-plane/bff/assistant/tests/test_user_mode_regression.py;services/openclaw-gateway-adapter;docs/04/pantheon_assistant_kernel_user_2026-05-31/ASST_KERNEL_007_REPAIR_WORKFLOW.md"
+    ],
+    "acceptance": [
+      "User mode cannot access shell repo write raw logs docker secret store provider session or command broker;Control/kernel mode requires RBAC MFA capability passphrase TTL and idle timeout;Passphrase change requires admin plus MFA;OpenClaw tool policy remains deny-first;Prompt injection cannot expand tools or expose secrets;Regression suite runs in local validation and CI"
+    ],
+    "next": "Owner finalized approved ASST-INTEG-009 after implementation PR #1024, closeout PR #1028, and final-head PR #1031 merged; focused suite passed 81/81.",
+    "last_update": "2026-06-04T13:57:22Z",
+    "task_class": "assistant_integration",
+    "auto_created_by": "dispatch_assistant_existing_architecture_2026-06-03",
+    "auto_generated": true,
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-04T13:57:22Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/asst-integ-009",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/ASST-INTEG-009",
+      "git_clean_required": false,
+      "commit": "f8b504a69b8190b6b874a3e1b6d6559663166160",
+      "commit_subject": "ASST-INTEG-009: record final delivery head",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped ASST-INTEG-009 brief closeout evidence.",
+        "Not changing": "assistant implementation, BFF security tests, OpenClaw adapter policy/runtime, generated ai-status/current-work/archive state, or unrelated archive/dev deploy updates merged from dev.",
+        "Composes with": "implementation PR #1024, closeout evidence PR #1028, and final scripts/ai-status.sh done transition after this delivery head merges.",
+        "Result": "81 passed in 13.81s",
+        "LLM-Agent": "Codex",
+        "Task-ID": "ASST-INTEG-009",
+        "Reviewer": "Claude",
+        "Verified": "81/81 assistant security and OpenClaw regression tests passed; git diff --check clean"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/ASST-INTEG-009",
+      "ahead": 0,
+      "behind": 7,
+      "push_status": "behind",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "3118d70c36a7ef9254e5f8a014e09b1ede51bc7e",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASST-INTEG-009",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "PR #1024 merged d78ea9fc; regression suite added in d4e01b4e; local focused pytest and GitHub checks passed; awaiting reviewer approval before done",
+      "status": "done",
+      "created_at": "2026-06-04T13:31:03Z",
+      "resolved_at": "2026-06-04T13:36:45Z"
+    },
+    {
+      "task_id": "ASST-INTEG-009",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 81 tests pass (23 user-mode regression + 32 BFF security + 26 OpenClaw command/provider/injection). All acceptance criteria met — user-mode contraction, control-mode TTL/passphrase/idle gates, tool allowlist denial, OpenClaw deny-first policy, prompt injection redaction, CI-runnable suite. mode_policy.py gap fix (repo_write/docker/secret_store) and confirmed='false' string-bypass regression are sharp catches. Owner Codex to closeout.",
+      "status": "done",
+      "created_at": "2026-06-04T13:36:45Z",
+      "resolved_at": "2026-06-04T13:57:23Z"
+    }
+  ],
+  "blockers": []
+}

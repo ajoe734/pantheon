@@ -1,0 +1,1491 @@
+{
+  "can_proceed": false,
+  "candidate_artifact": {
+    "algorithm": "PPO",
+    "artifact_id": "model_artifact:rllib-twse-a108cabe43a8",
+    "artifact_state": "draft",
+    "artifact_type": "model_artifact",
+    "backend": "local_bandit_ppo_skeleton",
+    "backend_kind": "dependency_light_fallback",
+    "checksum": "sha256:b5b8a8da681e90862d3953c455ae0667df35dcea758bc960f94a6eecea6311fe",
+    "created_at": "2026-05-18T00:00:00Z",
+    "deployment_summary": {
+      "current_stage": "none"
+    },
+    "env_id": "TWSETradingEnv-v1",
+    "framework": "ray.rllib",
+    "framework_version": "2.9.3",
+    "governance": {
+      "artifact_state": "draft",
+      "cpu_only": true,
+      "deployment_stage": "none",
+      "direct_live_influence": false
+    },
+    "gymnasium_version": "0.28.1",
+    "iteration_results": [
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00042246,
+          -0.00183037
+        ],
+        "episode_reward_mean": -0.0518108,
+        "epsilon": 0.970487,
+        "iteration": 1,
+        "policy_loss": 0.0518108,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00026435,
+          -0.00093796
+        ],
+        "episode_reward_mean": -0.00166907,
+        "epsilon": 0.941845,
+        "iteration": 2,
+        "policy_loss": 0.00166907,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          -7.356e-05,
+          -0.00077046
+        ],
+        "episode_reward_mean": -0.04604043,
+        "epsilon": 0.914048,
+        "iteration": 3,
+        "policy_loss": 0.04604043,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00039713,
+          -0.00044199
+        ],
+        "episode_reward_mean": 0.09252224,
+        "epsilon": 0.887072,
+        "iteration": 4,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          -0.00012565,
+          -0.00076907
+        ],
+        "episode_reward_mean": -0.16038104,
+        "epsilon": 0.860892,
+        "iteration": 5,
+        "policy_loss": 0.16038104,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00022219,
+          -0.00062741
+        ],
+        "episode_reward_mean": 0.08645144,
+        "epsilon": 0.835484,
+        "iteration": 6,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00050583,
+          -0.00064902
+        ],
+        "episode_reward_mean": 0.06437171,
+        "epsilon": 0.810826,
+        "iteration": 7,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00035106,
+          -0.00064548
+        ],
+        "episode_reward_mean": -0.04519237,
+        "epsilon": 0.786896,
+        "iteration": 8,
+        "policy_loss": 0.04519237,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00044256,
+          -0.00047813
+        ],
+        "episode_reward_mean": 0.08748224,
+        "epsilon": 0.763673,
+        "iteration": 9,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00046604,
+          -0.00042078
+        ],
+        "episode_reward_mean": 0.03826552,
+        "epsilon": 0.741134,
+        "iteration": 10,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00052693,
+          -0.00034506
+        ],
+        "episode_reward_mean": 0.07745044,
+        "epsilon": 0.719261,
+        "iteration": 11,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00063177,
+          -0.00060292
+        ],
+        "episode_reward_mean": -0.02724662,
+        "epsilon": 0.698034,
+        "iteration": 12,
+        "policy_loss": 0.02724662,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00049133,
+          -0.000578
+        ],
+        "episode_reward_mean": -0.05482161,
+        "epsilon": 0.677433,
+        "iteration": 13,
+        "policy_loss": 0.05482161,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00059679,
+          -0.00049843
+        ],
+        "episode_reward_mean": 0.12537723,
+        "epsilon": 0.65744,
+        "iteration": 14,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00046559,
+          -0.00048848
+        ],
+        "episode_reward_mean": -0.07381279,
+        "epsilon": 0.638036,
+        "iteration": 15,
+        "policy_loss": 0.07381279,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00036755,
+          -0.00046488
+        ],
+        "episode_reward_mean": -0.05663156,
+        "epsilon": 0.619206,
+        "iteration": 16,
+        "policy_loss": 0.05663156,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00036594,
+          -0.00053484
+        ],
+        "episode_reward_mean": -0.02678403,
+        "epsilon": 0.600931,
+        "iteration": 17,
+        "policy_loss": 0.02678403,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00035096,
+          -0.00059493
+        ],
+        "episode_reward_mean": -0.04296056,
+        "epsilon": 0.583196,
+        "iteration": 18,
+        "policy_loss": 0.04296056,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.0004232,
+          -0.00068729
+        ],
+        "episode_reward_mean": 0.02606496,
+        "epsilon": 0.565984,
+        "iteration": 19,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00045626,
+          -0.00079384
+        ],
+        "episode_reward_mean": -0.02239636,
+        "epsilon": 0.54928,
+        "iteration": 20,
+        "policy_loss": 0.02239636,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00046675,
+          -0.00065921
+        ],
+        "episode_reward_mean": 0.10245132,
+        "epsilon": 0.533069,
+        "iteration": 21,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00043735,
+          -0.00066405
+        ],
+        "episode_reward_mean": -0.02066019,
+        "epsilon": 0.517337,
+        "iteration": 22,
+        "policy_loss": 0.02066019,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00040013,
+          -0.00063767
+        ],
+        "episode_reward_mean": -0.00371918,
+        "epsilon": 0.502069,
+        "iteration": 23,
+        "policy_loss": 0.00371918,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00039937,
+          -0.00063364
+        ],
+        "episode_reward_mean": 0.01695284,
+        "epsilon": 0.487251,
+        "iteration": 24,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00042529,
+          -0.00063448
+        ],
+        "episode_reward_mean": 0.05661352,
+        "epsilon": 0.472871,
+        "iteration": 25,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00039286,
+          -0.00059513
+        ],
+        "episode_reward_mean": 0.00193393,
+        "epsilon": 0.458915,
+        "iteration": 26,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00038935,
+          -0.00060449
+        ],
+        "episode_reward_mean": 0.00032404,
+        "epsilon": 0.445371,
+        "iteration": 27,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00036572,
+          -0.00054408
+        ],
+        "episode_reward_mean": 0.03067934,
+        "epsilon": 0.432227,
+        "iteration": 28,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00041022,
+          -0.00053031
+        ],
+        "episode_reward_mean": 0.11791562,
+        "epsilon": 0.41947,
+        "iteration": 29,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00035935,
+          -0.0005645
+        ],
+        "episode_reward_mean": -0.10159127,
+        "epsilon": 0.407091,
+        "iteration": 30,
+        "policy_loss": 0.10159127,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00039765,
+          -0.00057844
+        ],
+        "episode_reward_mean": 0.08844668,
+        "epsilon": 0.395076,
+        "iteration": 31,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00040009,
+          -0.00059931
+        ],
+        "episode_reward_mean": 0.00424861,
+        "epsilon": 0.383416,
+        "iteration": 32,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00039255,
+          -0.0005882
+        ],
+        "episode_reward_mean": 0.01512947,
+        "epsilon": 0.3721,
+        "iteration": 33,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00038748,
+          -0.00060461
+        ],
+        "episode_reward_mean": 0.00077372,
+        "epsilon": 0.361119,
+        "iteration": 34,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00036258,
+          -0.0006298
+        ],
+        "episode_reward_mean": -0.05554423,
+        "epsilon": 0.350461,
+        "iteration": 35,
+        "policy_loss": 0.05554423,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.0003471,
+          -0.00065724
+        ],
+        "episode_reward_mean": -0.04108229,
+        "epsilon": 0.340118,
+        "iteration": 36,
+        "policy_loss": 0.04108229,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.0003435,
+          -0.00060469
+        ],
+        "episode_reward_mean": 0.0638146,
+        "epsilon": 0.33008,
+        "iteration": 37,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00034507,
+          -0.00060675
+        ],
+        "episode_reward_mean": 0.02925588,
+        "epsilon": 0.320338,
+        "iteration": 38,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00034844,
+          -0.00060317
+        ],
+        "episode_reward_mean": 0.03543153,
+        "epsilon": 0.310884,
+        "iteration": 39,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00037417,
+          -0.00059388
+        ],
+        "episode_reward_mean": 0.11210246,
+        "epsilon": 0.301709,
+        "iteration": 40,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00037774,
+          -0.00058002
+        ],
+        "episode_reward_mean": 0.05589398,
+        "epsilon": 0.292804,
+        "iteration": 41,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00035186,
+          -0.0005737
+        ],
+        "episode_reward_mean": -0.04169782,
+        "epsilon": 0.284163,
+        "iteration": 42,
+        "policy_loss": 0.04169782,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00034181,
+          -0.00056787
+        ],
+        "episode_reward_mean": -0.00108357,
+        "epsilon": 0.275776,
+        "iteration": 43,
+        "policy_loss": 0.00108357,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00033692,
+          -0.0005614
+        ],
+        "episode_reward_mean": 0.01745119,
+        "epsilon": 0.267637,
+        "iteration": 44,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00032421,
+          -0.00056466
+        ],
+        "episode_reward_mean": -0.01923183,
+        "epsilon": 0.259739,
+        "iteration": 45,
+        "policy_loss": 0.01923183,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00031716,
+          -0.00055203
+        ],
+        "episode_reward_mean": 0.0198977,
+        "epsilon": 0.252073,
+        "iteration": 46,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00031206,
+          -0.00053053
+        ],
+        "episode_reward_mean": 0.02782442,
+        "epsilon": 0.244633,
+        "iteration": 47,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00034673,
+          -0.0004858
+        ],
+        "episode_reward_mean": 0.20059799,
+        "epsilon": 0.237414,
+        "iteration": 48,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00036104,
+          -0.00052588
+        ],
+        "episode_reward_mean": 0.03991558,
+        "epsilon": 0.230407,
+        "iteration": 49,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00034154,
+          -0.00052962
+        ],
+        "episode_reward_mean": -0.04377382,
+        "epsilon": 0.223607,
+        "iteration": 50,
+        "policy_loss": 0.04377382,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00031972,
+          -0.00053944
+        ],
+        "episode_reward_mean": -0.07604987,
+        "epsilon": 0.217007,
+        "iteration": 51,
+        "policy_loss": 0.07604987,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00030743,
+          -0.00053083
+        ],
+        "episode_reward_mean": -0.00798961,
+        "epsilon": 0.210603,
+        "iteration": 52,
+        "policy_loss": 0.00798961,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00030499,
+          -0.00052207
+        ],
+        "episode_reward_mean": 0.02629367,
+        "epsilon": 0.204387,
+        "iteration": 53,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00030633,
+          -0.00050569
+        ],
+        "episode_reward_mean": 0.04931553,
+        "epsilon": 0.198355,
+        "iteration": 54,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00030175,
+          -0.00050911
+        ],
+        "episode_reward_mean": 0.00378078,
+        "epsilon": 0.192501,
+        "iteration": 55,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00029218,
+          -0.00051167
+        ],
+        "episode_reward_mean": -0.02388721,
+        "epsilon": 0.18682,
+        "iteration": 56,
+        "policy_loss": 0.02388721,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00027996,
+          -0.00048471
+        ],
+        "episode_reward_mean": 0.00598602,
+        "epsilon": 0.181306,
+        "iteration": 57,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00028292,
+          -0.00047806
+        ],
+        "episode_reward_mean": 0.04812453,
+        "epsilon": 0.175955,
+        "iteration": 58,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00032482,
+          -0.0004668
+        ],
+        "episode_reward_mean": 0.24114735,
+        "epsilon": 0.170762,
+        "iteration": 59,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00034306,
+          -0.00046382
+        ],
+        "episode_reward_mean": 0.12497945,
+        "epsilon": 0.165723,
+        "iteration": 60,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00033369,
+          -0.00048499
+        ],
+        "episode_reward_mean": -0.03576133,
+        "epsilon": 0.160832,
+        "iteration": 61,
+        "policy_loss": 0.03576133,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00033161,
+          -0.00046484
+        ],
+        "episode_reward_mean": 0.04271147,
+        "epsilon": 0.156085,
+        "iteration": 62,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00032407,
+          -0.00045996
+        ],
+        "episode_reward_mean": 0.00056683,
+        "epsilon": 0.151479,
+        "iteration": 63,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00033635,
+          -0.00044124
+        ],
+        "episode_reward_mean": 0.11782278,
+        "epsilon": 0.147008,
+        "iteration": 64,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00032304,
+          -0.00046151
+        ],
+        "episode_reward_mean": -0.0624255,
+        "epsilon": 0.142669,
+        "iteration": 65,
+        "policy_loss": 0.0624255,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00033177,
+          -0.00045755
+        ],
+        "episode_reward_mean": 0.08511684,
+        "epsilon": 0.138459,
+        "iteration": 66,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00032283,
+          -0.00045814
+        ],
+        "episode_reward_mean": -0.01634193,
+        "epsilon": 0.134372,
+        "iteration": 67,
+        "policy_loss": 0.01634193,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00031308,
+          -0.00043807
+        ],
+        "episode_reward_mean": 0.00212101,
+        "epsilon": 0.130407,
+        "iteration": 68,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00030315,
+          -0.00042865
+        ],
+        "episode_reward_mean": -0.01345764,
+        "epsilon": 0.126558,
+        "iteration": 69,
+        "policy_loss": 0.01345764,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00029601,
+          -0.00043722
+        ],
+        "episode_reward_mean": -0.02293363,
+        "epsilon": 0.122823,
+        "iteration": 70,
+        "policy_loss": 0.02293363,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00031054,
+          -0.00043082
+        ],
+        "episode_reward_mean": 0.12706788,
+        "epsilon": 0.119198,
+        "iteration": 71,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00030533,
+          -0.00041976
+        ],
+        "episode_reward_mean": 0.01357233,
+        "epsilon": 0.11568,
+        "iteration": 72,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.0002932,
+          -0.00041511
+        ],
+        "episode_reward_mean": -0.03604344,
+        "epsilon": 0.112266,
+        "iteration": 73,
+        "policy_loss": 0.03604344,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00030568,
+          -0.00041511
+        ],
+        "episode_reward_mean": 0.11287525,
+        "epsilon": 0.108953,
+        "iteration": 74,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00031942,
+          -0.00039679
+        ],
+        "episode_reward_mean": 0.14706005,
+        "epsilon": 0.105737,
+        "iteration": 75,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00034658,
+          -0.00038672
+        ],
+        "episode_reward_mean": 0.22721515,
+        "epsilon": 0.102617,
+        "iteration": 76,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00033966,
+          -0.0003751
+        ],
+        "episode_reward_mean": 0.00541973,
+        "epsilon": 0.099588,
+        "iteration": 77,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00033618,
+          -0.00037074
+        ],
+        "episode_reward_mean": 0.0196469,
+        "epsilon": 0.096649,
+        "iteration": 78,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00033516,
+          -0.0003591
+        ],
+        "episode_reward_mean": 0.04688011,
+        "epsilon": 0.093796,
+        "iteration": 79,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00035572,
+          -0.00036324
+        ],
+        "episode_reward_mean": 0.17480944,
+        "epsilon": 0.091028,
+        "iteration": 80,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00034606,
+          -0.00036878
+        ],
+        "episode_reward_mean": -0.03816342,
+        "epsilon": 0.088342,
+        "iteration": 81,
+        "policy_loss": 0.03816342,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00033227,
+          -0.00036656
+        ],
+        "episode_reward_mean": -0.05857131,
+        "epsilon": 0.085734,
+        "iteration": 82,
+        "policy_loss": 0.05857131,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00034361,
+          -0.00036761
+        ],
+        "episode_reward_mean": 0.11983834,
+        "epsilon": 0.083204,
+        "iteration": 83,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00034245,
+          -0.00038691
+        ],
+        "episode_reward_mean": 0.00178182,
+        "epsilon": 0.080749,
+        "iteration": 84,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00034303,
+          -0.00036535
+        ],
+        "episode_reward_mean": 0.07012359,
+        "epsilon": 0.078365,
+        "iteration": 85,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00034692,
+          -0.00036262
+        ],
+        "episode_reward_mean": 0.07311181,
+        "epsilon": 0.076053,
+        "iteration": 86,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00036519,
+          -0.00037128
+        ],
+        "episode_reward_mean": 0.16606452,
+        "epsilon": 0.073808,
+        "iteration": 87,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00034572,
+          -0.00036095
+        ],
+        "episode_reward_mean": -0.09993616,
+        "epsilon": 0.07163,
+        "iteration": 88,
+        "policy_loss": 0.09993616,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00036212,
+          -0.00037156
+        ],
+        "episode_reward_mean": 0.15543466,
+        "epsilon": 0.069516,
+        "iteration": 89,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.000378,
+          -0.00035499
+        ],
+        "episode_reward_mean": 0.19189016,
+        "epsilon": 0.067464,
+        "iteration": 90,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00037519,
+          -0.00035151
+        ],
+        "episode_reward_mean": 0.02572227,
+        "epsilon": 0.065473,
+        "iteration": 91,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00037286,
+          -0.00034433
+        ],
+        "episode_reward_mean": 0.03299123,
+        "epsilon": 0.063541,
+        "iteration": 92,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00038384,
+          -0.00033586
+        ],
+        "episode_reward_mean": 0.14732915,
+        "epsilon": 0.061665,
+        "iteration": 93,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00040575,
+          -0.00034861
+        ],
+        "episode_reward_mean": 0.21535891,
+        "epsilon": 0.059846,
+        "iteration": 94,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00039734,
+          -0.00035123
+        ],
+        "episode_reward_mean": -0.03238264,
+        "epsilon": 0.058079,
+        "iteration": 95,
+        "policy_loss": 0.03238264,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00040728,
+          -0.00036098
+        ],
+        "episode_reward_mean": 0.11938608,
+        "epsilon": 0.056365,
+        "iteration": 96,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00039386,
+          -0.00036098
+        ],
+        "episode_reward_mean": -0.07336925,
+        "epsilon": 0.054702,
+        "iteration": 97,
+        "policy_loss": 0.07336925,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00039997,
+          -0.00035591
+        ],
+        "episode_reward_mean": 0.10830311,
+        "epsilon": 0.053087,
+        "iteration": 98,
+        "policy_loss": 0.0,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00039089,
+          -0.00035065
+        ],
+        "episode_reward_mean": -0.03073777,
+        "epsilon": 0.051521,
+        "iteration": 99,
+        "policy_loss": 0.03073777,
+        "timesteps_total": 120
+      },
+      {
+        "action_value_estimates": [
+          0.0,
+          0.00038592,
+          -0.00035367
+        ],
+        "episode_reward_mean": -0.00635515,
+        "epsilon": 0.05,
+        "iteration": 100,
+        "policy_loss": 0.00635515,
+        "timesteps_total": 120
+      }
+    ],
+    "lineage": {
+      "parent_registry_ids": [
+        "rllib-cartpole-ppo-skeleton-v1"
+      ],
+      "source_dataset_refs": [
+        "dataset:synthetic-twse-ohlcv-5instrument",
+        "dataset:mgmt-qlib-001-twse-ohlcv"
+      ],
+      "source_run_ids": [
+        "rllib-twse-a108cabe43a8",
+        "OSS-RLLIB-V2-001",
+        "OSS-RLLIB-001"
+      ],
+      "source_strategy_spec_id": "rllib-twse-ppo-spec-v1"
+    },
+    "metrics": {
+      "cpu_only": true,
+      "eval_episodes": 10,
+      "improved_vs_random_baseline": true,
+      "random_baseline_mean_reward": -0.01523711,
+      "reward_improvement": 0.00888196,
+      "trained_policy_mean_reward": -0.00635515,
+      "training_iterations": 100
+    },
+    "model_family": "rl_policy",
+    "policy_state": {
+      "action_weights": [
+        0.1593957362699421,
+        0.6676549484681632,
+        0.17294931526189466
+      ],
+      "best_action": 1,
+      "final_epsilon": 0.05,
+      "fit_mode": "epsilon_greedy_action_value",
+      "seed": 42
+    },
+    "registry_id": "rllib-ppo-twse-trading-policy-rllib-twse-a108cabe43a8",
+    "strategy_id": "twse-5-instrument-rl-policy",
+    "strategy_spec_id": "rllib-twse-ppo-spec-v1",
+    "trained_policy_ref": "local_bandit_policy:best_action=1:seed=42",
+    "version": "1.0.0"
+  },
+  "depends_on_tasks": [
+    "OSS-RLLIB-001",
+    "MGMT-QLIB-001"
+  ],
+  "downstream_scope": {
+    "broker_session_opened": false,
+    "capital_binding": "none",
+    "cpu_only": true,
+    "deployment_stage": "none",
+    "gpu_required": false,
+    "order_route": "none",
+    "registry_admission_packet_only": true,
+    "registry_write_authority": "registry_service_only",
+    "registry_write_performed": false,
+    "training_performed_in_this_task": true
+  },
+  "environment": "paper",
+  "evaluation_summary": {
+    "algorithm": "PPO",
+    "cpu_only": true,
+    "env_id": "TWSETradingEnv-v1",
+    "improved_vs_baseline": true,
+    "random_baseline_mean_reward": -0.01523711,
+    "reward_improvement": 0.00888196,
+    "trained_policy_mean_reward": -0.00635515,
+    "training_iterations": 100
+  },
+  "experiment_run_summary": {
+    "artifact_refs": [
+      "artifact://rllib/rllib-twse-ppo-spec-v1/rllib-twse-a108cabe43a8/model_artifact",
+      "rllib-ppo-twse-trading-policy-rllib-twse-a108cabe43a8@1.0.0"
+    ],
+    "backend_id": "rllib_ppo_twse",
+    "dataset_version_id": "dataset:synthetic-twse-ohlcv-5instrument",
+    "run_id": "rllib-twse-a108cabe43a8",
+    "status": "completed",
+    "task_id": "OSS-RLLIB-V2-001"
+  },
+  "gate_results": [
+    {
+      "cpu_only": true,
+      "gate": "production_ppo_run_completed",
+      "num_iters": 100,
+      "source_ref": "experiment_run.status",
+      "status": "passed"
+    },
+    {
+      "gate": "reward_improves_vs_random_baseline",
+      "random_baseline": -0.01523711,
+      "source_ref": "metadata.evaluation_summary",
+      "status": "passed",
+      "trained_reward": -0.00635515
+    },
+    {
+      "artifact_state": "draft",
+      "checksum": "sha256:b5b8a8da681e90862d3953c455ae0667df35dcea758bc960f94a6eecea6311fe",
+      "gate": "model_artifact_projection",
+      "source_ref": "metadata.model_artifact",
+      "status": "passed",
+      "trained_policy_ref": "local_bandit_policy:best_action=1:seed=42"
+    },
+    {
+      "gate": "lineage_refs",
+      "source_dataset_refs": [
+        "dataset:synthetic-twse-ohlcv-5instrument",
+        "dataset:mgmt-qlib-001-twse-ohlcv"
+      ],
+      "source_ref": "metadata.model_artifact.lineage",
+      "source_strategy_spec_id": "rllib-twse-ppo-spec-v1",
+      "status": "passed"
+    },
+    {
+      "deployment_stage": "none",
+      "gate": "safety_fail_closed",
+      "order_route": "none",
+      "registry_write_performed": false,
+      "source_ref": "metadata.safety_assertions",
+      "status": "passed"
+    }
+  ],
+  "generated_at": "2026-05-18T00:00:00Z",
+  "generated_by": "Codex2 / OSS-RLLIB-V2-001",
+  "lineage": {
+    "parent_registry_ids": [
+      "rllib-cartpole-ppo-skeleton-v1"
+    ],
+    "source_dataset_refs": [
+      "dataset:synthetic-twse-ohlcv-5instrument",
+      "dataset:mgmt-qlib-001-twse-ohlcv"
+    ],
+    "source_run_ids": [
+      "rllib-twse-a108cabe43a8",
+      "OSS-RLLIB-V2-001",
+      "OSS-RLLIB-001"
+    ],
+    "source_strategy_spec_id": "rllib-twse-ppo-spec-v1"
+  },
+  "missing_evidence": [
+    "upstream_rllib_ppo_backend_confirmed"
+  ],
+  "model_artifact_ref": {
+    "artifact_name": "model_artifact",
+    "artifact_ref": "rllib-ppo-twse-trading-policy-rllib-twse-a108cabe43a8@1.0.0",
+    "artifact_state": "draft",
+    "artifact_type": "model_artifact",
+    "checksum": "sha256:b5b8a8da681e90862d3953c455ae0667df35dcea758bc960f94a6eecea6311fe",
+    "deployment_stage": "none",
+    "registry_id": "rllib-ppo-twse-trading-policy-rllib-twse-a108cabe43a8",
+    "source_dataset_refs": [
+      "dataset:synthetic-twse-ohlcv-5instrument",
+      "dataset:mgmt-qlib-001-twse-ohlcv"
+    ],
+    "source_run_id": "rllib-twse-a108cabe43a8",
+    "source_strategy_spec_id": "rllib-twse-ppo-spec-v1",
+    "storage_ref": {
+      "backend": "local_file",
+      "path": "/tmp/pantheon/research/rllib/twse/rllib-twse-a108cabe43a8.model_artifact.json"
+    },
+    "strategy_id": "twse-5-instrument-rl-policy",
+    "version": "1.0.0"
+  },
+  "operator_approval_recorded": false,
+  "operator_required": false,
+  "packet_id": "prp-oss-rllib-v2-001-rllib-ppo-twse-trading-policy-rllib-twse-a108cabe43a8",
+  "production_dataset": {
+    "data_frequency": "daily",
+    "dataset_id": "dataset:synthetic-twse-ohlcv-5instrument",
+    "episode_days": 120,
+    "num_instruments": 5,
+    "production_scale_satisfied": true
+  },
+  "provided_evidence": [
+    {
+      "description": "OSS-RLLIB-001 CartPole PPO skeleton established the baseline adapter contract.",
+      "key": "oss_rllib_001_cartpole_ppo_baseline",
+      "path": "services/research/rllib/cartpole_ppo.py",
+      "ref_type": "baseline_ppo",
+      "source_task_id": "OSS-RLLIB-001",
+      "status": "passed"
+    },
+    {
+      "description": "PPO production run completed on TWSETradingEnv (100 iterations, CPU-only). Trained-policy reward: -0.00635515, random baseline: -0.01523711.",
+      "key": "production_ppo_run_completed",
+      "path": "services/research/rllib/production_ppo_run.py",
+      "ref_type": "experiment_run_builder",
+      "source_task_id": "OSS-RLLIB-V2-001",
+      "status": "passed"
+    },
+    {
+      "description": "Draft model_artifact projection includes checksum, storage_ref, and registry_id.",
+      "key": "model_artifact_ref_registered",
+      "path": "services/research/rllib/production_ppo_run.py",
+      "ref_type": "model_artifact_projection",
+      "source_task_id": "OSS-RLLIB-V2-001",
+      "status": "passed"
+    },
+    {
+      "description": "trained_policy_ref: local_bandit_policy:best_action=1:seed=42",
+      "key": "trained_policy_ref_present",
+      "path": "services/research/rllib/production_ppo_run.py",
+      "ref_type": "policy_ref",
+      "source_task_id": "OSS-RLLIB-V2-001",
+      "status": "passed"
+    },
+    {
+      "description": "Lineage links dataset refs, StrategySpec id, and source run ids.",
+      "key": "lineage_refs_present",
+      "path": "services/research/rllib/registry_admission_packet.py",
+      "ref_type": "lineage_check",
+      "source_task_id": "OSS-RLLIB-V2-001",
+      "status": "passed"
+    },
+    {
+      "description": "Registry write, broker session, order route, capital binding, and deployment stage remain disabled.",
+      "key": "fail_closed_research_only",
+      "path": "services/research/rllib/registry_admission_packet.py",
+      "ref_type": "safety_assertions",
+      "source_task_id": "OSS-RLLIB-V2-001",
+      "status": "passed"
+    }
+  ],
+  "reason": "RLlib PPO production run on TWSETradingEnv completed and draft model_artifact projection is ready for registry candidate review. This packet performs no registry write and grants no paper/canary/live deployment authority.",
+  "registry_request": {
+    "approval_scope": "candidate_admission_review_only",
+    "artifact_type": "model_artifact",
+    "current_artifact_state": "draft",
+    "deployment_stage": "none",
+    "registry_id": "rllib-ppo-twse-trading-policy-rllib-twse-a108cabe43a8",
+    "registry_write_authority": "registry_service_only",
+    "registry_write_performed": false,
+    "request_type": "artifact_state_transition",
+    "requested_artifact_state": "candidate",
+    "requested_transition": "draft_to_candidate",
+    "strategy_id": "twse-5-instrument-rl-policy",
+    "version": "1.0.0"
+  },
+  "required_evidence": [
+    "oss_rllib_001_cartpole_ppo_baseline",
+    "upstream_rllib_ppo_backend_confirmed",
+    "production_ppo_run_completed",
+    "model_artifact_ref_registered",
+    "trained_policy_ref_present",
+    "lineage_refs_present",
+    "fail_closed_research_only"
+  ],
+  "risk_owner_approval_recorded": false,
+  "risk_owner_required": false,
+  "safety_assertions": {
+    "artifact_state_request_limited_to_candidate": true,
+    "cpu_only": true,
+    "deployment_stage_remains_none": true,
+    "no_broker_session": true,
+    "no_capital_binding": true,
+    "no_gpu": true,
+    "no_order_route": true,
+    "no_registry_write": true,
+    "scoring_only_not_direct_action": true
+  },
+  "schema_version": "PromotionReadinessPacket.v1",
+  "source_task_id": "OSS-RLLIB-V2-001",
+  "target_id": "rllib-ppo-twse-trading-policy-rllib-twse-a108cabe43a8",
+  "target_type": "artifact"
+}

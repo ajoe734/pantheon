@@ -5,6 +5,14 @@ WORKDIR /workspace
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
+# Smoke scripts under scripts/smoke_*.py vary in deps:
+#   smoke_honest_stack.py + smoke_source_search_bounded.py — stdlib only
+#   smoke_oss_activation_ready_matrix.py — needs fastapi.testclient + transitively jsonschema
+# Install the union here so any compose service that uses Dockerfile.smoke
+# (smoke-stack, oss-activation-ready-smoke-matrix, source-search-bounded-smoke)
+# can run its command without ModuleNotFoundError.
+RUN pip install --no-cache-dir fastapi uvicorn pydantic "jsonschema>=4.0,<5.0" httpx
+
 COPY . /workspace
 
 CMD ["python", "scripts/smoke_honest_stack.py"]

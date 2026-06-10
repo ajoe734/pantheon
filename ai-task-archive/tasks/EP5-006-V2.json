@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "EP5-006-V2",
+  "archived_at": "2026-05-19T19:18:12Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EP5-006-V2",
+    "title": "Canary dry-run command (no live side effects)",
+    "summary_zh": "Implements POST /api/v1/ep5/proofs/dry-run. Runs the canary execution path in validate_only or sandbox mode; asserts live_capital_side_effects=false.",
+    "phase": "Phase 8 / EPIC-EP5",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "EP5-005-V2"
+    ],
+    "artifacts": [
+      "services/governance/ep5_proof/dry_run.py",
+      "tests/governance/test_ep5_dry_run.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner finalized: implementation merged via PR #288, closeout evidence merged via PR #290, focused governance verification passed (53 tests), no live side effects enabled.",
+    "last_update": "2026-05-19T19:18:12Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：EP5 dry-run API/command 僅允許 validate_only 或 sandbox，order_route_mode 必須匹配 mode，live_capital_side_effects 透過 schema 與 runtime packet 固定為 false；失敗路徑會回傳 failed proof packet 且不產生 live side effects。",
+      "驗證通過：python3 -m pytest tests/governance/test_ep5_dry_run.py tests/governance/test_ep5_proof_generator.py tests/governance/test_promotion_readiness_packet.py -q -> 53 passed；python3 -m pytest tests/governance -q -> 133 passed；git diff --check task-owned files clean；PR #288 merged at 2026-05-19T19:02:46Z with GitHub Branch CI Gate success。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T19:18:12Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ep5-006-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/EP5-006-V2",
+      "git_clean_required": false,
+      "commit": "2fd482191ea3724af3a562927a25f2d46036c78b",
+      "commit_subject": "EP5-006-V2: refresh closeout after dev merge",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Verified": "git diff --check -- support/evidence/EP5-006-V2/owner-closeout.md",
+        "LLM-Agent": "Codex",
+        "Task-ID": "EP5-006-V2",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/EP5-006-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "ea369174b8b76c665798fea39c7d3b27fe647c3d",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EP5-006-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review: EP5 dry-run command implemented and merged via PR #288 (merge commit 1117c189954290ceff222ccb7f5aaeb6b770138e). Scope: services/governance/ep5_proof/dry_run.py, services/governance/ep5_proof/packet_generator.py, tests/governance/test_ep5_dry_run.py. Validated: 53 focused governance tests, 133 full tests/governance, GitHub Branch CI Gate checks all passed.",
+      "status": "done",
+      "created_at": "2026-05-19T19:03:07Z",
+      "resolved_at": "2026-05-19T19:08:49Z"
+    },
+    {
+      "task_id": "EP5-006-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: EP5-006-V2 dry-run command matches scope, preserves no-live-side-effect invariant, focused/full governance tests pass, and PR #288 is merged into dev. Returning to Codex for owner closeout to done.",
+      "status": "done",
+      "created_at": "2026-05-19T19:08:49Z",
+      "resolved_at": "2026-05-19T19:18:13Z"
+    }
+  ],
+  "blockers": []
+}

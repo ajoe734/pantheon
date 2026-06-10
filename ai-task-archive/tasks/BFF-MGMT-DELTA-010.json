@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "task_id": "BFF-MGMT-DELTA-010",
+  "archived_at": "2026-05-24T15:37:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-MGMT-DELTA-010",
+    "title": "GET /bff/management/loop-throughput",
+    "summary_zh": null,
+    "phase": "Sprint BFF-DELTA / EPIC-BFF-DELTA-MGMT-LIVE",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-24_delta/BFF_API_GAP_delta_audit_spec.md;execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md;services/control-plane/bff/main.py;execute-plans/src/lib/bff-v1/management.ts"
+    ],
+    "acceptance": [
+      "Path registered; v5 loop runs per minute queue depth and lag;Anonymous 401 authenticated 200; envelope canonical; CORS preflight 204;pytest case loop_throughput"
+    ],
+    "next": "Owner finalized approved task after implementation PR #548 and closeout PR #553 merged to dev. Closeout merge commit 6c20488e2f5d4ad0ee9a71afeddac983754957fd; task commit eaa5517768b34804f8953cde76caee2aaf41b5c5. Verification: git diff --check; python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q (34 passed, 3 existing read_store.py datetime.utcnow warnings).",
+    "last_update": "2026-05-24T15:37:33Z",
+    "review_notes_zh": [
+      "審查通過：PR #548 已合併至 dev，loop-throughput route 在最新 origin/dev 仍存在，backend envelope/auth/CORS/OpenAPI 與 execute-plans helper 契約一致。",
+      "Reviewer verification: git diff --check 0fa0593d6811c44a052e9517283b5c06fdcca935^1 0fa0593d6811c44a052e9517283b5c06fdcca935; python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py -q (93 passed, 3 existing read_store.py datetime.utcnow warnings)."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-24T15:37:33Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-mgmt-delta-010",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-MGMT-DELTA-010",
+      "git_clean_required": false,
+      "commit": "eaa5517768b34804f8953cde76caee2aaf41b5c5",
+      "commit_subject": "BFF-MGMT-DELTA-010: record owner closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-MGMT-DELTA-010",
+        "Reviewer": "Codex",
+        "Verified": "git diff --check; pytest focused route/live-wiring suite (34 passed, 3 existing warnings)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-MGMT-DELTA-010",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "6c20488e2f5d4ad0ee9a71afeddac983754957fd",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-MGMT-DELTA-010",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-24T14:35:12Z",
+      "resolved_at": "2026-05-24T14:35:29Z"
+    },
+    {
+      "task_id": "BFF-MGMT-DELTA-010",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implementation delivered and PR #548 merged to dev as 0fa0593d6811c44a052e9517283b5c06fdcca935. Scope: GET /bff/management/loop-throughput backend route, execute-plans helper, docs/audit notes, pytest coverage and final live wiring contract. Verified locally: git diff --check; python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py -q (86 passed, 3 warnings). GitHub checks passed: Commit trailers, Runtime mirror guard, Smoke acceptance, Forward to orchestrator. Owner closeout attempted but blocked because task must be review_approved first; awaiting reviewer approval/finalize handoff.",
+      "status": "done",
+      "created_at": "2026-05-24T14:59:25Z",
+      "resolved_at": "2026-05-24T15:21:50Z"
+    },
+    {
+      "task_id": "BFF-MGMT-DELTA-010",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: PR #548 is merged, loop-throughput remains present on latest origin/dev, and focused reviewer validation passed (93 passed, 3 existing datetime.utcnow warnings). Owner Codex2 should run closeout finalization and done.",
+      "status": "done",
+      "created_at": "2026-05-24T15:21:50Z",
+      "resolved_at": "2026-05-24T15:37:34Z"
+    }
+  ],
+  "blockers": []
+}

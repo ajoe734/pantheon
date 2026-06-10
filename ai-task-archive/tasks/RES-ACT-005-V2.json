@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "RES-ACT-005-V2",
+  "archived_at": "2026-05-19T15:31:47Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "RES-ACT-005-V2",
+    "title": "No-order-route scanner (generic)",
+    "summary_zh": "Static + dynamic proof that research adapters do not call any broker order route. Includes code-path scan + integration test asserting empty broker outbox after a training step. Generic across FinRL/RLlib/Qlib/TRL/etc.",
+    "phase": "Phase 8 / EPIC-RES-ACT",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/governance/research_activation/no_order_route_scanner.py",
+      "tests/integrations/test_research_no_order_route.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner closeout complete: PR #216 implementation and PR #221 closeout merged; pytest -q tests/integrations/test_research_no_order_route.py passed (3 passed); py_compile passed.",
+    "last_update": "2026-05-19T15:31:47Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T15:31:47Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/res-act-005-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/RES-ACT-005-V2",
+      "git_clean_required": false,
+      "commit": "3170e3fd7ded61291847fcca563a8b556c9e659d",
+      "commit_subject": "RES-ACT-005-V2: refresh closeout for latest dev",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "RES-ACT-005-V2 closeout evidence refresh.",
+        "Not changing": "scanner implementation, integration test behavior, or canonical architecture docs.",
+        "Composes with": "PR #221 closeout branch refresh and owner done transition.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "RES-ACT-005-V2",
+        "Reviewer": "Codex2",
+        "Verified": "pytest -q tests/integrations/test_research_no_order_route.py -> 3 passed in 0.78s; python3 -m py_compile services/governance/research_activation/no_order_route_scanner.py tests/integrations/test_research_no_order_route.py -> passed"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/RES-ACT-005-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "0e2137cb78db42c25fbab01e4efe87876b9ec4cb",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "RES-ACT-005-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review: PR #216 merged into dev (merge f89f94c75dd229ab2c06b870c4cd8d9c28a21339; task commit 9da6a291f8e51357bf39f975f72b9a6dbf91a4a6). Added services/governance/research_activation/no_order_route_scanner.py and tests/integrations/test_research_no_order_route.py. Verified focused pytest and py_compile; GitHub checks passed.",
+      "status": "done",
+      "created_at": "2026-05-19T15:08:22Z",
+      "resolved_at": "2026-05-19T15:21:04Z"
+    },
+    {
+      "task_id": "RES-ACT-005-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: PR #216 merged into dev; focused pytest and py_compile pass locally; no blocking findings.",
+      "status": "done",
+      "created_at": "2026-05-19T15:21:04Z",
+      "resolved_at": "2026-05-19T15:31:47Z"
+    }
+  ],
+  "blockers": []
+}

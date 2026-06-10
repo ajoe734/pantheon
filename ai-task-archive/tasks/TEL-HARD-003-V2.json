@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "TEL-HARD-003-V2",
+  "archived_at": "2026-05-20T15:07:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "TEL-HARD-003-V2",
+    "title": "Incident severity escalation SLA test",
+    "summary_zh": "Per blueprint §12 TEL-HARD-003. High-severity incident → postmortem within SLA; postmortem → EvolutionDecisionProposal within SLA; critical incident may propose freeze / rollback. SLA values configurable; tests cover happy path + one fail-closed (SLA breach blocks closure).",
+    "phase": "Phase 8 / EPIC-TEL-HARD",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/incident/escalation_sla.py",
+      "tests/incident/test_escalation_sla.py",
+      "docs/operations/incident_sla_runbook.md"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 blueprint section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "PR #359 merged into dev at 1739b83c; owner closeout verified incident escalation SLA gate on latest dev.",
+    "last_update": "2026-05-20T15:07:33Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-v3-blueprint-residual-2026-05-20",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：PR #359 的 incident escalation SLA gate 維持純 evaluator 邊界，high/critical policy、critical freeze/rollback、configurable SLA 與 fail-closed breach 覆蓋符合 TEL-HARD-003-V2 acceptance。Reviewer local validation: python3 -m pytest tests/incident/test_escalation_sla.py services/incident/test_incident.py services/evolution/test_postmortem_bridge.py -q; python3 -m pytest tests/e2e/test_paper_run_to_evolution_decision.py tests/e2e/test_canary_telemetry_to_evolution.py -q。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T15:07:33Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/tel-hard-003-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/TEL-HARD-003-V2",
+      "git_clean_required": false,
+      "commit": "e787316e23623048d95683bdb60c069557bc560f",
+      "commit_subject": "TEL-HARD-003-V2: record closeout verification",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped closeout notes for the approved incident escalation SLA delivery.",
+        "Not changing": "SLA evaluator behavior, focused tests, runbook, or unrelated merged dev task surfaces.",
+        "Composes with": "PR #359 after latest dev refresh and Codex2 review_approved.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "TEL-HARD-003-V2",
+        "Reviewer": "Codex2",
+        "Verified": "python3 -m pytest tests/incident/test_escalation_sla.py services/incident/test_incident.py services/evolution/test_postmortem_bridge.py tests/e2e/test_paper_run_to_evolution_decision.py -q"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/TEL-HARD-003-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "1739b83c00e8fda513d741020e18469825f62fe0",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "TEL-HARD-003-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Implemented incident escalation SLA gate in PR #359 at 270e8065; local focused/adjacent pytest passed and GitHub checks passed. Please review SLA policy shape and fail-closed coverage.",
+      "status": "done",
+      "created_at": "2026-05-20T14:44:36Z",
+      "resolved_at": "2026-05-20T14:56:45Z"
+    },
+    {
+      "task_id": "TEL-HARD-003-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Codex2 approved PR #359 after local focused/adjacent and e2e proposal-shape validation. Owner Codex should finalize, publish/merge the task PR, then close out done.",
+      "status": "done",
+      "created_at": "2026-05-20T14:56:45Z",
+      "resolved_at": "2026-05-20T15:07:34Z"
+    }
+  ],
+  "blockers": []
+}

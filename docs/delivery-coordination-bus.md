@@ -1,10 +1,31 @@
 # Delivery Coordination Bus
 
 Last updated: 2026-04-14
-Status: implementation guide for the Pantheon cross-repo delivery bus
+Status: legacy implementation guide; superseded for current frontend dev on
+2026-06-08
 Tier: L2 Planning & Execution
 Scope: multi-repo coordination files, GitHub issue flow, worker routing, and Lovable trigger policy
 Conflict rule: this guide explains the delivery bus; it does not override Pantheon runtime or BFF policy
+
+## 2026-06-08 Supersession Notice
+
+Do not use this file to route current Pantheon frontend development.
+
+The current frontend repository is `ajoe734/execute-plans`, not
+`ajoe734/front-ai-trading-system`. Pantheon dev frontend hosting is
+Pantheon-owned at `https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io`, with
+the dev BFF at `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io`.
+
+Do not ask the operator to press Lovable publish, wait on Lovable connector
+authorization, or revive `front-ai-trading-system` for dev delivery. The active
+frontend delivery loop is GitHub branch, commit, PR, merge, build from
+`execute-plans`, and deploy to the Pantheon-owned dev FE host.
+
+For current frontend hosting, read
+`docs/frontend/execute-plans-dev-hosting.md`. For Management AI/OpenClaw dev
+work, read `docs/operations/management-ai-openclaw-dev-bridge.md`. The older
+Lovable lane and `front-ai-trading-system` references below remain historical
+context only.
 
 ## 1. Purpose
 

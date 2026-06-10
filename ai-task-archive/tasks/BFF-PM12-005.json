@@ -1,0 +1,117 @@
+{
+  "version": 1,
+  "task_id": "BFF-PM12-005",
+  "archived_at": "2026-05-23T10:27:29Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-PM12-005",
+    "title": "Persona league rankings and tiers",
+    "summary_zh": null,
+    "phase": "Sprint BFF-4 / EPIC-BFF-GAP-PM12",
+    "owner": "Codex2",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "BFF-PM12-004"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#b34-pm-12-composition-sources",
+      "execute-plans/src/lib/bff-v1/management.ts",
+      "services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "GET /bff/management/persona-league/rankings returns computed ranking blocks",
+      "GET /bff/management/persona-league/tiers returns tier config / current season tiers",
+      "FE league pages render live"
+    ],
+    "next": "Closed BFF-PM12-005 after merged implementation PR #455 and closeout evidence PR #467; validation passed: py_compile main.py, PM12 persona league tests, final live wiring contract, git diff --check.",
+    "last_update": "2026-05-23T10:27:29Z",
+    "review_notes_zh": [
+      "審查通過：rankings/tiers 路由實作正確，scoring weights、tier 定義、auth guard 均符合 spec；execute-plans TS helpers 完整；7/7 persona league tests + 7/7 wiring contract tests pass；quarterly-ranking 超前交付（BFF-PM12-006 scope），已正確標記於 spec，不影響本 task 驗收"
+    ],
+    "review_file": "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T10:27:29Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-pm12-005",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-PM12-005",
+      "git_clean_required": false,
+      "repository_fallback": {
+        "from_repository_id": "execute_plans",
+        "missing_repository_path": "/tmp/pantheon-worker-worktrees/pantheon/execute-plans",
+        "reason": "non-Pantheon artifact repository local_path is unavailable; using Pantheon because the task also has Pantheon artifacts"
+      },
+      "commit": "dbfcea2910fcf3573988747a095bb9e0454d3a03",
+      "commit_subject": "BFF-PM12-005: refresh closeout after dev merge",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-specific closeout evidence under support/evidence/BFF-PM12-005.",
+        "Not changing": "BFF route behavior, execute-plans contracts, or canonical architecture policy.",
+        "Composes with": "merged implementation PR #455 and latest dev closeout base.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-PM12-005",
+        "Reviewer": "Claude2",
+        "Verified": "python3 -m py_compile services/control-plane/bff/main.py; pytest -q services/control-plane/bff/tests/test_bff_pm12_persona_league.py; pytest -q services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py; git diff --check"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-PM12-005",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "2c60565d8c6c0049165de92ee1fd1a533f084918",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-PM12-005",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Implemented and merged PR #455 (merge 689c400f): persona league rankings/tiers routes plus execute-plans typed helpers. Verified py_compile, PM12 persona league tests, final live wiring contract, and GitHub checks all pass. Awaiting Claude2 review approval.",
+      "status": "done",
+      "created_at": "2026-05-23T09:35:45Z",
+      "resolved_at": "2026-05-23T10:00:31Z"
+    },
+    {
+      "task_id": "BFF-PM12-005",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Review approved: all 5 acceptance criteria satisfied, 14/14 tests pass, commit trailers clean, PR #455 merged. Rankings and tiers routes are correct; TS helpers complete; quarterly-ranking bonus delivery noted.",
+      "status": "done",
+      "created_at": "2026-05-23T10:00:31Z",
+      "resolved_at": "2026-05-23T10:23:26Z"
+    },
+    {
+      "task_id": "BFF-PM12-005",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: fatal: ambiguous argument 'origin/dev': unknown revision or path not in the working tree.",
+      "status": "done",
+      "created_at": "2026-05-23T10:23:26Z",
+      "resolved_at": "2026-05-23T10:27:15Z"
+    },
+    {
+      "task_id": "BFF-PM12-005",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Ownership updated",
+      "status": "done",
+      "created_at": "2026-05-23T10:27:15Z",
+      "resolved_at": "2026-05-23T10:27:30Z"
+    }
+  ],
+  "blockers": []
+}

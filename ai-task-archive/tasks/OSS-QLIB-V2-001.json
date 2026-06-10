@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "OSS-QLIB-V2-001",
+  "archived_at": "2026-05-19T12:13:50Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-QLIB-V2-001",
+    "title": "Qlib production-scale rolling + registry admission",
+    "summary_zh": "把 OSS-QLIB-002 的 rolling pipeline 升級到 production scale：使用 MGMT-QLIB-001 已建好的 TWSE OHLCV dataset（≥50 instruments × ≥2 years），跑完整 rolling-window 訓練，產 model_artifact 並提交 registry admission packet。獨立檔案路徑。",
+    "phase": "Sprint 8 / EPIC-OSS-V2",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "OSS-QLIB-002",
+      "MGMT-QLIB-001"
+    ],
+    "artifacts": [
+      "services/research/qlib/production_rolling_run.py",
+      "services/research/qlib/test_production_rolling_run.py",
+      "services/research/qlib/registry_admission_packet.py",
+      "support/evidence/OSS-QLIB-V2-001/admission_packet.json"
+    ],
+    "acceptance": [
+      "production_rolling_run.py exposes run_production(instrument_universe start_date end_date window_days) returning ExperimentRun dict with rolling_sharpe and rolling_ic per window",
+      "uses real TWSE dataset from MGMT-QLIB-001 dataset_manifest not synthetic data",
+      "produces model_artifact registered as artifact_type=model_artifact with checksum and lineage refs",
+      "registry_admission_packet.py emits admission_packet.json conforming to PromotionReadinessPacket schema",
+      "test asserts at least one rolling window produces non-trivial sharpe > 0 on test fixture",
+      "pytest -q exit 0",
+      "CPU-only no GPU no live broker"
+    ],
+    "next": "Owner closeout finalized after Codex2 approval. Closeout PR #81 merged to dev at dab66ecd40e1c4157eda7fef96162f7cffad7cbd; task closeout commit 6255f2391fc8dd25fa930123ea8ad537afa03192. Verification rerun: py_compile passed; production rolling test 5 passed; full services/research/qlib slice 40 passed.",
+    "last_update": "2026-05-19T12:13:50Z",
+    "review_notes_zh": [
+      "審查通過：production rolling runner、model_artifact projection、admission packet safety gates verified; no blocking findings.",
+      "驗證：pytest services/research/qlib/test_production_rolling_run.py -q -> 5 passed; pytest services/research/qlib -q -> 40 passed; py_compile -> passed; CLI admission packet emission -> passed."
+    ],
+    "review_file": "support/reviews/OSS-QLIB-V2-001-review-codex2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T12:13:50Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/oss-qlib-v2-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OSS-QLIB-V2-001",
+      "git_clean_required": false,
+      "commit": "6255f2391fc8dd25fa930123ea8ad537afa03192",
+      "commit_subject": "OSS-QLIB-V2-001: record approved closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "task closeout evidence and Codex2 review record for Qlib V2 production rolling admission.",
+        "Not changing": "production runner, registry admission packet logic, checked-in admission packet JSON, or canonical architecture docs.",
+        "Composes with": "PR #75 implementation already merged into dev; this closeout PR preserves review and owner finalization artifacts.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "OSS-QLIB-V2-001",
+        "Reviewer": "Codex2",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/research/qlib/production_rolling_run.py services/research/qlib/registry_admission_packet.py services/research/qlib/test_production_rolling_run.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/research/qlib -q (40 passed)"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OSS-QLIB-V2-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-QLIB-V2-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review: production Qlib rolling runner, registry admission packet emitter, tests, and admission_packet.json are merged via PR #70. Please review services/research/qlib/production_rolling_run.py, services/research/qlib/registry_admission_packet.py, services/research/qlib/test_production_rolling_run.py, and support/evidence/OSS-QLIB-V2-001/admission_packet.json.",
+      "status": "done",
+      "created_at": "2026-05-17T16:26:36Z",
+      "resolved_at": "2026-05-19T11:53:26Z"
+    },
+    {
+      "task_id": "OSS-QLIB-V2-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: no blocking findings. Owner Codex can finalize; review record at support/reviews/OSS-QLIB-V2-001-review-codex2.md. Verification rerun: production test 5 passed, full qlib slice 40 passed, py_compile and CLI packet emission passed.",
+      "status": "done",
+      "created_at": "2026-05-19T11:53:26Z",
+      "resolved_at": "2026-05-19T12:13:50Z"
+    }
+  ],
+  "blockers": []
+}

@@ -594,13 +594,15 @@ flowchart LR
     PR["GitHub PR"] --> CI1["GitHub Actions: lint / schema / unit / smoke"]
     CI1 --> DEC{Pass?}
     DEC -- no --> FAIL["Block merge"]
-    DEC -- yes --> MERGE["Merge to main"]
+    DEC -- yes --> DEV_MERGE["Merge to dev"]
 
-    MERGE --> AUTH["GitHub OIDC -> GCP WIF"]
+    DEV_MERGE --> NIGHTLY["03:00 UTC nightly-publish-cut from dev HEAD"]
+    NIGHTLY --> SNAP["Immutable publish/v* snapshot"]
+    SNAP --> AUTH["GitHub OIDC -> GCP WIF"]
     AUTH --> BUILD["Cloud Build builds changed images"]
     BUILD --> AR["Push to Artifact Registry"]
 
-    AR --> DEV["Auto deploy to dev"]
+    AR --> DEV["Auto deploy publish/v* snapshot to dev"]
     DEV --> SANDBOX["Promote to sandbox after integration gate"]
 
     SANDBOX --> PAPER["Pantheon Governance creates DeploymentPlan for paper"]
@@ -675,10 +677,14 @@ flowchart LR
 - early integration
 
 ### 流程
-- merge to `main`
-- 自動 deploy 到 `dev`
+- task / hotfix PR 持續 merge 到 `dev`
+- `nightly-publish-cut.yml` 每天 03:00 UTC 從 `dev` HEAD 切出不可變 `publish/v*` snapshot
+- push `publish/v*` 自動觸發 `nonprod-deploy.yml`
+- deploy-dev 使用該 snapshot 內的 workflow 與 runtime 定義，也就是 `dev` 當下的 4-service / FLP 等部署邏輯
 - 只允許 non-production secrets
 - 執行 health / smoke / migration checks
+
+`main` / `master` release branch 不屬於 dev deploy source path；它只負責 staging / paper / prod 類 promotion 路徑。若本文件與 `docs/conventions/GIT_WORKFLOW.md` 衝突，以 `docs/conventions/GIT_WORKFLOW.md` 的 branch / publish / promote 定義為準。
 
 ### 可直接由 GitHub/CD 完成的內容
 - Cloud Run revisions
@@ -782,7 +788,7 @@ Paper deploy 不能只靠 GitHub Action 把 image 推到 paper namespace 就算�
 | 項目 | dev | sandbox | paper | prod |
 |---|---|---|---|---|
 | 目的 | 開發與單元驗證 | 跨服務整合、contract 驗證 | production-like 模擬交易 | 真實營運 |
-| Git trigger | PR / feature branch | main / RC tag | release + Pantheon approval | release + Pantheon approval |
+| Git trigger | `dev` -> nightly `publish/v*` snapshot -> auto deploy | release branch / RC tag | release + Pantheon approval | release + Pantheon approval |
 | Cloud Run services | yes | yes | yes | yes |
 | GKE Autopilot workers | minimal / shared | yes | yes | yes |
 | GKE execution cluster | optional / stub | optional / stub | yes | yes |
@@ -805,14 +811,14 @@ Paper deploy 不能只靠 GitHub Action 把 image 推到 paper namespace 就算�
 ## 10.1 建議 project layout
 
 ### 推薦方案
-- `pantheon-shared`
+- `pantheon-benjamin-20260528`
 - `pantheon-dev`
 - `pantheon-sandbox`
 - `pantheon-paper`
 - `pantheon-prod`
 
 ### 精簡方案
-- `pantheon-shared`
+- `pantheon-benjamin-20260528`
 - `pantheon-nonprod`
 - `pantheon-paper`
 - `pantheon-prod`
@@ -1200,14 +1206,14 @@ GitHub runner 上不存放任何 GCP service account key JSON。
 正式執行時，優先使用 repo 內的 idempotent helper：
 
 ```bash
-bash scripts/gcp_nonprod_baseline.sh --project-id pantheon-shared
+bash scripts/gcp_nonprod_baseline.sh --project-id pantheon-benjamin-20260528
 ```
 
 若先做 dry-run，但目前 shell 無法用 `gcloud projects describe` 讀到 project number，請一併傳入：
 
 ```bash
 bash scripts/gcp_nonprod_baseline.sh \
-  --project-id pantheon-shared \
+  --project-id pantheon-benjamin-20260528 \
   --project-number 123456789012 \
   --dry-run
 ```
@@ -1222,7 +1228,7 @@ bash scripts/gcp_nonprod_baseline.sh \
 若需要人工審核或逐步操作，以下命令可作為對照版（同樣屬於 `BP5-GCP-001` 範疇）：
 
 ```bash
-PROJECT_ID="pantheon-shared"
+PROJECT_ID="pantheon-benjamin-20260528"
 PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format="value(projectNumber)")
 GITHUB_REPO="ajoe734/pantheon"
 POOL_ID="pantheon-github-pool"
@@ -1300,7 +1306,7 @@ echo "GCP_PROJECT_NUMBER=${PROJECT_NUMBER}"
 | Tag | 特性 | 說明 |
 |---|---|---|
 | `:<commit-sha>` | immutable | canonical artifact identity；永不覆寫 |
-| `:dev-candidate` | mutable | 指向 main 分支最新 dev build |
+| `:dev-candidate` | mutable | 指向最新 `publish/v*` dev snapshot build；source 必須來自 `dev` HEAD 切出的 publish 快照 |
 | `:paper-candidate` | mutable | 指向通過 sandbox gate 的候選 |
 | `:paper-approved` | mutable | 指向 DeploymentPlan 核准後的 paper image |
 | `:prod-approved` | mutable | 指向 prod ApprovalDecision 核准後的 image |
@@ -1345,10 +1351,10 @@ Cloud Run example：
 
 ```bash
 gcloud run deploy pantheon-dev-bff \
-  --project="pantheon-shared" \
+  --project="pantheon-benjamin-20260528" \
   --region="asia-east1" \
-  --service-account="pantheon-dev-control-plane@pantheon-shared.iam.gserviceaccount.com" \
-  --image="asia-east1-docker.pkg.dev/pantheon-shared/pantheon/bff:dev-candidate" \
+  --service-account="pantheon-dev-control-plane@pantheon-benjamin-20260528.iam.gserviceaccount.com" \
+  --image="asia-east1-docker.pkg.dev/pantheon-benjamin-20260528/pantheon/bff:dev-candidate" \
   --set-secrets="DATABASE_URL=pantheon-dev-postgres-url:1,OPENCLAW_API_TOKEN=pantheon-dev-openclaw-api-token:1,WEBHOOK_SIGNING_SECRET=pantheon-dev-webhook-signing-secret:1"
 ```
 
@@ -1358,7 +1364,7 @@ GKE example：
 kubectl create namespace pantheon-dev
 kubectl create serviceaccount runtime-manager -n pantheon-dev
 kubectl annotate serviceaccount runtime-manager -n pantheon-dev \
-  iam.gke.io/gcp-service-account="pantheon-dev-execution@pantheon-shared.iam.gserviceaccount.com"
+  iam.gke.io/gcp-service-account="pantheon-dev-execution@pantheon-benjamin-20260528.iam.gserviceaccount.com"
 ```
 
 重點是 deploy artifact 與 secret truth 分開：
@@ -1371,7 +1377,7 @@ kubectl annotate serviceaccount runtime-manager -n pantheon-dev \
 
 推薦 topology：
 
-- `pantheon-shared`: GitHub OIDC/WIF、Cloud Build、Artifact Registry
+- `pantheon-benjamin-20260528`: GitHub OIDC/WIF、Cloud Build、Artifact Registry
 - `pantheon-nonprod`: `dev / sandbox` runtime VPC、Cloud SQL、Pub/Sub、runtime identities、runtime secrets
 
 若目前仍採單 project，也可把 `--shared-project-id` 省略，讓 shared / runtime 都落在同一個 project；腳本仍可收斂成同一組 naming truth。
@@ -1381,7 +1387,7 @@ kubectl annotate serviceaccount runtime-manager -n pantheon-dev \
 ```bash
 bash scripts/gcp_nonprod_foundation.sh \
   --project-id pantheon-nonprod \
-  --shared-project-id pantheon-shared \
+  --shared-project-id pantheon-benjamin-20260528 \
   --dry-run
 ```
 
@@ -1390,7 +1396,7 @@ bash scripts/gcp_nonprod_foundation.sh \
 ```bash
 bash scripts/gcp_nonprod_foundation.sh \
   --project-id pantheon-nonprod \
-  --shared-project-id pantheon-shared
+  --shared-project-id pantheon-benjamin-20260528
 ```
 
 它會一次完成：
@@ -1427,7 +1433,7 @@ gcloud run deploy pantheon-dev-bff \
   --no-allow-unauthenticated \
   --vpc-connector="pantheon-dev-connector" \
   --vpc-egress="private-ranges-only" \
-  --image="asia-east1-docker.pkg.dev/pantheon-shared/pantheon/bff:dev-candidate" \
+  --image="asia-east1-docker.pkg.dev/pantheon-benjamin-20260528/pantheon/bff:dev-candidate" \
   --set-secrets="DATABASE_URL=pantheon-dev-postgres-url:1,OPENCLAW_API_TOKEN=pantheon-dev-openclaw-api-token:1,WEBHOOK_SIGNING_SECRET=pantheon-dev-webhook-signing-secret:1"
 ```
 

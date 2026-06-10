@@ -1,0 +1,123 @@
+{
+  "version": 1,
+  "task_id": "CBL-004-V2",
+  "archived_at": "2026-05-20T05:55:47Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "CBL-004-V2",
+    "title": "Binding TTL / revoke / suspend semantics",
+    "summary_zh": "BindingTTL + BindingRevocationPolicy + suspend semantics. Binding must have TTL and revocation semantics.",
+    "phase": "Phase 8 / EPIC-CAPITAL-BINDING-LIVE",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "CBL-001-V2"
+    ],
+    "artifacts": [
+      "services/capital/binding_live/lifecycle.py",
+      "tests/capital/test_binding_lifecycle.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner closeout finalized after implementation PR #334 merged at f2ba5e83a35bed6aa4e48cc5b459548fd57950fc and closeout PR #338 merged at 8e1b5f3364c96de65f8b90873cc958c2ade298f9. Verified after branch refresh: pytest -q tests/capital/test_binding_lifecycle.py tests/capital/test_binding_live_readiness.py -> 15 passed; pytest -q tests/capital services/capital/test_service.py services/control-plane/governance/test_persona_capital_binding.py -> 86 passed; python3 -m py_compile services/capital/binding_live/lifecycle.py tests/capital/test_binding_lifecycle.py; git diff --check.",
+    "last_update": "2026-05-20T05:55:47Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：CBL-004-V2 lifecycle patch provides side-effect-free BindingTTL, BindingRevocationPolicy, suspend/reactivate/revoke evaluation, fail-closed TTL expiry and revocation policy coverage, and no L1 canonical doc changes.",
+      "複審確認 PR #334 merged at f2ba5e83a35bed6aa4e48cc5b459548fd57950fc; prior global FastAPI handler concern is addressed by endpoint-level CAPITAL_HTTP_ERRORS mapping in services/capital/main.py, with broader capital/governance regression suite passing."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T05:55:47Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/cbl-004-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/CBL-004-V2",
+      "git_clean_required": false,
+      "commit": "fba8b0afb61493c8da22044ddb7c6377aa6f2fbc",
+      "commit_subject": "CBL-004-V2: refresh closeout publication evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "CBL-004-V2",
+        "Reviewer": "Codex",
+        "Verified": "pytest lifecycle/readiness -> 15 passed; capital/governance regression -> 86 passed; py_compile; git diff --check"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/CBL-004-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "8e1b5f3364c96de65f8b90873cc958c2ade298f9",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "CBL-004-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-20T04:55:21Z",
+      "resolved_at": "2026-05-20T04:55:35Z"
+    },
+    {
+      "task_id": "CBL-004-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: b7834c8e adds side-effect-free TTL, revocation, suspend/reactivate lifecycle semantics plus focused tests. Validation: pytest -q tests/capital/test_binding_lifecycle.py tests/capital/test_binding_live_readiness.py; pytest -q tests/capital services/capital/test_service.py services/control-plane/governance/test_persona_capital_binding.py.",
+      "status": "done",
+      "created_at": "2026-05-20T05:05:52Z",
+      "resolved_at": "2026-05-20T05:10:59Z"
+    },
+    {
+      "task_id": "CBL-004-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review reopened: lifecycle semantics and tests pass, but b7834c8e also changes services/capital/main.py with global ValueError/PermissionError handlers outside the task artifacts. Please remove that scope from CBL-004-V2, or justify it with scoped tests and re-handoff. Reviewer validation run: pytest -q tests/capital/test_binding_lifecycle.py tests/capital/test_binding_live_readiness.py; pytest -q tests/capital services/capital/test_service.py services/control-plane/governance/test_persona_capital_binding.py; python3 -m py_compile services/capital/binding_live/lifecycle.py tests/capital/test_binding_lifecycle.py; git diff --check origin/dev...HEAD -- services/capital/main.py services/capital/binding_live/lifecycle.py tests/capital/test_binding_lifecycle.py.",
+      "status": "done",
+      "created_at": "2026-05-20T05:10:59Z",
+      "resolved_at": "2026-05-20T05:10:59Z"
+    },
+    {
+      "task_id": "CBL-004-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for re-review. PR #334 merged at f2ba5e83a35bed6aa4e48cc5b459548fd57950fc after required GitHub checks passed. Reopen concern addressed by removing the global FastAPI ValueError/PermissionError handlers from services/capital/main.py and replacing them with endpoint-level CAPITAL_HTTP_ERRORS mapping only; full removal of main.py mapping fails the reviewer-specified broader capital suite because governance domain ValueError subclasses can be reloaded under pytest collection. Validation rerun after merging origin/dev: pytest -q tests/capital/test_binding_lifecycle.py tests/capital/test_binding_live_readiness.py -> 15 passed; pytest -q tests/capital services/capital/test_service.py services/control-plane/governance/test_persona_capital_binding.py -> 80 passed; python3 -m py_compile services/capital/binding_live/lifecycle.py tests/capital/test_binding_lifecycle.py; git diff --check origin/dev...HEAD -- services/capital/main.py services/capital/binding_live/lifecycle.py tests/capital/test_binding_lifecycle.py.",
+      "status": "done",
+      "created_at": "2026-05-20T05:31:37Z",
+      "resolved_at": "2026-05-20T05:35:50Z"
+    },
+    {
+      "task_id": "CBL-004-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved after re-review. Verified: pytest -q tests/capital/test_binding_lifecycle.py tests/capital/test_binding_live_readiness.py -> 15 passed; pytest -q tests/capital services/capital/test_service.py services/control-plane/governance/test_persona_capital_binding.py -> 80 passed; python3 -m py_compile services/capital/binding_live/lifecycle.py tests/capital/test_binding_lifecycle.py; git diff --check f2ba5e83^1 f2ba5e83 -- services/capital/main.py services/capital/binding_live/lifecycle.py tests/capital/test_binding_lifecycle.py. PR #334 merged at f2ba5e83a35bed6aa4e48cc5b459548fd57950fc; owner Codex2 may finalize to done.",
+      "status": "done",
+      "created_at": "2026-05-20T05:35:50Z",
+      "resolved_at": "2026-05-20T05:55:48Z"
+    }
+  ],
+  "blockers": []
+}

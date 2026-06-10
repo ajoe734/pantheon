@@ -1,0 +1,1541 @@
+# BFF API GAP - Delta Audit Spec
+
+Status: active
+Date: 2026-05-24
+Sprint: Sprint BFF-DELTA
+
+This document records BFF deltas found after the 2026-05-23 final integration
+spec. It is an execution record, not a new L1 product authority.
+
+---
+
+## DELTA-1 CORS Preflight Regression - execute-plans Origin Blocked in Live Mode
+
+Task: BFF-B1-001-DELTA
+Owner: Claude
+Reviewer: Codex
+
+### Gap
+
+After BFF-B1-001 added `https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com`
+to `_DEFAULT_LOVABLE_CORS_ORIGINS`, it was simultaneously added to
+`_DEV_LOVABLE_CORS_ORIGINS`.
+
+`_DEV_LOVABLE_CORS_ORIGINS` is the set of origins stripped from the allowlist
+when the BFF runs in production strict mode (`PANTHEON_ENV=production/live/canary`
+and `PANTHEON_BFF_AUTH_MODE=strict`). The production strict filter in
+`_cors_origins_from_env()` removes any origin found in `_DEV_LOVABLE_CORS_ORIGINS`.
+
+As a result, when the live BFF served an OPTIONS preflight from the execute-plans
+frontend (`https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com`), no
+matching `Access-Control-Allow-Origin` header was returned, and Starlette's
+CORSMiddleware responded with HTTP 400. All subsequent CORS-gated requests from
+the live execute-plans frontend therefore failed.
+
+The preview-URL regex (`_LOVABLE_PREVIEW_ORIGIN_REGEX`) is disabled in strict
+mode (`preview_regex = None`), so regex fallback could not compensate.
+
+### Root Cause
+
+`https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com` is the
+published URL for the execute-plans Lovable project, not a dev/preview URL. It
+was incorrectly classified as dev-only when added by BFF-B1-001.
+
+### Fix
+
+**File: `services/control-plane/bff/main.py`**
+
+Remove `https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com` from
+`_DEV_LOVABLE_CORS_ORIGINS`. The URL remains in `_DEFAULT_LOVABLE_CORS_ORIGINS`
+and now survives the production strict filter unchanged.
+
+BFF-PM12-DELTA-002 also standardizes successful CORS preflight responses to
+HTTP 204 through the BFF CORS middleware. Current regression tests therefore
+assert successful preflight as HTTP 204 with the matching
+`Access-Control-Allow-Origin` header.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `_cors_origins_from_env()` includes `https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com` when `PANTHEON_ENV=production` and `PANTHEON_BFF_AUTH_MODE=strict` | Fixed |
+| 2 | OPTIONS preflight from `https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com` succeeds with HTTP 204 and matching `Access-Control-Allow-Origin` in strict/production mode | Fixed |
+| 3 | Dev-only origins (`pantheon-dev.lovable.app`, `b75d3452-...-lovableproject.com`) are still filtered in strict mode | Unchanged |
+| 4 | Dynamic preview URLs (`id-preview-<hash>--<uuid>.lovable.app`) are still blocked in strict mode (regex disabled) | Unchanged |
+| 5 | `pytest -q services/control-plane/bff/tests/test_auth_jwks_strict.py` exits 0 | Verified |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_auth_jwks_strict.py`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
+
+### Finalization
+
+- Fix commit: `73a365fb` (`BFF-B1-001-DELTA: fix CORS preflight blocked in live mode`)
+- Merged via PR #511 into `dev`
+- Reviewer approval: Codex (2026-05-24)
+- Closeout verification (2026-05-24):
+  - `pytest -q services/control-plane/bff/tests/test_auth_jwks_strict.py` → 18 passed
+  - `pytest -q services/control-plane/bff/tests/test_auth_jwks_strict.py -k cors` → 6 passed
+- Status: closed
+
+---
+
+## BFF-MGMT-DELTA-001 Persona League Movers Route
+
+Task: BFF-MGMT-DELTA-001
+Owner: Codex
+Reviewer: Claude
+
+### Scope
+
+Add a dedicated Management route for execute-plans strict live rendering:
+
+```text
+GET /bff/management/persona-league/movers?state=&archetype=&q=&direction=&limit=
+```
+
+The route exposes persona-league movement cards/lists without requiring
+execute-plans to fan out through raw persona, ranking, tier, and health routes.
+It is read-only and uses `policy=read_only_governance_advisory`.
+
+### Contract
+
+The response uses the canonical Management list envelope:
+
+```json
+{
+  "data": {
+    "id": "management-persona-league-movers",
+    "items": [],
+    "movers": [],
+    "summary": {},
+    "policy": "read_only_governance_advisory"
+  },
+  "items": [],
+  "movers": [],
+  "summary": {},
+  "page_info": {
+    "next_page_token": null,
+    "total": 0,
+    "page_size": 0
+  },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": [],
+    "policy": "read_only_governance_advisory"
+  }
+}
+```
+
+Each mover item includes persona identifiers, current rank and score, previous
+rank and score placeholders, rank and score deltas, direction, tier, metrics,
+score components, links, formula version, and movement basis.
+
+Historical persona-league snapshots are not yet a first-class read source in
+the BFF. Until that source exists, returned items use
+`baselineStatus=unavailable`, `direction=new`, null delta fields, and
+`basis=current_persona_league_snapshot_no_historical_baseline`.
+
+### Composition Sources
+
+- `GET /bff/management/persona-league`
+- `GET /bff/management/persona-league/rankings`
+- `GET /bff/management/persona-league/tiers`
+- `GET /bff/personas`
+- `GET /bff/v5/execution/persona-health`
+
+`meta.surfaces` includes `persona_league_movers`, `persona_league_history`, and
+the PM-12 persona-league source surfaces. The history surface is degraded while
+historical baseline data is unavailable.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Authenticated GET returns `data`, `items`, `movers`, `summary`, `page_info`, and `meta` | Implemented |
+| 2 | Route supports `state`, `archetype`, `q`, `direction`, and `limit` | Implemented |
+| 3 | Invalid `direction` returns HTTP 422 | Implemented |
+| 4 | Missing auth returns HTTP 401 | Implemented |
+| 5 | execute-plans exposes path, query/response types, and fetch helper | Implemented |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/tests/test_bff_pm12_persona_league.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
+
+### Validation
+
+```bash
+git diff --check
+python3 -m pytest services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q
+```
+
+Reviewer result before closeout merge with `origin/dev`: 18 passed, 3 existing
+`datetime.utcnow()` deprecation warnings in `services/control-plane/bff/read_store.py`.
+
+Closeout merge validation with `origin/dev`:
+
+```bash
+python3 -m pytest services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py -q
+```
+
+Result: 62 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
+---
+
+## BFF-MGMT-DELTA-010 Management Loop Throughput Route
+
+Task: BFF-MGMT-DELTA-010
+Owner: Codex2
+Reviewer: Codex
+
+### Scope
+
+Add a strict-live Management Console route for loop execution throughput:
+
+```text
+GET /bff/management/loop-throughput?status=&runtime_id=&page_token=&page_size=
+```
+
+The route composes the existing v5 loop-run read surface exposed by
+`GET /bff/v5/loop-runs`. It is read-only, reports throughput and queue health
+for Management Console rendering, and does not introduce a new loop source of
+truth.
+
+### Contract
+
+The response uses the canonical aggregate envelope:
+
+```json
+{
+  "data": {
+    "id": "management-loop-throughput",
+    "items": [],
+    "rows": [],
+    "loops": [],
+    "summary": {},
+    "metrics": {}
+  },
+  "items": [],
+  "rows": [],
+  "loops": [],
+  "summary": {},
+  "metrics": {},
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 50 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": [],
+    "policy": "read_only_loop_throughput"
+  }
+}
+```
+
+Rows normalize loop id, status, runtime/binding/incident refs, queued/start/end
+timestamps, queue lag seconds, duration seconds, source refs, and links back to
+`/bff/v5/loop-runs/{id}`. Summary reports loop count, returned count, runtime
+count, queue depth, active/completed/failed counts, runs per minute, completed
+runs per minute, observed window minutes, average/max queue lag, and status
+buckets.
+
+### Composition Sources
+
+- `GET /bff/v5/loop-runs`
+- `GET /api/v1/loop-runs`
+- `GET /bff/incidents` when v5 loop runs are incident-derived
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Path registered in FastAPI/OpenAPI | Implemented |
+| 2 | Response reports v5 loop runs per minute, queue depth, and lag | Implemented |
+| 3 | Anonymous request returns HTTP 401 | Implemented |
+| 4 | Authenticated request returns HTTP 200 | Implemented |
+| 5 | Response keeps canonical aggregate envelope | Implemented |
+| 6 | CORS preflight returns HTTP 204 | Implemented |
+| 7 | Focused pytest case covers `loop_throughput` success, auth, filter, preflight, and OpenAPI | Implemented |
+| 8 | execute-plans exposes typed path and fetch helpers | Implemented |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_management_delta_routes.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
+
+### Validation
+
+```bash
+git diff --check
+python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py -q
+```
+
+Result: `git diff --check` exited 0; broader BFF delta suite passed with 86
+tests and 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
+---
+
+## BFF-MGMT-DELTA-012 Management Intervention Stream Route
+
+Task: BFF-MGMT-DELTA-012
+Owner: Codex
+Reviewer: Claude
+
+### Scope
+
+Add a strict-live Management Console route for recent intervention activity:
+
+```text
+GET /bff/management/intervention-stream?persona_id=&status=&kind=&q=&window_hours=&page_token=&page_size=
+```
+
+The route composes existing v5 intervention records and intervention audit
+events into a read-only event stream. It does not introduce a new intervention
+event source of truth and does not mutate interventions, audit records,
+approvals, or capital.
+
+### Contract
+
+The response uses the canonical aggregate envelope:
+
+```json
+{
+  "data": {
+    "id": "management-intervention-stream",
+    "items": [],
+    "rows": [],
+    "events": [],
+    "stream": [],
+    "summary": {},
+    "policy": "read_only_intervention_stream"
+  },
+  "items": [],
+  "rows": [],
+  "events": [],
+  "stream": [],
+  "summary": {},
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 50 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": [],
+    "policy": "read_only_intervention_stream"
+  }
+}
+```
+
+Stream rows expose stable event identity, event type/source, intervention id,
+persona/runtime/strategy refs, kind, status, priority, occurred time, actor,
+target, source refs, links, and a redaction-safe source record snapshot. The
+default window is the latest 24 hours; callers may pass `window_hours` up to
+720 hours when reviewing older intervention activity.
+
+### Composition Sources
+
+- `GET /bff/v5/interventions`
+- `GET /bff/audit`
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Path registered in FastAPI/OpenAPI | Implemented |
+| 2 | Composes recent intervention records and intervention audit events | Implemented |
+| 3 | Default response window is 24 hours and summary groups events by persona | Implemented |
+| 4 | Accepts `persona_id`, `status`, `kind`, `q`, `window_hours`, `page_token`, and `page_size` query parameters | Implemented |
+| 5 | Anonymous request returns HTTP 401 | Implemented |
+| 6 | Authenticated request returns HTTP 200 | Implemented |
+| 7 | Response keeps canonical aggregate envelope | Implemented |
+| 8 | CORS preflight returns HTTP 204/200 with matching allow-origin | Implemented |
+| 9 | execute-plans exposes typed path and fetch helpers | Implemented |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_management_delta_routes.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
+
+### Validation
+
+```bash
+git diff --check
+python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q
+```
+
+Result: `git diff --check HEAD~2..HEAD` exited 0; focused
+route/live-wiring suite passed with 31 tests and 3 existing
+`datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+Additional owner validation: broader BFF delta/auth suite passed with 93 tests
+and the same 3 existing warnings.
+
+---
+
+## BFF-MGMT-DELTA-011 Management HIQ Backlog Route
+
+Task: BFF-MGMT-DELTA-011
+Owner: Codex2
+Reviewer: Codex
+
+### Scope
+
+Add a strict-live Management Console route for the HIQ operator backlog:
+
+```text
+GET /bff/management/hiq-backlog?source_type=&status=&kind=&priority=&q=&page_token=&page_size=
+```
+
+The route composes existing v5 intervention, sentinel finding, and human-inbox
+read surfaces into a read-only backlog for HIQ review. It does not create a new
+backlog source of truth and does not mutate interventions, findings, approvals,
+or capital.
+
+### Contract
+
+The response uses the canonical aggregate envelope:
+
+```json
+{
+  "data": {
+    "id": "management-hiq-backlog",
+    "items": [],
+    "rows": [],
+    "backlog": [],
+    "summary": {},
+    "policy": "read_only_hiq_backlog"
+  },
+  "items": [],
+  "rows": [],
+  "backlog": [],
+  "summary": {},
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 50 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": [],
+    "policy": "read_only_hiq_backlog"
+  }
+}
+```
+
+Backlog rows expose stable source identity, source type (`intervention` or
+`sentinel_finding`), kind, status, action state, priority, target refs, source
+refs, source/human-inbox links, allowed actions where available, and the
+redaction-safe source record snapshot.
+
+Default filters keep the route backlog-focused: `kind` defaults to
+`hiq_sentinel,risk_breach`, and status defaults to open/pending backlog states.
+Clients may pass `kind=all` or `status=all` to disable those defaults.
+
+### Composition Sources
+
+- `GET /bff/v5/interventions`
+- `GET /bff/v5/sentinel/findings`
+- `GET /bff/management/human-inbox`
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Path registered in FastAPI/OpenAPI | Implemented |
+| 2 | Composes open HIQ/risk interventions and HIQ sentinel findings | Implemented |
+| 3 | Accepts `source_type`, `status`, `kind`, `priority`, `q`, `page_token`, and `page_size` query parameters | Implemented |
+| 4 | Anonymous request returns HTTP 401 | Implemented |
+| 5 | Authenticated request returns HTTP 200 | Implemented |
+| 6 | Response keeps canonical aggregate envelope | Implemented |
+| 7 | CORS preflight returns HTTP 204/200 with matching allow-origin | Implemented |
+| 8 | Focused pytest cases cover success, filters, auth, preflight, OpenAPI, and execute-plans helper export checks | Implemented |
+| 9 | execute-plans exposes typed path and fetch helpers | Implemented |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_management_delta_routes.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
+
+### Validation
+
+```bash
+git diff --check
+python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q
+python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py -q
+```
+
+Result: `git diff --check` exited 0; focused route/live-wiring suite passed
+with 22 tests; broader BFF delta suite passed with 84 tests and 3 existing
+`datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
+---
+
+## BFF-MGMT-DELTA-006 Management Incident Timeline Route
+
+Task: BFF-MGMT-DELTA-006
+Owner: Codex
+Reviewer: Claude
+
+### Scope
+
+Add a strict-live Management Console route for chronological incident review:
+
+```text
+GET /bff/management/incident-timeline?status=&severity=&capital_pool_id=&runtime_id=&page_token=&page_size=
+```
+
+The route composes the existing IncidentCase read surface already exposed by
+`/bff/incidents`. It is read-only, preserves IncidentCase evidence fields, and
+does not introduce a new incident source of truth.
+
+### Contract
+
+The response uses the canonical aggregate envelope:
+
+```json
+{
+  "data": {
+    "id": "management-incident-timeline",
+    "items": [],
+    "rows": [],
+    "incidents": [],
+    "events": [],
+    "summary": {},
+    "severityBuckets": { "high": 0, "medium": 0, "low": 0 }
+  },
+  "items": [],
+  "rows": [],
+  "incidents": [],
+  "events": [],
+  "summary": {},
+  "severityBuckets": { "high": 0, "medium": 0, "low": 0 },
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 50 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": [],
+    "policy": "read_only_incident_timeline"
+  }
+}
+```
+
+Timeline rows are sorted by incident occurrence time and include incident,
+runtime, deployment, capital pool, artifact, telemetry-event, lineage, evidence
+summary, source refs, detail links, and severity bucket aliases.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Path registered in FastAPI/OpenAPI | Implemented |
+| 2 | Incident rows are chronologically sorted | Implemented |
+| 3 | Severity buckets expose `high`, `medium`, and `low` counts | Implemented |
+| 4 | Anonymous request returns HTTP 401 | Implemented |
+| 5 | Authenticated request returns HTTP 200 | Implemented |
+| 6 | Response keeps canonical aggregate envelope | Implemented |
+| 7 | CORS preflight returns HTTP 204 | Implemented |
+| 8 | Focused pytest cases cover `incident_timeline` success, filter, auth, and preflight | Implemented |
+| 9 | execute-plans exposes typed path and fetch helpers | Implemented |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_management_delta_routes.py`
+- `services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
+
+### Validation
+
+```bash
+pytest -q services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py
+```
+
+Result: 75 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
+---
+
+## BFF-MGMT-DELTA-007 Governance Ledger Route
+
+Task: BFF-MGMT-DELTA-007
+Owner: Codex2
+Reviewer: Codex
+
+### Scope
+
+Add a strict-live Management Console route for the governance ledger:
+
+```text
+GET /bff/management/governance-ledger?source_type=&status=&q=&page_token=&page_size=
+```
+
+The route composes existing approval, intervention, and governance audit read
+surfaces into a unified read-only ledger. It does not create a new governance
+source of truth and does not mutate approvals, interventions, or overrides.
+
+### Contract
+
+The response uses the canonical aggregate envelope:
+
+```json
+{
+  "data": {
+    "id": "management-governance-ledger",
+    "items": [],
+    "entries": [],
+    "ledger": [],
+    "summary": {},
+    "policy": "read_only_governance_ledger"
+  },
+  "items": [],
+  "entries": [],
+  "ledger": [],
+  "summary": {},
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 50 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": [],
+    "policy": "read_only_governance_ledger"
+  }
+}
+```
+
+Ledger entries expose approval, intervention, and override/audit activity with
+stable `entry_id`, source type, event type, status/outcome, actor, target,
+timestamp, evidence refs, audit context, source record, and detail/audit links.
+
+### Composition Sources
+
+- `GET /bff/audit`
+- `GET /bff/approvals`
+- `GET /bff/v5/interventions`
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Path registered in FastAPI/OpenAPI | Implemented |
+| 2 | Ledger unifies approvals, interventions, and override audit entries | Implemented |
+| 3 | Accepts `source_type`, `status`, `q`, `page_token`, and `page_size` query parameters | Implemented |
+| 4 | Anonymous request returns HTTP 401 | Implemented |
+| 5 | Authenticated request returns HTTP 200 | Implemented |
+| 6 | Response keeps canonical aggregate envelope | Implemented |
+| 7 | CORS preflight returns HTTP 204 | Implemented |
+| 8 | Focused pytest cases cover `governance_ledger` success, auth, preflight, OpenAPI, and execute-plans helper export checks | Implemented |
+| 9 | execute-plans exposes typed path and fetch helpers | Implemented |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_management_delta_routes.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
+
+### Validation
+
+```bash
+python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py -q
+```
+
+Result: 81 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
+---
+
+## BFF-MGMT-DELTA-009 Management Sentinel Pulse Route
+
+Task: BFF-MGMT-DELTA-009
+Owner: Codex
+Reviewer: Claude
+
+### Scope
+
+Add a strict-live Management Console route for the sentinel first-screen pulse:
+
+```text
+GET /bff/management/sentinel-pulse?kind=&status=&severity=&q=&page_token=&page_size=
+```
+
+The route composes existing v5 sentinel findings and v5 interventions. It is
+read-only, does not remediate or mutate interventions, and does not introduce a
+new sentinel source of truth.
+
+### Contract
+
+The response uses the canonical aggregate envelope:
+
+```json
+{
+  "data": {
+    "id": "management-sentinel-pulse",
+    "items": [],
+    "findings": [],
+    "interventions": [],
+    "cards": [],
+    "summary": {},
+    "policy": "read_only_sentinel_pulse"
+  },
+  "items": [],
+  "findings": [],
+  "interventions": [],
+  "cards": [],
+  "summary": {},
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 20 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": [],
+    "policy": "read_only_sentinel_pulse"
+  }
+}
+```
+
+Finding rows include finding identifiers, kind, status, severity/risk level,
+title/summary, timestamps, target/source references, links to v5 sentinel
+detail, and the source record. Intervention rows expose intervention
+identifiers, status, severity/risk level, finding references, v5 links, and the
+source record.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Path registered in FastAPI/OpenAPI | Implemented |
+| 2 | Authenticated request returns HTTP 200 | Implemented |
+| 3 | Anonymous request returns HTTP 401 | Implemented |
+| 4 | CORS preflight succeeds for Lovable origin | Implemented |
+| 5 | Response keeps canonical aggregate envelope with `data`, `items`, `findings`, `interventions`, `cards`, `summary`, `page_info`, and `meta` | Implemented |
+| 6 | Supports `kind`, `status`, `severity`, `q`, `page_token`, and `page_size` | Implemented |
+| 7 | execute-plans exposes typed path and fetch helpers | Implemented |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_management_delta_routes.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
+
+### Validation
+
+```bash
+python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q
+```
+
+Result after rebase with `origin/dev`: 21 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
+---
+
+## DELTA-2 PM-12 Persona Performance Attribution Route
+
+Task: BFF-PM12-DELTA-002
+Owner: Codex2
+Reviewer: Claude2
+
+### Scope
+
+Add a dedicated persona-grouped attribution route for execute-plans strict live
+rendering:
+
+```text
+GET /bff/management/performance-attribution/by-persona?period=&page_token=&page_size=
+```
+
+The route reuses the PM-12 performance attribution composition logic and fixes
+the attribution dimension to `persona`. It does not introduce a new performance
+source of truth and does not change the generic
+`GET /bff/management/performance-attribution` route.
+
+### Contract
+
+The response uses the canonical aggregate envelope:
+
+```json
+{
+  "data": {
+    "id": "pm12-performance-attribution-by-persona",
+    "period": "latest",
+    "dimensions": ["persona"],
+    "items": [],
+    "rows": [],
+    "summary": {}
+  },
+  "items": [],
+  "rows": [],
+  "summary": {},
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 50 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": [],
+    "policy": "read_only_performance_attribution"
+  }
+}
+```
+
+Rows keep the existing attribution row schema: `dimension`,
+`dimensionKey` / `dimension_key`, `label`, `rank`, `period`, nested `metrics`,
+top-level contribution fields, `sourceRefs` / `source_refs`, and persona
+drilldown links when available.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Path registered in FastAPI/OpenAPI | Implemented |
+| 2 | Attribution grouped by persona dimension | Implemented |
+| 3 | Accepts `period`, `page_token`, and `page_size` query parameters | Implemented |
+| 4 | Anonymous request returns HTTP 401 | Implemented |
+| 5 | Authenticated request returns HTTP 200 | Implemented |
+| 6 | Response keeps canonical aggregate envelope | Implemented |
+| 7 | CORS preflight returns HTTP 204 | Implemented |
+| 8 | Focused pytest case covers `attribution_by_persona` | Implemented |
+| 9 | execute-plans exposes typed path and fetch helpers | Implemented |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `services/control-plane/bff/tests/test_auth_jwks_strict.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
+
+### Validation
+
+```bash
+pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py
+```
+
+Result: 43 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
+---
+
+## DELTA-3 Management Strategy Allocation Route
+
+Task: BFF-MGMT-DELTA-003
+Owner: Codex
+Reviewer: Claude
+
+### Scope
+
+Add a strict-live Management Console route for active strategy allocation across
+capital pools:
+
+```text
+GET /bff/management/strategy-allocation?strategy_id=&capital_pool_id=&deployment_stage=&drift_status=&page_token=&page_size=
+```
+
+The route composes runtime bindings, deployment plans, persona-capital bindings,
+capital pools, strategy summaries, telemetry snapshots, and paper/live drift
+reports. It is read-only and does not introduce a new allocation source of
+truth or mutate capital.
+
+### Contract
+
+The response uses the canonical aggregate envelope:
+
+```json
+{
+  "data": {
+    "id": "management-strategy-allocation",
+    "items": [],
+    "rows": [],
+    "summary": {}
+  },
+  "items": [],
+  "rows": [],
+  "summary": {},
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 50 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": [],
+    "policy": "read_only_strategy_allocation"
+  }
+}
+```
+
+Rows include `strategyId` / `strategy_id`, `capitalPoolId` /
+`capital_pool_id`, allocation amount and risk-budget utilization, source refs,
+runtime/deployment/persona references, links, metrics, and a paper/live drift
+summary with per-runtime drift report refs.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Path registered in FastAPI/OpenAPI | Implemented |
+| 2 | Active strategy allocation slice across capital pools | Implemented |
+| 3 | Includes paper/live drift status and metric counts | Implemented |
+| 4 | Anonymous request returns HTTP 401 | Implemented |
+| 5 | Authenticated request returns HTTP 200 | Implemented |
+| 6 | Response keeps canonical aggregate envelope | Implemented |
+| 7 | CORS preflight returns HTTP 204 | Implemented |
+| 8 | Focused pytest case covers `strategy_allocation` | Implemented |
+| 9 | execute-plans exposes typed path and fetch helpers | Implemented |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
+
+### Validation
+
+```bash
+pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py
+```
+
+Result: 49 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
+---
+
+## BFF-MGMT-DELTA-004 Management Capital Flow Route
+
+Task: BFF-MGMT-DELTA-004
+Owner: Codex2
+Reviewer: Codex
+
+### Scope
+
+Add a strict-live Management Console route for read-only capital flow
+projections across capital pools, personas, strategies, and runtime deployment
+stages:
+
+```text
+GET /bff/management/capital-flow?capital_pool_id=&persona_id=&strategy_id=&deployment_stage=&direction=&page_token=&page_size=
+```
+
+The route composes runtime bindings, deployment plans, persona-capital
+bindings, capital pools, strategy summaries, and telemetry summaries. It does
+not introduce a new capital ledger, does not mutate capital, and treats capital
+flow as a projection over allocated exposure plus realized/unrealized PnL
+available in existing runtime telemetry.
+
+### Contract
+
+The response uses the canonical aggregate envelope:
+
+```json
+{
+  "data": {
+    "id": "management-capital-flow",
+    "items": [],
+    "rows": [],
+    "flows": [],
+    "summary": {}
+  },
+  "items": [],
+  "rows": [],
+  "flows": [],
+  "summary": {},
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 50 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": [],
+    "policy": "read_only_capital_flow"
+  }
+}
+```
+
+Rows include `flowId` / `flow_id`, `direction`, capital-pool/persona/strategy
+identifiers and labels, deployment stage, runtime references, net capital flow,
+inflow/outflow amounts, allocated capital, current exposure, risk budget,
+budget utilization, latest telemetry timestamp, source refs, and drilldown
+links.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Path registered in FastAPI/OpenAPI | Implemented |
+| 2 | Capital-flow rows compose from runtime, deployment, binding, pool, strategy, and telemetry surfaces | Implemented |
+| 3 | Supports `capital_pool_id`, `persona_id`, `strategy_id`, `deployment_stage`, `direction`, `page_token`, and `page_size` query parameters | Implemented |
+| 4 | Anonymous request returns HTTP 401 | Implemented |
+| 5 | Authenticated request returns HTTP 200 | Implemented |
+| 6 | Response keeps canonical aggregate envelope | Implemented |
+| 7 | CORS preflight returns HTTP 204 | Implemented |
+| 8 | execute-plans exposes typed path and fetch helpers | Implemented |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
+
+### Validation
+
+```bash
+python3 -m pytest services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py -q
+```
+
+Result: 79 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
+---
+
+## DELTA-4 PM-12 Capital Pool Performance Attribution Route
+
+Task: BFF-PM12-DELTA-004
+Owner: Codex2
+Reviewer: Claude2
+
+### Scope
+
+Add a dedicated capital-pool grouped attribution route for execute-plans strict
+live rendering:
+
+```text
+GET /bff/management/performance-attribution/by-pool?period=&page_token=&page_size=
+```
+
+The route reuses the PM-12 performance attribution composition logic and fixes
+the attribution dimension to `pool`. It does not introduce a new performance
+source of truth and does not change the generic
+`GET /bff/management/performance-attribution` route.
+
+### Contract
+
+The response uses the canonical aggregate envelope:
+
+```json
+{
+  "data": {
+    "id": "pm12-performance-attribution-by-pool",
+    "period": "latest",
+    "dimensions": ["pool"],
+    "items": [],
+    "rows": [],
+    "summary": {}
+  },
+  "items": [],
+  "rows": [],
+  "summary": {},
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 50 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": [],
+    "policy": "read_only_performance_attribution"
+  }
+}
+
+```
+
+Rows keep the existing attribution row schema: `dimension`,
+`dimensionKey` / `dimension_key`, `label`, `rank`, `period`, nested `metrics`,
+top-level contribution fields, `sourceRefs` / `source_refs`, and capital-pool
+drilldown links when available.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Path registered in FastAPI/OpenAPI | Implemented |
+| 2 | Attribution grouped by capital pool dimension | Implemented |
+| 3 | Accepts `period`, `page_token`, and `page_size` query parameters | Implemented |
+| 4 | Anonymous request returns HTTP 401 | Implemented |
+| 5 | Authenticated request returns HTTP 200 | Implemented |
+| 6 | Response keeps canonical aggregate envelope | Implemented |
+| 7 | CORS preflight returns HTTP 204 | Implemented |
+| 8 | Focused pytest case covers `attribution_by_pool` | Implemented |
+| 9 | execute-plans exposes typed path and fetch helpers | Implemented |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
+
+### Validation
+
+```bash
+pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py
+```
+
+Result: 46 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
+---
+
+## DELTA-5 PM-12 Portfolio Book Positions Route
+
+Task: BFF-PM12-DELTA-005
+Owner: Codex2
+Reviewer: Claude2
+
+### Scope
+
+Add a dedicated portfolio-book positions route for execute-plans strict live
+rendering:
+
+```text
+GET /bff/management/portfolio-book/positions?capital_pool_id=&persona_id=&runtime_id=&deployment_stage=&status=&q=&page_token=&page_size=
+```
+
+The route reuses the existing PM-12 portfolio-book holdings composition and
+projects holdings as position rows. It does not introduce a new positions
+source of truth and does not change
+`GET /bff/management/portfolio-book/holdings`.
+
+### Contract
+
+The response uses the canonical aggregate envelope:
+
+```json
+{
+  "data": {
+    "summary": {},
+    "items": [],
+    "positions": []
+  },
+  "items": [],
+  "positions": [],
+  "summary": {},
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 50 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": []
+  }
+}
+```
+
+Position rows keep the existing holding fields, including runtime, capital
+pool, persona, strategy, symbol, quantity, mark price, market value, PnL, links,
+and source refs. Each row additionally exposes `position_id` and `positionId`
+derived from the composed holding identity.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Path registered in FastAPI/OpenAPI | Implemented |
+| 2 | Positions list composes from portfolio-book holdings sources | Implemented |
+| 3 | Accepts pool/persona/runtime/stage/status/search/page query parameters | Implemented |
+| 4 | Anonymous request returns HTTP 401 | Implemented |
+| 5 | Authenticated request returns HTTP 200 | Implemented |
+| 6 | Response keeps canonical aggregate envelope | Implemented |
+| 7 | CORS preflight returns HTTP 204 | Implemented |
+| 8 | Focused pytest cases cover list, filter, auth, preflight, and degraded telemetry | Implemented |
+| 9 | execute-plans exposes typed path and fetch helpers | Implemented |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
+
+### Validation
+
+```bash
+pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py
+```
+
+Result: 58 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
+---
+
+## DELTA-6 PM-12 Portfolio Book Exposure Route
+
+Task: BFF-PM12-DELTA-006
+Owner: Codex2
+Reviewer: Claude2
+
+### Scope
+
+Add a dedicated portfolio-book exposure route for execute-plans strict live
+rendering:
+
+```text
+GET /bff/management/portfolio-book/exposure?status=&risk_policy_ref=&capital_pool_id=&page_token=&page_size=
+```
+
+The route reuses the existing PM-12 portfolio-book pool composition and exposes
+the risk-budget / current-exposure view as a first-class read-only aggregate.
+It does not introduce a new exposure source of truth and does not change
+`GET /bff/management/portfolio-book/pools`.
+
+### Contract
+
+The response uses the canonical aggregate envelope:
+
+```json
+{
+  "data": {
+    "id": "pm12-portfolio-book-exposure",
+    "summary": {},
+    "items": [],
+    "exposures": []
+  },
+  "items": [],
+  "exposures": [],
+  "summary": {},
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 50 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": [],
+    "policy": "read_only_portfolio_exposure"
+  }
+}
+```
+
+Exposure rows keep the portfolio-book pool identifiers and include
+`risk_budget` / `riskBudget`, `current_exposure` / `currentExposure`,
+`risk_budget_utilization` / `riskBudgetUtilization`, `risk_state` /
+`riskState`, `available_budget` / `availableBudget`, source refs, and capital
+pool drilldown links when available.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Path registered in FastAPI/OpenAPI | Implemented |
+| 2 | Exposure rows compose from portfolio-book pool sources | Implemented |
+| 3 | Accepts `status`, `risk_policy_ref`, `capital_pool_id`, `page_token`, and `page_size` query parameters | Implemented |
+| 4 | Anonymous request returns HTTP 401 | Implemented |
+| 5 | Authenticated request returns HTTP 200 | Implemented |
+| 6 | Response keeps canonical aggregate envelope | Implemented |
+| 7 | CORS preflight returns HTTP 204 | Implemented |
+| 8 | Focused pytest cases cover exposure rollup, filter, auth, and preflight | Implemented |
+| 9 | execute-plans exposes typed path and fetch helpers | Implemented |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
+
+### Validation
+
+```bash
+pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py
+```
+
+Result: 53 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
+---
+
+## DELTA-7 PM-12 Management Board Pack Route
+
+Task: BFF-PM12-DELTA-007
+Owner: Codex2
+Reviewer: Claude2
+
+### Scope
+
+Add a dedicated board-pack route for execute-plans strict live rendering:
+
+```text
+GET /bff/management/board-pack?period=&state=&archetype=&q=&section_limit=
+```
+
+The route is a read-only packet over existing PM-12 Management read surfaces.
+It does not introduce a new source of truth and does not change the underlying
+portfolio-book, strategy-allocation, persona-league, or performance attribution
+routes.
+
+### Contract
+
+The response uses the canonical aggregate envelope:
+
+```json
+{
+  "data": {
+    "id": "management-board-pack",
+    "sections": [],
+    "summary": {},
+    "portfolioBook": {},
+    "portfolioBookExposure": {},
+    "portfolioBookPositions": {},
+    "strategyAllocation": {},
+    "personaLeague": {},
+    "performanceAttribution": {},
+    "policy": "read_only_management_board_pack"
+  },
+  "items": [],
+  "sections": [],
+  "summary": {},
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 0 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": [],
+    "policy": "read_only_management_board_pack"
+  }
+}
+```
+
+The packet includes section descriptors plus full nested responses for:
+
+- `GET /bff/management/portfolio-book`
+- `GET /bff/management/portfolio-book/exposure`
+- `GET /bff/management/portfolio-book/positions`
+- `GET /bff/management/strategy-allocation`
+- `GET /bff/management/persona-league`
+- `GET /bff/management/persona-league/movers`
+- `GET /bff/management/performance-attribution/by-persona`
+- `GET /bff/management/performance-attribution/by-pool`
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Path registered in FastAPI/OpenAPI | Implemented |
+| 2 | Board pack composes existing PM-12 Management surfaces without a new source of truth | Implemented |
+| 3 | Accepts `period`, `state`, `archetype`, `q`, and `section_limit` query parameters | Implemented |
+| 4 | Anonymous request returns HTTP 401 | Implemented |
+| 5 | Authenticated request returns HTTP 200 | Implemented |
+| 6 | Response keeps canonical aggregate envelope with `data`, `items`, `sections`, `summary`, `page_info`, and `meta` | Implemented |
+| 7 | CORS preflight returns HTTP 204 | Implemented |
+| 8 | Focused pytest cases cover composition, auth, preflight, OpenAPI, and execute-plans helper export checks | Implemented |
+| 9 | execute-plans exposes typed path and fetch helpers | Implemented |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
+
+### Validation
+
+```bash
+pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py
+```
+
+Result: 66 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
+---
+
+## BFF-MGMT-DELTA-008 Management Cost Attribution Route
+
+Task: BFF-MGMT-DELTA-008
+Owner: Claude2
+Reviewer: Claude
+
+### Scope
+
+Add a strict-live Management Console route for read-only cost attribution across
+personas, strategies, and capital pools:
+
+```text
+GET /bff/management/cost-attribution?persona_id=&strategy_id=&capital_pool_id=&period=&page_token=&page_size=
+```
+
+The route composes runtime bindings, deployment plans, persona-capital bindings,
+capital pools, strategy summaries, and runtime telemetry summaries. It derives
+cost components (commission, slippage, infrastructure) from existing telemetry
+surfaces without introducing a new cost ledger or mutating capital.
+
+### Contract
+
+The response uses the canonical aggregate envelope:
+
+```json
+{
+  "data": {
+    "id": "management-cost-attribution",
+    "items": [],
+    "rows": [],
+    "attributions": [],
+    "summary": {},
+    "policy": "read_only_cost_attribution"
+  },
+  "items": [],
+  "rows": [],
+  "attributions": [],
+  "summary": {},
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 50 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": [],
+    "policy": "read_only_cost_attribution"
+  }
+}
+```
+
+Rows include `cost_id`, capital-pool/persona/strategy identifiers and labels,
+`total_cost`, `commission_cost` (from trade count × commission rate placeholder),
+`slippage_cost` (from avg_slippage_bps × total_notional), `infrastructure_cost`
+(from allocated capital × fee rate placeholder), `allocated_capital`,
+`risk_budget`, trade/notional metrics, `latest_at`, cost basis description,
+source refs, and drilldown links.
+
+### Composition Sources
+
+- `GET /api/v1/runtime-bindings`
+- `GET /api/v1/deployment-plans`
+- `GET /api/v1/persona-capital-bindings`
+- `GET /bff/capital-pools`
+- `GET /bff/strategies`
+- `GET /api/v1/telemetry/{runtime_id}/summary`
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Path registered in FastAPI/OpenAPI | Implemented |
+| 2 | Cost attribution rows compose from runtime, deployment, binding, pool, strategy, and telemetry surfaces | Implemented |
+| 3 | Supports `persona_id`, `strategy_id`, `capital_pool_id`, `period`, `page_token`, and `page_size` query parameters | Implemented |
+| 4 | Anonymous request returns HTTP 401 | Implemented |
+| 5 | Authenticated request returns HTTP 200 | Implemented |
+| 6 | Response keeps canonical aggregate envelope | Implemented |
+| 7 | CORS preflight returns HTTP 204 | Implemented |
+| 8 | Focused pytest cases cover success, filter, auth, preflight, and OpenAPI presence | Implemented |
+| 9 | execute-plans exposes typed path and fetch helpers | Implemented |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_management_delta_routes.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `docs/04/pantheon_bff_api_gap_2026-05-24_delta/BFF_API_GAP_delta_audit_spec.md`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
+
+### Validation
+
+```bash
+python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py -q
+```
+
+Result: 84 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
+
+---
+
+## BFF-MGMT-DELTA-005 Management Risk Radar Route
+
+Task: BFF-MGMT-DELTA-005
+Owner: Codex
+Reviewer: Claude
+
+### Scope
+
+Add a strict-live Management Console route for cross-persona and strategy risk
+indicators:
+
+```text
+GET /bff/management/risk-radar?persona_id=&strategy_id=&capital_pool_id=&risk_state=&page_token=&page_size=
+```
+
+The route composes runtime bindings, deployment plans, persona-capital
+bindings, capital pools, strategy summaries, and telemetry summaries. It is
+read-only, does not mutate capital, and does not introduce a new risk source of
+truth.
+
+### Contract
+
+The response uses the canonical aggregate envelope:
+
+```json
+{
+  "data": {
+    "id": "management-risk-radar",
+    "items": [],
+    "rows": [],
+    "indicators": [],
+    "summary": {}
+  },
+  "items": [],
+  "rows": [],
+  "indicators": [],
+  "summary": {},
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 50 },
+  "meta": {
+    "snapshot_at": "...",
+    "surfaces": {},
+    "composition_sources": [],
+    "policy": "read_only_risk_radar"
+  }
+}
+```
+
+Rows are grouped by persona, strategy, and capital pool. Each row includes
+drawdown, exposure, value-at-risk, risk-budget utilization, per-metric
+indicator statuses, runtime/deployment source refs, and links back to persona,
+strategy, and capital-pool details when those identifiers are known.
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Path registered in FastAPI/OpenAPI | Implemented |
+| 2 | Cross persona and strategy risk indicators include drawdown, exposure, and value-at-risk | Implemented |
+| 3 | Anonymous request returns HTTP 401 | Implemented |
+| 4 | Authenticated request returns HTTP 200 | Implemented |
+| 5 | Response keeps canonical aggregate envelope | Implemented |
+| 6 | CORS preflight returns HTTP 204 | Implemented |
+| 7 | Focused pytest cases cover `risk_radar` success, auth, and preflight | Implemented |
+| 8 | execute-plans exposes typed path and fetch helpers | Implemented |
+
+### Affected Files
+
+- `services/control-plane/bff/main.py`
+- `services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py`
+- `services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py`
+- `execute-plans/src/lib/bff-v1/paths.ts`
+- `execute-plans/src/lib/bff-v1/management.ts`
+- `execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md`
+
+### Validation
+
+```bash
+pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py
+```
+
+Result: 62 passed, 3 existing `datetime.utcnow()` deprecation warnings in
+`services/control-plane/bff/read_store.py`.
