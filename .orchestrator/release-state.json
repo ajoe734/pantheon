@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "mode": "per_task",
+  "version_format": "vYYYY.MM.DD.N",
+  "state_owner": "branch_workflow.nightly_publish",
+  "history_source": "git refs: release/* tags and publish/* branches",
+  "legacy_wave_state": {
+    "publish_gate": false,
+    "reason": "The wave branch workflow is retired; ai-status.wave_state is legacy read-only state and no longer gates per-task publish cuts."
+  },
+  "task_closeout_gate": {
+    "source": "task PR branch protection",
+    "required_checks": [
+      "Commit trailers",
+      "Runtime mirror guard",
+      "Smoke acceptance"
+    ]
+  }
+}

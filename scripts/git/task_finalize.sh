@@ -12,7 +12,8 @@
 # if the branch name doesn't follow the task/<TASK-ID> convention.
 # Adds `--auto --merge` so the PR completes automatically when the dev
 # branch protection's required status checks (Commit trailers / Runtime
-# mirror guard / Smoke acceptance) turn green.
+# mirror guard / Smoke acceptance) turn green. Do not run
+# `scripts/ai-status.sh done` until GitHub reports the PR merged.
 
 set -euo pipefail
 
@@ -105,4 +106,4 @@ echo "✓ task $TASK_ID PR is open with auto-merge enabled"
 if [[ -n "$PR_URL" ]]; then
   echo "  $PR_URL"
 fi
-echo "  (PR will merge once branch-ci status checks turn green)"
+echo "  (wait for the PR to merge before running scripts/ai-status.sh done)"

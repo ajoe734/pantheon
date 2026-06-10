@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "task_id": "LOVABLE-STRICT-PUBLISH",
+  "archived_at": "2026-05-18T05:09:34Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOVABLE-STRICT-PUBLISH",
+    "title": "Lovable build-time strict env publish audit script",
+    "summary_zh": "SA § 2.2 列為 non-blocking follow-up：execute-plans@main build-time 應使用 strict env (VITE_BFF_MODE=live VITE_BFF_FALLBACK=strict VITE_BFF_REAL_WRITES=false) 重新發佈一次，並驗證發佈後的 bundle 不再含 seed fallback assets。本任務不直接動 execute-plans repo，而是寫一個 pantheon 端的 audit script + evidence packet，記錄 publish 條件、build env、bundle hash、verification probe 結果。",
+    "phase": "Sprint 7 / EPIC-LOVABLE-INFRA",
+    "owner": "Codex",
+    "reviewer": "Gemini2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "scripts/audit_lovable_strict_publish.py",
+      "support/evidence/LOVABLE-STRICT-PUBLISH/audit_report.md",
+      "support/evidence/LOVABLE-STRICT-PUBLISH/required_build_env.json",
+      "support/evidence/LOVABLE-STRICT-PUBLISH/bundle_verification_probe.md",
+      "scripts/test_audit_lovable_strict_publish.py"
+    ],
+    "acceptance": [
+      "audit_lovable_strict_publish.py exposes verify_strict_publish(deployment_url) returning AuditResult dict with strict_env_confirmed bool and missing_flags list",
+      "required_build_env.json lists exact VITE_* keys with required values (VITE_BFF_MODE=live VITE_BFF_FALLBACK=strict VITE_BFF_REAL_WRITES=false)",
+      "probe fails if deployed bundle requests any path matching /mocks/ or seed.* at runtime",
+      "audit_report.md is the human-readable evidence packet template",
+      "test_audit_lovable_strict_publish.py covers 1 pass case (all flags strict) and 1 fail case (any flag relaxed) with pytest -q exit 0",
+      "no execute-plans repo modification this task only produces audit infrastructure inside pantheon"
+    ],
+    "next": "Owner finalized strict publish audit infrastructure: evidence packet refreshed, focused checks passed, and no execute-plans repository changes were made.",
+    "last_update": "2026-05-18T05:09:34Z",
+    "review_notes_zh": [
+      "審查通過（狀態恢復）：audit_report.md 記錄 PR #62/#80 已合併，strict publish audit script、required env、bundle probe 與 focused tests 已完成；本次 Codex rerun focused verification 後恢復 closeout。"
+    ],
+    "review_file": "support/evidence/LOVABLE-STRICT-PUBLISH/audit_report.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-18T05:09:34Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/lovable-strict-publish",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOVABLE-STRICT-PUBLISH",
+      "git_clean_required": false,
+      "commit": "b6b7f4d8845654721de0cf4d04e29629e713184a",
+      "commit_subject": "LOVABLE-STRICT-PUBLISH: record status recovery evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "LOVABLE-STRICT-PUBLISH evidence packet closeout note.",
+        "Not changing": "audit script behavior, test behavior, execute-plans repository, or live Lovable deployment.",
+        "Composes with": "merged implementation/review PRs #62 and #80, plus task-board closeout recovery on this branch.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "LOVABLE-STRICT-PUBLISH",
+        "Reviewer": "Gemini2",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q -p no:cacheprovider scripts/test_audit_lovable_strict_publish.py; PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/audit_lovable_strict_publish.py scripts/test_audit_lovable_strict_publish.py; git diff --check -- task files"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOVABLE-STRICT-PUBLISH",
+      "ahead": 175,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOVABLE-STRICT-PUBLISH",
+      "from": "Gemini2",
+      "to": "Codex",
+      "message": "Restored review_approved from recorded review evidence in support/evidence/LOVABLE-STRICT-PUBLISH/audit_report.md after task-board status recovery.",
+      "status": "done",
+      "created_at": "2026-05-18T05:09:26Z",
+      "resolved_at": "2026-05-18T05:09:34Z"
+    }
+  ],
+  "blockers": []
+}

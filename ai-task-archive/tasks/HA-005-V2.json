@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "HA-005-V2",
+  "archived_at": "2026-05-19T18:26:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "HA-005-V2",
+    "title": "Observability spec",
+    "summary_zh": "Observability spec: latency histograms, error rates, SSE connection count, idempotency cache hit ratio, audit write rate, degraded-mode count.",
+    "phase": "Phase 8 / EPIC-BFF-HA",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "HA-001-V2"
+    ],
+    "artifacts": [
+      "docs/bff/bff_ha_observability_spec.md"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner finalized HA-005-V2 after PR #275 merged. Observability spec, tests, reviewer record, and closeout evidence are durable; focused pytest passed (15 tests).",
+    "last_update": "2026-05-19T18:26:33Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：observability spec 完整涵蓋 6 個必要 dashboard metrics、7 個 degraded error codes 與 fail-closed alert rules；測試覆蓋必要 spec 屬性；PR #265 CI 已通過",
+      "非阻塞觀察：degraded_key metric label 的具體值格式（row key vs error_code）留給 HA PoC 實作層決定"
+    ],
+    "review_file": "support/reviews/HA-005-V2-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T18:26:33Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ha-005-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/HA-005-V2",
+      "git_clean_required": false,
+      "commit": "97f9aaba8431f5f47bf984108b1d0093e16be7d4",
+      "commit_subject": "HA-005-V2: refresh closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "HA-005-V2",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m pytest -q tests/bff/test_sla_targets.py tests/bff/test_degraded_mode.py tests/bff/test_observability_spec.py (15 passed)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/HA-005-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "f56744db6dad408e62b6a377f3864cf66117bb31",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "HA-005-V2",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Handoff to Claude for review: PR #265 merged to dev at a9d9bf819e1b589c503a86506d42e9b8d2e38c3d. Added docs/bff/bff_ha_observability_spec.md plus tests/bff/test_observability_spec.py. Validation: python3 -m pytest -q tests/bff/test_sla_targets.py tests/bff/test_degraded_mode.py tests/bff/test_observability_spec.py (15 passed). CI passed Commit trailers, Runtime mirror guard, and Smoke acceptance.",
+      "status": "done",
+      "created_at": "2026-05-19T17:51:57Z",
+      "resolved_at": "2026-05-19T18:09:46Z"
+    },
+    {
+      "task_id": "HA-005-V2",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: observability spec is complete, aligned with degraded_mode.py and sla_targets.json, fail-closed rules correct. Return to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-05-19T18:09:46Z",
+      "resolved_at": "2026-05-19T18:26:34Z"
+    }
+  ],
+  "blockers": []
+}

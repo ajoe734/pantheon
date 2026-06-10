@@ -82,6 +82,99 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
     # Runtime control
     # ------------------------------------------------------------------ #
     BffActionCatalogEntry(
+        action_id="StartRuntime",
+        entity_type="Runtime",
+        endpoint="/bff/runtimes/{runtime_id}/actions/StartRuntime",
+        risk_level=RiskLevel.HIGH,
+        requires_approval=False,
+        requires_confirm_token=True,
+        requires_two_man=True,
+        cooldown_seconds=60,
+        idempotency_required=True,
+        required_roles=["runtime_operator", "live_owner_approver"],
+        description="Start a stopped runtime binding; two-man authorization required for live runtimes.",
+    ),
+    BffActionCatalogEntry(
+        action_id="RestartPaperRuntime",
+        entity_type="Runtime",
+        endpoint=_FINAL_COMMAND_ENDPOINT,
+        risk_level=RiskLevel.HIGH,
+        requires_approval=False,
+        requires_confirm_token=True,
+        requires_two_man=False,
+        cooldown_seconds=90,
+        idempotency_required=True,
+        required_roles=["operator", "runtime_operator"],
+        description=(
+            "Restart a paper runtime worker through the protected runtime-manager "
+            "repair path; success is heartbeat freshness, not trade count."
+        ),
+    ),
+    BffActionCatalogEntry(
+        action_id="RestartTelemetryBridge",
+        entity_type="Runtime",
+        endpoint=_FINAL_COMMAND_ENDPOINT,
+        risk_level=RiskLevel.HIGH,
+        requires_approval=False,
+        requires_confirm_token=True,
+        requires_two_man=False,
+        cooldown_seconds=90,
+        idempotency_required=True,
+        required_roles=["operator", "runtime_operator"],
+        description=(
+            "Restart the telemetry bridge for a paper runtime through the protected "
+            "runtime-manager repair path; no broker or capital authority is granted."
+        ),
+    ),
+    BffActionCatalogEntry(
+        action_id="TerminateStalePaperMonitoringSession",
+        entity_type="Runtime",
+        endpoint=_FINAL_COMMAND_ENDPOINT,
+        risk_level=RiskLevel.HIGH,
+        requires_approval=False,
+        requires_confirm_token=True,
+        requires_two_man=False,
+        cooldown_seconds=90,
+        idempotency_required=True,
+        required_roles=["operator", "runtime_operator"],
+        description=(
+            "Terminate a paper monitoring session only when stale heartbeat evidence "
+            "is supplied; no session is ended from status alone."
+        ),
+    ),
+    BffActionCatalogEntry(
+        action_id="StartPaperMonitoringSession",
+        entity_type="Runtime",
+        endpoint=_FINAL_COMMAND_ENDPOINT,
+        risk_level=RiskLevel.HIGH,
+        requires_approval=False,
+        requires_confirm_token=True,
+        requires_two_man=False,
+        cooldown_seconds=90,
+        idempotency_required=True,
+        required_roles=["operator", "runtime_operator"],
+        description=(
+            "Start a paper monitoring session through runtime-manager after repair "
+            "preconditions pass; success is fresh monitoring heartbeat."
+        ),
+    ),
+    BffActionCatalogEntry(
+        action_id="ProbeTelemetryIngest",
+        entity_type="Runtime",
+        endpoint=_FINAL_COMMAND_ENDPOINT,
+        risk_level=RiskLevel.HIGH,
+        requires_approval=False,
+        requires_confirm_token=True,
+        requires_two_man=False,
+        cooldown_seconds=30,
+        idempotency_required=True,
+        required_roles=["operator", "runtime_operator"],
+        description=(
+            "Probe telemetry ingest freshness through a governed runtime repair "
+            "command; the action is read-only and emits an audit receipt."
+        ),
+    ),
+    BffActionCatalogEntry(
         action_id="PauseRuntime",
         entity_type="Runtime",
         endpoint=_FINAL_COMMAND_ENDPOINT,
@@ -132,6 +225,19 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
         idempotency_required=True,
         required_roles=["operator", "approver"],
         description="Switch a runtime into safe mode; reduces exposure and disables new strategies.",
+    ),
+    BffActionCatalogEntry(
+        action_id="AlertAcknowledge",
+        entity_type="RiskAlert",
+        endpoint=_FINAL_COMMAND_ENDPOINT,
+        risk_level=RiskLevel.LOW,
+        requires_approval=False,
+        requires_confirm_token=False,
+        requires_two_man=False,
+        cooldown_seconds=0,
+        idempotency_required=True,
+        required_roles=["operator"],
+        description="Acknowledge a risk alert without mutating runtime or capital state.",
     ),
     # ------------------------------------------------------------------ #
     # Rollback lifecycle
@@ -207,6 +313,19 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
     # ------------------------------------------------------------------ #
     # Capital pool operations
     # ------------------------------------------------------------------ #
+    BffActionCatalogEntry(
+        action_id="ApprovePool",
+        entity_type="CapitalPool",
+        endpoint="/bff/capital-pools/{pool_id}/actions/ApprovePool",
+        risk_level=RiskLevel.HIGH,
+        requires_approval=True,
+        requires_confirm_token=False,
+        requires_two_man=False,
+        cooldown_seconds=0,
+        idempotency_required=True,
+        required_roles=["treasury_approver"],
+        description="Approve a capital pool draft; transitions state from draft to approved (one-way).",
+    ),
     BffActionCatalogEntry(
         action_id="LiquidateAll",
         entity_type="CapitalPool",
@@ -322,6 +441,87 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
         idempotency_required=True,
         required_roles=["approver"],
         description="Execute HIQ Sentinel remediation for a pending intervention; requires two-man authorization.",
+    ),
+    # ------------------------------------------------------------------ #
+    # HumanGate and PM-12 governance advisory write admission (BFF-B5-001)
+    # ------------------------------------------------------------------ #
+    BffActionCatalogEntry(
+        action_id="HumanGateApprove",
+        entity_type="HumanGateItem",
+        endpoint=_FINAL_COMMAND_ENDPOINT,
+        risk_level=RiskLevel.HIGH,
+        requires_approval=False,
+        requires_confirm_token=False,
+        requires_two_man=True,
+        cooldown_seconds=0,
+        idempotency_required=True,
+        required_roles=["approver"],
+        description="Approve a HumanGate item from the Management human inbox; high-risk items require two-man authorization.",
+    ),
+    BffActionCatalogEntry(
+        action_id="HumanGateReject",
+        entity_type="HumanGateItem",
+        endpoint=_FINAL_COMMAND_ENDPOINT,
+        risk_level=RiskLevel.HIGH,
+        requires_approval=False,
+        requires_confirm_token=False,
+        requires_two_man=True,
+        cooldown_seconds=0,
+        idempotency_required=True,
+        required_roles=["approver"],
+        description="Reject a HumanGate item from the Management human inbox; high-risk items require two-man authorization.",
+    ),
+    BffActionCatalogEntry(
+        action_id="HumanGateRequestMoreEvidence",
+        entity_type="HumanGateItem",
+        endpoint=_FINAL_COMMAND_ENDPOINT,
+        risk_level=RiskLevel.LOW,
+        requires_approval=False,
+        requires_confirm_token=False,
+        requires_two_man=False,
+        cooldown_seconds=0,
+        idempotency_required=True,
+        required_roles=["operator", "reviewer", "approver"],
+        description="Request more evidence for a HumanGate item before approval or rejection.",
+    ),
+    BffActionCatalogEntry(
+        action_id="HumanGateRevoke",
+        entity_type="HumanGateItem",
+        endpoint=_FINAL_COMMAND_ENDPOINT,
+        risk_level=RiskLevel.HIGH,
+        requires_approval=False,
+        requires_confirm_token=False,
+        requires_two_man=True,
+        cooldown_seconds=0,
+        idempotency_required=True,
+        required_roles=["approver"],
+        description="Revoke a previously admitted HumanGate decision fail-closed; high-risk items require two-man authorization.",
+    ),
+    BffActionCatalogEntry(
+        action_id="HumanGateExtendTtl",
+        entity_type="HumanGateItem",
+        endpoint=_FINAL_COMMAND_ENDPOINT,
+        risk_level=RiskLevel.LOW,
+        requires_approval=False,
+        requires_confirm_token=False,
+        requires_two_man=False,
+        cooldown_seconds=0,
+        idempotency_required=True,
+        required_roles=["approver"],
+        description="Extend the TTL for a pending HumanGate item through command admission.",
+    ),
+    BffActionCatalogEntry(
+        action_id="QuarterlyRankingRecommendationSubmit",
+        entity_type="Ranking",
+        endpoint=_FINAL_COMMAND_ENDPOINT,
+        risk_level=RiskLevel.MEDIUM,
+        requires_approval=False,
+        requires_confirm_token=False,
+        requires_two_man=False,
+        cooldown_seconds=0,
+        idempotency_required=True,
+        required_roles=["operator", "approver"],
+        description="Submit a PM-12 quarterly ranking recommendation into governance without direct live capital mutation.",
     ),
     # ------------------------------------------------------------------ #
     # Strategy / persona resource actions (BFF-LUV-GAP-002)
@@ -719,6 +919,19 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
         description="Submit a v5 intervention lifecycle command receipt without bypassing governance preconditions.",
     ),
     BffActionCatalogEntry(
+        action_id="DecideV5Intervention",
+        entity_type="SentinelIntervention",
+        endpoint="/bff/v5/interventions/{intervention_id}/decide",
+        risk_level=RiskLevel.MEDIUM,
+        requires_approval=False,
+        requires_confirm_token=False,
+        requires_two_man=False,
+        cooldown_seconds=30,
+        idempotency_required=True,
+        required_roles=["operator", "approver"],
+        description="Record a v5 intervention decision through the canonical command admission receipt.",
+    ),
+    BffActionCatalogEntry(
         action_id="SentinelFindingStatus",
         entity_type="SentinelFinding",
         endpoint="/bff/v5/sentinel/findings/{finding_id}/status",
@@ -756,6 +969,35 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
         idempotency_required=True,
         required_roles=["operator", "approver"],
         description="Submit a sentinel remediation execution command receipt without enabling live capital side effects.",
+    ),
+    # ------------------------------------------------------------------ #
+    # P0 lifecycle actions (BFF-WRITE-P0-LIFECYCLE)
+    # ------------------------------------------------------------------ #
+    BffActionCatalogEntry(
+        action_id="AdvanceLifecycle",
+        entity_type="Persona",
+        endpoint="/bff/personas/{persona_id}/actions/AdvanceLifecycle",
+        risk_level=RiskLevel.HIGH,
+        requires_approval=True,
+        requires_confirm_token=True,
+        requires_two_man=False,
+        cooldown_seconds=0,
+        idempotency_required=True,
+        required_roles=["persona_operator", "live_owner_approver"],
+        description="Advance persona lifecycle state: draft → paper_owner → live_owner → retired. Confirm token required; live_owner_approver role required when target=live_owner.",
+    ),
+    BffActionCatalogEntry(
+        action_id="ApprovePool",
+        entity_type="CapitalPool",
+        endpoint="/bff/capital-pools/{pool_id}/actions/ApprovePool",
+        risk_level=RiskLevel.HIGH,
+        requires_approval=True,
+        requires_confirm_token=False,
+        requires_two_man=False,
+        cooldown_seconds=0,
+        idempotency_required=True,
+        required_roles=["treasury_approver"],
+        description="Approve a capital pool draft → approved (one-way). Memo ≥8 chars required.",
     ),
 ]
 

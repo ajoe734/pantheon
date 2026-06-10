@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "BFF-B1-003",
+  "archived_at": "2026-05-23T06:12:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-B1-003",
+    "title": "GET /bff/me session bootstrap",
+    "summary_zh": null,
+    "phase": "Sprint BFF-1 / EPIC-BFF-GAP-P0",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BFF-B1-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#11-session-bootstrap;services/control-plane/bff/main.py;execute-plans/src/lib/bff-v1/paths.ts"
+    ],
+    "acceptance": [
+      "Returns payload per spec section 1.1 B1-001 schema including operatorId roles tenantId allowedTenants locale sessionKind capabilities featureFlags;Anonymous returns 401 with typed error; authenticated returns 200;meta.correlationId echoed; X-Correlation-Id response header set"
+    ],
+    "next": "PR #416 and #417 merged; GET /bff/me session bootstrap approved and verified. Commit 4e954df620417d7b72cbf674f776f96a6f87daeb merged via a05144be7094d945ab47e4b2dce6b780192ff5d1. Verification: py_compile main.py/test_bff_me_session_bootstrap.py; pytest test_bff_me_session_bootstrap.py; pytest services/control-plane/bff/tests.",
+    "last_update": "2026-05-23T06:12:44Z",
+    "review_notes_zh": [
+      "審查通過：所有 §11 acceptance criteria 均已實作並由 focused regression 覆蓋",
+      "correlation ID 在成功與錯誤路徑均正確回傳，payload alias 向後相容",
+      "33 tests passed"
+    ],
+    "review_file": "support/reviews/BFF-B1-003-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T06:12:44Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-b1-003",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-B1-003",
+      "git_clean_required": false,
+      "commit": "4e954df620417d7b72cbf674f776f96a6f87daeb",
+      "commit_subject": "BFF-B1-003: record Claude review approval",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-B1-003",
+        "Reviewer": "Claude",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/tests/test_bff_me_session_bootstrap.py; PYTHONDONTWRITEBYTECODE=1 pytest services/control-plane/bff/tests/test_bff_me_session_bootstrap.py; PYTHONDONTWRITEBYTECODE=1 pytest services/control-plane/bff/tests"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-B1-003",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "a05144be7094d945ab47e4b2dce6b780192ff5d1",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-B1-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-23T05:50:22Z",
+      "resolved_at": "2026-05-23T05:50:31Z"
+    },
+    {
+      "task_id": "BFF-B1-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implementation merged via PR #416 (merge 05adbc24af34c984b9834af25c0f23c7e68941dc; head 2505720b8288ba6849bba6fbccfc61dd06cd8e51). Verified py_compile and pytest services/control-plane/bff/tests (33 passed). Please review /bff/me bootstrap aliases and correlation behavior.",
+      "status": "done",
+      "created_at": "2026-05-23T05:59:50Z",
+      "resolved_at": "2026-05-23T06:04:19Z"
+    },
+    {
+      "task_id": "BFF-B1-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved; all §11 session bootstrap criteria verified. Returned to owner for finalization.",
+      "status": "done",
+      "created_at": "2026-05-23T06:04:19Z",
+      "resolved_at": "2026-05-23T06:12:45Z"
+    }
+  ],
+  "blockers": []
+}

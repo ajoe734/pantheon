@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "task_id": "EXP-V2-002",
+  "archived_at": "2026-05-19T12:34:55Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXP-V2-002",
+    "title": "ExperimentRun multi-artifact lineage tree",
+    "summary_zh": "新增多 artifact-type lineage tree：ExperimentRun 可同時產 model_artifact + feature_set + signal_snapshot + optimizer_result，本任務確保 lineage edges 正確連接 N 個 artifact 而非單一。獨立 module。",
+    "phase": "Sprint 8 / EPIC-STRAT-EXP-DEEP",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "EXP-005",
+      "LIN-001"
+    ],
+    "artifacts": [
+      "services/lineage-read/multi_artifact_tree.py",
+      "services/lineage-read/test_multi_artifact_tree.py"
+    ],
+    "acceptance": [
+      "multi_artifact_tree.py exposes get_run_artifacts(experiment_run_id) returning list of artifact records grouped by artifact_type",
+      "supports model_artifact feature_set signal_snapshot optimizer_result evaluation_result types",
+      "each artifact node carries lineage.parent_run_id pointing back to experiment_run",
+      "test fixture creates a run producing 4 artifact types and asserts all retrieved with correct grouping",
+      "pytest -q exit 0"
+    ],
+    "next": "Owner finalized Claude-approved closeout; evidence PR #209 merged into dev with focused lineage-read validation passing.",
+    "last_update": "2026-05-19T12:34:55Z",
+    "review_notes_zh": [
+      "審查通過：實作符合所有驗收條件；get_run_artifacts() 正確分組 5 種 artifact type；lineage.parent_run_id 在每個節點正確設定；6 個 focused tests 全數通過（pytest -q exit 0）；模組邊界清晰，未改動 EXP-005 或 LIN-001 公開 API"
+    ],
+    "review_file": "support/evidence/EXP-V2-002/review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T12:34:55Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/exp-v2-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/EXP-V2-002",
+      "git_clean_required": false,
+      "commit": "28f781bd2cb65751a6056ee870edb6022223cddb",
+      "commit_subject": "EXP-V2-002: record final Claude closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "EXP-V2-002 review and closeout evidence for the final Claude approval recorded at 2026-05-19T12:20:23Z.",
+        "Not changing": "lineage-read implementation, tests, HTTP wrapper, registry write path, canonical architecture docs, or generated task brief.",
+        "Composes with": "PR #191 merged evidence and the shared status root review_approved state before owner done closeout.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "EXP-V2-002",
+        "Reviewer": "Claude",
+        "Verified": "pytest -q services/lineage-read/test_multi_artifact_tree.py; pytest -q services/lineage-read"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/EXP-V2-002",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "c09e444ffa010a9353beb8dbf8f00e4613431b36",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXP-V2-002",
+      "from": "Codex2",
+      "to": "Copilot",
+      "message": "Ready for review: multi_artifact_tree implementation is present on task/EXP-V2-002 and already merged into dev via PR #191 (merge c7d85d0c); branch HEAD 873b3207 is ancestor of origin/dev. Verified pytest -q services/lineage-read/test_multi_artifact_tree.py (6 passed) and pytest -q services/lineage-read (28 passed).",
+      "status": "done",
+      "created_at": "2026-05-19T11:53:49Z",
+      "resolved_at": "2026-05-19T12:17:40Z"
+    },
+    {
+      "task_id": "EXP-V2-002",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Chair reassigned review from Copilot to Claude: Copilot review dispatch repeatedly exits with 402 no quota; implementation is already merged and needs a live reviewer.",
+      "status": "done",
+      "created_at": "2026-05-19T12:17:40Z",
+      "resolved_at": "2026-05-19T12:20:23Z"
+    },
+    {
+      "task_id": "EXP-V2-002",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: all acceptance criteria met, 6 tests pass, implementation is clean and self-contained",
+      "status": "done",
+      "created_at": "2026-05-19T12:20:23Z",
+      "resolved_at": "2026-05-19T12:34:56Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Idle capacity exists and there is no queue, approval, or provider blocker; sidecars are safe for future eligible parents.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "OPS-STALE-BLOCKERS-20260522: clear stale blocker rows for LOVABLE-STRICT-PUBLISH and OSS-QUANTLIB-V2-001 after PRs #83 and #194 merged.",
+    "OPS-HUMAN-GATE-METADATA-20260522: refresh PROD-WRITES-001-V2 and LIVE-SCALE-001-V2 next text to remove archived dependency references.",
+    "OPS-TASK-BRANCH-HOUSEKEEP-20260522: inventory remote task/* branches with no open PR and retire only verified merged or abandoned branches.",
+    "OPS-WORKTREE-REFRESH-20260522: ensure future implementation dispatch starts from clean current origin/dev rather than the dirty local dev checkout."
+  ]
+}

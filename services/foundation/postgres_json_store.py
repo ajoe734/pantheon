@@ -15,6 +15,39 @@ def quote_pg_identifier(identifier: str) -> str:
     return ".".join(f'"{part}"' for part in parts)
 
 
+def _fetch_one(cursor: Any) -> Any:
+    if hasattr(cursor, "fetchone"):
+        return cursor.fetchone()
+    rows = cursor.fetchall()
+    return rows[0] if rows else None
+
+
+def ensure_postgres_schema(conn: Any, schema: str) -> None:
+    """Create a schema, or accept a pre-created schema for restricted roles."""
+
+    clean_schema = str(schema or "").strip()
+    if not clean_schema:
+        return
+    try:
+        conn.execute(f"CREATE SCHEMA IF NOT EXISTS {quote_pg_identifier(clean_schema)}")
+        return
+    except Exception as exc:
+        if getattr(exc, "sqlstate", "") != "42501":
+            raise
+        # Restricted runtime roles may have USAGE/CREATE on a pre-provisioned
+        # schema but no database-level CREATE privilege.  After the failed
+        # CREATE SCHEMA attempt, the transaction must be reset before probing.
+        if hasattr(conn, "rollback"):
+            conn.rollback()
+        cursor = conn.execute(
+            "SELECT 1 FROM information_schema.schemata WHERE schema_name = %s",
+            (clean_schema,),
+        )
+        if _fetch_one(cursor) is not None:
+            return
+        raise
+
+
 class PostgresJsonOwnerStore:
     """Small JSONB owner-store used by control-plane services.
 
@@ -53,8 +86,7 @@ class PostgresJsonOwnerStore:
 
     def bootstrap(self) -> None:
         with self._connect() as conn:
-            if self.schema:
-                conn.execute(f"CREATE SCHEMA IF NOT EXISTS {quote_pg_identifier(self.schema)}")
+            ensure_postgres_schema(conn, self.schema)
             conn.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {self.table} (
@@ -116,7 +148,4 @@ class PostgresJsonOwnerStore:
 
     @staticmethod
     def _fetch_one(cursor: Any) -> Any:
-        if hasattr(cursor, "fetchone"):
-            return cursor.fetchone()
-        rows = cursor.fetchall()
-        return rows[0] if rows else None
+        return _fetch_one(cursor)

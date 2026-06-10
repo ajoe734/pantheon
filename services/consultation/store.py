@@ -401,6 +401,13 @@ class ConsultationStore:
             if handoff.request_id == request_id
         ]
 
+    def list_handoffs_for_target(self, target_gate: str) -> List[ConsultGateHandoff]:
+        return [
+            _model_copy(handoff)
+            for handoff in self._handoffs.values()
+            if handoff.target_gate == target_gate
+        ]
+
     # --- Audit ---
 
     def append_audit(self, event: ConsultAuditEvent) -> None:

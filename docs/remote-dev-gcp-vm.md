@@ -4,7 +4,10 @@ This repo can be developed on the GCP VM through a small remote stack and a loca
 
 ## Pull Full Developer State From An Old VM
 
-Use this on the new VM when cutting over from an old development VM. The default source is `edna@pantheon-taiwan` in project `pantheon-493602`, zone `asia-east1-b`, reached through `gcloud compute ssh`.
+Use this on the new VM when cutting over from an old development VM. This is a
+legacy pull-only helper; its defaults intentionally point at the old source VM
+recorded in `scripts/pull_old_vm_dev_state.sh` rather than the current Benjamin
+project. Override the source flags when pulling from any newer VM.
 
 ```bash
 cd ~/code/pantheon
@@ -205,14 +208,14 @@ docker compose down --remove-orphans
 
 ```bash
 cd ~/code/pantheon
-bash scripts/gcp_nonprod_baseline.sh --project-id pantheon-shared --dry-run
+bash scripts/gcp_nonprod_baseline.sh --project-id pantheon-benjamin-20260528 --dry-run
 ```
 
 Then execute it for real once the target project is confirmed:
 
 ```bash
 cd ~/code/pantheon
-bash scripts/gcp_nonprod_baseline.sh --project-id pantheon-shared
+bash scripts/gcp_nonprod_baseline.sh --project-id pantheon-benjamin-20260528
 ```
 
 What it establishes:
@@ -226,16 +229,16 @@ Recommended operator flow on the VM:
 
 ```bash
 gcloud auth login
-gcloud config set project pantheon-shared
-bash scripts/gcp_nonprod_baseline.sh --project-id pantheon-shared --dry-run
-bash scripts/gcp_nonprod_baseline.sh --project-id pantheon-shared
+gcloud config set project pantheon-benjamin-20260528
+bash scripts/gcp_nonprod_baseline.sh --project-id pantheon-benjamin-20260528 --dry-run
+bash scripts/gcp_nonprod_baseline.sh --project-id pantheon-benjamin-20260528
 ```
 
 If the dry run cannot read the project number from `gcloud projects describe`, pass it explicitly:
 
 ```bash
 bash scripts/gcp_nonprod_baseline.sh \
-  --project-id pantheon-shared \
+  --project-id pantheon-benjamin-20260528 \
   --project-number 123456789012 \
   --dry-run
 ```
@@ -244,17 +247,17 @@ After the bootstrap, add real secret versions explicitly:
 
 ```bash
 printf '%s' 'REPLACE_ME' | gcloud secrets versions add pantheon-dev-postgres-url \
-  --project='pantheon-shared' --data-file=-
+  --project='pantheon-benjamin-20260528' --data-file=-
 ```
 
 Then wire runtime identities during deploy rather than in GitHub secrets:
 
 ```bash
 gcloud run deploy pantheon-dev-bff \
-  --project='pantheon-shared' \
+  --project='pantheon-benjamin-20260528' \
   --region='asia-east1' \
-  --service-account='pantheon-dev-control-plane@pantheon-shared.iam.gserviceaccount.com' \
-  --image='asia-east1-docker.pkg.dev/pantheon-shared/pantheon/bff:dev-candidate' \
+  --service-account='pantheon-dev-control-plane@pantheon-benjamin-20260528.iam.gserviceaccount.com' \
+  --image='asia-east1-docker.pkg.dev/pantheon-benjamin-20260528/pantheon/bff:dev-candidate' \
   --set-secrets='DATABASE_URL=pantheon-dev-postgres-url:1'
 ```
 
@@ -274,7 +277,7 @@ gcloud auth login
 gcloud config set project pantheon-nonprod
 bash scripts/gcp_nonprod_foundation.sh \
   --project-id pantheon-nonprod \
-  --shared-project-id pantheon-shared \
+  --shared-project-id pantheon-benjamin-20260528 \
   --dry-run
 ```
 
@@ -284,7 +287,7 @@ Then execute it for real:
 cd ~/code/pantheon
 bash scripts/gcp_nonprod_foundation.sh \
   --project-id pantheon-nonprod \
-  --shared-project-id pantheon-shared
+  --shared-project-id pantheon-benjamin-20260528
 ```
 
 What it establishes:
@@ -315,7 +318,7 @@ gcloud run deploy pantheon-dev-bff \
   --no-allow-unauthenticated \
   --vpc-connector='pantheon-dev-connector' \
   --vpc-egress='private-ranges-only' \
-  --image='asia-east1-docker.pkg.dev/pantheon-shared/pantheon/bff:dev-candidate' \
+  --image='asia-east1-docker.pkg.dev/pantheon-benjamin-20260528/pantheon/bff:dev-candidate' \
   --set-secrets='DATABASE_URL=pantheon-dev-postgres-url:1'
 ```
 

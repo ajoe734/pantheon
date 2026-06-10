@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "task_id": "BLA-004-V2",
+  "archived_at": "2026-05-19T19:13:46Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BLA-004-V2",
+    "title": "Rollback drill dry-run",
+    "summary_zh": "Broker rollback drill dry-run runner that produces rollback evidence without live side effects.",
+    "phase": "Phase 8 / EPIC-BROKER-LIVE",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BLA-001-V2"
+    ],
+    "artifacts": [
+      "services/broker/live_activation/rollback_drill_dry_run.py",
+      "tests/broker/test_rollback_drill_dry_run.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner closeout finalized after PR #286 merged at e52bb1ed81816669a185bee993be2e6d6bc76d1e; verified rollback dry-run runner with broker live-activation pytest suite: python3 -m pytest tests/broker/test_live_activation_validator.py tests/broker/test_risk_owner_checklist.py tests/broker/test_operator_checklist.py tests/broker/test_kill_switch_evidence.py tests/broker/test_rollback_drill_dry_run.py.",
+    "last_update": "2026-05-19T19:13:46Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：rollback drill dry-run runner fail-closed 產生 deterministic evidence，拒絕 live side-effect flags、raw broker secret，且只建立 Runtime Manager request/telemetry preview，不觸發 Runtime Manager、broker API、檔案寫入或 telemetry ingest。;驗證通過：python3 -m pytest tests/broker/test_live_activation_validator.py tests/broker/test_risk_owner_checklist.py tests/broker/test_operator_checklist.py tests/broker/test_kill_switch_evidence.py tests/broker/test_rollback_drill_dry_run.py（29 passed）。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T19:13:46Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bla-004-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BLA-004-V2",
+      "git_clean_required": false,
+      "commit": "6fa520c747b1b2b5cb55b20c45533073193e8ce5",
+      "commit_subject": "BLA-004-V2: add rollback drill dry-run evidence runner",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "broker live activation rollback dry-run evidence runner and focused unit tests.",
+        "Not changing": "L1 canonical docs, Runtime Manager rollback execution, broker adapters, or live dispatch paths.",
+        "Composes with": "BLA-001-V2 activation criteria validator and BLA-003/BLA-005 evidence gates consuming rollback_drill_ref.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BLA-004-V2",
+        "Reviewer": "Codex",
+        "Verified": "python3 -m pytest tests/broker/test_live_activation_validator.py tests/broker/test_risk_owner_checklist.py tests/broker/test_operator_checklist.py tests/broker/test_kill_switch_evidence.py tests/broker/test_rollback_drill_dry_run.py"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BLA-004-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "569ee876b77bd184cb64882fd257d8ac3f985dee",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BLA-004-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-19T18:17:27Z",
+      "resolved_at": "2026-05-19T18:17:48Z"
+    },
+    {
+      "task_id": "BLA-004-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: rollback drill dry-run evidence runner committed in 6fa520c7 and PR #286 is open with auto-merge enabled. Verified 29 broker live activation tests passed.",
+      "status": "done",
+      "created_at": "2026-05-19T18:58:34Z",
+      "resolved_at": "2026-05-19T19:03:14Z"
+    },
+    {
+      "task_id": "BLA-004-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Reviewer approved BLA-004-V2 after PR #286 merged at e52bb1ed81816669a185bee993be2e6d6bc76d1e; owner Codex2 should finalize closeout to done.",
+      "status": "done",
+      "created_at": "2026-05-19T19:03:14Z",
+      "resolved_at": "2026-05-19T19:13:47Z"
+    }
+  ],
+  "blockers": []
+}

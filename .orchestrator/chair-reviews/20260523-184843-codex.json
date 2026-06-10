@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "No queue, approval, provider, or PR blockers; idle capacity can support the next dispatchable P1 parent wave.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "PROD-WRITES-001-V2",
+    "LIVE-SCALE-001-V2"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "EPIC-GOV-DEPLOY-dispatch",
+    "EPIC-RUNTIME-dispatch",
+    "STALE-BLOCKER-CLEANUP",
+    "OPS-BRANCH-RETIREMENT-SWEEP"
+  ]
+}

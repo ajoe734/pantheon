@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "task_id": "RES-ACT-QUANTLIB-001-V2",
+  "archived_at": "2026-05-20T08:36:34Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "RES-ACT-QUANTLIB-001-V2",
+    "title": "QuantLib production pricing evidence retention and admission proof",
+    "summary_zh": "Adapter-specific child: QuantLib production pricing evidence retention + admission proof. Parent: RES-ACT-001-V2.",
+    "phase": "Phase 8 / EPIC-RES-ACT",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "RES-ACT-001-V2"
+    ],
+    "artifacts": [
+      "integrations/quantlib/pricing_evidence_retention.md",
+      "integrations/quantlib/admission_proof.md"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner closeout complete: PR #316 delivered approved QuantLib proof artifacts; PR #350 merged reviewer approval and owner closeout evidence at 48dfd5bbcd9db31ccdc5606152ae591730bde102, merge 894acd43638277f6a2d05c68a61bdaa15835e87b; focused verification passed: pytest -q tests/governance/test_quantlib_proof_artifacts.py.",
+    "last_update": "2026-05-20T08:36:34Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：pricing_evidence_retention.md 與 admission_proof.md 完整一致，ProductionDataProof.v1 欄位齊全，5 個 admission gate 全部通過，fail-closed 守則正確，checksum 交叉一致，verification test 存在。"
+    ],
+    "review_file": "support/reviews/RES-ACT-QUANTLIB-001-V2-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T08:36:34Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/res-act-quantlib-001-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/RES-ACT-QUANTLIB-001-V2",
+      "git_clean_required": false,
+      "commit": "48dfd5bbcd9db31ccdc5606152ae591730bde102",
+      "commit_subject": "RES-ACT-QUANTLIB-001-V2: refresh closeout verification",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "RES-ACT-QUANTLIB-001-V2",
+        "Reviewer": "Claude",
+        "Verified": "pytest -q tests/governance/test_quantlib_proof_artifacts.py -> 5 passed; git diff --check -- support/evidence/RES-ACT-QUANTLIB-001-V2/closeout.md"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/RES-ACT-QUANTLIB-001-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "894acd43638277f6a2d05c68a61bdaa15835e87b",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "RES-ACT-QUANTLIB-001-V2",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "PR #316 merged with QuantLib pricing evidence retention/admission proof artifacts; local validation passed (5 focused, 43 governance regression). Please review integrations/quantlib/pricing_evidence_retention.md, integrations/quantlib/admission_proof.md, tests/governance/test_quantlib_proof_artifacts.py, and the pricing_snapshot allowlist change.",
+      "status": "done",
+      "created_at": "2026-05-20T03:44:51Z",
+      "resolved_at": "2026-05-20T04:29:13Z"
+    },
+    {
+      "task_id": "RES-ACT-QUANTLIB-001-V2",
+      "from": "Gemini",
+      "to": "Copilot",
+      "message": "Chair reassigned review from Gemini to Copilot: Gemini worker for this task is zombie after quota exhaustion; previous chair already reassigned RES-ACT-QLIB-001-V2, RES-ACT-TRL-001-V2, RES-ACT-RL-001-V2, and RES-ACT-WANDB-001-V2 from Gemini to Copilot for the same structural reason; Copilot is idle and suitable for spec/evidence review.",
+      "status": "done",
+      "created_at": "2026-05-20T04:29:13Z",
+      "resolved_at": "2026-05-20T08:21:28Z"
+    },
+    {
+      "task_id": "RES-ACT-QUANTLIB-001-V2",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Chair reassigned review from Copilot to Claude: Copilot review dispatch failed repeatedly at 08:01, 08:06, 08:11, and 08:16 UTC with 402 quota; Claude is not the owner and can review the merged evidence.",
+      "status": "done",
+      "created_at": "2026-05-20T08:21:28Z",
+      "resolved_at": "2026-05-20T08:23:11Z"
+    },
+    {
+      "task_id": "RES-ACT-QUANTLIB-001-V2",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: both pricing evidence retention and admission proof artifacts are complete, internally consistent, and satisfy ProductionDataProof.v1 requirements. All admission gates pass and fail-closed guards are in place. Returning to owner for finalization.",
+      "status": "done",
+      "created_at": "2026-05-20T08:23:11Z",
+      "resolved_at": "2026-05-20T08:36:34Z"
+    }
+  ],
+  "blockers": []
+}

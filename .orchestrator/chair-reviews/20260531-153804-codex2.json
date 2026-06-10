@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Idle capacity exists, but there is no runnable execution backlog or active sidecar parent support need.",
+  "blocked_by": [
+    "ai-status.json has no todo, in_progress, review, or review_approved tasks; current board is 3 done tasks and 2 non-dispatchable human gates."
+  ],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "OPS-PUBLISH-PIPELINE-REPAIR-20260531",
+    "OPS-TASK-BRANCH-RETIREMENT-20260531"
+  ]
+}

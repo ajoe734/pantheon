@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "task_id": "DATASTRAT-CATALOG-003",
+  "archived_at": "2026-06-09T14:27:40Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DATASTRAT-CATALOG-003",
+    "title": "Add initial financial data source catalog and active-universe scheduling policy",
+    "summary_zh": "把 FinMind、TWSE/TPEx、MOPS、Yahoo RSS/broker top N、SEC EDGAR、FRED 做成 data-source catalog/config templates，並加入 core/candidate/archive universe 更新策略。",
+    "phase": "EPIC DATASTRAT / Financial data source catalog",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "DATASTRAT-REG-002"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_data_strategy_source_design_2026-06-09/DATA_STRATEGY_SOURCE_SYSTEM_DESIGN.md",
+      "services/source_ingestion",
+      "services/control-plane/bff/read_store.py"
+    ],
+    "acceptance": [
+      "Catalog entries exist for FinMind TWSE TPEx MOPS Yahoo SEC EDGAR FRED",
+      "Each catalog entry declares source class datasets update frequency license scope and secret_ref policy",
+      "Active universe scheduler policy supports core candidate archive tiers",
+      "Archive tier skips expensive broker and detailed news updates",
+      "Health projection includes last_success_at watermark row_count staleness and source_error",
+      "No inline credentials are accepted or documented"
+    ],
+    "next": "Owner finalized approved task after PR #1234 merged implementation at 221d055becc4d176d895a05b0d14a8e1dc6b646f and PR #1235 merged owner closeout at 5776728f4078d2b0827e61cf9d519b565c411931; focused validation passed: 11 pytest cases for financial catalog, active-universe policy, source-ingest endpoints, and BFF read-only passthrough.",
+    "last_update": "2026-06-09T14:27:40Z",
+    "auto_created_by": "codex_data_strategy_source_dispatch_2026-06-09",
+    "review_notes_zh": [
+      "審查通過：6個金融資料來源均已建立目錄模板；active-universe三層政策正確；BFF唯讀傳遞無副作用；測試覆蓋關鍵不變式；無內嵌憑證"
+    ],
+    "review_file": "docs/04/pantheon_data_strategy_source_design_2026-06-09/REVIEW_DATASTRAT_CATALOG_003.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-09T14:27:40Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/datastrat-catalog-003",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/DATASTRAT-CATALOG-003",
+      "git_clean_required": false,
+      "commit": "3888a0eb7c1b19666d7cb62cd3389440eaff06cf",
+      "commit_subject": "DATASTRAT-CATALOG-003: record owner closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped owner closeout evidence for DATASTRAT-CATALOG-003 after PR #1234 merged into dev.",
+        "Not changing": "source-ingest runtime behavior, BFF passthrough behavior, catalog templates, scheduler policy logic, or registry write authority.",
+        "Composes with": "merged PR #1234 at 221d055becc4d176d895a05b0d14a8e1dc6b646f and Claude2 review approval.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "DATASTRAT-CATALOG-003",
+        "Reviewer": "Claude2",
+        "Verified": "python3 -m pytest services/source_ingestion/tests/test_financial_source_catalog.py services/source_ingestion/tests/test_active_universe.py services/source_ingestion/test_service.py::test_registry_exposes_connector_status_policy_and_provider_examples services/source_ingestion/test_service.py::test_financial_data_source_catalog_endpoint_exposes_templates services/control-plane/bff/test_source_connector_service_client.py::test_bff_reads_source_connector_registry_through_service_client services/control-plane/bff/test_source_search_ops_bff.py::test_get_source_ops_snapshot_normal_path -> 11 passed after dev refresh"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/DATASTRAT-CATALOG-003",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "5776728f4078d2b0827e61cf9d519b565c411931",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DATASTRAT-CATALOG-003",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned DATASTRAT-CATALOG-003 away from unavailable lane Codex2 (disabled, sidecar-only, or auth-down); owner Codex2 -> Codex.",
+      "status": "done",
+      "created_at": "2026-06-09T10:42:49Z",
+      "resolved_at": "2026-06-09T13:57:15Z"
+    },
+    {
+      "task_id": "DATASTRAT-CATALOG-003",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Implementation ready for review. Commits ce005b96/b48fcd08 add financial data-source catalog templates, active-universe scheduling policy, source-ingest API exposure, BFF passthrough, docs, and tests. Focused validation passed: python3 -m pytest services/source_ingestion/tests/test_financial_source_catalog.py services/source_ingestion/tests/test_active_universe.py services/source_ingestion/test_service.py::test_registry_exposes_connector_status_policy_and_provider_examples services/source_ingestion/test_service.py::test_financial_data_source_catalog_endpoint_exposes_templates services/control-plane/bff/test_source_connector_service_client.py::test_bff_reads_source_connector_registry_through_service_client services/control-plane/bff/test_source_search_ops_bff.py::test_get_source_ops_snapshot_normal_path. Larger related suite has existing non-catalog residual: services/control-plane/bff/test_source_search_ops_bff.py::test_replay_dlq_requires_idempotency_key expects detail.error but current response is top-level error.",
+      "status": "done",
+      "created_at": "2026-06-09T14:07:38Z",
+      "resolved_at": "2026-06-09T14:14:33Z"
+    },
+    {
+      "task_id": "DATASTRAT-CATALOG-003",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved: all acceptance criteria met. Catalog templates cover all 6 required providers, active-universe scheduling policy correctly scopes archive to baseline-only, BFF passthrough is read-only, and focused tests pass. Returned to owner for closeout.",
+      "status": "done",
+      "created_at": "2026-06-09T14:14:33Z",
+      "resolved_at": "2026-06-09T14:27:41Z"
+    }
+  ],
+  "blockers": []
+}

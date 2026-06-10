@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "task_id": "LIVE-SCALE-001-V2",
+  "archived_at": "2026-06-02T15:37:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LIVE-SCALE-001-V2",
+    "title": "Live capital scale-up (human gate)",
+    "summary_zh": "Human-only activation. Raises live capital budget ceiling above first-window cap after first-week observation report + dual signoff. Cannot be dispatched to AI worker.",
+    "phase": "Phase 8 / EPIC-LIVE-GATE",
+    "owner": "Human/Ops",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [
+      "Human risk-owner + operator signoff",
+      "Preconditions satisfied",
+      "Activation logged in audit chain"
+    ],
+    "next": "Human/Ops approved live-scale gate; HumanGateDecision recorded at support/evidence/LIVE-SCALE-001-V2/human-gate/decision.json. Capital budget/config mutation remains a separate operator action.",
+    "last_update": "2026-06-01T02:42:08Z",
+    "non_dispatchable": true,
+    "gate_status": "approved",
+    "allowed_workers": [],
+    "human_required_roles": [
+      "risk_owner",
+      "operator"
+    ],
+    "activation_effect": [
+      "irreversible_or_high_risk"
+    ],
+    "task_class": "human_gate",
+    "auto_created_by": "phase8-v3-audit-chain-fixup-20260521",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "terminal_outcome": "completed",
+    "human_gate_decision_ref": "support/evidence/LIVE-SCALE-001-V2/human-gate/decision.json",
+    "activation_audit_ref": "support/evidence/LIVE-SCALE-001-V2/human-gate/decision.json"
+  },
+  "handoffs": [],
+  "blockers": [
+    {
+      "task_id": "LIVE-SCALE-001-V2",
+      "owner": "Human/Ops",
+      "waiting_for": "Human/Ops",
+      "message": "Awaiting: CBL-LIVE-001-V2, BLA-007-V2, first_week_observation_report, risk_owner_signoff, operator_signoff",
+      "status": "resolved",
+      "created_at": "2026-05-21T03:01:56Z",
+      "resolved_at": "2026-06-01T02:42:08Z",
+      "resolution_ref": "support/evidence/LIVE-SCALE-001-V2/human-gate/decision.json"
+    }
+  ]
+}

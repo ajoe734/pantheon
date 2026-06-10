@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "HA-006-V2",
+  "archived_at": "2026-05-19T18:47:06Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "HA-006-V2",
+    "title": "Cost ceiling monitor",
+    "summary_zh": "Monitor: production monthly cost ceiling (USD 800 per SLA). Alarm path defined; auto-cap behavior documented.",
+    "phase": "Phase 8 / EPIC-BFF-HA",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "HA-002-V2"
+    ],
+    "artifacts": [
+      "services/bff/ha/cost_ceiling_monitor.py",
+      "tests/bff/test_cost_ceiling_monitor.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Closeout complete: PR #280 merged to dev at 96e231e5f692e0bc901b1ca2d5b8e70c917d0227; validation python3 -m pytest -q tests/bff/test_cost_ceiling_monitor.py tests/bff/test_sla_targets.py tests/bff/test_degraded_mode.py passed 20 tests.",
+    "last_update": "2026-05-19T18:47:06Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：production USD 800 ceiling 正確載入、alarm path 完整定義、auto-cap 為 alarm_only_manual_gate（不自動降級 BFF 可用性）、5 個狀態覆蓋含 fail-closed data unavailable 路徑、8 個測試全通過"
+    ],
+    "review_file": "support/evidence/HA-006-V2/review_claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T18:47:06Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ha-006-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/HA-006-V2",
+      "git_clean_required": false,
+      "commit": "d693c62d1ef9c92aa572a5145110dd830553c05f",
+      "commit_subject": "HA-006-V2: finalize cost ceiling monitor closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "HA-006-V2 task brief and closeout evidence artifacts.",
+        "Not changing": "cost ceiling monitor logic, focused tests, L1 HA policy, BFF routing, billing integrations, production replica settings, or broker/capital controls.",
+        "Composes with": "merged delivery PR #264 and ai-status done publication after this closeout commit is merged.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "HA-006-V2",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m pytest -q tests/bff/test_cost_ceiling_monitor.py tests/bff/test_sla_targets.py tests/bff/test_degraded_mode.py (20 passed in 1.62s)"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/HA-006-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "13bd9fc22177b94f93116abce6e177506ab58a9e",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "HA-006-V2",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for review: PR #264 adds services/bff/ha/cost_ceiling_monitor.py and tests/bff/test_cost_ceiling_monitor.py. Local verification on refreshed origin/dev base: python3 -m pytest -q tests/bff/test_cost_ceiling_monitor.py tests/bff/test_sla_targets.py tests/bff/test_degraded_mode.py -> 20 passed. Production SLA cost ceiling is USD 800; alarm path and alarm-only manual-gate auto-cap behavior are encoded; no L1 docs modified.",
+      "status": "done",
+      "created_at": "2026-05-19T17:48:55Z",
+      "resolved_at": "2026-05-19T18:19:04Z"
+    },
+    {
+      "task_id": "HA-006-V2",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: cost ceiling monitor is correct, fail-closed, and fully tested. Returning to Codex2 for done closeout.",
+      "status": "done",
+      "created_at": "2026-05-19T18:19:04Z",
+      "resolved_at": "2026-05-19T18:47:07Z"
+    }
+  ],
+  "blockers": []
+}

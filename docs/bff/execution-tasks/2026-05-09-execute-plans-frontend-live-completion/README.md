@@ -2,6 +2,16 @@
 
 Date: 2026-05-09
 
+## Superseded Dev Hosting Note - 2026-06-08
+
+This task pack predates the Pantheon-owned dev frontend hosting decision. For
+current frontend work, use `ajoe734/execute-plans` and deploy dev FE from the
+Pantheon dev environment. Do not use Lovable publish state as the dev frontend
+source of truth.
+
+Canonical current rule:
+`docs/frontend/execute-plans-dev-hosting.md`.
+
 Repo under implementation:
 
 - `/home/lupin/code/execute-plans`

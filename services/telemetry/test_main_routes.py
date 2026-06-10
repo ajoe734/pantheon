@@ -25,8 +25,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 import services.telemetry.main as _main
 from services.telemetry.ingest_svc import TelemetryIngestService
+from services.telemetry.heartbeat_service import build_telemetry_event_from_runtime_heartbeat
 from services.telemetry.lineage_read import LineageReadService
 from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+from services.telemetry.dead_letter import TAG_WRITER_ERROR
 
 # ---------------------------------------------------------------------------
 # Stubs
@@ -42,6 +44,7 @@ _KNOWN_BINDING = types.SimpleNamespace(
     plan_id="plan-456",
     persona_capital_binding_id="pcb-789",
     deployment_mode="paper",
+    execution_mode="paper",
     effective_at="2026-01-01T00:00:00Z",
     retired_at=None,
 )
@@ -220,6 +223,9 @@ class TestMainRoutes(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        cls._old_runtime_manager_url = os.environ.get("PANTHEON_RUNTIME_MANAGER_URL")
+        os.environ["PANTHEON_RUNTIME_MANAGER_URL"] = "http://runtime-manager.test"
+
         # Start a dedicated asyncio event loop in a daemon thread so the
         # TelemetryIngestService batch writer can run during the test.
         loop = asyncio.new_event_loop()
@@ -263,6 +269,10 @@ class TestMainRoutes(unittest.TestCase):
         if cls._loop and cls._loop.is_running():
             cls._loop.call_soon_threadsafe(cls._loop.stop)
         _main._loop = None
+        if cls._old_runtime_manager_url is None:
+            os.environ.pop("PANTHEON_RUNTIME_MANAGER_URL", None)
+        else:
+            os.environ["PANTHEON_RUNTIME_MANAGER_URL"] = cls._old_runtime_manager_url
 
     # --- health ---
 
@@ -282,6 +292,32 @@ class TestMainRoutes(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 202)
         self.assertEqual(resp.get_json()["status"], "accepted")
+
+    def test_readyz_exposes_writer_and_dlq_metrics(self):
+        resp = self.client.get("/readyz")
+        self.assertEqual(resp.status_code, 200)
+        payload = resp.get_json()
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["dependencies"]["telemetry_writer"]["status"], "ok")
+        self.assertTrue(payload["dependencies"]["telemetry_writer"]["running"])
+        self.assertEqual(payload["dependencies"]["dead_letter_queue"]["status"], "ok")
+        self.assertIn("writer_total_written", payload["metrics"])
+        self.assertIn("dlq_memory_entries", payload["metrics"])
+        self.assertIn("startup_dlq_loaded", payload["metrics"])
+
+    def test_replay_route_replays_write_failure_entry(self):
+        _main._svc._dlq.reject(
+            _make_event(
+                binding_id=_KNOWN_BINDING_ID,
+                event_id="route-dlq-replay-001",
+            ),
+            tags=[TAG_WRITER_ERROR],
+            reason="simulated transient write outage",
+        )
+
+        resp = self.client.post("/api/telemetry/replay")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json()["replayed"], 1)
 
     def test_paper_heartbeat_updates_runtime_summary_route(self):
         resp = self.client.post(
@@ -352,6 +388,36 @@ class TestMainRoutes(unittest.TestCase):
         self.assertEqual(status["broker_status"], "ok")
         self.assertEqual(status["queue_lag_ms"], 7)
         self.assertEqual(status["event_delivery_lag_ms"], 12)
+
+    def test_runtime_heartbeat_canary_execution_mode_remains_canary(self):
+        binding = types.SimpleNamespace(
+            binding_id="canary-binding-001",
+            runtime_id="lean-worker-canary",
+            capital_pool_id="pool-canary",
+            artifact_id="artifact-canary",
+            artifact_version="1.0.0",
+            plan_id="plan-canary",
+            persona_capital_binding_id="pcb-canary",
+            deployment_mode="canary",
+            execution_mode="canary",
+        )
+        event = build_telemetry_event_from_runtime_heartbeat(
+            {
+                "runtime_id": "lean-worker-canary",
+                "runtime_binding_id": "canary-binding-001",
+                "capital_pool_id": "pool-canary",
+                "artifact_id": "artifact-canary",
+                "deployment_mode": "canary",
+                "heartbeat_time": "2026-04-15T12:00:06Z",
+                "connectivity_status": "connected",
+                "broker_status": "ok",
+                "target": {"strategy_id": "strategy-canary"},
+            },
+            binding=binding,
+        )
+
+        self.assertEqual(event["execution_mode"], "canary")
+        self.assertEqual(event["deployment_stage"], "canary")
 
     def test_runtime_heartbeat_endpoint_rejects_unknown_binding(self):
         heartbeat = {

@@ -14,13 +14,15 @@ def base_env() -> dict[str, str]:
         "EXECUTION_BROKER_PROVIDER": "IBKR",
         "TW_EXECUTION_PROVIDER": "Shioaji",
         "CRYPTO_EXECUTION_PROVIDER": "Kraken",
-        "TW_RESEARCH_PROVIDER": "TEJ",
+        "TW_RESEARCH_PROVIDER": "FinMind",
+        "TW_HISTORICAL_BACKFILL_PROVIDER": "TEJ",
         "BROKER_API_KEY_SECRET_NAME": "pantheon-dev-broker-api-key",
         "BROKER_API_SECRET_SECRET_NAME": "pantheon-dev-broker-api-secret",
         "SHIOAJI_API_KEY_SECRET_NAME": "pantheon-dev-shioaji-api-key",
         "SHIOAJI_SECRET_KEY_SECRET_NAME": "pantheon-dev-shioaji-secret-key",
         "KRAKEN_API_KEY_SECRET_NAME": "pantheon-dev-kraken-api-key",
         "KRAKEN_API_SECRET_SECRET_NAME": "pantheon-dev-kraken-api-secret",
+        "FINMIND_API_TOKEN_SECRET_NAME": "pantheon-dev-finmind-api-token",
         "TEJ_API_KEY_SECRET_NAME": "pantheon-dev-tej-api-key",
         "CANARY_BROKER_ACCOUNT_REF": "broker-subaccount-paper-us-equities",
         "CANARY_VENUE_REF": "venue-nyse-arca-smart",
@@ -174,16 +176,17 @@ class RunEp5CanaryReadinessTest(unittest.TestCase):
         self.assertEqual(payload["providers"]["ibkr"]["expected_provider"], "IBKR")
         self.assertEqual(payload["providers"]["shioaji"]["expected_provider"], "Shioaji")
         self.assertEqual(payload["providers"]["kraken"]["expected_provider"], "Kraken")
-        self.assertEqual(payload["providers"]["tej"]["expected_provider"], "TEJ")
+        self.assertEqual(payload["providers"]["finmind"]["expected_provider"], "FinMind")
+        self.assertEqual(payload["providers"]["tej_backfill"]["expected_provider"], "TEJ")
         self.assertEqual(payload["providers"]["ibkr"]["order_payload"]["broker"], "IBKR")
         self.assertEqual(payload["providers"]["shioaji"]["quote_subscription"]["exchange"], "TSE")
         self.assertEqual(payload["providers"]["kraken"]["order_payload"]["provider"], "Kraken")
         self.assertEqual(
-            payload["providers"]["tej"]["normalized_dataset"]["governance_metadata"]["source_key"],
-            "tej",
+            payload["providers"]["finmind"]["normalized_dataset"]["governance_metadata"]["source_key"],
+            "finmind",
         )
         self.assertEqual(
-            payload["providers"]["tej"]["normalized_dataset"]["governance_metadata"]["source_class"],
+            payload["providers"]["finmind"]["normalized_dataset"]["governance_metadata"]["source_class"],
             "research_grade",
         )
 
@@ -203,9 +206,10 @@ class RunEp5CanaryReadinessTest(unittest.TestCase):
             summary = json.loads((output_dir / "summary.json").read_text(encoding="utf-8"))
             payload = json.loads((output_dir / "datasource-smoke.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["status"], "pass")
-            self.assertEqual(sorted(summary["providers"]), ["ibkr", "kraken", "shioaji", "tej"])
+            self.assertEqual(sorted(summary["providers"]), ["finmind", "ibkr", "kraken", "shioaji", "tej_backfill"])
             self.assertEqual(payload["task_id"], "APP-003-DATASOURCE-OPS-001")
-            self.assertEqual(payload["providers"]["tej"]["dataset_code"], "TWN/APRCD1")
+            self.assertEqual(payload["providers"]["finmind"]["dataset_code"], "TaiwanStockTradingDailyReport")
+            self.assertEqual(payload["providers"]["tej_backfill"]["dataset_code"], "TWN/APRCD1")
 
     def test_build_canary_plan_carries_runtime_manager_promotion_gate(self) -> None:
         plan, projection = readiness.build_canary_plan(base_env())

@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "BFF-B1-001-DELTA-2",
+  "archived_at": "2026-05-25T05:20:41Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-B1-001-DELTA-2",
+    "title": "CORS preflight: fix id-preview origin in strict mode + regex hex requirement",
+    "summary_zh": null,
+    "phase": "Sprint BFF-DELTA-V3 / EPIC-BFF-DELTA-V3-INFRA",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-25_delta_v3/BFF_API_GAP_delta_v3_spec.md;execute-plans/.lovable/audits/bff-backend-gap-2026-05-25-delta-v4.md;services/control-plane/bff/main.py;services/control-plane/bff/tests/test_auth_jwks_strict.py;support/evidence/bff-delta-v3-20260525/redeploy-curl-results.md"
+    ],
+    "acceptance": [
+      "Remove id-preview URL from _DEV_LOVABLE_CORS_ORIGINS so it survives production-strict filter (mirror BFF-B1-001-DELTA fix pattern for 140c41d5 URL);Fix _LOVABLE_PREVIEW_ORIGIN_REGEX hex requirement: change [a-f0-9]+-- to [a-f0-9]*-- so Lovable id-preview--<UUID> (no hex prefix) matches;Add unit test covering both static-match path (id-preview URL in DEFAULT list survives strict filter) and regex-match path (id-preview-<hex>--<UUID> and id-preview--<UUID> both match);Trigger gh workflow run nonprod-deploy.yml -f environment=dev -f component=auto after merge;Verify live OPTIONS /bff/me returns 204 with ACAO echoed for all 4 Lovable origins (id-preview-- + lovableproject.com + pantheon-dev.lovable.app + 140c41d5 lovableproject);Do not mark done if any of 4 origins still returns 400 or missing ACAO"
+    ],
+    "next": "Closeout complete: PR #573 merged owner finalization commit 86f1305e into dev (merge eeec62ac); validation git diff --check and pytest auth/CORS 20 passed; live OPTIONS evidence already recorded.",
+    "last_update": "2026-05-25T05:20:41Z",
+    "review_notes_zh": [
+      "審查通過：id-preview static origin 正確保留在嚴格模式 allowlist；regex hex 限制正確實作；8 項 CORS 測試覆蓋所有邊界案例；live deploy 四個 origin 全數返回 204"
+    ],
+    "review_file": "support/reviews/BFF-B1-001-DELTA-2-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-25T05:20:41Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-b1-001-delta-2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-B1-001-DELTA-2",
+      "git_clean_required": false,
+      "commit": "86f1305e6e77068a097806626f35650168c2c8d9",
+      "commit_subject": "BFF-B1-001-DELTA-2: finalize CORS closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "owner closeout evidence and task-scoped dispatch brief state for BFF-B1-001-DELTA-2.",
+        "Not changing": "BFF runtime behavior, CORS implementation, deploy script behavior, or canonical architecture truth.",
+        "Composes with": "merged implementation PRs #568, #569, #570 and Claude approval artifact ae56b109.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-B1-001-DELTA-2",
+        "Reviewer": "Claude",
+        "Verified": "AI_NAME=Codex ./scripts/ai-status.sh show BFF-B1-001-DELTA-2; git diff --check; python3 -m pytest services/control-plane/bff/tests/test_auth_jwks_strict.py -q (20 passed)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-B1-001-DELTA-2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "eeec62ac91dcd75db947f161b9aa73e176ba52b8",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-B1-001-DELTA-2",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Owner implementation merged via PR #568, PR #569, PR #570. Validation: git diff --check, pytest auth/CORS 20 passed, nonprod-deploy run 26383877729 passed, and live OPTIONS /bff/me returned 204 with exact ACAO for all four required Lovable origins. Please review and move to review_approved if accepted.",
+      "status": "done",
+      "created_at": "2026-05-25T05:02:34Z",
+      "resolved_at": "2026-05-25T05:09:19Z"
+    },
+    {
+      "task_id": "BFF-B1-001-DELTA-2",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: CORS id-preview strict-mode fix and hex-only regex are correct, tested, and live-verified. Returned to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-05-25T05:09:19Z",
+      "resolved_at": "2026-05-25T05:20:42Z"
+    }
+  ],
+  "blockers": []
+}

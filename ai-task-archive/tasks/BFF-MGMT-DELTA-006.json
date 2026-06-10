@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "task_id": "BFF-MGMT-DELTA-006",
+  "archived_at": "2026-05-24T14:36:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-MGMT-DELTA-006",
+    "title": "GET /bff/management/incident-timeline",
+    "summary_zh": null,
+    "phase": "Sprint BFF-DELTA / EPIC-BFF-DELTA-MGMT-LIVE",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-24_delta/BFF_API_GAP_delta_audit_spec.md;execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md;services/control-plane/bff/main.py;execute-plans/src/lib/bff-v1/management.ts"
+    ],
+    "acceptance": [
+      "Path registered; incidents chronologically sorted plus severity bucket high/medium/low;Anonymous 401 authenticated 200; envelope canonical; CORS preflight 204;pytest case incident_timeline"
+    ],
+    "next": "Owner finalized approved incident timeline route after PR #543 merged into dev at c2327e154dcb8efe3a9046cc24384843025be240. Verification: git diff --check; pytest focused BFF management delta suite (81 passed, 3 existing read_store.py datetime.utcnow warnings).",
+    "last_update": "2026-05-24T14:36:18Z",
+    "review_notes_zh": [
+      "審查通過：route/envelope/severity bucket/lineage/auth/CORS 全部符合規格。75 tests passed。",
+      "後續追蹤：datetime.utcnow() deprecation 警告為既有 read_store.py 問題，非本 task 引入，建議後續 task 修正。"
+    ],
+    "review_file": "support/reviews/BFF-MGMT-DELTA-006-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-24T14:36:18Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-mgmt-delta-006",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-MGMT-DELTA-006",
+      "git_clean_required": false,
+      "commit": "07b1a8c11700d05cacccb4ae2a44fff5b793181c",
+      "commit_subject": "BFF-MGMT-DELTA-006: record owner closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Verification": "git diff --check; pytest -q services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py (81 passed, 3 existing read_store.py datetime.utcnow warnings).",
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-MGMT-DELTA-006",
+        "Reviewer": "Claude",
+        "Verified": "git diff --check; pytest focused BFF management delta suite (81 passed, 3 warnings)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-MGMT-DELTA-006",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "c2327e154dcb8efe3a9046cc24384843025be240",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-MGMT-DELTA-006",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implementation committed and PR #536 opened for GET /bff/management/incident-timeline. Validated on latest origin/dev: pytest focused suite 75 passed, git diff --check clean. Please review route/envelope/severity bucket behavior before owner closeout.",
+      "status": "done",
+      "created_at": "2026-05-24T14:13:58Z",
+      "resolved_at": "2026-05-24T14:18:02Z"
+    },
+    {
+      "task_id": "BFF-MGMT-DELTA-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: route/envelope/severity bucket/lineage/auth/CORS verified. 75 tests passed. Returned to owner Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-05-24T14:18:02Z",
+      "resolved_at": "2026-05-24T14:36:19Z"
+    }
+  ],
+  "blockers": []
+}

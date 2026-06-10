@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "task_id": "OPS-WAVE-004-V2",
+  "archived_at": "2026-05-19T18:20:45Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OPS-WAVE-004-V2",
+    "title": "Release branch and publish tag discipline",
+    "summary_zh": "Map wave to publish/vYYYY.WW.0; validate no missing wave before publish; require closeout evidence before release branch. Per design reply section 3 (NEW SCOPE vs earlier OPS-WAVE-004 in 2026-05-18 packet).",
+    "phase": "Phase 8 / EPIC-OPS-WAVE",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "OPS-WAVE-001-V2"
+    ],
+    "artifacts": [
+      "scripts/release_branch_discipline.py",
+      "tests/orchestrator/test_release_branch_discipline.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner closeout complete: PR #263 merged into dev at b5b91e29ba6edf30db87c18047946af7673de246; task commit eb497bdcf2cb0f386e7d11f78e5bbf3fd1b7cdf9 is ancestor of origin/dev. Verified: python3 -m pytest -q tests/orchestrator/test_release_branch_discipline.py tests/orchestrator/test_wave_open_guard.py scripts/git/test_git_workflow_helpers.py (74 passed); python3 -m py_compile scripts/release_branch_discipline.py; bash -n scripts/git/nightly_publish.sh; git diff --check origin/dev...HEAD.",
+    "last_update": "2026-05-19T18:20:45Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：release_branch_discipline.py 純側效無，三項檢查（no_missing_wave / wave_frozen_then_closed / closeout_evidence）均正確實作；非可派 human-gate 豁免邏輯正確；nightly_publish.sh 正確透過 discipline checker 取版號；publish_promote.py regex 向後相容；7 項測試全通，整套 74 項測試通過；無 L1 canonical docs 修改"
+    ],
+    "review_file": "support/evidence/OPS-WAVE-004-V2/review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T18:20:45Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-wave-004-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-WAVE-004-V2",
+      "git_clean_required": false,
+      "commit": "eb497bdcf2cb0f386e7d11f78e5bbf3fd1b7cdf9",
+      "commit_subject": "OPS-WAVE-004-V2: enforce wave release discipline",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "release branch discipline checker, nightly publish gate, and L2 workflow/config version-format alignment.",
+        "Not changing": "wave open/freeze command semantics, release-candidate branch creation, L1 policy files, or evidence-retention rules.",
+        "Composes with": "OPS-WAVE-001-V2 wave guards and OPS-WAVE-005-V2 evidence-retention follow-up.",
+        "Verified": "python3 -m pytest -q tests/orchestrator/test_release_branch_discipline.py tests/orchestrator/test_wave_open_guard.py scripts/git/test_git_workflow_helpers.py; python3 -m py_compile scripts/release_branch_discipline.py; bash -n scripts/git/nightly_publish.sh; git diff --check",
+        "LLM-Agent": "Codex",
+        "Task-ID": "OPS-WAVE-004-V2",
+        "Reviewer": "Claude",
+        "Cross-Dir": "yes"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OPS-WAVE-004-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "881e80d9033f41a7a8f2d9935366090aff26db9a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OPS-WAVE-004-V2",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: PR #263 merged into dev at b5b91e29ba6edf30db87c18047946af7673de246. Task commit eb497bdcf2cb0f386e7d11f78e5bbf3fd1b7cdf9 adds scripts/release_branch_discipline.py and focused tests, gates nightly publish on wave-to-vYYYY.WW.0 mapping/no-missing-wave/freeze-then-close/closeout delivery metadata, and aligns L2 workflow docs/config. Verification: pytest release_branch_discipline + wave_open_guard + git_workflow_helpers = 74 passed; py_compile release_branch_discipline; bash -n nightly_publish; git diff --check; GitHub Branch CI Gate checks passed on PR #263.",
+      "status": "done",
+      "created_at": "2026-05-19T17:45:49Z",
+      "resolved_at": "2026-05-19T18:06:35Z"
+    },
+    {
+      "task_id": "OPS-WAVE-004-V2",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: release branch discipline checker, nightly publish gate, and L2 workflow/config version-format alignment all correct. 74 tests pass. Returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-19T18:06:35Z",
+      "resolved_at": "2026-05-19T18:20:46Z"
+    }
+  ],
+  "blockers": []
+}

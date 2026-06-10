@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,7 +10,17 @@ from typing import Any, Iterable
 from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parents[1]
-ARCHIVE_DIR = ROOT / "ai-task-archive"
+
+
+def status_root() -> Path:
+    raw = str(os.environ.get("PANTHEON_STATUS_ROOT") or "").strip()
+    if not raw:
+        return ROOT
+    return Path(os.path.expanduser(raw)).resolve()
+
+
+STATUS_ROOT = status_root()
+ARCHIVE_DIR = STATUS_ROOT / "ai-task-archive"
 ARCHIVE_TASKS_DIR = ARCHIVE_DIR / "tasks"
 ARCHIVE_INDEX_FILE = ARCHIVE_DIR / "index.json"
 
@@ -77,6 +88,27 @@ def archive_task_path(task_id: str | None) -> Path:
         raise ValueError("task_id is required for archive lookup")
     slug = quote(normalized, safe="-_.")
     return ARCHIVE_TASKS_DIR / f"{slug}.json"
+
+
+def archive_tasks_dir_for_status_root(status_root: str | Path) -> Path:
+    return Path(status_root).expanduser().resolve() / "ai-task-archive" / "tasks"
+
+
+def archive_task_path_in_dir(task_id: str | None, archive_tasks_dir: str | Path) -> Path:
+    normalized = normalize_task_id(task_id)
+    if not normalized:
+        raise ValueError("task_id is required for archive lookup")
+    slug = quote(normalized, safe="-_.")
+    return Path(archive_tasks_dir).expanduser().resolve() / f"{slug}.json"
+
+
+def archive_display_path(path: Path) -> str:
+    for root in (STATUS_ROOT, ROOT):
+        try:
+            return str(path.relative_to(root))
+        except ValueError:
+            continue
+    return str(path)
 
 
 def default_archive_index() -> dict[str, Any]:
@@ -148,7 +180,7 @@ def compact_terminal_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
         "last_update": task.get("last_update"),
         "archived_at": snapshot.get("archived_at"),
         "next": task.get("next"),
-        "snapshot_path": str(archive_task_path(task_id).relative_to(ROOT)),
+        "snapshot_path": archive_display_path(archive_task_path(task_id)),
     }
 
 
@@ -242,7 +274,13 @@ def archive_task_snapshot(
 
 
 class TaskResolver:
-    def __init__(self, active_tasks: Iterable[dict[str, Any]] | dict[str, dict[str, Any]] | None = None) -> None:
+    def __init__(
+        self,
+        active_tasks: Iterable[dict[str, Any]] | dict[str, dict[str, Any]] | None = None,
+        *,
+        status_root: str | Path | None = None,
+        archive_tasks_dir: str | Path | None = None,
+    ) -> None:
         if isinstance(active_tasks, dict):
             self._active = {
                 normalize_task_id(task_id): deepcopy(task)
@@ -255,6 +293,12 @@ class TaskResolver:
                 for task in (active_tasks or [])
                 if isinstance(task, dict) and normalize_task_id(task.get("id"))
             }
+        if archive_tasks_dir is not None:
+            self._archive_tasks_dir = Path(archive_tasks_dir).expanduser().resolve()
+        elif status_root is not None:
+            self._archive_tasks_dir = archive_tasks_dir_for_status_root(status_root)
+        else:
+            self._archive_tasks_dir = None
         self._archive_task_cache: dict[str, dict[str, Any] | None] = {}
         self._archive_snapshot_cache: dict[str, dict[str, Any] | None] = {}
 
@@ -279,7 +323,7 @@ class TaskResolver:
         if active is not None:
             return deepcopy(active)
         if normalized not in self._archive_task_cache:
-            self._archive_task_cache[normalized] = load_archived_task(normalized)
+            self._archive_task_cache[normalized] = self._load_archived_task(normalized)
         cached = self._archive_task_cache.get(normalized)
         return deepcopy(cached) if isinstance(cached, dict) else None
 
@@ -288,7 +332,7 @@ class TaskResolver:
         if not normalized or normalized in self._active:
             return None
         if normalized not in self._archive_snapshot_cache:
-            self._archive_snapshot_cache[normalized] = load_archived_snapshot(normalized)
+            self._archive_snapshot_cache[normalized] = self._load_archived_snapshot(normalized)
         cached = self._archive_snapshot_cache.get(normalized)
         return deepcopy(cached) if isinstance(cached, dict) else None
 
@@ -303,3 +347,19 @@ class TaskResolver:
         if status == TERMINAL_STATUS_DONE and terminal_outcome_for(task) == TERMINAL_OUTCOME_SUPERSEDED:
             return TERMINAL_OUTCOME_SUPERSEDED
         return status or "missing"
+
+    def _load_archived_snapshot(self, task_id: str | None) -> dict[str, Any] | None:
+        if self._archive_tasks_dir is None:
+            return load_archived_snapshot(task_id)
+        normalized = normalize_task_id(task_id)
+        if not normalized:
+            return None
+        snapshot = load_json(archive_task_path_in_dir(normalized, self._archive_tasks_dir), default=None)
+        return snapshot if isinstance(snapshot, dict) else None
+
+    def _load_archived_task(self, task_id: str | None) -> dict[str, Any] | None:
+        snapshot = self._load_archived_snapshot(task_id)
+        if not snapshot:
+            return None
+        task = snapshot.get("task")
+        return deepcopy(task) if isinstance(task, dict) else None

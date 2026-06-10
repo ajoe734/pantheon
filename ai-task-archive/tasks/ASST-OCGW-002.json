@@ -1,0 +1,134 @@
+{
+  "version": 1,
+  "task_id": "ASST-OCGW-002",
+  "archived_at": "2026-06-01T10:09:11Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASST-OCGW-002",
+    "title": "Add gateway CLI image and readiness probes",
+    "summary_zh": "在 OpenClaw gateway container 內安裝或探測 Codex/Claude CLI，回報 binary path version auth readiness mount mode 與 degraded reason。",
+    "phase": "Assistant OpenClaw Gateway Kernel/User Mode",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "ASST-OCGW-001"
+    ],
+    "artifacts": [
+      "services/openclaw-gateway-adapter/Dockerfile",
+      "services/openclaw-gateway-adapter/assistant_provider_runtime.py",
+      "services/openclaw-gateway-adapter/main.py",
+      "services/openclaw-gateway-adapter/tests/test_assistant_provider_runtime.py",
+      "scripts/openclaw-assistant-provider-smoke.sh"
+    ],
+    "acceptance": [
+      "gateway reports provider binary path and version",
+      "gateway reports credential mount path and mode",
+      "gateway degrades when binary is missing",
+      "gateway degrades when auth mount is missing",
+      "smoke proves readiness endpoint shape for codex and claude"
+    ],
+    "next": "Closeout: fixed SyntaxError in readiness probe tests; all 3 tests passed. PR #749 (implementation) and PR #750 (closeout evidence) merged into dev. Acceptance: binary path+version, mount mode, degrade on missing binary/mount, smoke script probes codex and claude.",
+    "last_update": "2026-06-01T10:09:11Z",
+    "source_documents": [
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/SA_assistant_kernel_user_mode.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/SD_assistant_kernel_user_mode.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md"
+    ],
+    "implementation_track": "assistant-openclaw-gateway-cli-mount",
+    "provider_runtime": "openclaw_gateway_cli_mount",
+    "credential_policy": "dedicated_service_user_oauth_mount",
+    "delivery_layer": "primary",
+    "review_notes_zh": [
+      "審查通過",
+      "後續追蹤事項"
+    ],
+    "review_file": "services/openclaw-gateway-adapter/tests/test_assistant_provider_runtime.py",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-01T10:09:11Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/asst-ocgw-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/ASST-OCGW-002",
+      "git_clean_required": false,
+      "commit": "e0f2ca3e283e6dbbaf63f726699ed735e2eed733",
+      "commit_subject": "ASST-OCGW-002: record closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Verified": "pytest 3/3 passed; PR #749 merged into dev",
+        "LLM-Agent": "Claude",
+        "Task-ID": "ASST-OCGW-002",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 2,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/ASST-OCGW-002",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "b51ce99251049c18f8a30d379ddf6f6feb4f866a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASST-OCGW-002",
+      "from": "Gemini2",
+      "to": "Codex2",
+      "message": "Implementation complete, ready for review. Final commit: e75c7a18.",
+      "status": "done",
+      "created_at": "2026-06-01T00:47:33Z",
+      "resolved_at": "2026-06-01T00:47:38Z"
+    },
+    {
+      "task_id": "ASST-OCGW-002",
+      "from": "Codex2",
+      "to": "Gemini2",
+      "message": "Review approved and returned to the owner for finalization",
+      "status": "done",
+      "created_at": "2026-06-01T00:47:38Z",
+      "resolved_at": "2026-06-01T00:47:46Z"
+    },
+    {
+      "task_id": "ASST-OCGW-002",
+      "from": "Gemini2",
+      "to": "Claude",
+      "message": "Chair reassigned owner from Gemini2 to Claude: Gemini2 blocked by persistent push-auth failure since 2026-05-19 (last_update: 2026-05-19T13:10:41Z; last_action 2026-05-20T11:29:47Z notes 'cleared tasks after push-auth failure'); supervisor confirms next='PR push blocked by auth failure' with targets=['Claude']; Claude is idle, not dispatch-paused, and is not the current reviewer (Codex2). Task returned to todo for a blocked-owner rescue dispatch.",
+      "status": "done",
+      "created_at": "2026-06-01T09:44:20Z",
+      "resolved_at": "2026-06-01T09:45:04Z"
+    },
+    {
+      "task_id": "ASST-OCGW-002",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Restoring review_approved state: Codex2 originally approved at 2026-06-01T00:47:38Z; task was reset to todo for blocked-owner rescue dispatch to Claude; implementation unchanged, PR #749 merged into dev.",
+      "status": "done",
+      "created_at": "2026-06-01T10:02:08Z",
+      "resolved_at": "2026-06-01T10:09:12Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "ASST-OCGW-002",
+      "owner": "Gemini2",
+      "waiting_for": "Gemini",
+      "message": "PR push blocked by auth failure.",
+      "status": "resolved",
+      "created_at": "2026-06-01T00:47:46Z",
+      "resolved_at": "2026-06-01T09:44:20Z",
+      "resolution_ref": "chair_reassignment:ASST-OCGW-002"
+    }
+  ]
+}

@@ -89,6 +89,13 @@ from services.foundation import (  # noqa: E402
     idempotency_record_from_entry,
     load_command_recovery_entries,
 )
+from services.capital.risk_policy import (  # noqa: E402
+    RiskPolicyEvaluation,
+    RiskPolicyEvaluationContext,
+    RiskPolicyEvaluator,
+    RiskPolicyTargetType,
+    risk_policy_rejection_message,
+)
 
 __all__ = [
     "RuntimeManagerService",
@@ -215,6 +222,117 @@ def _validate_activation_gate(
     gate["persona_capital_binding_id"] = persona_capital_binding_id
     gate["allowed_deployment_scope"] = allowed_deployment_scope
     return gate
+
+
+def _validate_upstream_risk_policy_evaluation(
+    payload: Any,
+    *,
+    error_prefix: str,
+) -> Optional[Dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return None
+    evaluation = RiskPolicyEvaluation.from_mapping(payload)
+    if evaluation.rejected:
+        raise RuntimeManagerError(risk_policy_rejection_message(error_prefix, evaluation))
+    return evaluation.to_dict()
+
+
+def _risk_policy_context_from_deploy_request(
+    request: Dict[str, Any],
+    *,
+    binding_metadata: Dict[str, Any],
+    target_stage: str,
+    capital_pool_id: str,
+    plan_id: str,
+    runtime_id: str,
+) -> RiskPolicyEvaluationContext:
+    activation_gate = _nested_mapping(request.get("promotion_gate"))
+    activation_gate.update(_nested_mapping(request.get("activation_gate")))
+    activation_gate.update(_nested_mapping(binding_metadata.get("activation_gate")))
+    metadata_context = _nested_mapping(binding_metadata.get("risk_policy_context"))
+    request_context = _nested_mapping(request.get("risk_policy_context"))
+    context = {
+        **metadata_context,
+        **request_context,
+        "target_type": RiskPolicyTargetType.RUNTIME_BINDING.value,
+        "target_id": request_context.get("target_id") or request.get("binding_id") or runtime_id or plan_id,
+        "capital_pool_id": capital_pool_id,
+        "stage": target_stage,
+        "risk_policy_ref": _first_non_empty_from_sources(
+            [request, binding_metadata, request_context, metadata_context],
+            "risk_policy_ref",
+        ),
+        "capital_scale_pct": request_context.get(
+            "capital_scale_pct",
+            activation_gate.get("capital_scale_pct"),
+        ),
+        "gross_scale_pct": request_context.get(
+            "gross_scale_pct",
+            activation_gate.get("gross_scale_pct"),
+        ),
+        "runtime_action": request.get("runtime_action") or binding_metadata.get("runtime_action"),
+        "target_weights": request_context.get("target_weights") or binding_metadata.get("target_weights") or {},
+        "asset_classes": request_context.get("asset_classes") or binding_metadata.get("asset_classes") or [],
+        "strategy_family": request_context.get("strategy_family") or binding_metadata.get("strategy_family"),
+        "gross_exposure": request_context.get("gross_exposure") or binding_metadata.get("gross_exposure"),
+        "net_exposure": request_context.get("net_exposure") or binding_metadata.get("net_exposure"),
+        "leverage": request_context.get("leverage") or binding_metadata.get("leverage"),
+        "turnover": request_context.get("turnover") or binding_metadata.get("turnover"),
+        "sector_exposures": request_context.get("sector_exposures")
+        or binding_metadata.get("sector_exposures")
+        or {},
+        "factor_exposures": request_context.get("factor_exposures")
+        or binding_metadata.get("factor_exposures")
+        or {},
+        "liquidity": request_context.get("liquidity") or binding_metadata.get("liquidity") or {},
+        "order_type": request_context.get("order_type") or binding_metadata.get("order_type"),
+        "time_in_force": request_context.get("time_in_force") or binding_metadata.get("time_in_force"),
+        "drawdown_pct": request_context.get("drawdown_pct") or binding_metadata.get("drawdown_pct"),
+        "kill_switch_trigger": request_context.get("kill_switch_trigger")
+        or binding_metadata.get("kill_switch_trigger"),
+        "metadata": {**binding_metadata, **metadata_context, **request_context},
+        "trace_id": request_context.get("trace_id") or binding_metadata.get("trace_id"),
+    }
+    return RiskPolicyEvaluationContext.from_mapping(context)
+
+
+def _evaluate_risk_policy_for_deploy(
+    request: Dict[str, Any],
+    *,
+    binding_metadata: Dict[str, Any],
+    target_stage: str,
+    capital_pool_id: str,
+    plan_id: str,
+    runtime_id: str,
+) -> None:
+    upstream = (
+        request.get("risk_policy_evaluation")
+        or binding_metadata.get("risk_policy_evaluation")
+    )
+    upstream_payload = _validate_upstream_risk_policy_evaluation(
+        upstream,
+        error_prefix="RuntimeBinding blocked",
+    )
+    if upstream_payload is not None:
+        binding_metadata.setdefault("risk_policy_evaluation", upstream_payload)
+
+    risk_policy = request.get("risk_policy") or binding_metadata.get("risk_policy")
+    if risk_policy is None:
+        return
+    evaluation = RiskPolicyEvaluator().evaluate(
+        risk_policy,
+        _risk_policy_context_from_deploy_request(
+            request,
+            binding_metadata=binding_metadata,
+            target_stage=target_stage,
+            capital_pool_id=capital_pool_id,
+            plan_id=plan_id,
+            runtime_id=runtime_id,
+        ),
+    )
+    binding_metadata["risk_policy_evaluation"] = evaluation.to_dict()
+    if evaluation.rejected:
+        raise RuntimeManagerError(risk_policy_rejection_message("RuntimeBinding blocked", evaluation))
 
 
 def _foundation_environment_scope(request: Dict[str, Any]) -> EnvironmentScope:
@@ -644,6 +762,7 @@ class RuntimeManagerService:
         rollback_parent = request.get("rollback_parent")
         rollback_action_type = request.get("rollback_action_type")
         binding_metadata = dict(request.get("metadata") or {}) if isinstance(request.get("metadata"), dict) else {}
+        execution_mode = str(request.get("execution_mode") or target_stage).strip().lower()
         if request.get("strategy_id"):
             binding_metadata.setdefault("strategy_id", str(request.get("strategy_id")))
 
@@ -685,6 +804,18 @@ class RuntimeManagerService:
                 f"target_stage={target_stage!r} is not a valid DeploymentMode. "
                 f"Must be one of {[e.value for e in DeploymentMode]}."
             )
+        try:
+            DeploymentMode(execution_mode)
+        except ValueError:
+            raise RuntimeManagerError(
+                f"execution_mode={execution_mode!r} is not a valid DeploymentMode. "
+                f"Must be one of {[e.value for e in DeploymentMode]}."
+            )
+        if execution_mode != target_stage:
+            raise RuntimeManagerError(
+                f"execution_mode={execution_mode!r} must equal target_stage={target_stage!r}. "
+                "Canary runtime bindings must not be collapsed into live."
+            )
 
         # Pre-condition 6: rollback fields consistency
         if rollback_parent and not rollback_action_type:
@@ -711,6 +842,15 @@ class RuntimeManagerService:
             if activation_gate is not None:
                 binding_metadata.setdefault("activation_gate", activation_gate)
 
+        _evaluate_risk_policy_for_deploy(
+            request,
+            binding_metadata=binding_metadata,
+            target_stage=target_stage,
+            capital_pool_id=capital_pool_id,
+            plan_id=plan_id,
+            runtime_id=runtime_id,
+        )
+
         binding_id = f"rb-{uuid.uuid4().hex}"
         binding = RuntimeBinding(
             binding_id=binding_id,
@@ -719,6 +859,7 @@ class RuntimeManagerService:
             artifact_id=artifact_id,
             artifact_version=artifact_version,
             deployment_mode=target_stage,
+            execution_mode=execution_mode,
             effective_at=utc_now(),
             status=RuntimeBindingStatus.ACTIVE.value,
             plan_id=plan_id,

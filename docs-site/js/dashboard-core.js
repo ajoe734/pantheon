@@ -338,7 +338,7 @@ export function buildCodexSlotRoster(orchState, status) {
   }
   return codexWorkerSlots.map((slot) => {
     const worker = bySlot.get(slot.id) || null;
-    const active = worker && ["running", "pending"].includes(worker.bucket);
+    const active = worker && ["running", "pending"].includes(worker.bucket) && worker.is_live_runtime !== false;
     return {
       ...slot,
       label: slot.id.replace(/^codex/, "Codex"),
@@ -357,12 +357,21 @@ export function normalizeWorkerRecords(orchState, status) {
     const task = taskMap.get(worker?.task_id) || null;
     const taskStatus = task?.status || null;
     const logicalAgentId = logicalWorkerAgentId(worker);
+    const runtimeBucket = String(worker?.runtime_bucket || worker?.bucket || "").toLowerCase();
+    const isLiveRuntime = worker?.is_live_runtime;
     let bucket = "pending";
 
-    if (["superseded", "reassigned"].includes(worker?.status)) {
+    if (["running", "pending", "transition", "completed", "stale"].includes(runtimeBucket)) {
+      bucket = runtimeBucket;
+      if (isLiveRuntime === false && ["running", "pending"].includes(bucket)) {
+        bucket = "stale";
+      }
+    } else if (["superseded", "reassigned"].includes(worker?.status)) {
       bucket = "transition";
     } else if (terminalTaskStatus(taskStatus) || ["completed", "failed"].includes(worker?.status)) {
       bucket = "completed";
+    } else if (isLiveRuntime === false && ["running", "started"].includes(worker?.status)) {
+      bucket = "stale";
     } else if (["running", "started"].includes(worker?.status)) {
       bucket = "running";
     } else if (["waiting_approval", "suspended_approval", "manual_pending", "retry_backoff", "stalled", "fallback"].includes(worker?.status)) {
@@ -377,6 +386,9 @@ export function normalizeWorkerRecords(orchState, status) {
       dispatch_mode: runtimeDispatchMode(worker),
       bucket,
       reason: worker?.reason || worker?.request_snapshot?.reason || null,
+      is_live_runtime: isLiveRuntime,
+      pid_alive: worker?.pid_alive,
+      pid_state: worker?.pid_state || null,
       display_actor: actorLabel(logicalAgentId, worker?.provider),
     };
   });
@@ -386,6 +398,9 @@ export function normalizeWorkerRecords(orchState, status) {
 
 export function workerLifecycleBadge(worker) {
   const status = String(worker?.status || "").toLowerCase();
+  if (worker?.bucket === "stale" || (worker?.is_live_runtime === false && ["running", "started"].includes(status))) {
+    return { label: "stale", className: "lifecycle-stale" };
+  }
   if (["running", "started"].includes(status)) {
     return { label: "active", className: "lifecycle-active" };
   }
@@ -437,9 +452,11 @@ export function normalizeDispatchQueue(orchState, status) {
   const taskMap = new Map((status?.tasks || []).map((task) => [task.id, task]));
   return normalizeQueueEvents(orchState)
     .map((event) => {
-      const taskStatus = taskMap.get(event.task_id)?.status || null;
+      const inferredTaskId = event.task_id || inferTaskIdFromQueueEvent(event, taskMap);
+      const taskStatus = taskMap.get(inferredTaskId)?.status || null;
       return {
         ...event,
+        task_id: inferredTaskId,
         logical_agent_id: logicalWorkerAgentId(event),
         task_status: taskStatus,
         stale: terminalTaskStatus(taskStatus),
@@ -448,11 +465,391 @@ export function normalizeDispatchQueue(orchState, status) {
     .filter((event) => !["completed", "failed"].includes(event.status) && !event.stale);
 }
 
+function inferTaskIdFromQueueEvent(event, taskMap) {
+  const fields = [
+    event?.task_id,
+    event?.event_key,
+    event?.last_wait_reason,
+    event?.reason,
+    event?.message,
+  ].filter(Boolean);
+  for (const field of fields) {
+    const text = String(field);
+    for (const taskId of taskMap.keys()) {
+      if (text.includes(taskId)) return taskId;
+    }
+  }
+  return event?.task_id || null;
+}
+
+function queueWaitReason(event) {
+  return event?.last_wait_reason
+    || event?.wait_reason
+    || event?.blocked_reason
+    || event?.last_error
+    || event?.reason
+    || "";
+}
+
+function queueEventTime(event) {
+  return event?.last_event_at
+    || event?.worktree_lease_blocked_at
+    || event?.last_attempt_at
+    || event?.processed_at
+    || event?.created_at
+    || null;
+}
+
+function taskStatusRank(task, rowState) {
+  const status = String(task?.status || "").toLowerCase();
+  if (rowState === "attention") return 0;
+  if (status === "blocked") return 1;
+  if (status === "in_progress") return 2;
+  if (status === "review") return 3;
+  if (rowState === "queued") return 4;
+  if (rowState === "ready") return 5;
+  if (status === "review_approved") return 6;
+  return 7;
+}
+
+function dependencyLabel(depId, taskMap) {
+  const dep = taskMap.get(depId);
+  if (!dep) return `${depId}: done`;
+  return `${depId}: ${dep.status || "-"}`;
+}
+
+function taskUnresolvedDeps(task, taskMap) {
+  return (task?.depends_on || []).filter((depId) => {
+    const dep = taskMap.get(depId);
+    if (!dep) return false;
+    return String(dep.status || "").toLowerCase() !== "done";
+  });
+}
+
+function taskDependents(taskId, tasks) {
+  return (tasks || []).filter((task) => (task.depends_on || []).includes(taskId));
+}
+
+function activeRowState(task, liveWorkers, queueEvents, mismatches, unresolvedDeps) {
+  const status = String(task?.status || "").toLowerCase();
+  const hasRunning = liveWorkers.some((worker) => worker.bucket === "running" || worker.runtime_bucket === "running");
+  if (mismatches.length || (status === "in_progress" && !hasRunning)) return "attention";
+  if (status === "blocked") return "blocked";
+  if (status === "review") return "review";
+  if (status === "review_approved") return "approved";
+  if (hasRunning) return "running";
+  if (queueEvents.length) return "queued";
+  if (unresolvedDeps.length) return "waiting";
+  if (status === "todo") return "ready";
+  return status || "unknown";
+}
+
+export function buildActiveWorkRows(status, orchState, dashboardBundle = null, approvalQueue = null) {
+  const tasks = status?.tasks || [];
+  const taskMap = new Map(tasks.map((task) => [task.id, task]));
+  const truth = buildTruthMismatches(status, orchState, approvalQueue);
+  const queueEvents = normalizeDispatchQueue(orchState, status);
+  const bundleLinks = Array.isArray(dashboardBundle?.worker_task_links) ? dashboardBundle.worker_task_links : [];
+  const bundleMismatches = Array.isArray(dashboardBundle?.truth_mismatches) ? dashboardBundle.truth_mismatches : [];
+  const mismatchItems = truth.mismatches.length ? truth.mismatches : bundleMismatches;
+
+  const queueByTask = new Map();
+  for (const event of queueEvents) {
+    const taskId = event.task_id || inferTaskIdFromQueueEvent(event, taskMap);
+    if (!taskId) continue;
+    if (!queueByTask.has(taskId)) queueByTask.set(taskId, []);
+    queueByTask.get(taskId).push(event);
+  }
+
+  const linksByTask = new Map();
+  for (const link of bundleLinks) {
+    const taskId = String(link.task_id || "").trim();
+    if (!taskId) continue;
+    if (!linksByTask.has(taskId)) linksByTask.set(taskId, []);
+    linksByTask.get(taskId).push(link);
+  }
+
+  const mismatchesByTask = new Map();
+  for (const mismatch of mismatchItems) {
+    const taskId = String(mismatch.task_id || "").trim();
+    if (!taskId) continue;
+    if (!mismatchesByTask.has(taskId)) mismatchesByTask.set(taskId, []);
+    mismatchesByTask.get(taskId).push(mismatch);
+  }
+
+  const rows = tasks
+    .filter((task) => !terminalTaskStatus(task.status))
+    .map((task) => {
+      const liveWorkers = truth.liveWorkersByTask.get(task.id) || [];
+      const linkedWorkers = linksByTask.get(task.id) || [];
+      const runtimeWorkers = liveWorkers.length ? liveWorkers : linkedWorkers;
+      const taskQueueEvents = queueByTask.get(task.id) || [];
+      const mismatches = mismatchesByTask.get(task.id) || [];
+      const unresolvedDeps = taskUnresolvedDeps(task, taskMap);
+      const dependents = taskDependents(task.id, tasks).filter((item) => !terminalTaskStatus(item.status));
+      const state = activeRowState(task, runtimeWorkers, taskQueueEvents, mismatches, unresolvedDeps);
+      const queueReasons = taskQueueEvents.map(queueWaitReason).filter(Boolean);
+      const primaryMismatch = mismatches[0] || null;
+      const primaryQueue = taskQueueEvents[0] || null;
+      let nextAction = task.next || "尚未指定下一步。";
+      if (queueReasons.length) {
+        nextAction = queueReasons[0];
+      } else if (primaryMismatch) {
+        nextAction = primaryMismatch.resolution_hint || primaryMismatch.summary || nextAction;
+      } else if (unresolvedDeps.length) {
+        nextAction = `等待前置完成：${unresolvedDeps.map((depId) => dependencyLabel(depId, taskMap)).join("、")}`;
+      }
+      return {
+        task,
+        state,
+        expected_actor: expectedTaskActor(task),
+        runtimeWorkers,
+        queueEvents: taskQueueEvents,
+        mismatches,
+        unresolvedDeps,
+        dependencies: task.depends_on || [],
+        dependencyLabels: (task.depends_on || []).map((depId) => dependencyLabel(depId, taskMap)),
+        dependents,
+        primaryQueue,
+        primaryQueueReason: queueReasons[0] || "",
+        primaryQueueAt: primaryQueue ? queueEventTime(primaryQueue) : null,
+        nextAction,
+        rank: taskStatusRank(task, state),
+      };
+    });
+
+  rows.sort((a, b) => {
+    if (a.rank !== b.rank) return a.rank - b.rank;
+    return String(b.task.last_update || "").localeCompare(String(a.task.last_update || ""));
+  });
+
+  return {
+    rows,
+    truth,
+    queueEvents,
+    counts: {
+      open: rows.length,
+      attention: rows.filter((row) => row.state === "attention").length,
+      running: rows.filter((row) => row.state === "running").length,
+      queued: rows.filter((row) => row.state === "queued").length,
+      waiting: rows.filter((row) => row.state === "waiting").length,
+      ready: rows.filter((row) => row.state === "ready").length,
+      review: rows.filter((row) => row.state === "review").length,
+      blocked: rows.filter((row) => row.state === "blocked").length,
+    },
+  };
+}
+
+export function buildDependencyRunway(status) {
+  const tasks = status?.tasks || [];
+  const taskMap = new Map(tasks.map((task) => [task.id, task]));
+  const openTasks = tasks.filter((task) => !terminalTaskStatus(task.status));
+  return openTasks
+    .map((task) => {
+      const unresolvedDeps = taskUnresolvedDeps(task, taskMap);
+      const dependents = taskDependents(task.id, tasks).filter((item) => !terminalTaskStatus(item.status));
+      let state = "waiting";
+      if (String(task.status || "").toLowerCase() === "blocked") state = "blocked";
+      else if (activeTaskStatuses.has(String(task.status || "").toLowerCase())) state = "active";
+      else if (!unresolvedDeps.length) state = "ready";
+      return {
+        task,
+        state,
+        unresolvedDeps,
+        dependencyLabels: (task.depends_on || []).map((depId) => dependencyLabel(depId, taskMap)),
+        dependents,
+        unlocks: dependents.map((item) => item.id),
+      };
+    })
+    .sort((a, b) => {
+      const order = { active: 0, blocked: 1, ready: 2, waiting: 3 };
+      const rank = (order[a.state] ?? 9) - (order[b.state] ?? 9);
+      if (rank) return rank;
+      return a.task.id.localeCompare(b.task.id);
+    });
+}
+
+export function buildProviderPauses(orchState) {
+  const pauses = orchState?.provider_guardrails?.dispatch_pauses;
+  if (!pauses || typeof pauses !== "object") return [];
+  return Object.entries(pauses)
+    .map(([provider, info]) => ({ provider, ...(info || {}) }))
+    .sort((a, b) => String(b.blocked_until || b.paused_at || "").localeCompare(String(a.blocked_until || a.paused_at || "")));
+}
+
+function workerLaneKey(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return "";
+  const compact = raw.replace(/[\s/_-]+/g, "");
+  if (compact === "claude2") return "claude2";
+  if (compact === "gemini2") return "gemini2";
+  if (compact === "codex2") return "codex2";
+  if (compact === "claude") return "claude";
+  if (compact === "gemini") return "gemini";
+  if (compact === "codex") return "codex";
+  if (compact === "grok" || compact === "copilot") return "copilot";
+  if (compact === "humanops") return "human_ops";
+  return raw.replace(/[\s/-]+/g, "_");
+}
+
+function workerLaneLabel(key, fallback = null) {
+  if (key === "human_ops") return "Human/Ops";
+  return agentLabel(fallback || key);
+}
+
+function finiteCount(value, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function mergeDispatchTarget(targets, key, capacity, source) {
+  if (!key) return;
+  const current = targets.get(key);
+  const normalizedCapacity = Math.max(0, finiteCount(capacity, 0));
+  if (!current || normalizedCapacity > current.capacity) {
+    targets.set(key, { capacity: normalizedCapacity, source });
+  }
+}
+
+export function buildWorkerCapacity(status, orchState, dashboardBundle = null, approvalQueue = null) {
+  const runtime = dashboardBundle?.runtime_summary || {};
+  const dispatchTargets = new Map();
+
+  for (const [name, target] of Object.entries(runtime.dispatch_targets || {})) {
+    mergeDispatchTarget(dispatchTargets, workerLaneKey(name), target, "dispatch target");
+  }
+  for (const [name, target] of Object.entries(status?.workload || {})) {
+    mergeDispatchTarget(dispatchTargets, workerLaneKey(name), target, "workload target");
+  }
+
+  const workers = normalizeWorkerRecords(orchState, status);
+  const queueEvents = normalizeDispatchQueue(orchState, status);
+  const pauses = buildProviderPauses(orchState);
+  const activeWork = buildActiveWorkRows(status, orchState, dashboardBundle, approvalQueue);
+  const runtimeLanes = runtime.lanes || {};
+  const runtimeLaneKeys = Object.keys(runtimeLanes).map(workerLaneKey).filter(Boolean);
+
+  const laneKeys = new Set([
+    ...dispatchTargets.keys(),
+    ...(status?.agents || []).map((agent) => workerLaneKey(agent.name)),
+    ...workers.map((worker) => workerLaneKey(worker.logical_agent_id || worker.provider || worker.agent_id)),
+    ...queueEvents.map((event) => workerLaneKey(event.logical_agent_id || event.provider || event.agent_id)),
+    ...pauses.map((pause) => workerLaneKey(pause.provider)),
+    ...runtimeLaneKeys,
+  ].filter(Boolean));
+
+  const runtimeLaneByKey = new Map(
+    Object.entries(runtimeLanes).map(([name, lane]) => [workerLaneKey(name), lane || {}])
+  );
+
+  const rows = [...laneKeys].map((key) => {
+    const agent = (status?.agents || []).find((item) => workerLaneKey(item.name) === key) || null;
+    const laneWorkers = workers.filter((worker) => workerLaneKey(worker.logical_agent_id || worker.provider || worker.agent_id) === key);
+    const laneQueue = queueEvents.filter((event) => workerLaneKey(event.logical_agent_id || event.provider || event.agent_id) === key);
+    const pause = pauses.find((item) => workerLaneKey(item.provider) === key) || null;
+    const ownedRows = activeWork.rows.filter((row) => workerLaneKey(row.task.owner) === key);
+    const target = dispatchTargets.get(key) || null;
+    const runtimeLane = runtimeLaneByKey.get(key) || {};
+    const workerRunning = laneWorkers.filter((worker) => worker.bucket === "running" && worker.is_live_runtime !== false).length;
+    const workerPending = laneWorkers.filter((worker) => worker.bucket === "pending" && worker.is_live_runtime !== false).length;
+    const running = Math.max(workerRunning, finiteCount(runtimeLane.running, 0));
+    const pending = Math.max(workerPending, finiteCount(runtimeLane.pending, 0));
+    const transition = Math.max(
+      laneWorkers.filter((worker) => worker.bucket === "transition").length,
+      finiteCount(runtimeLane.transition, 0)
+    );
+    const stale = laneWorkers.filter((worker) => worker.bucket === "stale").length;
+    const failed = Math.max(
+      laneWorkers.filter((worker) => String(worker.status || "").toLowerCase() === "failed").length,
+      finiteCount(runtimeLane.failed, 0)
+    );
+    const queued = Math.max(laneQueue.length, finiteCount(runtimeLane.queued, 0));
+    const capacity = target ? target.capacity : Math.max(running + pending + queued, ownedRows.length);
+    const liveOccupied = running + pending;
+    const queueBlocked = laneQueue.filter((event) => queueWaitReason(event)).length;
+    const activeTaskIds = ownedRows.map((row) => row.task.id);
+    const readyCount = ownedRows.filter((row) => row.state === "ready").length;
+    const waitingCount = ownedRows.filter((row) => row.state === "waiting").length;
+    const attentionCount = ownedRows.filter((row) => row.state === "attention").length;
+    let health = "idle";
+    if (pause) health = "paused";
+    else if (failed || stale) health = "degraded";
+    else if (running) health = "running";
+    else if (pending || queued) health = queueBlocked ? "blocked" : "queued";
+    else if (attentionCount) health = "blocked";
+    else if (readyCount || activeTaskIds.length) health = "ready";
+
+    return {
+      key,
+      label: workerLaneLabel(key, agent?.name || key),
+      agent,
+      capacity,
+      capacitySource: target?.source || "observed",
+      liveOccupied,
+      running,
+      pending,
+      transition,
+      stale,
+      failed,
+      queued,
+      queueBlocked,
+      pause,
+      health,
+      activeTaskIds,
+      readyCount,
+      waitingCount,
+      attentionCount,
+      idleCapacity: Math.max(0, capacity - liveOccupied),
+      lastUpdate: agent?.last_update || laneWorkers[0]?.last_event_at || laneQueue[0]?.last_event_at || null,
+    };
+  }).filter((row) => {
+    if (row.key === "human_ops" && !row.capacity && !row.liveOccupied && !row.queued && !row.activeTaskIds.length && !row.pause) {
+      return false;
+    }
+    return row.capacity || row.liveOccupied || row.queued || row.activeTaskIds.length || row.pause || row.agent;
+  });
+
+  rows.sort((a, b) => {
+    const order = { blocked: 0, degraded: 1, paused: 2, running: 3, queued: 4, ready: 5, idle: 6 };
+    const rank = (order[a.health] ?? 9) - (order[b.health] ?? 9);
+    if (rank) return rank;
+    if (b.activeTaskIds.length !== a.activeTaskIds.length) return b.activeTaskIds.length - a.activeTaskIds.length;
+    if (b.capacity !== a.capacity) return b.capacity - a.capacity;
+    return a.label.localeCompare(b.label);
+  });
+
+  return {
+    rows,
+    totals: {
+      lanes: rows.filter((row) => row.capacity > 0).length,
+      capacity: rows.reduce((sum, row) => sum + row.capacity, 0),
+      liveOccupied: rows.reduce((sum, row) => sum + row.liveOccupied, 0),
+      running: rows.reduce((sum, row) => sum + row.running, 0),
+      pending: rows.reduce((sum, row) => sum + row.pending, 0),
+      queued: rows.reduce((sum, row) => sum + row.queued, 0),
+      assigned: rows.reduce((sum, row) => sum + row.activeTaskIds.length, 0),
+      attention: rows.reduce((sum, row) => sum + row.attentionCount, 0),
+      stale: rows.reduce((sum, row) => sum + row.stale, 0),
+      failed: rows.reduce((sum, row) => sum + row.failed, 0),
+      paused: rows.filter((row) => row.pause).length,
+    },
+  };
+}
+
+export function buildWorkerHealth(status, orchState, dashboardBundle = null, approvalQueue = null) {
+  return buildWorkerCapacity(status, orchState, dashboardBundle, approvalQueue).rows.map((row) => ({
+    ...row,
+    agentId: row.key,
+  }));
+}
+
 function normalizedActorName(value) {
   const lowered = String(value || "").trim().toLowerCase();
   const aliases = {
     "claude 2": "claude2",
+    "claude (2)": "claude2",
     "gemini 2": "gemini2",
+    "gemini (2)": "gemini2",
     "codex (2)": "codex2",
     "codex 2": "codex2",
     "codex (3)": "codex",
@@ -504,7 +901,7 @@ export function buildTruthMismatches(status, orchState, approvalQueue = null) {
   const pendingApprovalRunIds = new Set(
     approvals.map((approval) => String(approval?.worker_run_id || "").trim()).filter(Boolean)
   );
-  const liveWorkers = workers.filter((worker) => ["running", "pending"].includes(worker.bucket));
+  const liveWorkers = workers.filter((worker) => ["running", "pending"].includes(worker.bucket) && worker.is_live_runtime !== false);
   const liveWorkersByTask = new Map();
   const mismatches = [];
   const seen = new Set();
@@ -827,9 +1224,9 @@ export function deriveAgentState(status, orchState) {
     );
     const waiting = queued.filter((task) => !ready.includes(task));
 
-    const liveRunningWorkers = workers.filter((worker) => worker.logical_agent_id === agentId && worker.bucket === "running");
-    const livePendingWorkers = workers.filter((worker) => worker.logical_agent_id === agentId && worker.bucket === "pending");
-    const liveTransitionWorkers = workers.filter((worker) => worker.logical_agent_id === agentId && worker.bucket === "transition");
+    const liveRunningWorkers = workers.filter((worker) => worker.logical_agent_id === agentId && worker.bucket === "running" && worker.is_live_runtime !== false);
+    const livePendingWorkers = workers.filter((worker) => worker.logical_agent_id === agentId && worker.bucket === "pending" && worker.is_live_runtime !== false);
+    const transitionWorkers = workers.filter((worker) => worker.logical_agent_id === agentId && worker.bucket === "transition");
 
     let derivedStatus = "idle";
     let derivedTaskIds = [];
@@ -851,10 +1248,10 @@ export function deriveAgentState(status, orchState) {
     } else if (active.some((task) => task.status === "review")) {
       derivedStatus = "reviewing";
       derivedTaskIds = active.map((task) => task.id);
-    } else if (livePendingWorkers.length || liveTransitionWorkers.length) {
+    } else if (livePendingWorkers.length) {
       derivedStatus = "pending";
-      derivedTaskIds = [...livePendingWorkers, ...liveTransitionWorkers].map((worker) => worker.task_id).filter(Boolean);
-      const latest = [...livePendingWorkers, ...liveTransitionWorkers].sort((a, b) => (b.last_event_at || "").localeCompare(a.last_event_at || ""))[0];
+      derivedTaskIds = livePendingWorkers.map((worker) => worker.task_id).filter(Boolean);
+      const latest = [...livePendingWorkers].sort((a, b) => (b.last_event_at || "").localeCompare(a.last_event_at || ""))[0];
       derivedNext = latest?.last_error || taskMap.get(latest?.task_id)?.next || derivedNext;
       derivedLastUpdate = latest?.last_event_at || derivedLastUpdate;
     } else if (ready.length) {
@@ -888,6 +1285,7 @@ export function deriveAgentState(status, orchState) {
       approved_count: approved.length,
       live_running_count: liveRunningWorkers.length,
       live_pending_count: livePendingWorkers.length,
+      transition_count: transitionWorkers.length,
       target_workload: Number.isFinite(Number(status?.workload?.[agent.name])) ? Number(status.workload[agent.name]) : null,
     };
   });

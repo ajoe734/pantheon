@@ -1,4 +1,4 @@
-"""HTTP facade for the canonical institutional memory store."""
+"""HTTP facade for the canonical memory stores."""
 from __future__ import annotations
 
 import os
@@ -8,7 +8,7 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Response
 
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
@@ -18,6 +18,18 @@ from .institutional_memory_store import (
     InstitutionalMemoryError,
     InstitutionalMemoryStore,
     build_institutional_memory_store,
+)
+from .learn_feedback_writeback import (
+    LearnFeedbackUnauthorizedError,
+    LearnFeedbackWritebackError,
+    write_learn_feedback,
+)
+from .persona_memory_store import (
+    PersonaMemoryEntry,
+    PersonaMemoryError,
+    PersonaMemoryStore,
+    PersonaRelevanceScope,
+    build_persona_memory_store,
 )
 
 
@@ -35,7 +47,8 @@ register_fastapi_health_routes(
     "memory",
     dependencies=lambda: {"persistence": PERSISTENCE_POSTURE.to_dict()},
     details=lambda: {
-        "store_path": str(_store_path()),
+        "institutional_store_path": str(_store_path()),
+        "persona_store_path": str(_persona_store_path()),
         "store_backend": STORE_BACKEND,
         "persistence_posture": PERSISTENCE_POSTURE.to_dict(),
     },
@@ -50,10 +63,24 @@ def _store_path() -> Path:
     return data_dir / "institutional_memory_entries.json"
 
 
+def _persona_store_path() -> Path:
+    explicit = os.getenv("PANTHEON_PERSONA_MEMORY_STORE", "").strip()
+    if explicit:
+        return Path(explicit)
+    data_dir = Path(os.getenv("PANTHEON_MEMORY_DATA_DIR", "/tmp/pantheon/memory"))
+    return data_dir / "persona_memory_entries.json"
+
+
 def _store() -> InstitutionalMemoryStore:
     path = _store_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     return build_institutional_memory_store(path)
+
+
+def _persona_store() -> PersonaMemoryStore:
+    path = _persona_store_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return build_persona_memory_store(path)
 
 
 def _governance_authz_url() -> str:
@@ -121,6 +148,48 @@ async def store_entry(payload: Dict[str, Any]):
     return {"entry_id": saved.entry_id}
 
 
+def _store_persona_payload(payload: Dict[str, Any]) -> Dict[str, str]:
+    try:
+        entry = PersonaMemoryEntry.from_dict(payload)
+        saved = _persona_store().create(entry)
+    except (PersonaMemoryError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail={"error": "invalid_persona_entry", "message": str(exc)}) from exc
+    return {"memory_id": saved.memory_id}
+
+
+@app.post("/api/memory/persona-entries", status_code=201)
+async def store_persona_entry(payload: Dict[str, Any]):
+    return _store_persona_payload(payload)
+
+
+@app.post("/api/memory/writebacks/persona", status_code=201)
+async def writeback_persona_entry(payload: Dict[str, Any]):
+    return _store_persona_payload(payload)
+
+
+@app.post("/api/memory/writebacks/learn-feedback", status_code=201)
+async def writeback_learn_feedback(payload: Dict[str, Any], response: Response):
+    try:
+        result = write_learn_feedback(
+            payload,
+            persona_store=_persona_store(),
+            institutional_store=_store(),
+        )
+    except LearnFeedbackUnauthorizedError as exc:
+        raise HTTPException(
+            status_code=403,
+            detail={"error": "learn_feedback_writeback_unauthorized", "message": str(exc)},
+        ) from exc
+    except (LearnFeedbackWritebackError, InstitutionalMemoryError, PersonaMemoryError, TypeError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "invalid_learn_feedback_writeback", "message": str(exc)},
+        ) from exc
+    if not result.get("created"):
+        response.status_code = 200
+    return result
+
+
 @app.get("/api/memory/entries")
 async def list_entries(
     knowledge_type: Optional[str] = Query(default=None),
@@ -157,6 +226,7 @@ async def retrieve_memory(
     scope: str = Query(default="both", pattern="^(institutional|persona|both)$"),
     query: str = Query(default=""),
     knowledge_type: Optional[str] = Query(default=None),
+    memory_type: Optional[str] = Query(default=None),
     scope_filter: Optional[str] = Query(default=None),
     tags: Optional[List[str]] = Query(default=None),
     limit: int = Query(default=10, ge=1, le=100),
@@ -166,6 +236,10 @@ async def retrieve_memory(
     resource = {"scope": scope}
     if persona_id:
         resource["persona_id"] = persona_id
+    persona_relevance_scope = None
+    if "consultation_session" in roles and scope in {"persona", "both"}:
+        persona_relevance_scope = PersonaRelevanceScope.PERSONA_AND_COMMITTEE.value
+        resource["relevance_scope"] = persona_relevance_scope
     context = {"session_id": session_id}
     if session_persona_id:
         context["session_persona_id"] = session_persona_id
@@ -185,27 +259,65 @@ async def retrieve_memory(
             },
         )
 
-    hits = []
+    ranked_hits = []
     if scope in {"institutional", "both"}:
-        for hit in _store().retrieve(
+        institutional_store = _store()
+        for hit in institutional_store.retrieve(
             query=query,
             knowledge_type=knowledge_type,
             scope_filter=scope_filter,
             tags=tag_values,
             limit=limit,
         ):
-            updated = _store().mark_reused(hit.entry.entry_id)
-            hits.append(
-                {
-                    "type": "institutional",
-                    "relevance_score": hit.relevance_score,
-                    "entry": updated.to_dict(),
-                }
+            ranked_hits.append(
+                ("institutional", hit.relevance_score, hit.entry.written_at, hit.entry.entry_id, hit.entry)
             )
 
+    if scope in {"persona", "both"}:
+        try:
+            persona_store = _persona_store()
+            for hit in persona_store.retrieve(
+                persona_id=persona_id or "",
+                query=query,
+                memory_type=memory_type,
+                relevance_scope=persona_relevance_scope,
+                tags=tag_values,
+                limit=limit,
+            ):
+                ranked_hits.append(
+                    ("persona", hit.relevance_score, hit.entry.written_at, hit.entry.memory_id, hit.entry)
+                )
+        except PersonaMemoryError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={"error": "invalid_persona_retrieve", "message": str(exc)},
+            ) from exc
+
+    ranked_hits.sort(key=lambda item: (item[1], item[2], item[3]), reverse=True)
+    selected_hits = ranked_hits[:limit]
+    response_hits = []
+    institutional_store = None
+    persona_store = None
+    for hit_type, relevance_score, _written_at, _entry_id, entry in selected_hits:
+        if hit_type == "institutional":
+            if institutional_store is None:
+                institutional_store = _store()
+            updated = institutional_store.mark_reused(entry.entry_id)
+        else:
+            if persona_store is None:
+                persona_store = _persona_store()
+            updated = persona_store.mark_reused(entry.memory_id)
+        response_hits.append(
+            {
+                "type": hit_type,
+                "relevance_score": relevance_score,
+                "entry": updated.to_dict(),
+            }
+        )
+
     return {
-        "hits": hits[:limit],
-        "count": len(hits[:limit]),
+        "hits": response_hits,
+        "count": len(response_hits),
         "scope": scope,
         "authz": {
             "allowed": True,

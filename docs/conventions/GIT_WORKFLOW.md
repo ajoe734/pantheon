@@ -19,7 +19,7 @@ master   ── PR-only ── canonical / production source
    ▲
    │ promote/<v> PR  (auto-merged after soak + CI)
    │
-publish/v<YYYY>.<MM>.<DD>.N   ── immutable snapshots from dev
+publish/v<YYYY>.<MM>.<DD>.<N> ── immutable snapshots from dev
    ▲
    │ nightly-publish-cut.yml  (cron 03:00 UTC)
    │
@@ -37,15 +37,15 @@ task/<TASK-ID>  ── ephemeral, auto-deleted by GitHub when PR merges
 | canonical   | `master`                              | permanent         | PR auto-merge only (promote / hotfix) |
 | integration | `dev`                                 | permanent         | PR auto-merge only (task / hotfix)    |
 | task        | `task/<TASK-ID>`                      | minutes to hours  | one autoworker / human; PR + auto-delete |
-| publish     | `publish/v<YYYY>.<MM>.<DD>.<N>`       | permanent (snapshot) | nightly cron; immutable after cut  |
+| publish     | `publish/v<YYYY>.<MM>.<DD>.<N>`       | permanent (snapshot) | nightly cron after release-state discipline; immutable after cut |
 | hotfix      | `hotfix/<topic>`                      | < 24 h            | one author; dual-PR (master + dev)    |
 
 ### 1.2 Tag types
 
 | Tag                              | When set                                          | What it marks                                   |
 |----------------------------------|---------------------------------------------------|-------------------------------------------------|
-| `release/v<YYYY>.<MM>.<DD>.N`    | At publish snapshot creation                      | Immutable snapshot ref                          |
-| `prod/v<YYYY>.<MM>.<DD>.N`       | When promote PR merges into master                | Production release marker                       |
+| `release/v<YYYY>.<MM>.<DD>.<N>`  | At publish snapshot creation                      | Immutable snapshot ref                          |
+| `prod/v<YYYY>.<MM>.<DD>.<N>`     | When promote PR merges into master                | Production release marker                       |
 | `archive/<branch>-<YYYY-MM-DD>`  | Before retiring any branch                        | Snapshot of branch tip prior to deletion        |
 | `recovery/<timestamp>`           | Before destructive ops that may go wrong          | Manual backup point (used for rebase rescue)    |
 
@@ -173,9 +173,14 @@ Pantheon implementation:
   anchor procedure and commit message shape
 - `.orchestrator/skills/task-closeout-finalization.md` defines how
   final closeout handles prior anchor commits and unrelated dirty files
+- `worker_worktrees` leases a separate git worktree per execution task
+  and launches auto workers from that isolated cwd while routing
+  `ai-status.sh` updates back to the supervisor root with
+  `PANTHEON_STATUS_ROOT`
 - `worker_tree_guard` may be enabled in warn or block mode to detect
-  dirty high-fragility surfaces before dispatch; it is disabled by
-  default and does not auto-restore state files
+  dirty high-fragility surfaces inside the task worktree before
+  dispatch; it is disabled by default and does not auto-restore state
+  files
 
 If a downstream repo keeps a separate `branch-strategy.md`, mirror this
 section there. In Pantheon, this document is the canonical branch
@@ -189,9 +194,13 @@ strategy.
 
 1. Compares `origin/dev` HEAD against the latest `release/v*` tag.
 2. If `dev` advanced (new task PRs merged since last cut):
-   - Creates `publish/v<YYYY>.<MM>.<DD>.0` from `origin/dev` HEAD.
+   - Runs `scripts/release_branch_discipline.py version`.
+   - Reads `.orchestrator/release-state.json`; in current `per_task` mode,
+     `ai-status.json.wave_state` is legacy read-only state and does not gate
+     publish cuts.
+   - Creates `publish/v<YYYY>.<MM>.<DD>.<N>` from `origin/dev` HEAD.
    - Pushes the branch.
-   - Tags `release/v<YYYY>.<MM>.<DD>.0` (annotated).
+   - Tags `release/v<YYYY>.<MM>.<DD>.<N>` (annotated).
    - Triggers `nonprod-deploy.yml` (publish/* push → dev VM redeploy).
 3. If `dev` has not advanced, no-op.
 
@@ -200,14 +209,13 @@ strategy.
 | Segment | Meaning                                 | Example       |
 |---------|-----------------------------------------|---------------|
 | `YYYY`  | Calendar year                           | `2026`        |
-| `MM`    | Month (zero-padded)                     | `05`          |
-| `DD`    | Day of month (zero-padded)              | `17`          |
-| `N`     | Counter for same-day hotfix patches     | `0` initially |
+| `MM`    | Month (zero-padded)                     | `06`          |
+| `DD`    | Day of month (zero-padded)              | `09`          |
+| `N`     | Same-day patch slot, starting at 0      | `0`           |
 
 Examples:
-- `v2026.05.17.0` — nightly cut on 2026-05-17
-- `v2026.05.17.1` — same-day hotfix patch
-- `v2026.05.18.0` — next-day nightly cut
+- `v2026.06.09.0` — first publish cut on 2026-06-09
+- `v2026.06.09.1` — second publish cut on 2026-06-09
 
 ### 3.2 Manual cut
 
@@ -221,8 +229,8 @@ landed and you want a fresh release tag immediately).
 ### 3.3 Publish snapshots are immutable
 
 After cut, **never push commits onto a `publish/v*` branch**. To patch,
-cut a fresh `publish/v….N+1` from updated dev/master via the hotfix
-path (§ 6).
+merge the hotfix through the normal path, then cut a fresh daily publish
+snapshot once release discipline passes (§ 6).
 
 ---
 
@@ -249,7 +257,7 @@ If a release was cut at 03:00 UTC Monday, its promote PR opens earliest
 
 ### 4.2 Blocking a promote
 
-Open a GitHub issue with label `regression/v<YYYY>.<MM>.<DD>.N` (or any
+Open a GitHub issue with label `regression/v<YYYY>.<MM>.<DD>.<N>` (or any
 configured `block_labels`). `publish-promote.yml` skips that candidate
 until the label is removed.
 
@@ -393,10 +401,10 @@ This is intentional: gating discipline is in CI, not in human review
 | File                                       | Trigger                                                                 | Purpose                                                  |
 |--------------------------------------------|--------------------------------------------------------------------------|----------------------------------------------------------|
 | `.github/workflows/branch-ci.yml`          | push/PR on `task/**`, `hotfix/**`, `dev`, `publish/**`, `master`         | Trailer check + mirror guard + smoke acceptance gate     |
-| `.github/workflows/nightly-publish-cut.yml`| cron `0 3 * * *` + `workflow_dispatch`                                    | Cut `publish/v<date>.N` from `dev` if it advanced        |
+| `.github/workflows/nightly-publish-cut.yml`| cron `0 3 * * *` + `workflow_dispatch`                                    | Cut `publish/v<YYYY>.<MM>.<DD>.<N>` from `dev` if it advanced and release discipline passes |
 | `.github/workflows/publish-promote.yml`    | cron hourly + `release/v*` push + `workflow_dispatch`                    | Open `promote/<v>` PR after soak; auto-merge             |
 | `.github/workflows/master-release.yml`     | push on `master`                                                         | Tag `prod/<v>` on promote merges; tag hotfix merges      |
-| `.github/workflows/nonprod-deploy.yml`     | push on `publish/v*` + `workflow_dispatch`                               | Auto-deploy dev VM from latest publish; manual staging   |
+| `.github/workflows/nonprod-deploy.yml`     | push on `publish/v*`, push on `master`, and `workflow_dispatch`           | Auto-deploy dev from publish and staging-live from master |
 | `.github/workflows/orchestrator-sync.yml`  | push/tag/PR labeled                                                      | POST git event to orchestrator webhook (no-op without SYNC_URL) |
 
 ---
@@ -481,6 +489,7 @@ All workflow parameters live in `.orchestrator/config.json`:
     "enabled": true,
     "cron_utc": "0 3 * * *",
     "version_format": "vYYYY.MM.DD.N",
+    "release_state_file": ".orchestrator/release-state.json",
     "skip_if_no_new_commits": true
   },
   "promote": {

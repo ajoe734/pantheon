@@ -69,12 +69,35 @@ class CommandStore:
                 return cmd
         return None
 
-    def get_command_by_idempotency_key(self, idempotency_key: str) -> Optional[Dict[str, Any]]:
+    @staticmethod
+    def _operator_id_from_command(command: Dict[str, Any]) -> Optional[str]:
+        audit = command.get("audit") if isinstance(command.get("audit"), dict) else {}
+        for key in ("operator_id", "actor", "actor_id"):
+            value = str(audit.get(key) or "").strip()
+            if value:
+                return value
+
+        foundation = command.get("foundation") if isinstance(command.get("foundation"), dict) else {}
+        trace = foundation.get("trace_context") if isinstance(foundation.get("trace_context"), dict) else {}
+        actor_ref = trace.get("actor_ref") if isinstance(trace.get("actor_ref"), dict) else {}
+        value = str(actor_ref.get("actor_id") or "").strip()
+        return value or None
+
+    def get_command_by_idempotency_key(
+        self,
+        idempotency_key: str,
+        *,
+        operator_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        clean_operator_id = str(operator_id or "").strip()
         for cmd in self._get_all_commands():
             foundation = cmd.get("foundation") if isinstance(cmd.get("foundation"), dict) else {}
             record = foundation.get("idempotency_record") if isinstance(foundation.get("idempotency_record"), dict) else {}
-            if record.get("idempotency_key") == idempotency_key:
-                return cmd
+            if record.get("idempotency_key") != idempotency_key:
+                continue
+            if clean_operator_id and self._operator_id_from_command(cmd) != clean_operator_id:
+                continue
+            return cmd
         return None
 
     def update_status(

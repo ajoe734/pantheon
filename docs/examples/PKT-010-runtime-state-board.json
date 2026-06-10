@@ -26,6 +26,29 @@
           "total_trades": 21
         }
       },
+      "paper_runtime_monitoring": null,
+      "row_health": {
+        "status": "ok",
+        "checks": {
+          "runtime_binding": {
+            "status": "ok",
+            "source": "runtime_bindings",
+            "applies": true
+          },
+          "telemetry_summary": {
+            "status": "ok",
+            "source": "telemetry_summaries",
+            "applies": true
+          },
+          "paper_runtime_monitoring": {
+            "status": "ok",
+            "source": "not_applicable",
+            "applies": false,
+            "message": "Paper runtime monitoring applies only to paper runtimes."
+          }
+        },
+        "degraded_checks": []
+      },
       "rollback_summary": {
         "count": 1,
         "latest": {
@@ -67,6 +90,43 @@
           "total_trades": 12
         }
       },
+      "paper_runtime_monitoring": {
+        "session_id": "prmon-runtime-paper-100",
+        "session_type": "paper_runtime_monitoring",
+        "binding_id": "runtime-paper-100",
+        "runtime_binding_id": "runtime-paper-100",
+        "runtime_id": "runtime-paper-100",
+        "deployment_stage": "paper",
+        "status": "running",
+        "active": true,
+        "started_at": "2026-04-18T04:00:00Z",
+        "ended_at": null,
+        "last_heartbeat_at": "2026-04-18T04:10:00Z",
+        "heartbeat_status": "active",
+        "stale_after_seconds": 90,
+        "restart_count": 0
+      },
+      "row_health": {
+        "status": "ok",
+        "checks": {
+          "runtime_binding": {
+            "status": "ok",
+            "source": "runtime_bindings",
+            "applies": true
+          },
+          "telemetry_summary": {
+            "status": "ok",
+            "source": "telemetry_summaries",
+            "applies": true
+          },
+          "paper_runtime_monitoring": {
+            "status": "ok",
+            "source": "paper_runtime_monitoring_sessions",
+            "applies": true
+          }
+        },
+        "degraded_checks": []
+      },
       "rollback_summary": {
         "count": 0,
         "latest": null,
@@ -88,13 +148,23 @@
     "surfaces": {
       "runtime_state": {
         "status": "ok",
-        "source": "bff_composed"
+        "source": "bff_composed",
+        "support_surface_status": {
+          "runtime_roster": "ok",
+          "telemetry_summary": "ok",
+          "paper_runtime_monitoring": "ok",
+          "rollback_history": "ok"
+        }
       },
       "runtime_roster": {
         "status": "ok",
         "source": "canonical"
       },
       "telemetry_summary": {
+        "status": "ok",
+        "source": "service_store"
+      },
+      "paper_runtime_monitoring": {
         "status": "ok",
         "source": "service_store"
       },

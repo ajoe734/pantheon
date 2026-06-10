@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "BFF-PM12-002",
+  "archived_at": "2026-05-23T10:08:15Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-PM12-002",
+    "title": "GET /bff/management/portfolio-book/holdings global holdings",
+    "summary_zh": null,
+    "phase": "Sprint BFF-4 / EPIC-BFF-GAP-PM12",
+    "owner": "Codex2",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "BFF-PM12-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#b34-pm-12-composition-sources",
+      "execute-plans/src/lib/bff-v1/management.ts",
+      "services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "Returns positions + fills + mark prices + strategy persona runtime links",
+      "FE Global holdings table renders live"
+    ],
+    "next": "Closeout complete: implementation PR #453 merged at 7165d59212b652aea0e31c5198b2191c60d29d2d, closeout PR #456 merged at f660fafcf25e2e7caf8b5879cb37ccd862d91d52, and done-gate repair PR #464 merged at 9dbc291efc1c1c7cb110a314023ed0615bf3f81a. Required GitHub checks passed; local validation passed (PM12 contract pytest 11 passed earlier, scripts/test_ai_status.py 54 passed, py_compile, git diff --check).",
+    "last_update": "2026-05-23T10:08:15Z",
+    "review_notes_zh": [
+      "審查通過：8 個合約測試全 PASS、py_compile 乾淨、6 條 acceptance criteria 全部滿足；holdings 路由、TypeScript helpers、降級 telemetry 行為均符合規格"
+    ],
+    "review_file": "support/reviews/BFF-PM12-002-review-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T10:08:15Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-pm12-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-PM12-002",
+      "git_clean_required": false,
+      "repository_fallback": {
+        "from_repository_id": "execute_plans",
+        "missing_repository_path": "/tmp/pantheon-worker-worktrees/pantheon/execute-plans",
+        "reason": "non-Pantheon artifact repository local_path is unavailable; using Pantheon because the task also has Pantheon artifacts"
+      },
+      "commit": "76ddbf82e9a9cdb5c1fd3171646978ca6fadf34d",
+      "commit_subject": "BFF-PM12-002: merge dev for closeout gate",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "Branch refresh for BFF-PM12-002 closeout after dev advanced while PR #464 was open.",
+        "Not changing": "portfolio holdings runtime behavior, execute-plans client contract, or canonical PM-12 API spec.",
+        "Composes with": "PR #464 closeout-gate repair and current origin/dev.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-PM12-002",
+        "Reviewer": "Claude2",
+        "Verified": "PR #464 checks were green before dev refresh; rerun required checks after push."
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-PM12-002",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "9dbc291efc1c1c7cb110a314023ed0615bf3f81a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-PM12-002",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "BFF-PM12-002 implementation merged via PR #453 (merge commit 7165d59212b652aea0e31c5198b2191c60d29d2d). Added /bff/management/portfolio-book/holdings BFF route, execute-plans bff-v1 path/fetch helpers, spec update, and focused PM12 contract tests. Verified: pytest services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py; python3 -m py_compile services/control-plane/bff/main.py; git diff --check. Please review for lifecycle approval.",
+      "status": "done",
+      "created_at": "2026-05-23T09:17:51Z",
+      "resolved_at": "2026-05-23T09:22:02Z"
+    },
+    {
+      "task_id": "BFF-PM12-002",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Review approved: all 8 contract tests pass, all 6 acceptance criteria satisfied. Returned to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-05-23T09:22:02Z",
+      "resolved_at": "2026-05-23T10:08:16Z"
+    }
+  ],
+  "blockers": []
+}

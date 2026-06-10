@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "SENTINEL-RULE-COVERAGE-HEALTHREASON-001",
+  "archived_at": "2026-05-29T16:35:43Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SENTINEL-RULE-COVERAGE-HEALTHREASON-001",
+    "title": "Add Sentinel rules covering 6 HealthReasonCode values (rule engine work; not an endpoint)",
+    "summary_zh": null,
+    "phase": "Sprint BFF-WRITE-GAP / EPIC-WRITE-GAP-P2-MISC",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_bff_write_gap_2026-05-28/BFF_WRITE_GAP_SPEC.md;execute-plans/.lovable/specs/be-requirements/BE_WRITE_GAP_SPEC_2026-05-28.md;services/sentinel/"
+    ],
+    "acceptance": [
+      "Locate Sentinel rule registry (grep services/sentinel/ for register_rule or sentinel_rules table);Add one rule per HealthReasonCode: persona_lifecycle_not_active plus no_runtime_binding plus active_incident plus drawdown_threshold plus negative_pnl plus runtime_status_attention;Each rule emits a finding when matching reason present with severity bucket info-warn-alert per Pack D D-SentinelRules;After re-running Sentinel pass on the 13 degraded-personas fixture at least 13 findings (one per persona) appear in GET /bff/sentinel/findings?status=open;pytest covers each rule firing on its trigger reason plus not firing when reason absent;Documented gap (FE spec section 4): 13 personas currently degraded(85) with reasons [persona_lifecycle_not_active no_runtime_binding] produce 0 findings - this task closes that gap;Live verification after rule deploy: re-run probe and count findings against the 13 known-degraded fixture"
+    ],
+    "next": "Closeout: HealthReasonCode Sentinel rule engine (6 rules) approved by Claude2, PR #660 merged into dev (merge 34b7861e). Owner reproduced pytest 71 passed across 4 sentinel/read-store files. Resolved a push-range trailer false-positive (unowned dev commit e26ae859) by adding a fresh owner closeout-evidence commit.",
+    "last_update": "2026-05-29T16:35:43Z",
+    "review_notes_zh": [
+      "審查通過：6 個 HealthReasonCode 規則完整對應 _project_persona_fleet_health 實際輸出（無 drift），findings 為 additive 合併且有 id 去重，severity 用 canonical 詞彙＋Pack D bucket，test_sent001 contract 改為 subset 斷言；本地重跑 71 passed。",
+      "提醒 owner：PR #660 仍 OPEN/BEHIND，需先 merge 進 dev 才能 done。"
+    ],
+    "review_file": "support/reviews/SENTINEL-RULE-COVERAGE-HEALTHREASON-001-review-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-29T16:35:43Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sentinel-rule-coverage-healthreason-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SENTINEL-RULE-COVERAGE-HEALTHREASON-001",
+      "git_clean_required": false,
+      "commit": "a95b495edca538ca478ea25dd02c18c9d74bc41f",
+      "commit_subject": "SENTINEL-RULE-COVERAGE-HEALTHREASON-001: record closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "support/evidence closeout artifact only.",
+        "Not changing": "deliverable code (main.py rule engine) or tests.",
+        "Composes with": "PR #660; ai-status review_approved -> done gate.",
+        "LLM-Agent": "Claude",
+        "Task-ID": "SENTINEL-RULE-COVERAGE-HEALTHREASON-001",
+        "Reviewer": "Claude2",
+        "Verified": "pytest 4 sentinel/read-store files -q => 71 passed (reproduced)"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 3,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/SENTINEL-RULE-COVERAGE-HEALTHREASON-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "34b7861e27fe91217a4b6abdfcf45adcd48c7c2c",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SENTINEL-RULE-COVERAGE-HEALTHREASON-001",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-29T12:17:24Z",
+      "resolved_at": "2026-05-29T12:17:39Z"
+    },
+    {
+      "task_id": "SENTINEL-RULE-COVERAGE-HEALTHREASON-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Sentinel HealthReasonCode rule engine ready for review. PR #660 (auto-merge on). main.py adds _SENTINEL_HEALTH_REASON_RULES (6 rules) + _health_reason_sentinel_findings, merged into GET /bff/v5/sentinel/findings as kind=persona_health open findings; severity critical/high/medium/low + Pack D severity_bucket. Health read from existing persona-fleet projection (no drift). Tests: test_sentinel_healthreason_rule_coverage.py (per-rule fire/not-fire, registry drift guard, 13-degraded fixture >=13 open findings) + updated test_sent001 (additive subset assert). Verified 71 passed across 4 sentinel/read-store test files; pre-existing idempotency failures in test_final_command_execution_bridge.py are unrelated.",
+      "status": "done",
+      "created_at": "2026-05-29T16:13:23Z",
+      "resolved_at": "2026-05-29T16:17:01Z"
+    },
+    {
+      "task_id": "SENTINEL-RULE-COVERAGE-HEALTHREASON-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved: HealthReasonCode rule engine covers exactly the 6 reason codes (no drift), additive id-deduped merge, canonical severity + Pack D bucket, contract test relaxed to subset; reproduced 71 passed. Returned to owner Claude for closeout (PR #660 must merge into dev first).",
+      "status": "done",
+      "created_at": "2026-05-29T16:17:01Z",
+      "resolved_at": "2026-05-29T16:35:44Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,19 @@
+# Pantheon dev BFF + FE — Caddy HTTPS termination + ACME.
+#
+# Rendered and deployed by deploy/caddy/sync-caddy.sh — DO NOT hand-edit the
+# copy on the VM. __BFF_HOST__ and __FE_HOST__ are replaced with the env's
+# sslip.io hostnames at deploy time so a project/IP cutover updates cert SNI
+# automatically.
+#
+# Upstream is the operator-bff container published on the dev compose stack.
+__BFF_HOST__ {
+	reverse_proxy 127.0.0.1:18001
+}
+
+# Static execute-plans build installed by the dev FE deploy flow.
+__FE_HOST__ {
+	root * __FE_ROOT__
+	encode zstd gzip
+	try_files {path} /index.html
+	file_server
+}

@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "task_id": "BFF-B3-002",
+  "archived_at": "2026-05-23T08:52:17Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-B3-002",
+    "title": "GET /bff/management/persona-fleet aggregate",
+    "summary_zh": null,
+    "phase": "Sprint BFF-3 / EPIC-BFF-GAP-MGMT",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BFF-B2-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#b3--p1-management-aggregate-apis",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/tests/test_bff_b3_persona_fleet.py",
+      "support/evidence/BFF-B3-002/closeout.md"
+    ],
+    "acceptance": [
+      "Composes personas + bindings + telemetry persona-health + training evolution info per spec section B3.3",
+      "FE Persona Fleet page renders live"
+    ],
+    "next": "Closed BFF-B3-002 after PR #446 merged into dev at e1473cb5; persona fleet aggregate reviewed, closeout evidence recorded, and python3 -m pytest services/control-plane/bff/tests/test_bff_b3_persona_fleet.py passed (3 tests).",
+    "last_update": "2026-05-23T08:52:17Z",
+    "review_notes_zh": [
+      "審查通過：GET /bff/management/persona-fleet 已實作完整 persona fleet aggregate，覆蓋所有 6 個 source surface（personas、bindings、runtime bindings、telemetry、teaching sessions、evolution decisions），回傳標準 BFF aggregate envelope，auth gate 正確，health/pagination filter 正確，execute-plans client contract 無 seed-list fanout。5 項 AC 全部滿足，3 個 pytest 通過，trailers 完整。"
+    ],
+    "review_file": "services/control-plane/bff/tests/test_bff_b3_persona_fleet.py",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T08:52:17Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-b3-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-B3-002",
+      "git_clean_required": false,
+      "commit": "ea378eddb6da07213d24af2e6b14a2ac7ae0d5ee",
+      "commit_subject": "BFF-B3-002: record persona fleet closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-specific closeout evidence for BFF-B3-002.",
+        "Not changing": "backend route behavior, frontend client behavior, or canonical architecture docs.",
+        "Composes with": "merged implementation PR #444 and final ai-status done transition.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-B3-002",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m pytest services/control-plane/bff/tests/test_bff_b3_persona_fleet.py; git diff --check"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-B3-002",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "d8243c09fbbb6cd7142f67966f3a1180e17dc17f",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-B3-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "PR #444 open with auto-merge enabled. Implemented GET /bff/management/persona-fleet aggregate; validation: B3+B2 pytest 42 passed, PM12 pytest 4 passed, git diff --check origin/dev..HEAD passed. Awaiting Claude review.",
+      "status": "done",
+      "created_at": "2026-05-23T08:32:17Z",
+      "resolved_at": "2026-05-23T08:38:47Z"
+    },
+    {
+      "task_id": "BFF-B3-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 5 acceptance criteria satisfied. Backend composes full persona fleet aggregate, auth gate correct, filters work. Frontend client uses strict live read with no seed fanout. 3 pytest passed. Returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-23T08:38:47Z",
+      "resolved_at": "2026-05-23T08:52:18Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "task_id": "BFF-INFRA-ENVELOPE-001",
+  "archived_at": "2026-05-24T14:06:56Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-INFRA-ENVELOPE-001",
+    "title": "Error envelope shape - strip detail wrapper, add meta.correlationId per Pack D",
+    "summary_zh": "依 Pack D 調整 BFF error envelope：移除 detail wrapper，補上 meta.correlationId，並以 focused pytest 鎖定形狀。",
+    "phase": "Sprint BFF-DELTA / EPIC-BFF-DELTA-INFRA",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-24_delta/BFF_API_GAP_delta_audit_spec.md;execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md;services/control-plane/bff/main.py;services/control-plane/bff/test_bff_error_envelope_shape.py"
+    ],
+    "acceptance": [
+      "401 404 422 500 responses use shape error.code plus error.message plus meta.correlationId per Pack D (no outer detail wrapper);Outer detail wrapper removed across HTTPException RequestValidationError ValueError and generic 500 handlers;meta.correlationId echoes X-Correlation-Id request header or generates UUIDv4 when absent;Response X-Correlation-Id header set to same value;Success envelope data plus meta unchanged;Contract test services/control-plane/bff/test_bff_error_envelope_shape.py covers 4 status cases"
+    ],
+    "next": "Owner closeout complete: PR #534 merged to dev at 983ced40; closeout commit 5dd0416c verified Pack D error envelopes with 6 focused tests, 41 broader BFF tests, and git diff --check.",
+    "last_update": "2026-05-24T14:06:56Z",
+    "review_notes_zh": [
+      "審查通過：Pack D error envelope 形狀正確，移除 detail wrapper，meta.correlationId 與 X-Correlation-Id 一致；覆蓋 HTTPException/validation/value/generic/direct 五條路徑；47 個 pytest 全通過"
+    ],
+    "review_file": "support/reviews/BFF-INFRA-ENVELOPE-001-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-24T14:06:56Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-infra-envelope-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-INFRA-ENVELOPE-001",
+      "git_clean_required": false,
+      "commit": "5dd0416cfe463b076a53abc4f43c50bb702478f8",
+      "commit_subject": "BFF-INFRA-ENVELOPE-001: record owner closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-INFRA-ENVELOPE-001",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m pytest services/control-plane/bff/test_bff_error_envelope_shape.py -v; python3 -m pytest services/control-plane/bff/smoke_test.py services/control-plane/bff/test_final_precondition_errors.py services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py services/control-plane/bff/tests/test_bff_me_session_bootstrap.py -v; git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-INFRA-ENVELOPE-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "983ced40ffc6ce44fb43927aa2c047ec2542f2bc",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-INFRA-ENVELOPE-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implementation merged in PR #522 (merge d7b812f8328fa003bac950bb10570eac08d24406). Pack D error envelopes now remove the outer detail wrapper, set meta.correlationId and X-Correlation-Id, cover HTTPException/validation/value/generic/direct JSON errors, and update smoke assertions. Local validation: pytest services/control-plane/bff/smoke_test.py services/control-plane/bff/test_bff_error_envelope_shape.py services/control-plane/bff/test_final_precondition_errors.py services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py services/control-plane/bff/tests/test_bff_me_session_bootstrap.py -> 47 passed. GitHub required checks on PR #522 all passed. Please review and approve for owner closeout.",
+      "status": "done",
+      "created_at": "2026-05-24T13:29:22Z",
+      "resolved_at": "2026-05-24T13:40:56Z"
+    },
+    {
+      "task_id": "BFF-INFRA-ENVELOPE-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: Pack D error envelopes correct, all 47 tests pass. Returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-24T13:40:56Z",
+      "resolved_at": "2026-05-24T14:06:57Z"
+    }
+  ],
+  "blockers": []
+}

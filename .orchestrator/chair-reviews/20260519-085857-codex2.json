@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "No canonical task board entries or runnable parent support need exist for this cycle.",
+  "blocked_by": [
+    "Canonical ai-status task board is empty, so a sidecar wave would lack a parent support need."
+  ],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "OSS-FINRL-V2-001",
+    "OPS-ZOMBIE-TASK-BRANCH-SWEEP"
+  ]
+}

@@ -1,0 +1,285 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/persona-strategy-match/v1",
+  "title": "Pantheon PersonaStrategyMatch",
+  "description": "Explainable research recommendation that matches a persona to a strategy seed, StrategySpec, or alpha template. A match is not deployment, broker, runtime, or execution authority.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "match_id",
+    "persona_id",
+    "matched_object_type",
+    "matched_object_id",
+    "score",
+    "rank",
+    "score_breakdown",
+    "matched_fields",
+    "missing_data",
+    "allowed_use",
+    "entitlement_tags",
+    "recommended_action",
+    "evidence_refs",
+    "lineage",
+    "status",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["persona_strategy_match.v1"]
+    },
+    "match_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "persona_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "matched_object_type": {
+      "type": "string",
+      "enum": ["strategy_spec_seed", "strategy_spec", "alpha_template"]
+    },
+    "matched_object_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "rank": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "score_breakdown": {
+      "type": "object",
+      "required": [
+        "strategy_family_match",
+        "market_asset_match",
+        "holding_period_match",
+        "required_data_available",
+        "evidence_quality",
+        "backend_compatibility",
+        "risk_profile_match",
+        "novelty_or_diversification",
+        "total"
+      ],
+      "properties": {
+        "strategy_family_match": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 20
+        },
+        "market_asset_match": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 15
+        },
+        "holding_period_match": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "required_data_available": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 15
+        },
+        "evidence_quality": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 15
+        },
+        "backend_compatibility": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "risk_profile_match": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "novelty_or_diversification": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 5
+        },
+        "total": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        }
+      },
+      "additionalProperties": false
+    },
+    "matched_fields": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["field", "persona_value", "strategy_value", "contribution"],
+        "properties": {
+          "field": {
+            "type": "string",
+            "minLength": 1
+          },
+          "persona_value": {
+            "type": "string"
+          },
+          "strategy_value": {
+            "type": "string"
+          },
+          "contribution": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "missing_data": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["dataset", "severity", "remediation"],
+        "properties": {
+          "dataset": {
+            "type": "string",
+            "minLength": 1
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["info", "warning", "blocker"]
+          },
+          "remediation": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "recommended_action": {
+      "type": "object",
+      "required": ["type", "reason"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "create_research_ticket",
+            "promote_seed_candidate",
+            "run_rapid_eval",
+            "ignore",
+            "request_data_backfill"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "allowed_use": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "research_discovery",
+          "strategy_seed_generation",
+          "research_ticket_creation",
+          "rapid_eval_request"
+        ]
+      }
+    },
+    "entitlement_tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "lineage": {
+      "type": "object",
+      "required": ["discovery_session_id", "persona_profile_ref", "matched_source_refs", "evidence_refs"],
+      "properties": {
+        "discovery_session_id": {
+          "type": ["string", "null"]
+        },
+        "persona_profile_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "matched_source_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "strategy_seed_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "strategy_spec_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "source_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": ["candidate", "queued", "research_ticket_created", "ignored", "expired"]
+    },
+    "created_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "research_only": {
+          "type": "boolean",
+          "const": true
+        },
+        "execution_route": {
+          "type": "string",
+          "enum": ["none"]
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

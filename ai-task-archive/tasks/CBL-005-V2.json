@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "CBL-005-V2",
+  "archived_at": "2026-05-20T06:36:51Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "CBL-005-V2",
+    "title": "Live binding simulator",
+    "summary_zh": "Simulator for capital binding live activation + dual gate without flipping production flags.",
+    "phase": "Phase 8 / EPIC-CAPITAL-BINDING-LIVE",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "CBL-001-V2",
+      "CBL-002-V2",
+      "CBL-003-V2",
+      "CBL-004-V2"
+    ],
+    "artifacts": [
+      "services/capital/binding_live/simulator.py",
+      "tests/capital/test_binding_live_simulator.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner finalized approved live binding simulator after PR #343 and closeout PR #344 merged. Validation: pytest tests/capital/test_binding_live_simulator.py -q (9 passed); pytest tests/capital -q (45 passed); python3 -m py_compile services/capital/binding_live/simulator.py; git diff --check -- .orchestrator/task-briefs/cbl_005_v2.md services/capital/binding_live/simulator.py tests/capital/test_binding_live_simulator.py.",
+    "last_update": "2026-05-20T06:36:51Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：原實作的 simulation-only gate 組合正確，review 發現 dry_run/simulation_only false-like 字串與數值未 fail-closed，已由 reviewer repair PR #343 修正並合併。驗證通過：simulator focused tests 9 passed、capital suite 45 passed、py_compile、diff check。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T06:36:51Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/cbl-005-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/CBL-005-V2",
+      "git_clean_required": false,
+      "commit": "8a5e33fd573f45d698214e24aaaee38c6cfbfbcf",
+      "commit_subject": "CBL-005-V2: record closeout brief",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "CBL-005-V2",
+        "Reviewer": "Codex2",
+        "Verified": "pytest tests/capital/test_binding_live_simulator.py -q; pytest tests/capital -q; python3 -m py_compile services/capital/binding_live/simulator.py; git diff --check -- .orchestrator/task-briefs/cbl_005_v2.md services/capital/binding_live/simulator.py tests/capital/test_binding_live_simulator.py"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/CBL-005-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "cda23adb51c7478caadd4cef293c787aad18423e",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "CBL-005-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Implementation merged via PR #341 (merge c95cd71c5e37530941e714e1a7ff0d1927bf8c98; task commit 0cb488b0cadfabaf98aabd574ebb0fbab9246f42). Please review services/capital/binding_live/simulator.py and tests/capital/test_binding_live_simulator.py. Local verification: python3 -m pytest tests/capital (41 passed), py_compile simulator/test, git diff --check origin/dev..HEAD.",
+      "status": "done",
+      "created_at": "2026-05-20T06:11:02Z",
+      "resolved_at": "2026-05-20T06:24:49Z"
+    },
+    {
+      "task_id": "CBL-005-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved after simulator safety guard hardening merged via PR #343 (merge 096c2cc78028fadd4a6e9bb84b5a3c551bfedea7; fix 81856200976317a7308625765e9d81227f0414fa). Validation: simulator focused tests 9 passed, capital suite 45 passed, py_compile, diff check.",
+      "status": "done",
+      "created_at": "2026-05-20T06:24:49Z",
+      "resolved_at": "2026-05-20T06:36:51Z"
+    }
+  ],
+  "blockers": []
+}

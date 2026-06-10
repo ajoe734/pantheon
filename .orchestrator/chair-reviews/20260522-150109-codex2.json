@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "No runnable execution backlog or eligible sidecar parent exists.",
+  "blocked_by": [
+    "Current board has no runnable execution backlog; only PROD-WRITES-001-V2 and LIVE-SCALE-001-V2 are blocked human_gate tasks plus done tasks."
+  ],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SUP-PUBLISH-DISCIPLINE-REPAIR",
+    "SUP-PROMOTE-MERGE-128",
+    "OPS-TASK-BRANCH-HOUSEKEEP"
+  ]
+}

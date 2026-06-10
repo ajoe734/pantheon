@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "task_id": "ASST-KERNEL-001",
+  "archived_at": "2026-05-31T16:32:48Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASST-KERNEL-001",
+    "title": "Implement assistant context-pack schema and BFF route",
+    "summary_zh": "建立 assistant context pack model 與 BFF route，讓前端 route/entity/context refs 可被 BFF 組成帶來源、時間戳、staleness 與安全 allowlist 的後端觀測資料包。",
+    "phase": "Assistant OpenClaw Gateway Kernel/User Mode",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/control-plane/bff/assistant/models.py",
+      "services/control-plane/bff/assistant/context_composer.py",
+      "services/control-plane/bff/assistant/routes.py",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/tests/test_assistant_context_pack.py",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/"
+    ],
+    "acceptance": [
+      "context pack route builds structured snapshot",
+      "includes frontend route and selected entity",
+      "includes source refs timestamps and staleness metadata",
+      "composes allowlisted BFF surfaces only",
+      "user mode rejects kernel-only sources",
+      "tests cover allowlist missing sources and staleness"
+    ],
+    "next": "Closed ASST-KERNEL-001: implementation PR #670, closeout context PR #673, and owner closeout evidence PR #674 merged; Claude review approved context-pack schema/route; verified pytest tests/test_assistant_context_pack.py -q (3 passed).",
+    "last_update": "2026-05-31T16:32:48Z",
+    "source_documents": [
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/SA_assistant_kernel_user_mode.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/SD_assistant_kernel_user_mode.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md"
+    ],
+    "implementation_track": "assistant-openclaw-gateway-cli-mount",
+    "provider_runtime": "openclaw_gateway_cli_mount",
+    "credential_policy": "dedicated_service_user_oauth_mount",
+    "delivery_layer": "primary",
+    "review_notes_zh": [
+      "審查通過：context pack schema/route 符合全部 6 項 acceptance criteria，3 tests passed，user mode policy enforcement 正確，allowlist 與 staleness metadata 完整"
+    ],
+    "review_file": "support/reviews/ASST-KERNEL-001-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-31T16:32:48Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/asst-kernel-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/ASST-KERNEL-001",
+      "git_clean_required": false,
+      "commit": "43ba4170fc3c0424f047492cd49693ec5014d155",
+      "commit_subject": "ASST-KERNEL-001: record owner closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "support/reviews/ASST-KERNEL-001-closeout-codex.md owner finalization evidence.",
+        "Not changing": "assistant BFF implementation, context-pack schema, reviewer approval artifact, provider runtime, frontend wiring, or canonical architecture docs.",
+        "Composes with": "PR #670 implementation merge, PR #673 closeout context merge, and ai-status done archival.",
+        "Verified": "pytest tests/test_assistant_context_pack.py -q (services/control-plane/bff; 3 passed)",
+        "LLM-Agent": "Codex",
+        "Task-ID": "ASST-KERNEL-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/ASST-KERNEL-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "da5de6518e3ff5899707058c02d847b8850a7f52",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASST-KERNEL-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implementation merged in PR #670 (task commit 11f65217abbb723b25d8aca7150c3f0b85e11ec0, merge cb4eb3acc0429f5d6ed0e5a94b064d54f257f2c3). Please review assistant context-pack schema/route and approve for owner closeout.",
+      "status": "done",
+      "created_at": "2026-05-31T16:13:02Z",
+      "resolved_at": "2026-05-31T16:18:49Z"
+    },
+    {
+      "task_id": "ASST-KERNEL-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: context-pack schema, route, and tests all satisfy acceptance criteria. 3/3 tests pass. Returned to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-05-31T16:18:49Z",
+      "resolved_at": "2026-05-31T16:32:48Z"
+    }
+  ],
+  "blockers": []
+}

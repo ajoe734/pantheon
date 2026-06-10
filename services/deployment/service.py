@@ -266,6 +266,8 @@ class DeploymentPlannerService:
             metadata=request.metadata,
             supersedes_plan_id=request.supersedes_plan_id,
             status=request.status.value,
+            risk_policy=request.risk_policy,
+            risk_policy_context=request.risk_policy_context,
         )
         if persist:
             self.plan_store.put(plan)

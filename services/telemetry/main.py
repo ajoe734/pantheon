@@ -103,6 +103,15 @@ TELEMETRY_BATCH_INTERVAL
 TELEMETRY_MAX_RETRIES
     Max retries for transient write failures (default 5).
 
+TELEMETRY_REPLAY_DLQ_ON_START
+    If true, load persisted DLQ spill entries and replay safe write-failure
+    entries after the writer starts. Defaults to false because deployment
+    bootstrap already performs one explicit replay pass.
+
+TELEMETRY_REPLAY_DLQ_TAG
+    Optional explicit DLQ tag for startup replay. When unset, startup replay
+    uses the safe default write-failure tag set.
+
 LINEAGE_READ_CORPUS_PATH
     Optional path to the LIN-001A lineage benchmark corpus used to bootstrap
     the lineage read HTTP surface. Defaults to
@@ -254,6 +263,13 @@ _DEFAULT_LINEAGE_CORPUS_PATH = (
 )
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _build_service() -> TelemetryIngestService:
     """Instantiate TelemetryIngestService with production Postgres and RuntimeBinding wiring."""
     db_dsn = os.getenv("TELEMETRY_DB_DSN", "")
@@ -305,6 +321,8 @@ def _build_service() -> TelemetryIngestService:
         heartbeat_stale_after = int(os.getenv("TELEMETRY_RUNTIME_HEARTBEAT_STALE_SECONDS", "90"))
     except ValueError:
         heartbeat_stale_after = 90
+    replay_dlq_on_start = _env_bool("TELEMETRY_REPLAY_DLQ_ON_START", default=False)
+    dlq_replay_tag_filter = os.getenv("TELEMETRY_REPLAY_DLQ_TAG") or None
 
     Path(storage_dir).mkdir(parents=True, exist_ok=True)
     runtime_summary_path = os.getenv(
@@ -327,6 +345,8 @@ def _build_service() -> TelemetryIngestService:
         write_fn=write_fn,
         binding_store=binding_store,
         runtime_summary_store=runtime_summary_store,
+        replay_dlq_on_start=replay_dlq_on_start,
+        dlq_replay_tag_filter=dlq_replay_tag_filter,
     )
 
 
@@ -383,25 +403,84 @@ def _telemetry_metrics() -> dict[str, Any]:
     except Exception:
         return {"service_started": 0}
     service_stats = stats.get("service", {}) if isinstance(stats, dict) else {}
+    writer_stats = stats.get("writer", {}) if isinstance(stats, dict) else {}
+    dlq_stats = stats.get("dead_letter_queue", {}) if isinstance(stats, dict) else {}
+    buffer_stats = stats.get("buffer", {}) if isinstance(stats, dict) else {}
+    startup_stats = stats.get("startup", {}) if isinstance(stats, dict) else {}
     return {
         "service_started": 1 if service_stats.get("started") else 0,
-        "accepted_count": stats.get("accepted_count", 0) if isinstance(stats, dict) else 0,
-        "rejected_count": stats.get("rejected_count", 0) if isinstance(stats, dict) else 0,
+        "accepted_count": service_stats.get("total_ingested", 0),
+        "rejected_count": service_stats.get("total_rejected", 0),
+        "duplicate_count": service_stats.get("total_duplicates", 0),
+        "writer_running": 1 if writer_stats.get("running") else 0,
+        "writer_total_written": writer_stats.get("total_written", 0),
+        "writer_total_failed": writer_stats.get("total_failed", 0),
+        "writer_total_retried": writer_stats.get("total_retried", 0),
+        "writer_total_dlq": writer_stats.get("total_dlq", 0),
+        "writer_batches_flushed": writer_stats.get("batches_flushed", 0),
+        "buffer_size": buffer_stats.get("size", 0),
+        "buffer_capacity": buffer_stats.get("capacity", 0),
+        "dlq_memory_entries": dlq_stats.get("memory_entries", 0),
+        "dlq_total_rejected": dlq_stats.get("total_rejected", 0),
+        "dlq_incident_fired": 1 if dlq_stats.get("incident_fired") else 0,
+        "startup_dlq_loaded": startup_stats.get("dlq_loaded_from_spill", 0),
+        "startup_dlq_replayed": startup_stats.get("dlq_replayed_on_start", 0),
+    }
+
+
+def _telemetry_dependencies() -> dict[str, Any]:
+    try:
+        stats = _get_service().stats()
+    except Exception as exc:  # noqa: BLE001
+        writer_payload: dict[str, Any] = {
+            "status": "error",
+            "message": str(exc),
+        }
+        dlq_payload: dict[str, Any] = {"status": "ok", "memory_entries": 0}
+    else:
+        writer_stats = stats.get("writer", {}) if isinstance(stats, dict) else {}
+        service_stats = stats.get("service", {}) if isinstance(stats, dict) else {}
+        dlq_stats = stats.get("dead_letter_queue", {}) if isinstance(stats, dict) else {}
+        writer_running = bool(service_stats.get("started")) and bool(writer_stats.get("running"))
+        writer_payload = {
+            "status": "ok" if writer_running else "error",
+            "running": writer_running,
+            "total_written": writer_stats.get("total_written", 0),
+            "total_failed": writer_stats.get("total_failed", 0),
+            "total_retried": writer_stats.get("total_retried", 0),
+            "total_dlq": writer_stats.get("total_dlq", 0),
+            "batches_flushed": writer_stats.get("batches_flushed", 0),
+        }
+        dlq_payload = {
+            "status": "ok",
+            "memory_entries": dlq_stats.get("memory_entries", 0),
+            "total_rejected": dlq_stats.get("total_rejected", 0),
+            "incident_fired": bool(dlq_stats.get("incident_fired")),
+            "spill_path": dlq_stats.get("spill_path"),
+            "tag_counts": dlq_stats.get("tag_counts", {}),
+        }
+
+    return {
+        "runtime_manager": {
+            "status": "ok" if os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "").strip() else "degraded",
+            "url": os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "").strip(),
+        },
+        "lineage_read": {"status": "ok" if _lineage_svc is not None else "degraded"},
+        "telemetry_writer": writer_payload,
+        "dead_letter_queue": dlq_payload,
     }
 
 
 register_flask_health_routes(
     app,
     "telemetry-ingest",
-    dependencies=lambda: {
-        "runtime_manager": {
-            "status": "ok" if os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "").strip() else "degraded",
-            "url": os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "").strip(),
-        },
-        "lineage_read": {"status": "ok" if _lineage_svc is not None else "degraded"},
-    },
+    dependencies=_telemetry_dependencies,
     metrics=_telemetry_metrics,
-    details=lambda: {"storage_dir": os.getenv("TELEMETRY_STORAGE_DIR", _DEFAULT_STORAGE_DIR)},
+    details=lambda: {
+        "storage_dir": os.getenv("TELEMETRY_STORAGE_DIR", _DEFAULT_STORAGE_DIR),
+        "replay_dlq_on_start": _env_bool("TELEMETRY_REPLAY_DLQ_ON_START", default=False),
+        "dlq_replay_tag_filter": os.getenv("TELEMETRY_REPLAY_DLQ_TAG") or None,
+    },
 )
 
 

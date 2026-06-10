@@ -26,6 +26,7 @@ class _FakeCursor:
 class _FakeConnection:
     rows: dict[str, dict[str, dict]] = {}
     statements: list[str] = []
+    rollback_count = 0
 
     def __enter__(self):
         return self
@@ -50,6 +51,9 @@ class _FakeConnection:
             return _FakeCursor([(payload,) for payload in self.rows.get(table, {}).values()])
         return _FakeCursor([])
 
+    def rollback(self):
+        type(self).rollback_count += 1
+
     @staticmethod
     def _table_name(sql: str) -> str:
         match = re.search(r"(?:FROM|INTO)\s+((?:\"[^\"]+\"\.)?\"[^\"]+\")", sql, re.IGNORECASE)
@@ -65,6 +69,30 @@ def _fake_psycopg():
 def _reset_fake_connection():
     _FakeConnection.rows = {}
     _FakeConnection.statements = []
+    _FakeConnection.rollback_count = 0
+
+
+class _PermissionDenied(Exception):
+    sqlstate = "42501"
+
+
+class _SchemaPermissionConnection:
+    def __init__(self, *, schema_exists: bool) -> None:
+        self.schema_exists = schema_exists
+        self.rollback_count = 0
+        self.statements: list[str] = []
+
+    def execute(self, sql, params=()):
+        self.statements.append(sql)
+        normalized = " ".join(sql.split()).upper()
+        if normalized.startswith("CREATE SCHEMA"):
+            raise _PermissionDenied("permission denied for database")
+        if "INFORMATION_SCHEMA.SCHEMATA" in normalized:
+            return _FakeCursor([(1,)] if self.schema_exists else [])
+        return _FakeCursor([])
+
+    def rollback(self):
+        self.rollback_count += 1
 
 
 def _load_reconciliation_store_module():
@@ -101,6 +129,28 @@ def test_postgres_json_owner_store_read_only_boundary():
             reader.put("apv-002", {"decision_id": "apv-002"})
 
 
+def test_ensure_postgres_schema_accepts_precreated_schema_for_restricted_role():
+    from services.foundation.postgres_json_store import ensure_postgres_schema
+
+    conn = _SchemaPermissionConnection(schema_exists=True)
+
+    ensure_postgres_schema(conn, "management_ai")
+
+    assert conn.rollback_count == 1
+    assert any("information_schema.schemata" in statement for statement in conn.statements)
+
+
+def test_ensure_postgres_schema_reraises_when_schema_is_missing_for_restricted_role():
+    from services.foundation.postgres_json_store import ensure_postgres_schema
+
+    conn = _SchemaPermissionConnection(schema_exists=False)
+
+    with pytest.raises(_PermissionDenied):
+        ensure_postgres_schema(conn, "management_ai")
+
+    assert conn.rollback_count == 1
+
+
 def test_wave3_postgres_builders_are_env_gated():
     from services.capital.pg_store import (
         PostgresCapitalAuditStore,
@@ -120,6 +170,10 @@ def test_wave3_postgres_builders_are_env_gated():
     from services.memory.institutional_memory_store import (
         PostgresInstitutionalMemoryStore,
         build_institutional_memory_store,
+    )
+    from services.memory.persona_memory_store import (
+        PostgresPersonaMemoryStore,
+        build_persona_memory_store,
     )
     from services.promotion.pg_store import (
         PostgresDeploymentPlanStore,
@@ -181,6 +235,10 @@ def test_wave3_postgres_builders_are_env_gated():
         assert isinstance(
             build_institutional_memory_store(data_dir / "institutional_memory_entries.json"),
             PostgresInstitutionalMemoryStore,
+        )
+        assert isinstance(
+            build_persona_memory_store(data_dir / "persona_memory_entries.json"),
+            PostgresPersonaMemoryStore,
         )
         assert isinstance(
             reconciliation_store.build_reconciliation_drift_store(data_dir / "reconciliation-drift"),

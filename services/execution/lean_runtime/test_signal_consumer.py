@@ -186,10 +186,176 @@ class TestImportPaths(unittest.TestCase):
         from services.execution.lean_runtime.signal_consumer import SignalConsumer
         from services.execution.lean_runtime.executor import execute
         from services.execution.lean_runtime.symbol_parser import SymbolParseError
-        
+
         self.assertIsNotNone(SignalConsumer)
         self.assertIsNotNone(execute)
         self.assertIsNotNone(SymbolParseError)
+
+
+def _make_signal(signal_id: str, binding_id: str | None = None) -> dict:
+    sig = {
+        "signal_id": signal_id,
+        "version": "1.0",
+        "strategy_id": "test",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "symbol": "AAPL.US",
+        "action": "BUY",
+        "direction": "LONG",
+        "quantity": 0.5,
+        "quantity_type": "PERCENT_PORTFOLIO",
+    }
+    if binding_id is not None:
+        sig["binding_id"] = binding_id
+    return sig
+
+
+class TestBindingIsolation(unittest.TestCase):
+    """Defense-in-depth: SignalConsumer with binding_id discards misrouted signals."""
+
+    def _consumer(self, binding_id=None):
+        store = MagicMock()
+        return SignalConsumer(store_client=store, binding_id=binding_id)
+
+    # --- _is_wrong_binding unit tests ---
+
+    def test_no_consumer_binding_passes_all(self):
+        """Consumer without binding_id never discards on binding field."""
+        c = self._consumer(binding_id=None)
+        self.assertFalse(c._is_wrong_binding(_make_signal("s1", binding_id="b-other")))
+
+    def test_matching_binding_passes(self):
+        c = self._consumer(binding_id="b-001")
+        self.assertFalse(c._is_wrong_binding(_make_signal("s1", binding_id="b-001")))
+
+    def test_mismatched_binding_discards(self):
+        c = self._consumer(binding_id="b-001")
+        self.assertTrue(c._is_wrong_binding(_make_signal("s1", binding_id="b-002")))
+
+    def test_signal_without_binding_field_passes(self):
+        """Signals without a binding_id field are legacy/unrouted — always allowed."""
+        c = self._consumer(binding_id="b-001")
+        self.assertFalse(c._is_wrong_binding(_make_signal("s1", binding_id=None)))
+
+    def test_empty_string_binding_field_treated_as_absent(self):
+        c = self._consumer(binding_id="b-001")
+        sig = _make_signal("s1")
+        sig["binding_id"] = ""
+        self.assertFalse(c._is_wrong_binding(sig))
+
+    def _mock_algo(self):
+        algo = MagicMock()
+        # Give algo a real datetime so _is_stale() doesn't blow up on type comparison.
+        algo.Time = datetime.now(timezone.utc).replace(tzinfo=None)
+        return algo
+
+    # --- drain integration: binding filter applied end-to-end ---
+
+    def test_drain_discards_wrong_binding_signal(self):
+        """Signals for a different binding are discarded during drain."""
+        wrong_binding_signal = _make_signal("s-wrong", binding_id="b-other")
+        store = MagicMock()
+        store.get_pending.return_value = [wrong_binding_signal]
+        c = SignalConsumer(store_client=store, binding_id="b-mine")
+        with patch("services.execution.lean_runtime.signal_consumer.execute") as mock_exec:
+            c.drain(algo=self._mock_algo())
+        mock_exec.assert_not_called()
+        self.assertNotIn("s-wrong", c._processed_signal_ids)
+
+    def test_drain_executes_matching_binding_signal(self):
+        """Signals for the consumer's binding are executed normally."""
+        right_signal = _make_signal("s-right", binding_id="b-mine")
+        store = MagicMock()
+        store.get_pending.return_value = [right_signal]
+        c = SignalConsumer(store_client=store, binding_id="b-mine")
+        with patch("services.execution.lean_runtime.signal_consumer.execute") as mock_exec:
+            c.drain(algo=self._mock_algo())
+        mock_exec.assert_called_once()
+        self.assertIn("s-right", c._processed_signal_ids)
+
+    def test_drain_executes_unrouted_signal_regardless_of_consumer_binding(self):
+        """Signals without binding_id pass through even when consumer has binding_id."""
+        unrouted = _make_signal("s-legacy")  # no binding_id field
+        store = MagicMock()
+        store.get_pending.return_value = [unrouted]
+        c = SignalConsumer(store_client=store, binding_id="b-mine")
+        with patch("services.execution.lean_runtime.signal_consumer.execute") as mock_exec:
+            c.drain(algo=self._mock_algo())
+        mock_exec.assert_called_once()
+        self.assertIn("s-legacy", c._processed_signal_ids)
+
+
+class TestPendingSignalStoreQueueKey(unittest.TestCase):
+    """binding_queue_key() and build_pending_signal_store() auto-derive behaviour."""
+
+    def test_binding_queue_key_format(self):
+        from services.execution.lean_runtime.pending_signal_store import binding_queue_key
+        self.assertEqual(binding_queue_key("b-001"), "pantheon:signals:pending:b-001")
+
+    def test_binding_queue_key_prefix_constant(self):
+        from services.execution.lean_runtime.pending_signal_store import BINDING_QUEUE_KEY_PREFIX
+        self.assertEqual(BINDING_QUEUE_KEY_PREFIX, "pantheon:signals:pending")
+
+    def test_build_returns_memory_store_for_empty_url(self):
+        """Empty URL → InMemoryPendingSignalStore regardless of queue_key."""
+        import os
+        from unittest.mock import patch
+        from services.execution.lean_runtime.pending_signal_store import (
+            build_pending_signal_store, InMemoryPendingSignalStore,
+        )
+        with patch.dict(os.environ, {}, clear=False):
+            store = build_pending_signal_store("")
+        self.assertIsInstance(store, InMemoryPendingSignalStore)
+
+    def _make_redis_store(self, url, **kwargs):
+        """Build a RedisPendingSignalStore with a mocked redis module."""
+        import os
+        import sys
+        from unittest.mock import patch
+        from services.execution.lean_runtime.pending_signal_store import build_pending_signal_store
+
+        mock_redis_module = MagicMock()
+        mock_redis_module.Redis.from_url.return_value = MagicMock()
+        with patch.dict(sys.modules, {"redis": mock_redis_module}):
+            return build_pending_signal_store(url, **kwargs)
+
+    def test_build_auto_derives_from_binding_env(self):
+        """When PANTHEON_RUNTIME_BINDING_ID is set and queue_key is default, derive scoped key."""
+        import os
+        from unittest.mock import patch
+        from services.execution.lean_runtime.pending_signal_store import RedisPendingSignalStore
+        with patch.dict(os.environ, {
+            "PANTHEON_RUNTIME_BINDING_ID": "b-env-001",
+            "PANTHEON_SIGNAL_QUEUE_KEY": "",
+        }):
+            store = self._make_redis_store("redis://localhost:6379")
+        self.assertIsInstance(store, RedisPendingSignalStore)
+        self.assertEqual(store._queue_key, "pantheon:signals:pending:b-env-001")
+
+    def test_build_explicit_queue_key_overrides_env(self):
+        """Explicit queue_key parameter takes priority over env-derived key."""
+        import os
+        from unittest.mock import patch
+        from services.execution.lean_runtime.pending_signal_store import RedisPendingSignalStore
+        with patch.dict(os.environ, {"PANTHEON_RUNTIME_BINDING_ID": "b-should-not-use"}):
+            store = self._make_redis_store(
+                "redis://localhost:6379",
+                queue_key="pantheon:signals:pending:b-explicit",
+            )
+        self.assertIsInstance(store, RedisPendingSignalStore)
+        self.assertEqual(store._queue_key, "pantheon:signals:pending:b-explicit")
+
+    def test_build_prefers_signal_queue_key_env_over_binding_env(self):
+        """PANTHEON_SIGNAL_QUEUE_KEY takes priority over PANTHEON_RUNTIME_BINDING_ID."""
+        import os
+        from unittest.mock import patch
+        from services.execution.lean_runtime.pending_signal_store import RedisPendingSignalStore
+        with patch.dict(os.environ, {
+            "PANTHEON_SIGNAL_QUEUE_KEY": "pantheon:signals:pending:b-from-reconciler",
+            "PANTHEON_RUNTIME_BINDING_ID": "b-should-not-use",
+        }):
+            store = self._make_redis_store("redis://localhost:6379")
+        self.assertIsInstance(store, RedisPendingSignalStore)
+        self.assertEqual(store._queue_key, "pantheon:signals:pending:b-from-reconciler")
 
 
 if __name__ == "__main__":

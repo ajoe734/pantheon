@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "task_id": "ASST-CTRL-001",
+  "archived_at": "2026-06-09T00:57:52Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "ASST-CTRL-001",
+    "title": "Make assistant kernel control-mode deployable by configuration",
+    "summary_zh": "補齊 operator-bff 的 kernel/control-mode env 與 passphrase store path，讓 dev/staging 能顯式啟用但預設仍安全關閉。",
+    "phase": "Sprint ASST-CTRL / Control-mode deployability",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/CONTROL_MODE_REPAIR_EXECUTION_TASKS_2026-06-06.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/USER_MODE_CONTRACTION.md;docker-compose.yml;docker-compose.staging-full.yml;scripts/deploy_nonprod_vm.sh;services/control-plane/bff/tests/test_assistant_dev_compose_flags.py;services/control-plane/bff/assistant/mode_policy.py;services/control-plane/bff/assistant/control_mode.py"
+    ],
+    "acceptance": [
+      "operator-bff exposes PANTHEON_ASSISTANT_KERNEL_ENABLED with default false;operator-bff exposes PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH under durable BFF data storage;PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS is configurable and documented;nonprod deploy script can set the env values without plaintext passphrase;provider enabled does not imply kernel enabled;tests assert compose env contract and kernel-disabled default"
+    ],
+    "next": "Superseded by merged control-mode deployability delivery: PR #1123 (462b1daf) added kernel/control-mode env, durable store path, idle TTL, and dev/stub assistant.kernel capability plumbing; PR #1129/#1155 made the dev activation overlay and deploy persistence durable. Retired during OPS-STATE-CLOSEOUT-CLEANUP-20260609 audit.",
+    "last_update": "2026-06-09T00:57:52Z",
+    "task_class": "assistant_control_runtime_repair",
+    "auto_created_by": "dispatch_assistant_control_mode_repair_2026-06-06",
+    "auto_generated": true,
+    "terminal_outcome": "superseded",
+    "superseded_by": "MGMT-AI-CTRL"
+  },
+  "handoffs": [],
+  "blockers": []
+}

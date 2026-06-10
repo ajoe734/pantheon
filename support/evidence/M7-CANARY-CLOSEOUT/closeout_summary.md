@@ -2,8 +2,9 @@
 
 **Task ID:** M7-CANARY-CLOSEOUT  
 **Phase:** Track E / EPIC-05 M7 Canary Readiness  
-**Owner:** Claude  
-**Reviewer:** Codex  
+**Original Owner:** Claude  
+**Reviewer:** Claude2  
+**Finalizer:** Claude2 (owned_ready_dispatch)  
 **Closed At:** 2026-05-17  
 
 ## Objective

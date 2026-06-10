@@ -9,7 +9,7 @@ packet and a later human-gated `EP5-002` proof run:
 
 - real broker / venue config boundary
 - broker paper-account / sandbox / test-key order API smoke requirement
-- truthful governed datasource boundary for `IBKR`, `Shioaji`, `Kraken`, and `TEJ`
+- truthful governed datasource boundary for `IBKR`, `Shioaji`, `Kraken`, `FinMind`, and optional `TEJ` gap-fill
 - scaled canary capital gate
 - explicit runtime-manager promotion gate refs for canary activation
 - runnable operator approval checklist

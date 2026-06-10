@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "task_id": "BFF-B1-011",
+  "archived_at": "2026-05-23T07:45:32Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-B1-011",
+    "title": "POST /bff/v5/interventions/{id}/decide",
+    "summary_zh": null,
+    "phase": "Sprint BFF-1 / EPIC-BFF-GAP-P0",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BFF-B1-007"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#b4--p1-v5-closed-loop-os-apis",
+      "services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "v5 human intervention decide endpoint accepts decision payload",
+      "Returns command receipt envelope",
+      "Pairs with B4-005 GET /bff/v5/interventions/{id}"
+    ],
+    "next": "Done: implementation PR #437 merged at 6a48e3cc; closeout evidence PR #439 merged at a5e06f7f; focused BFF decide tests, py_compile, and git diff --check passed.",
+    "last_update": "2026-05-23T07:45:32Z",
+    "review_notes_zh": [
+      "審查通過：DecideV5Intervention 實作正確，38 個測試通過，py_compile 乾淨，B4 spec 完整記錄所有 7 項驗收標準；boundary 清楚（claim/escalate/release/two-man-sign 保留原有路徑）",
+      "後續追蹤：無；可直接收尾"
+    ],
+    "review_file": "support/reviews/BFF-B1-011-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T07:45:32Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-b1-011",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-B1-011",
+      "git_clean_required": false,
+      "commit": "7b42eb1c6af4463dc6267a090dc3c7ab3f82649d",
+      "commit_subject": "BFF-B1-011: record closeout review artifacts",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "Review and closeout evidence for POST /bff/v5/interventions/{id}/decide.",
+        "Not changing": "BFF route implementation, command-store behavior, canonical API spec, status records, or execute-plans surfaces.",
+        "Composes with": "Merged implementation PR #437 / 6a48e3cc and Claude review approval for B4 acceptance criteria.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-B1-011",
+        "Reviewer": "Claude",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_v5_interventions.py services/control-plane/bff/test_final_command_execution_bridge.py -q; PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/models.py services/control-plane/bff/action_catalog.py; git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-B1-011",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "a5e06f7f1ea4726f9e3a10c053c2a3f8c61d7fd3",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-B1-011",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-23T07:19:29Z",
+      "resolved_at": "2026-05-23T07:19:38Z"
+    },
+    {
+      "task_id": "BFF-B1-011",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Implemented and merged PR #437 (merge commit 6a48e3cc4089c96a2518e7f5bfdf1b7472579564). Validation: 57 focused BFF tests passed, py_compile passed, git diff --check passed; GitHub Branch CI Gate and Orchestrator Sync succeeded. Please review the merged BFF-B1-011 slice for review_approved.",
+      "status": "done",
+      "created_at": "2026-05-23T07:33:34Z",
+      "resolved_at": "2026-05-23T07:37:12Z"
+    },
+    {
+      "task_id": "BFF-B1-011",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: dedicated DecideV5Intervention handler is correctly scoped; 38 tests pass, py_compile clean, spec section B4 complete. Returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-05-23T07:37:12Z",
+      "resolved_at": "2026-05-23T07:45:33Z"
+    }
+  ],
+  "blockers": []
+}

@@ -15,12 +15,12 @@ import {
 } from "./js/dashboard-core.js?v=20260517-audit";
 import {
   applyModeVisibility,
+  renderActiveWorkMatrix,
   renderAlertStrip,
   renderActivity,
   renderAgentLanes,
   renderArchiveRecords,
   renderAuditStatus,
-  renderBffConsolidationTrack,
   renderBoardSummary,
   renderBridgeCard,
   renderControlPlaneStrip,
@@ -43,11 +43,12 @@ import {
   renderReviewNotes,
   renderSnapshot,
   renderStackList,
-  renderSystemStatus,
+  renderSupervisorCockpit,
   renderTaskBoard,
-  renderTruthMismatches,
+  renderWorkerHealthDigest,
   renderWorkload,
-} from "./js/dashboard-renderers.js?v=20260517-audit";
+  renderDependencyRunway,
+} from "./js/dashboard-renderers.js?v=20260518-archive-fix";
 
 let renderInFlight = false;
 
@@ -96,8 +97,8 @@ async function render({ syncFirst = false } = {}) {
 
     const [status, activityText, currentWorkText, orchState, approvalQueue, rawPlanningState, rawDashboardBundle] = await Promise.all([
       fetchJson(DATA_FILES.status),
-      fetchText(DATA_FILES.activity),
-      fetchText(DATA_FILES.currentWork),
+      fetchText(DATA_FILES.activity).catch(() => ""),
+      fetchText(DATA_FILES.currentWork).catch(() => ""),
       fetchJson(DATA_FILES.orchestratorState).catch(() => null),
       fetchJson(DATA_FILES.approvalQueue).catch(() => null),
       fetchJson(DATA_FILES.planningState).catch(() => null),
@@ -138,7 +139,10 @@ async function render({ syncFirst = false } = {}) {
     runRenderStep("control_plane_strip", renderFailures, () => renderControlPlaneStrip(status, planningState, orchState, dashboardBundle));
     runRenderStep("focus_summary", renderFailures, () => renderFocusSummary(status, planningState, orchState, dashboardBundle));
     runRenderStep("alert_strip", renderFailures, () => renderAlertStrip(status, orchState, planningState, approvalQueue, dashboardBundle));
-    runRenderStep("bff_consolidation_track", renderFailures, () => renderBffConsolidationTrack(status, dashboardBundle));
+    runRenderStep("supervisor_cockpit", renderFailures, () => renderSupervisorCockpit(status, orchState, approvalQueue, dashboardBundle));
+    runRenderStep("active_work_matrix", renderFailures, () => renderActiveWorkMatrix(status, orchState, approvalQueue, dashboardBundle));
+    runRenderStep("dependency_runway", renderFailures, () => renderDependencyRunway(status));
+    runRenderStep("worker_health_digest", renderFailures, () => renderWorkerHealthDigest(status, orchState, approvalQueue, dashboardBundle));
     runRenderStep("bridge_card", renderFailures, () => renderBridgeCard(status, planningState, dashboardBundle));
     runRenderStep("execution_section_summary", renderFailures, () => renderExecutionSectionSummary(status, orchState, planningState, dashboardBundle));
     runRenderStep("mode_visibility", renderFailures, () => applyModeVisibility(status, planningState));
@@ -148,10 +152,8 @@ async function render({ syncFirst = false } = {}) {
     runRenderStep("planning_gate", renderFailures, () => renderPlanningGate(planningState, status));
     runRenderStep("planning_issues", renderFailures, () => renderPlanningIssues(planningState));
     runRenderStep("planning_proposals", renderFailures, () => renderPlanningProposals(planningState, status, dashboardBundle));
-    runRenderStep("system_status", renderFailures, () => renderSystemStatus(status, orchState, approvalQueue, agentStates, dashboardBundle));
-    runRenderStep("truth_mismatches", renderFailures, () => renderTruthMismatches(status, orchState, approvalQueue, dashboardBundle));
     runRenderStep("workload", renderFailures, () => renderWorkload(status, orchState));
-    runRenderStep("delivery_layers", renderFailures, () => renderDeliveryLayers(status, planningState));
+    runRenderStep("delivery_layers", renderFailures, () => renderDeliveryLayers(status, planningState, dashboardBundle));
     runRenderStep("agent_lanes", renderFailures, () => renderAgentLanes(status, agentStates));
     runRenderStep("archive_records", renderFailures, () => renderArchiveRecords(dashboardBundle));
     runRenderStep("lovable_coordination_summary", renderFailures, () => renderLovableCoordinationSummary(dashboardBundle));

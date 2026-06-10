@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "task_id": "WNB-ACT-001-V2",
+  "archived_at": "2026-05-20T02:57:11Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "WNB-ACT-001-V2",
+    "title": "W&B credentialed sync proof",
+    "summary_zh": "Demonstrates W&B online sync works with credentialed access while preserving Pantheon registry as artifact-admission source of truth.",
+    "phase": "Phase 8 / EPIC-RES-ACT",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "integrations/wandb/credentialed_sync_proof.md",
+      "tests/integrations/test_wandb_sync.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "PR #304 merged into dev at 43bdf142f184da005e8c6f938cc5741818c4b2d7; owner closeout evidence committed at 89110429f10b1085db78a647bfc5540c18e3e33f; focused W&B checks passed after dev refresh.",
+    "last_update": "2026-05-20T02:57:11Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：5 tests passed，structured skip JSON 正確，secret 無洩漏，Pantheon registry 仍為 artifact-admission 唯一 source of truth，W&B 僅作 metadata mirror"
+    ],
+    "review_file": "support/evidence/WNB-ACT-001-V2/review_claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T02:57:11Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/wnb-act-001-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/WNB-ACT-001-V2",
+      "git_clean_required": false,
+      "commit": "89110429f10b1085db78a647bfc5540c18e3e33f",
+      "commit_subject": "WNB-ACT-001-V2: refresh closeout after dev merge",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "WNB-ACT-001-V2",
+        "Reviewer": "Claude2",
+        "Verified": "python3 -m pytest tests/integrations/test_wandb_sync.py -q -> 5 passed in 0.65s; python3 -m py_compile tests/integrations/test_wandb_sync.py; python3 services/registry/experiments/smoke_test.py --backend wandb-online -> structured skip; python3 -m unittest test_adapter -q -> Ran 16 tests OK"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/WNB-ACT-001-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "43bdf142f184da005e8c6f938cc5741818c4b2d7",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "WNB-ACT-001-V2",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Ready for review in PR #218 (commit 37243782): W&B credentialed sync proof artifact plus focused integration tests. Verified pytest 5 passed, py_compile passed, adapter unittest 16 OK, and wandb-online smoke returns structured skip because this worktree lacks W&B SDK/project/API key.",
+      "status": "done",
+      "created_at": "2026-05-19T15:21:36Z",
+      "resolved_at": "2026-05-20T02:25:13Z"
+    },
+    {
+      "task_id": "WNB-ACT-001-V2",
+      "from": "Gemini",
+      "to": "Claude2",
+      "message": "Chair reassigned review from Gemini to Claude2: The task has aged in review with the same Gemini quota guardrail; a non-Gemini reviewer can safely perform the review.",
+      "status": "done",
+      "created_at": "2026-05-20T02:25:13Z",
+      "resolved_at": "2026-05-20T02:44:48Z"
+    },
+    {
+      "task_id": "WNB-ACT-001-V2",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved: all 5 integration tests pass, structured skip verified, no-secret contract confirmed, registry-as-truth boundary intact. Returning to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-05-20T02:44:48Z",
+      "resolved_at": "2026-05-20T02:57:12Z"
+    }
+  ],
+  "blockers": []
+}

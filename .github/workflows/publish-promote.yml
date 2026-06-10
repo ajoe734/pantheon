@@ -49,8 +49,11 @@ jobs:
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
-          python3 scripts/git/publish_promote.py discover \
-            --github-output "$GITHUB_OUTPUT"
+          args=(discover --github-output "$GITHUB_OUTPUT")
+          if [[ -n "${INPUT_VERSION}" ]]; then
+            args+=(--version "${INPUT_VERSION}")
+          fi
+          python3 scripts/git/publish_promote.py "${args[@]}"
 
       - name: Open promote PRs
         if: steps.discover.outputs.candidate_count != '0'

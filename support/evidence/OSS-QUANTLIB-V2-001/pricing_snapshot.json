@@ -1,0 +1,643 @@
+{
+  "artifact_type": "pricing_snapshot",
+  "as_of": "2026-05-17",
+  "backend_id": "quantlib_production_option_chain",
+  "chain": [
+    {
+      "call_put": "call",
+      "contract_id": "TXO-2026-06-17-20400-call",
+      "delta": 0.67521723,
+      "expiry": "2026-06-17",
+      "gamma": 0.00024656,
+      "implied_vol": 0.238,
+      "price": 924.37806279,
+      "pricing_model": "black_scholes_merton",
+      "strike": 20400.0,
+      "tenor_years": 0.08493151,
+      "theta": -8.51575307,
+      "underlying": "TXO",
+      "vega": 2197.92523467
+    },
+    {
+      "call_put": "put",
+      "contract_id": "TXO-2026-06-17-20400-put",
+      "delta": -0.32376411,
+      "expiry": "2026-06-17",
+      "gamma": 0.00024656,
+      "implied_vol": 0.238,
+      "price": 319.79740616,
+      "pricing_model": "black_scholes_merton",
+      "strike": 20400.0,
+      "tenor_years": 0.08493151,
+      "theta": -8.36817194,
+      "underlying": "TXO",
+      "vega": 2197.92523467
+    },
+    {
+      "call_put": "call",
+      "contract_id": "TXO-2026-06-17-20700-call",
+      "delta": 0.59870637,
+      "expiry": "2026-06-17",
+      "gamma": 0.00027372,
+      "implied_vol": 0.2305,
+      "price": 723.69262358,
+      "pricing_model": "black_scholes_merton",
+      "strike": 20700.0,
+      "tenor_years": 0.08493151,
+      "theta": -8.85889923,
+      "underlying": "TXO",
+      "vega": 2363.07463479
+    },
+    {
+      "call_put": "put",
+      "contract_id": "TXO-2026-06-17-20700-put",
+      "delta": -0.40027497,
+      "expiry": "2026-06-17",
+      "gamma": 0.00027372,
+      "implied_vol": 0.2305,
+      "price": 418.73001851,
+      "pricing_model": "black_scholes_merton",
+      "strike": 20700.0,
+      "tenor_years": 0.08493151,
+      "theta": -8.69900503,
+      "underlying": "TXO",
+      "vega": 2363.07463479
+    },
+    {
+      "call_put": "call",
+      "contract_id": "TXO-2026-06-17-21000-call",
+      "delta": 0.51405123,
+      "expiry": "2026-06-17",
+      "gamma": 0.00029052,
+      "implied_vol": 0.224,
+      "price": 548.85762184,
+      "pricing_model": "black_scholes_merton",
+      "strike": 21000.0,
+      "tenor_years": 0.08493151,
+      "theta": -8.87234968,
+      "underlying": "TXO",
+      "vega": 2437.42449547
+    },
+    {
+      "call_put": "put",
+      "contract_id": "TXO-2026-06-17-21000-put",
+      "delta": -0.48493011,
+      "expiry": "2026-06-17",
+      "gamma": 0.00029052,
+      "implied_vol": 0.224,
+      "price": 543.51306834,
+      "pricing_model": "black_scholes_merton",
+      "strike": 21000.0,
+      "tenor_years": 0.08493151,
+      "theta": -8.7001424,
+      "underlying": "TXO",
+      "vega": 2437.42449547
+    },
+    {
+      "call_put": "call",
+      "contract_id": "TXO-2026-06-17-21300-call",
+      "delta": 0.42996109,
+      "expiry": "2026-06-17",
+      "gamma": 0.00028003,
+      "implied_vol": 0.229,
+      "price": 427.42022459,
+      "pricing_model": "black_scholes_merton",
+      "strike": 21300.0,
+      "tenor_years": 0.08493151,
+      "theta": -8.92795493,
+      "underlying": "TXO",
+      "vega": 2401.83876119
+    },
+    {
+      "call_put": "put",
+      "contract_id": "TXO-2026-06-17-21300-put",
+      "delta": -0.56902025,
+      "expiry": "2026-06-17",
+      "gamma": 0.00028003,
+      "implied_vol": 0.229,
+      "price": 721.69372266,
+      "pricing_model": "black_scholes_merton",
+      "strike": 21300.0,
+      "tenor_years": 0.08493151,
+      "theta": -8.74343458,
+      "underlying": "TXO",
+      "vega": 2401.83876119
+    },
+    {
+      "call_put": "call",
+      "contract_id": "TXO-2026-06-17-21600-call",
+      "delta": 0.35477046,
+      "expiry": "2026-06-17",
+      "gamma": 0.00025753,
+      "implied_vol": 0.236,
+      "price": 334.10845047,
+      "pricing_model": "black_scholes_merton",
+      "strike": 21600.0,
+      "tenor_years": 0.08493151,
+      "theta": -8.71257894,
+      "underlying": "TXO",
+      "vega": 2276.41802651
+    },
+    {
+      "call_put": "put",
+      "contract_id": "TXO-2026-06-17-21600-put",
+      "delta": -0.64421088,
+      "expiry": "2026-06-17",
+      "gamma": 0.00025753,
+      "implied_vol": 0.236,
+      "price": 928.00000011,
+      "pricing_model": "black_scholes_merton",
+      "strike": 21600.0,
+      "tenor_years": 0.08493151,
+      "theta": -8.51574552,
+      "underlying": "TXO",
+      "vega": 2276.41802651
+    },
+    {
+      "call_put": "call",
+      "contract_id": "TXO-2026-07-15-20400-call",
+      "delta": 0.63618198,
+      "expiry": "2026-07-15",
+      "gamma": 0.0001832,
+      "implied_vol": 0.242,
+      "price": 1142.22739405,
+      "pricing_model": "black_scholes_merton",
+      "strike": 20400.0,
+      "tenor_years": 0.16164384,
+      "theta": -6.54415134,
+      "underlying": "TXO",
+      "vega": 3160.29620821
+    },
+    {
+      "call_put": "put",
+      "contract_id": "TXO-2026-07-15-20400-put",
+      "delta": -0.36188017,
+      "expiry": "2026-07-15",
+      "gamma": 0.0001832,
+      "implied_vol": 0.242,
+      "price": 533.51906282,
+      "pricing_model": "black_scholes_merton",
+      "strike": 20400.0,
+      "tenor_years": 0.16164384,
+      "theta": -6.39689849,
+      "underlying": "TXO",
+      "vega": 3160.29620821
+    },
+    {
+      "call_put": "call",
+      "contract_id": "TXO-2026-07-15-20700-call",
+      "delta": 0.58014083,
+      "expiry": "2026-07-15",
+      "gamma": 0.00019734,
+      "implied_vol": 0.234,
+      "price": 945.00131719,
+      "pricing_model": "black_scholes_merton",
+      "strike": 20700.0,
+      "tenor_years": 0.16164384,
+      "theta": -6.5890346,
+      "underlying": "TXO",
+      "vega": 3291.76449553
+    },
+    {
+      "call_put": "put",
+      "contract_id": "TXO-2026-07-15-20700-put",
+      "delta": -0.41792132,
+      "expiry": "2026-07-15",
+      "gamma": 0.00019734,
+      "implied_vol": 0.234,
+      "price": 635.56646983,
+      "pricing_model": "black_scholes_merton",
+      "strike": 20700.0,
+      "tenor_years": 0.16164384,
+      "theta": -6.42948284,
+      "underlying": "TXO",
+      "vega": 3291.76449553
+    },
+    {
+      "call_put": "call",
+      "contract_id": "TXO-2026-07-15-21000-call",
+      "delta": 0.51959061,
+      "expiry": "2026-07-15",
+      "gamma": 0.00020388,
+      "implied_vol": 0.231,
+      "price": 781.19030425,
+      "pricing_model": "black_scholes_merton",
+      "strike": 21000.0,
+      "tenor_years": 0.16164384,
+      "theta": -6.62987367,
+      "underlying": "TXO",
+      "vega": 3357.27603626
+    },
+    {
+      "call_put": "put",
+      "contract_id": "TXO-2026-07-15-21000-put",
+      "delta": -0.47847154,
+      "expiry": "2026-07-15",
+      "gamma": 0.00020388,
+      "implied_vol": 0.231,
+      "price": 771.02894076,
+      "pricing_model": "black_scholes_merton",
+      "strike": 21000.0,
+      "tenor_years": 0.16164384,
+      "theta": -6.45802299,
+      "underlying": "TXO",
+      "vega": 3357.27603626
+    },
+    {
+      "call_put": "call",
+      "contract_id": "TXO-2026-07-15-21300-call",
+      "delta": 0.45935196,
+      "expiry": "2026-07-15",
+      "gamma": 0.00020183,
+      "implied_vol": 0.2325,
+      "price": 650.58469483,
+      "pricing_model": "black_scholes_merton",
+      "strike": 21300.0,
+      "tenor_years": 0.16164384,
+      "theta": -6.64343557,
+      "underlying": "TXO",
+      "vega": 3345.05208158
+    },
+    {
+      "call_put": "put",
+      "contract_id": "TXO-2026-07-15-21300-put",
+      "delta": -0.5387102,
+      "expiry": "2026-07-15",
+      "gamma": 0.00020183,
+      "implied_vol": 0.2325,
+      "price": 939.69681521,
+      "pricing_model": "black_scholes_merton",
+      "strike": 21300.0,
+      "tenor_years": 0.16164384,
+      "theta": -6.45928598,
+      "underlying": "TXO",
+      "vega": 3345.05208158
+    },
+    {
+      "call_put": "call",
+      "contract_id": "TXO-2026-07-15-21600-call",
+      "delta": 0.40434876,
+      "expiry": "2026-07-15",
+      "gamma": 0.00019171,
+      "implied_vol": 0.239,
+      "price": 553.77668788,
+      "pricing_model": "black_scholes_merton",
+      "strike": 21600.0,
+      "tenor_years": 0.16164384,
+      "theta": -6.66258932,
+      "underlying": "TXO",
+      "vega": 3266.25755651
+    },
+    {
+      "call_put": "put",
+      "contract_id": "TXO-2026-07-15-21600-put",
+      "delta": -0.59371339,
+      "expiry": "2026-07-15",
+      "gamma": 0.00019171,
+      "implied_vol": 0.239,
+      "price": 1142.16229213,
+      "pricing_model": "black_scholes_merton",
+      "strike": 21600.0,
+      "tenor_years": 0.16164384,
+      "theta": -6.46614082,
+      "underlying": "TXO",
+      "vega": 3266.25755651
+    },
+    {
+      "call_put": "call",
+      "contract_id": "TXO-2026-08-19-20400-call",
+      "delta": 0.6155088,
+      "expiry": "2026-08-19",
+      "gamma": 0.00014334,
+      "implied_vol": 0.249,
+      "price": 1374.7794102,
+      "pricing_model": "black_scholes_merton",
+      "strike": 20400.0,
+      "tenor_years": 0.25753425,
+      "theta": -5.41848236,
+      "underlying": "TXO",
+      "vega": 4053.50774185
+    },
+    {
+      "call_put": "put",
+      "contract_id": "TXO-2026-08-19-20400-put",
+      "delta": -0.38140556,
+      "expiry": "2026-08-19",
+      "gamma": 0.00014334,
+      "implied_vol": 0.249,
+      "price": 760.9243999,
+      "pricing_model": "black_scholes_merton",
+      "strike": 20400.0,
+      "tenor_years": 0.25753425,
+      "theta": -5.27163913,
+      "underlying": "TXO",
+      "vega": 4053.50774185
+    },
+    {
+      "call_put": "call",
+      "contract_id": "TXO-2026-08-19-20700-call",
+      "delta": 0.57192207,
+      "expiry": "2026-08-19",
+      "gamma": 0.0001538,
+      "implied_vol": 0.2385,
+      "price": 1167.99986836,
+      "pricing_model": "black_scholes_merton",
+      "strike": 20700.0,
+      "tenor_years": 0.25753425,
+      "theta": -5.33565927,
+      "underlying": "TXO",
+      "vega": 4165.90969328
+    },
+    {
+      "call_put": "put",
+      "contract_id": "TXO-2026-08-19-20700-put",
+      "delta": -0.42499229,
+      "expiry": "2026-08-19",
+      "gamma": 0.0001538,
+      "implied_vol": 0.2385,
+      "price": 852.98818951,
+      "pricing_model": "black_scholes_merton",
+      "strike": 20700.0,
+      "tenor_years": 0.25753425,
+      "theta": -5.1765348,
+      "underlying": "TXO",
+      "vega": 4165.90969328
+    },
+    {
+      "call_put": "call",
+      "contract_id": "TXO-2026-08-19-21000-call",
+      "delta": 0.52508934,
+      "expiry": "2026-08-19",
+      "gamma": 0.0001558,
+      "implied_vol": 0.239,
+      "price": 1020.07724629,
+      "pricing_model": "black_scholes_merton",
+      "strike": 21000.0,
+      "tenor_years": 0.25753425,
+      "theta": -5.4248387,
+      "underlying": "TXO",
+      "vega": 4228.92063404
+    },
+    {
+      "call_put": "put",
+      "contract_id": "TXO-2026-08-19-21000-put",
+      "delta": -0.47182502,
+      "expiry": "2026-08-19",
+      "gamma": 0.0001558,
+      "implied_vol": 0.239,
+      "price": 1003.90889888,
+      "pricing_model": "black_scholes_merton",
+      "strike": 21000.0,
+      "tenor_years": 0.25753425,
+      "theta": -5.25343301,
+      "underlying": "TXO",
+      "vega": 4228.92063404
+    },
+    {
+      "call_put": "call",
+      "contract_id": "TXO-2026-08-19-21300-call",
+      "delta": 0.47803269,
+      "expiry": "2026-08-19",
+      "gamma": 0.00015726,
+      "implied_vol": 0.237,
+      "price": 875.61200701,
+      "pricing_model": "black_scholes_merton",
+      "strike": 21300.0,
+      "tenor_years": 0.25753425,
+      "theta": -5.38260171,
+      "underlying": "TXO",
+      "vega": 4232.83667176
+    },
+    {
+      "call_put": "put",
+      "contract_id": "TXO-2026-08-19-21300-put",
+      "delta": -0.51888167,
+      "expiry": "2026-08-19",
+      "gamma": 0.00015726,
+      "implied_vol": 0.237,
+      "price": 1158.28699104,
+      "pricing_model": "black_scholes_merton",
+      "strike": 21300.0,
+      "tenor_years": 0.25753425,
+      "theta": -5.19891478,
+      "underlying": "TXO",
+      "vega": 4232.83667176
+    },
+    {
+      "call_put": "call",
+      "contract_id": "TXO-2026-08-19-21600-call",
+      "delta": 0.43670204,
+      "expiry": "2026-08-19",
+      "gamma": 0.00014926,
+      "implied_vol": 0.247,
+      "price": 795.18154838,
+      "pricing_model": "black_scholes_merton",
+      "strike": 21600.0,
+      "tenor_years": 0.25753425,
+      "theta": -5.5440021,
+      "underlying": "TXO",
+      "vega": 4187.227964
+    },
+    {
+      "call_put": "put",
+      "contract_id": "TXO-2026-08-19-21600-put",
+      "delta": -0.56021232,
+      "expiry": "2026-08-19",
+      "gamma": 0.00014926,
+      "implied_vol": 0.247,
+      "price": 1376.69986385,
+      "pricing_model": "black_scholes_merton",
+      "strike": 21600.0,
+      "tenor_years": 0.25753425,
+      "theta": -5.34803394,
+      "underlying": "TXO",
+      "vega": 4187.227964
+    }
+  ],
+  "chain_summary": {
+    "call_count": 15,
+    "contract_count": 30,
+    "expiry_count": 3,
+    "first_expiry": "2026-06-17",
+    "last_expiry": "2026-08-19",
+    "max_strike": 21600.0,
+    "min_strike": 20400.0,
+    "put_count": 15,
+    "strike_count": 5
+  },
+  "checksum": "sha256:80b1a323b3ce1f3fa5bdb35e20b8750e7c14c3d97fe7b06c36335ea205095b59",
+  "code_version": "pantheon:services/research/quantlib@OSS-QUANTLIB-V2-001",
+  "generated_at": "2026-05-17T00:00:00Z",
+  "inputs": {
+    "chain_definition": {
+      "as_of": "2026-05-17",
+      "call_put": [
+        "call",
+        "put"
+      ],
+      "expiries": [
+        "2026-06-17",
+        "2026-07-15",
+        "2026-08-19"
+      ],
+      "multiplier": 200,
+      "source_dataset_refs": [
+        "dataset:txo-option-chain-fixture-2026-05"
+      ],
+      "source_strategy_spec_id": "quantlib-txo-option-chain-pricing-spec-v1",
+      "strikes": [
+        20400.0,
+        20700.0,
+        21000.0,
+        21300.0,
+        21600.0
+      ],
+      "underlying": "TXO"
+    },
+    "dividend_yield": 0.012,
+    "rate": 0.015,
+    "spot": 21000.0,
+    "vol_surface": {
+      "by_expiry": {
+        "2026-06-17": 0.225,
+        "2026-07-15": 0.232,
+        "2026-08-19": 0.241
+      },
+      "by_strike": {
+        "20400": 0.245,
+        "20700": 0.236,
+        "21000": 0.228,
+        "21300": 0.233,
+        "21600": 0.242
+      },
+      "default_vol": 0.235,
+      "points": [
+        {
+          "expiry": "2026-06-17",
+          "strike": 20400.0,
+          "vol": 0.238
+        },
+        {
+          "expiry": "2026-06-17",
+          "strike": 21000.0,
+          "vol": 0.224
+        },
+        {
+          "expiry": "2026-06-17",
+          "strike": 21600.0,
+          "vol": 0.236
+        },
+        {
+          "expiry": "2026-07-15",
+          "strike": 20400.0,
+          "vol": 0.242
+        },
+        {
+          "expiry": "2026-07-15",
+          "strike": 21000.0,
+          "vol": 0.231
+        },
+        {
+          "expiry": "2026-07-15",
+          "strike": 21600.0,
+          "vol": 0.239
+        },
+        {
+          "expiry": "2026-08-19",
+          "strike": 20400.0,
+          "vol": 0.249
+        },
+        {
+          "expiry": "2026-08-19",
+          "strike": 21000.0,
+          "vol": 0.239
+        },
+        {
+          "expiry": "2026-08-19",
+          "strike": 21600.0,
+          "vol": 0.247
+        }
+      ]
+    }
+  },
+  "pricing_snapshot_ref": {
+    "artifact_name": "pricing_snapshot",
+    "artifact_ref": "quantlib-production-option-chain-txo-2.0.0@2.0.0",
+    "artifact_state": "draft",
+    "artifact_type": "pricing_snapshot",
+    "checksum": "sha256:80b1a323b3ce1f3fa5bdb35e20b8750e7c14c3d97fe7b06c36335ea205095b59",
+    "deployment_stage": "none",
+    "registry_id": "quantlib-production-option-chain-txo-2.0.0",
+    "source_dataset_refs": [
+      "dataset:txo-option-chain-fixture-2026-05"
+    ],
+    "source_run_id": "pricing-snapshot:quantlib_production_option_chain:2.0.0",
+    "source_strategy_spec_id": "quantlib-txo-option-chain-pricing-spec-v1",
+    "storage_ref": {
+      "backend": "inline",
+      "path": "$.pricing_snapshot"
+    },
+    "strategy_id": "txo-option-chain-risk-analytics",
+    "version": "2.0.0"
+  },
+  "registry_entry": {
+    "artifact_state": "draft",
+    "artifact_type": "pricing_snapshot",
+    "checksum": "sha256:80b1a323b3ce1f3fa5bdb35e20b8750e7c14c3d97fe7b06c36335ea205095b59",
+    "deployment_summary": {
+      "current_stage": "none",
+      "last_transition_at": "2026-05-17T00:00:00Z"
+    },
+    "lineage": {
+      "parent_registry_ids": [],
+      "source_dataset_refs": [
+        "dataset:txo-option-chain-fixture-2026-05"
+      ],
+      "source_run_ids": [
+        "pricing-snapshot:quantlib_production_option_chain:2.0.0"
+      ],
+      "source_strategy_spec_id": "quantlib-txo-option-chain-pricing-spec-v1"
+    },
+    "metadata": {
+      "backend_id": "quantlib_production_option_chain",
+      "chain_summary": {
+        "call_count": 15,
+        "contract_count": 30,
+        "expiry_count": 3,
+        "first_expiry": "2026-06-17",
+        "last_expiry": "2026-08-19",
+        "max_strike": 21600.0,
+        "min_strike": 20400.0,
+        "put_count": 15,
+        "strike_count": 5
+      },
+      "code_version": "pantheon:services/research/quantlib@OSS-QUANTLIB-V2-001",
+      "cpu_only": true,
+      "gpu_required": false,
+      "task_id": "OSS-QUANTLIB-V2-001"
+    },
+    "producer_run_id": "pricing-snapshot:quantlib_production_option_chain:2.0.0",
+    "registry_id": "quantlib-production-option-chain-txo-2.0.0",
+    "storage_ref": {
+      "backend": "inline",
+      "path": "$.pricing_snapshot"
+    },
+    "strategy_id": "txo-option-chain-risk-analytics",
+    "version": "2.0.0"
+  },
+  "safety_assertions": {
+    "artifact_state_remains_draft": true,
+    "cpu_only": true,
+    "deployment_stage_remains_none": true,
+    "no_broker_session": true,
+    "no_capital_binding": true,
+    "no_gpu": true,
+    "no_order_route": true,
+    "no_registry_write": true,
+    "research_only_not_direct_action": true
+  },
+  "snapshot_id": "pricing-snapshot:quantlib_production_option_chain:2.0.0",
+  "task_id": "OSS-QUANTLIB-V2-001",
+  "underlying": "TXO",
+  "version": "2.0.0"
+}
