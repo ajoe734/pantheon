@@ -112,6 +112,7 @@ jobs:
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
           DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/code/pantheon' }}
+          DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io' }}
           DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io' }}
           DEV_MANAGEMENT_AI_STORE_BACKEND: ${{ vars.DEV_MANAGEMENT_AI_STORE_BACKEND || 'postgres' }}
           DEV_MANAGEMENT_AI_STORE_SCHEMA: ${{ vars.DEV_MANAGEMENT_AI_STORE_SCHEMA || 'management_ai' }}
@@ -148,6 +149,7 @@ jobs:
       - name: Public BFF smoke
         env:
           DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io' }}
+          DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io' }}
           DEV_BFF_CORS_ORIGIN: ${{ vars.DEV_BFF_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io' }}
           STAGING_BFF_URL: ${{ vars.STAGING_BFF_URL || 'https://pantheon-lupin-staging-bff.104.155.223.192.sslip.io' }}
           # TODO(off-lovable): staging-live FE is migrating off Lovable to a self-hosted
@@ -157,11 +159,21 @@ jobs:
           case "${TARGET_ENV}:${TARGET_COMPONENT}" in
             dev:* )
               curl -fsS "${DEV_BFF_URL}/health"
-              curl -sS -D - -o /tmp/dev-cors-body \
-                -X OPTIONS "${DEV_BFF_URL}/health" \
-                -H "Origin: ${DEV_BFF_CORS_ORIGIN}" \
-                -H 'Access-Control-Request-Method: GET' \
-                | grep -qi "access-control-allow-origin: ${DEV_BFF_CORS_ORIGIN}"
+              dev_origins="${DEV_BFF_CANONICAL_CORS_ORIGIN}"
+              if [[ -n "${DEV_BFF_CORS_ORIGIN}" && ",${dev_origins}," != *",${DEV_BFF_CORS_ORIGIN},"* ]]; then
+                dev_origins="${dev_origins},${DEV_BFF_CORS_ORIGIN}"
+              fi
+              IFS=',' read -r -a dev_cors_origins <<< "${dev_origins}"
+              for origin in "${dev_cors_origins[@]}"; do
+                origin="${origin//[[:space:]]/}"
+                [[ -z "${origin}" ]] && continue
+                echo "Checking dev BFF CORS origin: ${origin}"
+                curl -sS -D - -o /tmp/dev-cors-body \
+                  -X OPTIONS "${DEV_BFF_URL}/health" \
+                  -H "Origin: ${origin}" \
+                  -H 'Access-Control-Request-Method: GET' \
+                  | grep -qi "access-control-allow-origin: ${origin}"
+              done
               ;;
             staging-live:auto|staging-live:control|staging-live:all )
               curl -fsS "${STAGING_BFF_URL}/health"

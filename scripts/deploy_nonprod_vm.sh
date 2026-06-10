@@ -14,7 +14,8 @@ REMOTE_USER="${REMOTE_USER:-lupin}"
 DEV_VM="${DEV_VM:-pantheon-lupin-dev}"
 DEV_ZONE="${DEV_ZONE:-asia-east1-b}"
 DEV_REMOTE_DIR="${DEV_REMOTE_DIR:-/home/lupin/code/pantheon}"
-DEV_BFF_CORS_ORIGINS="${DEV_BFF_CORS_ORIGINS:-https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io,https://pantheon-ai-system-front-dev.lovable.app,https://pantheon-dev.lovable.app}"
+DEV_BFF_CANONICAL_CORS_ORIGIN="${DEV_BFF_CANONICAL_CORS_ORIGIN:-https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io}"
+DEV_BFF_CORS_ORIGINS="${DEV_BFF_CORS_ORIGINS:-${DEV_BFF_CANONICAL_CORS_ORIGIN},https://pantheon-ai-system-front-dev.lovable.app,https://pantheon-dev.lovable.app}"
 DEV_BFF_REQUIRED_CORS_ORIGINS="${DEV_BFF_REQUIRED_CORS_ORIGINS:-https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com}"
 DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-true}"
 DEV_ASSISTANT_KERNEL_ENABLED="${DEV_ASSISTANT_KERNEL_ENABLED:-true}"
@@ -76,7 +77,8 @@ Environment overrides:
   PANTHEON_DEPLOY_WORKTREE_ROOT
   GITHUB_TOKEN
   DEV_VM DEV_ZONE DEV_REMOTE_DIR
-  DEV_BFF_CORS_ORIGINS DEV_BFF_AUTH_STUB
+  DEV_BFF_CANONICAL_CORS_ORIGIN DEV_BFF_CORS_ORIGINS
+  DEV_BFF_REQUIRED_CORS_ORIGINS DEV_BFF_AUTH_STUB
   DEV_ASSISTANT_KERNEL_ENABLED DEV_ASSISTANT_CONTROL_MODE_STORE_PATH
   DEV_ASSISTANT_CONTROL_IDLE_TTL_SECONDS
   DEV_ASSISTANT_REPAIR_REPO_URL DEV_ASSISTANT_REPAIR_REMOTE_URL
@@ -165,6 +167,7 @@ configure_management_ai_dev_kernel_env() {
   PANTHEON_STATUS_ROOT_HOST="${PANTHEON_STATUS_ROOT_HOST:-${DEV_STATUS_ROOT_HOST:-$DEV_REMOTE_DIR}}"
 }
 
+DEV_BFF_CORS_ORIGINS="$(append_csv_unique "$DEV_BFF_CORS_ORIGINS" "$DEV_BFF_CANONICAL_CORS_ORIGIN")"
 DEV_BFF_CORS_ORIGINS="$(append_csv_unique "$DEV_BFF_CORS_ORIGINS" "$DEV_BFF_REQUIRED_CORS_ORIGINS")"
 
 while [[ $# -gt 0 ]]; do
