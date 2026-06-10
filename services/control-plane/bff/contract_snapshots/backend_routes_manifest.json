@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "snapshot_date": "2026-06-08",
+    "snapshot_date": "2026-06-10",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 482,
+    "total_routes": 492,
     "status_values": [
       "implemented",
       "alias",
@@ -698,6 +698,12 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/personas/{param}/strategy-matches",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/personas/{param}/teaching",
       "family": "api-v1",
       "status": "implemented"
@@ -729,6 +735,12 @@
     {
       "method": "GET",
       "path": "/api/v1/research/search",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/research/source-change-proposals",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -915,6 +927,18 @@
     {
       "method": "POST",
       "path": "/api/v1/knowledge/notes",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/personas/{param}/strategy-discovery",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/personas/{param}/strategy-matches/{param}/actions",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -2204,6 +2228,12 @@
     },
     {
       "method": "GET",
+      "path": "/bff/personas/{param}/strategy-matches",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/personas/{param}/tools",
       "family": "strategy-persona",
       "status": "implemented"
@@ -2283,6 +2313,18 @@
     {
       "method": "POST",
       "path": "/bff/personas/{param}/actions/{param}",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/personas/{param}/strategy-discovery",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/personas/{param}/strategy-matches/{param}/actions",
       "family": "strategy-persona",
       "status": "implemented"
     },
@@ -2439,6 +2481,12 @@
     {
       "method": "GET",
       "path": "/bff/assistant/orchestrator/status",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/assistant/provider/reauth/{param}",
       "family": "unknown",
       "status": "implemented"
     },
@@ -2818,6 +2866,18 @@
     {
       "method": "POST",
       "path": "/bff/assistant/dev-docs/generate",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/assistant/provider/reauth",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/assistant/repair-worktrees/prepare",
       "family": "unknown",
       "status": "implemented"
     },
