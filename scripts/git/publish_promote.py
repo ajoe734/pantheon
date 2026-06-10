@@ -62,6 +62,26 @@ def run_git(*args: str) -> str:
     ).stdout.strip()
 
 
+def ensure_git_identity() -> None:
+    """Configure a committer identity if the checkout has none.
+
+    The promote flow creates a `git merge --no-ff` merge commit. GitHub's
+    actions/checkout does NOT set user.name/user.email, so the merge aborts with
+    exit 128 ("Committer identity unknown") -- which silently broke every
+    scheduled publish-promote run and stalled dev->master promotion. Set the
+    github-actions bot identity, but only when unset so local runs keep theirs.
+    """
+    for key, value in (
+        ("user.email", "github-actions[bot]@users.noreply.github.com"),
+        ("user.name", "github-actions[bot]"),
+    ):
+        existing = subprocess.run(
+            ["git", "config", key], capture_output=True, text=True, cwd=ROOT
+        )
+        if existing.returncode != 0 or not existing.stdout.strip():
+            subprocess.run(["git", "config", key, value], check=False, cwd=ROOT)
+
+
 def list_release_tags() -> list[tuple[str, datetime]]:
     """Return [(version, tagged_at)] for every release/v*.*.* tag on origin."""
     out = run_git(
@@ -213,6 +233,7 @@ def cmd_discover(args: argparse.Namespace) -> int:
 
 def cmd_open_prs(_args: argparse.Namespace) -> int:
     settings = load_promote_settings()
+    ensure_git_identity()
     raw = os.environ.get("PROMOTE_CANDIDATES", "[]")
     try:
         candidates = json.loads(raw)
