@@ -1,6 +1,6 @@
 # Management AI OpenClaw Dev Bridge Runbook
 
-Date: 2026-06-08
+Date: 2026-06-10
 
 This is the canonical runbook for Management AI development that needs
 OpenClaw-backed VM file access, SA/SD generation, and downstream supervisor or
@@ -21,13 +21,20 @@ Do not ask the operator to press Lovable publish or reconnect Lovable before
 working on Management AI dev capability. The active frontend is
 `execute-plans`, and the active host is Pantheon-owned.
 
-Current verified dev deployment, 2026-06-08:
+Current verified dev deployment, 2026-06-10:
 
-- `pantheon@22b89367a56cdbb4fb8a7345fc7c4ad1d293a118` on `dev` for BFF and
-  OpenClaw adapter repair-worktree preparation.
-- `execute-plans@8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf` on `main` for the
-  Management AI frontend control dialog and `openclaw.repair` forwarding.
+- `pantheon@58f70ac83be12a2dcfca9004fc6a30aa00d9cd0f` on `dev` for BFF,
+  OpenClaw adapter repair-worktree preparation, and the self-hosted dev FE CORS
+  allowlist. GitHub Actions run `27280903762` completed the dev nonprod deploy
+  and public BFF smoke.
+- `execute-plans@721bc3c4fe22648c242c6e39c353939575a33637` on `dev` for the
+  Management AI frontend control dialog, SA/SD skill-gated action, and
+  `openclaw.repair` forwarding.
 - Dev FE document root: `/var/www/pantheon-dev-fe/`.
+- Browser probe against
+  `https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io` passed with the current
+  dev BFF URL, no obsolete BFF URL hits, `/bff/management/fleet` `200`, and no
+  console errors.
 
 Current known gate: provider readiness and route availability can be healthy
 while control mode is configured but inactive. A positive VM-write claim still
@@ -96,10 +103,11 @@ The worktree must exist under `PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT` and
 must be the git repo root. Before provider execution it must be clean, on
 `expected_branch`, and limited to repo-relative `declared_scope` entries.
 `declared_scope` must not be empty and must not be `.`. Use `repoKey:
-execute-plans` with merge target `main` for frontend work and `repoKey:
-pantheon` with merge target `dev` for backend/BFF work.
+execute-plans` with merge target `dev` for frontend work and `repoKey:
+pantheon` with merge target `dev` for backend/BFF work. `execute-plans/main` is
+not the active dev integration or deploy source.
 
-As of 2026-06-08, dev BFF control mode can be configured independently from
+As of 2026-06-10, dev BFF control mode can be configured independently from
 repair-worktree provisioning. If Management AI chat does not first prepare the
 worktree through the governed BFF route and then send the returned
 `openclaw.repair` metadata to `/bff/management/nl/ask`, VM write capability is
@@ -140,12 +148,12 @@ ready. Check all of these before telling another agent or operator it is done:
 
 When the user asks for Management AI frontend or OpenClaw repair changes:
 
-1. For frontend code, work in `ajoe734/execute-plans` from `main`, merge by PR,
+1. For frontend code, work in `ajoe734/execute-plans` from `dev`, merge by PR,
    build with the dev BFF URL, and deploy to the Pantheon-owned dev FE host.
 2. For backend/BFF code, work in `ajoe734/pantheon` from `dev`, merge by PR,
    rebuild/restart the relevant dev VM services, then re-smoke the FE host.
 3. For write-capable Management AI work, use `repoKey: execute-plans` with
-   merge target `main` for frontend changes and `repoKey: pantheon` with merge
+   merge target `dev` for frontend changes and `repoKey: pantheon` with merge
    target `dev` for backend/BFF changes.
 4. Do not dispatch downstream implementation agents from a SA/SD packet until
    the packet has reached the assistant dev bridge inbox and the supervisor has
