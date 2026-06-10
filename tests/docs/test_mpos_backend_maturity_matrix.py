@@ -21,8 +21,13 @@ def _mpos_section() -> str:
     return text[start:next_heading]
 
 
+def _compact(text: str) -> str:
+    return " ".join(text.split())
+
+
 def test_mpos_backend_matrix_covers_required_backends_and_posture() -> None:
     section = _mpos_section()
+    compact_section = _compact(section)
 
     required_terms = [
         "`vectorbt`",
@@ -44,7 +49,7 @@ def test_mpos_backend_matrix_covers_required_backends_and_posture() -> None:
     ]
 
     for term in required_terms:
-        assert term in section
+        assert _compact(term) in compact_section
 
 
 def test_mpos_backend_matrix_cites_proof_tests_for_each_backend() -> None:
