@@ -80,7 +80,7 @@ Pantheon 的制度核心是：
 
 # 3. 系統公理
 
-以下 10 條是 Pantheon 的主公理，後續所有設計都不能違反：
+以下 13 條是 Pantheon 的主公理，後續所有設計都不能違反：
 
 1. **研究與執行分離**  
    研究產出 artifact，execution consume artifact。
@@ -109,6 +109,23 @@ Pantheon 的制度核心是：
 
 10. **實盤表現必須和 backtest / paper / canary 持續 reconciliation**
 
+11. **每個 persona 都有自己的 OODA loop**
+    多 persona 可以共存、互相會診、互相 red-team，但不能把多 persona 的
+    Observe / Orient / Decide 混成一條全域 OODA。
+
+12. **Agora / Trainer / Trader feedback 是 Observe 與 Learn 的人機互動證據**
+    真人交易員不一定以「我正在訓練 AI」的意圖互動。Agora ask、signal
+    feedback、journal、note、insight、persona-lab commit、trainer session、
+    approve / edit / reject / rationale 都可以形成 teaching evidence、correction
+    trace、preference pair、trader trajectory 或 persona lesson，但不能因此取得
+    live execution authority。
+
+13. **LEAN 是 execution-only runtime**
+    LEAN 只 consume approved DeploymentPlan / RuntimeBinding / artifact，負責
+    orders、fills、positions、runtime telemetry。Persona discussion、conflict
+    arbitration、artifact synthesis、governance approval、policy learning 都不得在
+    LEAN runtime 內發生。
+
 ---
 
 # 4. 總體系統架構
@@ -127,6 +144,7 @@ flowchart LR
         UI6["Consultation Workbench"]
         UI7["Governance Workbench"]
         UI8["Evolution Workbench"]
+        UI9["Agora / Ask Personas"]
     end
 
     subgraph BFF["Pantheon BFF Plane"]
@@ -160,6 +178,7 @@ flowchart LR
         PER5["Capability Resolver"]
         PER6["Teaching Session Coordinator"]
         PER7["Persona Lifecycle Manager"]
+        PER8["Per-Persona OODA State"]
     end
 
     subgraph CPL["Capital Pool Plane"]
@@ -205,6 +224,7 @@ flowchart LR
         P2["Alpha Policy Learning"]
         P3["Human Trader Imitation"]
         P4["Preference / Correction Dataset Builder"]
+        P5["Shadow / Paper Imitation Evaluation"]
     end
 
     subgraph OPT["Portfolio / Risk Optimizer Layer"]
@@ -304,6 +324,9 @@ flowchart LR
 
 ## 5.1 Pantheon Console Plane
 前台工作台群，承接 researcher、trainer、committee member、reviewer、operator 與 AI persona 的互動表面。
+Agora / Ask Personas 屬於同一個 Console Plane：真人交易員可能只是請 persona 做交易分析、
+修正 proposal、補 rationale、寫 journal 或標 signal，但這些互動會形成後續 Observe / Learn
+可用的 evidence。
 
 ## 5.2 Pantheon BFF Plane
 前台唯一聚合入口。負責 auth、session、RBAC、view model、command façade、notification。
@@ -315,7 +338,9 @@ flowchart LR
 受控研究素材入口。paper / repo / internal research 先進這一層，再 normalize 成 seed。
 
 ## 5.5 Persona Plane
-persona registry、workspace、route policy、consult policy、teaching session、lifecycle。
+persona registry、workspace、route policy、consult policy、teaching session、lifecycle、
+per-persona OODA state。每個 persona 的 Observe / Orient / Decide / Act / Learn 都是
+persona-scoped，不是全系統共用的一條 loop。
 
 ## 5.6 Capital Pool Plane
 capital pool registry、risk policy、broker account、persona-capital binding、pool lifecycle。
@@ -330,7 +355,9 @@ agent-to-agent bus、committee orchestrator、red-team orchestrator、consult me
 Qlib、vectorbt、statsmodels、QuantLib、RL Lab、rapid eval、experiment orchestration。
 
 ## 5.10 Policy Learning Plane
-persona policy、alpha policy、human trader imitation、preference / correction dataset builder。
+persona policy、alpha policy、human trader imitation、preference / correction dataset builder、
+shadow / paper imitation evaluation。這一層可以把 Agora / Trainer / trader feedback 轉成
+dataset 或 policy candidate，但不能直接改 running artifact 或 live runtime。
 
 ## 5.11 Portfolio / Risk Optimizer Layer
 skfolio、PyPortfolioOpt、cvxportfolio、Riskfolio-Lib，輸出 allocation artifact。
@@ -359,25 +386,79 @@ Pantheon 不是單一 pipeline，而是多條主循環並存。
 ## 6.3 Alpha 複製 / 研究回路
 `StrategySpec -> backend selection -> experiment / prototype / RL lab -> replicated artifact`
 
-## 6.4 Persona 教學回路
-`researcher -> Trainer Workbench -> teaching events -> rapid eval -> persona patch / dataset`
+## 6.4 Per-Persona OODA 回路
 
-## 6.5 Human Trader 模仿回路
-`teaching traces / trader trajectories -> imitation dataset -> behavior policy candidate`
+每個 persona 都各自跑自己的 OODA，不共享一條全域決策迴圈：
 
-## 6.6 Consultation / Committee 回路
+```text
+Persona A: Observe -> Orient -> Decide -> proposal/evidence -> Learn
+Persona B: Observe -> Orient -> Decide -> proposal/evidence -> Learn
+Persona C: Observe -> Orient -> Decide -> proposal/evidence -> Learn
+```
+
+- Observe: market data、own pool telemetry、strategy telemetry、research notes、signals、incidents、
+  Agora / trainer / trader feedback。
+- Orient: regime assessment、strategy ranking、risk budget、allocation among strategies、
+  drawdown / exposure review。
+- Decide: approve strategy adjustment proposal、propose rebalance、propose deploy / pause /
+  rollback、submit governance request。
+- Act: 在 pre-LEAN control plane 產生 proposal、evidence、ConsultMemo、CandidateArtifact、
+  AllocationPolicyArtifact、DeploymentPlan 或 RuntimeBinding request。Act 不代表 persona
+  直接呼叫 LEAN 或 broker。
+- Learn: telemetry、postmortem、strategy evolution、persona teaching history、correction trace、
+  preference pair、trader trajectory、no-order rationale。
+
+多 persona 的討論、conflict classification、同質性判斷、artifact synthesis 與 governance
+發生在 pre-LEAN control plane。若同一 review scope 需要進 runtime，才會產生一個或多個
+approved artifact；策略方向高度同質時，選多個等價 artifact 通常沒有意義。
+
+## 6.5 Agora / Human Trader Interaction Learning 回路
+
+Agora 是真人交易員與 persona 的自然互動面，不只是明確的 Trainer Workbench。
+真人交易員可能並不知道自己正在「訓練 AI」，但他的分析要求、修正、否決、rationale、
+journal、note、signal feedback、insight action、training example 或 persona-lab commit
+都會形成可審查的 learning evidence：
+
+```text
+human trader interaction
+  -> Agora ask / session / message / signal feedback / journal / note / insight
+  -> teaching message / trainer session / persona-lab commit
+  -> approve / edit / reject / rationale feedback
+  -> correction trace / preference pair / trader trajectory
+  -> persona memory / strategy lesson / imitation dataset
+```
+
+這些 evidence 只能進 Observe / Learn 或 research-plane dataset builder。它們不能 promote
+artifact、不能改 live LEAN、不能繞過 approval。
+
+## 6.6 Persona 教學回路
+`researcher / trainer -> Trainer Workbench -> teaching events -> rapid eval -> persona patch / dataset`
+
+## 6.7 Human Trader 模仿 / Shadow 回路
+`Agora traces / teaching traces / trader trajectories -> imitation dataset -> behavior policy candidate -> shadow / paper eval`
+
+Human trader imitation 會複製真人交易員的交易邏輯，形成 shadow behavior policy 或 persona
+patch candidate。shadow persona 可以在同一市場情境中跑自己的 OODA，和真人 decision、
+no-order rationale、risk adjustment 做比較，嘗試在 OOS / paper / rapid eval 裡比真人做得更好。
+這仍然是 research / policy learning loop；要影響 runtime 必須經 experiment、approval、
+DeploymentPlan 與 RuntimeBinding。
+
+## 6.8 Consultation / Committee 回路
 `persona / researcher -> consult request -> committee / red-team -> memo -> registry / review`
 
-## 6.7 Promotion / Deployment 回路
+## 6.9 Promotion / Deployment 回路
 `candidate artifact -> validators -> review gates -> approved -> paper / canary / live`
 
-## 6.8 Capital Pool Execution 回路
+## 6.10 Capital Pool Execution 回路
 `approved artifact -> runtime binding -> LEAN runtime -> broker/subaccounts -> fills/positions`
 
-## 6.9 Telemetry / Postmortem / Evolution 回路
+LEAN runtime 只執行已批准 artifact。它不做 persona discussion、committee、conflict handling、
+artifact synthesis、governance approval 或 policy learning。
+
+## 6.11 Telemetry / Postmortem / Evolution 回路
 `events -> reconciliation/drift -> incident -> postmortem -> evolution decision -> retrain/freeze/rollback/mutate`
 
-## 6.10 主循環圖
+## 6.12 主循環圖
 
 ```mermaid
 flowchart TD
@@ -514,6 +595,7 @@ stateDiagram-v2
 3. Shared Capability Plane
 4. Persona Plane
 5. Consultation Plane
+6. Agora / Ask Personas human-interaction capture
 
 它處理的是 **interaction/control plane**：
 - 人怎麼和 persona / system 互動
@@ -521,6 +603,8 @@ stateDiagram-v2
 - shared tools / skills / workflows 怎麼供應
 - 人格之間如何會診
 - 前台怎麼組成工作台與 BFF
+- 真人交易員怎麼透過 Agora ask、signal feedback、journal、insight、training example
+  或 persona-lab commit 形成 teaching / correction / imitation evidence
 
 ## 9.2 第一包架構圖
 
@@ -535,6 +619,7 @@ flowchart LR
         UI5["Consultation Workbench"]
         UI6["Governance Workbench (UI Shell)"]
         UI7["Evolution Workbench (UI Shell)"]
+        UI8["Agora / Ask Personas"]
     end
 
     subgraph BFF["Pantheon BFF Plane"]
@@ -655,7 +740,15 @@ flowchart LR
 5. 觸發 preview / rapid eval
 6. commit / discard / replay
 
-### 9.4.3 發起 Consultation
+### 9.4.3 Agora 真人互動證據收集
+1. 真人交易員 / operator 在 Agora ask persona 做交易分析、signal review、proposal critique。
+2. BFF 建立或重用 Agora session，寫入 message、command receipt、context refs。
+3. 真人可提交 signal feedback、note、journal、insight action、training example、research task。
+4. Persona-lab commit 只能形成 `trainer_feedback_to_persona_update` handoff，進 management review。
+5. 這些資料進 Observe / Learn、dataset builder、persona lesson 或 imitation candidate。
+6. 不 promote artifact、不修改 live LEAN、不繞 approval。
+
+### 9.4.4 發起 Consultation
 1. researcher / persona 建立 consult request
 2. 指定單一 persona / committee / red-team
 3. 進 agent-to-agent bus
@@ -693,6 +786,10 @@ flowchart LR
 
 ### TeachingSession / TeachingEvent
 用於支撐 trainer flow、preview、dataset builder 與 audit。
+
+### AgoraSession / AgoraMessage / AgoraFeedback
+用於支撐 Ask Personas、signal feedback、journal / note / insight、training example、
+persona-lab handoff 與後續 learning evidence capture。
 
 ### ConsultRequest / ConsultMemo
 用於支撐單次 consult、committee、red-team 與 memo 回寫。
@@ -864,16 +961,24 @@ flowchart LR
 5. 回傳 metrics / warnings / deltas
 
 ### 10.4.4 Policy Learning Dataset 流程
-1. 收集 teaching traces / consult traces / approval edits / experiment outcomes
-2. Dataset Builder 結構化
-3. 輸出 persona dataset / alpha dataset / imitation dataset
-4. 寫入 registry / storage
+1. 收集 Agora sessions / messages / signal feedback / journal / insight / training examples
+2. 收集 teaching traces / consult traces / approval edits / experiment outcomes
+3. 收集 trader trajectories / no-order rationale / correction traces / preference pairs
+4. Dataset Builder 結構化
+5. 輸出 persona dataset / alpha dataset / imitation dataset
+6. 將 human imitation 產物作為 behavior policy candidate 或 shadow persona candidate
+7. 經 OOS / rapid eval / paper shadow 比較真人 trajectory 與 persona proposal
+8. 寫入 registry / storage
+9. 任何 candidate 要影響 runtime，必須再走 experiment -> approval -> deployment
 
 ### 10.4.5 Allocation Artifact 產出
 1. 研究 run 產生 signal / risk estimate
 2. Optimizer layer 依 objective / constraints 選 optimizer
 3. 輸出 target weights / risk budget / constraints bundle
 4. 封裝成 AllocationPolicyArtifact
+5. 多 persona proposal 只在特定 review / capital-pool / strategy scope 內做 synthesis。
+   synthesis 可以產生一個 approved artifact、committee referral，或在 scope 允許時產生多個
+   artifact；它不是把所有 persona 的 OODA 永久聚合成單一策略人格。
 
 ## 10.5 第二包主物件索引
 

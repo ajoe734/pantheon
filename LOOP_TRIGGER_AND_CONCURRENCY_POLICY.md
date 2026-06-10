@@ -25,19 +25,19 @@ Pantheon 不採用「全部都是 event-driven」或「全部都是 cron」的�
 - cron / batch 輔助
 - runtime continuous loop
 
-目前共定義 **11 個主要迴圈**。
+目前共定義 **12 個主要迴圈**。
 
 ---
 
 ## 2. 結論摘要
 
 ### 2.1 唯一 continuous loop
-11 個主要迴圈中，只有 **capital pool execution（LEAN runtime）** 是真正長駐連續迴圈。
+12 個主要迴圈中，只有 **capital pool execution（LEAN runtime）** 是真正長駐連續迴圈。
 
 ### 2.2 其餘迴圈分類
 - event-driven: strategy distillation, consultation, telemetry ingest
-- cron/scheduled: source ingestion, human imitation, reconciliation, evolution daily sweep
-- command-driven: promotion/deployment, persona teaching, alpha replication
+- cron/scheduled: source ingestion, human imitation, shadow imitation evaluation, reconciliation, evolution daily sweep
+- command-driven: promotion/deployment, persona teaching, alpha replication, Agora interaction actions
 - continuous + event: BFF health monitoring
 
 ### 2.3 Race condition 規則
@@ -84,29 +84,39 @@ deploy 只吃 immutable approved artifact snapshot。
 
 | 項目 | 定義 |
 |---|---|
-| 主要觸發 | user-driven — operator 或 researcher 發起 teaching session |
+| 主要觸發 | user-driven — trainer、operator 或 researcher 發起 teaching session |
 | 次要觸發 | preview / eval 是 async worker |
 | 輸出 | `TeachingSession` / `TeachingEvent` / `ConsultMemo` |
 | 競爭條件 | 不與 execution 路徑競爭；teaching 結果需經 evaluation 才能影響 persona |
 
-### 3.5 Human Imitation
+### 3.5 Agora / Human Trader Interaction Evidence
 
 | 項目 | 定義 |
 |---|---|
-| 主要觸發 | batch / scheduled — 不對每個 teaching event 即時訓練 |
-| 輸出 | updated imitation model weights / policy |
-| 競爭條件 | 模型更新不影響 running artifact；新模型需經 experiment → approval 才能部署 |
+| 主要觸發 | user-driven / command-driven — Agora ask、signal feedback、journal、note、insight action、training example、persona-lab commit |
+| 次要觸發 | provider-backed assistant response、dataset extraction、handoff creation 是 async 或 command-backed |
+| 輸出 | `AgoraInteractionEvidence` / session message / feedback event / training example / handoff |
+| 競爭條件 | 只進 Observe / Learn 或 dataset builder；不 promote artifact、不改 running artifact、不碰 live LEAN |
 
-### 3.6 Consultation
+### 3.6 Human Imitation / Shadow Evaluation
+
+| 項目 | 定義 |
+|---|---|
+| 主要觸發 | batch / scheduled — 不對每個 Agora message、feedback 或 teaching event 即時訓練 |
+| 次要觸發 | explicit evaluation command 可要求 rapid eval / OOS / paper-shadow comparison |
+| 輸出 | updated imitation model weights / behavior policy / `ShadowImitationCandidate` |
+| 競爭條件 | 模型更新不影響 running artifact；shadow candidate 需經 experiment → approval → deployment 才能部署 |
+
+### 3.7 Consultation
 
 | 項目 | 定義 |
 |---|---|
 | 主要觸發 | on-demand event-driven |
 | 次要觸發 | committee / red-team 是 async workflow |
 | 輸出 | `ConsultRequest` / `ConsultMemo` / committee recommendation |
-| 競爭條件 | consultation 結果是 advisory，不直接觸發 deploy |
+| 競爭條件 | consultation / conflict classification / artifact synthesis 發生在 pre-LEAN control plane；advisory or review-bound，不直接觸發 deploy |
 
-### 3.7 Promotion / Deployment
+### 3.8 Promotion / Deployment
 
 | 項目 | 定義 |
 |---|---|
@@ -115,17 +125,17 @@ deploy 只吃 immutable approved artifact snapshot。
 | 輸出 | `ApprovalDecision` → `DeploymentPlan` → `RuntimeBinding` |
 | 競爭條件 | 只能消費 immutable approved artifact |
 
-### 3.8 Capital Pool Execution
+### 3.9 Capital Pool Execution
 
 | 項目 | 定義 |
 |---|---|
 | 主要觸發 | **continuous runtime loop** — LEAN engine 持續運行 |
-| 這是 | 11 個迴圈中唯一真正長駐連續迴圈 |
+| 這是 | 12 個迴圈中唯一真正長駐連續迴圈 |
 | 輸入 | 已 active 的 `RuntimeBinding` |
 | 輸出 | orders, fills, positions, runtime heartbeats |
-| 競爭條件 | 不與其他迴圈直接競爭；execution 路徑完全隔離 |
+| 競爭條件 | 不與其他迴圈直接競爭；execution 路徑完全隔離；LEAN 不做 persona discussion、conflict arbitration、artifact synthesis、governance approval 或 learning |
 
-### 3.9 Telemetry / Reconciliation
+### 3.10 Telemetry / Reconciliation
 
 | 項目 | 定義 |
 |---|---|
@@ -134,7 +144,7 @@ deploy 只吃 immutable approved artifact snapshot。
 | 輸出 | `TelemetryEvent` / `DriftReport` / `IncidentCase` |
 | 競爭條件 | reconciliation 不影響 running runtime；只產生分析結果 |
 
-### 3.10 Evolution
+### 3.11 Evolution
 
 | 項目 | 定義 |
 |---|---|
@@ -143,7 +153,7 @@ deploy 只吃 immutable approved artifact snapshot。
 | 輸出 | `EvolutionDecision` |
 | 競爭條件 | 同一 target 同時間只能有一個 active `EvolutionDecision` |
 
-### 3.11 BFF Health Monitoring
+### 3.12 BFF Health Monitoring
 
 | 項目 | 定義 |
 |---|---|
@@ -232,20 +242,21 @@ deployment 和 execution 必須能確定性地回答「當時部署的是什麼�
 | 2 | Strategy distillation | event-driven | 否 | StrategySpec draft | 只寫 mutable draft |
 | 3 | Alpha replication | review-driven + scheduled | 否 | ExperimentRun | 需 review 決定 |
 | 4 | Persona teaching | user-driven | 否 | TeachingSession | 不碰 execution |
-| 5 | Human imitation | batch/scheduled | 否 | imitation model | 需 experiment → approval |
-| 6 | Consultation | on-demand event | 否 | ConsultMemo | advisory only |
-| 7 | Promotion/deployment | command-driven | 否 | RuntimeBinding | 只吃 immutable artifact |
-| 8 | Capital pool execution | continuous loop | **是** | orders/fills | 完全隔離 |
-| 9 | Telemetry/reconciliation | event + scheduled | 否 | DriftReport/Incident | 不影響 running runtime |
-| 10 | Evolution | threshold + sweep | 否 | EvolutionDecision | 受 cooldown 約束 |
-| 11 | BFF health monitoring | continuous + event | 否 | health metrics | 不影響 active runtimes |
+| 5 | Agora / trader interaction evidence | user/command-driven | 否 | interaction evidence | Observe / Learn only |
+| 6 | Human imitation / shadow eval | batch/scheduled | 否 | imitation model / shadow candidate | 需 experiment → approval |
+| 7 | Consultation | on-demand event | 否 | ConsultMemo | pre-LEAN advisory / review-bound |
+| 8 | Promotion/deployment | command-driven | 否 | RuntimeBinding | 只吃 immutable artifact |
+| 9 | Capital pool execution | continuous loop | **是** | orders/fills | 完全隔離 |
+| 10 | Telemetry/reconciliation | event + scheduled | 否 | DriftReport/Incident | 不影響 running runtime |
+| 11 | Evolution | threshold + sweep | 否 | EvolutionDecision | 受 cooldown 約束 |
+| 12 | BFF health monitoring | continuous + event | 否 | health metrics | 不影響 active runtimes |
 
 ---
 
 ## 7. v1 決策
 
 1. 採 hybrid trigger model，不統一為單一觸發機制
-2. 只有 capital pool execution 是 continuous loop（共 11 個迴圈）
+2. 只有 capital pool execution 是 continuous loop（共 12 個迴圈）
 3. promotion 只消費 immutable approved artifact snapshot
 4. distillation 只寫 mutable draft
 5. latest draft head 可以變，但 approved artifact immutable
