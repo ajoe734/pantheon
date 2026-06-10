@@ -63,7 +63,12 @@ GOVERNANCE_EVIDENCE_REF_TYPES = {
     "telemetry_summary",
     "audit_log_entry",
     "manual_review_ticket",
+    "committee_memo",
+    "service_handoff",
 }
+
+CONSULTATION_GATE_TARGET_TYPES = {"allocation_policy"}
+CONSULTATION_GATE_RISK_LEVELS = {"high", "critical"}
 
 
 @dataclass(frozen=True)
@@ -177,6 +182,25 @@ def _approval_proposal(payload: Mapping[str, Any], decision_type: str) -> Approv
     if conditions:
         metadata["conditions"] = conditions
 
+    evidence = _evidence_refs(payload)
+
+    if target_type in CONSULTATION_GATE_TARGET_TYPES and risk_level in CONSULTATION_GATE_RISK_LEVELS:
+        committee_id = _optional_str(payload, "committee_id", "committeeId")
+        handoff_id = _optional_str(payload, "handoff_id", "handoffId")
+        if not committee_id:
+            raise SponsorDecisionBridgeError(
+                "committee_id is required for high-risk allocation_policy approval proposal"
+            )
+        if not handoff_id:
+            raise SponsorDecisionBridgeError(
+                "handoff_id is required for high-risk allocation_policy approval proposal"
+            )
+        existing_types = {r.get("ref_type") for r in evidence if isinstance(r, dict)}
+        if "committee_memo" not in existing_types:
+            evidence = [{"ref_type": "committee_memo", "ref_id": committee_id}] + evidence
+        if "service_handoff" not in existing_types:
+            evidence = evidence + [{"ref_type": "service_handoff", "ref_id": handoff_id}]
+
     return ApprovalDecisionProposal(
         proposal_type="approval_decision",
         decision_id=_proposal_id(payload, "approval", source_decision_id),
@@ -186,7 +210,7 @@ def _approval_proposal(payload: Mapping[str, Any], decision_type: str) -> Approv
         decision_state="proposed",
         risk_level=risk_level,
         rationale=_rationale(payload, source_decision_id, sponsor_persona_id),
-        evidence_refs=_evidence_refs(payload),
+        evidence_refs=evidence,
         capital_pool_id=_optional_str(payload, "capital_pool_id", "capitalPoolId"),
         persona_id=(
             _optional_str(payload, "persona_id", "personaId", "target_persona_id")
