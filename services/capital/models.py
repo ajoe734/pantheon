@@ -7,7 +7,7 @@ These models wrap the canonical governance objects:
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -50,6 +50,9 @@ class RiskPolicyBody(BaseModel):
     forbidden_asset_classes: List[str] = Field(default_factory=list)
     allowed_strategy_families: List[str] = Field(default_factory=list)
     forbidden_strategy_families: List[str] = Field(default_factory=list)
+    max_strategy_family_concentration: Optional[Union[Dict[str, float], float]] = None
+    max_target_overlap: Optional[float] = None
+    max_signal_correlation: Optional[float] = None
     allowed_stages: List[str] = Field(default_factory=list)
     max_canary_capital_scale_pct: Optional[float] = None
     max_canary_gross_scale_pct: Optional[float] = None
@@ -70,6 +73,9 @@ class RiskPolicyEvaluationContextBody(BaseModel):
     turnover: Optional[float] = None
     asset_classes: List[str] = Field(default_factory=list)
     strategy_family: Optional[str] = None
+    strategy_family_concentration: Dict[str, float] = Field(default_factory=dict)
+    target_overlap: Optional[float] = None
+    signal_correlation: Optional[float] = None
     sector_exposures: Dict[str, float] = Field(default_factory=dict)
     factor_exposures: Dict[str, float] = Field(default_factory=dict)
     liquidity: Dict[str, Any] = Field(default_factory=dict)

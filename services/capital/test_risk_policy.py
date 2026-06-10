@@ -85,3 +85,31 @@ def test_drawdown_warn_allows_with_conditions() -> None:
 
     assert evaluation.decision == RiskPolicyDecision.ALLOWED_WITH_CONDITIONS.value
     assert evaluation.warnings
+
+
+def test_homogeneity_and_correlation_limits_are_hard_vetoes() -> None:
+    policy = RiskPolicy(
+        risk_policy_id="risk-main",
+        max_strategy_family_concentration=0.65,
+        max_target_overlap=0.8,
+        max_signal_correlation=0.9,
+    )
+
+    evaluation = RiskPolicyEvaluator().evaluate(
+        policy,
+        RiskPolicyEvaluationContext(
+            target_type=RiskPolicyTargetType.ALLOCATION_PROPOSAL.value,
+            target_id="allocation-gate-review-001",
+            capital_pool_id="pool-001",
+            strategy_family_concentration={"mega_cap_momentum": 0.9},
+            target_overlap=0.95,
+            signal_correlation=0.97,
+        ),
+    )
+
+    assert evaluation.rejected is True
+    assert {check.code for check in evaluation.checks if check.status == "failed"} == {
+        "strategy_family_concentration_limit_exceeded",
+        "target_overlap_limit_exceeded",
+        "signal_correlation_limit_exceeded",
+    }
