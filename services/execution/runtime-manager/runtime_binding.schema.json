@@ -10,6 +10,7 @@
     "artifact_id",
     "artifact_version",
     "deployment_mode",
+    "execution_mode",
     "effective_at",
     "status",
     "plan_id",
@@ -42,6 +43,11 @@
       "type": "string",
       "enum": ["paper", "canary", "live", "frozen"],
       "description": "The actual execution stage of the runtime (equivalent to 'stage' in L1 docs)."
+    },
+    "execution_mode": {
+      "type": "string",
+      "enum": ["paper", "canary", "live", "frozen"],
+      "description": "The runtime execution mode emitted to runtime and telemetry surfaces. Must equal deployment_mode; kept explicit so canary is not collapsed into live."
     },
     "effective_at": {
       "type": "string",

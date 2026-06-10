@@ -52,6 +52,12 @@
       "description": "Policy document refs used to compute this snapshot (route_policy, consult_policy, RBAC rules).",
       "default": []
     },
+    "denial_reasons": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Reasons why one or more capabilities were denied during policy resolution (set by PersonaPolicyResolver).",
+      "default": []
+    },
     "metadata": {
       "type": "object",
       "description": "Arbitrary metadata."

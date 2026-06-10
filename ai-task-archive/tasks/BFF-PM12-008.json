@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "BFF-PM12-008",
+  "archived_at": "2026-05-23T11:20:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-PM12-008",
+    "title": "GET /bff/management/quarterly-ranking/recommendations",
+    "summary_zh": null,
+    "phase": "Sprint BFF-4 / EPIC-BFF-GAP-PM12",
+    "owner": "Codex2",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "BFF-PM12-006"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#b35-important-policy-rule",
+      "execute-plans/src/lib/bff-v1/management.ts",
+      "services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "Accepts ?quarter=YYYY-Qn query",
+      "Returns governance recommendations only (promote_to_canary_candidate increase_research_budget grant_tool_access reduce_capital_access require_retraining freeze_persona suspend_persona retire_persona)",
+      "No direct live capital change",
+      "all writes enter Human Inbox per spec section B3.5"
+    ],
+    "next": "Owner finalized approved B3.5 quarterly ranking recommendations after implementation PR #473 and closeout PR #482 merged. Validation: py_compile focused BFF modules; pytest PM-12 persona-league plus final live wiring contract (16 passed, 3 existing read_store datetime.utcnow warnings).",
+    "last_update": "2026-05-23T11:20:18Z",
+    "review_notes_zh": [
+      "審查通過：governance-only contract 完整，B3.5 allow-list 8 個 action 無缺漏，每項 recommendation 正確設定 requiresHumanGateDecision=true / liveCapitalMutation=false，HumanGateDecision routing metadata 及 governance destinations 正確傳遞，execute-plans typed helpers 齊全，test coverage 覆蓋所有 6 條 acceptance criteria。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T11:20:18Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-pm12-008",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-PM12-008",
+      "git_clean_required": false,
+      "repository_fallback": {
+        "from_repository_id": "execute_plans",
+        "missing_repository_path": "/tmp/pantheon-worker-worktrees/pantheon/execute-plans",
+        "reason": "non-Pantheon artifact repository local_path is unavailable; using Pantheon because the task also has Pantheon artifacts"
+      },
+      "commit": "7a716c7e806f1fa64e5231cd651631f46af600e4",
+      "commit_subject": "BFF-PM12-008: refresh closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-PM12-008",
+        "Reviewer": "Claude2",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q; git diff --check -- support/evidence/BFF-PM12-008/owner-closeout.md"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-PM12-008",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "d51cb2c26485592d7a408e3dded0a64b7a2a6df0",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-PM12-008",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Implemented and merged PR #473 for GET /bff/management/quarterly-ranking/recommendations. Please review governance-only recommendation contract, HumanGateDecision routing metadata, execute-plans typed helpers, and focused validation.",
+      "status": "done",
+      "created_at": "2026-05-23T10:46:22Z",
+      "resolved_at": "2026-05-23T10:51:17Z"
+    },
+    {
+      "task_id": "BFF-PM12-008",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Review approved: governance-only contract, HumanGateDecision routing metadata, execute-plans typed helpers, and focused validation all satisfy the B3.5 spec and 6 acceptance criteria. Returning to Codex2 for closeout.",
+      "status": "done",
+      "created_at": "2026-05-23T10:51:17Z",
+      "resolved_at": "2026-05-23T11:20:19Z"
+    }
+  ],
+  "blockers": []
+}

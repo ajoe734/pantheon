@@ -1,30 +1,26 @@
 # Nonprod CI/CD
 
-Status date: 2026-05-02
+Status date: 2026-06-09
 
 This is the repo-local CI/CD operating record for Pantheon dev and
 staging-live.
 
-The current implementation keeps the existing VM/Compose topology and adds the
-missing GitHub Actions deployment lane:
+The current implementation keeps the VM/Compose non-prod topology in the
+Benjamin GCP project and uses GitHub Actions for pinned VM deployment:
 
 - CI remains `Pantheon Stage 0 CI`.
-- Image publishing remains `Publish images to Artifact Registry`.
-- Dev deployment is automatic after push-triggered image publishing succeeds on
-  the deployment branch and the published commit changes at least one runtime
-  deploy target. The current GitHub default branch is
-  `backend-dev-publish-20260429`; the workflows also accept `master` and `main`
-  while the repo branch naming is being cleaned up.
-- Staging-live deployment is manual and should be protected by GitHub
-  Environment reviewers.
+- Image publishing remains manual through `Publish images to Artifact Registry`.
+- Dev deployment is automatic on `publish/v*` pushes.
+- Staging-live deployment is automatic on `master` pushes and can also be run
+  manually through the protected `staging-live` GitHub Environment.
 
 ## Workflows
 
 | Workflow | File | Trigger | Role |
 | --- | --- | --- | --- |
-| Pantheon Stage 0 CI | `.github/workflows/stage-0-ci.yml` | PR, push to deployment branch, manual | changed target detection, baseline checks, focused verify, Docker build dry-run |
-| Publish images to Artifact Registry | `.github/workflows/gcp-deploy.yml` | push to deployment branch, manual | GitHub OIDC to GCP, Cloud Build, Artifact Registry tags, build manifest |
-| Pantheon Nonprod Deploy | `.github/workflows/nonprod-deploy.yml` | after image publish, manual | VM checkout-to-commit, compose restart, health/CORS smoke |
+| Pantheon Stage 0 CI | `.github/workflows/stage-0-ci.yml` | PR, push, manual | changed target detection, baseline checks, focused verify, Docker build dry-run |
+| Publish images to Artifact Registry | `.github/workflows/gcp-deploy.yml` | manual | GitHub OIDC to GCP, Cloud Build, Artifact Registry tags, build manifest |
+| Pantheon Nonprod Deploy | `.github/workflows/nonprod-deploy.yml` | `publish/v*`, `master`, manual | VM checkout-to-commit, compose restart, health/CORS smoke |
 
 ## Deployment Script
 
@@ -38,7 +34,7 @@ The script SSHes to the target VM through `gcloud compute ssh`, snapshots the
 current human-facing remote checkout, prepares a managed clean deploy worktree
 under `~/pantheon-ci-deploy`, starts the expected Compose stack from the pinned
 commit, and runs health checks. This keeps CI deploys from overwriting operator
-or agent work in `/home/edna/code/pantheon`.
+or agent work in `/home/lupin/code/pantheon`.
 
 For private repository fetches on the VM, GitHub Actions passes its short-lived
 `GITHUB_TOKEN` only to the deploy SSH session. The token is used as a temporary
@@ -69,29 +65,23 @@ Emergency flags:
 
 ## Dev Lane
 
-Automatic dev deploy runs after a push-triggered
-`Publish images to Artifact Registry` run completes successfully on the
-deployment branch and `scripts/ci_stage0.py detect-changes` finds at least one
-runtime deploy target for the published commit. Pure CI/CD or documentation
-commits leave a skip notice and do not SSH to the VM. The current GitHub default
-branch is `backend-dev-publish-20260429`; `master` and `main` are also included
-in the workflow triggers during the branch cleanup period.
-Manual image-publish runs do not auto-deploy dev; use the manual deploy entry
-when that is desired.
+Automatic dev deploy runs when a `publish/v*` snapshot branch is pushed. Manual
+image-publish runs do not auto-deploy dev; use the manual deploy entry when
+that is desired.
 
 Target:
 
-- VM: `pantheon-dev-vm1`
+- VM: `pantheon-lupin-dev`
 - compose project: `pantheon`
 - compose file: `docker-compose.yml`
-- public BFF: `https://pantheon-dev-bff.35.236.178.81.sslip.io`
+- public BFF: `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io`
 
 Guardrails applied by the deploy script:
 
 ```env
 PANTHEON_ENV=dev
 PANTHEON_LIVE_BROKER_ENABLED=false
-PANTHEON_BFF_CORS_ORIGINS=https://pantheon-ai-system-front-dev.lovable.app
+PANTHEON_BFF_CORS_ORIGINS=https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io
 ```
 
 Post-deploy smoke:
@@ -99,7 +89,7 @@ Post-deploy smoke:
 - local VM BFF `/health`
 - local VM BFF `/readyz`
 - public HTTPS BFF `/health`
-- CORS preflight for the dev Lovable origin
+- CORS preflight for the Pantheon-owned dev FE origin
 
 ## Staging-Live Lane
 
@@ -115,11 +105,11 @@ Use:
 
 Target:
 
-- VM1: `pantheon-taiwan`, compose project `pantheon-control`,
+- VM1: `pantheon-lupin-staging-control`, compose project `pantheon-control`,
   `docker-compose.control.yml`
-- VM2: `pantheon-exec-vm2-20260424`, compose project `pantheon-exec`,
+- VM2: `pantheon-lupin-staging-exec`, compose project `pantheon-exec`,
   `docker-compose.exec.yml`
-- public BFF: `https://pantheon-staging-bff.34.81.225.122.sslip.io`
+- public BFF: `https://pantheon-lupin-staging-bff.104.155.223.192.sslip.io`
 
 Normal full deploy order:
 
@@ -159,14 +149,13 @@ GCP_DEPLOY_SERVICE_ACCOUNT
 
 `GCP_BUILD_STAGING_BUCKET` is the Cloud Build source staging path used by
 `gcloud builds submit`; the current value is
-`gs://pantheon-493602-pantheon-builds/source`. If it is absent, the image publish
-workflow defaults to that path instead of the absent legacy
-`gs://pantheon-493602_cloudbuild` bucket.
+`gs://pantheon-benjamin-20260528-pantheon-builds/source`. If it is absent, the
+image publish workflow defaults to that path instead of the absent legacy
+`gs://pantheon-benjamin-20260528_cloudbuild` bucket.
 
 `GCP_DEPLOY_PROJECT_ID` is the VM project for `gcloud compute ssh`; the current
-VMs live in `pantheon-493602`. If it is absent, the deploy workflow defaults to
-`pantheon-493602` so it does not accidentally reuse the shared image/build
-project.
+VMs live in `pantheon-benjamin-20260528`. If it is absent, the deploy workflow
+defaults to `pantheon-benjamin-20260528`.
 
 If `GCP_DEPLOY_SERVICE_ACCOUNT` is absent, the deploy workflow falls back to
 `GCP_SERVICE_ACCOUNT`.
@@ -180,9 +169,9 @@ Recommended GitHub Environments:
 
 The deploy identity must be allowed to SSH to the three non-prod VMs:
 
-- `pantheon-dev-vm1`
-- `pantheon-taiwan`
-- `pantheon-exec-vm2-20260424`
+- `pantheon-lupin-dev`
+- `pantheon-lupin-staging-control`
+- `pantheon-lupin-staging-exec`
 
 Use a separate deploy service account if possible, then set
 `GCP_DEPLOY_SERVICE_ACCOUNT` to that account.
@@ -206,8 +195,9 @@ VM compose stacks, not read broker secrets from Secret Manager.
 
 ## Promotion Contract
 
-Dev promotion is automatic only for commits that have reached the default
-branch and passed the image-publish workflow.
+Dev promotion is a publish snapshot: push `publish/v*` after the target commit
+has passed the required repository checks. Staging-live promotion consumes
+`master` or an explicit manually selected ref.
 
 Staging-live promotion is manual:
 

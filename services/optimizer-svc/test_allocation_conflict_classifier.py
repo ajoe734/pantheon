@@ -117,6 +117,89 @@ def test_weight_horizon_and_regime_conflicts_are_explainable_without_committee()
     assert weight_conflict.details["spread"] == 0.07
 
 
+def test_low_correlation_duplicate_family_passes_without_committee() -> None:
+    report = classify_allocation_conflicts(
+        [
+            make_proposal(
+                target_weights={"2330.TW": 0.12, "CASH": 0.88},
+                metadata={
+                    "holding_period": "swing",
+                    "risk_posture": "risk_on",
+                    "strategy_family": "tw_equity",
+                    "signal_correlations": {"pap-beta": 0.2},
+                    "correlation_bucket": "low",
+                },
+            ),
+            make_proposal(
+                proposal_id="pap-beta",
+                persona_id="persona-beta",
+                conviction=0.5,
+                target_weights={"0050.TW": 0.12, "CASH": 0.88},
+                metadata={
+                    "holding_period": "swing",
+                    "risk_posture": "risk_on",
+                    "strategy_family": "tw_equity",
+                    "correlation_bucket": "low",
+                },
+            ),
+        ]
+    )
+
+    assert report.requires_committee is False
+    homogeneity_conflict = next(
+        conflict
+        for conflict in report.conflicts
+        if conflict.conflict_type == AllocationConflictType.HOMOGENEITY.value
+    )
+    assert homogeneity_conflict.severity == "warning"
+    assert homogeneity_conflict.details["max_target_overlap"] == 0.0
+    assert homogeneity_conflict.details["max_signal_correlation"] == 0.2
+
+
+def test_high_correlation_bucket_and_target_overlap_require_committee() -> None:
+    report = classify_allocation_conflicts(
+        [
+            make_proposal(
+                target_weights={"2330.TW": 0.1, "2454.TW": 0.08, "CASH": 0.82},
+                metadata={
+                    "holding_period": "swing",
+                    "risk_posture": "risk_on",
+                    "strategy_family": "tw_equity",
+                    "signal_correlations": {"pap-beta": 0.91},
+                    "correlation_bucket": "high",
+                },
+            ),
+            make_proposal(
+                proposal_id="pap-beta",
+                persona_id="persona-beta",
+                target_weights={"2330.TW": 0.1, "2454.TW": 0.08, "CASH": 0.82},
+                metadata={
+                    "holding_period": "swing",
+                    "risk_posture": "risk_on",
+                    "strategy_family": "tw_equity",
+                    "correlation_bucket": "high",
+                },
+            ),
+        ]
+    )
+
+    assert report.requires_committee is True
+    assert report.committee_triggers[0] == "homogeneity_correlation_review"
+    assert {
+        AllocationConflictType.HOMOGENEITY.value,
+        AllocationConflictType.CORRELATION.value,
+    }.issubset(conflict_types(report))
+    correlation_conflict = next(
+        conflict
+        for conflict in report.conflicts
+        if conflict.conflict_type == AllocationConflictType.CORRELATION.value
+    )
+    assert correlation_conflict.severity == "committee"
+    assert correlation_conflict.details["strategy_family_concentration"] == 1.0
+    assert correlation_conflict.details["max_target_overlap"] == 1.0
+    assert correlation_conflict.details["max_signal_correlation"] == 0.91
+
+
 def test_store_backed_explain_conflicts_preserves_requested_proposal_order(tmp_path) -> None:
     store = PersonaAllocationProposalJsonlStore(tmp_path / "proposals.jsonl")
     ingest_persona_proposal(make_proposal(), store=store)

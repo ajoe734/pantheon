@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "HA-004-V2",
+  "archived_at": "2026-05-19T17:39:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "HA-004-V2",
+    "title": "Failover runbook",
+    "summary_zh": "Failover runbook covering active-passive failover demo, RTO/RPO assertion, on-call escalation.",
+    "phase": "Phase 8 / EPIC-BFF-HA",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "HA-001-V2"
+    ],
+    "artifacts": [
+      "docs/operations/bff_ha_failover_runbook.md"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner finalized HA-004-V2 after runbook PR #255, evidence PR #259, and final closeout PR #261 merged. Verification: python3 -m pytest -q tests/docs/test_bff_ha_failover_runbook.py tests/docs/test_bff_ha_topology_doc.py tests/bff/test_sla_targets.py (7 passed).",
+    "last_update": "2026-05-19T17:39:57Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：active-passive 演練步驟完整，SLA RTO/RPO 與 sla_targets.json 一致，fail-closed 矩陣涵蓋所有必要情況，policy §0/§2.2/§6 一致，production gate 正確鎖定至 HA-PROD-001-V2",
+      "後續追蹤：placeholder cursor 命令由 operator 依環境替換（設計正確，非缺陷）"
+    ],
+    "review_file": "support/evidence/HA-004-V2/review-claude-2026-05-19.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T17:39:57Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ha-004-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/HA-004-V2",
+      "git_clean_required": false,
+      "commit": "96cea821f22c7e71a4c1709589662502b76481b8",
+      "commit_subject": "HA-004-V2: refresh final closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "HA-004-V2 final closeout evidence.",
+        "Not changing": "approved runbook content, tests, HA policy, deployment topology, runtime code, or production gates.",
+        "Composes with": "merged PR #255, merged PR #259, and ai-status done publication.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "HA-004-V2",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m pytest -q tests/docs/test_bff_ha_failover_runbook.py tests/docs/test_bff_ha_topology_doc.py tests/bff/test_sla_targets.py (7 passed in 1.09s)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/HA-004-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "60e5199446a3f40c71fb423a578bd674f8a35fa0",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "HA-004-V2",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for review: BFF HA failover runbook merged via PR #255 (implementation commit 44ddaccf, merge commit ac840972). Artifact covers active-passive drill, RTO/RPO assertions from SLA JSON, on-call escalation, command freeze, SSE reconnect, and fail-closed idempotency/audit/runtime/governance/telemetry cases. Verification passed: python3 -m pytest -q tests/docs/test_bff_ha_failover_runbook.py tests/docs/test_bff_ha_topology_doc.py tests/bff/test_sla_targets.py (7 passed).",
+      "status": "done",
+      "created_at": "2026-05-19T17:24:36Z",
+      "resolved_at": "2026-05-19T17:27:01Z"
+    },
+    {
+      "task_id": "HA-004-V2",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: runbook covers active-passive drill, RTO/RPO assertion from SLA JSON, fail-closed matrix, on-call escalation, SSE reconnect, and all policy-consistency checks. 7 tests passed. Returned to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-05-19T17:27:01Z",
+      "resolved_at": "2026-05-19T17:39:58Z"
+    }
+  ],
+  "blockers": []
+}

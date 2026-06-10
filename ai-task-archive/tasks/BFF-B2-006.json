@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "task_id": "BFF-B2-006",
+  "archived_at": "2026-05-23T11:53:14Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-B2-006",
+    "title": "v5 closed-loop read routes (B4 4 read endpoints)",
+    "summary_zh": null,
+    "phase": "Sprint BFF-2 / EPIC-BFF-GAP-CORE",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BFF-B2-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#b4--p1-v5-closed-loop-os-apis",
+      "services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "GET /bff/v5/loop-runs list and detail",
+      "GET /bff/v5/sentinel/findings",
+      "GET /bff/v5/execution/persona-health",
+      "GET /bff/v5/interventions/{id} detail",
+      "Anonymous 401 authenticated 200",
+      "envelope per section 3"
+    ],
+    "next": "Done: PR #487 delivered v5 closed-loop read handlers; closeout PR #489 merged review artifact, task brief, and owner closeout evidence. Verification: py_compile plus focused BFF-B2-006 pytest suite passed (13 passed).",
+    "last_update": "2026-05-23T11:53:14Z",
+    "review_notes_zh": [
+      "審查通過：4個專用 v5 closed-loop read handler 實作正確，已排除 catch-all alias，13項測試通過，PR #487 已合併"
+    ],
+    "review_file": "support/reviews/BFF-B2-006-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T11:53:14Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-b2-006",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-B2-006",
+      "git_clean_required": false,
+      "commit": "50eea040ae41d90a9157af7436a22398ac8cf7c4",
+      "commit_subject": "BFF-B2-006: record owner closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "BFF-B2-006 review artifact, owner closeout evidence, and task brief review_approved sync.",
+        "Not changing": "Runtime BFF implementation, command/write APIs, frontend clients, or L1 architecture/policy truth.",
+        "Composes with": "PR #487 merged to dev at 9bf0da2afa617e160742c742234ba2df4fd15031.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-B2-006",
+        "Reviewer": "Claude",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/tests/test_bff_b2_006_v5_closed_loop_reads.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/tests/test_bff_b2_006_v5_closed_loop_reads.py -q (13 passed)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-B2-006",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "05b011ff711a617c85c5f6e5f89fb4e28a66dd3d",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-B2-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-23T11:31:44Z",
+      "resolved_at": "2026-05-23T11:31:53Z"
+    },
+    {
+      "task_id": "BFF-B2-006",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "PR #487 merged into dev at 9bf0da2a after checks passed. Owner validation commit 775a9098 records verification; please review/approve so Codex can run done closeout.",
+      "status": "done",
+      "created_at": "2026-05-23T11:40:25Z",
+      "resolved_at": "2026-05-23T11:45:08Z"
+    },
+    {
+      "task_id": "BFF-B2-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: 4 dedicated v5 closed-loop read handlers verified, PR #487 merged, 13 tests pass. Returning to Codex for done closeout.",
+      "status": "done",
+      "created_at": "2026-05-23T11:45:08Z",
+      "resolved_at": "2026-05-23T11:53:15Z"
+    }
+  ],
+  "blockers": []
+}

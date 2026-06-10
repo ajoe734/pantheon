@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "task_id": "RES-ACT-003-V2",
+  "archived_at": "2026-05-20T03:22:10Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "RES-ACT-003-V2",
+    "title": "Production data entitlement and PIT validator",
+    "summary_zh": "Re-spec'd per design reply section 4. Validator for production data: entitlement, license, PIT correctness, durable storage, freshness, audit ref.",
+    "phase": "Phase 8 / EPIC-RES-ACT",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "RES-ACT-001-V2"
+    ],
+    "artifacts": [
+      "services/governance/research_activation/admission_gate.py",
+      "tests/governance/test_admission_gate.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner closeout complete: implementation PR #307 and closeout PR #310 merged into dev; admission gate evidence recorded; verified focused tests, py_compile, and full governance tests.",
+    "last_update": "2026-05-20T03:22:10Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：admission gate 正確要求 ProductionDataProof R3、entitlement/license、PIT、freshness、durable storage、audit evidence，並保持 candidate admission paper-scoped、registry-write-before-validation fail-closed、no broker/order/capital/deployment-stage route。",
+      "驗證通過：python3 -m pytest -q tests/governance/test_admission_gate.py tests/governance/test_production_data_proof.py；python3 -m py_compile services/governance/research_activation/admission_gate.py services/governance/research_activation/__init__.py tests/governance/test_admission_gate.py；python3 -m pytest -q tests/governance。",
+      "PR #307 已 merged into dev，merge commit 25c71b30cb1a290a45f32a9e61f46b4f94ce606f；GitHub checks 全部 success。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T03:22:10Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/res-act-003-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/RES-ACT-003-V2",
+      "git_clean_required": false,
+      "commit": "9c9370a748f4ca9a5271ef43e9409b21bca55174",
+      "commit_subject": "RES-ACT-003-V2: refresh closeout after dev merge",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "RES-ACT-003-V2",
+        "Reviewer": "Codex",
+        "Verified": "python3 -m pytest -q tests/governance/test_admission_gate.py tests/governance/test_production_data_proof.py -> 12 passed; python3 -m py_compile services/governance/research_activation/admission_gate.py services/governance/research_activation/__init__.py tests/governance/test_admission_gate.py; python3 -m pytest -q tests/governance -> 167 passed"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/RES-ACT-003-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "2d67a20962be1662227b41c8143a41bb5347dd54",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "RES-ACT-003-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-20T02:50:50Z",
+      "resolved_at": "2026-05-20T02:51:03Z"
+    },
+    {
+      "task_id": "RES-ACT-003-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: PR #307 merged into dev with merge commit 25c71b30. Implementation commit b6b9a8c7 adds services/governance/research_activation/admission_gate.py, exports it, and covers entitlement/license/PIT/storage/freshness/audit fail-closed behavior in tests/governance/test_admission_gate.py. Local validation passed: pytest admission+ProductionDataProof (12 passed), py_compile, and pytest tests/governance (150 passed). GitHub checks passed: Commit trailers, Runtime mirror guard, Smoke acceptance, Forward to orchestrator.",
+      "status": "done",
+      "created_at": "2026-05-20T03:01:37Z",
+      "resolved_at": "2026-05-20T03:10:42Z"
+    },
+    {
+      "task_id": "RES-ACT-003-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: ProductionDataProof admission gate satisfies entitlement/license/PIT/storage/freshness/audit and no-order candidate scope. Verified focused tests, py_compile, full governance tests, and PR #307 merge/checks. Returning to owner Codex2 for closeout.",
+      "status": "done",
+      "created_at": "2026-05-20T03:10:42Z",
+      "resolved_at": "2026-05-20T03:22:11Z"
+    }
+  ],
+  "blockers": []
+}

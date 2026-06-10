@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "No queue, approval, provider, or watchdog blockers; sidecars may run, but current runnable backlog is empty except human-gate parents.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "PROD-WRITES-001-V2",
+    "LIVE-SCALE-001-V2"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "OPS-RELEASE-DISCIPLINE-20260522",
+    "OPS-PUBLISH-PROMOTE-GIT-IDENTITY-20260522",
+    "OPS-TASK-BRANCH-RETIRE-20260522",
+    "PROD-WRITES-001-V2",
+    "LIVE-SCALE-001-V2"
+  ]
+}

@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "HA-009-V2",
+  "archived_at": "2026-05-20T05:16:51Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "HA-009-V2",
+    "title": "Idempotency under multi-replica test",
+    "summary_zh": "Test that idempotency works correctly when commands hit different replicas. Same idempotency key on different replicas produces same response.",
+    "phase": "Phase 8 / EPIC-BFF-HA",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "HA-007-V2"
+    ],
+    "artifacts": [
+      "tests/bff/test_idempotency_multi_replica.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner finalized approved HA-009-V2 after PR #326 and publication refresh PR #330 merged to dev; focused pytest passed with 2 tests.",
+    "last_update": "2026-05-20T05:16:51Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：跨副本冪等性測試覆蓋完整",
+      "test_1 驗證相同 key 在不同副本回傳相同 202 response",
+      "test_2 驗證 payload 改變時回傳 409 IDEMPOTENCY_CONFLICT",
+      "PR #293 已合入 dev，CI 三項檢查全過"
+    ],
+    "review_file": "support/evidence/HA-009-V2/review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T05:16:51Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ha-009-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/HA-009-V2",
+      "git_clean_required": false,
+      "commit": "7e982ae41342d398c280d71bd02aaddb6de43628",
+      "commit_subject": "HA-009-V2: record closeout PR merge",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "HA-009-V2",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m pytest -q tests/bff/test_idempotency_multi_replica.py (2 passed)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/HA-009-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "4dc93fce7ec7e708862b12a9cd699070f6b2363d",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "HA-009-V2",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for review: PR #293 merged into dev (merge e2d1786d53951fc8de58084a2109bfb0286a4702). Added tests/bff/test_idempotency_multi_replica.py covering exact replay across replicas and 409 IDEMPOTENCY_CONFLICT for changed payload. Local validation passed: pytest -q tests/bff/test_idempotency_multi_replica.py; pytest -q tests/bff/test_idempotency_multi_replica.py tests/bff/test_multi_replica_smoke.py. GitHub checks passed: Commit trailers, Runtime mirror guard, Smoke acceptance.",
+      "status": "done",
+      "created_at": "2026-05-20T01:25:50Z",
+      "resolved_at": "2026-05-20T04:46:47Z"
+    },
+    {
+      "task_id": "HA-009-V2",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: idempotency multi-replica tests cover exact replay (202 same body) and conflict detection (409 IDEMPOTENCY_CONFLICT). PR #293 merged into dev with green CI. Returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-05-20T04:46:47Z",
+      "resolved_at": "2026-05-20T05:16:52Z"
+    }
+  ],
+  "blockers": []
+}

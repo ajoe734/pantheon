@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "BFF-B1-005",
+  "archived_at": "2026-05-23T06:55:30Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-B1-005",
+    "title": "POST /bff/auth/refresh cookie or bearer refresh",
+    "summary_zh": null,
+    "phase": "Sprint BFF-1 / EPIC-BFF-GAP-P0",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BFF-B1-003"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#11-session-bootstrap;services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "Refreshes cookie or bearer token when refresh credential present;Returns typed auth error code when no refresh path available;Never returns raw 500"
+    ],
+    "next": "Closeout complete: implementation PR #422 merged at 1564b165, closeout evidence PR #429 merged at 6ff36224, focused verification passed (python3 -m py_compile services/control-plane/bff/main.py; pytest services/control-plane/bff/tests/test_bff_auth_refresh.py -q: 3 passed).",
+    "last_update": "2026-05-23T06:55:30Z",
+    "review_notes_zh": [
+      "審查通過：刷新憑證解析順序符合規範、session 生命週期持久化正確、typed 401 及 CORS X-Refresh-Token 均已實作，所有驗收條件測試通過（3 passed）"
+    ],
+    "review_file": "support/reviews/BFF-B1-005-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T06:55:30Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-b1-005",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-B1-005",
+      "git_clean_required": false,
+      "commit": "c9bc4ea57e4c4436f17e4059d697ca8fbaffd03b",
+      "commit_subject": "BFF-B1-005: record review closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "BFF-B1-005 closeout evidence, generated task brief, and Claude review note.",
+        "Not changing": "/bff/auth/refresh implementation already merged via PR #422, canonical architecture, or neighboring BFF tasks.",
+        "Composes with": "PR #422 merge commit 1564b165 and the current dev BFF session/auth surface.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-B1-005",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m py_compile services/control-plane/bff/main.py; pytest services/control-plane/bff/tests/test_bff_auth_refresh.py -q (3 passed); gh pr view 422 --json number,state,mergedAt,mergeCommit,statusCheckRollup (MERGED, checks SUCCESS)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-B1-005",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "6ff362247aa6385a8c2261b33d8349bf45b4c94f",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-B1-005",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-23T06:21:51Z",
+      "resolved_at": "2026-05-23T06:22:01Z"
+    },
+    {
+      "task_id": "BFF-B1-005",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Implementation ready for review. PR #422 merged at 1564b1657bb15503da623d51833caf5694fbb4f3; Branch CI Gate passed (Commit trailers, Runtime mirror guard, Smoke acceptance). Local focused verification: py_compile passed; pytest auth refresh + session auth + confirm-token + B2 alias tests => 24 passed, 2 warnings. Broader execute-plans final live-wiring probe still has unrelated capital-pool 503 noted in commit trailer.",
+      "status": "done",
+      "created_at": "2026-05-23T06:35:31Z",
+      "resolved_at": "2026-05-23T06:41:05Z"
+    },
+    {
+      "task_id": "BFF-B1-005",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: all §12 spec requirements met, 3 acceptance tests pass. Returning to Codex2 for closeout.",
+      "status": "done",
+      "created_at": "2026-05-23T06:41:05Z",
+      "resolved_at": "2026-05-23T06:55:31Z"
+    }
+  ],
+  "blockers": []
+}

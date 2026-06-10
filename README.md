@@ -47,3 +47,35 @@ updated_entry = gate.promote(entry, PromotionState.LIVE, approver="human-trader-
 ## Workspace Cutover
 
 Operate Pantheon from this repo. Use `scripts/launch-docs-site.sh`, `scripts/ai-status.sh`, and `.orchestrator/` here. The sibling `Lean` checkout is execution-side only and should no longer host Pantheon collaboration state or dashboard processes.
+
+## Frontend Cutover
+
+Current frontend work targets `ajoe734/execute-plans`
+(`/home/lupin/code/execute-plans`), not `front-ai-trading-system`.
+
+Do not recreate, clone, delete, or assign work to `front-ai-trading-system` for
+current Pantheon frontend delivery. Treat that repo name as historical evidence
+only unless a user explicitly asks for archaeology of old delivery notes.
+
+Pantheon dev frontend hosting is no longer Lovable-first. Dev delivery should
+build and serve `execute-plans` from the Pantheon dev environment, with a
+Pantheon-owned FE URL such as
+`https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io` talking to
+`https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io`. Lovable publish state
+is historical/reference evidence only and must not be used as the dev frontend
+source of truth.
+
+As of 2026-06-08, the verified dev deployment is:
+
+- Backend/BFF: `pantheon@22b89367a56cdbb4fb8a7345fc7c4ad1d293a118` on `dev`.
+- Frontend: `execute-plans@8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf` on
+  `main`.
+- Dev FE: `https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io`.
+- Dev BFF: `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io`.
+
+Do not ask the operator to press Lovable publish as part of Pantheon dev
+delivery. The delivery loop is branch, commit, PR, merge, build, and deploy to
+the Pantheon-owned dev FE host.
+
+See `docs/frontend/execute-plans-dev-hosting.md` before assigning frontend
+tasks or deploying the dev FE.

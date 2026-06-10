@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "No live execution blockers, pending approvals, provider pauses, or active sidecar pressure; approval is safe for the next runnable parent.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "OPS-PUBLISH-DISCIPLINE-REPAIR-20260524",
+    "OPS-PROMOTE-PR-TRIAGE-20260524",
+    "OPS-BRANCH-CLEANUP-001"
+  ]
+}

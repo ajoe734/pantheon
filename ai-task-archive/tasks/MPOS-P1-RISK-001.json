@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "MPOS-P1-RISK-001",
+  "archived_at": "2026-06-09T13:25:19Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MPOS-P1-RISK-001",
+    "title": "Create first class RiskPolicy evaluator contract",
+    "summary_zh": "把 risk_policy_ref 升級為可執行的統一風控 evaluator contract，讓 optimizer、promotion、deployment、runtime manager 都能用同一套風控判斷。",
+    "phase": "EPIC MPOS / P1 governance risk and artifact integration",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MPOS-P0-VAL-001"
+    ],
+    "artifacts": [
+      "services/control-plane/governance",
+      "services/capital",
+      "services/optimizer-svc",
+      "services/runtime-manager",
+      "services/execution/runtime-manager"
+    ],
+    "acceptance": [
+      "RiskPolicy evaluator exposes limits for exposure asset class liquidity drawdown canary scale and kill switch triggers",
+      "Optimizer hard veto uses the evaluator or an adapter with equivalent contract",
+      "Promotion and deployment reject policy violations before runtime binding",
+      "Runtime manager can verify pool risk policy identity and stage scoped limits",
+      "Tests prove risk veto outranks committee aggregator and persona suggestion"
+    ],
+    "next": "Closed after PR #1225 merged into dev at c3566c5c; closeout evidence committed and focused RiskPolicy pytest slice passed 123 tests.",
+    "last_update": "2026-06-09T13:25:19Z",
+    "auto_created_by": "codex_mpos_gap_dispatch_2026-06-09",
+    "review_notes_zh": [
+      "審查通過：所有驗收標準均滿足，70 個測試全部通過",
+      "風控 veto 優先於委員會升級的測試已明確驗證",
+      "風控評估合約已整合至 optimizer、deployment、promotion、runtime manager 四個服務",
+      "核准 owner 進行最終收尾"
+    ],
+    "review_file": "/tmp/mpos_p1_risk_001_review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-09T13:25:19Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mpos-p1-risk-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MPOS-P1-RISK-001",
+      "git_clean_required": false,
+      "commit": "58617ce4178d7b9b90a861abd05b9e8e79389a09",
+      "commit_subject": "MPOS-P1-RISK-001: refresh closeout verification",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "MPOS-P1-RISK-001",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m pytest services/capital/test_risk_policy.py services/control-plane/governance/test_deployment_plan.py services/deployment/test_service.py services/execution/runtime-manager/test_runtime_manager_risk_policy.py services/optimizer-svc/test_portfolio_synthesis.py services/promotion/test_service.py services/runtime-manager/test_runtime_manager.py (123 passed)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MPOS-P1-RISK-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "c3566c5cf84010c737665a9aea0ecf2d7874d14d",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MPOS-P1-RISK-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "PR #1222 merged into dev at 93c3ef99acdc27f8cca04e79ff64ee8a5c0ed60a. Please review the RiskPolicy evaluator contract delivery and approve for owner closeout.",
+      "status": "done",
+      "created_at": "2026-06-09T12:57:15Z",
+      "resolved_at": "2026-06-09T13:14:05Z"
+    },
+    {
+      "task_id": "MPOS-P1-RISK-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved — all 5 acceptance criteria satisfied, 70 tests pass across 6 services; risk veto precedence over committee aggregation explicitly verified. Returned to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-06-09T13:14:05Z",
+      "resolved_at": "2026-06-09T13:25:20Z"
+    }
+  ],
+  "blockers": []
+}

@@ -19,6 +19,7 @@ class ArtifactLoadError(ValueError):
 
 class ExecutionMode(str, Enum):
     PAPER = "paper"
+    CANARY = "canary"
     LIVE = "live"
 
 
@@ -305,20 +306,27 @@ class ArtifactLoader:
         if not metadata.get("checksum"):
             raise ArtifactLoadError("Artifact metadata must include checksum before payload load.")
 
-        if mode is ExecutionMode.LIVE:
+        if mode in {ExecutionMode.CANARY, ExecutionMode.LIVE}:
             rollback = metadata.get("rollback")
             if not isinstance(rollback, dict):
-                raise ArtifactLoadError("Live artifact metadata requires an explicit rollback object.")
+                raise ArtifactLoadError(
+                    f"{mode.value} artifact metadata requires an explicit rollback object."
+                )
             required = ("target_registry_id", "target_version")
             missing = [field for field in required if rollback.get(field) in (None, "")]
             if missing:
                 raise ArtifactLoadError(
-                    "Live artifact rollback object missing required fields: " + ", ".join(missing)
+                    f"{mode.value} artifact rollback object missing required fields: "
+                    + ", ".join(missing)
                 )
             if rollback.get("target_registry_id") == metadata.get("registry_id"):
-                raise ArtifactLoadError("Live artifact rollback target_registry_id cannot equal registry_id.")
+                raise ArtifactLoadError(
+                    f"{mode.value} artifact rollback target_registry_id cannot equal registry_id."
+                )
             if rollback.get("target_version") == metadata.get("version"):
-                raise ArtifactLoadError("Live artifact rollback target_version cannot equal version.")
+                raise ArtifactLoadError(
+                    f"{mode.value} artifact rollback target_version cannot equal version."
+                )
 
     def _validate_checksum(self, expected_checksum: str, payload: bytes) -> None:
         expected = str(expected_checksum).strip()

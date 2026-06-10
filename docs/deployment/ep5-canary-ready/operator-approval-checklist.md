@@ -14,7 +14,7 @@ Fill in the machine-local file with:
 
 - real broker / exchange secrets on VM-2 only
 - broker account ref and venue ref
-- governed provider refs for `IBKR`, `Shioaji`, `Kraken`, and `TEJ`
+- governed provider refs for `IBKR`, `Shioaji`, `Kraken`, `FinMind`, and optional `TEJ` gap-fill
 - the chosen US market-data provider ref (`Massive / Polygon` when enabled, otherwise explicit `IBKR market data` fallback)
 - approval, pool, persona-binding, and fallback artifact refs
 - promotion gate refs: human-gate packet, broker sandbox smoke packet, Shioaji sandbox evidence packet, risk-owner approval, and operator approval
@@ -57,7 +57,8 @@ Review before any later human gate:
 - `IBKR` order and market-data payloads are materialized from the env-backed boundary
 - `Shioaji` order and quote-subscription payloads are materialized from the env-backed boundary
 - `Kraken` order and venue quote payloads are materialized from the env-backed boundary
-- `TEJ` dataset normalization stays on the `research_grade` vendor boundary
+- `FinMind` dataset normalization stays on the primary `research_grade` vendor boundary
+- `TEJ` dataset normalization, when configured, stays on the optional historical gap-fill boundary
 
 ## 3A. Run The Read-Only Market-Data Credential Smoke
 
@@ -74,7 +75,7 @@ python3 scripts/run_marketdata_credential_smoke.py \
 Expected artifacts:
 
 - one JSON packet for each governed read-only provider:
-  `Massive / Polygon`, `TWSE`, `TPEx`, `MOPS`, `TEJ`, `CoinGecko`,
+  `Massive / Polygon`, `TWSE`, `TPEx`, `MOPS`, `FinMind`, `TEJ`, `CoinGecko`,
   `Kraken`, `IBKR`, and `Shioaji`
 - `summary.json`
 

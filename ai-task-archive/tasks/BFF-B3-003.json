@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "task_id": "BFF-B3-003",
+  "archived_at": "2026-05-23T09:17:00Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-B3-003",
+    "title": "GET /bff/management/human-inbox aggregate and detail",
+    "summary_zh": null,
+    "phase": "Sprint BFF-3 / EPIC-BFF-GAP-MGMT",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BFF-B2-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#b3--p1-management-aggregate-apis",
+      "execute-plans/src/lib/bff-v1/management.ts",
+      "services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "List composes approvals + interventions + sentinel + readiness blockers + policy violations",
+      "Detail /bff/management/human-inbox/{id} returns HumanGateDetail shape",
+      "Detail links resolve to command path"
+    ],
+    "next": "PR #448 merged into dev at 2973104e0bfa170e8cdfc8448e487a393de78642; owner closeout evidence committed at 042f26311abd3d2f8689a0e0b5db1d960f7a826f; local verification: human-inbox/evidence backend tests 7 passed, py_compile passed, git diff --check passed. Merge gate was verified manually because the task artifacts route execute-plans as a separate repo in this per-task worktree.",
+    "last_update": "2026-05-23T09:17:00Z",
+    "review_notes_zh": [
+      "審查通過：human-inbox aggregate/detail 實作完整；4個後端測試全通過；前端 paths、client.ts 合約符合規格；無 seed-list fanout；5項驗收標準全滿足。"
+    ],
+    "review_file": "support/reviews/BFF-B3-003-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T09:17:00Z",
+      "repository_id": "execute_plans",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-b3-003/execute-plans",
+      "repository_slug": "ajoe734/execute-plans",
+      "branch": "task/BFF-B3-003",
+      "git_clean_required": false,
+      "commit": "042f26311abd3d2f8689a0e0b5db1d960f7a826f",
+      "commit_subject": "BFF-B3-003: finalize after evidence merge",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "BFF-B3-003 owner closeout evidence after resolving dev merge conflicts with BFF-B3-006 evidence explorer work.",
+        "Not changing": "approved human-inbox runtime semantics, evidence explorer semantics, or L1 architecture policy.",
+        "Composes with": "PR #448 auto-merge into dev after the refreshed branch checks pass.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-B3-003",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m pytest services/control-plane/bff/tests/test_bff_b3_human_inbox.py services/control-plane/bff/tests/test_bff_b3_management_evidence.py -- 7 passed; python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/tests/test_bff_b3_human_inbox.py services/control-plane/bff/tests/test_bff_b3_management_evidence.py; git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-B3-003",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-B3-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implementation committed and PR #448 opened for review: human-inbox aggregate/detail plus execute-plans client adapters. Focused backend tests pass.",
+      "status": "done",
+      "created_at": "2026-05-23T08:50:06Z",
+      "resolved_at": "2026-05-23T08:56:33Z"
+    },
+    {
+      "task_id": "BFF-B3-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: human-inbox aggregate/detail fully implemented; 4 backend tests pass; frontend paths and client contract correct; no seed-list fanout. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-23T08:56:33Z",
+      "resolved_at": "2026-05-23T09:17:00Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,117 @@
+{
+  "version": 1,
+  "task_id": "RES-ACT-STAT-001-V2",
+  "archived_at": "2026-05-20T08:45:41Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "RES-ACT-STAT-001-V2",
+    "title": "statsmodels cointegration production evidence and admission proof",
+    "summary_zh": "Adapter-specific child: statsmodels cointegration production evidence + admission proof. Parent: RES-ACT-001-V2.",
+    "phase": "Phase 8 / EPIC-RES-ACT",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "RES-ACT-001-V2"
+    ],
+    "artifacts": [
+      "integrations/statsmodels/cointegration_production_evidence.md",
+      "integrations/statsmodels/admission_proof.md"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Closed after PR #352 merged into dev (merge 11e49ae936cb092f679be382378e1e7ac9c9b207). Local closeout validation passed: 12 statsmodels tests, py_compile, and git diff --check.",
+    "last_update": "2026-05-20T08:45:41Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：production data proof 文件完整、fail-closed 斷言齊備、5 個驗證測試全部通過"
+    ],
+    "review_file": "support/evidence/RES-ACT-STAT-001-V2/review_claude_20260520.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T08:45:41Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/res-act-stat-001-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/RES-ACT-STAT-001-V2",
+      "git_clean_required": false,
+      "commit": "f749d6d1fad7834c05579662cbe84fde4203f0f8",
+      "commit_subject": "RES-ACT-STAT-001-V2: refresh closeout metadata",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "RES-ACT-STAT-001-V2 closeout evidence metadata.",
+        "Not changing": "statsmodels proof semantics, implementation code, registry schema, canonical policy, broker/runtime paths, or review decision.",
+        "Composes with": "PR #315 implementation merge, PR #351 review evidence merge, Claude approval, and RES-ACT-001-V2 ProductionDataProof schema.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "RES-ACT-STAT-001-V2",
+        "Reviewer": "Claude",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/research/statsmodels/test_production_cointegration.py tests/governance/test_statsmodels_proof_artifacts.py -q (12 passed in 7.09s); PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile tests/governance/test_statsmodels_proof_artifacts.py; git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/RES-ACT-STAT-001-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "11e49ae936cb092f679be382378e1e7ac9c9b207",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "RES-ACT-STAT-001-V2",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "PR #315 merged into dev at 03d2b7f48d853c5bb173302a3a26bd53a6279e7b. Delivered integrations/statsmodels cointegration production evidence + admission proof, plus tests/governance/test_statsmodels_proof_artifacts.py. Local validation: 12 passed for statsmodels production cointegration + proof artifacts; py_compile passed; git diff --check passed. Please review and approve.",
+      "status": "done",
+      "created_at": "2026-05-20T03:40:21Z",
+      "resolved_at": "2026-05-20T04:29:16Z"
+    },
+    {
+      "task_id": "RES-ACT-STAT-001-V2",
+      "from": "Gemini",
+      "to": "Copilot",
+      "message": "Chair reassigned review from Gemini to Copilot: Handoff to Gemini has been pending 44+ minutes with no progress; Gemini quota-exhaustion pattern established across this review cycle; Copilot is idle and capable of evidence review for statsmodels cointegration proof.",
+      "status": "done",
+      "created_at": "2026-05-20T04:29:16Z",
+      "resolved_at": "2026-05-20T08:21:30Z"
+    },
+    {
+      "task_id": "RES-ACT-STAT-001-V2",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Chair reassigned review from Copilot to Claude: Copilot quota failure is blocking the review lane; Claude is not the owner and its current sprint closeout assignment is dependency-blocked.",
+      "status": "done",
+      "created_at": "2026-05-20T08:21:30Z",
+      "resolved_at": "2026-05-20T08:28:29Z"
+    },
+    {
+      "task_id": "RES-ACT-STAT-001-V2",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: statsmodels production evidence meets all gates, fail-closed assertions verified, 5 tests pass. Returned to Codex for closeout finalization.",
+      "status": "done",
+      "created_at": "2026-05-20T08:28:29Z",
+      "resolved_at": "2026-05-20T08:45:42Z"
+    }
+  ],
+  "blockers": []
+}

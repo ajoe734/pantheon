@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "task_id": "DATASTRAT-PERSONA-005",
+  "archived_at": "2026-06-10T00:45:22Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DATASTRAT-PERSONA-005",
+    "title": "Implement Persona strategy discovery deterministic matching",
+    "summary_zh": "讓 Persona 依 mandate、strategy_family、市場/資產/週期/風險/route policy 找相似 StrategySpecSeed 或 StrategySpec，先做可解釋 deterministic scorer，不先上 embedding。",
+    "phase": "EPIC DATASTRAT / Persona strategy discovery",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "DATASTRAT-SEED-004"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_data_strategy_source_design_2026-06-09/DATA_STRATEGY_SOURCE_SYSTEM_DESIGN.md",
+      "services/control-plane/persona",
+      "services/control-plane/bff",
+      "services/research"
+    ],
+    "acceptance": [
+      "Extract PersonaStrategyProfile from persona mandate strategy_family lifecycle and policy fields",
+      "Add deterministic scoring for family market asset holding period data availability evidence backend risk and diversification",
+      "Return explainable matched_fields score_breakdown missing_data blockers and recommended_action",
+      "Hard blockers include license disabled source rejected seed unavailable data and persona lifecycle not research capable",
+      "BFF read surface exposes persona strategy matches",
+      "Match action can create a research ticket or promote seed candidate but cannot deploy"
+    ],
+    "next": "PR #1256 merged implementation at be0b35e26b9040aa7345bcf0fd8821da32801cdb; closeout PR #1257 merged at d493efc4a280684619eb3c962e6967ddd75d61d1; verified pytest persona/BFF discovery tests 7 passed and py_compile succeeded.",
+    "last_update": "2026-06-10T00:45:22Z",
+    "auto_created_by": "codex_data_strategy_source_dispatch_2026-06-09",
+    "review_notes_zh": [
+      "審查通過",
+      "所有驗收條件達標：PersonaStrategyProfile 提取正確、deterministic scorer 涵蓋 8 個維度、hard blocker 正確截斷分數並設 status=ignored、BFF read surface 雙路由上線、deploy action 被 422 攔截、7 個測試全部通過"
+    ],
+    "review_file": "/tmp/DATASTRAT-PERSONA-005-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-10T00:45:22Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/datastrat-persona-005",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/DATASTRAT-PERSONA-005",
+      "git_clean_required": false,
+      "commit": "7a7ca56ff11005bf2949aaf4cc625f2f6b6fa19b",
+      "commit_subject": "DATASTRAT-PERSONA-005: record closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "Task closeout evidence for deterministic Persona strategy discovery after PR #1256 merged.",
+        "Not changing": "Persona scorer semantics, BFF route behavior, StrategySpecSeed persistence, registry writes, deployment gates, runtime binding, broker, or order-routing authority.",
+        "Composes with": "merged implementation PR #1256 and active status closeout from review_approved to done.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "DATASTRAT-PERSONA-005",
+        "Reviewer": "Claude2",
+        "Verified": "python3 -m pytest services/control-plane/bff/test_datastrat_persona_strategy_discovery_bff.py services/control-plane/persona/test_persona_strategy_discovery.py -q - 7 passed, 3 existing deprecation warnings; python3 -m py_compile services/control-plane/persona/persona_strategy_discovery.py services/control-plane/bff/main.py"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/DATASTRAT-PERSONA-005",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "d493efc4a280684619eb3c962e6967ddd75d61d1",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DATASTRAT-PERSONA-005",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Auto-reassigned DATASTRAT-PERSONA-005 away from unavailable lane Codex (disabled, sidecar-only, or auth-down); owner Codex -> Claude2.",
+      "status": "done",
+      "created_at": "2026-06-09T14:40:44Z",
+      "resolved_at": "2026-06-10T00:11:46Z"
+    },
+    {
+      "task_id": "DATASTRAT-PERSONA-005",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-06-10T00:11:46Z",
+      "resolved_at": "2026-06-10T00:11:50Z"
+    },
+    {
+      "task_id": "DATASTRAT-PERSONA-005",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "PR #1256 opened with auto-merge enabled. Scope: deterministic PersonaStrategyProfile extraction/scoring for StrategySpecSeed and StrategySpec, BFF strategy-matches read routes, transient discovery route, and research-only match actions. Verified: 21 focused tests pass and py_compile OK. Broader legacy BFF contract run has unrelated existing failures for error-envelope/deprecated-action expectations.",
+      "status": "done",
+      "created_at": "2026-06-10T00:27:41Z",
+      "resolved_at": "2026-06-10T00:36:08Z"
+    },
+    {
+      "task_id": "DATASTRAT-PERSONA-005",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved: all acceptance criteria met, 7/7 tests pass, research-only boundary enforced. Returning to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-06-10T00:36:08Z",
+      "resolved_at": "2026-06-10T00:45:23Z"
+    }
+  ],
+  "blockers": []
+}

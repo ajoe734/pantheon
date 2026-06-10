@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Idle workers exist, but there is no runnable execution backlog or parent task to support.",
+  "blocked_by": [
+    "no_runnable_execution_backlog"
+  ],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "OPS-GEMINI-GH-AUTH-001",
+    "PR-225",
+    "CLOSEOUT-PUSH-METADATA-RECON"
+  ]
+}

@@ -1,0 +1,150 @@
+{
+  "version": 1,
+  "task_id": "ASST-USER-001",
+  "archived_at": "2026-06-02T15:36:42Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASST-USER-001",
+    "title": "Contract assistant into product-safe user mode",
+    "summary_zh": "把正式產品預設收斂為 user mode，禁用 shell repo raw logs repair command broker，只保留 BFF-curated context 與 source-backed answer。",
+    "phase": "Assistant OpenClaw Gateway Kernel/User Mode",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "ASST-BFF-001",
+      "ASST-BFF-002",
+      "ASST-FE-001",
+      "ASST-SEC-001"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/assistant/mode_policy.py",
+      "services/control-plane/bff/assistant/routes.py",
+      "execute-plans/src/agora/pages/AskPersonas.tsx",
+      "execute-plans/src/lib/bff-v1/paths.ts",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/"
+    ],
+    "acceptance": [
+      "product default mode is user",
+      "user mode has no shell repo raw-log repair or broker capability",
+      "user mode receives only BFF-curated context",
+      "action suggestions route through existing BFF command and approval flows",
+      "regression tests prove kernel controls are disabled"
+    ],
+    "next": "Completed: original PR #787 and follow-up PR #793 are both merged to dev; follow-up fix commit 38613b4a is covered by required checks and local focused pytest 71 passed.",
+    "last_update": "2026-06-02T15:36:42Z",
+    "source_documents": [
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/SA_assistant_kernel_user_mode.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/SD_assistant_kernel_user_mode.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md"
+    ],
+    "implementation_track": "assistant-openclaw-gateway-cli-mount",
+    "provider_runtime": "openclaw_gateway_cli_mount",
+    "credential_policy": "dedicated_service_user_oauth_mount",
+    "delivery_layer": "primary",
+    "terminal_outcome": "completed",
+    "review_notes_zh": [
+      "Codex2 review closeout accepted the follow-up after PR #793 merged and required GitHub checks passed.",
+      "Local focused validation rerun in task worktree: 71 passed for assistant/BFF context/security/session suites.",
+      "Follow-up PR #793 merge commit a448f30adb1e1935a69c681a2e9b27d77cf98d8f is now origin/dev."
+    ],
+    "delivery": {
+      "recorded_at": "2026-06-02T15:36:42Z",
+      "repository_id": "pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "git_clean_required": false,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "a448f30adb1e1935a69c681a2e9b27d77cf98d8f",
+      "head_merged_to_target": true,
+      "checks": [
+        {
+          "name": "Commit trailers",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Runtime mirror guard",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Smoke acceptance",
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/asst-user-001",
+      "branch": "task/ASST-USER-001",
+      "upstream": "origin/task/ASST-USER-001",
+      "ahead": 0,
+      "behind": 0,
+      "commit": "38613b4aa1a6c34525512562bafd487e80c66bbb",
+      "commit_subject": "ASST-USER-001: enforce kernel gate on context; fix env pollution",
+      "commit_author": {
+        "name": "Claude",
+        "email": "claude@pantheon.local"
+      },
+      "commit_metadata": {
+        "(1) routes.py": "add assert_kernel_allowed(payload.mode) to",
+        "(2) test_user_mode_regression.py": "replace direct os.environ",
+        "test_assistant_security.py": "update kernel-mode tests to set",
+        "Verified": "pytest 79 passed; assistant-only 26 passed; kernel-enabled session 40 passed",
+        "LLM-Agent": "Claude",
+        "Task-ID": "ASST-USER-001",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "pr": {
+        "number": 793,
+        "url": "https://github.com/ajoe734/pantheon/pull/793",
+        "state": "MERGED",
+        "merged_at": "2026-06-02T15:29:08Z",
+        "merge_commit": "a448f30adb1e1935a69c681a2e9b27d77cf98d8f"
+      },
+      "related_prs": [
+        {
+          "number": 787,
+          "url": "https://github.com/ajoe734/pantheon/pull/787",
+          "state": "MERGED",
+          "merged_at": "2026-06-02T04:58:33Z",
+          "merge_commit": "9f34caa2aaca12ee73f752714c96f1c3bb9cee26"
+        }
+      ]
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASST-USER-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Implementation complete. PR #787 open with auto-merge. Changes: (1) PRODUCT_DEFAULT_MODE=user constant + kernel_sessions_enabled() env gate + assert_kernel_allowed() in mode_policy.py; (2) AssistantContextPackRequest defaults to user mode; (3) routes.py enforces kernel gate before capability checks + GET /bff/assistant/mode endpoint; (4) assistant session path builders in paths.ts; (5) AskPersonas.tsx user-mode UI (mode badge kernel-only, source citations always visible); (6) 22-test regression suite covering all acceptance gates; (7) USER_MODE_CONTRACTION.md delivery record. pytest 26/26 passed.",
+      "status": "done",
+      "created_at": "2026-06-02T04:57:55Z",
+      "resolved_at": "2026-06-02T12:58:36Z"
+    },
+    {
+      "task_id": "ASST-USER-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review failed. Required fixes: (1) /bff/assistant/sessions/{id}/context must not trust payload.mode to enter kernel_debug while PANTHEON_ASSISTANT_KERNEL_ENABLED is unset/false; enforce assert_kernel_allowed or persisted session mode before kernel-only context sources such as job_logs/repo_status. (2) Fix test_user_mode_regression.py env pollution: direct os.environ setup/teardown removes PANTHEON_ASSISTANT_KERNEL_ENABLED for later tests; use monkeypatch/restore and update existing session/context tests for the new disabled-by-default gate. Verification failed: pytest services/control-plane/bff/assistant/tests/ services/control-plane/bff/tests/test_assistant_context_pack.py services/control-plane/bff/tests/test_assistant_sessions.py services/control-plane/bff/tests/test_assistant_security.py services/control-plane/bff/tests/test_assistant_agora_ask.py -q => 4 failed, 75 passed; assistant-only 26 passed; PANTHEON_ASSISTANT_KERNEL_ENABLED=true pytest services/control-plane/bff/tests/test_assistant_sessions.py -q => 40 passed.",
+      "status": "done",
+      "created_at": "2026-06-02T12:58:36Z",
+      "resolved_at": "2026-06-02T12:58:36Z"
+    },
+    {
+      "task_id": "ASST-USER-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Both required fixes implemented and verified. (1) routes.py: assert_kernel_allowed(payload.mode) added to POST /bff/assistant/sessions/{id}/context — now returns 403 when PANTHEON_ASSISTANT_KERNEL_ENABLED unset/false, preventing kernel-only sources like job_logs/repo_status. (2) test_user_mode_regression.py: TestKernelCapabilityGateWhenEnabled replaced setup_method/teardown_method with @pytest.fixture(autouse=True) using monkeypatch — no env pollution. All kernel-mode route tests updated to set env via monkeypatch. Commit: 38613b4a. pytest 79 passed (full), 26 passed (assistant-only), 40 passed (kernel-enabled sessions).",
+      "status": "done",
+      "created_at": "2026-06-02T13:10:43Z",
+      "resolved_at": "2026-06-02T15:36:42Z"
+    }
+  ],
+  "blockers": []
+}

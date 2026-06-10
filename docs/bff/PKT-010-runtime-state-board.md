@@ -38,6 +38,19 @@ Required response fields:
     - `metrics.fill_rate`
     - `metrics.avg_slippage_bps`
     - `metrics.total_trades`
+  - `paper_runtime_monitoring` (nullable)
+    - `session_id`
+    - `status`
+    - `active`
+    - `last_heartbeat_at`
+    - `heartbeat_status`
+    - `restart_count`
+  - `row_health`
+    - `status` (`ok` | `degraded`)
+    - `checks.runtime_binding`
+    - `checks.telemetry_summary`
+    - `checks.paper_runtime_monitoring`
+    - `degraded_checks`
   - `rollback_summary`
     - `count`
     - `latest` (nullable)
@@ -56,15 +69,21 @@ Required response fields:
 - `meta.sort.sort_by`
 - `meta.sort.sort_order`
 - `meta.surfaces.runtime_state`
+  - `support_surface_status`
+  - `degraded_support_surfaces`
 - `meta.surfaces.runtime_roster`
 - `meta.surfaces.telemetry_summary`
+- `meta.surfaces.paper_runtime_monitoring`
 - `meta.surfaces.rollback_history`
 
 ## Degraded-State Rules
 
 - When `meta.surfaces.runtime_state = unavailable`, return `runtimes: []` and preserve the surface-level unavailable message. The UI must render an explicit unavailable state, not an empty healthy table.
 - When `meta.surfaces.runtime_roster = degraded`, the roster may still render, but the UI must show the degradation banner and keep the board read-only.
+- `runtimes[].row_health` reports only row-local runtime binding, telemetry summary, and paper monitoring evidence. It must not be degraded merely because a support surface such as rollback history is stale or unavailable.
 - When `meta.surfaces.telemetry_summary = degraded` or `unavailable`, any row with `telemetry_summary = null` renders the backend-supplied unavailable copy. The UI must not backfill telemetry from another route.
+- When a paper row has `row_health.checks.paper_runtime_monitoring.status = unavailable`, the UI may keep telemetry visible but must show that paper-worker monitoring evidence is missing for that row.
+- `meta.surfaces.runtime_state.degraded_support_surfaces` names board-level support surfaces that degrade the board as a whole. This is separate from row-local health.
 - When `meta.surfaces.rollback_history = degraded` or `unavailable`, the rollback history link remains visible only when `rollback_summary.href` is present; the UI must not infer rollback freshness from `count = 0`.
 
 ## Design Rules

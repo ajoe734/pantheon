@@ -96,6 +96,7 @@ class RuntimeManagerServiceTests(unittest.TestCase):
 
         self.assertEqual(binding.plan_id, "plan-001")
         self.assertEqual(binding.deployment_mode, "paper")
+        self.assertEqual(binding.execution_mode, "paper")
         self.assertEqual(binding.status, "active")
         self.assertEqual(binding.persona_capital_binding_id, "pcb-001")
 
@@ -119,8 +120,23 @@ class RuntimeManagerServiceTests(unittest.TestCase):
 
         self.assertEqual(binding.plan_id, "plan-canary-001")
         self.assertEqual(binding.deployment_mode, "canary")
+        self.assertEqual(binding.execution_mode, "canary")
         self.assertEqual(binding.to_dict()["deployment_mode"], "canary")
+        self.assertEqual(binding.to_dict()["execution_mode"], "canary")
         self.assertEqual(binding.metadata["activation_gate"]["broker_sandbox_smoke_ref"], "docs/deployment/evidence/execution-sandbox-canary-ready/broker-smoke")
+
+    def test_deploy_rejects_execution_mode_mismatch(self):
+        with self.assertRaisesRegex(RuntimeManagerError, "execution_mode"):
+            self.service.deploy(
+                _valid_deploy_request(
+                    plan_id="plan-canary-exec-mode-mismatch",
+                    target_stage="canary",
+                    execution_mode="live",
+                    allowed_deployment_scope="live",
+                    runtime_id="rt-canary-exec-mode-mismatch",
+                    promotion_gate=_valid_activation_gate(),
+                )
+            )
 
     def test_canary_deploy_requires_explicit_activation_gate(self):
         with self.assertRaisesRegex(RuntimeManagerError, "activation is blocked"):
@@ -154,6 +170,31 @@ class RuntimeManagerServiceTests(unittest.TestCase):
                     allowed_deployment_scope="live",
                     runtime_id="rt-live-no-observation",
                     promotion_gate=_valid_activation_gate(capital_scale_pct=100.0, gross_scale_pct=100.0),
+                )
+            )
+
+    def test_deploy_records_allowed_risk_policy_evaluation(self):
+        binding = self.service.deploy(
+            _valid_deploy_request(
+                risk_policy_ref="risk-main",
+                risk_policy={
+                    "risk_policy_id": "risk-main",
+                    "allowed_stages": ["paper"],
+                    "max_single_name_weight": 0.7,
+                },
+                metadata={"target_weights": {"AAPL": 0.6}},
+            )
+        )
+
+        self.assertEqual(binding.metadata["risk_policy_evaluation"]["decision"], "allowed")
+        self.assertEqual(binding.metadata["risk_policy_evaluation"]["risk_policy_id"], "risk-main")
+
+    def test_deploy_rejects_risk_policy_identity_mismatch(self):
+        with self.assertRaisesRegex(RuntimeManagerError, "RiskPolicy"):
+            self.service.deploy(
+                _valid_deploy_request(
+                    risk_policy_ref="risk-other",
+                    risk_policy={"risk_policy_id": "risk-main"},
                 )
             )
 

@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "HA-001-V2",
+  "archived_at": "2026-05-19T17:00:07Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "HA-001-V2",
+    "title": "BFF HA topology doc (Part D2)",
+    "summary_zh": "Document the production-grade BFF HA topology per Part D2 Mermaid diagram. Includes LB, replicas, shared idempotency+audit store, SSE fanout, registry, governance, runtime manager, telemetry.",
+    "phase": "Phase 8 / EPIC-BFF-HA",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/bff/bff_ha_topology.md"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Merged HA-001-V2 closeout through PR #246 (merge 362ebd4827b13bf48fa356cd1c700c4c16ba7dfc) and final publication evidence through PR #249 (merge 61fdabfd816957088df30aa03cd0985cdeae2a70). Validation: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q tests/docs/test_bff_ha_topology_doc.py -> 2 passed; git diff --check on HA-001-V2 docs/review/evidence/brief -> passed.",
+    "last_update": "2026-05-19T17:00:07Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：拓撲圖覆蓋所有必要節點，fail-closed boundary 完整，正確標示為 pre-gate 規劃文件，不改動 compose / L1 正典 / 生產切換，doc tests 2 passed"
+    ],
+    "review_file": "support/reviews/HA-001-V2/review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T17:00:07Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ha-001-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/HA-001-V2",
+      "git_clean_required": false,
+      "commit": "fc99c9a38492a4d97b10fd2c77efd37f4cf4fede",
+      "commit_subject": "HA-001-V2: refresh final publication evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "HA-001-V2 owner closeout evidence.",
+        "Not changing": "BFF HA topology semantics, reviewer verdict, L1 policy, compose/deployment state, SLA targets, degraded-mode implementation, failover runbook, observability, cost monitoring, SSE replay, idempotency integration, or production cutover.",
+        "Composes with": "PR #235 implementation merge, PR #246 closeout publication merge, and the refreshed PR #249 branch.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "HA-001-V2",
+        "Reviewer": "Claude",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q tests/docs/test_bff_ha_topology_doc.py -> 2 passed in 0.24s; git diff --check -- support/evidence/HA-001-V2/closeout.md docs/bff/bff_ha_topology.md tests/docs/test_bff_ha_topology_doc.py support/reviews/HA-001-V2/review.md .orchestrator/task-briefs/ha_001_v2.md -> passed"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/HA-001-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "61fdabfd816957088df30aa03cd0985cdeae2a70",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "HA-001-V2",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for review: PR #235 adds docs/bff/bff_ha_topology.md plus focused doc tests for the D2 topology and fail-closed boundaries. Verified: pytest tests/docs/test_bff_ha_topology_doc.py.",
+      "status": "done",
+      "created_at": "2026-05-19T16:12:40Z",
+      "resolved_at": "2026-05-19T16:18:34Z"
+    },
+    {
+      "task_id": "HA-001-V2",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: topology doc complete, fail-closed boundaries correct, L1 policy aligned, doc tests pass. Returning to Codex2 for closeout.",
+      "status": "done",
+      "created_at": "2026-05-19T16:18:34Z",
+      "resolved_at": "2026-05-19T17:00:08Z"
+    }
+  ],
+  "blockers": []
+}

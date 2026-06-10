@@ -118,6 +118,13 @@ class TestExperimentRegistryWriteback(unittest.TestCase):
                 _artifact(registry_hints={"artifact_type": "model_artifact", "deployment_stage": "paper"}),
             )
 
+    def test_rejects_malformed_evaluation_summary_at_writeback_boundary(self) -> None:
+        with self.assertRaisesRegex(ExperimentRegistryWritebackError, "evaluation_summary must be a mapping"):
+            build_registry_entry_from_experiment_run(
+                _run(),
+                _artifact(evaluation_summary="invalid-not-a-dict"),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

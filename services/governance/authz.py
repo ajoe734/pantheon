@@ -22,6 +22,12 @@ _PERSONA_SESSION_ROLES = {
     "trainer_session",
     "consultation_session",
 }
+_PERSONA_OPERATOR_ROLES = {
+    "operator",
+    "admin",
+    "reviewer",
+    "auditor",
+}
 _VALID_MEMORY_SCOPES = {"institutional", "persona", "both"}
 
 
@@ -84,12 +90,15 @@ def evaluate_authz_request(
         ).strip()
         if not persona_id:
             return _deny("missing_resource_persona_id")
-        if not roles.intersection(_PERSONA_SESSION_ROLES):
+        has_persona_session_role = bool(roles.intersection(_PERSONA_SESSION_ROLES))
+        has_persona_operator_role = bool(roles.intersection(_PERSONA_OPERATOR_ROLES))
+        if not has_persona_session_role and not has_persona_operator_role:
             return _deny("persona_memory_role_denied")
-        if not session_persona_id:
-            return _deny("missing_session_persona_id")
-        if session_persona_id != persona_id:
-            return _deny("persona_scope_mismatch")
+        if has_persona_session_role:
+            if not session_persona_id:
+                return _deny("missing_session_persona_id")
+            if session_persona_id != persona_id:
+                return _deny("persona_scope_mismatch")
         if "consultation_session" in roles:
             relevance_scope = str(resource.get("relevance_scope") or "").strip()
             if relevance_scope != "persona_and_committee":

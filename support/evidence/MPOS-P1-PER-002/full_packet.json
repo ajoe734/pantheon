@@ -1,0 +1,234 @@
+{
+  "packet_id": "mpos-p1-per-002-full-e2e-packet",
+  "task_id": "MPOS-P1-PER-002",
+  "generated_at": "2026-06-10T00:00:00Z",
+  "persona_ooda_packets": [
+    {
+      "persona_id": "persona-alpha",
+      "persona_name": "Alpha",
+      "mandate": "TW equity momentum mandate; paper-trading sponsor",
+      "observe": {
+        "seed_id": "seed-dcdd2776d007c0aa",
+        "hypothesis": "TWSE and TPEx equities with positive 60-day momentum, stable profitability, and moderate volume expansion can rank five-day forward returns.",
+        "source_ids": [
+          "src-per-002-alpha-001"
+        ],
+        "backend_hint": "vectorbt",
+        "asset_class": [
+          "equity"
+        ],
+        "market_scope": [
+          "Taiwan",
+          "TWSE",
+          "TPEx"
+        ],
+        "risk_notes": [
+          "no_broker_route",
+          "research_only"
+        ],
+        "no_order_route": true
+      },
+      "orient": {
+        "regime": "risk_on",
+        "risk_posture": "risk_on",
+        "strategy_family": "tw_equity",
+        "mandate_fit_score": 0.95,
+        "evidence_quality_score": 0.88,
+        "oos_run_id": "exp-per-002-alpha-oos-001",
+        "oos_sharpe": 1.42,
+        "oos_max_dd": -0.08,
+        "no_order_route_proof": {
+          "seed_risk_notes_include_research_only": true,
+          "broker_consumption": "not_direct_action",
+          "direct_execution_allowed": false,
+          "proof_ref": "seed://seed-dcdd2776d007c0aa#risk_notes"
+        }
+      },
+      "decide": {
+        "proposal_id": "pap-per-002-alpha-001",
+        "evidence_refs": [
+          "seed://seed-dcdd2776d007c0aa",
+          "orient://src-per-002-alpha-001/orient-001",
+          "oos://exp-per-002-alpha-oos-001"
+        ],
+        "conviction": 0.82,
+        "uncertainty": 0.1,
+        "target_weights": {
+          "2330.TW": 0.45,
+          "0050.TW": 0.25
+        }
+      }
+    },
+    {
+      "persona_id": "persona-beta",
+      "persona_name": "Beta",
+      "mandate": "TW equity mean-reversion mandate; paper-trading contributor",
+      "observe": {
+        "seed_id": "seed-2d860654193514e3",
+        "hypothesis": "TWSE equities exhibiting short-term reversal patterns after high-volume sell-offs can deliver positive risk-adjusted returns over 3-10 day hold.",
+        "source_ids": [
+          "src-per-002-beta-001"
+        ],
+        "backend_hint": "vectorbt",
+        "asset_class": [
+          "equity"
+        ],
+        "market_scope": [
+          "Taiwan",
+          "TWSE"
+        ],
+        "risk_notes": [
+          "no_broker_route",
+          "research_only"
+        ],
+        "no_order_route": true
+      },
+      "orient": {
+        "regime": "risk_on",
+        "risk_posture": "risk_neutral",
+        "strategy_family": "tw_equity",
+        "mandate_fit_score": 0.9,
+        "evidence_quality_score": 0.82,
+        "oos_run_id": "exp-per-002-beta-oos-001",
+        "oos_sharpe": 1.18,
+        "oos_max_dd": -0.12,
+        "no_order_route_proof": {
+          "seed_risk_notes_include_research_only": true,
+          "broker_consumption": "not_direct_action",
+          "direct_execution_allowed": false,
+          "proof_ref": "seed://seed-2d860654193514e3#risk_notes"
+        }
+      },
+      "decide": {
+        "proposal_id": "pap-per-002-beta-001",
+        "evidence_refs": [
+          "seed://seed-2d860654193514e3",
+          "orient://src-per-002-beta-001/orient-001",
+          "oos://exp-per-002-beta-oos-001"
+        ],
+        "conviction": 0.7,
+        "uncertainty": 0.15,
+        "target_weights": {
+          "2330.TW": 0.15,
+          "2454.TW": 0.3
+        }
+      }
+    },
+    {
+      "persona_id": "persona-gamma",
+      "persona_name": "Gamma",
+      "mandate": "Global equity value/quality mandate; paper-trading contributor",
+      "observe": {
+        "seed_id": "seed-bfbe674bfa966a35",
+        "hypothesis": "Global large-cap equities with low price-to-book ratio, stable gross margins, and positive earnings revisions can generate alpha over a 20-60 day hold.",
+        "source_ids": [
+          "src-per-002-gamma-001"
+        ],
+        "backend_hint": "qlib",
+        "asset_class": [
+          "equity"
+        ],
+        "market_scope": [
+          "US",
+          "NASDAQ"
+        ],
+        "risk_notes": [
+          "no_broker_route",
+          "research_only"
+        ],
+        "no_order_route": true
+      },
+      "orient": {
+        "regime": "neutral",
+        "risk_posture": "risk_off",
+        "strategy_family": "global_equity",
+        "mandate_fit_score": 0.85,
+        "evidence_quality_score": 0.79,
+        "oos_run_id": "exp-per-002-gamma-oos-001",
+        "oos_sharpe": 0.98,
+        "oos_max_dd": -0.06,
+        "no_order_route_proof": {
+          "seed_risk_notes_include_research_only": true,
+          "broker_consumption": "not_direct_action",
+          "direct_execution_allowed": false,
+          "proof_ref": "seed://seed-bfbe674bfa966a35#risk_notes"
+        }
+      },
+      "decide": {
+        "proposal_id": "pap-per-002-gamma-001",
+        "evidence_refs": [
+          "seed://seed-bfbe674bfa966a35",
+          "orient://src-per-002-gamma-001/orient-001",
+          "oos://exp-per-002-gamma-oos-001"
+        ],
+        "conviction": 0.65,
+        "uncertainty": 0.2,
+        "target_weights": {
+          "AAPL": 0.25,
+          "MSFT": 0.2
+        }
+      }
+    }
+  ],
+  "registry_health_gate": {
+    "sponsor_candidate_ids": [
+      "persona-alpha",
+      "persona-beta",
+      "persona-gamma"
+    ],
+    "excluded_persona_ids": [
+      "persona-delta"
+    ],
+    "blocked_sponsor_ids": [],
+    "committee_review": true,
+    "issues": [
+      {
+        "code": "conflicting_sponsor_assignments",
+        "message": "Multiple personas are assigned sponsor roles for the same pool/scope context: persona-alpha, persona-beta, persona-gamma, persona-delta.",
+        "capital_pool_id": "pool-paper",
+        "scope_ref": "paper"
+      },
+      {
+        "code": "persona_suspended",
+        "message": "Persona 'persona-delta' is suspended and cannot enter sponsor selection.",
+        "persona_id": "persona-delta",
+        "role": "paper_owner",
+        "capital_pool_id": "pool-paper",
+        "scope_ref": "paper"
+      }
+    ],
+    "passed": false
+  },
+  "synthesis": {
+    "artifact_id": "e81ffe2f-bafe-4fee-a0cf-981db9f4b70d",
+    "capital_pool_id": "pool-paper",
+    "sponsor_persona_id": "persona-alpha",
+    "synthesis_method": "weighted_fusion",
+    "provenance_refs": [
+      "pap-per-002-alpha-001",
+      "pap-per-002-beta-001",
+      "pap-per-002-gamma-001"
+    ],
+    "target_weights": {
+      "2330.TW": 0.24444059382689867,
+      "0050.TW": 0.1097606275858241,
+      "2454.TW": 0.09374292834483063,
+      "AAPL": 0.06212026546015039,
+      "MSFT": 0.049696212368120316
+    }
+  },
+  "acceptance_gates": {
+    "persona_a_seed_built": true,
+    "persona_b_seed_built": true,
+    "persona_c_seed_built": true,
+    "persona_a_no_order_route": true,
+    "persona_b_no_order_route": true,
+    "persona_c_no_order_route": true,
+    "persona_a_evidence_refs_chain": true,
+    "persona_b_evidence_refs_chain": true,
+    "persona_c_evidence_refs_chain": true,
+    "persona_d_suspended_excluded": true,
+    "synthesis_three_proposals": true,
+    "synthesis_sponsor_is_active_persona": true
+  }
+}

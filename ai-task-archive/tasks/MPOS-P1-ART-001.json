@@ -1,0 +1,135 @@
+{
+  "version": 1,
+  "task_id": "MPOS-P1-ART-001",
+  "archived_at": "2026-06-09T15:23:47Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MPOS-P1-ART-001",
+    "title": "Wire AllocationPolicyArtifact into registry governance and deployment path",
+    "summary_zh": "讓 optimizer 產出的 AllocationPolicyArtifact 成為 registry 可審核 artifact，帶 lineage/conflict log/pool scope/risk evidence，並可被 DeploymentPlan 引用。",
+    "phase": "EPIC MPOS / P1 governance risk and artifact integration",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MPOS-P1-RISK-001"
+    ],
+    "artifacts": [
+      "services/optimizer-svc/portfolio_synthesis",
+      "services/registry",
+      "services/registry/promotion",
+      "services/control-plane/governance/deployment_plan.py",
+      "services/execution/artifact_loader.py"
+    ],
+    "acceptance": [
+      "AllocationPolicyArtifact is a supported registry artifact type with lineage and conflict resolution log",
+      "Registration as candidate preserves pool id scope risk policy ref and proposal provenance",
+      "Promotion gate can require committee evidence and risk evidence for allocation artifacts",
+      "DeploymentPlan can reference an approved allocation artifact",
+      "Artifact loader rejects unapproved or pool mismatched allocation artifacts"
+    ],
+    "next": "Owner closeout complete: PR #1236 (implementation) + PR #1240 (task brief) both merged into dev. All 5 acceptance criteria met: AllocationPolicyArtifact registered as allocation_policy type with lineage, pool scope, and risk evidence; registry governance path wired; 67 tests pass.",
+    "last_update": "2026-06-09T15:23:47Z",
+    "auto_created_by": "codex_mpos_gap_dispatch_2026-06-09",
+    "review_notes_zh": [
+      "審查通過：五項驗收標準全部達成，67 測試全過，邊界決策正確",
+      "後續追蹤：optimizer-svc、deployment_plan.py、artifact_loader.py 的接點已在 anchor commit 記錄，不屬本 task 範圍"
+    ],
+    "review_file": ".orchestrator/reviews/MPOS-P1-ART-001-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-09T15:23:47Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mpos-p1-art-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MPOS-P1-ART-001",
+      "git_clean_required": false,
+      "commit": "0e4be617367b30b321c22266af00814cdb6b096e",
+      "commit_subject": "MPOS-P1-ART-001: restore review_approved and refresh task brief",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": ".orchestrator/task-briefs/mpos_p1_art_001.md",
+        "Not changing": "implementation files, review artifact (already committed)",
+        "Composes with": "PR #1236 auto-merge into dev",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "MPOS-P1-ART-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MPOS-P1-ART-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "e091fadb8aec4ef5762db016513ce97412865457",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MPOS-P1-ART-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned MPOS-P1-ART-001 away from unavailable lane Codex2 (disabled, sidecar-only, or auth-down); reviewer Codex2 -> Codex.",
+      "status": "done",
+      "created_at": "2026-06-09T10:42:48Z",
+      "resolved_at": "2026-06-09T14:22:25Z"
+    },
+    {
+      "task_id": "MPOS-P1-ART-001",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "PR #1236 open with auto-merge. Please review: (1) ArtifactType.ALLOCATION_POLICY added to registry models; (2) POST/GET/list/advance facade endpoints with provenance_refs->lineage.source_run_ids and conflict_resolution_log_id->lineage.source_strategy_spec_id mapping; (3) schema updates to registry_entry_schema.json and promoted_artifact_metadata.schema.json; (4) 22 new tests all passing, 45 existing tests unaffected.",
+      "status": "done",
+      "created_at": "2026-06-09T14:29:42Z",
+      "resolved_at": "2026-06-09T14:38:11Z"
+    },
+    {
+      "task_id": "MPOS-P1-ART-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex to Claude after repeated Codex terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-06-09T14:38:11Z",
+      "resolved_at": "2026-06-09T14:44:07Z"
+    },
+    {
+      "task_id": "MPOS-P1-ART-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Review approved: all 5 acceptance criteria satisfied, 67 tests pass, artifact_loader pool-mismatch and approval-state rejection is enforced by existing generic logic — no changes needed there. Minor lazy import style note (non-blocking). Returning to Claude2 for closeout.",
+      "status": "done",
+      "created_at": "2026-06-09T14:44:07Z",
+      "resolved_at": "2026-06-09T14:49:37Z"
+    },
+    {
+      "task_id": "MPOS-P1-ART-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Restoring review_approved: supervisor re-dispatched task as in_progress despite prior review approval by Claude (5/5 criteria, 67 tests, review_file committed); pushing fresh commit to clear stuck pending Commit-trailers check on PR #1236",
+      "status": "done",
+      "created_at": "2026-06-09T15:16:17Z",
+      "resolved_at": "2026-06-09T15:17:02Z"
+    },
+    {
+      "task_id": "MPOS-P1-ART-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Re-restoring review_approved: progress command inadvertently reverted status; PR #1236 implementation + PR #1240 task brief both merged into dev; ready for done",
+      "status": "done",
+      "created_at": "2026-06-09T15:23:38Z",
+      "resolved_at": "2026-06-09T15:23:48Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Queues and approvals are clear with no provider pauses; only human-gate parents are excluded from sidecar generation.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "PROD-WRITES-001-V2",
+    "LIVE-SCALE-001-V2"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "OPS-CLOSEOUT-METADATA-REPAIR",
+    "OPS-PUBLISH-PIPELINE-TRIAGE",
+    "OPS-HUMAN-GATE-METADATA-AUDIT",
+    "OPS-ZOMBIE-BRANCH-CLEANUP",
+    "SPRINT-9-PLANNING"
+  ]
+}

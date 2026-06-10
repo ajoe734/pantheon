@@ -586,6 +586,35 @@ class TestSchemaFile(unittest.TestCase):
         errors = list(Draft7Validator(schema).iter_errors(payload))
         self.assertEqual(errors, [])
 
+    def test_schema_accepts_committee_memo_and_service_handoff_evidence(self):
+        try:
+            from jsonschema import Draft7Validator
+        except ImportError:
+            self.skipTest("jsonschema is not installed")
+
+        schema_path = GOVERNANCE_DIR / "approval_decision.schema.json"
+        schema = json.loads(schema_path.read_text())
+        payload = {
+            "decision_id": "dec-schema-consult-001",
+            "target_type": "allocation_policy",
+            "target_id": "artifact-alloc-001",
+            "target_version": "1.0.0",
+            "decision_state": "decided",
+            "decision": "approved",
+            "rationale": "Committee approved high-risk allocation.",
+            "actor_role": "governance_committee",
+            "actor_id": "committee-bot-001",
+            "risk_level": "high",
+            "created_at": "2026-06-10T00:00:00Z",
+            "decided_at": "2026-06-10T01:00:00Z",
+            "evidence_refs": [
+                {"ref_type": "committee_memo", "ref_id": "memo-alloc-001"},
+                {"ref_type": "service_handoff", "ref_id": "gh-alloc-001"},
+            ],
+        }
+        errors = list(Draft7Validator(schema).iter_errors(payload))
+        self.assertEqual(errors, [], msg="\n".join(str(e) for e in errors))
+
 
 if __name__ == "__main__":
     unittest.main()

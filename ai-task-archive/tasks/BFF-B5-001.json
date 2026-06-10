@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "task_id": "BFF-B5-001",
+  "archived_at": "2026-05-23T11:29:14Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-B5-001",
+    "title": "HumanGate command operations via /bff/v1/commands",
+    "summary_zh": null,
+    "phase": "Sprint BFF-5 / EPIC-BFF-GAP-HUMANGATE",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BFF-B1-007",
+      "BFF-B3-003"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#b5--p15--p2-humangate-write-apis",
+      "services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "Implements command names HumanGateApprove HumanGateReject HumanGateRequestMoreEvidence HumanGateRevoke HumanGateExtendTtl QuarterlyRankingRecommendationSubmit",
+      "Each command path returns standard CommandResponse",
+      "Human Inbox decision flow can approve reject request-evidence through command path"
+    ],
+    "next": "Owner closeout complete: implementation PR #476 and closeout PR #486 merged to dev; 17 B5/B3/PM12 regression tests passed post-refresh; merge commit 31d03a86bbf4c40614e76120135cb3ef51b6e45f.",
+    "last_update": "2026-05-23T11:29:14Z",
+    "review_notes_zh": [
+      "審查通過：所有 5 項驗收標準均已滿足；4 個 B5 聚焦測試通過，17 個組合測試通過；6 個 B5 命令名稱已在 action catalog 和 executor dispatch 中正確註冊；HumanGate 正規化、role gate 與 TTL 驗證邏輯完整；QuarterlyRankingRecommendationSubmit 正確設定 liveCapitalSideEffects=false；PR #476 已合併至 dev，CI 綠燈。"
+    ],
+    "review_file": "support/reviews/BFF-B5-001-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T11:29:14Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-b5-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-B5-001",
+      "git_clean_required": false,
+      "commit": "b2a463c87d568a69598e4caae4b300fc9e3aa516",
+      "commit_subject": "BFF-B5-001: refresh closeout gate evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "BFF-B5-001 owner closeout evidence.",
+        "Not changing": "BFF runtime command handling, action catalog semantics, executor routing, Human Inbox reads, PM-12 recommendation scoring, or live capital execution authority.",
+        "Composes with": "origin/dev at e84d7fb550a955568635659ce75bd20ba3860e86 and owner done finalization after this closeout PR merges.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-B5-001",
+        "Reviewer": "Claude",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=services/control-plane/bff python3 -m pytest services/control-plane/bff/tests/test_bff_b5_humangate_commands.py services/control-plane/bff/tests/test_bff_b3_human_inbox.py services/control-plane/bff/tests/test_bff_pm12_persona_league.py -q (17 passed in 8.24s)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-B5-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "31d03a86bbf4c40614e76120135cb3ef51b6e45f",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-B5-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-23T10:49:21Z",
+      "resolved_at": "2026-05-23T10:49:26Z"
+    },
+    {
+      "task_id": "BFF-B5-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review handoff: B5 implementation is already durable in commit 972de7ba and merged via PR #476 (merge db10d26a) into dev; GitHub checks were green. Codex2 validation: PYTHONPATH=services/control-plane/bff pytest services/control-plane/bff/tests/test_bff_b5_humangate_commands.py (4 passed); PYTHONPATH=services/control-plane/bff pytest services/control-plane/bff/tests/test_bff_b5_humangate_commands.py services/control-plane/bff/tests/test_bff_b3_human_inbox.py services/control-plane/bff/tests/test_bff_pm12_persona_league.py (17 passed). Worktree has only generated task brief untracked.",
+      "status": "done",
+      "created_at": "2026-05-23T11:14:51Z",
+      "resolved_at": "2026-05-23T11:18:14Z"
+    },
+    {
+      "task_id": "BFF-B5-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: all 5 acceptance criteria verified; 4 B5 tests pass, 17 combined regression tests pass; commit 972de7ba merged via PR #476 into dev with green CI. Returning to owner for closeout.",
+      "status": "done",
+      "created_at": "2026-05-23T11:18:14Z",
+      "resolved_at": "2026-05-23T11:29:15Z"
+    }
+  ],
+  "blockers": []
+}

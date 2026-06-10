@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Idle agents and runnable BFF follow-up work exist, with no global provider or approval blocker.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "BFF-B2-004",
+    "BFF-B6-001"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "BFF-B2-004",
+    "BFF-B6-001",
+    "BFF-B2-006",
+    "BFF-B6-002",
+    "BFF-B6-003"
+  ]
+}

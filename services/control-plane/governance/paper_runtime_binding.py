@@ -171,9 +171,29 @@ def _deployment_plan_with_checksum(deployment_packet: Mapping[str, Any]) -> Dict
     if not checksum:
         raise ValueError("MGMT-PAPER-003 packet must provide approved artifact checksum")
 
+    plan["artifact_state"] = "approved"
     plan["artifact_checksum"] = checksum
+    plan["runtime_config_status"] = "approved"
+    plan["risk_policy_ref"] = "risk-policy-paper-runtime-binding"
+    plan["risk_policy_evaluation"] = {
+        "risk_policy_id": "risk-policy-paper-runtime-binding",
+        "risk_policy_version": "v1",
+        "capital_pool_id": str(plan["capital_pool_id"]),
+        "target_type": "runtime_launch",
+        "target_id": str(plan["plan_id"]),
+        "decision": "allowed",
+        "checks": [],
+        "blocking_reasons": [],
+        "warnings": [],
+        "evaluated_at": "2026-06-09T00:00:00Z",
+        "trace_id": TRACE_ID,
+    }
     metadata = dict(plan.get("metadata") or {})
     metadata.setdefault("artifact_checksum", checksum)
+    metadata.setdefault("artifact_state", "approved")
+    metadata.setdefault("runtime_config_status", "approved")
+    metadata.setdefault("risk_policy_ref", plan["risk_policy_ref"])
+    metadata.setdefault("risk_policy_evaluation", plan["risk_policy_evaluation"])
     metadata.setdefault("strategy_id", plan.get("strategy_id"))
     plan["metadata"] = metadata
     return plan

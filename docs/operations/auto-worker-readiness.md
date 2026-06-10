@@ -102,6 +102,11 @@ correct fail-closed behavior.
 ```bash
 python3 .orchestrator/doctor.py --json --no-write
 python3 .orchestrator/doctor.py
+python3 scripts/supervisor_runtime_health.py --require-watchdog --json
 rg -n '"disabled_agents"|"sidecar_only_agents"' .orchestrator/config.json .orchestrator/config.local.json
 tmux ls | rg 'pantheon-(dashboard|dashboard-tunnel|supervisor)' || true
 ```
+
+`tmux` is only an operator convenience check. Supervisor/auto-worker readiness
+must be judged from the watchdog-backed runtime health check above; dashboard
+or tunnel sessions can stay alive after the supervisor process has died.

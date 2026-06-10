@@ -20,6 +20,9 @@ PANTHEON_LEAN_RUNTIME_PATH = "/workspace/lean"
 DEFAULT_RUNTIME_CONFIG_REF = "/workspace/lean/Launcher/config.json"
 
 _VALID_STAGES = {"paper", "canary", "live", "frozen"}
+_APPROVED_ARTIFACT_STATES = {"approved"}
+_APPROVED_CONFIG_STATES = {"approved"}
+_ALLOWED_RISK_POLICY_DECISIONS = {"allowed", "allowed_with_conditions"}
 _SECRET_KEY_MARKERS = (
     "api_key",
     "apikey",
@@ -170,6 +173,7 @@ def materialize_runtime_bootstrap_request(
     _reject_raw_secrets(binding, "runtime_binding")
     _reject_lean_platform_target(plan, "deployment_plan")
     _reject_lean_platform_target(binding, "runtime_binding")
+    launch_contract = _validate_launch_governance_contract(plan, binding)
 
     plan_id = _first_non_empty(plan, "deployment_plan_id", "plan_id")
     binding_id = _first_non_empty(binding, "runtime_binding_id", "binding_id")
@@ -256,6 +260,7 @@ def materialize_runtime_bootstrap_request(
         metadata={
             "source": "deployment_plan_runtime_binding",
             "write_owner": "runtime-manager",
+            "launch_contract": launch_contract,
         },
     )
 
@@ -426,6 +431,151 @@ def _materialize_runtime_config(
         live_broker_enabled=False,
         health_only=stage in {"canary", "live"},
     )
+
+
+def _validate_launch_governance_contract(
+    plan: Mapping[str, Any],
+    binding: Mapping[str, Any],
+) -> dict[str, Any]:
+    artifact_state = _governance_value(
+        plan,
+        binding,
+        "artifact_state",
+        "artifact_status",
+        "artifact.state",
+        "artifact.status",
+    )
+    if artifact_state not in _APPROVED_ARTIFACT_STATES:
+        raise BootstrapContractError(
+            "RuntimeBootstrapRequest requires approved artifact evidence: "
+            f"artifact_state must be 'approved', got {artifact_state!r}."
+        )
+
+    config_status = _governance_value(
+        plan,
+        binding,
+        "runtime_config_status",
+        "config_status",
+        "runtime_config.status",
+        "runtime_config.approval_status",
+    )
+    config_approved = _governance_bool(
+        plan,
+        binding,
+        "runtime_config.approved",
+        "runtime_config_approved",
+        "config_approved",
+    )
+    if config_status not in _APPROVED_CONFIG_STATES and config_approved is not True:
+        raise BootstrapContractError(
+            "RuntimeBootstrapRequest requires approved runtime config evidence: "
+            "runtime_config_status must be 'approved' or runtime_config.approved must be true."
+        )
+
+    risk_policy_ref = _governance_value(
+        plan,
+        binding,
+        "risk_policy_ref",
+        "risk_policy.risk_policy_id",
+        "risk_policy.policy_id",
+    )
+    evaluation = _governance_mapping(plan, binding, "risk_policy_evaluation")
+    if not risk_policy_ref:
+        raise BootstrapContractError("RuntimeBootstrapRequest requires pool risk_policy_ref evidence.")
+    if not evaluation:
+        raise BootstrapContractError(
+            "RuntimeBootstrapRequest requires allowed pool risk_policy_evaluation evidence."
+        )
+
+    decision = str(evaluation.get("decision") or "").strip().lower()
+    if decision not in _ALLOWED_RISK_POLICY_DECISIONS:
+        raise BootstrapContractError(
+            "RuntimeBootstrapRequest requires allowed pool risk_policy_evaluation; "
+            f"got decision {decision!r}."
+        )
+
+    plan_pool = _first_non_empty(plan, "capital_pool_id")
+    binding_pool = _first_non_empty(binding, "capital_pool_id")
+    evaluation_pool = str(evaluation.get("capital_pool_id") or "").strip()
+    expected_pool = binding_pool or plan_pool
+    if evaluation_pool and expected_pool and evaluation_pool != expected_pool:
+        raise BootstrapContractError(
+            "risk_policy_evaluation capital_pool_id "
+            f"{evaluation_pool!r} does not match RuntimeBinding capital_pool_id {expected_pool!r}."
+        )
+
+    evaluation_policy_id = str(
+        evaluation.get("risk_policy_id") or evaluation.get("policy_id") or ""
+    ).strip()
+    if evaluation_policy_id and risk_policy_ref != evaluation_policy_id:
+        raise BootstrapContractError(
+            f"risk_policy_ref {risk_policy_ref!r} does not match "
+            f"risk_policy_evaluation {evaluation_policy_id!r}."
+        )
+
+    return {
+        "artifact_state": artifact_state,
+        "runtime_config_status": config_status or "approved",
+        "risk_policy_ref": risk_policy_ref,
+        "risk_policy_decision": decision,
+    }
+
+
+def _governance_sources(
+    plan: Mapping[str, Any],
+    binding: Mapping[str, Any],
+) -> tuple[Mapping[str, Any], ...]:
+    sources: list[Mapping[str, Any]] = [plan]
+    for source in (plan, binding):
+        metadata = source.get("metadata")
+        if isinstance(metadata, Mapping):
+            sources.append(metadata)
+    sources.append(binding)
+    return tuple(sources)
+
+
+def _governance_value(
+    plan: Mapping[str, Any],
+    binding: Mapping[str, Any],
+    *paths: str,
+) -> str | None:
+    for source in _governance_sources(plan, binding):
+        value = _first_non_empty(source, *paths)
+        if value:
+            return value.strip().lower()
+    return None
+
+
+def _governance_mapping(
+    plan: Mapping[str, Any],
+    binding: Mapping[str, Any],
+    key: str,
+) -> Mapping[str, Any] | None:
+    for source in _governance_sources(plan, binding):
+        value = source.get(key)
+        if isinstance(value, Mapping):
+            return value
+    return None
+
+
+def _governance_bool(
+    plan: Mapping[str, Any],
+    binding: Mapping[str, Any],
+    *paths: str,
+) -> bool | None:
+    for source in _governance_sources(plan, binding):
+        for path in paths:
+            value = _get_path(source, path)
+            if value in (None, ""):
+                continue
+            if isinstance(value, bool):
+                return value
+            text = str(value).strip().lower()
+            if text in {"1", "true", "yes", "on"}:
+                return True
+            if text in {"0", "false", "no", "off"}:
+                return False
+    return None
 
 
 def _boolish(value: Any) -> bool:

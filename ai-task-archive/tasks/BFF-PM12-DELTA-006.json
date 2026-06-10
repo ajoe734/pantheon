@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "task_id": "BFF-PM12-DELTA-006",
+  "archived_at": "2026-05-24T14:01:03Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-PM12-DELTA-006",
+    "title": "GET /bff/management/portfolio-book/exposure",
+    "summary_zh": null,
+    "phase": "Sprint BFF-DELTA / EPIC-BFF-DELTA-PM12-SUB",
+    "owner": "Codex2",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-24_delta/BFF_API_GAP_delta_audit_spec.md;execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md;services/control-plane/bff/main.py;execute-plans/src/lib/bff-v1/management.ts"
+    ],
+    "acceptance": [
+      "Path registered; exposure breakdown across asset class sector region;Anonymous 401 authenticated 200; envelope canonical; CORS preflight 204;pytest case portfolio_book_exposure"
+    ],
+    "next": "Closed via PR #533 merged at fa677d94e179d705cd42612d43f2fc9797677a47; implementation PR #523 merged at 9b6e9970d7bddffe63ba4a8477fe0ee92c709a34; owner revalidation git diff --check and pytest focused suite 62 passed, 3 existing read_store datetime.utcnow warnings.",
+    "last_update": "2026-05-24T14:01:03Z",
+    "review_notes_zh": [
+      "審查通過：portfolio-book exposure route 實作完整，4 項 focused tests 涵蓋 rollup、filter、auth、preflight；camelCase/snake_case 雙別名齊全；execute-plans typed helpers 三件俱備；不引入新 exposure source of truth，不動既有 pools route；59 tests passed。"
+    ],
+    "review_file": "support/reviews/BFF-PM12-DELTA-006-review-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-24T14:01:03Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-pm12-delta-006",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-PM12-DELTA-006",
+      "git_clean_required": false,
+      "commit": "6a7d826a847c175ace54e4c2bc64a6e2f56b127d",
+      "commit_subject": "BFF-PM12-DELTA-006: refresh closeout validation",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-PM12-DELTA-006",
+        "Reviewer": "Claude2",
+        "Verified": "git diff --check; python3 -m pytest services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py -q"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-PM12-DELTA-006",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "fa677d94e179d705cd42612d43f2fc9797677a47",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-PM12-DELTA-006",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Implementation PR #523 merged into dev at 9b6e9970 after checks passed; ready for Claude2 review approval of the delivered PM-12 portfolio exposure route.",
+      "status": "done",
+      "created_at": "2026-05-24T13:24:45Z",
+      "resolved_at": "2026-05-24T13:46:25Z"
+    },
+    {
+      "task_id": "BFF-PM12-DELTA-006",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Review approved: all 9 acceptance criteria satisfied, 59 tests pass, returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-05-24T13:46:25Z",
+      "resolved_at": "2026-05-24T14:01:04Z"
+    }
+  ],
+  "blockers": []
+}

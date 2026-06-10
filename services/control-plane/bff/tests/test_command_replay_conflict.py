@@ -26,6 +26,11 @@ async def _noop_process_command(_command_id: str) -> None:
     return None
 
 
+def _error_detail(response) -> dict:
+    body = response.json()
+    return body.get("detail") or body
+
+
 @contextmanager
 def _isolated_command_client() -> Iterator[TestClient]:
     with tempfile.TemporaryDirectory() as td:
@@ -144,7 +149,7 @@ def test_legacy_action_idempotency_conflict_returns_409() -> None:
 
         assert first.status_code == 202, first.text
         assert conflict.status_code == 409, conflict.text
-        detail = conflict.json()["detail"]
+        detail = _error_detail(conflict)
         assert detail["error"]["code"] == "IDEMPOTENCY_CONFLICT"
         assert detail["foundation_error"]["error_code"] == "IDEMPOTENCY_CONFLICT"
         assert detail["audit_action"]["action_type"] == "bff.command.idempotency_conflict"
@@ -184,7 +189,7 @@ def test_final_command_idempotency_conflict_returns_409() -> None:
 
         assert first.status_code == 202, first.text
         assert conflict.status_code == 409, conflict.text
-        detail = conflict.json()["detail"]
+        detail = _error_detail(conflict)
         assert detail["error"]["code"] == "IDEMPOTENCY_CONFLICT"
         assert detail["foundation_error"]["error_code"] == "IDEMPOTENCY_CONFLICT"
         assert detail["audit_action"]["action_type"] == "bff.command.idempotency_conflict"
@@ -208,10 +213,10 @@ def test_final_command_missing_confirm_token_returns_typed_error() -> None:
         )
 
         assert response.status_code == 428, response.text
-        detail = response.json()["detail"]
-        assert detail["error"]["code"] == "CONFIRM_TOKEN_REQUIRED"
+        detail = _error_detail(response)
+        assert detail["error"]["code"] == "CONFIRMATION_REQUIRED"
         assert detail["error"]["details"]["kind"] == "confirm_token"
-        assert detail["foundation_error"]["error_code"] == "CONFIRM_TOKEN_REQUIRED"
+        assert detail["foundation_error"]["error_code"] == "CONFIRMATION_REQUIRED"
         assert detail["audit_action"]["action_type"] == "bff.command.rejected"
         assert bff_main.command_store._get_all_commands() == []
 
@@ -230,9 +235,9 @@ def test_final_command_missing_approval_evidence_returns_typed_error() -> None:
         )
 
         assert response.status_code == 409, response.text
-        detail = response.json()["detail"]
-        assert detail["error"]["code"] == "APPROVAL_REQUIRED"
+        detail = _error_detail(response)
+        assert detail["error"]["code"] == "HUMAN_GATE_PENDING"
         assert detail["error"]["details"]["kind"] == "approval"
-        assert detail["foundation_error"]["error_code"] == "APPROVAL_REQUIRED"
+        assert detail["foundation_error"]["error_code"] == "HUMAN_GATE_PENDING"
         assert detail["audit_action"]["action_type"] == "bff.command.rejected"
         assert bff_main.command_store._get_all_commands() == []

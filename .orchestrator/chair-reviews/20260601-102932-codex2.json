@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "No independent safe sidecar parent while ASST-OCGW-004 closeout is inconsistent and downstream work is dependency-blocked.",
+  "blocked_by": [
+    "No independent runnable sidecar parent: remaining ASST todos are downstream of ASST-OCGW-003 and/or ASST-OCGW-004.",
+    "ASST-OCGW-004 is a fake in_progress after PR #752 merged and its worker completed, so it needs lifecycle reconciliation rather than sidecar work.",
+    "Reviewer/provider lanes are constrained by claude2 manual pause and recent claude/codex1 auth pauses."
+  ],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "ASST-OCGW-004",
+    "ASST-OCGW-003",
+    "OPS-CHAIR-REVIEW"
+  ]
+}

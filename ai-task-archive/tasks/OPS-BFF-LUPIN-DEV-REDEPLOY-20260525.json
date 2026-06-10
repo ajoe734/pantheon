@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "task_id": "OPS-BFF-LUPIN-DEV-REDEPLOY-20260525",
+  "archived_at": "2026-05-25T03:48:35Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OPS-BFF-LUPIN-DEV-REDEPLOY-20260525",
+    "title": "Re-deploy lupin dev BFF (retry from v2 blocker) - verify 8 audit paths live",
+    "summary_zh": "Retry v2 blocker: re-deploy lupin dev BFF and verify 8 delta-v3 audit paths live.",
+    "phase": "Sprint BFF-DELTA-V3 / EPIC-BFF-DELTA-V3-INFRA",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-25_delta_v3/BFF_API_GAP_delta_v3_spec.md;execute-plans/.lovable/audits/bff-backend-gap-2026-05-25-delta-v3.md;docs/04/pantheon_bff_api_gap_2026-05-24_delta/BFF_API_GAP_delta_audit_spec.md;services/control-plane/bff/main.py;support/evidence/bff-delta-v3-20260525/redeploy-curl-results.md"
+    ],
+    "acceptance": [
+      "Investigate v2 IAM failure root cause and document either self-grant path or operator handoff with exact gcloud command;Rebuild lupin dev BFF image from pantheon@origin/dev HEAD;Push image and roll out service; new pod ready;CORS preflight from 4 Lovable origins to /bff/me returns 204 with full ACAO ACAH ACAM ACEH headers;8 path live curl with Authorization Bearer pantheon-dev-browser:reviewer all return 200 (POST /bff/approvals/batch-decide; GET /bff/command-confirmations/{token}; GET /bff/management/cockpit; GET /bff/management/persona-league/rankings; GET /bff/management/persona-league/movers; GET /bff/management/quarterly-ranking?quarter=2026-Q2; GET /bff/management/performance-attribution; GET /bff/management/portfolio-book);Evidence at support/evidence/bff-delta-v3-20260525/redeploy-curl-results.md committed before status transition to done;Do not mark done if any curl returns 404 or 500"
+    ],
+    "next": "Closeout complete: PR #563 merged into dev at 16c2383d; owner closeout commit e397f25d records live health/readyz and audit path probe with no 404/500; caveats documented.",
+    "last_update": "2026-05-25T03:48:35Z",
+    "review_notes_zh": [
+      "審查通過：BFF 從 origin/dev 9304c09c 重新部署，健康端點正常，4 個 CORS origin 均通過 preflight，8 條 delta-v3 audit path 無 404/500，Pack D 錯誤碼在容器中生效",
+      "後續追蹤：ACEH 出現在實際 CORS 回應而非 OPTIONS preflight（Starlette 標準行為，非缺陷）；batch-decide 403/207 caveats 已記錄，route 確認存活"
+    ],
+    "review_file": "support/reviews/OPS-BFF-LUPIN-DEV-REDEPLOY-20260525-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-25T03:48:35Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-bff-lupin-dev-redeploy-20260525",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-BFF-LUPIN-DEV-REDEPLOY-20260525",
+      "git_clean_required": false,
+      "commit": "e397f25d8d33fda46409281ea8be0a1555034f5a",
+      "commit_subject": "OPS-BFF-LUPIN-DEV-REDEPLOY-20260525: record owner closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "owner closeout evidence and generated task-scoped orchestrator brief for the lupin dev BFF redeploy retry.",
+        "Not changing": "live BFF implementation, CORS middleware, RBAC semantics, approval seed data, deploy scripts, or canonical delta planning docs.",
+        "Composes with": "PR #560 redeploy evidence, PR #562 Claude review approval artifact, and current origin/dev 10bb19f7.",
+        "Verified": "git diff --check; live closeout probe on pantheon-lupin-dev BFF returned health 200, readyz 200, reviewer batch-decide 403, approver batch-decide 207 with explicit Idempotency-Key, and all seven GET audit paths 200.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "OPS-BFF-LUPIN-DEV-REDEPLOY-20260525",
+        "Reviewer": "Claude"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OPS-BFF-LUPIN-DEV-REDEPLOY-20260525",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "16c2383d1f07e399e61e2792ffa00a7d8ae61995",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OPS-BFF-LUPIN-DEV-REDEPLOY-20260525",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "PR #560 merged into dev at d4b8dcb3 with evidence commit 93eddf86. Redeployed pantheon-lupin-dev BFF from origin/dev 9304c09c; health healthy; CORS and audit curls recorded at support/evidence/bff-delta-v3-20260525/redeploy-curl-results.md. Caveats for review: reviewer token is forbidden for POST /bff/approvals/batch-decide by RBAC; approver token reaches live route with HTTP 207 RESOURCE_NOT_FOUND per missing dev approval seed; ACEH appears on actual GET /bff/me responses, not OPTIONS preflight. No audited path returned 404 or 500.",
+      "status": "done",
+      "created_at": "2026-05-25T03:25:23Z",
+      "resolved_at": "2026-05-25T03:35:55Z"
+    },
+    {
+      "task_id": "OPS-BFF-LUPIN-DEV-REDEPLOY-20260525",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 8 delta-v3 audit paths live, BFF healthy, CORS verified. Caveats documented. Returning to Codex for closeout finalization.",
+      "status": "done",
+      "created_at": "2026-05-25T03:35:55Z",
+      "resolved_at": "2026-05-25T03:48:36Z"
+    }
+  ],
+  "blockers": []
+}

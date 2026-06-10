@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "task_id": "BLA-LIVE-001-V2",
+  "archived_at": "2026-05-20T11:52:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "BLA-LIVE-001-V2",
+    "title": "Broker production live enable (human gate)",
+    "summary_zh": "Re-spec'd per design reply section 4. Management Console read model showing research activation tier (R0-R7) per adapter, evidence presence, admission gate status.",
+    "phase": "Phase 8 / EPIC-LIVE-GATE",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [
+      "Human risk-owner + operator signoff",
+      "Preconditions satisfied",
+      "Activation logged in audit chain"
+    ],
+    "next": "Operator marked human gate complete; closing gate placeholder without changing production live flags or runtime config. Downstream supervisor may proceed.",
+    "last_update": "2026-05-20T11:52:18Z",
+    "task_class": "human_gate",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "non_dispatchable": true,
+    "gate_status": "pending_human_go_no_go",
+    "allowed_workers": [],
+    "human_required_roles": [
+      "risk_owner",
+      "operator"
+    ],
+    "activation_effect": [
+      "irreversible_or_high_risk"
+    ],
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "task_id": "BLA-LIVE-001-V2",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Helper-claimed by Claude2 while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-19T15:23:01Z",
+      "resolved_at": "2026-05-19T15:23:21Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "BLA-LIVE-001-V2",
+      "owner": "Claude2",
+      "waiting_for": "Claude",
+      "message": "Human gate: this task cannot advance without explicit dual approval from the Risk Owner AND Operator (human principals). Per PAPER_CANARY_LIVE_POLICY.md §7.1, canary→live requires Reviewer + Risk Owner + Operator approval. BROKER_PRODUCTION_LIVE_ENABLED cannot be flipped by an AI worker. Current sprint fail-closed policy also prohibits broker production live. Waiting for human signoff.",
+      "status": "resolved",
+      "created_at": "2026-05-19T15:25:13Z",
+      "resolved_at": "2026-05-20T11:52:18Z"
+    }
+  ]
+}

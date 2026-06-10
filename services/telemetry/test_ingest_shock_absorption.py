@@ -14,7 +14,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 import tempfile
+import types
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,7 +48,11 @@ from services.telemetry.batch_writer import (
     AsyncBatchWriter,
     WriteResult,
 )
-from services.telemetry.ingest_svc import TelemetryIngestService
+from services.telemetry.ingest_svc import (
+    TelemetryIngestService,
+    _coerce_postgres_created_at,
+    build_postgres_write_fn,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +242,9 @@ class TestDeadLetterQueue(unittest.TestCase):
             self.assertEqual(count, 1)
             entries = dlq.get_entries()
             self.assertEqual(entries[0].event["event_id"], "loaded")
+            stats = dlq.stats()
+            self.assertEqual(stats["memory_entries"], 1)
+            self.assertEqual(stats["total_rejected"], 1)
         finally:
             os.unlink(spill_path)
 
@@ -578,6 +587,52 @@ class TestAsyncBatchWriter(unittest.IsolatedAsyncioTestCase):
 # 6. TelemetryIngestService Integration Tests
 # ---------------------------------------------------------------------------
 
+class TestPostgresWriteFn(unittest.IsolatedAsyncioTestCase):
+
+    def test_coerce_postgres_created_at_parses_rfc3339_z(self):
+        parsed = _coerce_postgres_created_at("2026-06-06T05:16:32Z")
+
+        self.assertEqual(
+            parsed,
+            datetime(2026, 6, 6, 5, 16, 32, tzinfo=timezone.utc),
+        )
+
+    async def test_postgres_writer_passes_datetime_to_asyncpg(self):
+        captured: dict[str, object] = {}
+
+        class FakeConnection:
+            async def executemany(self, query, rows):
+                captured["query"] = query
+                captured["rows"] = rows
+
+            async def close(self):
+                captured["closed"] = True
+
+        async def connect(dsn):
+            captured["dsn"] = dsn
+            return FakeConnection()
+
+        fake_asyncpg = types.SimpleNamespace(connect=connect)
+        event = _make_event(
+            event_id="postgres-created-at",
+            created_at="2026-06-06T05:16:32Z",
+        )
+
+        with patch.dict(sys.modules, {"asyncpg": fake_asyncpg}):
+            result = await build_postgres_write_fn("postgresql://example/db")([event])
+
+        self.assertTrue(result.success, result.error)
+        self.assertEqual(captured["dsn"], "postgresql://example/db")
+        self.assertTrue(captured["closed"])
+        rows = captured["rows"]
+        self.assertEqual(len(rows), 1)
+        self.assertIsInstance(rows[0][2], datetime)
+        self.assertEqual(
+            rows[0][2],
+            datetime(2026, 6, 6, 5, 16, 32, tzinfo=timezone.utc),
+        )
+
+
 class TestTelemetryIngestService(unittest.IsolatedAsyncioTestCase):
 
     async def test_end_to_end_ingest(self):
@@ -709,6 +764,36 @@ class TestTelemetryIngestService(unittest.IsolatedAsyncioTestCase):
 
         await svc.stop(graceful=True)
 
+    async def test_start_loads_spill_and_replays_write_failures_when_enabled(self):
+        """Startup can load persisted DLQ spill entries and replay safe write failures."""
+        with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as f:
+            spill_path = f.name
+
+        try:
+            persisted = DeadLetterQueue(spill_path=spill_path)
+            persisted.reject(
+                _make_event(event_id="startup-replay-target"),
+                tags=[TAG_WRITER_ERROR],
+                reason="simulated pre-restart db outage",
+            )
+
+            svc = TelemetryIngestService(
+                dlq_spill_path=spill_path,
+                replay_dlq_on_start=True,
+                batch_size=10,
+                batch_interval=0.05,
+            )
+            await svc.start()
+            await asyncio.sleep(0.2)
+            await svc.stop(graceful=True)
+
+            stats = svc.stats()
+            self.assertEqual(stats["startup"]["dlq_loaded_from_spill"], 1)
+            self.assertEqual(stats["startup"]["dlq_replayed_on_start"], 1)
+            self.assertEqual(stats["writer"]["total_written"], 1)
+        finally:
+            os.unlink(spill_path)
+
     async def test_stats_comprehensive(self):
         """Stats should return all sections."""
         svc = TelemetryIngestService()
@@ -721,6 +806,7 @@ class TestTelemetryIngestService(unittest.IsolatedAsyncioTestCase):
         self.assertIn("writer", stats)
         self.assertIn("dead_letter_queue", stats)
         self.assertIn("backpressure", stats)
+        self.assertIn("startup", stats)
 
         await svc.stop(graceful=True)
 
@@ -740,6 +826,7 @@ class _FakeBinding:
         self.artifact_id = overrides.get("artifact_id", "artifact-123")
         self.artifact_version = overrides.get("artifact_version", "1.0.0")
         self.deployment_mode = overrides.get("deployment_mode", "paper")
+        self.execution_mode = overrides.get("execution_mode", self.deployment_mode)
         self.effective_at = overrides.get("effective_at", "2026-01-01T00:00:00Z")
         self.retired_at = overrides.get("retired_at", None)
         self.plan_id = overrides.get("plan_id", "plan-456")
@@ -778,6 +865,43 @@ class TestRuntimeBindingEvidenceValidation(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result)
         await svc.stop(graceful=True)
         self.assertEqual(svc.stats()["service"]["total_ingested"], 1)
+
+    async def test_valid_canary_event_with_binding_store_accepted(self):
+        """Canary events must carry explicit canary execution_mode, not live."""
+        b = _FakeBinding(deployment_mode="canary")
+        store = _FakeBindingStore(bindings={b.binding_id: b})
+        svc = TelemetryIngestService(binding_store=store, batch_size=10, batch_interval=0.1)
+        await svc.start()
+        result = await svc.ingest(
+            _make_event(
+                event_id="valid-canary-binding",
+                execution_mode="canary",
+                environment="canary",
+                deployment_stage="canary",
+            )
+        )
+        self.assertTrue(result)
+        await svc.stop(graceful=True)
+        self.assertEqual(svc.stats()["service"]["total_ingested"], 1)
+
+    async def test_canary_execution_mode_mismatch_rejected(self):
+        """Canary telemetry cannot be accepted with legacy execution_mode=live."""
+        b = _FakeBinding(deployment_mode="canary")
+        store = _FakeBindingStore(bindings={b.binding_id: b})
+        svc = TelemetryIngestService(binding_store=store, batch_size=10, batch_interval=0.1)
+        await svc.start()
+        result = await svc.ingest(
+            _make_event(
+                event_id="canary-execution-mode-mismatch",
+                execution_mode="live",
+                environment="canary",
+                deployment_stage="canary",
+            )
+        )
+        self.assertFalse(result)
+        await svc.stop(graceful=True)
+        dlq = svc.get_dlq_entries(tag_filter=TAG_BINDING_MISMATCH)
+        self.assertGreater(len(dlq), 0)
 
     async def test_unknown_binding_id_rejected(self):
         """Event whose binding_id is absent from the store is rejected."""

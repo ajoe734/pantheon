@@ -1,0 +1,173 @@
+{
+  "version": 1,
+  "task_id": "BFF-B1-012",
+  "archived_at": "2026-05-23T10:27:07Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-B1-012",
+    "title": "POST /bff/alerts/{id}/acknowledge",
+    "summary_zh": null,
+    "phase": "Sprint BFF-1 / EPIC-BFF-GAP-P0",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "BFF-B1-007"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#12-decision-endpoints",
+      "services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "Acknowledges alert",
+      "idempotent on repeat",
+      "Alert state transitions to acknowledged in subsequent GET /bff/alerts"
+    ],
+    "next": "Closeout complete: implementation PR #436 merged, task-brief PR #461 merged, owner evidence PR #468 merged into dev at 2c60565d8c6c0049165de92ee1fd1a533f084918; final task commit ae771274858dc01bd00ad6a605414c779767f221; verified pytest services/control-plane/bff/tests/test_bff_alerts_acknowledge.py services/control-plane/bff/test_pkt012_alerts_rail_contract.py (12 passed).",
+    "last_update": "2026-05-23T10:27:07Z",
+    "review_notes_zh": [
+      "審查通過：POST /bff/alerts/{id}/acknowledge 已提供 202 command receipt、header idempotency replay/conflict、body idempotency rejection、未知 alert 404、SSE alert.acknowledged publish、_ACKNOWLEDGED_ALERTS suppression 與 acknowledgement_supported=true 語意；focused pytest 12 passed。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T10:27:07Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-b1-012",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-B1-012",
+      "git_clean_required": false,
+      "commit": "ae771274858dc01bd00ad6a605414c779767f221",
+      "commit_subject": "BFF-B1-012: refresh closeout evidence again",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "support/evidence/BFF-B1-012 owner closeout refresh note.",
+        "Not changing": "BFF runtime behavior, final integration spec semantics, or generated status state.",
+        "Composes with": "PR #468 after composing latest origin/dev through BFF-PM12-005 closeout.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-B1-012",
+        "Reviewer": "Codex2",
+        "Verified": "pytest services/control-plane/bff/tests/test_bff_alerts_acknowledge.py services/control-plane/bff/test_pkt012_alerts_rail_contract.py (12 passed after second PR #468 dev refresh)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-B1-012",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "2c60565d8c6c0049165de92ee1fd1a533f084918",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-B1-012",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation complete and pushed as PR #436 (task/BFF-B1-012 → dev, auto-merge enabled). Deliverables: (1) CommandType.ALERT_ACKNOWLEDGE in models.py; (2) dedicated bff_alert_acknowledge handler in main.py with operator-role gate, idempotency, alert existence check (404 when surface healthy), command store persistence, alert.acknowledged SSE event, CommandResponse<T> return; (3) dedicated bff_get_alert GET handler; (4) both removed from generic catch-all stubs; (5) 7 tests in test_bff_alerts_acknowledge.py — all 99 BFF suite tests passing. Spec §18 added to BFF_API_GAP_final_integration_spec.md at fragment #12-decision-endpoints.",
+      "status": "done",
+      "created_at": "2026-05-23T07:28:18Z",
+      "resolved_at": "2026-05-23T07:35:56Z"
+    },
+    {
+      "task_id": "BFF-B1-012",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review requested changes: PR #436 is merge-conflicted with current dev; acceptance not met because alert acknowledge does not transition alert state in subsequent GET /bff/alerts and meta.acknowledgement_supported remains false; AlertAcknowledge is missing command_executor mapping. Review comment posted on PR #436. Verified locally: alert ack tests 7 passed; BFF suite 99 passed.",
+      "status": "done",
+      "created_at": "2026-05-23T07:35:56Z",
+      "resolved_at": "2026-05-23T07:35:56Z"
+    },
+    {
+      "task_id": "BFF-B1-012",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All 3 review issues resolved: executor mapping added, alert state transition via _ACKNOWLEDGED_ALERTS store, meta.acknowledgement_supported=True. 9 tests pass. Merge conflict resolved; PR #436 is now mergeable. Please re-review.",
+      "status": "done",
+      "created_at": "2026-05-23T08:00:53Z",
+      "resolved_at": "2026-05-23T08:21:44Z"
+    },
+    {
+      "task_id": "BFF-B1-012",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Chair reassigned review from Codex to Codex2: Codex has 2 consecutive failed review dispatches (worker_failed 08:11:08Z, skipped_dirty_worktree 08:11:12Z) due to unrelated prior-task diff support/evidence/MPO-003-V2/full_packet.json in the BFF-B1-012 worktree; Claude posted re-review-ready handoff at 08:00:53Z; Codex2 reviewed BFF-B2-001 in the same BFF domain and has a clean environment.",
+      "status": "done",
+      "created_at": "2026-05-23T08:21:44Z",
+      "resolved_at": "2026-05-23T08:33:26Z"
+    },
+    {
+      "task_id": "BFF-B1-012",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review blocked before code inspection: task/BFF-B1-012 worktree contains unrelated tracked diff support/evidence/MPO-003-V2/full_packet.json plus generated untracked .orchestrator/task-briefs/bff_b1_012.md. Clear or explicitly assign the prior-task diff before re-review; Codex2 did not inspect, stash, or validate task artifacts.",
+      "status": "done",
+      "created_at": "2026-05-23T08:33:26Z",
+      "resolved_at": "2026-05-23T08:33:26Z"
+    },
+    {
+      "task_id": "BFF-B1-012",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Unrelated worktree diff cleared. Implementation complete (commit de2d73dd): bff_alert_acknowledge handler, ALERT_ACKNOWLEDGE in models.py and command_executor._EXECUTORS, _ACKNOWLEDGED_ALERTS state, acknowledgement_supported meta flag, dedicated GET /bff/alerts/{alert_id} handler. pytest test_bff_alerts_acknowledge.py: 9/9 passed. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-05-23T08:49:36Z",
+      "resolved_at": "2026-05-23T09:06:27Z"
+    },
+    {
+      "task_id": "BFF-B1-012",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review changes requested: focused acknowledge tests pass, but pytest services/control-plane/bff/test_pkt012_alerts_rail_contract.py fails 2/3. Update the existing alerts rail/detail contract or implementation so acknowledgement_supported semantics and /bff/alerts/{id} meta.surfaces remain intentional and green before re-review.",
+      "status": "done",
+      "created_at": "2026-05-23T09:06:27Z",
+      "resolved_at": "2026-05-23T09:06:27Z"
+    },
+    {
+      "task_id": "BFF-B1-012",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Implementation complete. commit 22db4bfc. Two changes: (1) main.py bff_get_alert now returns full meta from _build_operator_alerts_payload (adds acknowledgement_supported to GET /bff/alerts/{id}); (2) _build_operator_alerts_payload sets acknowledgement_supported=True unconditionally per spec §18. Updated test_pkt012_alerts_rail_contract.py assertion to match. pytest tests/test_bff_alerts_acknowledge.py: 9 passed; pytest test_pkt012_alerts_rail_contract.py: 3 passed.",
+      "status": "done",
+      "created_at": "2026-05-23T09:33:13Z",
+      "resolved_at": "2026-05-23T09:34:25Z"
+    },
+    {
+      "task_id": "BFF-B1-012",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Implementation complete. commit 22db4bfc. POST /bff/alerts/{id}/acknowledge endpoint is fully implemented with idempotency, SSE publish, 404 on unknown ID, and _ACKNOWLEDGED_ALERTS suppression. Fixed acknowledgement_supported=True unconditionally. Updated test_pkt012 assertion. pytest: 12 passed.",
+      "status": "done",
+      "created_at": "2026-05-23T09:34:25Z",
+      "resolved_at": "2026-05-23T09:38:34Z"
+    },
+    {
+      "task_id": "BFF-B1-012",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review approved. Verified pytest services/control-plane/bff/tests/test_bff_alerts_acknowledge.py services/control-plane/bff/test_pkt012_alerts_rail_contract.py: 12 passed. Owner should finalize via task-closeout after PR/merge policy.",
+      "status": "done",
+      "created_at": "2026-05-23T09:38:34Z",
+      "resolved_at": "2026-05-23T10:02:21Z"
+    },
+    {
+      "task_id": "BFF-B1-012",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned ownership from Claude to Codex after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-05-23T10:02:21Z",
+      "resolved_at": "2026-05-23T10:27:08Z"
+    }
+  ],
+  "blockers": []
+}

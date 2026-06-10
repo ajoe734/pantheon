@@ -1,0 +1,138 @@
+{
+  "version": 1,
+  "task_id": "BLA-007-V2",
+  "archived_at": "2026-05-20T05:01:54Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BLA-007-V2",
+    "title": "First-week observation report builder",
+    "summary_zh": "Builder for the 13-check first-week observation report per Part B5 runbook.",
+    "phase": "Phase 8 / EPIC-BROKER-LIVE",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "BLA-001-V2"
+    ],
+    "artifacts": [
+      "services/broker/live_activation/first_week_observation.py",
+      "docs/operations/first_week_observation_window.md",
+      "tests/broker/test_first_week_observation.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Closeout verified: PR #284 merged into dev; pytest -q 9/9 passed; py_compile OK. All 13 checks implemented with fail-closed semantics; reversed timestamp and report_id window scope fixes confirmed.",
+    "last_update": "2026-05-20T05:01:54Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T05:01:54Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bla-007-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BLA-007-V2",
+      "git_clean_required": false,
+      "commit": "203918cafbb139e569e3b61f4ebc1b6b03491e51",
+      "commit_subject": "BLA-007-V2: closeout first-week observation report builder",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Verified": "pytest -q tests/broker/test_first_week_observation.py → 9 passed; python3 -m py_compile first_week_observation.py test_first_week_observation.py → OK",
+        "LLM-Agent": "Claude",
+        "Task-ID": "BLA-007-V2",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BLA-007-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "2877663f2ff85f4213ade7882118806457418cd9",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BLA-007-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review: PR #284 adds the Part B5 first-week observation report builder, operations runbook, and focused tests. Verified: pytest -q tests/broker; python3 -m py_compile services/broker/live_activation/first_week_observation.py tests/broker/test_first_week_observation.py.",
+      "status": "done",
+      "created_at": "2026-05-19T18:49:53Z",
+      "resolved_at": "2026-05-19T18:52:55Z"
+    },
+    {
+      "task_id": "BLA-007-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review reopened: _check_observation_window currently accepts invalid ISO-8601 live_started_at/observed_through_at when explicit observation_window_days/window_days is >= 7. Repro: set live_started_at='not-a-time', observed_through_at='also-not-a-time', observation_window_days=7; build_first_week_observation_report returns can_continue_live=True and continue_live. Required: fail closed on invalid timestamps even when explicit days are present, and add a regression test. Reviewer verification: pytest -q tests/broker/test_first_week_observation.py passed; py_compile passed.",
+      "status": "done",
+      "created_at": "2026-05-19T18:52:55Z",
+      "resolved_at": "2026-05-19T18:52:55Z"
+    },
+    {
+      "task_id": "BLA-007-V2",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "All three artifacts ready for review: 13-check first-week observation builder (first_week_observation.py), runbook doc (first_week_observation_window.md), and test suite (test_first_week_observation.py, 7 tests). pytest -q: 7 passed. Commits: 2363bb3d anchor, 24c8ebd4 fail-closed timestamps, 5a6f9308 task brief update.",
+      "status": "done",
+      "created_at": "2026-05-19T19:18:25Z",
+      "resolved_at": "2026-05-19T19:24:01Z"
+    },
+    {
+      "task_id": "BLA-007-V2",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review changes requested: first_week_observation.py accepts reversed observation timestamps when observation_window_days=7 is supplied; repro sets live_started_at=2026-05-26T00:00:00Z, observed_through_at=2026-05-19T00:00:00Z, observation_window_days=7 and currently returns can_continue_live=True/continue_live. Please fail closed with chronological blocker and add a regression test. Verified current suite: pytest -q tests/broker/test_first_week_observation.py (7 passed); py_compile pass; supplemental repro exposes failure.",
+      "status": "done",
+      "created_at": "2026-05-19T19:24:01Z",
+      "resolved_at": "2026-05-19T19:24:01Z"
+    },
+    {
+      "task_id": "BLA-007-V2",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review changes requested: (1) first_week_observation.py allows reversed timestamps to pass when observation_window_days=7 is supplied; repro live_started_at=2026-05-26T00:00:00Z, observed_through_at=2026-05-19T00:00:00Z, observation_window_days=7 returns can_continue_live=True/continue_live. Add chronological fail-closed blocker and regression test. (2) report_id ignores nested observation_window.observed_through_at; changing 2026-05-26 to 2026-05-27 leaves report_id unchanged. Derive report identity from context-resolved window fields. Verified current suite: pytest -q tests/broker/test_first_week_observation.py (7 passed); py_compile pass; supplemental repros expose failures.",
+      "status": "done",
+      "created_at": "2026-05-19T19:25:23Z",
+      "resolved_at": "2026-05-19T19:25:23Z"
+    },
+    {
+      "task_id": "BLA-007-V2",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Both issues resolved. (1) _observation_timestamp_blockers now parses timestamps once and blocks when end < start, even when observation_window_days is explicitly provided. (2) _report_id accepts _ObservationContext and uses _first_string(context, ...) for observed_through_at, capturing nested observation_window fields. Two regression tests added. pytest -q → 9 passed; py_compile → OK. Commit d70efd1c on task/BLA-007-V2.",
+      "status": "done",
+      "created_at": "2026-05-19T19:29:57Z",
+      "resolved_at": "2026-05-19T19:34:00Z"
+    },
+    {
+      "task_id": "BLA-007-V2",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review approved: focused tests passed (pytest -q tests/broker/test_first_week_observation.py; python3 -m py_compile services/broker/live_activation/first_week_observation.py tests/broker/test_first_week_observation.py). Fixes verified for reversed timestamp fail-closed handling and nested observation_window observed_through_at report_id stability; return to Claude for closeout.",
+      "status": "done",
+      "created_at": "2026-05-19T19:34:00Z",
+      "resolved_at": "2026-05-20T05:01:55Z"
+    }
+  ],
+  "blockers": []
+}

@@ -22,11 +22,25 @@ from __future__ import annotations
 
 import copy
 import json
+import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from services.capital.risk_policy import (
+    RiskPolicy,
+    RiskPolicyEvaluation,
+    RiskPolicyEvaluationContext,
+    RiskPolicyEvaluator,
+    RiskPolicyTargetType,
+    risk_policy_rejection_message,
+)
 
 
 def utc_now() -> str:
@@ -511,6 +525,8 @@ class StagePlanner:
         metadata: dict[str, Any] | None = None,
         supersedes_plan_id: str | None = None,
         status: PlanStatus | str = PlanStatus.APPROVED,
+        risk_policy: RiskPolicy | Mapping[str, Any] | None = None,
+        risk_policy_context: Mapping[str, Any] | None = None,
     ) -> DeploymentPlan:
         normalized_entry = self.normalize_registry_entry(registry_entry)
         artifact_state = normalized_entry["artifact_state"]
@@ -565,7 +581,100 @@ class StagePlanner:
         errors = plan.validate()
         if errors:
             raise DeploymentPlanError("; ".join(errors))
+        if risk_policy is not None:
+            evaluation = self.evaluate_risk_policy(
+                risk_policy=risk_policy,
+                plan=plan,
+                registry_entry=normalized_entry,
+                extra_context=risk_policy_context,
+            )
+            if evaluation.rejected:
+                raise DeploymentPlanError(
+                    risk_policy_rejection_message("DeploymentPlan blocked", evaluation)
+                )
+            plan.metadata = dict(plan.metadata or {})
+            plan.metadata["risk_policy_evaluation"] = evaluation.to_dict()
         return plan
+
+    def evaluate_risk_policy(
+        self,
+        *,
+        risk_policy: RiskPolicy | Mapping[str, Any],
+        plan: DeploymentPlan,
+        registry_entry: Mapping[str, Any],
+        extra_context: Mapping[str, Any] | None = None,
+    ) -> RiskPolicyEvaluation:
+        """Evaluate a deployment plan through the shared RiskPolicy contract."""
+
+        metadata = _mapping(plan.metadata)
+        registry_metadata = _mapping(registry_entry.get("metadata"))
+        overrides = _mapping(extra_context)
+        scale = plan.scale
+        context_payload: dict[str, Any] = {
+            "target_type": RiskPolicyTargetType.DEPLOYMENT_PLAN.value,
+            "target_id": plan.plan_id,
+            "capital_pool_id": plan.capital_pool_id,
+            "stage": _enum_value(plan.target_stage),
+            "risk_policy_ref": _first_non_empty(
+                overrides.get("risk_policy_ref"),
+                metadata.get("risk_policy_ref"),
+                registry_entry.get("risk_policy_ref"),
+                registry_metadata.get("risk_policy_ref"),
+            ),
+            "target_weights": _first_mapping(
+                overrides.get("target_weights"),
+                metadata.get("target_weights"),
+                registry_entry.get("target_weights"),
+                registry_metadata.get("target_weights"),
+            ),
+            "asset_classes": _first_sequence(
+                overrides.get("asset_classes"),
+                metadata.get("asset_classes"),
+                registry_entry.get("asset_classes"),
+                registry_metadata.get("asset_classes"),
+            ),
+            "strategy_family": _first_non_empty(
+                overrides.get("strategy_family"),
+                metadata.get("strategy_family"),
+                registry_entry.get("strategy_family"),
+                registry_metadata.get("strategy_family"),
+            ),
+            "gross_exposure": _first_non_empty(
+                overrides.get("gross_exposure"),
+                metadata.get("gross_exposure"),
+                registry_metadata.get("gross_exposure"),
+            ),
+            "net_exposure": _first_non_empty(
+                overrides.get("net_exposure"),
+                metadata.get("net_exposure"),
+                registry_metadata.get("net_exposure"),
+            ),
+            "leverage": _first_non_empty(
+                overrides.get("leverage"),
+                metadata.get("leverage"),
+                registry_metadata.get("leverage"),
+            ),
+            "turnover": _first_non_empty(
+                overrides.get("turnover"),
+                metadata.get("turnover"),
+                registry_metadata.get("turnover"),
+            ),
+            "capital_scale_pct": overrides.get(
+                "capital_scale_pct",
+                scale.capital_scale_pct if scale is not None else None,
+            ),
+            "gross_scale_pct": overrides.get(
+                "gross_scale_pct",
+                scale.gross_scale_pct if scale is not None else None,
+            ),
+            "runtime_action": _enum_value(plan.runtime_action),
+            "metadata": {**registry_metadata, **metadata, **overrides},
+            "trace_id": _first_non_empty(overrides.get("trace_id"), metadata.get("trace_id")),
+        }
+        return RiskPolicyEvaluator().evaluate(
+            risk_policy,
+            RiskPolicyEvaluationContext.from_mapping(context_payload),
+        )
 
     def build_execution_projection(
         self,
@@ -691,6 +800,40 @@ def _legacy_promotion_state(target_stage: DeploymentStage | str) -> str | None:
     if stage in {DeploymentStage.PAPER, DeploymentStage.LIVE}:
         return stage.value
     return None
+
+
+def _enum_value(value: Any) -> Any:
+    return value.value if isinstance(value, Enum) else value
+
+
+def _mapping(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _first_non_empty(*values: Any) -> str | None:
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
+def _first_mapping(*values: Any) -> dict[str, Any]:
+    for value in values:
+        if isinstance(value, Mapping):
+            return dict(value)
+    return {}
+
+
+def _first_sequence(*values: Any) -> list[str]:
+    for value in values:
+        if isinstance(value, str):
+            return [value] if value else []
+        if isinstance(value, (list, tuple, set)):
+            return [str(item) for item in value if str(item).strip()]
+    return []
 
 
 def _normalize_lineage(lineage: Any) -> dict[str, Any]:

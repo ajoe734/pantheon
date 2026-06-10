@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "task_id": "ASST-CTRL-002",
+  "archived_at": "2026-06-09T00:58:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "ASST-CTRL-002",
+    "title": "Add explicit assistant kernel activation capability plumbing",
+    "summary_zh": "新增 assistant.kernel.activate 權限與 dev/staging capability claims，讓 operator/admin 可啟動 control mode，同時保留 reviewer 預設拒絕。",
+    "phase": "Sprint ASST-CTRL / Activation authority",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "ASST-CTRL-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/CONTROL_MODE_REPAIR_EXECUTION_TASKS_2026-06-06.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/USER_MODE_CONTRACTION.md;services/control-plane/bff/assistant/control_mode.py;services/control-plane/bff/assistant/routes.py;services/control-plane/bff/main.py;services/control-plane/bff/tests/test_assistant_sessions.py;services/control-plane/bff/tests/test_assistant_security.py;services/control-plane/bff/tests/test_management_nl_assistant_provider.py"
+    ],
+    "acceptance": [
+      "explicit activation capability such as assistant.kernel.activate is introduced;stub/dev auth can carry assistant.kernel capability claims;production JWT auth still uses real capability claims;reviewer without activation capability is rejected even with passphrase and MFA;authorized operator/admin with MFA capability passphrase and kernel flag activates kernel_debug;errors distinguish missing role MFA capability kernel flag passphrase config bad passphrase and TTL/idle expiry"
+    ],
+    "next": "Superseded by merged activation authority delivery: PR #1123 (462b1daf) added assistant.kernel capability plumbing for dev/stub auth while preserving kernel-disabled fail-closed defaults; PR #1129 and PR #1155 kept the dev activation overlay explicit and non-secret. Retired during OPS-STATE-CLOSEOUT-CLEANUP-20260609 audit.",
+    "last_update": "2026-06-09T00:58:04Z",
+    "task_class": "assistant_control_runtime_repair",
+    "auto_created_by": "dispatch_assistant_control_mode_repair_2026-06-06",
+    "auto_generated": true,
+    "terminal_outcome": "superseded",
+    "superseded_by": "MGMT-AI-CTRL"
+  },
+  "handoffs": [],
+  "blockers": []
+}

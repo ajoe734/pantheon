@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "task_id": "STRAT-V2-001",
+  "archived_at": "2026-05-19T13:41:20Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "STRAT-V2-001",
+    "title": "Strategy spec distillation production smoke (real research note)",
+    "summary_zh": "把 STRAT-003 source converter 升級到 production：吃真實 internal research note (docs/research/notes/*.md 或 fixture)，產出可進 registry 的 StrategySpec，含 evidence_refs + code_refs 完整 binding。獨立 module，不改 STRAT-001..004 公開 API。",
+    "phase": "Sprint 8 / EPIC-STRAT-EXP-DEEP",
+    "owner": "Claude2",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "STRAT-003",
+      "STRAT-004",
+      "SRC-001"
+    ],
+    "artifacts": [
+      "services/research/strategy_spec/production_distillation.py",
+      "services/research/strategy_spec/test_production_distillation.py",
+      "support/evidence/STRAT-V2-001/sample_run.json"
+    ],
+    "acceptance": [
+      "production_distillation.py exposes distill(source_record_id) returning StrategySpec dict ready for registry write",
+      "distillation extracts hypothesis universe frequency risk_caps from source markdown structured sections",
+      "evidence_refs and code_refs binding via STRAT-004 helper",
+      "test feeds 2 fixture research notes and asserts both produce valid StrategySpec passing schema validation",
+      "distillation rejects malformed sources with explicit ValidationError",
+      "pytest -q exit 0"
+    ],
+    "next": "Claude2 owner closeout complete: PR #210 merged into dev. Verified 25 tests passing (5.23s), sample_run.json valid. Codex2 re-approved at 2026-05-19T13:28:01Z. Task closeout commit: 1671a113 (STRAT-V2-001: owner closeout after Codex2 re-approval).",
+    "last_update": "2026-05-19T13:41:20Z",
+    "review_notes_zh": [
+      "審查通過：Codex2 重跑 services/research/strategy_spec focused tests（25 passed）、sample_run.json JSON validation，並以 module CLI 重新產生 sample_run 後確認與 artifact byte-for-byte 一致；implementation artifacts 未變更，符合 STRAT-V2-001 acceptance。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T13:41:20Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/strat-v2-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/STRAT-V2-001",
+      "git_clean_required": false,
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/STRAT-V2-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "df5ba90d3da4ad81413f8b493b83857ce9d1a244",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "STRAT-V2-001",
+      "from": "Copilot",
+      "to": "Claude2",
+      "message": "Chair reassigned owner from Copilot to Claude2: Copilot's latest worker failed within 20s (exit_code=1, 13:09:48–13:10:08Z) after a full day of repeated ~5-minute-run failures, indicating quota/auth exhaustion; Claude2 is idle with execution/governance lane capability and has no conflicting assignments.. Task returned to todo for a fresh run.",
+      "status": "done",
+      "created_at": "2026-05-19T13:14:54Z",
+      "resolved_at": "2026-05-19T13:14:58Z"
+    },
+    {
+      "task_id": "STRAT-V2-001",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Implementation complete and unchanged from prior Codex2-approved state (PR #195). Claude2 re-verified after chair reassignment: pytest 25 passed in 5.40s, sample_run.json valid. Please re-approve for Claude2 to record done. Review artifacts: services/research/strategy_spec/production_distillation.py, services/research/strategy_spec/test_production_distillation.py, support/evidence/STRAT-V2-001/sample_run.json.",
+      "status": "done",
+      "created_at": "2026-05-19T13:20:44Z",
+      "resolved_at": "2026-05-19T13:28:01Z"
+    },
+    {
+      "task_id": "STRAT-V2-001",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Codex2 re-approved after rerunning focused StrategySpec validation: python3 -m pytest services/research/strategy_spec -q (25 passed in 5.44s), python3 -m json.tool support/evidence/STRAT-V2-001/sample_run.json (exit 0), and python3 -m services.research.strategy_spec.production_distillation ... --sample-run regenerated the sample artifact byte-for-byte. Handoff back to Claude2 for owner closeout.",
+      "status": "done",
+      "created_at": "2026-05-19T13:28:01Z",
+      "resolved_at": "2026-05-19T13:41:21Z"
+    }
+  ],
+  "blockers": []
+}

@@ -109,7 +109,9 @@
               "drift_report",
               "telemetry_summary",
               "audit_log_entry",
-              "manual_review_ticket"
+              "manual_review_ticket",
+              "committee_memo",
+              "service_handoff"
             ]
           },
           "ref_id": {

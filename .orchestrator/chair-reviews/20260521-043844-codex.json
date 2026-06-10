@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "No dispatchable execution backlog; all non-terminal work is non-dispatchable human_gate.",
+  "blocked_by": [
+    "Dispatch queue depth is 0 and there are no todo, in_progress, review, or review_approved tasks.",
+    "The only non-terminal tasks are human_gate blockers PROD-WRITES-001-V2 and LIVE-SCALE-001-V2."
+  ],
+  "blocked_sidecar_parents": [
+    "PROD-WRITES-001-V2",
+    "LIVE-SCALE-001-V2"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "OPS-NIGHTLY-PUBLISH-DISCIPLINE: Fix nightly-publish-cut.yml release discipline failure for 2026-W25 and missing delivery metadata/trailers.",
+    "OPS-PROMOTE-WORKFLOW-TRIAGE: Investigate publish-promote.yml repeated scheduled failures before expecting promote PRs.",
+    "SUP-HUMAN-GATE-DEPENDENCY-RECON: Reconcile human gate dependencies that still reference superseded HA-PROD-001-V2 and CBL-LIVE-001-V2.",
+    "SUP-STALE-BLOCKER-CLEANUP: Resolve stale blockers for LOVABLE-STRICT-PUBLISH and OSS-QUANTLIB-V2-001 after merged closeout PRs.",
+    "OPS-ZOMBIE-TASK-BRANCH-CLEANUP: Verify and delete stale origin/task branches with no open PR."
+  ]
+}

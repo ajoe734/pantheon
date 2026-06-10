@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "task_id": "ASST-FE-002",
+  "archived_at": "2026-06-02T15:36:41Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASST-FE-002",
+    "title": "Add assistant mode and provider UI signals",
+    "summary_zh": "在 execute-plans 顯示 kernel/user mode TTL provider status command-enabled state context snapshot and audit/session refs；user mode 僅顯示一般 helper 與 source citations。",
+    "phase": "Assistant OpenClaw Gateway Kernel/User Mode",
+    "owner": "Codex",
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "depends_on": [
+      "ASST-FE-001",
+      "ASST-OCGW-003"
+    ],
+    "artifacts": [
+      "execute-plans/src/agora/pages/AskPersonas.tsx",
+      "execute-plans/src/platform/components/AssistantModeBadge.tsx",
+      "execute-plans/src/lib/bff-v1/paths.ts"
+    ],
+    "acceptance": [
+      "kernel sessions show mode TTL provider status command state snapshot and audit id",
+      "user mode shows only helper UI and source citations",
+      "unauthorized users cannot see kernel controls",
+      "provider degraded state is visible without blocking fallback",
+      "tests cover kernel and user mode rendering"
+    ],
+    "next": "Completed by manual ops closeout after Copilot was paused indefinitely: PR #790 merged to dev with required checks green; task commit 6a95edd8 is ancestor of origin/dev.",
+    "last_update": "2026-06-02T15:36:41Z",
+    "source_documents": [
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/SA_assistant_kernel_user_mode.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/SD_assistant_kernel_user_mode.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md"
+    ],
+    "implementation_track": "assistant-openclaw-gateway-cli-mount",
+    "provider_runtime": "openclaw_gateway_cli_mount",
+    "target_repository": "execute-plans",
+    "delivery_layer": "primary",
+    "terminal_outcome": "completed",
+    "review_notes_zh": [
+      "Copilot 已依操作指示無限期停派，未再派新 review worker。",
+      "以 Human/Ops 手動 closeout 審查既有 merged PR #790；Commit trailers、Runtime mirror guard、Smoke acceptance 皆為 SUCCESS。",
+      "PR #790 merge commit 7ef1e280d1b411b3800d0b50ef0def2eac530fd1 已在 origin/dev。"
+    ],
+    "delivery": {
+      "recorded_at": "2026-06-02T15:36:41Z",
+      "repository_id": "pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "git_clean_required": false,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "a448f30adb1e1935a69c681a2e9b27d77cf98d8f",
+      "head_merged_to_target": true,
+      "checks": [
+        {
+          "name": "Commit trailers",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Runtime mirror guard",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Smoke acceptance",
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/asst-fe-002",
+      "branch": "task/ASST-FE-002",
+      "upstream": "origin/task/ASST-FE-002",
+      "ahead": 0,
+      "behind": 0,
+      "commit": "6a95edd8f4d2f0b39a84ca2ae852dc6f0645601b",
+      "commit_subject": "ASST-FE-002: anchor assistant mode signals",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "execute-plans Ask Personas assistant mode/provider signal rendering and focused AssistantModeBadge component tests.",
+        "Not changing": "BFF assistant route contracts, OpenClaw provider runtime, and canonical path builders that already expose assistant/agora paths.",
+        "Composes with": "ASST-FE-001 BFF/SSE Ask Personas wiring and ASST-BFF-001 assistant-backed agora ask response shape.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "ASST-FE-002",
+        "Reviewer": "Copilot",
+        "Verified": "npx --yes esbuild execute-plans/src/agora/pages/AskPersonas.tsx --loader:.tsx=tsx --format=esm --outfile=/tmp/asst-fe-002-AskPersonas.js --bundle=false; npx --yes esbuild execute-plans/src/platform/components/AssistantModeBadge.tsx --loader:.tsx=tsx --format=esm --outfile=/tmp/asst-fe-002-AssistantModeBadge.js --bundle=false; npx --yes esbuild execute-plans/src/platform/components/AssistantModeBadge.test.tsx --loader:.tsx=tsx --format=esm --outfile=/tmp/asst-fe-002-AssistantModeBadge.test.js --bundle=false"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "pr": {
+        "number": 790,
+        "url": "https://github.com/ajoe734/pantheon/pull/790",
+        "state": "MERGED",
+        "merged_at": "2026-06-02T13:30:52Z",
+        "merge_commit": "7ef1e280d1b411b3800d0b50ef0def2eac530fd1"
+      }
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASST-FE-002",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Copilot is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-06-02T13:19:07Z",
+      "resolved_at": "2026-06-02T13:19:07Z"
+    },
+    {
+      "task_id": "ASST-FE-002",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Implementation merged in PR #790 (merge 7ef1e280d1b411b3800d0b50ef0def2eac530fd1; task commit 6a95edd8). Ready for review: kernel UI signals render mode/TTL/provider/commands/context/audit refs, user mode hides kernel controls, degraded provider fallback visible; validation used focused esbuild TSX parse because execute-plans package harness is absent in this worktree.",
+      "status": "done",
+      "created_at": "2026-06-02T13:31:43Z",
+      "resolved_at": "2026-06-02T15:36:41Z"
+    }
+  ],
+  "blockers": []
+}

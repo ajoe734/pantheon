@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "task_id": "CBL-002-V2",
+  "archived_at": "2026-05-20T05:29:23Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "CBL-002-V2",
+    "title": "Sponsor responsibility model",
+    "summary_zh": "SponsorPersonaResponsibility model: sponsor persona, live owner, escalation chain.",
+    "phase": "Phase 8 / EPIC-CAPITAL-BINDING-LIVE",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "CBL-001-V2"
+    ],
+    "artifacts": [
+      "services/capital/binding_live/sponsor_responsibility.py",
+      "tests/capital/test_sponsor_responsibility.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner finalized CBL-002-V2 after closeout PR #333 merged into dev at dfe4c529; validation: pytest sponsor responsibility, pytest tests/capital, py_compile, git diff --check.",
+    "last_update": "2026-05-20T05:29:23Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：SponsorPersonaResponsibility schema-only model covers sponsor persona, live owner binding consistency, escalation chain contiguity, and active fail-closed requirement.",
+      "驗證：PR #325 merged at 2877663f; GitHub checks green; local pytest tests/capital -q and py_compile pass.",
+      "範圍確認：只新增 services/capital/binding_live/sponsor_responsibility.py and tests/capital/test_sponsor_responsibility.py; no L1 canonical docs or live/broker side effects."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T05:29:23Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/cbl-002-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/CBL-002-V2",
+      "git_clean_required": false,
+      "commit": "fa2040fb90f07f06e6ffca4e407996761a17fd19",
+      "commit_subject": "CBL-002-V2: record owner closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "CBL-002-V2 task brief refresh and owner closeout evidence.",
+        "Not changing": "sponsor responsibility schema implementation, tests, runtime or",
+        "Composes with": "implementation PR #325 merge 2877663f2ff85f4213ade7882118806457418cd9 and follow-up CBL task branches on dev.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "CBL-002-V2",
+        "Reviewer": "Codex2",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/capital/test_sponsor_responsibility.py -q (6 passed); PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/capital -q (17 passed); PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/capital/binding_live/sponsor_responsibility.py tests/capital/test_sponsor_responsibility.py"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/CBL-002-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "dfe4c52953a9225b7eb8fd7099513607f668cc9e",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "CBL-002-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review: SponsorPersonaResponsibility schema and tests merged via PR #325 (merge 2877663f). Local validation passed: pytest tests/capital -q, py_compile, diff check; GitHub checks pass.",
+      "status": "done",
+      "created_at": "2026-05-20T04:59:39Z",
+      "resolved_at": "2026-05-20T05:03:46Z"
+    },
+    {
+      "task_id": "CBL-002-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: schema and tests satisfy CBL-002-V2 acceptance; PR #325 merged at 2877663f; local pytest tests/capital -q and py_compile pass. Owner should finalize to done.",
+      "status": "done",
+      "created_at": "2026-05-20T05:03:46Z",
+      "resolved_at": "2026-05-20T05:29:23Z"
+    }
+  ],
+  "blockers": []
+}

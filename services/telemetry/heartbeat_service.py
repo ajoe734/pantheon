@@ -92,7 +92,7 @@ def _assert_matches_binding(
 
 
 def _execution_mode_for_stage(deployment_stage: str) -> str:
-    return "live" if deployment_stage in {"canary", "live"} else "paper"
+    return deployment_stage
 
 
 def _target(payload: dict[str, Any], artifact_id: str, artifact_version: str) -> dict[str, Any]:

@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "task_id": "OPS-WAVE-001-V2",
+  "archived_at": "2026-05-19T17:04:10Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OPS-WAVE-001-V2",
+    "title": "Wave open guard: no-skip, cooldown, baton-owner",
+    "summary_zh": "Guard on wave open: reject if wave number skips, reject if previous wave closed < 60 min ago, reject if actor != baton owner for open/close/freeze. Per design reply section 3 H1/H4.",
+    "phase": "Phase 8 / EPIC-OPS-WAVE",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".orchestrator/wave_guards.py",
+      "scripts/ai_status.py",
+      "tests/orchestrator/test_wave_open_guard.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner finalized: PR #241 merged into dev (ef39d458), 49/49 tests passing (pytest tests/orchestrator/test_wave_open_guard.py -q). Deliverables: wave_guards.py (no-skip, cooldown, baton-owner, current-wave-closed guards), ai_status.py wave commands (wave open/close/freeze), test_wave_open_guard.py (49 tests). Reviewer: Codex.",
+    "last_update": "2026-05-19T17:04:10Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：wave open guard (no-skip, cooldown, baton-owner, current-wave-closed) 實作正確，focused test 49/49 pass。",
+      "已確認 PR #241 merged into dev，merge commit ef39d45898ac3b26fd0d23443bba43f1d580c19a；owner 可依 closeout 規則執行 done。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T17:04:10Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-wave-001-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-WAVE-001-V2",
+      "git_clean_required": false,
+      "commit": "307167e47b1f400d40b708193400efaebb397244",
+      "commit_subject": "OPS-WAVE-001-V2: merge latest dev for closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude2",
+        "Task-ID": "OPS-WAVE-001-V2",
+        "Reviewer": "Codex",
+        "Verified": "pytest tests/orchestrator/test_wave_open_guard.py -q → 49 passed",
+        "Cross-Dir": "yes"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OPS-WAVE-001-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "453f61b31324c854fb9c19fb0980674febd4c9d1",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OPS-WAVE-001-V2",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Helper-claimed by Claude2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-19T15:59:58Z",
+      "resolved_at": "2026-05-19T16:00:24Z"
+    },
+    {
+      "task_id": "OPS-WAVE-001-V2",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Wave open guards implemented: .orchestrator/wave_guards.py (no-skip H1 / cooldown H4 / baton-owner, pure functions), command_wave added to scripts/ai_status.py (wave open|close|freeze), 40 tests in tests/orchestrator/test_wave_open_guard.py all passing (pytest -q exit 0). Commit fc090ddb on task/OPS-WAVE-001-V2. Please review the three guard functions, command_wave integration, and test coverage.",
+      "status": "done",
+      "created_at": "2026-05-19T16:07:30Z",
+      "resolved_at": "2026-05-19T16:14:49Z"
+    },
+    {
+      "task_id": "OPS-WAVE-001-V2",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review rejected: check_wave_open currently permits opening 2026-W26 while current 2026-W25 is still open, because cooldown only considers the latest close event anywhere in history. Add a guard requiring the current/last wave to be closed before opening the successor, plus tests for status=open/no close. Verification run by reviewer: python3 -m pytest tests/orchestrator/test_wave_open_guard.py -q -> 40 passed; python3 -m py_compile .orchestrator/wave_guards.py scripts/ai_status.py tests/orchestrator/test_wave_open_guard.py -> passed; probe reproduced PASS for current-open W25 -> W26.",
+      "status": "done",
+      "created_at": "2026-05-19T16:14:49Z",
+      "resolved_at": "2026-05-19T16:14:49Z"
+    },
+    {
+      "task_id": "OPS-WAVE-001-V2",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Re-submitted after review rejection. Added check_current_wave_closed() guard (status=open path + history fallback). check_wave_open now runs it first. 9 new tests; suite 40 → 49. Probe: W25-open → W26 now correctly rejected. Commit ea24502f. Please re-review .orchestrator/wave_guards.py and tests/orchestrator/test_wave_open_guard.py.",
+      "status": "done",
+      "created_at": "2026-05-19T16:20:02Z",
+      "resolved_at": "2026-05-19T16:31:42Z"
+    },
+    {
+      "task_id": "OPS-WAVE-001-V2",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review approved: wave open guards match scope and focused verification passed; owner should finalize task PR/merge before done.",
+      "status": "done",
+      "created_at": "2026-05-19T16:31:42Z",
+      "resolved_at": "2026-05-19T16:32:57Z"
+    },
+    {
+      "task_id": "OPS-WAVE-001-V2",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Wave open guards implemented in .orchestrator/wave_guards.py and integrated into scripts/ai_status.py; 49 tests pass in tests/orchestrator/test_wave_open_guard.py. Ready for review.",
+      "status": "done",
+      "created_at": "2026-05-19T16:37:29Z",
+      "resolved_at": "2026-05-19T16:37:37Z"
+    },
+    {
+      "task_id": "OPS-WAVE-001-V2",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review approved: wave open guards match scope and focused verification passed; owner should finalize task PR/merge before done.",
+      "status": "done",
+      "created_at": "2026-05-19T16:37:37Z",
+      "resolved_at": "2026-05-19T16:39:03Z"
+    },
+    {
+      "task_id": "OPS-WAVE-001-V2",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Re-submitting for re-approval: my prior progress call accidentally reset review_approved to in_progress. Work is complete — PR #241 merged into dev, 49/49 tests pass. Codex has already approved this twice (16:31:42Z and 16:37:37Z). Please re-approve so owner can run done.",
+      "status": "done",
+      "created_at": "2026-05-19T16:42:59Z",
+      "resolved_at": "2026-05-19T16:51:07Z"
+    },
+    {
+      "task_id": "OPS-WAVE-001-V2",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Re-approved after verifying PR #241 is merged into dev and pytest tests/orchestrator/test_wave_open_guard.py -q passes 49/49. Owner may finalize done.",
+      "status": "done",
+      "created_at": "2026-05-19T16:51:07Z",
+      "resolved_at": "2026-05-19T17:04:11Z"
+    }
+  ],
+  "blockers": []
+}

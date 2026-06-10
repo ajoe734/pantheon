@@ -21,6 +21,12 @@ from integrations.openclaw.adapter import (
     OpenClawGatewayConfig,
     OpenClawGatewayTransportError,
 )
+from persona_policy_resolver import (
+    ConsultPolicy,
+    PersonaPolicyResolver,
+    RoutePolicy,
+    ToolProfile,
+)
 from persona_registry import (
     CapabilitySnapshot,
     Persona,
@@ -89,6 +95,30 @@ async def standard_metrics():
 PERSONA_REGISTRY = PersonaRegistry()
 SESSION_STORE = PersonaSessionStore()
 CAPABILITY_SNAPSHOTS: dict[str, CapabilitySnapshot] = {}
+
+# Default policy catalog for the control-plane persona agent.
+# Entries here correspond to the policy IDs set on default personas.
+_DEFAULT_POLICY_RESOLVER = PersonaPolicyResolver(
+    tool_profiles={
+        "persona-default": ToolProfile(
+            profile_id="persona-default",
+            allowed_tools=["web_search", "code_exec", "file_read"],
+        ),
+    },
+    route_policies={
+        "control-plane.default": RoutePolicy(
+            policy_id="control-plane.default",
+            allowed_workflows=["trade", "monitor", "governance"],
+            allowed_skills=["status-summary", "monitoring-summary"],
+        ),
+    },
+    consult_policies={
+        "control-plane.default": ConsultPolicy(
+            policy_id="control-plane.default",
+            allowed_skills=["governance-review", "deployment-review", "research-summary"],
+        ),
+    },
+)
 
 _INTENT_KEYWORDS: list[tuple[str, list[str]]] = [
     ("execution.signal", ["buy", "sell", "trade", "order", "signal", "execute"]),
@@ -200,20 +230,22 @@ def _select_skill(intent: str | None) -> str | None:
     return _INTENT_SKILLS.get(intent, _INTENT_SKILLS["unknown"])
 
 
-def _build_capability_snapshot(persona_id: str, intent: str, channel: str) -> CapabilitySnapshot:
-    skill = _select_skill(intent)
-    snapshot = CapabilitySnapshot(
+def _build_capability_snapshot(persona: Persona, channel: str) -> CapabilitySnapshot:
+    snapshot = _DEFAULT_POLICY_RESOLVER.resolve_to_snapshot(
+        persona,
         snapshot_id=f"cap-{uuid.uuid4()}",
-        persona_id=persona_id,
         generated_at=utc_now(),
-        effective_tools=[intent] if intent != "unknown" else [],
-        effective_skills=[skill] if skill else [],
-        restrictions=[],
-        source_refs=[
-            "OPENCLAW_RUNTIME_CONTRACT.md",
-            "PERSONA_RUNTIME_MODEL.md",
-            f"channel:{channel}",
-        ],
+    )
+    # Augment source_refs with runtime-context refs that are not in the policy catalog.
+    snapshot = CapabilitySnapshot(
+        **{
+            **snapshot.to_dict(),
+            "source_refs": snapshot.source_refs + [
+                "OPENCLAW_RUNTIME_CONTRACT.md",
+                "PERSONA_RUNTIME_MODEL.md",
+                f"channel:{channel}",
+            ],
+        }
     )
     CAPABILITY_SNAPSHOTS[snapshot.snapshot_id] = snapshot
     return snapshot
@@ -225,7 +257,7 @@ def _ensure_session(req: InvokeRequest, intent: str) -> SessionPersona:
         return existing
 
     persona = _ensure_default_persona()
-    snapshot = _build_capability_snapshot(persona.persona_id, intent, req.channel)
+    snapshot = _build_capability_snapshot(persona, req.channel)
     session = SessionPersona(
         session_id=req.session_id,
         persona_id=persona.persona_id,

@@ -20,8 +20,11 @@ primary implementer in this role.
 - Decide whether idle auto workers should receive sidecar work.
 - Check closeout hygiene for `review_approved` and recently `done` tasks using `.orchestrator/skills/task-closeout-finalization.md`.
 - Surface stuck `task/*` PRs and stuck `promote/*` PRs.
-- Keep the main execution path safe: do not mutate canonical task ownership, reviewer assignment, or task terminal statuses.
+- Keep the main execution path safe: never mutate task terminal statuses (`done`, `review_approved`, `superseded`). Reviewer reassignment IS allowed when a concrete blocker is identified. Owner reassignment IS allowed under a narrower set of conditions (see "When to emit reassignment_actions" below).
 - Triage pending approvals when the supervisor prompt provides approval details.
+- Unblock stuck review pipelines by emitting `reassignment_actions` for reviewer changes when the current reviewer cannot proceed (provider auth failure, quota exhaustion, repeated dispatch failures).
+- Relieve worker under-utilization by emitting `reassignment_actions` for owner changes when an idle, healthy agent (target_workload > 0, owned-todos = 0, auth_ready, recently exercised) can take over a `todo`-status task from a saturated owner.
+- Rescue blocked owner lanes by emitting `reassignment_actions` when the current owner is blocked by auth, credential, quota, or PR push failure and a healthy fallback owner can safely rerun the handoff.
 
 ## Sidecar Decision Rule
 
@@ -61,9 +64,25 @@ The JSON decision must be valid JSON and match this shape:
       "remember": false
     }
   ],
+  "reassignment_actions": [
+    {
+      "task_id": "RES-ACT-QLIB-001-V2",
+      "role": "reviewer",
+      "to": "Claude2",
+      "reason": "Copilot reviewer returning 402 quota for 6+ tasks; Claude2 is idle and capable."
+    },
+    {
+      "task_id": "BFF-B3-008",
+      "role": "owner",
+      "to": "Gemini",
+      "reason": "Codex saturated (10 owned todos, cap=3, all 3 slots active); Gemini owned=0 with target_workload=5, auth_ready=true, last successful run 2026-05-21; task is todo, no pinned owner."
+    }
+  ],
   "recommended_focus": ["TASK-ID"]
 }
 ```
+
+The supervisor enforces `max_reassignment_actions` (default 4) per cycle and ignores any extras silently. Always include a concrete `reason` — it lands in the activity log.
 
 Use `decision: "deny_sidecars"` and `sidecar_approved: false` when sidecars should not be dispatched.
 When only specific parent tasks are unsafe for sidecar generation, keep `sidecar_approved: true` and list those parent task IDs in `blocked_sidecar_parents`.
@@ -78,6 +97,58 @@ For `approval_actions`, only act on approvals whose command preview and task con
 - Deny force, mirror, delete, all-branch, tag-wide, or ambiguous push commands as routine closeout.
 - Omit an approval if you cannot decide from the prompt.
 - Do not use `remember: true` unless the prompt explicitly asks for a reusable rule.
+
+## When to emit `reassignment_actions`
+
+Chair has authority to change a task's **reviewer** when a concrete blocker is identified, and to change the **owner** under a narrower set of conditions in order to relieve worker under-utilization. Chair never changes task `status`. Emit an entry when one of these conditions holds and the change is safe.
+
+### Reviewer reassignment (broad authority)
+
+| Condition | Action | Notes |
+|---|---|---|
+| Reviewer provider returning auth failure / quota error ≥ 30 min, blocking ≥ 1 task | reassign reviewer to an idle, capable agent | confirm replacement is not also in `dispatch_pauses` |
+| Reviewer worker has had ≥ 2 consecutive failed dispatches on the same task | reassign reviewer | reason should cite the failure ids |
+| Reviewer is the same agent as owner (assignment bug) | reassign reviewer to a different agent | never let owner == reviewer |
+| Provider-wide outage flagged in `provider_capabilities.json` | reassign all that provider's reviewer slots | one entry per task, respect the 4/cycle cap |
+| Reviewer backlog ≥ 5 tasks on the same reviewer while peers are idle | rebalance 1–2 tasks to idle reviewers | only when work is naturally parallelizable |
+
+### Owner reassignment (narrow authority)
+
+Owner changes shift implementation responsibility, so the bar is higher than reviewer changes. Emit `role: "owner"` when either the normal under-utilization path or the blocked-owner rescue path applies.
+
+#### Normal under-utilization owner reassignment
+
+Use this path ONLY when ALL of these hold:
+
+1. **Saturated source.** Source agent has owned-todos > `2 × max_tasks_per_agent` for that agent (e.g. Codex cap=3 → trigger at 7+ owned todos) AND source agent's currently-active slot count is at cap.
+2. **Starving target.** Target agent has `owned-todos = 0` but `target_workload > 0` in `ready_dispatcher.target_workload` (i.e. the agent is configured to carry load but has none).
+3. **Target verified healthy.** Target agent has `auth_ready: true` in `provider_capabilities.json` AND has produced a successful `worker_started` → terminal-status pair within the last 7 days (or has just passed a smoke test recorded by chair / human).
+4. **Task is dispatchable.** Task `status == "todo"`, NOT `task_class: human_gate`, NOT carrying `auto_created_by` pointing at a planning session that pins the owner (look for `pin_owner: true` or owner explicitly named in the planning packet).
+5. **No owner-specific context required.** Task brief / artifacts do NOT name the source agent or reference an evidence packet only that agent has produced.
+
+Cap owner reassignments at **2 per chair cycle** so a single mis-judgement cannot unbalance the board. Spread them across distinct (source, target) pairs.
+
+When emitting `role: "owner"`, also check whether the task's current reviewer would equal the new owner; if so, emit a second `role: "reviewer"` entry in the same JSON to fix it (and count both against the per-cycle cap).
+
+#### Blocked-owner rescue reassignment
+
+Use this path when ALL of these hold:
+
+1. **Owner is the blocker.** The task is `status: "blocked"` because the owner lane hit auth, credential, quota, permission, or PR push failure. Cite the concrete `next`, blocker, activity-log, or supervisor prompt evidence.
+2. **Task is not a human gate.** Never rescue `task_class: human_gate`, tasks with `human_required_roles`, `pending_human*` gate status, `non_dispatchable: true`, or sidecar tasks.
+3. **Work is safe to rerun or hand off.** The task can be resumed from committed/worktree artifacts or rerun from its task brief; do not move work that requires private context only the failed owner has.
+4. **Target is healthy and distinct.** Pick a viable fallback from `Blocked Owner Rescue Candidates` or `owner_fallbacks`; the target must not be dispatch-paused, auth-failed, or already the reviewer.
+5. **Keep status semantics to supervisor.** Emit only `role: "owner"` with `from`, `to`, and a concrete reason. The supervisor will clear the blocked handoff and return the task to `todo` for a fresh dispatch.
+
+### Safety rules — never emit a reassignment that:
+
+- Changes `role: "owner"` outside the normal under-utilization path or blocked-owner rescue path. The default for owner remains: leave it alone.
+- Targets a task in status `in_progress`, `review`, `review_approved`, `done`, blocked human-gate, or `superseded`. (Reviewer change is allowed in `review`; owner change is not — never reassign owner mid-flight.)
+- Targets `task_class: human_gate`. Those gates are not dispatchable; reviewer or owner churn is noise.
+- Picks a `to:` agent that is itself in `dispatch_pauses`, has a recent `worker_auth_failure`, or (for reviewer) is the task's current owner / (for owner) is the task's current reviewer.
+- Lacks a concrete `reason` citing the blocker (provider error code, task id, timestamp, owned-todo counts, or activity-log evidence).
+
+If a task is stuck because the **owner** is the one with broken auth, like Gemini2 not being able to push, prefer blocked-owner rescue reassignment when the supervisor lists viable targets. If no healthy target is available or the task needs private owner-only context, surface it as a Finding with a Human/Ops repair instead.
 
 ## Closeout Oversight
 
@@ -146,8 +217,11 @@ responsibilities (no other actor will run them):
 ## Recommended Repair Patterns
 
 When you spot one of these conditions, propose the matching action in
-`recommended_focus` or a new follow-up task. Do NOT execute these
-yourself; chair role is operational review, not implementation.
+`recommended_focus` or a new follow-up task. Do NOT execute git / PR
+operations (push, delete branch, force-push, workflow_dispatch)
+yourself; those still belong to the task owner or human. Reviewer
+reassignment via `reassignment_actions` IS in scope — see the
+"When to emit `reassignment_actions`" section above.
 
 | Condition                                                | Recommendation                                                |
 |----------------------------------------------------------|---------------------------------------------------------------|

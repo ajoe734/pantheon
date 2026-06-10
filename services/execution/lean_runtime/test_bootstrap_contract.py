@@ -8,18 +8,42 @@ from services.execution.lean_runtime.bootstrap_contract import (
 )
 
 
+def _risk_policy_evaluation(
+    *,
+    decision: str = "allowed",
+    capital_pool_id: str = "pool-paper-001",
+) -> dict:
+    return {
+        "risk_policy_id": "risk-policy-paper-001",
+        "risk_policy_version": "v1",
+        "capital_pool_id": capital_pool_id,
+        "target_type": "runtime_launch",
+        "target_id": "dp-paper-001",
+        "decision": decision,
+        "checks": [],
+        "blocking_reasons": [] if decision != "rejected" else ["blocked by policy"],
+        "warnings": [],
+        "evaluated_at": "2026-06-09T00:00:00Z",
+        "trace_id": "trace-risk-policy-paper-001",
+    }
+
+
 def _deployment_plan(**overrides):
     plan = {
         "plan_id": "dp-paper-001",
         "approval_decision_id": "appr-001",
         "artifact_id": "art-alpha",
         "artifact_version": "1.0.0",
+        "artifact_state": "approved",
         "artifact_checksum": "sha256:alpha",
         "strategy_id": "strat-alpha",
         "capital_pool_id": "pool-paper-001",
         "target_stage": "paper",
         "runtime_role": "paper",
         "runtime_config_ref": "/workspace/lean/Launcher/config.json",
+        "runtime_config_status": "approved",
+        "risk_policy_ref": "risk-policy-paper-001",
+        "risk_policy_evaluation": _risk_policy_evaluation(),
     }
     plan.update(overrides)
     return plan
@@ -75,6 +99,12 @@ class RuntimeBootstrapContractTests(unittest.TestCase):
         self.assertTrue(payload["runtime_config"]["paper_mode"])
         self.assertFalse(payload["runtime_config"]["live_broker_enabled"])
         self.assertFalse(payload["runtime_config"]["health_only"])
+        self.assertEqual(payload["metadata"]["launch_contract"]["artifact_state"], "approved")
+        self.assertEqual(payload["metadata"]["launch_contract"]["runtime_config_status"], "approved")
+        self.assertEqual(
+            payload["metadata"]["launch_contract"]["risk_policy_ref"],
+            "risk-policy-paper-001",
+        )
 
         env = request.to_runtime_env()
         self.assertEqual(env["PANTHEON_RUNTIME_BINDING_ID"], "rtb-paper-001")
@@ -127,6 +157,38 @@ class RuntimeBootstrapContractTests(unittest.TestCase):
         with self.assertRaisesRegex(BootstrapContractError, "api_key"):
             materialize_runtime_bootstrap_request(
                 deployment_plan=_deployment_plan(metadata={"api_key": "raw-api-key"}),
+                runtime_binding=_runtime_binding(),
+            )
+
+    def test_bootstrap_request_rejects_unapproved_artifact(self):
+        with self.assertRaisesRegex(BootstrapContractError, "approved artifact"):
+            materialize_runtime_bootstrap_request(
+                deployment_plan=_deployment_plan(artifact_state="candidate"),
+                runtime_binding=_runtime_binding(),
+            )
+
+    def test_bootstrap_request_rejects_unapproved_runtime_config(self):
+        with self.assertRaisesRegex(BootstrapContractError, "approved runtime config"):
+            materialize_runtime_bootstrap_request(
+                deployment_plan=_deployment_plan(runtime_config_status="draft"),
+                runtime_binding=_runtime_binding(),
+            )
+
+    def test_bootstrap_request_rejects_rejected_pool_risk_policy(self):
+        with self.assertRaisesRegex(BootstrapContractError, "risk_policy_evaluation"):
+            materialize_runtime_bootstrap_request(
+                deployment_plan=_deployment_plan(
+                    risk_policy_evaluation=_risk_policy_evaluation(decision="rejected")
+                ),
+                runtime_binding=_runtime_binding(),
+            )
+
+    def test_bootstrap_request_rejects_cross_pool_risk_policy_evidence(self):
+        with self.assertRaisesRegex(BootstrapContractError, "capital_pool_id"):
+            materialize_runtime_bootstrap_request(
+                deployment_plan=_deployment_plan(
+                    risk_policy_evaluation=_risk_policy_evaluation(capital_pool_id="pool-other")
+                ),
                 runtime_binding=_runtime_binding(),
             )
 
