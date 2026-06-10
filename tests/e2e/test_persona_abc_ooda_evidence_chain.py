@@ -29,6 +29,7 @@ import json
 import sys
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 OPTIMIZER_DIR = REPO_ROOT / "services" / "optimizer-svc"
@@ -60,6 +61,8 @@ GENERATED_AT = "2026-06-10T00:00:00Z"
 PACKET_ID = "mpos-p1-per-002-full-e2e-packet"
 CAPITAL_POOL_ID = "pool-paper"
 SCOPE_REF = "paper"
+SYNTHESIS_LOG_ID = "mpos-p1-per-002-conflict-log"
+SYNTHESIS_ARTIFACT_ID = "e81ffe2f-bafe-4fee-a0cf-981db9f4b70d"
 
 # -----------------------------------------------------------------------
 # Per-persona OODA specs: Persona A (Alpha), B (Beta), C (Gamma)
@@ -492,14 +495,16 @@ def test_persona_abc_ooda_evidence_chain(tmp_path: Path) -> None:
         ingest_persona_proposal(proposals[persona_id], store=store)
 
     proposal_ids = [cfg["proposal_id"] for cfg in PERSONA_CONFIGS.values()]
-    synthesis = synthesize_allocation_with_log(
-        capital_pool_id=CAPITAL_POOL_ID,
-        proposal_ids=proposal_ids,
-        method="risk_first",
-        risk_policy_ref="risk-policy://pool-paper/v1",
-        store=store,
-        constraints_bundle={"environment": "paper"},
-    )
+    synthesis_ids = iter([SYNTHESIS_LOG_ID, SYNTHESIS_ARTIFACT_ID])
+    with patch("portfolio_synthesis.synthesizer._new_id", side_effect=lambda: next(synthesis_ids)):
+        synthesis = synthesize_allocation_with_log(
+            capital_pool_id=CAPITAL_POOL_ID,
+            proposal_ids=proposal_ids,
+            method="risk_first",
+            risk_policy_ref="risk-policy://pool-paper/v1",
+            store=store,
+            constraints_bundle={"environment": "paper"},
+        )
 
     # Synthesis must produce a valid AllocationPolicyArtifact from 3 proposals
     assert synthesis.artifact.capital_pool_id == CAPITAL_POOL_ID
