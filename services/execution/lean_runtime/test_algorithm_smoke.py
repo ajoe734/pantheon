@@ -1,14 +1,35 @@
 from __future__ import annotations
 
+import importlib
 import os
+import sys
+
+import pytest
 
 from services.execution.lean_runtime.smoke_algorithm import (
+    LEAN_ALGORITHM_PATH,
     SMOKE_BINDING_ID,
     SMOKE_PLAN_ID,
     SMOKE_SIGNAL_ID,
     SMOKE_STRATEGY_ID,
     SMOKE_VERSION,
     run_algorithm_smoke,
+)
+
+
+def _lean_submodule_available() -> bool:
+    if str(LEAN_ALGORITHM_PATH) not in sys.path:
+        sys.path.insert(0, str(LEAN_ALGORITHM_PATH))
+    try:
+        importlib.import_module("pantheon_algo.smoke_loader_test")
+        return True
+    except (ImportError, ModuleNotFoundError):
+        return False
+
+
+pytestmark = pytest.mark.skipif(
+    not _lean_submodule_available(),
+    reason="LEAN submodule (lean/Algorithm.Python/pantheon_algo) not initialised",
 )
 
 
