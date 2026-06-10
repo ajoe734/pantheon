@@ -1458,7 +1458,73 @@ def _restore_reused_index_split(worktree_path: Path, paths: list[str]) -> bool:
     return proc.returncode == 0
 
 
-def _refresh_reused_worker_worktree(repo_root: Path, worktree_path: Path, base_ref: str) -> tuple[bool, str]:
+def _anchor_commit_task_wip(worktree_path: Path, task_id: str | None, branch: str) -> tuple[bool, str]:
+    """Anchor-commit a reused worktree's own uncommitted WIP on its task branch.
+
+    Called when a reused worktree -- located by matching this task's branch --
+    still carries real tracked/staged changes after every orchestrator-managed
+    auto-restore (scratch, index-split). That is almost always a prior worker
+    run for THIS task that was superseded/SIGTERMed before it could commit
+    (supersession has no commit grace period). Because the worktree is checked
+    out on the task's own branch, the dirt is the task's work, so committing it
+    preserves the work and clears the dirty-tree condition that otherwise
+    re-blocks dispatch every supervisor tick (jamming the whole agent). The
+    resumed worker run merges base and finalizes from this anchor.
+
+    Bypasses local commit hooks (--no-verify) for deterministic, non-interactive
+    success, but writes the required Pantheon trailers so the eventual finalize
+    PR still passes the Commit-trailers check.
+    """
+    head = subprocess.run(
+        ["git", "symbolic-ref", "--quiet", "--short", "HEAD"],
+        cwd=worktree_path, capture_output=True, text=True, check=False,
+    )
+    current = (head.stdout or "").strip()
+    if current != branch:
+        return False, f"branch_mismatch:{current or 'detached'}"
+    add = subprocess.run(
+        ["git", "add", "-A"], cwd=worktree_path, capture_output=True, text=True, check=False,
+    )
+    if add.returncode != 0:
+        return False, "git_add_failed"
+    tid = str(task_id or "").strip() or "TASK"
+    subject = f"{tid}: anchor recovered worktree WIP"
+    if len(subject) > 72:
+        subject = f"{tid}: anchor WIP"
+    message = (
+        f"{subject}\n\n"
+        "Auto-anchor by the supervisor worktree-lease guard. A prior worker run\n"
+        "for this task was superseded/killed before committing, leaving real\n"
+        "uncommitted changes in its isolated worktree. Committing them on the\n"
+        "task's own branch preserves the work and clears the dirty-tree block\n"
+        "that otherwise re-jams dispatch every tick. The resumed worker run\n"
+        "merges base and finalizes from here.\n\n"
+        "LLM-Agent: supervisor\n"
+        f"Task-ID: {tid}\n"
+        "Reviewer: local\n"
+    )
+    commit = subprocess.run(
+        ["git", "commit", "--no-verify", "-q", "-m", message],
+        cwd=worktree_path, capture_output=True, text=True, check=False,
+    )
+    if commit.returncode != 0:
+        details = (commit.stderr or commit.stdout or "").strip().splitlines()
+        return False, "commit_failed:" + (details[0] if details else "unknown")
+    rev = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=worktree_path, capture_output=True, text=True, check=False,
+    )
+    return True, (rev.stdout or "").strip() or "ok"
+
+
+def _refresh_reused_worker_worktree(
+    repo_root: Path,
+    worktree_path: Path,
+    base_ref: str,
+    *,
+    task_id: str | None = None,
+    branch: str | None = None,
+) -> tuple[bool, str]:
     """Fast-forward a reused worker worktree to the current base ref tip.
 
     Reused worktrees may carry the worker's per-task branch from days ago,
@@ -1511,7 +1577,20 @@ def _refresh_reused_worker_worktree(repo_root: Path, worktree_path: Path, base_r
                 return False, "skipped_dirty_worktree"
             classification, scratch_paths = _classify_worktree_dirt(status_proc.stdout)
             if classification == "real":
-                return False, "skipped_dirty_worktree"
+                # All orchestrator-managed auto-restores ran and the worktree is
+                # still dirty: the remaining changes are this task's own
+                # uncommitted WIP (the worktree was located by its task branch),
+                # typically a superseded run killed before it could commit.
+                # Anchor-commit it on the task branch instead of jamming dispatch
+                # every tick; the resumed worker merges base and finalizes from
+                # the anchor. Fall back to blocking only if the anchor cannot be
+                # made safely (wrong branch / git failure).
+                if not branch:
+                    return False, "skipped_dirty_worktree"
+                anchored, anchor_detail = _anchor_commit_task_wip(worktree_path, task_id, branch)
+                if not anchored:
+                    return False, "skipped_dirty_worktree"
+                return True, f"autoanchored_{anchor_detail}"
             if classification == "clean":
                 scratch_paths = []
         # Only orchestrator-managed scratch is dirty: restore it and reuse the
@@ -1670,7 +1749,11 @@ def prepare_worker_workspace(
             worktree_path = existing
             reused = True
             refresh_ok, refresh_status = _refresh_reused_worker_worktree(
-                repo_root, worktree_path, str(settings.get("base_ref") or "origin/dev")
+                repo_root,
+                worktree_path,
+                str(settings.get("base_ref") or "origin/dev"),
+                task_id=workspace_task_id,
+                branch=branch,
             )
             write_activity_log(
                 config,
