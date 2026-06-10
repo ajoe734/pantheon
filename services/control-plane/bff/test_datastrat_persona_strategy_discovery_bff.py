@@ -185,3 +185,16 @@ def test_bff_persona_strategy_match_actions_are_research_only() -> None:
         error_payload = deploy.json()
         error = (error_payload.get("detail") or error_payload).get("error", {})
         assert error["details"]["precondition_failed"] == "action"
+
+
+def test_bff_persona_strategy_discovery_rejects_invalid_page_size() -> None:
+    with _discovery_client() as client:
+        response = client.post(
+            f"/api/v1/personas/{PERSONA_ID}/strategy-discovery",
+            json={"page_size": "many"},
+            headers={**HEADERS, "Idempotency-Key": "match-discovery-invalid-page"},
+        )
+        assert response.status_code == 422, response.text
+        error_payload = response.json()
+        error = (error_payload.get("detail") or error_payload).get("error", {})
+        assert error["details"]["precondition_failed"] == "page_size"

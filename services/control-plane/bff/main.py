@@ -22942,6 +22942,28 @@ def _persona_strategy_matches_response(
     }
 
 
+def _strategy_discovery_page_size(value: Any) -> int:
+    try:
+        page_size = int(value or 20)
+    except (TypeError, ValueError) as exc:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "page_size must be an integer",
+            "Persona strategy discovery page_size must be an integer from 1 to 100.",
+            precondition_failed="page_size",
+        ) from exc
+    if page_size < 1 or page_size > 100:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "page_size must be between 1 and 100",
+            "Persona strategy discovery page_size must be an integer from 1 to 100.",
+            precondition_failed="page_size",
+        )
+    return page_size
+
+
 def _strategy_match_action_type(payload: Mapping[str, Any]) -> str:
     action = str(
         payload.get("action")
@@ -34952,7 +34974,7 @@ async def bff_start_persona_strategy_discovery(
         include_retired=bool(payload.get("include_retired", False)),
         include_blocked=bool(payload.get("include_blocked", True)),
         page_token=None,
-        page_size=int(payload.get("page_size") or 20),
+        page_size=_strategy_discovery_page_size(payload.get("page_size")),
         discovery_session_id=discovery_session_id,
     )
     response["discovery_session"] = {
