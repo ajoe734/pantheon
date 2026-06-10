@@ -775,7 +775,9 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     curl_with_retry http://127.0.0.1:28081/__health__
     curl_with_retry http://127.0.0.1:28097/__health__
     curl_with_retry http://127.0.0.1:28098/__health__
-    curl_with_retry http://127.0.0.1:28110/__health__
+    # Paper-runtime readiness requires a RuntimeBinding; master auto-deploy
+    # only proves the execution substrate is live before control-plane binding.
+    curl_with_retry http://127.0.0.1:28110/livez
     ;;
 
   control)
