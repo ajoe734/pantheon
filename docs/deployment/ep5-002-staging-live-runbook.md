@@ -31,15 +31,15 @@ Run EP5-002 on staging-live before any production environment exists:
 1. Start or verify VM2 execution stack:
 
 ```bash
-gcloud compute ssh edna@pantheon-exec-vm2-20260424 --zone=asia-east1-a --project=pantheon-493602 -- \
+gcloud compute ssh lupin@pantheon-lupin-staging-exec --zone=asia-east1-b --project=pantheon-benjamin-20260528 -- \
   'cd /home/lupin/code/pantheon-ep5 && docker compose -p pantheon-exec -f docker-compose.exec.yml up -d && curl -fsS http://127.0.0.1:28081/__health__'
 ```
 
 2. Start or verify VM1 control stack:
 
 ```bash
-gcloud compute ssh edna@pantheon-taiwan --zone=asia-east1-b --project=pantheon-493602 -- \
-  'cd /home/lupin/code/pantheon && PANTHEON_RUNTIME_MANAGER_URL=http://10.140.0.5:28081 PANTHEON_RUNTIME_MANAGER_TOKEN=runtime-control-internal PANTHEON_INTERNAL_API_URL=http://10.140.0.5:28081 PANTHEON_LIVE_BROKER_ENABLED=true docker compose -f docker-compose.control.yml up -d && curl -fsS http://127.0.0.1:38001/health && curl -fsS http://10.140.0.5:28081/__health__'
+gcloud compute ssh lupin@pantheon-lupin-staging-control --zone=asia-east1-b --project=pantheon-benjamin-20260528 -- \
+  'cd /home/lupin/code/pantheon && PANTHEON_RUNTIME_MANAGER_URL=http://10.50.0.21:28081 PANTHEON_RUNTIME_MANAGER_TOKEN=runtime-control-internal PANTHEON_INTERNAL_API_URL=http://10.50.0.21:28081 PANTHEON_LIVE_BROKER_ENABLED=true docker compose -f docker-compose.control.yml up -d && curl -fsS http://127.0.0.1:38001/health && curl -fsS http://10.50.0.21:28081/__health__'
 ```
 
 3. Publish the staging Lovable app from a verified commit.
@@ -123,14 +123,14 @@ Stop staging UI exposure by unpublishing or repointing the staging Lovable app.
 Stop staging VM1 BFF:
 
 ```bash
-gcloud compute ssh edna@pantheon-taiwan --zone=asia-east1-b --project=pantheon-493602 -- \
+gcloud compute ssh lupin@pantheon-lupin-staging-control --zone=asia-east1-b --project=pantheon-benjamin-20260528 -- \
   'cd /home/lupin/code/pantheon && docker compose -f docker-compose.control.yml stop operator-bff'
 ```
 
 Stop staging execution:
 
 ```bash
-gcloud compute ssh edna@pantheon-exec-vm2-20260424 --zone=asia-east1-a --project=pantheon-493602 -- \
+gcloud compute ssh lupin@pantheon-lupin-staging-exec --zone=asia-east1-b --project=pantheon-benjamin-20260528 -- \
   'cd /home/lupin/code/pantheon-ep5 && docker compose -p pantheon-exec -f docker-compose.exec.yml stop'
 ```
 

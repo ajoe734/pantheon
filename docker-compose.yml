@@ -16,6 +16,10 @@ services:
       PANTHEON_APP_DB_USER: ${PANTHEON_APP_DB_USER:-pantheon_app}
       PANTHEON_APP_DB_PASSWORD: ${PANTHEON_APP_DB_PASSWORD:-pantheon_app}
       PANTHEON_APP_DB_NAME: ${PANTHEON_APP_DB_NAME:-pantheon}
+      PANTHEON_MANAGEMENT_AI_DB_USER: ${PANTHEON_MANAGEMENT_AI_DB_USER:-pantheon_management_ai}
+      PANTHEON_MANAGEMENT_AI_DB_PASSWORD: ${PANTHEON_MANAGEMENT_AI_DB_PASSWORD:-pantheon_management_ai_dev}
+      PANTHEON_MANAGEMENT_AI_DB_NAME: ${PANTHEON_MANAGEMENT_AI_DB_NAME:-pantheon}
+      MANAGEMENT_AI_STORE_SCHEMA: ${MANAGEMENT_AI_STORE_SCHEMA:-management_ai}
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/01-init-db.sh:ro
@@ -350,6 +354,12 @@ services:
     image: ghcr.io/openclaw/openclaw:2026.4.7
     environment:
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-pantheon-local-token}
+      PANTHEON_ASSISTANT_CODEX_HOST_HOME: ${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}
+      PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME: ${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}
+      PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR: ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}
+      PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR: ${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}
+      PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT: ${PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT:-/srv/pantheon-assistant/worktrees}
+      PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE: ${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
     depends_on:
       openclaw-data-init:
         condition: service_completed_successfully
@@ -368,6 +378,9 @@ services:
       ]
     volumes:
       - openclaw-data:/home/node/.openclaw
+      - ${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}:${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}:${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
+      - ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
+      - ${PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT:-/srv/pantheon-assistant/worktrees}:${PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT:-/srv/pantheon-assistant/worktrees}:rw
     ports:
       - "${OPENCLAW_GATEWAY_PORT:-18789}:18789"
     healthcheck:
@@ -385,6 +398,11 @@ services:
     build:
       context: .
       dockerfile: services/openclaw-gateway-adapter/Dockerfile
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined
     environment:
       PORT: "8104"
       OPENCLAW_GATEWAY_URL: http://openclaw-gateway:18789
@@ -395,9 +413,27 @@ services:
       OPENCLAW_LIVE_ADAPTER_ENABLED: "false"
       OPENCLAW_CANARY_ADAPTER_ENABLED: "false"
       OPENCLAW_CAPITAL_BINDING_ENABLED: "false"
+      OPENCLAW_ALLOWED_TOOLS: ${OPENCLAW_ALLOWED_TOOLS:-assistant.command,assistant.sa_sd.generate,assistant.openclaw.ask,assistant.control_mode.status,assistant.transcript.resync,assistant.orchestrator.status}
       OPENCLAW_BROKER_SIDECAR_URL: http://broker:8102
       OPENCLAW_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: runtime-control-internal
+      PANTHEON_ASSISTANT_CODEX_WORKSPACE: ${PANTHEON_ASSISTANT_CODEX_WORKSPACE:-/workspace}
+      PANTHEON_ASSISTANT_CODEX_HOST_HOME: ${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}
+      PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME: ${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}
+      PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR: ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}
+      PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR: ${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}
+      PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT: ${PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT:-/srv/pantheon-assistant/worktrees}
+      PANTHEON_STATUS_ROOT_CONTAINER: ${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}
+      PANTHEON_ASSISTANT_REPAIR_REPO_URL: ${PANTHEON_ASSISTANT_REPAIR_REPO_URL:-/workspace/status-root}
+      PANTHEON_ASSISTANT_REPAIR_REMOTE_URL: ${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL:-https://github.com/ajoe734/pantheon.git}
+      PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS: ${PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS:-https://github.com/ajoe734/execute-plans.git}
+      PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS: ${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS:-https://github.com/ajoe734/execute-plans.git}
+      PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE: ${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
+    volumes:
+      - ${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}:${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}:${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
+      - ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
+      - ${PANTHEON_STATUS_ROOT_HOST:-.}:${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}:ro
+      - ${PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT:-/srv/pantheon-assistant/worktrees}:${PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT:-/srv/pantheon-assistant/worktrees}:rw
     ports:
       - "${OPENCLAW_GATEWAY_ADAPTER_PORT:-18104}:8104"
     healthcheck:
@@ -613,17 +649,46 @@ services:
       dockerfile: services/control-plane/bff/Dockerfile
     environment:
       BFF_DATA_DIR: /data/bff
+      PANTHEON_STATUS_ROOT: ${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}
       BFF_READ_SURFACE_STATE: fresh
       PANTHEON_BFF_ALLOW_LOCAL_SNAPSHOT_FALLBACK: "false"
-      PANTHEON_BFF_CORS_ORIGINS: ${PANTHEON_BFF_CORS_ORIGINS:-https://pantheon-dev.lovable.app,https://pantheon-ai-system-front-dev.lovable.app,https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app}
+      PANTHEON_BFF_CAPABILITY_SNAPSHOT_STORE: /data/bff/capability_snapshots.json
+      PANTHEON_BFF_KILL_SWITCH_STORE: /data/bff/kill_switch.json
+      PANTHEON_BFF_PERSONA_SESSION_STORE: /data/bff/persona_sessions.json
+      PANTHEON_BFF_PAPER_LIVE_DRIFT_STORE: /data/bff/paper_live_drift_reports.json
+      PANTHEON_BFF_V5_INTERVENTION_STORE: /data/bff/v5_interventions.json
+      PANTHEON_BFF_CORS_ORIGINS: ${PANTHEON_BFF_CORS_ORIGINS:-https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io,https://pantheon-dev.lovable.app,https://pantheon-ai-system-front-dev.lovable.app,https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com}
       PANTHEON_BFF_SERVICE_TIMEOUT_SECONDS: "2.0"
       PANTHEON_ENV: ${PANTHEON_ENV:-dev}
       PANTHEON_LIVE_BROKER_ENABLED: ${PANTHEON_LIVE_BROKER_ENABLED:-false}
-      # Dev tier defaults to strict JWT auth. CI/Lovable dev can exchange
+      PANTHEON_ASSISTANT_ENABLED: ${PANTHEON_ASSISTANT_ENABLED:-true}
+      PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED: ${PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED:-true}
+      MANAGEMENT_AI_STORE_BACKEND: ${MANAGEMENT_AI_STORE_BACKEND:-postgres}
+      MANAGEMENT_AI_STORE_SCHEMA: ${MANAGEMENT_AI_STORE_SCHEMA:-management_ai}
+      MANAGEMENT_AI_STORE_DSN: ${MANAGEMENT_AI_STORE_DSN:-}
+      MANAGEMENT_AI_DATABASE_URL: ${MANAGEMENT_AI_DATABASE_URL:-postgresql://pantheon_management_ai:pantheon_management_ai_dev@postgres:5432/pantheon}
+      PANTHEON_MANAGEMENT_AI_STORE_PATH: ${PANTHEON_MANAGEMENT_AI_STORE_PATH:-/data/bff/management-ai-conversations.json}
+      PANTHEON_MANAGEMENT_AI_ATTACHMENT_STORE_PATH: ${PANTHEON_MANAGEMENT_AI_ATTACHMENT_STORE_PATH:-/data/bff/management-ai-attachments}
+      PANTHEON_MGMT_AI_ATTACH_BUCKET: ${PANTHEON_MGMT_AI_ATTACH_BUCKET:-}
+      PANTHEON_MANAGEMENT_AI_AUDIT_PATH: ${PANTHEON_MANAGEMENT_AI_AUDIT_PATH:-/data/bff/management-ai-audit.jsonl}
+      PANTHEON_ASSISTANT_PROVIDER: ${PANTHEON_ASSISTANT_PROVIDER:-codex_cli}
+      PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS: ${PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS:-75.0}
+      PANTHEON_ASSISTANT_KERNEL_ENABLED: ${PANTHEON_ASSISTANT_KERNEL_ENABLED:-false}
+      PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH: ${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-/data/bff/assistant-control-mode.json}
+      PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS: ${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-300}
+      # Dev tier defaults to strict JWT auth. CI/dev browser clients can exchange
       # dev-only client credentials for a short-lived JWT through
       # POST /bff/auth/dev-login.
+      #
+      # Dev tier defaults: permissive legacy bearer acceptance without auth
+      # stub bypass. This rejects anonymous protected-route reads while still
+      # accepting the legacy dev browser token
+      # (VITE_BFF_DEV_BEARER_TOKEN=pantheon-dev-browser:reviewer).
+      # Staging/prod compose files must explicitly export
+      # PANTHEON_BFF_AUTH_STUB=false and PANTHEON_BFF_AUTH_MODE=strict.
       PANTHEON_BFF_AUTH_STUB: ${PANTHEON_BFF_AUTH_STUB:-false}
-      PANTHEON_BFF_AUTH_MODE: ${PANTHEON_BFF_AUTH_MODE:-strict}
+      PANTHEON_BFF_AUTH_MODE: ${PANTHEON_BFF_AUTH_MODE:-permissive}
+      PANTHEON_BFF_STUB_CAPABILITIES: ${PANTHEON_BFF_STUB_CAPABILITIES:-}
       PANTHEON_BFF_JWT_SECRET: ${PANTHEON_BFF_JWT_SECRET:-}
       PANTHEON_BFF_JWT_ISSUER: ${PANTHEON_BFF_JWT_ISSUER:-}
       PANTHEON_BFF_JWT_AUDIENCE: ${PANTHEON_BFF_JWT_AUDIENCE:-}
@@ -664,6 +729,7 @@ services:
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
     volumes:
       - bff-data:/data/bff
+      - ${PANTHEON_STATUS_ROOT_HOST:-.}:${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}:ro
       - governance-data:/data/governance:ro
       - runtime-data:/data/runtime:ro
       - incident-data:/data/incidents:ro
@@ -1043,6 +1109,37 @@ services:
       retries: 10
       start_period: 5s
 
+  paper-fleet-reconciler:
+    profiles: ["paper-fleet"]
+    build:
+      context: .
+      dockerfile: services/execution/runtime-manager/Dockerfile
+    command: ["python", "services/execution/runtime-manager/paper_fleet_reconciler.py"]
+    environment:
+      PORT: "8011"
+      PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
+      PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
+      RECONCILER_POLL_INTERVAL_SECONDS: ${RECONCILER_POLL_INTERVAL_SECONDS:-15}
+      RECONCILER_WORKER_BASE_PORT: ${RECONCILER_WORKER_BASE_PORT:-8020}
+      RECONCILER_MAX_RESTARTS: ${RECONCILER_MAX_RESTARTS:-5}
+      RECONCILER_RESTART_BACKOFF_SECONDS: ${RECONCILER_RESTART_BACKOFF_SECONDS:-5}
+      RECONCILER_DRAIN_TIMEOUT_SECONDS: ${RECONCILER_DRAIN_TIMEOUT_SECONDS:-10}
+      PANTHEON_TELEMETRY_URL: http://telemetry:8083
+      SIGNAL_STORE_URL: redis://signal-store:6379
+    depends_on:
+      runtime-manager:
+        condition: service_healthy
+      signal-store:
+        condition: service_healthy
+    ports:
+      - "${PAPER_FLEET_RECONCILER_PORT:-18011}:8011"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8011/readyz', timeout=5).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
   reconciliation-drift-svc:
     build:
       context: .
@@ -1334,7 +1431,7 @@ services:
     environment:
       PANTHEON_DEFERRED_PREP_GATE: "1"
       RLLIB_BACKEND: "stub"
-    command: ["python", "smoke_test.py", "--enable-deferred-prep", "--backend", "stub"]
+    command: ["python", "smoke_test.py", "--enable-deferred-prep", "--deferred-backend", "stub"]
     restart: "no"
 
   ray-tune-dormant-smoke:

@@ -4,20 +4,42 @@ The canonical signal-store contract intentionally stops at stable write/query
 semantics. Execution runtimes need one extra capability: pull the next batch of
 signals waiting to be consumed. This module provides runtime-local adapters for
 that pending queue without changing the base store contract.
+
+Queue key isolation
+-------------------
+Each runtime binding should consume from its own Redis key to prevent the 15+
+paper runtimes in the fleet from racing on a shared queue.  The canonical
+key format is ``pantheon:signals:pending:<binding_id>``.
+
+Use :func:`binding_queue_key` to construct a binding-scoped key.
+:func:`build_pending_signal_store` auto-derives the scoped key from env vars
+when the caller has not supplied an explicit override:
+  1. ``PANTHEON_SIGNAL_QUEUE_KEY`` (set by the fleet reconciler per worker)
+  2. ``PANTHEON_RUNTIME_BINDING_ID``  (set in the worker's env by the reconciler)
+  3. bare default ``pantheon:signals:pending`` (standalone / test runs)
 """
 
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Protocol
+
+#: Shared namespace prefix; all signal queue keys start with this value.
+BINDING_QUEUE_KEY_PREFIX = "pantheon:signals:pending"
 
 _SIGNAL_STORE_DIR = Path(__file__).resolve().parents[2] / "signal-store"
 if str(_SIGNAL_STORE_DIR) not in sys.path:
     sys.path.insert(0, str(_SIGNAL_STORE_DIR))
 
 from client import validate_signal_payload_minimal
+
+
+def binding_queue_key(binding_id: str) -> str:
+    """Return the binding-scoped Redis queue key for *binding_id*."""
+    return f"{BINDING_QUEUE_KEY_PREFIX}:{binding_id}"
 
 
 class PendingSignalStore(Protocol):
@@ -106,10 +128,23 @@ class RedisPendingSignalStore:
 def build_pending_signal_store(
     signal_store_url: str,
     *,
-    queue_key: str = "pantheon:signals:pending",
+    queue_key: str = BINDING_QUEUE_KEY_PREFIX,
     default_batch_size: int = 100,
 ) -> PendingSignalStore:
-    """Build the default pending store adapter from the configured URL."""
+    """Build the default pending store adapter from the configured URL.
+
+    Queue-key resolution (when *queue_key* equals the bare default):
+    1. ``PANTHEON_SIGNAL_QUEUE_KEY`` env var (set by fleet reconciler)
+    2. Binding-scoped key derived from ``PANTHEON_RUNTIME_BINDING_ID``
+    3. Bare default ``pantheon:signals:pending``
+    """
+    if queue_key == BINDING_QUEUE_KEY_PREFIX:
+        env_explicit = os.getenv("PANTHEON_SIGNAL_QUEUE_KEY", "").strip()
+        env_binding = os.getenv("PANTHEON_RUNTIME_BINDING_ID", "").strip()
+        if env_explicit:
+            queue_key = env_explicit
+        elif env_binding:
+            queue_key = binding_queue_key(env_binding)
 
     normalized = str(signal_store_url or "").strip()
     if not normalized:

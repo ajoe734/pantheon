@@ -25,6 +25,11 @@ from command_executor import (
     _execute_evolution_action,
     _execute_reject_mutation,
     _execute_remediate_sentinel_intervention,
+    _execute_restart_paper_runtime,
+    _execute_restart_telemetry_bridge,
+    _execute_terminate_stale_paper_monitoring_session,
+    _execute_start_paper_monitoring_session,
+    _execute_probe_telemetry_ingest,
     _execute_bff_action_adapter,
 )
 
@@ -227,6 +232,118 @@ class TestKillSwitchExecutor(unittest.TestCase):
         })
         self.assertEqual(result["kill_switch_order_id"], "ks-123456")
         self.assertEqual(result["command_id"], "cmd-004")
+
+
+class TestRuntimeRepairExecutors(unittest.TestCase):
+    def setUp(self):
+        os.environ["PANTHEON_RUNTIME_MANAGER_API_URL"] = "http://runtime-manager:8080"
+
+    def tearDown(self):
+        os.environ.pop("PANTHEON_RUNTIME_MANAGER_API_URL", None)
+
+    def _success_body(self, **extra):
+        payload = {
+            "status": "accepted",
+            "runtime_id": "paper-runtime-1",
+            "audit_id": "audit-runtime-repair-1",
+            "trace_id": "trace-runtime-repair-1",
+            "heartbeat_freshness": {"age_seconds": 12, "state": "fresh"},
+            "telemetry_projection": {"surface": "runtime_state", "state": "fresh"},
+        }
+        payload.update(extra)
+        return payload
+
+    def _params(self, **extra):
+        payload = {
+            "runtime_id": "paper-runtime-1",
+            "confirm_token": "confirm-runtime-repair",
+            "idempotency_key": "idem-runtime-repair",
+            "actor_id": "operator-1",
+            "trace_id": "trace-runtime-repair-1",
+            "reason": "stale telemetry recovery",
+        }
+        payload.update(extra)
+        return payload
+
+    @patch("command_executor._post_json")
+    def test_restart_paper_runtime_dispatches_to_runtime_manager_with_audit_receipt(self, mock_post):
+        mock_post.return_value = self._success_body()
+        result = _execute_restart_paper_runtime("cmd-repair-1", self._params())
+
+        self.assertEqual(result["action_id"], "RestartPaperRuntime")
+        self.assertEqual(result["dispatch_path"], "runtime_manager_repair_api")
+        self.assertEqual(result["success_condition"], "heartbeat_freshness")
+        self.assertFalse(result["live_broker_side_effects"])
+        self.assertFalse(result["capital_authority_granted"])
+        self.assertEqual(result["audit_receipt"]["idempotency_key"], "idem-runtime-repair")
+        called_url = mock_post.call_args[0][0]
+        self.assertIn("/runtime-repair/paper-runtimes/paper-runtime-1/restart", called_url)
+        payload = mock_post.call_args[0][1]
+        self.assertEqual(payload["command_id"], "cmd-repair-1")
+        self.assertEqual(payload["confirm_token"], "confirm-runtime-repair")
+
+    @patch("command_executor._post_json")
+    def test_restart_telemetry_bridge_dispatches_to_bridge_repair_path(self, mock_post):
+        mock_post.return_value = self._success_body()
+        result = _execute_restart_telemetry_bridge("cmd-repair-bridge", self._params())
+
+        self.assertEqual(result["action_id"], "RestartTelemetryBridge")
+        called_url = mock_post.call_args[0][0]
+        self.assertIn(
+            "/runtime-repair/paper-runtimes/paper-runtime-1/telemetry-bridge/restart",
+            called_url,
+        )
+
+    @patch("command_executor._post_json")
+    def test_terminate_stale_monitoring_session_requires_staleness_evidence(self, mock_post):
+        with self.assertRaises(ValueError) as ctx:
+            _execute_terminate_stale_paper_monitoring_session(
+                "cmd-stale-deny",
+                {"session_id": "session-1", "confirm_token": "confirm-runtime-repair"},
+            )
+        self.assertIn("staleness_evidence", str(ctx.exception))
+        mock_post.assert_not_called()
+
+    @patch("command_executor._post_json")
+    def test_terminate_stale_monitoring_session_forwards_staleness_evidence(self, mock_post):
+        mock_post.return_value = self._success_body(session_id="session-1")
+        result = _execute_terminate_stale_paper_monitoring_session(
+            "cmd-stale-1",
+            self._params(
+                session_id="session-1",
+                staleness_evidence={
+                    "heartbeat_age_seconds": 600,
+                    "observed_at": "2026-06-09T00:00:00Z",
+                },
+            ),
+        )
+
+        self.assertEqual(result["action_id"], "TerminateStalePaperMonitoringSession")
+        self.assertEqual(result["session_id"], "session-1")
+        payload = mock_post.call_args[0][1]
+        self.assertEqual(payload["staleness_evidence"]["heartbeat_age_seconds"], 600)
+
+    @patch("command_executor._post_json")
+    def test_start_monitoring_session_and_probe_ingest_are_dispatchable(self, mock_post):
+        mock_post.return_value = self._success_body()
+        start = _execute_start_paper_monitoring_session("cmd-start-session", self._params())
+        probe = _execute_probe_telemetry_ingest("cmd-probe-ingest", self._params())
+
+        self.assertEqual(start["action_id"], "StartPaperMonitoringSession")
+        self.assertEqual(probe["action_id"], "ProbeTelemetryIngest")
+        self.assertEqual(mock_post.call_count, 2)
+
+    @patch("command_executor._post_json")
+    def test_execute_command_dispatches_runtime_repair_types(self, mock_post):
+        mock_post.return_value = self._success_body()
+        for command_type in (
+            CommandType.RESTART_PAPER_RUNTIME,
+            CommandType.RESTART_TELEMETRY_BRIDGE,
+            CommandType.START_PAPER_MONITORING_SESSION,
+            CommandType.PROBE_TELEMETRY_INGEST,
+        ):
+            result = execute_command("cmd-runtime-repair", command_type, self._params())
+            self.assertEqual(result["action_id"], command_type.value)
 
 
 class TestEvolutionDecisionExecutor(unittest.TestCase):

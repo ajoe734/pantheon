@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "task_id": "RES-ACT-DISCLOSURE-001-V2",
+  "archived_at": "2026-05-19T17:21:07Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "RES-ACT-DISCLOSURE-001-V2",
+    "title": "Research backend real/stub backend disclosure report",
+    "summary_zh": "Disclosure report listing, for each research adapter, whether it currently uses a real backend or a stub/mock. The original RES-ACT-005-V2 delivered a no-order-route scanner; this new task addresses the design-team's re-spec'd intent for RES-ACT-005 (which is now embodied here under a clean ID).",
+    "phase": "Phase 8 / EPIC-RES-ACT",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/governance/research_activation/disclosure_report.py",
+      "tests/governance/test_disclosure_report.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner closeout complete: implementation PR #233 merged at 2cbd6b230bf189e637a00f530e270a6e4469485e; closeout PR #254 merged at c87bec5c41d071045106204c7351b443dbf91e7a; verified pytest -q tests/governance/test_disclosure_report.py, pytest -q tests/governance, and py_compile.",
+    "last_update": "2026-05-19T17:21:07Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T17:21:07Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/res-act-disclosure-001-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/RES-ACT-DISCLOSURE-001-V2",
+      "git_clean_required": false,
+      "commit": "8fc43fb75e08ad98e6b0e45e911f78ca4aaa96b4",
+      "commit_subject": "RES-ACT-DISCLOSURE-001-V2: merge latest dev for closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "closeout branch freshness for RES-ACT-DISCLOSURE-001-V2.",
+        "Not changing": "disclosure report implementation, research adapter behavior, OpenClaw runtime policy, broker/order routing, or activation gates.",
+        "Composes with": "PR #254 closeout evidence and latest dev after PR #253.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "RES-ACT-DISCLOSURE-001-V2",
+        "Reviewer": "Codex2",
+        "Verified": "pytest -q tests/governance/test_disclosure_report.py; pytest -q tests/governance; python3 -m py_compile services/governance/research_activation/disclosure_report.py tests/governance/test_disclosure_report.py"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/RES-ACT-DISCLOSURE-001-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "c87bec5c41d071045106204c7351b443dbf91e7a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "RES-ACT-DISCLOSURE-001-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for Codex2 review: PR #233 adds services/governance/research_activation/disclosure_report.py and tests/governance/test_disclosure_report.py. Local verification: pytest -q tests/governance/test_disclosure_report.py (3 passed); pytest -q tests/governance (19 passed); python3 -m py_compile services/governance/research_activation/disclosure_report.py tests/governance/test_disclosure_report.py. PR auto-merge enabled; latest pushed HEAD f07b8e3a.",
+      "status": "done",
+      "created_at": "2026-05-19T16:37:19Z",
+      "resolved_at": "2026-05-19T16:43:50Z"
+    },
+    {
+      "task_id": "RES-ACT-DISCLOSURE-001-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Codex2 review posted on PR #233; changes required for RLlib backend-id disclosure and OpenClaw research-only/order-gate modeling before approval.",
+      "status": "done",
+      "created_at": "2026-05-19T16:43:50Z",
+      "resolved_at": "2026-05-19T16:43:50Z"
+    },
+    {
+      "task_id": "RES-ACT-DISCLOSURE-001-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "PR #233 updated with commit 4c7d9aab: RLlib backend ids now disclose emitted stub_rllib/rllib_ppo labels; OpenClaw excluded from research-only disclosure; verified pytest -q tests/governance/test_disclosure_report.py, pytest -q tests/governance, and py_compile.",
+      "status": "done",
+      "created_at": "2026-05-19T17:02:47Z",
+      "resolved_at": "2026-05-19T17:06:54Z"
+    },
+    {
+      "task_id": "RES-ACT-DISCLOSURE-001-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: disclosure report truthfully lists research backend real/stub status; OpenClaw excluded from research-only scope; verified pytest -q tests/governance/test_disclosure_report.py, pytest -q tests/governance, and py_compile.",
+      "status": "done",
+      "created_at": "2026-05-19T17:06:54Z",
+      "resolved_at": "2026-05-19T17:21:07Z"
+    }
+  ],
+  "blockers": []
+}

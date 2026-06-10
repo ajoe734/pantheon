@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "No live execution blocker, queue backlog, approval backlog, or active sidecar pressure; approval stands for the next runnable parent task.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "OPS-ZOMBIE-BRANCH-CLEANUP-20260524",
+    "OPS-STALE-BLOCKER-CLEANUP-20260524",
+    "OPS-PROMOTE-PIPELINE-HEALTH-20260524"
+  ]
+}

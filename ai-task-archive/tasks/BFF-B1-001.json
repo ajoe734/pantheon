@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "task_id": "BFF-B1-001",
+  "archived_at": "2026-05-23T05:49:02Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-B1-001",
+    "title": "CORS fix for Lovable preview and published origins",
+    "summary_zh": null,
+    "phase": "Sprint BFF-1 / EPIC-BFF-GAP-P0",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#15-cors;services/control-plane/bff/main.py;execute-plans/src/lib/bff-v1/paths.ts"
+    ],
+    "acceptance": [
+      "Allowed origins include 4 Lovable hosts per spec section 1.5;Allowed headers include Authorization X-Correlation-Id X-Request-Id X-Idempotency-Key X-Confirm-Token X-MFA-Token;Exposed headers include X-Correlation-Id X-Request-Id X-BFF-Api-Version;OPTIONS preflight returns 204 with full ACAO ACAH ACAM ACEH headers"
+    ],
+    "next": "Closeout: CORS fix for Lovable preview and published origins delivered in PR #410; closeout evidence committed in PR #413 (merged to dev); HEAD is ancestor of dev confirmed; task finalized.",
+    "last_update": "2026-05-23T05:49:02Z",
+    "review_notes_zh": [
+      "審查通過：PR #410 已 merged 到 dev；CORS execute-plans UUID 與 Lovable dynamic preview regex 符合 §15 scope，production strict 會拒絕 dev-tier preview。",
+      "驗證：pytest services/control-plane/bff/tests/test_auth_jwks_strict.py -q（15 passed）；GitHub PR #410 checks green。",
+      "備註：status root 已有 BFF-B1-002 接續處理 exposed headers/OpenAPI surface；本核准範圍為 BFF-B1-001 的 Lovable origins/preview regex fix。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T05:49:02Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-b1-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-B1-001",
+      "git_clean_required": false,
+      "commit": "6e4af3a91b995fc4198e617efa31d8ee3fba9122",
+      "commit_subject": "BFF-B1-001: record closeout evidence for CORS fix",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "BFF-B1-001",
+        "Reviewer": "Codex",
+        "Verified": "PR #410 merged to dev; git merge-base --is-ancestor HEAD origin/dev passed"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 3,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-B1-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "74c1ad7aad15d43e354aeb29e7639f796bb909cb",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-B1-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "CORS fix implementation complete. PR #410 open with auto-merge. Changes: (1) added execute-plans UUID 140c41d5 to default CORS origins + dev-tier filter; (2) added allow_origin_regex for dynamic id-preview-<commit>--<uuid>.lovable.app pattern suppressed in production strict; (3) 8 new tests + 7 existing pass; (4) spec doc at docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md. Pre-existing test_bff_agora_core_contract failure is unrelated.",
+      "status": "done",
+      "created_at": "2026-05-23T05:27:21Z",
+      "resolved_at": "2026-05-23T05:34:41Z"
+    },
+    {
+      "task_id": "BFF-B1-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: PR #410 merged to dev; Lovable CORS origin and dynamic preview regex fix verified; owner should finalize closeout.",
+      "status": "done",
+      "created_at": "2026-05-23T05:34:41Z",
+      "resolved_at": "2026-05-23T05:49:03Z"
+    }
+  ],
+  "blockers": []
+}

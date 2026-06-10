@@ -107,6 +107,48 @@ export const paths = {
   managementFleet: () => `${BASE}/management/fleet`,
   search: () => `${BASE}/search`,
 
+  // ---- P1 Management aggregate APIs ----
+  managementCockpit: () => `${BASE}/management/cockpit`,
+  managementBoardPack: () => `${BASE}/management/board-pack`,
+  managementGovernanceLedger: () => `${BASE}/management/governance-ledger`,
+  managementHiqBacklog: () => `${BASE}/management/hiq-backlog`,
+  managementInterventionStream: () => `${BASE}/management/intervention-stream`,
+  managementTradingPulse: () => `${BASE}/management/trading-pulse`,
+  managementTradingPulseRankings: () => `${BASE}/management/trading-pulse/rankings`,
+  managementSentinelPulse: () => `${BASE}/management/sentinel-pulse`,
+  managementEvidence: () => `${BASE}/management/evidence`,
+  managementEvolutionJournal: () => `${BASE}/management/evolution-journal`,
+  managementPersonaIntent: () => `${BASE}/management/persona-intent`,
+  managementLoopThroughput: () => `${BASE}/management/loop-throughput`,
+  managementReadinessEp5: () => `${BASE}/management/readiness/ep5`,
+  managementReadinessBrokerLive: () => `${BASE}/management/readiness/broker-live`,
+  managementReadinessCapitalBindingLive: () => `${BASE}/management/readiness/capital-binding-live`,
+  managementReadinessBffHa: () => `${BASE}/management/readiness/bff-ha`,
+  managementReadinessStrictPublish: () => `${BASE}/management/readiness/strict-publish`,
+  managementStrategyAllocation: () => `${BASE}/management/strategy-allocation`,
+  managementCapitalFlow: () => `${BASE}/management/capital-flow`,
+  managementRiskRadar: () => `${BASE}/management/risk-radar`,
+  managementIncidentTimeline: () => `${BASE}/management/incident-timeline`,
+  managementCostAttribution: () => `${BASE}/management/cost-attribution`,
+  managementPortfolioBook: () => `${BASE}/management/portfolio-book`,
+  managementPortfolioBookPools: () => `${BASE}/management/portfolio-book/pools`,
+  managementPortfolioBookExposure: () => `${BASE}/management/portfolio-book/exposure`,
+  managementPortfolioBookHoldings: () => `${BASE}/management/portfolio-book/holdings`,
+  managementPortfolioBookPositions: () => `${BASE}/management/portfolio-book/positions`,
+  managementPersonaLeague: () => `${BASE}/management/persona-league`,
+  managementPersonaLeagueMovers: () => `${BASE}/management/persona-league/movers`,
+  managementPersonaLeagueRankings: () => `${BASE}/management/persona-league/rankings`,
+  managementPersonaLeagueTiers: () => `${BASE}/management/persona-league/tiers`,
+  managementPersonaLeagueHeatmap: () => `${BASE}/management/persona-league/heatmap`,
+  managementQuarterlyRanking: () => `${BASE}/management/quarterly-ranking`,
+  managementQuarterlyRankingDrilldown: () => `${BASE}/management/quarterly-ranking/drilldown`,
+  managementQuarterlyRankingFormula: () => `${BASE}/management/quarterly-ranking/formula`,
+  managementQuarterlyRankingRecommendations: () => `${BASE}/management/quarterly-ranking/recommendations`,
+  managementPerformanceAttribution: () => `${BASE}/management/performance-attribution`,
+  managementPerformanceAttributionByStrategy: () => `${BASE}/management/performance-attribution/by-strategy`,
+  managementPerformanceAttributionByPersona: () => `${BASE}/management/performance-attribution/by-persona`,
+  managementPerformanceAttributionByPool: () => `${BASE}/management/performance-attribution/by-pool`,
+
   // ---- Research ----
   researchExperiments: () => `${BASE}/research-experiments`,
   strategySpecs: (id: string) => `${BASE}/strategies/${enc(id)}/specs`,
@@ -124,13 +166,31 @@ export const paths = {
   // ---- SSE ----
   sse: () => `${BASE}/events/stream`,
 
+  // ---- Assistant sessions (user-mode default) ----
+  assistantSessions: () => `${BASE}/assistant/sessions`,
+  assistantSession: (id: string) => `${BASE}/assistant/sessions/${enc(id)}`,
+  assistantSessionContext: (id: string) => `${BASE}/assistant/sessions/${enc(id)}/context`,
+  assistantSessionMessages: (id: string) => `${BASE}/assistant/sessions/${enc(id)}/messages`,
+  assistantSessionTranscript: (id: string) => `${BASE}/assistant/sessions/${enc(id)}/transcript`,
+  assistantSessionRevoke: (id: string) => `${BASE}/assistant/sessions/${enc(id)}/revoke`,
+  assistantProviders: () => `${BASE}/assistant/providers`,
+  assistantMode: () => `${BASE}/assistant/mode`,
+  assistantControlMode: () => `${BASE}/assistant/control-mode`,
+  assistantOrchestratorStatus: () => `${BASE}/assistant/orchestrator/status`,
+  assistantDevDocsGenerate: () => `${BASE}/assistant/dev-docs/generate`,
+  assistantDevDoc: (packetId: string) => `${BASE}/assistant/dev-docs/${enc(packetId)}`,
+  assistantDevBridgeTaskPacket: () => `${BASE}/assistant/dev-bridge/task-packet`,
+
   // ---- Agora ----
   agoraSignals: () => `${BASE}/agora/signals`,
   agoraInbox: () => `${BASE}/agora/inbox`,
   agoraJournal: () => `${BASE}/agora/journal`,
   agoraPostmortems: () => `${BASE}/agora/postmortems`,
+  agoraAsk: () => `${BASE}/agora/ask`,
   agoraAskSessions: () => `${BASE}/agora/ask/sessions`,
   agoraAskSession: (id: string) => `${BASE}/agora/ask/sessions/${enc(id)}`,
+  managementNlAsk: () => `${BASE}/management/nl/ask`,
+  managementAiConversation: (id: string) => `${BASE}/management/ai/conversations/${enc(id)}`,
 
   // ---- v5 closed-loop ----
   v5LoopRuns: () => `${BASE}/v5/loop-runs`,
@@ -142,6 +202,11 @@ export const paths = {
   /** @deprecated Alias of `v5InterventionDecide(id)`. */
   v5InterventionDecision: (id: string) => `${BASE}/v5/interventions/${enc(id)}/decide`,
   v5ExecutionPersonaHealth: () => `${BASE}/v5/execution/persona-health`,
+
+  // ---- Management aggregate read surfaces ----
+  managementPersonaFleet: () => `${BASE}/management/persona-fleet`,
+  managementHumanInbox: () => `${BASE}/management/human-inbox`,
+  managementHumanInboxItem: (id: string) => `${BASE}/management/human-inbox/${enc(id)}`,
 
   // ---- Management OODA packet read surface ----
   oodaPackets: () => `${BASE}/ooda/packets`,

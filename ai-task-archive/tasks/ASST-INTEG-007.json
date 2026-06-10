@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "task_id": "ASST-INTEG-007",
+  "archived_at": "2026-06-04T13:15:35Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASST-INTEG-007",
+    "title": "Expose orchestrator worker PR CI and deploy status readback to assistant",
+    "summary_zh": "讓小幫手可從既有 orchestrator/GitHub 狀態讀回 task、worker、PR、CI、deploy 進度，用於閉環回覆。",
+    "phase": "Sprint ASST-INTEG / Orchestrator status readback",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "ASST-INTEG-006"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_INTEGRATION_PLAN_2026-06-03.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/EXISTING_ARCHITECTURE_EXECUTION_TASKS_2026-06-03.md;scripts/ai_status.py;.orchestrator/runtime_state.py;.orchestrator/supervisor.py;services/control-plane/bff/assistant"
+    ],
+    "acceptance": [
+      "Assistant can read task owner reviewer blocker next action and task brief path;Assistant can read worker dispatch state without provider credentials;Assistant can report PR CI merge and deploy status when available;Status payloads include source refs and snapshot timestamps;Tests or probe cover unavailable GitHub status degradation"
+    ],
+    "next": "Closeout complete: implementation PR #914 merged at 6c3640b3f66676a0530c99f9c84db1b9435f5c2c; closeout PR #1015 merged at 55c5b615841117ac939d63abdacfd998d387ecdd; checks passed.",
+    "last_update": "2026-06-04T13:15:35Z",
+    "task_class": "assistant_integration",
+    "auto_created_by": "dispatch_assistant_existing_architecture_2026-06-03",
+    "auto_generated": true,
+    "review_notes_zh": [
+      "Reviewed ASST-INTEG-007 implementation against acceptance: assistant route requires BFF read role, readback is file-based and does not shell out, worker/provider diagnostics pass through assistant redaction, task source refs include snapshot timestamps, and GitHub/CI/deploy metadata is normalized when present in ai-status delivery or github-bus state while unavailable bus data degrades honestly.",
+      "Validation: PYTHONPATH=.orchestrator python3 -m pytest .orchestrator/test_github_bus.py services/control-plane/bff/assistant/tests/test_orchestrator_status.py -q (16 passed); python3 -m py_compile services/control-plane/bff/assistant/orchestrator_status.py services/control-plane/bff/assistant/models.py; git diff --check for touched ASST-INTEG-007 paths; gh pr view 914 confirmed merged at 6c3640b3f66676a0530c99f9c84db1b9435f5c2c with visible checks success.",
+      "Residual non-blocking risk: BFF deployment must provide PANTHEON_STATUS_ROOT or equivalent live repo root to read live orchestrator state; otherwise endpoint returns sourceRefs with unavailable/not_found rather than querying GitHub directly."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-04T13:15:35Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/asst-integ-007",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/ASST-INTEG-007",
+      "git_clean_required": false,
+      "commit": "76729427165bf31e408ce500b09ed4322dee6531",
+      "commit_subject": "ASST-INTEG-007: refresh closeout after PR 1018",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped ASST-INTEG-007 brief closeout evidence.",
+        "Not changing": "assistant implementation, supervisor dispatch policy, GitHub bus behavior, provider credentials, deployment controls, frontend code, Codex provider stdin behavior, or MGMT-AI-PERSIST behavior.",
+        "Composes with": "merged ASST-INTEG-007 implementation PR #914, closeout PR #1015, and canonical status closeout via scripts/ai-status.sh done.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "ASST-INTEG-007",
+        "Reviewer": "Codex",
+        "Verified": "git diff --check -- .orchestrator/task-briefs/asst_integ_007.md"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/ASST-INTEG-007",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "1b7bf7cd3ef0c5ce94f64ee9dd1fc425a0a15e1b",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASST-INTEG-007",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implementation pushed in PR #914; focused pytest, py_compile, and diff check passed. Awaiting Codex review and GitHub checks.",
+      "status": "done",
+      "created_at": "2026-06-04T04:22:00Z",
+      "resolved_at": "2026-06-04T04:30:43Z"
+    },
+    {
+      "task_id": "ASST-INTEG-007",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Codex review approved: orchestrator status readback meets ASST-INTEG-007 acceptance; PR #914 merged at 6c3640b3f66676a0530c99f9c84db1b9435f5c2c and focused validation passed. Owner Codex2 should run closeout finalization to done.",
+      "status": "done",
+      "created_at": "2026-06-04T04:30:43Z",
+      "resolved_at": "2026-06-04T13:15:36Z"
+    }
+  ],
+  "blockers": []
+}

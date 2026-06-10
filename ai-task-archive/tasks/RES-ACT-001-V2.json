@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "task_id": "RES-ACT-001-V2",
+  "archived_at": "2026-05-20T02:48:55Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "RES-ACT-001-V2",
+    "title": "Production data proof schema (generic across adapters)",
+    "summary_zh": "Implements ProductionDataProof schema per Part F2/F3. Generic across Qlib / TRL / FinRL / W&B / etc. Per-adapter evidence is captured as instances.",
+    "phase": "Phase 8 / EPIC-RES-ACT",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/governance/research_activation/production_data_proof.py",
+      "tests/governance/test_production_data_proof.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Finalized ProductionDataProof schema closeout after PR #303 merged into dev (merge commit 8a02553815a71ae7370006c4e704f841f74a34d7). Owner verification: pytest -v tests/governance/test_production_data_proof.py passed 8/8; python3 -m py_compile services/governance/research_activation/production_data_proof.py tests/governance/test_production_data_proof.py exited 0.",
+    "last_update": "2026-05-20T02:48:55Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過 (Claude2 獨立審核，chair reassignment from Gemini 已套用)：全 8 項測試通過 (pytest -v exit 0)。ProductionDataProof schema 正確實作 R3 activation tier 強制 (activation_tier = R3 guard)、Fail-closed F3 輸出邊界 (FORBIDDEN_ADAPTER_OUTPUT_TYPES 含 order/runtimebinding/broker 等)、adapter-neutral evidence capture 跨 Qlib/TRL/FinRL/W&B。token normalization 正確處理 W&B → wandb。storage sha256 checksum、PIT correctness、entitlement allowed_use 防護均有對應測試覆蓋。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T02:48:55Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/res-act-001-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/RES-ACT-001-V2",
+      "git_clean_required": false,
+      "commit": "acd4ed3fdc3f46fd9bbba16755babdf16e769da1",
+      "commit_subject": "RES-ACT-001-V2: record owner closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped closeout evidence for ProductionDataProof.v1 finalization.",
+        "Not changing": "schema implementation, tests, L1 canonical docs, adapter runtimes, broker paths, RuntimeBinding, deployment stages, or live-capital routes.",
+        "Composes with": "already-merged implementation commit 52aa67499d0c6c686509568fba310ba7ff05ede6 and Claude2 review approval.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "RES-ACT-001-V2",
+        "Reviewer": "Claude2",
+        "Verified": "pytest -v tests/governance/test_production_data_proof.py (8 passed); python3 -m py_compile services/governance/research_activation/production_data_proof.py tests/governance/test_production_data_proof.py"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 2,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/RES-ACT-001-V2",
+      "ahead": 0,
+      "behind": 313,
+      "push_status": "behind",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "8a02553815a71ae7370006c4e704f841f74a34d7",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "RES-ACT-001-V2",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Ready for review. PR #215 contains commit 52aa67499d0c6c686509568fba310ba7ff05ede6 with ProductionDataProof.v1 schema and tests. Verification: python3 -m pytest tests/governance/test_production_data_proof.py -q (8 passed); python3 -m py_compile services/governance/research_activation/production_data_proof.py services/governance/research_activation/__init__.py. No L1 canonical docs modified.",
+      "status": "done",
+      "created_at": "2026-05-19T15:07:13Z",
+      "resolved_at": "2026-05-20T02:25:11Z"
+    },
+    {
+      "task_id": "RES-ACT-001-V2",
+      "from": "Gemini",
+      "to": "Claude2",
+      "message": "Chair reassigned review from Gemini to Claude2: Gemini review dispatch is repeatedly exiting on quota exhaustion; reassign to an available non-owner reviewer so RES-ACT children can unblock.",
+      "status": "done",
+      "created_at": "2026-05-20T02:25:11Z",
+      "resolved_at": "2026-05-20T02:38:13Z"
+    },
+    {
+      "task_id": "RES-ACT-001-V2",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved by Claude2 (chair reassignment from Gemini): all 8 tests pass (pytest -v exit 0). Schema enforces R3 tier, fail-closed F3 boundary, adapter-neutral evidence. Owner Codex to finalize.",
+      "status": "done",
+      "created_at": "2026-05-20T02:38:13Z",
+      "resolved_at": "2026-05-20T02:48:56Z"
+    }
+  ],
+  "blockers": []
+}

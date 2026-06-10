@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "task_id": "SPRINT-8-CLOSEOUT-SIDECAR-REVIEW",
+  "archived_at": "2026-05-18T09:30:51Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SPRINT-8-CLOSEOUT-SIDECAR-REVIEW",
+    "title": "Prepare SPRINT-8-CLOSEOUT review packet and evidence summary",
+    "summary_zh": "平行支援 SPRINT-8-CLOSEOUT，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Sprint 8 / EPIC-CLOSEOUT",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "OSS-QLIB-V2-001",
+      "OSS-STAT-V2-001",
+      "OSS-QUANTLIB-V2-001",
+      "OSS-RLLIB-V2-001",
+      "OSS-FINRL-V2-001",
+      "OODA-E2E-007",
+      "STRAT-V2-001",
+      "STRAT-V2-002",
+      "EXP-V2-001",
+      "EXP-V2-002"
+    ],
+    "artifacts": [
+      "support/sidecars/SPRINT-8-CLOSEOUT/SPRINT-8-CLOSEOUT-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved support-only sidecar; PR #155 merged review packet/Claude review, PR #157 merged publication note; Branch CI and Orchestrator Sync checks passed; no canonical/runtime changes.",
+    "last_update": "2026-05-18T09:30:51Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SPRINT-8-CLOSEOUT",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：sidecar packet 正確限定在 support-only 範圍，未觸及 canonical L1 或 runtime 實作",
+      "Section 1 時間點差異已由 Section 2 caveat 說明，不構成 blocking",
+      "父任務三份 evidence artifact 均存在且 schema 符合，Codex review record 亦在位",
+      "父任務目前因意外 progress 命令退回 review 狀態，需 Codex re-approve 後 Claude 再 finalize done；此 sidecar 收尾不影響父任務 lifecycle"
+    ],
+    "review_file": "support/reviews/SPRINT-8-CLOSEOUT-SIDECAR-REVIEW-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-18T09:30:51Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sprint-8-closeout-sidecar-review",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SPRINT-8-CLOSEOUT-SIDECAR-REVIEW",
+      "git_clean_required": false,
+      "commit": "f2886974730d2294a5c7d985573917af1ced8621",
+      "commit_subject": "SPRINT-8-CLOSEOUT-SIDECAR-REVIEW: record publication",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only sidecar packet final publication note.",
+        "Not changing": "L1 canonical truth, parent closeout artifacts, runtime implementation, registry behavior, governance behavior, or status implementation.",
+        "Composes with": "PR #155 merge commit 3016c786ec30df4e6608b71c86536e910e506b02 and Claude sidecar approval.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SPRINT-8-CLOSEOUT-SIDECAR-REVIEW",
+        "Reviewer": "Claude",
+        "Verified": "git diff --check -- support/sidecars/SPRINT-8-CLOSEOUT/SPRINT-8-CLOSEOUT-SIDECAR-REVIEW.md; gh pr checks 155; gh pr view 155 --json number,state,mergedAt,mergeCommit,url"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/SPRINT-8-CLOSEOUT-SIDECAR-REVIEW",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SPRINT-8-CLOSEOUT-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review packet updated in support/sidecars/SPRINT-8-CLOSEOUT/SPRINT-8-CLOSEOUT-SIDECAR-REVIEW.md and PR #151 is open with auto-merge enabled. Please review the support-only packet; it does not change canonical truth or parent artifacts.",
+      "status": "done",
+      "created_at": "2026-05-18T09:05:46Z",
+      "resolved_at": "2026-05-18T09:16:14Z"
+    },
+    {
+      "task_id": "SPRINT-8-CLOSEOUT-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Sidecar packet reviewed and approved by Claude. Support-only scope confirmed; no canonical edits. Parent artifacts verified present. Timing discrepancy in Section 1 covered by Section 2 caveat. Codex2 should finalize done per task-closeout-finalization.md.",
+      "status": "done",
+      "created_at": "2026-05-18T09:16:14Z",
+      "resolved_at": "2026-05-18T09:30:52Z"
+    }
+  ],
+  "blockers": []
+}

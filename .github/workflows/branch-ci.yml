@@ -64,7 +64,23 @@ jobs:
           python-version: "3.12"
 
       - name: Check commit trailers
+        env:
+          EVENT: ${{ github.event_name }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          REF_NAME: ${{ github.ref_name }}
+          HEAD_SHA: ${{ github.sha }}
         run: |
+          if [[ "$EVENT" == "pull_request" && "$HEAD_REF" == promote/* ]]; then
+            echo "Skipping commit trailer re-scan for promote PR ${HEAD_REF}; publish history was already validated before snapshot cut."
+            exit 0
+          fi
+          if [[ "$EVENT" == "push" && "$REF_NAME" == "master" ]]; then
+            subject="$(git log -1 --format=%s "$HEAD_SHA")"
+            if [[ "$subject" == Merge\ pull\ request*promote/* ]]; then
+              echo "Skipping commit trailer re-scan for master promote merge: ${subject}"
+              exit 0
+            fi
+          fi
           python3 scripts/git/check_commit_trailers.py \
             --range "${{ steps.range.outputs.range }}" \
             --skip-merge

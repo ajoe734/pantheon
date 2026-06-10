@@ -31,7 +31,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
 
-# Accept both YYYY.WW.P (legacy wave) and YYYY.MM.DD.N (per-task) formats.
+# Accept the current YYYY.WW.P format and historical YYYY.MM.DD.N tags.
 RELEASE_TAG_RE = re.compile(r"^refs/tags/release/(v\d{4}\.\d{2}(?:\.\d+){1,2})$")
 
 
@@ -60,6 +60,26 @@ def run_git(*args: str) -> str:
     return subprocess.run(
         ["git", *args], check=True, capture_output=True, text=True, cwd=ROOT
     ).stdout.strip()
+
+
+def ensure_git_identity() -> None:
+    """Configure a committer identity if the checkout has none.
+
+    The promote flow creates a `git merge --no-ff` merge commit. GitHub's
+    actions/checkout does NOT set user.name/user.email, so the merge aborts with
+    exit 128 ("Committer identity unknown") -- which silently broke every
+    scheduled publish-promote run and stalled dev->master promotion. Set the
+    github-actions bot identity, but only when unset so local runs keep theirs.
+    """
+    for key, value in (
+        ("user.email", "github-actions[bot]@users.noreply.github.com"),
+        ("user.name", "github-actions[bot]"),
+    ):
+        existing = subprocess.run(
+            ["git", "config", key], capture_output=True, text=True, cwd=ROOT
+        )
+        if existing.returncode != 0 or not existing.stdout.strip():
+            subprocess.run(["git", "config", key, value], check=False, cwd=ROOT)
 
 
 def list_release_tags() -> list[tuple[str, datetime]]:
@@ -213,6 +233,7 @@ def cmd_discover(args: argparse.Namespace) -> int:
 
 def cmd_open_prs(_args: argparse.Namespace) -> int:
     settings = load_promote_settings()
+    ensure_git_identity()
     raw = os.environ.get("PROMOTE_CANDIDATES", "[]")
     try:
         candidates = json.loads(raw)
@@ -261,12 +282,23 @@ def cmd_open_prs(_args: argparse.Namespace) -> int:
                 f"Promote {version} to {main_branch}",
                 "--body",
                 body,
-                "--label",
-                promote_label,
             ],
             check=True,
             cwd=ROOT,
         )
+        if promote_label:
+            subprocess.run(
+                [
+                    "gh",
+                    "pr",
+                    "edit",
+                    promote_branch,
+                    "--add-label",
+                    promote_label,
+                ],
+                check=False,
+                cwd=ROOT,
+            )
         # Enable auto-merge so the PR auto-completes once branch-protection
         # status checks (Commit trailers / Runtime mirror guard / Smoke
         # acceptance) come back green. Non-fatal if auto-merge is unavailable.

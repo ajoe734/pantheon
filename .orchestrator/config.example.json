@@ -32,6 +32,41 @@
     "max_worker_history": 200,
     "auto_refresh_provider_capabilities": true
   },
+  "worker_runtime": {
+    "worker_lease_seconds": 1800,
+    "queue_lease_seconds": 1800,
+    "heartbeat_stale_seconds": 300,
+    "heartbeat_grace_seconds": 60,
+    "runner_heartbeat_interval_seconds": 15
+  },
+  "watchdog": {
+    "enabled": true,
+    "state_file": ".orchestrator/watchdog-state.json",
+    "metrics_file": ".orchestrator/metrics/supervisor-watchdog.jsonl",
+    "heartbeat_stale_seconds": 900,
+    "restart_budget_window_seconds": 900,
+    "max_restarts_per_window": 2,
+    "max_restarts_per_hour": 4,
+    "backoff_schedule_seconds": [
+      30,
+      120,
+      300,
+      900
+    ],
+    "circuit_cooldown_seconds": 1800,
+    "safe_mode_seconds": 120,
+    "min_disk_free_gb": 2.0,
+    "max_disk_used_percent": 95.0,
+    "min_memory_available_mb": 512,
+    "max_load_1m": 24.0,
+    "max_active_workers": 12,
+    "supervisor_command": [
+      "python3",
+      "-u",
+      ".orchestrator/supervisor.py",
+      "--verbose"
+    ]
+  },
   "provider_guardrails": {
     "pause_on_capacity_failure": true,
     "pause_on_auth_failure": true,
@@ -59,6 +94,19 @@
       "docs-site/**"
     ],
     "auto_restore_enabled": false
+  },
+  "worker_worktrees": {
+    "enabled": true,
+    "root": "/tmp/pantheon-worker-worktrees",
+    "base_ref": "origin/dev",
+    "reuse_existing": true,
+    "execution_reasons": [
+      "owned_ready_dispatch",
+      "owned_in_progress_dispatch",
+      "owned_finalize_dispatch",
+      "review_ready_dispatch",
+      "chair_review:*"
+    ]
   },
   "worker_retry": {
     "enabled": true,
@@ -144,7 +192,7 @@
     }
   },
   "underutilization_dispatch": {
-    "enabled": true,
+    "enabled": false,
     "threshold_ratio": 0.5,
     "continuous_window_seconds": 900,
     "cooldown_seconds": 900,
@@ -168,9 +216,9 @@
         "local_path": ".",
         "default_branch": "master"
       },
-      "front_ai_trading_system": {
-        "repo": "your-org/front-ai-trading-system",
-        "local_path": "../front-ai-trading-system",
+      "execute_plans": {
+        "repo": "ajoe734/execute-plans",
+        "local_path": "../execute-plans",
         "default_branch": "main"
       },
       "runtime_platform": {
@@ -204,10 +252,6 @@
       "qa-worker": {
         "target_agent": "Claude"
       }
-    },
-    "lovable": {
-      "project_url_env": "PANTHEON_FRONT_LOVABLE_PROJECT_URL",
-      "project_url": "https://lovable.dev/projects/your-project-id"
     }
   },
   "github_bus": {
@@ -519,6 +563,7 @@
       "done"
     ],
     "worker_terminal_statuses": [
+      "review",
       "done",
       "review_approved"
     ],
@@ -547,8 +592,27 @@
         "blocked"
       ]
     },
-    "max_tasks_per_agent": 1,
-    "max_dispatches_per_tick": 4
+    "max_tasks_per_agent_by_agent": {
+      "Claude": 3,
+      "Claude2": 1,
+      "Gemini": 1,
+      "Gemini2": 1,
+      "Codex": 4,
+      "Codex2": 4,
+      "Copilot": 1
+    },
+    "max_dispatches_per_tick": 2,
+    "max_active_workers_per_task": 1,
+    "max_concurrent_per_quota_group": {
+      "claude": 3,
+      "claude2": 1,
+      "gemini": 1,
+      "gemini2": 1,
+      "codex1": 4,
+      "codex2": 4,
+      "copilot": 1
+    },
+    "max_concurrent_workers": 2
   },
   "branch_workflow": {
     "enabled": true,
@@ -563,6 +627,7 @@
       "enabled": true,
       "cron_utc": "0 3 * * *",
       "version_format": "vYYYY.MM.DD.N",
+      "release_state_file": ".orchestrator/release-state.json",
       "skip_if_no_new_commits": true
     },
     "promote": {

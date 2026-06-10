@@ -21,6 +21,7 @@ __pycache__/
 .orchestrator/provider_capabilities.json
 .orchestrator/state.json
 .orchestrator/supervisor.pid
+.orchestrator/worker-runtime/
 #.orchestrator/task-briefs/
 docs-site/planning-state.json
 docs-site/ai-activity-log.jsonl
@@ -33,6 +34,7 @@ docs-site/orchestrator-state.json
 dashboard-bundle.json
 repo_tree.txt
 archived
+archive/logs/
 *.Zone.Identifier
 *:Zone.Identifier
 .venv-*/

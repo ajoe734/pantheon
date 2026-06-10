@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "task_id": "ASST-KERNEL-003",
+  "archived_at": "2026-05-31T17:12:23Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASST-KERNEL-003",
+    "title": "Implement assistant session and transcript store",
+    "summary_zh": "建立 assistant session/transcript store，保存 mode actor TTL reason context_pack_id provider_run_id source refs 與 SSE transcript。",
+    "phase": "Assistant OpenClaw Gateway Kernel/User Mode",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "ASST-KERNEL-001"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/assistant/transcript_store.py",
+      "services/control-plane/bff/assistant/mode_policy.py",
+      "services/control-plane/bff/assistant/routes.py",
+      "services/control-plane/bff/tests/test_assistant_sessions.py"
+    ],
+    "acceptance": [
+      "sessions carry mode actor roles reason TTL status and audit refs",
+      "transcripts record user assistant context and provider refs",
+      "kernel sessions require reason TTL and capability",
+      "expired or revoked sessions reject new messages",
+      "tests cover create expire revoke and readback"
+    ],
+    "next": "Closeout finalized. Implementation at 42fea5a0 (Claude) and reviewer fix at ddae012d (Codex) merged to dev via PR #681 at b5435505. Verified: pytest tests/test_assistant_sessions.py tests/test_assistant_context_pack.py — 42 passed. HEAD is GitHub merge commit (no LLM-Agent trailers); actual task commits 42fea5a0 and ddae012d carried proper trailers per the commit-msg hook's Merge-subject exemption. Dirty file .orchestrator/task-briefs/asst_kernel_003.md is orchestrator-generated state from Codex approve command, not a deliverable artifact.",
+    "last_update": "2026-05-31T17:12:23Z",
+    "source_documents": [
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/SA_assistant_kernel_user_mode.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/SD_assistant_kernel_user_mode.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md"
+    ],
+    "implementation_track": "assistant-openclaw-gateway-cli-mount",
+    "provider_runtime": "openclaw_gateway_cli_mount",
+    "credential_policy": "dedicated_service_user_oauth_mount",
+    "delivery_layer": "primary",
+    "review_notes_zh": [
+      "審查通過：session/transcript store、kernel mode policy、session routes 與 readback tests 滿足 ASST-KERNEL-003 acceptance。",
+      "Reviewer 補上一個 integration fix：policy violation 經 main._bff_error 時改走 details_extra，避免 422 變 500；已由 PR #681 合併。",
+      "驗證：pytest -q tests/test_assistant_sessions.py tests/test_assistant_context_pack.py 共 42 passed；main-router policy probe 回傳 422 且 field=capabilities。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-31T17:12:23Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/asst-kernel-003",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/ASST-KERNEL-003",
+      "git_clean_required": false,
+      "commit": "b54355051bb71594bd5070fa7698d4195d5179dc",
+      "commit_subject": "Merge pull request #681 from ajoe734/task/ASST-KERNEL-003",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "ASST-KERNEL-003": "implement session and transcript store"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/ASST-KERNEL-003",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "b54355051bb71594bd5070fa7698d4195d5179dc",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASST-KERNEL-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation complete at commit 42fea5a0. Artifacts: transcript_store.py (InMemorySessionStore + InMemoryTranscriptStore + build_session/build_turn helpers), mode_policy.py (validate_session_request, create_session, check_session_active), routes.py (5 new session endpoints under /bff/assistant/sessions), test_assistant_sessions.py (38 tests covering create/expire/revoke/readback). All acceptance criteria met. pytest tests/test_assistant_sessions.py: 38 passed; tests/test_assistant_context_pack.py: 3 passed (no regression).",
+      "status": "done",
+      "created_at": "2026-05-31T16:43:00Z",
+      "resolved_at": "2026-05-31T17:02:05Z"
+    },
+    {
+      "task_id": "ASST-KERNEL-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved after PR #681 merged into dev at b5435505; implementation 42fea5a0 plus reviewer fix ddae012d verified with pytest 42 passed and main-router policy probe 422 field=capabilities. Owner Claude should run closeout done.",
+      "status": "done",
+      "created_at": "2026-05-31T17:02:05Z",
+      "resolved_at": "2026-05-31T17:12:24Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "BFF-B1-007-SEC-FIX",
+  "archived_at": "2026-05-25T13:38:53Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-B1-007-SEC-FIX",
+    "title": "Validate confirm/approval/two-man tokens + remove bearer-in-audit + scope idempotency by caller",
+    "summary_zh": null,
+    "phase": "Sprint BFF-1 / EPIC-BFF-GAP-P0-SEC-FIX",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/test_governance_command_submission.py",
+      "services/control-plane/bff/tests/test_command_replay_conflict.py",
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md"
+    ],
+    "acceptance": [
+      "confirmToken / X-Confirm-Token is validated against a confirm-token store (issued + not redeemed + bound to command+target+caller)",
+      "approvalDecisionId is validated against the governance approval store (exists + not consumed + applies to this command)",
+      "twoManSignatureId is validated (two distinct signer operator_ids + bound to command+target)",
+      "audit_record no longer persists the caller's raw bearer token",
+      "idempotency lookup is scoped by (idempotency_key + operator_id) so cross-user replay is blocked",
+      "new test_bff_b1_007_security_hardening covers each rule above",
+      "existing test_governance_command_submission and test_command_replay_conflict still pass"
+    ],
+    "next": "Owner closeout complete: PR #594 merged into dev; closeout commit 0cedcbb469276479c53cbdaf3562bde7bbaaff15. Verified py_compile OK, focused pytest 33 passed, and GitHub Branch CI Gate checks passed.",
+    "last_update": "2026-05-25T13:38:53Z",
+    "review_notes_zh": [
+      "審查通過：evidence validation（confirm-token / approval-decision / two-man）正確在 command-store write 前驗證 backing records；raw bearer token 不持久化（僅 bool flag）；idempotency 以 operator_id 為 scope，null-byte separator 防碰撞。33 tests pass，py_compile clean，無安全漏洞。"
+    ],
+    "review_file": "support/reviews/BFF-B1-007-SEC-FIX-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-25T13:38:53Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-b1-007-sec-fix",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-B1-007-SEC-FIX",
+      "git_clean_required": false,
+      "commit": "0cedcbb469276479c53cbdaf3562bde7bbaaff15",
+      "commit_subject": "BFF-B1-007-SEC-FIX: record owner closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "owner closeout evidence and task-scoped review-approved dispatch brief for BFF-B1-007-SEC-FIX.",
+        "Not changing": "BFF runtime implementation, command security logic, canonical architecture truth, or Claude review artifact.",
+        "Composes with": "implementation PR #589, review artifact PR #592, and final ai-status done archival after this closeout PR merges.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-B1-007-SEC-FIX",
+        "Reviewer": "Claude",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/command_queue.py services/control-plane/bff/test_governance_command_submission.py services/control-plane/bff/tests/test_command_replay_conflict.py services/control-plane/bff/tests/test_bff_b1_007_security_hardening.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/tests/test_bff_b1_007_security_hardening.py services/control-plane/bff/test_governance_command_submission.py services/control-plane/bff/tests/test_command_replay_conflict.py -q (33 passed); git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-B1-007-SEC-FIX",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "6ae181a7650f397424f37c3aeede07ba7c0f1c9a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-B1-007-SEC-FIX",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implementation complete and merged for review. PR #589 merged into dev at 74e6b0cbe1d31d6768ed56fabe5d0e9250dddbd3; task commit ce76b8e0ffb88033b4e977801aaac186c8f25dcb. Verified: pytest services/control-plane/bff/tests/test_bff_b1_007_security_hardening.py services/control-plane/bff/test_governance_command_submission.py services/control-plane/bff/tests/test_command_replay_conflict.py; python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/command_queue.py services/control-plane/bff/test_governance_command_submission.py services/control-plane/bff/tests/test_command_replay_conflict.py services/control-plane/bff/tests/test_bff_b1_007_security_hardening.py.",
+      "status": "done",
+      "created_at": "2026-05-25T13:12:17Z",
+      "resolved_at": "2026-05-25T13:30:27Z"
+    },
+    {
+      "task_id": "BFF-B1-007-SEC-FIX",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: evidence validation, bearer-token redaction, and operator-scoped idempotency all correctly implemented. 33 tests pass. No security vulnerabilities found. Review artifact: support/reviews/BFF-B1-007-SEC-FIX-review-claude.md",
+      "status": "done",
+      "created_at": "2026-05-25T13:30:27Z",
+      "resolved_at": "2026-05-25T13:38:54Z"
+    }
+  ],
+  "blockers": []
+}

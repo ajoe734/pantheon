@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "BFF-MGMT-DELTA-008",
+  "archived_at": "2026-05-24T15:18:37Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-MGMT-DELTA-008",
+    "title": "GET /bff/management/cost-attribution",
+    "summary_zh": null,
+    "phase": "Sprint BFF-DELTA / EPIC-BFF-DELTA-MGMT-LIVE",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-24_delta/BFF_API_GAP_delta_audit_spec.md;execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md;services/control-plane/bff/main.py;execute-plans/src/lib/bff-v1/management.ts"
+    ],
+    "acceptance": [
+      "Path registered; cost breakdown LLM data runtime by persona and strategy;Anonymous 401 authenticated 200; envelope canonical; CORS preflight 204;pytest case cost_attribution"
+    ],
+    "next": "Owner closeout complete: PR #546 merged into dev at 2026-05-24T15:18:05Z. 22 focused tests pass. Review approved by Claude at 27679b92. Conflicts resolved during rebase (additive: CostAttribution + LoopThroughput types coexist). Implementation complete.",
+    "last_update": "2026-05-24T15:18:37Z",
+    "review_notes_zh": [
+      "審查通過：GET /bff/management/cost-attribution 實作完整，cost components 計算正確，TS 型別/path/fetch 與 BFF 模式一致，3 個 pytest 案例全數通過，audit spec 已更新，無回歸。Index 中有前一個 worker 遺留的 staged deletions，屬 pre-existing 問題，不影響本次交付。"
+    ],
+    "review_file": "support/reviews/BFF-MGMT-DELTA-008-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-24T15:18:37Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-mgmt-delta-008",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-MGMT-DELTA-008",
+      "git_clean_required": false,
+      "commit": "326d79221d270f2fab84b2a05887e48b24510e4a",
+      "commit_subject": "BFF-MGMT-DELTA-008: closeout — add review artifact and task brief",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "support/reviews/, .orchestrator/task-briefs/",
+        "Not changing": "backend route, TS client, test files, audit docs",
+        "Composes with": "PR into dev via task_finalize.sh",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "BFF-MGMT-DELTA-008",
+        "Reviewer": "Claude",
+        "Verified": "pytest -q test_bff_management_delta_routes.py test_execute_plans_final_live_wiring_contract.py → 22 passed"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-MGMT-DELTA-008",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "e45284d720c8a528b9fcdc2d24cb5562e6cc1aa7",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-MGMT-DELTA-008",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Chair reassigned owner from Codex to Claude2: Codex saturated: 5 owned todos + 1 in_progress (DELTA-009) queued. Claude2 has zero dispatchable owned-todos (only LIVE-SCALE-001-V2 which is non_dispatchable human_gate), auth_ready=true, last successful execution at 14:17:56Z (BFF-PM12-DELTA-007 review), capability lane (execution, control-plane) matches BFF implementation work. Reviewer is Claude — no owner==reviewer conflict. Task is todo, no deps, no pin_owner.. Task returned to todo for a fresh run.",
+      "status": "done",
+      "created_at": "2026-05-24T14:30:02Z",
+      "resolved_at": "2026-05-24T14:35:24Z"
+    },
+    {
+      "task_id": "BFF-MGMT-DELTA-008",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Implementation complete at commit 27679b92. GET /bff/management/cost-attribution implemented: backend route + helper functions in main.py, ManagementCostAttribution* TS types + path + fetch helpers in management.ts and paths.ts, 3 focused pytest cases in test_bff_management_delta_routes.py, route added to contract and live-probe test sets, audit spec updated. Verified: pytest -q 84 passed.",
+      "status": "done",
+      "created_at": "2026-05-24T14:47:51Z",
+      "resolved_at": "2026-05-24T14:57:39Z"
+    },
+    {
+      "task_id": "BFF-MGMT-DELTA-008",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Review approved: implementation complete and correct. 22 focused tests pass. Returning to Claude2 for closeout.",
+      "status": "done",
+      "created_at": "2026-05-24T14:57:39Z",
+      "resolved_at": "2026-05-24T15:18:38Z"
+    }
+  ],
+  "blockers": []
+}

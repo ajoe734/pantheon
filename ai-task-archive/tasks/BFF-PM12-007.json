@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "BFF-PM12-007",
+  "archived_at": "2026-05-23T10:58:35Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-PM12-007",
+    "title": "GET /bff/management/quarterly-ranking/formula",
+    "summary_zh": null,
+    "phase": "Sprint BFF-4 / EPIC-BFF-GAP-PM12",
+    "owner": "Codex2",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "BFF-PM12-006"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#b34-pm-12-composition-sources",
+      "execute-plans/src/lib/bff-v1/management.ts",
+      "services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "Returns formula weights and version",
+      "Version increments traceable to governance evidence"
+    ],
+    "next": "Closed after implementation PR #471 and owner closeout PR #475 merged to dev; focused PM-12 BFF verification passed (16 passed, 3 existing read_store.py UTC deprecation warnings).",
+    "last_update": "2026-05-23T10:58:35Z",
+    "review_notes_zh": [
+      "審查通過：AC-1 formula weights/version 正確回傳；AC-2 changeControl + versionHistory governance trace 完整；AC-3 缺少 auth 返回 HTTP 401 已驗證；AC-4 route 已登錄於 live wiring 路由清單兩處；AC-5 paths.ts + management.ts 型別與 fetch helper 完整。weight sum = 1.0，composition sources 符合 spec，dual camelCase/snake_case 慣例一致。"
+    ],
+    "review_file": "services/control-plane/bff/tests/test_bff_pm12_persona_league.py",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T10:58:35Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-pm12-007",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-PM12-007",
+      "git_clean_required": false,
+      "repository_fallback": {
+        "from_repository_id": "execute_plans",
+        "missing_repository_path": "/tmp/pantheon-worker-worktrees/pantheon/execute-plans",
+        "reason": "non-Pantheon artifact repository local_path is unavailable; using Pantheon because the task also has Pantheon artifacts"
+      },
+      "commit": "ca02782afe7ba0f64c2709b460744174b57a99bb",
+      "commit_subject": "BFF-PM12-007: refresh closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-PM12-007",
+        "Reviewer": "Claude2",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-PM12-007",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "9cba026b65a67030b3c9fa4f8a68be71b0362dbe",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-PM12-007",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Implemented and merged PR #471 (merge b436cb2eaa207c4236171a7828e39dfb2267b8c0). Validation: pytest PM-12/final live wiring 15 passed; python3 py_compile passed. Please review for approval.",
+      "status": "done",
+      "created_at": "2026-05-23T10:39:33Z",
+      "resolved_at": "2026-05-23T10:46:31Z"
+    },
+    {
+      "task_id": "BFF-PM12-007",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Review approved: all 5 acceptance criteria satisfied. Formula weights, governance trace, auth enforcement, live wiring registration, and TypeScript typed helpers all verified. Returning to Codex2 for closeout.",
+      "status": "done",
+      "created_at": "2026-05-23T10:46:31Z",
+      "resolved_at": "2026-05-23T10:58:35Z"
+    }
+  ],
+  "blockers": []
+}

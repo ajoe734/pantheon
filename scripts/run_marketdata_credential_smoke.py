@@ -35,6 +35,7 @@ PROVIDERS = (
     "twse",
     "tpex",
     "mops",
+    "finmind",
     "tej",
     "coingecko",
     "kraken",
@@ -86,6 +87,15 @@ class ProviderSpec:
     order_capable: bool = False
 
 
+@dataclass(frozen=True)
+class ProbeRequest:
+    method: str
+    url: str | None
+    headers: dict[str, str]
+    body_json: dict[str, Any] | None
+    secret_values: list[str]
+
+
 SPECS = {
     "massive_polygon": ProviderSpec(
         key="massive_polygon",
@@ -123,6 +133,14 @@ SPECS = {
         market="TW",
         credential_envs=("TEJ_API_KEY",),
         secret_ref_envs=("TEJ_API_KEY_SECRET_NAME", "TEJ_SECRET_REF"),
+    ),
+    "finmind": ProviderSpec(
+        key="finmind",
+        display_name="FinMind",
+        source_class="research_grade",
+        market="TW",
+        credential_envs=("FINMIND_API_TOKEN", "FINMIND_API_KEY"),
+        secret_ref_envs=("FINMIND_API_TOKEN_SECRET_NAME", "FINMIND_SECRET_REF"),
     ),
     "coingecko": ProviderSpec(
         key="coingecko",
@@ -277,14 +295,20 @@ def session_provenance_evidence(
     }
 
 
-def http_json_read(
+def http_json_request(
     url: str,
     *,
+    method: str = "GET",
     headers: dict[str, str] | None = None,
+    body_json: dict[str, Any] | None = None,
     timeout_seconds: int = 15,
     max_bytes: int = 512_000,
 ) -> dict[str, Any]:
-    request = Request(url, headers=headers or {})
+    body = json.dumps(body_json).encode("utf-8") if body_json is not None else None
+    request_headers = dict(headers or {})
+    if body is not None:
+        request_headers.setdefault("Content-Type", "application/json")
+    request = Request(url, data=body, headers=request_headers, method=method.upper())
     started_at = iso_now()
     with urlopen(request, timeout=timeout_seconds) as response:
         body = response.read(max_bytes + 1)
@@ -309,7 +333,7 @@ def http_json_read(
             "rate_limit": rate_limit_evidence(response.headers),
             "session_provenance": session_provenance_evidence(
                 status="observed",
-                session_type="stateless_http_get",
+                session_type=f"stateless_http_{method.lower()}",
                 generated_at=started_at,
                 details={
                     "completed_at": iso_now(),
@@ -318,6 +342,16 @@ def http_json_read(
                 },
             ),
         }
+
+
+def http_json_read(
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    timeout_seconds: int = 15,
+    max_bytes: int = 512_000,
+) -> dict[str, Any]:
+    return http_json_request(url, headers=headers, timeout_seconds=timeout_seconds, max_bytes=max_bytes)
 
 
 def record_count_hint(parsed: Any) -> int | None:
@@ -347,33 +381,72 @@ def unavailable_status(reason: str, *, public_reference: bool = False) -> dict[s
     }
 
 
-def build_probe_request(provider: str, env_map: dict[str, str], credential: str | None) -> tuple[str | None, dict[str, str], list[str]]:
+def build_probe_request(provider: str, env_map: dict[str, str], credential: str | None) -> ProbeRequest:
     if provider == "massive_polygon":
         symbol = optional(env_map, "POLYGON_SMOKE_SYMBOL", "AAPL")
         date = optional(env_map, "POLYGON_SMOKE_DATE", "2024-01-02")
         base_url = optional(env_map, "POLYGON_BASE_URL", optional(env_map, "MASSIVE_BASE_URL", "https://api.polygon.io"))
         query = urlencode({"adjusted": "true", "sort": "asc", "limit": "1", "apiKey": credential or ""})
-        return f"{base_url.rstrip('/')}/v2/aggs/ticker/{symbol}/range/1/day/{date}/{date}?{query}", {}, [credential or ""]
+        return ProbeRequest("GET", f"{base_url.rstrip('/')}/v2/aggs/ticker/{symbol}/range/1/day/{date}/{date}?{query}", {}, None, [credential or ""])
     if provider == "twse":
-        return optional(env_map, "TWSE_SMOKE_URL", "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_AVG_ALL"), {}, []
+        return ProbeRequest("GET", optional(env_map, "TWSE_SMOKE_URL", "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_AVG_ALL"), {}, None, [])
     if provider == "tpex":
-        return optional(env_map, "TPEX_SMOKE_URL", "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes"), {}, []
+        return ProbeRequest("GET", optional(env_map, "TPEX_SMOKE_URL", "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes"), {}, None, [])
     if provider == "mops":
-        return optional(env_map, "MOPS_SMOKE_URL"), {}, []
+        base_url = optional(env_map, "MOPS_BASE_URL", "https://mops.twse.com.tw/mops/api")
+        endpoint = optional(env_map, "MOPS_SMOKE_ENDPOINT", "home_page/t05sr01_1").strip("/")
+        url = optional(env_map, "MOPS_SMOKE_URL", f"{base_url.rstrip('/')}/{endpoint}")
+        return ProbeRequest(
+            "POST",
+            url,
+            {
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "Origin": "https://mops.twse.com.tw",
+                "Referer": "https://mops.twse.com.tw/mops/",
+                "User-Agent": "pantheon-marketdata-smoke/0.1",
+            },
+            {
+                "count": int(optional(env_map, "MOPS_SMOKE_COUNT", "8")),
+                "marketKind": optional(env_map, "MOPS_SMOKE_MARKET_KIND", ""),
+            },
+            [],
+        )
     if provider == "tej":
         base_url = optional(env_map, "TEJ_BASE_URL", "https://api.tej.com.tw")
-        dataset = optional(env_map, "TEJ_DATASET_CODE", "TWN/APRCD1")
-        query = urlencode({"api_key": credential or "", "coid": optional(env_map, "TEJ_SMOKE_SYMBOL", "2330"), "opts": "columns"})
-        return f"{base_url.rstrip('/')}/api/datatables/{dataset}.json?{query}", {}, [credential or ""]
+        dataset = optional(env_map, "TEJ_DATASET_CODE", "TRAIL/TAPRCD")
+        query = urlencode(
+            {
+                "api_key": credential or "",
+                "coid": optional(env_map, "TEJ_SMOKE_SYMBOL", "2330"),
+                "opts.columns": optional(env_map, "TEJ_SMOKE_COLUMNS", "coid,mdate,close_d"),
+                "opts.per_page": optional(env_map, "TEJ_SMOKE_PER_PAGE", "1"),
+                "opts.sort": optional(env_map, "TEJ_SMOKE_SORT", "mdate.desc"),
+            }
+        )
+        return ProbeRequest("GET", f"{base_url.rstrip('/')}/api/datatables/{dataset}.json?{query}", {}, None, [credential or ""])
+    if provider == "finmind":
+        base_url = optional(env_map, "FINMIND_BASE_URL", "https://api.finmindtrade.com/api/v4")
+        dataset = optional(env_map, "FINMIND_SMOKE_DATASET", "TaiwanStockPrice")
+        query = urlencode(
+            {
+                "dataset": dataset,
+                "data_id": optional(env_map, "FINMIND_SMOKE_SYMBOL", "2330"),
+                "start_date": optional(env_map, "FINMIND_SMOKE_START_DATE", "2026-06-01"),
+                "end_date": optional(env_map, "FINMIND_SMOKE_END_DATE", "2026-06-08"),
+                "token": credential or "",
+            }
+        )
+        return ProbeRequest("GET", f"{base_url.rstrip('/')}/data?{query}", {}, None, [credential or ""])
     if provider == "coingecko":
         base_url = optional(env_map, "COINGECKO_BASE_URL", "https://api.coingecko.com/api/v3")
         headers = {"x-cg-demo-api-key": credential} if credential else {}
-        return f"{base_url.rstrip('/')}/simple/price?ids=bitcoin&vs_currencies=usd", headers, [credential or ""]
+        return ProbeRequest("GET", f"{base_url.rstrip('/')}/simple/price?ids=bitcoin&vs_currencies=usd", headers, None, [credential or ""])
     if provider == "kraken":
         base_url = optional(env_map, "KRAKEN_BASE_URL", "https://api.kraken.com")
         pair = optional(env_map, "KRAKEN_PUBLIC_PAIR", "XBTUSD")
-        return f"{base_url.rstrip('/')}/0/public/Ticker?{urlencode({'pair': pair})}", {}, []
-    return None, {}, []
+        return ProbeRequest("GET", f"{base_url.rstrip('/')}/0/public/Ticker?{urlencode({'pair': pair})}", {}, None, [])
+    return ProbeRequest("GET", None, {}, None, [])
 
 
 def build_read_intent(provider: str, env_map: dict[str, str]) -> dict[str, Any] | None:
@@ -476,13 +549,15 @@ def run_provider(provider: str, env_map: dict[str, str], *, allow_network: bool)
             packet.update(unavailable_status(f"{evidence_path_key} was not provided for read-only quote readback"))
         return packet
 
-    url, headers, secret_values = build_probe_request(provider, env_map, credential_value)
+    probe = build_probe_request(provider, env_map, credential_value)
     packet["request"] = {
-        "method": "GET",
-        "url": redact_url(url or "", secret_values) if url else None,
-        "headers_present": sorted(headers.keys()),
+        "method": probe.method,
+        "url": redact_url(probe.url or "", probe.secret_values) if probe.url else None,
+        "headers_present": sorted(probe.headers.keys()),
+        "body_present": probe.body_json is not None,
+        "body_keys": sorted(probe.body_json.keys()) if probe.body_json else [],
     }
-    if not url:
+    if not probe.url:
         packet.update(unavailable_status("provider smoke URL is not configured", public_reference=spec.public_reference))
         return packet
     if spec.credential_envs and not credential["credential_present"] and not spec.public_reference:
@@ -509,9 +584,9 @@ def run_provider(provider: str, env_map: dict[str, str], *, allow_network: bool)
         return packet
 
     try:
-        readback = http_json_read(url, headers=headers)
+        readback = http_json_request(probe.url, method=probe.method, headers=probe.headers, body_json=probe.body_json)
         packet.update(readback)
-        packet["request"]["url"] = redact_url(url, secret_values)
+        packet["request"]["url"] = redact_url(probe.url, probe.secret_values)
     except HTTPError as exc:
         packet.update(
             {

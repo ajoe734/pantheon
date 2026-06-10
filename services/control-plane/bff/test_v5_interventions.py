@@ -7,6 +7,7 @@ Acceptance criteria:
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -25,6 +26,7 @@ from models import (
     InterventionStatus,
     ObjectType,
 )
+from read_store import ReadSurfaceStore
 
 
 OPERATOR_TOKEN = "Bearer op-v5:operator"
@@ -128,6 +130,48 @@ def test_get_v5_interventions_filters_by_status() -> None:
         body = response.json()
         assert body["count"] == 1
         assert body["items"][0]["intervention_id"] == "intv-v5-002"
+
+
+def test_get_v5_interventions_reads_service_backed_store() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        intervention_path = os.path.join(td, "v5_interventions.json")
+        with open(intervention_path, "w", encoding="utf-8") as handle:
+            json.dump(
+                {
+                    "intv-store-001": {
+                        "intervention_id": "intv-store-001",
+                        "kind": "hiq_sentinel",
+                        "status": "pending",
+                        "target_type": "Runtime",
+                        "target_id": "rt-store-001",
+                        "triggered_at": "2026-06-03T08:00:00Z",
+                    }
+                },
+                handle,
+            )
+        original_env = os.environ.get("PANTHEON_BFF_V5_INTERVENTION_STORE")
+        original_read_store = bff_main.read_store
+        os.environ["PANTHEON_BFF_V5_INTERVENTION_STORE"] = intervention_path
+        bff_main.read_store = ReadSurfaceStore(
+            os.path.join(td, "read_surfaces.json"),
+            allow_local_snapshot_fallback=False,
+        )
+        try:
+            with _isolated_client() as client:
+                response = client.get(
+                    "/bff/v5/interventions",
+                    headers={"Authorization": OPERATOR_TOKEN},
+                )
+                assert response.status_code == 200, response.text
+                body = response.json()
+                assert body["count"] == 1
+                assert body["items"][0]["intervention_id"] == "intv-store-001"
+        finally:
+            bff_main.read_store = original_read_store
+            if original_env is None:
+                os.environ.pop("PANTHEON_BFF_V5_INTERVENTION_STORE", None)
+            else:
+                os.environ["PANTHEON_BFF_V5_INTERVENTION_STORE"] = original_env
 
 
 def test_get_v5_interventions_requires_auth() -> None:
@@ -272,6 +316,99 @@ def test_bff_v1_commands_remediate_sentinel_missing_two_man_returns_409() -> Non
         assert "TWO_MAN_SIGNATURE_MISSING" in str(detail)
 
 
+def test_decide_v5_intervention_records_dedicated_command_and_trace() -> None:
+    """POST /bff/v5/interventions/{id}/decide routes through final command admission."""
+    idem_key = "v5-decide-final-admission-001"
+    with _isolated_client() as client:
+        response = client.post(
+            "/bff/v5/interventions/intv-v5-decide-001/decide",
+            headers={
+                "Authorization": OPERATOR_TOKEN,
+                "Idempotency-Key": idem_key,
+                "X-Trace-Id": "trace-v5-decide-001",
+                "X-Correlation-Id": "corr-v5-decide-001",
+                "X-Request-Id": "req-v5-decide-001",
+            },
+            json={"decision": "defer", "memo": "Need another observation window"},
+        )
+        assert response.status_code == 202, response.text
+        body = response.json()
+        assert body["data"]["command"] == "DecideV5Intervention"
+        assert body["data"]["commandId"]
+        assert body["meta"]["durable"] is True
+        assert body["meta"]["liveCapitalSideEffects"] is False
+        assert body["meta"]["idempotency"]["key"] == idem_key
+
+        stored = bff_main.command_store.get_command_by_idempotency_key(idem_key)
+        assert stored is not None
+        assert stored["type"] == "DecideV5Intervention"
+        assert stored["target"]["type"] == ObjectType.SENTINEL_INTERVENTION.value
+        assert stored["target"]["id"] == "intv-v5-decide-001"
+        params = stored["params"]
+        assert params["intervention_id"] == "intv-v5-decide-001"
+        assert params["interventionId"] == "intv-v5-decide-001"
+        assert params["decision"] == "defer"
+        assert params["audit_event"] == "intervention.defer"
+
+        audit = stored["audit"]
+        assert audit["action_id"] == "decide"
+        assert audit["audit_event"] == "intervention.defer"
+        foundation = stored["foundation"]
+        assert foundation["admission_route"] == "POST /bff/v5/interventions/{id}/decide"
+        trace = foundation["trace_context"]
+        assert trace["trace_id"] == "trace-v5-decide-001"
+        assert trace["correlation_id"] == "corr-v5-decide-001"
+        assert trace["request_id"] == "req-v5-decide-001"
+        assert trace["idempotency_key"] == idem_key
+
+
+def test_decide_v5_intervention_replays_same_idempotency_key() -> None:
+    idem_key = "v5-decide-replay-001"
+    with _isolated_client() as client:
+        first = client.post(
+            "/bff/v5/interventions/intv-v5-decide-replay/decide",
+            headers={"Authorization": OPERATOR_TOKEN, "Idempotency-Key": idem_key},
+            json={"decision": "dismiss", "reason": "Resolved by observation"},
+        )
+        second = client.post(
+            "/bff/v5/interventions/intv-v5-decide-replay/decide",
+            headers={"Authorization": OPERATOR_TOKEN, "Idempotency-Key": idem_key},
+            json={"decision": "dismiss", "reason": "Resolved by observation"},
+        )
+        assert first.status_code == 202, first.text
+        assert second.status_code == 202, second.text
+        assert second.json()["data"]["commandId"] == first.json()["data"]["commandId"]
+        assert second.json()["meta"]["idempotency"]["replayed"] is True
+        assert len(bff_main.command_store._get_all_commands()) == 1
+
+
+def test_decide_v5_intervention_invalid_decision_returns_422_without_store() -> None:
+    with _isolated_client() as client:
+        response = client.post(
+            "/bff/v5/interventions/intv-v5-decide-invalid/decide",
+            headers={"Authorization": OPERATOR_TOKEN, "Idempotency-Key": "v5-decide-invalid-001"},
+            json={"decision": "not-a-decision"},
+        )
+        assert response.status_code == 422, response.text
+        error = response.json()["detail"]["error"]
+        assert error["code"] == "INVALID_PARAMS"
+        assert error["details"]["precondition_failed"] == "decision"
+        assert bff_main.command_store._get_all_commands() == []
+
+
+def test_decide_v5_intervention_body_idempotency_key_rejected_before_store() -> None:
+    with _isolated_client() as client:
+        response = client.post(
+            "/bff/v5/interventions/intv-v5-decide-body-idem/decide",
+            headers={"Authorization": OPERATOR_TOKEN, "Idempotency-Key": "v5-decide-body-idem-001"},
+            json={"decision": "defer", "idempotencyKey": "body-key-not-allowed"},
+        )
+        assert response.status_code in {400, 422}, response.text
+        error = response.json()["detail"]["error"]
+        assert error["code"] == "INVALID_REQUEST"
+        assert bff_main.command_store._get_all_commands() == []
+
+
 # --------------------------------------------------------------------------- #
 # 4. v5 interventions route in SSE resync metadata
 # --------------------------------------------------------------------------- #
@@ -300,6 +437,16 @@ def test_remediate_sentinel_intervention_in_action_catalog() -> None:
     assert entry.requires_approval is True, "RemediateSentinelIntervention must require approval"
     assert entry.requires_confirm_token is True, "RemediateSentinelIntervention must require confirm token"
     assert entry.risk_level.value == "critical"
+
+
+def test_decide_v5_intervention_in_action_catalog() -> None:
+    from action_catalog import get_catalog_entry
+    entry = get_catalog_entry("DecideV5Intervention")
+    assert entry is not None, "DecideV5Intervention missing from action catalog"
+    assert entry.endpoint == "/bff/v5/interventions/{intervention_id}/decide"
+    assert entry.required_roles == ["operator", "approver"]
+    assert entry.requires_confirm_token is False
+    assert entry.idempotency_required is True
 
 
 # --------------------------------------------------------------------------- #
@@ -331,6 +478,11 @@ def test_remediate_sentinel_intervention_command_type_present() -> None:
     """CommandType must include RemediateSentinelIntervention."""
     from models import CommandType
     assert CommandType.REMEDIATE_SENTINEL_INTERVENTION.value == "RemediateSentinelIntervention"
+
+
+def test_decide_v5_intervention_command_type_present() -> None:
+    from models import CommandType
+    assert CommandType.DECIDE_V5_INTERVENTION.value == "DecideV5Intervention"
 
 
 # --------------------------------------------------------------------------- #

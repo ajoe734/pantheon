@@ -353,6 +353,52 @@ class TestTaiwanMarketClient(unittest.TestCase):
         self.assertEqual(normalized.filing_code, "monthly_revenue")
         self.assertEqual(normalized.governance_metadata["source_key"], "mops")
 
+    def test_mops_route_inventory_covers_recommended_official_sources(self):
+        inventory = self.client.mops_route_inventory(
+            index_js_text='__vite__mapDeps.viteFileDeps = ["assets/t05st02.js","assets/t05st03.js","assets/custom_new.js"]'
+        )
+        by_id = {route.route_id: route for route in inventory}
+
+        for route_id in ("t05st02", "t05st03", "t163sb01", "t05st10_ifrs", "stapap1", "query6_1"):
+            self.assertIn(route_id, by_id)
+        self.assertEqual(by_id["t05st03"].source_type, "market")
+        self.assertEqual(by_id["t163sb01"].category, "financials")
+        self.assertEqual(by_id["custom_new"].category, "discovered_from_spa_bundle")
+        self.assertFalse(by_id["custom_new"].allow_fetch)
+
+    def test_mops_payload_rows_and_disclosures_normalize_homepage_table(self):
+        payload = {
+            "code": 200,
+            "message": "查詢成功",
+            "result": {
+                "titles": [{"main": "發言日期"}, {"main": "發言時間"}, {"main": "公司代號"}, {"main": "公司名稱"}, {"main": "主旨"}],
+                "data": [["115/06/08", "14:07:19", "2428", "興勤", "本公司115年05月份自結合併營業收入公告"]],
+            },
+            "datetime": "115/06/08 23:11:35",
+        }
+
+        rows = self.client.mops_result_rows(payload)
+        self.assertEqual(rows[0]["公司代號"], "2428")
+        disclosures = self.client.normalize_mops_disclosures_from_payload("t05st02", payload)
+        self.assertEqual(disclosures[0].symbol, "2428")
+        self.assertEqual(disclosures[0].filing_code, "t05st02")
+        self.assertEqual(disclosures[0].source_metadata["route_title_zh"], "當日重大訊息")
+
+    def test_tej_trial_table_inventory_maps_research_categories(self):
+        payload = {
+            "tables": [
+                {"tableName": "AIND", "cName": "上市(櫃)基本資料", "groupName": "公司營運面資料", "dataRange": "近五年"},
+                {"tableName": "TATINST1", "cName": "三大法人買賣超", "groupName": "公司交易面資料", "dataRange": "近五年"},
+                {"tableName": "TAIM1A", "cName": "IFRS以合併為主簡表(累計)-全產業", "groupName": "公司財務資料"},
+            ]
+        }
+
+        specs = self.client.tej_trial_table_inventory_from_payload(payload)
+        by_code = {spec.table_code: spec for spec in specs}
+        self.assertEqual(by_code["AIND"].dataset_code, "TRAIL/AIND")
+        self.assertEqual(by_code["TATINST1"].source_category, "institutional_flow")
+        self.assertEqual(by_code["TAIM1A"].source_category, "financials")
+
     def test_tej_dataset_normalization_keeps_vendor_boundary(self):
         normalized = self.client.normalize_tej_dataset(
             {

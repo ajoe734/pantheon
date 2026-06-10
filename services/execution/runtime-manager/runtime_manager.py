@@ -47,6 +47,9 @@ from typing import Any, Dict, List, Optional
 # ---------------------------------------------------------------------------
 
 _HERE = Path(__file__).parent
+_REPO_ROOT = _HERE.parents[2]
+if str(_REPO_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_REPO_ROOT))
 
 
 def _load_sibling(name: str) -> Any:
@@ -61,6 +64,14 @@ def _load_sibling(name: str) -> Any:
 
 _rb_mod = _load_sibling("runtime_binding")
 _ks_mod = _load_sibling("kill_switch_controller")
+
+from services.capital.risk_policy import (  # noqa: E402
+    RiskPolicyEvaluation,
+    RiskPolicyEvaluationContext,
+    RiskPolicyEvaluator,
+    RiskPolicyTargetType,
+    risk_policy_rejection_message,
+)
 
 RuntimeBinding = _rb_mod.RuntimeBinding
 RuntimeBindingError = _rb_mod.RuntimeBindingError
@@ -153,6 +164,9 @@ class DeployRuntimeRequest:
     binding_id: Optional[str] = None
     promotion_gate: Optional[PromotionGateEvidence] = None
     single_runtime_enforced: bool = True
+    risk_policy: Optional[Any] = None
+    risk_policy_ref: Optional[str] = None
+    risk_policy_evaluation: Optional[Dict[str, Any]] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -335,6 +349,75 @@ def _validate_promotion_gate(mode: str, gate: Optional[PromotionGateEvidence]) -
                 )
 
 
+def _validate_upstream_risk_policy_evaluation(payload: Any, *, error_prefix: str) -> Optional[Dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return None
+    evaluation = RiskPolicyEvaluation.from_mapping(payload)
+    if evaluation.rejected:
+        raise RuntimeManagerError(risk_policy_rejection_message(error_prefix, evaluation))
+    return evaluation.to_dict()
+
+
+def _risk_policy_context_from_deploy_request(
+    request: DeployRuntimeRequest,
+    *,
+    metadata: Dict[str, Any],
+) -> RiskPolicyEvaluationContext:
+    raw_context = metadata.get("risk_policy_context")
+    policy_context = dict(raw_context) if isinstance(raw_context, dict) else {}
+    gate = request.promotion_gate.to_dict() if request.promotion_gate else {}
+    return RiskPolicyEvaluationContext.from_mapping(
+        {
+            **policy_context,
+            "target_type": RiskPolicyTargetType.RUNTIME_LAUNCH.value,
+            "target_id": policy_context.get("target_id") or request.binding_id or request.runtime_id,
+            "capital_pool_id": request.capital_pool_id,
+            "stage": request.deployment_mode,
+            "risk_policy_ref": request.risk_policy_ref or metadata.get("risk_policy_ref") or policy_context.get("risk_policy_ref"),
+            "capital_scale_pct": policy_context.get("capital_scale_pct", gate.get("capital_scale_pct")),
+            "gross_scale_pct": policy_context.get("gross_scale_pct", gate.get("gross_scale_pct")),
+            "runtime_action": metadata.get("runtime_action"),
+            "target_weights": policy_context.get("target_weights") or metadata.get("target_weights") or {},
+            "asset_classes": policy_context.get("asset_classes") or metadata.get("asset_classes") or [],
+            "strategy_family": policy_context.get("strategy_family") or metadata.get("strategy_family"),
+            "gross_exposure": policy_context.get("gross_exposure") or metadata.get("gross_exposure"),
+            "net_exposure": policy_context.get("net_exposure") or metadata.get("net_exposure"),
+            "leverage": policy_context.get("leverage") or metadata.get("leverage"),
+            "turnover": policy_context.get("turnover") or metadata.get("turnover"),
+            "sector_exposures": policy_context.get("sector_exposures") or metadata.get("sector_exposures") or {},
+            "factor_exposures": policy_context.get("factor_exposures") or metadata.get("factor_exposures") or {},
+            "liquidity": policy_context.get("liquidity") or metadata.get("liquidity") or {},
+            "order_type": policy_context.get("order_type") or metadata.get("order_type"),
+            "time_in_force": policy_context.get("time_in_force") or metadata.get("time_in_force"),
+            "drawdown_pct": policy_context.get("drawdown_pct") or metadata.get("drawdown_pct"),
+            "kill_switch_trigger": policy_context.get("kill_switch_trigger") or metadata.get("kill_switch_trigger"),
+            "metadata": {**metadata, **policy_context},
+            "trace_id": policy_context.get("trace_id") or metadata.get("trace_id"),
+        }
+    )
+
+
+def _evaluate_risk_policy_for_deploy(request: DeployRuntimeRequest, metadata: Dict[str, Any]) -> None:
+    upstream = request.risk_policy_evaluation or metadata.get("risk_policy_evaluation")
+    upstream_payload = _validate_upstream_risk_policy_evaluation(
+        upstream,
+        error_prefix="Runtime launch blocked",
+    )
+    if upstream_payload is not None:
+        metadata.setdefault("risk_policy_evaluation", upstream_payload)
+
+    risk_policy = request.risk_policy or metadata.get("risk_policy")
+    if risk_policy is None:
+        return
+    evaluation = RiskPolicyEvaluator().evaluate(
+        risk_policy,
+        _risk_policy_context_from_deploy_request(request, metadata=metadata),
+    )
+    metadata["risk_policy_evaluation"] = evaluation.to_dict()
+    if evaluation.rejected:
+        raise RuntimeManagerError(risk_policy_rejection_message("Runtime launch blocked", evaluation))
+
+
 # ---------------------------------------------------------------------------
 # RuntimeManager
 # ---------------------------------------------------------------------------
@@ -420,6 +503,9 @@ class RuntimeManager:
                 "a PersonaCapitalBinding reference is needed for governance admissibility proof"
             )
 
+        metadata = dict(request.metadata)
+        _evaluate_risk_policy_for_deploy(request, metadata)
+
         binding_id = request.binding_id or _new_binding_id()
         binding = RuntimeBinding(
             binding_id=binding_id,
@@ -432,7 +518,7 @@ class RuntimeManager:
             status=RuntimeBindingStatus.ACTIVE.value,
             plan_id=request.plan_id,
             persona_capital_binding_id=request.persona_capital_binding_id,
-            metadata=dict(request.metadata),
+            metadata=metadata,
         )
 
         created = self._store.create(

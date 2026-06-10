@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "task_id": "ASST-SEC-002",
+  "archived_at": "2026-06-09T00:58:50Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "ASST-SEC-002",
+    "title": "Add focused security regression for control mode and runtime repair",
+    "summary_zh": "補 user-mode、control-mode、暗語 redaction、command broker denylist、runtime repair audit 的安全回歸。",
+    "phase": "Sprint ASST-SEC / Security regression",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "ASST-CTRL-002",
+      "ASST-CTRL-003",
+      "ASST-RUNTIME-002"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/CONTROL_MODE_REPAIR_EXECUTION_TASKS_2026-06-06.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/USER_MODE_CONTRACTION.md;docs/04/pantheon_assistant_kernel_user_2026-05-31/ASST_KERNEL_007_REPAIR_WORKFLOW.md;services/control-plane/bff/tests/test_assistant_security.py;services/control-plane/bff/assistant/tests/test_user_mode_regression.py;services/openclaw-gateway-adapter/tests;services/control-plane/bff/tests/test_management_nl_assistant_provider.py"
+    ],
+    "acceptance": [
+      "user mode cannot access shell repo write raw logs docker secret store provider sessions or command broker;control mode fails closed for disabled kernel env missing/bad passphrase no MFA no activation capability and invalid TTL;explicit and direct passphrase attempts never persist raw passphrase text;command broker denies env token cookie key paths docker socket root shell destructive git and direct production DB writes;runtime repair commands require high-risk confirmation and audit receipts;prompt injection cannot expand the tool allowlist"
+    ],
+    "next": "Superseded by OPS-STATE-CLOSEOUT-CLEANUP-20260609 delivery plus existing ASST-INTEG-009/ASST-SEC-001 regression coverage: runtime repair actions now require high-risk confirmation/idempotency, stale-session termination fails closed without evidence, audit receipts are returned, and focused command/catalog tests cover the runtime repair guardrails.",
+    "last_update": "2026-06-09T00:58:50Z",
+    "task_class": "assistant_control_runtime_repair",
+    "auto_created_by": "dispatch_assistant_control_mode_repair_2026-06-06",
+    "auto_generated": true,
+    "terminal_outcome": "superseded",
+    "superseded_by": "OPS-STATE-CLOSEOUT-CLEANUP-20260609"
+  },
+  "handoffs": [],
+  "blockers": []
+}

@@ -48,6 +48,15 @@ def test_bff_reads_source_connector_registry_through_service_client() -> None:
                 "schema_version": "source_crawler_indexer_policy_registry.v1",
                 "summary": {"connector_policy_count": 1},
             },
+            "financial_data_source_catalog": {
+                "schema_version": "financial_data_source_catalog.v1",
+                "summary": {"data_source_count": 6, "config_template_count": 9},
+                "entries": [{"data_source_id": "ds-finmind-tw-data", "source_kind": "data_source"}],
+            },
+            "active_universe_policy": {
+                "schema_version": "active_universe_scheduling_policy.v1",
+                "summary": {"rule_count": 9},
+            },
         }
 
     with tempfile.TemporaryDirectory() as td:
@@ -65,3 +74,5 @@ def test_bff_reads_source_connector_registry_through_service_client() -> None:
     assert registry["connectors"][0]["policy"]["auth"]["secret_ref"]["secret_ref_id"] == "env://OPENALEX_API_KEY"
     assert registry["provider_examples"][0]["fetch_policy"]["mode"] == "external_feed"
     assert registry["policy_registry"]["schema_version"] == "source_crawler_indexer_policy_registry.v1"
+    assert registry["financial_data_source_catalog"]["summary"]["data_source_count"] == 6
+    assert registry["active_universe_policy"]["summary"]["rule_count"] == 9

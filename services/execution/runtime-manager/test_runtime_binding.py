@@ -88,6 +88,7 @@ class TestRuntimeBindingSchema:
         assert b.plan_id == "plan-001"
         assert b.persona_capital_binding_id == "pcb-001"
         assert b.deployment_mode == "paper"
+        assert b.execution_mode == "paper"
         assert b.status == "active"
         assert not b.is_terminal()
 
@@ -101,6 +102,7 @@ class TestRuntimeBindingSchema:
         assert b2.binding_id == b.binding_id
         assert b2.plan_id == b.plan_id
         assert b2.deployment_mode == b.deployment_mode
+        assert b2.execution_mode == b.execution_mode
 
     def test_to_json_round_trip(self) -> None:
         b = _base()
@@ -176,6 +178,7 @@ class TestDeploymentMode:
     def test_deployment_mode_canary(self) -> None:
         b = _base(deployment_mode="canary")
         assert b.deployment_mode == "canary"
+        assert b.execution_mode == "canary"
 
     def test_deployment_mode_live(self) -> None:
         b = _base(deployment_mode="live")
@@ -184,6 +187,15 @@ class TestDeploymentMode:
     def test_deployment_mode_frozen(self) -> None:
         b = _base(deployment_mode="frozen")
         assert b.deployment_mode == "frozen"
+
+    def test_execution_mode_defaults_to_deployment_mode_for_legacy_records(self) -> None:
+        b = RuntimeBinding.from_dict(_base(deployment_mode="canary").to_dict() | {"execution_mode": None})
+        assert b.deployment_mode == "canary"
+        assert b.execution_mode == "canary"
+
+    def test_execution_mode_must_match_deployment_mode(self) -> None:
+        with pytest.raises(RuntimeBindingError, match="execution_mode"):
+            _base(deployment_mode="canary", execution_mode="live")
 
 
 # ---------------------------------------------------------------------------

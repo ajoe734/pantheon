@@ -15,6 +15,61 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ai_status
 
 
+class StatusRootRoutingTests(unittest.TestCase):
+    def test_load_local_coordination_payload_tolerates_missing_yaml(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-no-yaml-") as temp_dir:
+            root = Path(temp_dir)
+            (root / "payload.yaml").write_text("status: done\n", encoding="utf-8")
+            (root / "payload.json").write_text('{"status": "done"}\n', encoding="utf-8")
+
+            with (
+                mock.patch.object(ai_status, "ROOT", root),
+                mock.patch.object(ai_status, "yaml", None),
+                mock.patch.object(ai_status, "YAML_ERROR_TYPES", ()),
+            ):
+                self.assertIsNone(ai_status.load_local_coordination_payload("payload.yaml"))
+                self.assertEqual(
+                    {"status": "done"},
+                    ai_status.load_local_coordination_payload("payload.json"),
+                )
+
+    def test_load_config_routes_runtime_paths_to_status_root(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-routing-") as temp_dir:
+            root = Path(temp_dir)
+            code_root = root / "code"
+            status_root = root / "status"
+            config_file = code_root / ".orchestrator" / "config.json"
+            config_file.parent.mkdir(parents=True)
+            config_file.write_text(
+                json.dumps(
+                    {
+                        "paths": {
+                            "status_file": "ai-status.json",
+                            "activity_log": "ai-activity-log.jsonl",
+                            "state_file": ".orchestrator/state.json",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(ai_status, "CONFIG_FILE", config_file),
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.object(ai_status, "STATUS_FILE", status_root / "ai-status.json"),
+                mock.patch.object(ai_status, "LOG_FILE", status_root / "ai-activity-log.jsonl"),
+                mock.patch.object(ai_status, "CURRENT_WORK_FILE", status_root / "current-work.md"),
+                mock.patch.object(ai_status, "DOCS_SITE_DIR", status_root / "docs-site"),
+                mock.patch.object(ai_status, "ORCHESTRATOR_STATE_FILE", status_root / ".orchestrator" / "state.json"),
+                mock.patch.object(ai_status, "APPROVAL_QUEUE_FILE", status_root / ".orchestrator" / "approval-queue.json"),
+            ):
+                config = ai_status.load_config()
+
+        self.assertEqual(config["paths"]["status_file"], str(status_root / "ai-status.json"))
+        self.assertEqual(config["paths"]["activity_log"], str(status_root / "ai-activity-log.jsonl"))
+        self.assertEqual(config["paths"]["state_file"], str(status_root / ".orchestrator" / "state.json"))
+        self.assertEqual(config["paths"]["event_queue"], str(status_root / ".orchestrator" / "event-queue.jsonl"))
+
+
 class ReviewApprovedWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
         self.state = {
@@ -186,6 +241,36 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
         self.assertIn("`Task-ID: ...`", message)
         self.assertIn("`Reviewer: ...`", message)
 
+    def test_collect_done_delivery_metadata_skips_trailers_for_merge_commit(self) -> None:
+        responses = iter(
+            [
+                "task/REG-002",
+                "merge123",
+                "Merge pull request #1259 from ajoe734/task/REG-002",
+                "REG-002: deliver reviewed task\n",
+                "GitHub",
+                "noreply@github.com",
+                "",
+                "",
+            ]
+        )
+        task = {
+            "id": "REG-002",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "status": "review_approved",
+        }
+
+        with (
+            mock.patch.dict(os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False),
+            mock.patch.object(ai_status, "run_git_command", side_effect=lambda *args, **kwargs: next(responses)),
+        ):
+            delivery = ai_status.collect_done_delivery_metadata(task, "Codex")
+
+        self.assertEqual(delivery["commit"], "merge123")
+        self.assertEqual(delivery["commit_trailer_skip_reason"], "Merge")
+        self.assertTrue(delivery["commit_trailer_check_skipped"])
+
     def test_collect_done_delivery_metadata_uses_execute_plans_artifact_repo(self) -> None:
         responses = iter(
             [
@@ -212,17 +297,180 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             "status": "review_approved",
             "artifacts": ["execute-plans/e2e/dummy.spec.ts"],
         }
-        execute_plans_root = ai_status.ROOT.parent / "execute-plans"
-
-        with mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command):
+        with (
+            mock.patch.dict(os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False),
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
+        ):
             delivery = ai_status.collect_done_delivery_metadata(task, "Codex2")
 
+        execute_plans_root = Path(delivery["repository_path"])
         self.assertEqual(delivery["repository_id"], "execute_plans")
         self.assertEqual(delivery["repository_path"], str(execute_plans_root))
         self.assertEqual(delivery["repository_slug"], "ajoe734/execute-plans")
         self.assertEqual(delivery["branch"], "bff-luv-fe-006-dev-deploy")
         self.assertTrue(calls)
         self.assertTrue(all(cwd == execute_plans_root for _, cwd in calls))
+
+    def test_collect_done_delivery_metadata_falls_back_to_pantheon_for_missing_mixed_repo(self) -> None:
+        responses = iter(
+            [
+                "task/BFF-PM12-002",
+                "abc123",
+                "BFF-PM12-002: refresh closeout gate",
+                "LLM-Agent: Codex2\nTask-ID: BFF-PM12-002\nReviewer: Claude2\n",
+                "Codex2",
+                "codex2@example.com",
+                "",
+                "",
+            ]
+        )
+        calls: list[tuple[list[str], Path | None]] = []
+
+        def fake_run_git_command(args: list[str], **kwargs: object) -> str:
+            calls.append((args, kwargs.get("cwd") if isinstance(kwargs.get("cwd"), Path) else None))
+            return next(responses)
+
+        task = {
+            "id": "BFF-PM12-002",
+            "owner": "Codex2",
+            "reviewer": "Claude2",
+            "status": "review_approved",
+            "artifacts": [
+                "execute-plans/src/lib/bff-v1/management.ts",
+                "services/control-plane/bff/main.py",
+            ],
+        }
+        pantheon_root = Path("/tmp/pantheon-task-worktree")
+        missing_execute_plans_root = Path("/tmp/pantheon-worker-worktrees/pantheon/execute-plans")
+
+        def fake_repository_local_path(_config: dict[str, object], repo_id: str | None) -> Path | None:
+            if repo_id == "execute_plans":
+                return missing_execute_plans_root
+            if repo_id == "pantheon":
+                return pantheon_root
+            return None
+
+        with (
+            mock.patch.dict(os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False),
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
+            mock.patch.object(ai_status, "repository_local_path", side_effect=fake_repository_local_path),
+        ):
+            delivery = ai_status.collect_done_delivery_metadata(task, "Codex2")
+
+        self.assertEqual(delivery["repository_id"], "pantheon")
+        self.assertEqual(delivery["repository_path"], str(pantheon_root))
+        self.assertEqual(delivery["branch"], "task/BFF-PM12-002")
+        self.assertEqual(delivery["repository_fallback"]["from_repository_id"], "execute_plans")
+        self.assertEqual(delivery["repository_fallback"]["missing_repository_path"], str(missing_execute_plans_root))
+        self.assertTrue(calls)
+        self.assertTrue(all(cwd == pantheon_root for _, cwd in calls))
+
+    def test_collect_done_delivery_metadata_blocks_unmerged_task_pr(self) -> None:
+        task = {
+            "id": "REG-002",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "artifacts": [],
+        }
+
+        def fake_run_git_command(args: list[str], **kwargs: object) -> str:
+            if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                return "task/REG-002"
+            if args == ["rev-parse", "HEAD"]:
+                return "abc123"
+            if args == ["show", "-s", "--format=%s", "HEAD"]:
+                return "REG-002 finalize"
+            if args == ["show", "-s", "--format=%b", "HEAD"]:
+                return "LLM-Agent: Codex\nTask-ID: REG-002\nReviewer: Claude\n"
+            if args == ["show", "-s", "--format=%an", "HEAD"]:
+                return "Codex"
+            if args == ["show", "-s", "--format=%ae", "HEAD"]:
+                return "codex@example.com"
+            if args == ["status", "--porcelain"]:
+                return ""
+            if args == ["remote"]:
+                return "origin"
+            if args == ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]:
+                return "origin/task/REG-002"
+            if args == ["rev-list", "--left-right", "--count", "origin/task/REG-002...HEAD"]:
+                return "0 0"
+            if args == ["fetch", "origin", "dev"]:
+                return ""
+            if args == ["rev-parse", "--verify", "origin/dev"]:
+                return "devsha"
+            raise AssertionError(f"unexpected git command: {args}")
+
+        with (
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
+            mock.patch.object(ai_status, "git_command_succeeds", return_value=False),
+            mock.patch.object(
+                ai_status,
+                "pull_request_status_for_branch",
+                return_value={
+                    "number": 152,
+                    "state": "OPEN",
+                    "mergeStateStatus": "BEHIND",
+                    "autoMergeRequest": {"mergeMethod": "MERGE"},
+                    "url": "https://github.com/ajoe734/pantheon/pull/152",
+                },
+            ),
+        ):
+            with self.assertRaises(SystemExit) as exc_info:
+                ai_status.collect_done_delivery_metadata(task, "Codex")
+
+        message = str(exc_info.exception)
+        self.assertIn("not merged into `origin/dev`", message)
+        self.assertIn("PR #152", message)
+        self.assertIn("mergeState=BEHIND", message)
+        self.assertIn("review_approved", message)
+
+    def test_collect_done_delivery_metadata_allows_head_merged_to_dev(self) -> None:
+        task = {
+            "id": "REG-002",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "artifacts": [],
+        }
+
+        def fake_run_git_command(args: list[str], **kwargs: object) -> str:
+            if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                return "task/REG-002"
+            if args == ["rev-parse", "HEAD"]:
+                return "abc123"
+            if args == ["show", "-s", "--format=%s", "HEAD"]:
+                return "REG-002 finalize"
+            if args == ["show", "-s", "--format=%b", "HEAD"]:
+                return "LLM-Agent: Codex\nTask-ID: REG-002\nReviewer: Claude\n"
+            if args == ["show", "-s", "--format=%an", "HEAD"]:
+                return "Codex"
+            if args == ["show", "-s", "--format=%ae", "HEAD"]:
+                return "codex@example.com"
+            if args == ["status", "--porcelain"]:
+                return ""
+            if args == ["remote"]:
+                return "origin"
+            if args == ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]:
+                return "origin/task/REG-002"
+            if args == ["rev-list", "--left-right", "--count", "origin/task/REG-002...HEAD"]:
+                return "0 0"
+            if args == ["fetch", "origin", "dev"]:
+                return ""
+            if args == ["rev-parse", "--verify", "origin/dev"]:
+                return "devsha"
+            raise AssertionError(f"unexpected git command: {args}")
+
+        with (
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
+            mock.patch.object(ai_status, "git_command_succeeds", return_value=True),
+        ):
+            delivery = ai_status.collect_done_delivery_metadata(task, "Codex")
+
+        self.assertEqual(delivery["merge_target_branch"], "dev")
+        self.assertEqual(delivery["merge_target_ref"], "origin/dev")
+        self.assertEqual(delivery["merge_target_sha"], "devsha")
+        self.assertTrue(delivery["head_merged_to_target"])
 
 
 class ArchiveWorkflowTests(unittest.TestCase):
@@ -298,6 +546,18 @@ class ArchiveWorkflowTests(unittest.TestCase):
         archive_task = archive_task_snapshot.call_args.args[0]
         self.assertEqual(archive_task["id"], "REG-100")
         rebuild_archive_index.assert_called_once()
+
+    def test_prune_archived_active_tasks_removes_duplicate_active_rows(self) -> None:
+        def fake_archived_snapshot(task_id: str):
+            return {"task_id": task_id} if task_id == "REG-100" else None
+
+        with mock.patch.object(ai_status, "archived_task_snapshot", side_effect=fake_archived_snapshot):
+            pruned = ai_status.prune_archived_active_tasks(self.state)
+
+        self.assertEqual(pruned, ["REG-100"])
+        self.assertEqual([task["id"] for task in self.state["tasks"]], ["REG-101"])
+        self.assertEqual(self.state["handoffs"], [])
+        self.assertEqual(self.state["blockers"], [])
 
     def test_reopen_rejects_archived_task(self) -> None:
         self.state["tasks"] = []
@@ -389,6 +649,109 @@ class SidecarTaskTests(unittest.TestCase):
         )
 
         self.assertEqual(title, "[Sidecar] [Auto] [Parent APP-001] Prepare APP-001 BFF handoff packet")
+
+
+class HumanOpsAgentTests(unittest.TestCase):
+    def test_human_gate_can_belong_to_human_ops_without_blocking_worker(self) -> None:
+        state = {
+            "agents": [
+                {"name": "Claude", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
+                {"name": "Codex", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
+            ],
+            "tasks": [
+                {
+                    "id": "PROD-WRITES-001-V2",
+                    "title": "Enable production real writes",
+                    "phase": "Phase 8 / EPIC-LIVE-GATE",
+                    "owner": "human/ops",
+                    "reviewer": "Codex",
+                    "status": "blocked",
+                    "waiting_for": "ops",
+                    "depends_on": [],
+                    "artifacts": [],
+                    "acceptance": ["Human risk-owner + operator signoff"],
+                    "next": "Awaiting risk-owner and operator signoff",
+                    "last_update": "2026-06-01T00:00:00Z",
+                    "task_class": "human_gate",
+                    "non_dispatchable": True,
+                    "allowed_workers": [],
+                }
+            ],
+            "handoffs": [],
+            "blockers": [
+                {
+                    "task_id": "PROD-WRITES-001-V2",
+                    "owner": "human/ops",
+                    "waiting_for": "ops",
+                    "message": "Awaiting risk-owner and operator signoff",
+                    "status": "open",
+                    "created_at": "2026-06-01T00:00:00Z",
+                }
+            ],
+            "workload": {},
+            "workload_summary": {},
+        }
+
+        ai_status.validate_state(state)
+        ai_status.recompute_agents(state)
+        ai_status.recompute_workload(state)
+
+        task = ai_status.get_task(state, "PROD-WRITES-001-V2")
+        self.assertEqual(task["owner"], "Human/Ops")
+        self.assertEqual(task["waiting_for"], "Human/Ops")
+        self.assertEqual(state["blockers"][0]["owner"], "Human/Ops")
+        self.assertEqual(state["blockers"][0]["waiting_for"], "Human/Ops")
+
+        human_ops = ai_status.get_agent(state, "Human/Ops")
+        self.assertEqual(human_ops["status"], "blocked")
+        self.assertEqual(human_ops["current_task_ids"], ["PROD-WRITES-001-V2"])
+        self.assertEqual(ai_status.get_agent(state, "Claude")["status"], "idle")
+        self.assertEqual(state["workload"]["Human/Ops"], 0)
+        self.assertEqual(state["workload_summary"]["Human/Ops"]["blocked"], 1)
+
+
+class RuntimeWorkerLivenessTests(unittest.TestCase):
+    def test_pid_is_alive_rejects_zombie_processes(self) -> None:
+        with mock.patch.object(ai_status, "proc_pid_state", return_value="Z"):
+            self.assertFalse(ai_status.pid_is_alive(1234))
+
+    def test_normalize_runtime_workers_marks_zombie_running_worker_stale(self) -> None:
+        state = {
+            "tasks": [
+                {
+                    "id": "TASK-001",
+                    "title": "Review stale runtime",
+                    "summary_zh": "確認 zombie worker 不會被 dashboard 當成 live。",
+                    "owner": "Codex",
+                    "reviewer": "Gemini2",
+                    "status": "review_approved",
+                    "depends_on": [],
+                    "next": "Owner finalize",
+                    "last_update": "2026-05-17T11:00:00Z",
+                }
+            ]
+        }
+        orchestrator_state = {
+            "workers": {
+                "gemini2-run": {
+                    "task_id": "TASK-001",
+                    "provider": "gemini2",
+                    "logical_agent_id": "gemini2",
+                    "status": "running",
+                    "pid": 1234,
+                    "last_event_at": "2026-05-17T11:03:15Z",
+                    "request_snapshot": {"reason": "review_ready_dispatch"},
+                }
+            }
+        }
+
+        with mock.patch.object(ai_status, "proc_pid_state", return_value="Z"):
+            workers = ai_status.normalize_runtime_workers(state, orchestrator_state)
+
+        self.assertEqual(workers[0]["bucket"], "stale")
+        self.assertFalse(workers[0]["is_live_runtime"])
+        self.assertFalse(workers[0]["pid_alive"])
+        self.assertEqual(workers[0]["pid_state"], "Z")
 
 
 class PortableStateRenderingTests(unittest.TestCase):
@@ -663,7 +1026,13 @@ class PortableStateRenderingTests(unittest.TestCase):
                 "agent": "Codex",
                 "task_id": "DEMO-002",
                 "message": "Paused until 2026-04-10T02:40:00Z.",
-            }
+            },
+            {
+                "ts": "2026-04-10T02:11:00Z",
+                "agent": "Orchestrator",
+                "type": "worker_started",
+                "task_id": "DEMO-002",
+            },
         ]
 
         with tempfile.TemporaryDirectory(prefix="ai-status-current-work-taipei-") as temp_dir:
@@ -682,6 +1051,62 @@ class PortableStateRenderingTests(unittest.TestCase):
         self.assertIn("| `DEMO-002` | Codex | Claude | Please review before 2026-04-10 10:20:00. | pending | 2026-04-10 10:05:00 |", content)
         self.assertIn("Reviewer checked the handoff at 2026-04-10 10:30:00.", content)
         self.assertIn("- 2026-04-10 10:10:00 Codex: `DEMO-002` Paused until 2026-04-10 10:40:00.", content)
+        self.assertIn("- 2026-04-10 10:11:00 Orchestrator: `DEMO-002` worker_started", content)
+
+    def test_write_current_work_tolerates_structured_log_entries_without_message(self) -> None:
+        state = {
+            "updated_at": "2026-05-17T16:24:00Z",
+            "objective": "Keep generated status views robust.",
+            "sprint": "2026-05-17-status-sync",
+            "canonical_document_layers": {
+                "L0 Collaboration & State": [
+                    "AI_COLLABORATION_GUIDE.md",
+                    "ai-status.json",
+                    "ai-activity-log.jsonl",
+                ],
+            },
+            "agents": [],
+            "tasks": [],
+            "handoffs": [],
+            "blockers": [],
+            "workload": {},
+            "workload_summary": {},
+        }
+        logs = [
+            {
+                "ts": "2026-05-17T16:24:21Z",
+                "agent": "Codex2",
+                "type": "worker_commit",
+                "task_id": "OODA-E2E-002",
+                "commit": "abcdef1234567890",
+                "scope": ["tests/e2e/test_demo.py"],
+            }
+        ]
+
+        with tempfile.TemporaryDirectory(prefix="ai-status-current-work-structured-log-") as temp_dir:
+            output_path = Path(temp_dir) / "current-work.md"
+            with (
+                mock.patch.object(ai_status, "CURRENT_WORK_FILE", output_path),
+                mock.patch.object(
+                    ai_status,
+                    "load_archive_index",
+                    return_value={
+                        "updated_at": None,
+                        "counts": {"total": 0, "completed": 0, "superseded": 0},
+                        "recent_terminal_ids": [],
+                    },
+                ),
+                mock.patch.object(ai_status, "recent_terminal_summaries", return_value=[]),
+            ):
+                ai_status.write_current_work(state, logs)
+
+            content = output_path.read_text(encoding="utf-8")
+
+        self.assertIn(
+            "- 2026-05-18 00:24:21 Codex2: `OODA-E2E-002` "
+            "worker_commit: commit abcdef123456; scope `tests/e2e/test_demo.py`",
+            content,
+        )
 
     def test_build_onboarding_prompt_mentions_active_planning(self) -> None:
         state = {
@@ -1510,8 +1935,10 @@ class PortableStateRenderingTests(unittest.TestCase):
             },
         }
         approval_state = {"pending": [], "history": []}
+        config = {"ready_dispatcher": {"max_tasks_per_agent_by_agent": {"Claude": 1}}}
 
         with (
+            mock.patch.object(ai_status, "load_config", return_value=config),
             mock.patch.object(ai_status, "load_archive_index", return_value={"updated_at": None, "counts": {"total": 0, "completed": 0, "superseded": 0}, "recent_terminal_ids": []}),
             mock.patch.object(ai_status, "pid_is_alive", return_value=True),
         ):
@@ -1520,6 +1947,68 @@ class PortableStateRenderingTests(unittest.TestCase):
         self.assertEqual(bundle["runtime_summary"]["running_workers"], 1)
         self.assertEqual(bundle["execution_summary"]["ready_now"], 0)
         self.assertEqual(bundle["execution_summary"]["dependency_ready"], 2)
+
+    def test_build_dashboard_bundle_counts_ready_capacity_when_owner_has_free_slots(self) -> None:
+        state = {
+            "updated_at": "2026-04-16T08:50:00Z",
+            "agents": [],
+            "tasks": [
+                {
+                    "id": "RUN-CODEX",
+                    "title": "Running Codex task",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                    "status": "in_progress",
+                    "depends_on": [],
+                    "next": "Running",
+                    "last_update": "2026-04-16T08:50:00Z",
+                },
+                {
+                    "id": "TODO-CODEX",
+                    "title": "Ready Codex task",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                    "status": "todo",
+                    "depends_on": [],
+                    "next": "Ready to start",
+                    "last_update": "2026-04-16T08:50:00Z",
+                },
+            ],
+        }
+        planning_state = {"status": "accepted", "runtime_mode": "supervisor_managed_execution", "proposed_execution_tasks": []}
+        orchestrator_state = {
+            "supervisor": {"pid": 1, "last_heartbeat_at": "2026-04-16T08:50:05Z", "focus_mode": "execution"},
+            "queue": {"events": {}},
+            "workers": {
+                "codex-run": {
+                    "run_id": "codex-run",
+                    "logical_agent_id": "codex",
+                    "agent_id": "codex1_1",
+                    "provider": "codex1-1",
+                    "task_id": "RUN-CODEX",
+                    "status": "running",
+                    "last_event_at": "2026-04-16T08:50:04Z",
+                    "queue_event_id": "evt-1",
+                    "pid": 1234,
+                }
+            },
+            "provider_guardrails": {"dispatch_pauses": {}},
+        }
+        approval_state = {"pending": [], "history": []}
+        config = {"ready_dispatcher": {"max_tasks_per_agent_by_agent": {"Codex": 2}}}
+
+        with (
+            mock.patch.object(ai_status, "load_config", return_value=config),
+            mock.patch.object(ai_status, "load_archive_index", return_value={"updated_at": None, "counts": {"total": 0, "completed": 0, "superseded": 0}, "recent_terminal_ids": []}),
+            mock.patch.object(ai_status, "pid_is_alive", return_value=True),
+        ):
+            bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
+
+        self.assertEqual(bundle["runtime_summary"]["running_workers"], 1)
+        self.assertEqual(bundle["execution_summary"]["ready_now"], 1)
+        self.assertEqual(bundle["execution_summary"]["dependency_ready"], 1)
+        self.assertEqual(bundle["dispatch_policy"]["max_tasks_per_agent"], None)
+        self.assertEqual(bundle["dispatch_policy"]["max_tasks_per_agent_by_agent"], {"Codex": 2})
 
     def test_build_dashboard_bundle_includes_coordination_summary(self) -> None:
         state = {
@@ -2232,6 +2721,78 @@ class PortableStateRenderingTests(unittest.TestCase):
         bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
 
         self.assertFalse(any(item["type"] == "worker_task_missing" for item in bundle["truth_mismatches"]))
+
+
+class ActivityLogRotationTests(unittest.TestCase):
+    def _make_log(self, *, size_per_line: int = 200, line_count: int = 100) -> Path:
+        tmp = tempfile.TemporaryDirectory(prefix="ai-status-rotate-")
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        log_path = root / "ai-activity-log.jsonl"
+        payload = ("x" * (size_per_line - 1)) + "\n"
+        log_path.write_text(payload * line_count, encoding="utf-8")
+        return log_path
+
+    def test_does_not_rotate_when_under_threshold(self) -> None:
+        log_path = self._make_log(line_count=10)
+        with (
+            mock.patch.object(ai_status, "LOG_FILE", log_path),
+            mock.patch.object(ai_status, "LOG_ROTATE_MAX_BYTES", 1_000_000),
+            mock.patch.object(ai_status, "LOG_ROTATE_KEEP_LINES", 5),
+        ):
+            archive = ai_status.maybe_rotate_activity_log()
+        self.assertIsNone(archive)
+        self.assertEqual(len(log_path.read_bytes().splitlines()), 10)
+        archive_dir = log_path.parent / "archive" / "logs"
+        self.assertFalse(archive_dir.exists())
+
+    def test_rotates_and_keeps_tail_when_over_threshold(self) -> None:
+        log_path = self._make_log(size_per_line=200, line_count=100)  # ~20 KB
+        with (
+            mock.patch.object(ai_status, "LOG_FILE", log_path),
+            mock.patch.object(ai_status, "LOG_ROTATE_MAX_BYTES", 5_000),
+            mock.patch.object(ai_status, "LOG_ROTATE_KEEP_LINES", 8),
+        ):
+            archive = ai_status.maybe_rotate_activity_log()
+        assert archive is not None
+        self.assertTrue(archive.exists())
+        self.assertTrue(str(archive).endswith(".gz"))
+        # The active log now holds just the tail
+        active_lines = log_path.read_bytes().splitlines()
+        self.assertEqual(len(active_lines), 8)
+        # The gzip archive holds the full original
+        import gzip as _gz
+        with _gz.open(archive, "rb") as fh:
+            archived = fh.read().splitlines()
+        self.assertEqual(len(archived), 100)
+
+    def test_rotation_preserves_inode_for_concurrent_appenders(self) -> None:
+        log_path = self._make_log(line_count=80)
+        before_inode = log_path.stat().st_ino
+        with (
+            mock.patch.object(ai_status, "LOG_FILE", log_path),
+            mock.patch.object(ai_status, "LOG_ROTATE_MAX_BYTES", 1),
+            mock.patch.object(ai_status, "LOG_ROTATE_KEEP_LINES", 3),
+        ):
+            ai_status.maybe_rotate_activity_log()
+        after_inode = log_path.stat().st_ino
+        self.assertEqual(before_inode, after_inode)
+
+    def test_append_log_triggers_rotation(self) -> None:
+        log_path = self._make_log(size_per_line=200, line_count=50)  # ~10 KB
+        with (
+            mock.patch.object(ai_status, "LOG_FILE", log_path),
+            mock.patch.object(ai_status, "LOG_ROTATE_MAX_BYTES", 5_000),
+            mock.patch.object(ai_status, "LOG_ROTATE_KEEP_LINES", 4),
+        ):
+            ai_status.append_log({"ts": "2026-05-18T00:00:00Z", "msg": "new entry"})
+        active_lines = log_path.read_text(encoding="utf-8").splitlines()
+        # 4 kept tail lines + 1 new = 5
+        self.assertEqual(len(active_lines), 5)
+        self.assertIn("new entry", active_lines[-1])
+        archive_dir = log_path.parent / "archive" / "logs"
+        archives = list(archive_dir.glob("*.gz"))
+        self.assertEqual(len(archives), 1)
 
 
 if __name__ == "__main__":

@@ -211,6 +211,31 @@ class _BffRuntimeStateStore:
     def get_telemetry_summary(self, runtime_id: str) -> dict[str, Any] | None:
         return self._runtime_summary_store.get(runtime_id)
 
+    def get_paper_runtime_monitoring_session(
+        self,
+        *,
+        runtime_id: str,
+        binding_id: str,
+    ) -> dict[str, Any] | None:
+        summary = self._runtime_summary_store.get(runtime_id)
+        if not summary:
+            return None
+        return {
+            "session_id": f"paper-session-{runtime_id}",
+            "session_type": "paper_runtime",
+            "binding_id": binding_id,
+            "runtime_binding_id": binding_id,
+            "runtime_id": runtime_id,
+            "deployment_stage": summary.get("deployment_stage", "paper"),
+            "status": "active",
+            "active": True,
+            "started_at": summary.get("first_heartbeat_at") or summary.get("last_heartbeat_at"),
+            "last_heartbeat_at": summary.get("last_heartbeat_at"),
+            "heartbeat_status": "ok",
+            "stale_after_seconds": 60,
+            "restart_count": 0,
+        }
+
     def get_rollbacks(self, runtime_id: str) -> list[dict[str, Any]]:
         return []
 
@@ -218,6 +243,7 @@ class _BffRuntimeStateStore:
         return {
             "runtime_bindings": "runtime_manager",
             "telemetry_summaries": "telemetry_ingest_projection",
+            "paper_runtime_monitoring_sessions": "paper_runtime",
             "rollbacks": "runtime_manager",
         }.get(dataset, "missing")
 
@@ -281,8 +307,24 @@ class MinimumPaperOperatingLoopSmokeTest(unittest.TestCase):
             )
 
             plan_payload = plan.to_dict()
+            plan_payload["artifact_state"] = "approved"
             plan_payload["artifact_checksum"] = projection.metadata["checksum"]
             plan_payload["runtime_role"] = "pantheon-lean-paper-runtime"
+            plan_payload["runtime_config_status"] = "approved"
+            plan_payload["risk_policy_ref"] = "risk-policy-p0-loop-paper"
+            plan_payload["risk_policy_evaluation"] = {
+                "risk_policy_id": "risk-policy-p0-loop-paper",
+                "risk_policy_version": "v1",
+                "capital_pool_id": plan.capital_pool_id,
+                "target_type": "runtime_launch",
+                "target_id": plan.plan_id,
+                "decision": "allowed",
+                "checks": [],
+                "blocking_reasons": [],
+                "warnings": [],
+                "evaluated_at": "2026-06-09T00:00:00Z",
+                "trace_id": "trace-risk-policy-p0-loop-paper",
+            }
             bootstrap_request = materialize_runtime_bootstrap_request(
                 deployment_plan=plan_payload,
                 runtime_binding=binding.to_dict(),
@@ -373,7 +415,9 @@ class MinimumPaperOperatingLoopSmokeTest(unittest.TestCase):
 
             original_store = bff_main.read_store
             original_auth_stub = os.environ.get("PANTHEON_BFF_AUTH_STUB")
+            original_auth_mode = os.environ.get("PANTHEON_BFF_AUTH_MODE")
             os.environ["PANTHEON_BFF_AUTH_STUB"] = "true"
+            os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
             bff_main.read_store = _BffRuntimeStateStore(
                 runtime_manager=runtime_manager,
                 runtime_summary_store=summary_store,
@@ -389,6 +433,10 @@ class MinimumPaperOperatingLoopSmokeTest(unittest.TestCase):
                     os.environ.pop("PANTHEON_BFF_AUTH_STUB", None)
                 else:
                     os.environ["PANTHEON_BFF_AUTH_STUB"] = original_auth_stub
+                if original_auth_mode is None:
+                    os.environ.pop("PANTHEON_BFF_AUTH_MODE", None)
+                else:
+                    os.environ["PANTHEON_BFF_AUTH_MODE"] = original_auth_mode
 
             self.assertEqual(response.status_code, 200, response.text)
             payload = response.json()

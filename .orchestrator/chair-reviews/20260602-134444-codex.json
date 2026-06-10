@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Live backlog is review-only and blocked by reviewer pause/worktree lease hygiene, with no safe sidecar parent support need.",
+  "blocked_by": [
+    "No runnable sidecar parent/support need: live board has two review tasks and no todo/in_progress implementation backlog.",
+    "ASST-USER-001 review dispatch cannot lease /tmp/pantheon-worker-worktrees/pantheon/asst-user-001 because the reused worktree is dirty.",
+    "ASST-FE-002 review is assigned to Copilot while Copilot is under an indefinite manual dispatch pause."
+  ],
+  "blocked_sidecar_parents": [
+    "ASST-USER-001",
+    "ASST-FE-002"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [
+    {
+      "task_id": "ASST-FE-002",
+      "role": "reviewer",
+      "from": "Copilot",
+      "to": "Claude2",
+      "reason": "Copilot has an indefinite manual dispatch pause since 2026-06-02T13:18:32Z while ASST-FE-002 is in review; Claude2 is idle, auth-ready, and not the owner."
+    }
+  ],
+  "recommended_focus": [
+    "ASST-FE-002",
+    "ASST-USER-001",
+    "OPS-ARCHIVE-AUTO-COMMIT-20260531T165903Z"
+  ]
+}

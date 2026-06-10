@@ -71,8 +71,8 @@
     },
     "execution_mode": {
       "type": "string",
-      "enum": ["paper", "live"],
-      "description": "Legacy execution mode field. For new events, this is a derived alias of deployment_stage (paper=paper, live=canary|live). Maintained for backward compatibility with legacy telemetry consumers."
+      "enum": ["paper", "canary", "live", "frozen"],
+      "description": "Runtime execution mode emitted by the active RuntimeBinding. For new events, this MUST equal deployment_stage so canary is not collapsed into live."
     },
     "trace_id": {
       "type": "string",

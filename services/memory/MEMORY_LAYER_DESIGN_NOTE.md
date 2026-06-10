@@ -47,6 +47,7 @@ Key fields:
 | `source_event_id` | Traceable back to the originating event record |
 | `write_authority` | Service that wrote the entry (whitelist enforced) |
 | `relevance_scope` | `persona_private` or `persona_and_committee` |
+| `reuse_count` | Incremented by retrieval facade; used for ranking |
 | `superseded_by` | Lineage chain if a lesson was updated |
 
 ### 2.2 InstitutionalMemoryEntry
@@ -166,9 +167,15 @@ GET /memory/retrieve
 Response: ranked list of `PersonaMemory` and/or `InstitutionalMemoryEntry` objects, with `relevance_score` and `source_event_id` for traceability.
 
 Production hardening note (2026-04-30):
-- `GET /api/memory/retrieve` is implemented for institutional memory entries and remains the retrieval-facade entry point for future persona-memory merge-in.
+- `GET /api/memory/retrieve` is implemented as the shared retrieval-facade entry point for `scope=institutional`, `scope=persona`, and `scope=both`.
 - The facade performs a governance AuthZ check before store access. If `PANTHEON_GOVERNANCE_AUTHZ_URL`, `PANTHEON_GOVERNANCE_API_URL`, or `PANTHEON_GOVERNANCE_SERVICE_URL` is not configured, retrieval fails closed with `governance_authz_unconfigured`.
-- Authorized institutional hits increment `reuse_count` through the store, preserving the ranking feedback loop.
+- Authorized institutional and persona hits increment `reuse_count` through their owning stores, preserving the ranking feedback loop.
+
+Persona implementation note (2026-06-09, MPOS-P1-MEM-001):
+- `POST /api/memory/persona-entries` and `POST /api/memory/writebacks/persona` accept canonical `PersonaMemory` payloads.
+- Persona retrieval requires `persona_id` and governance authorization. Persona-session style actors must also provide a matching `session_persona_id`; operator/admin/reviewer/auditor reads are authorized through governance for a specified `persona_id`.
+- Consultation sessions are filtered to `relevance_scope=persona_and_committee`, so private persona memory does not leak into committee contexts.
+- `scope=both` merges ranked persona and institutional hits and only writes `reuse_count` for returned hits.
 
 ### 5.2 Retrieval Trigger Contexts
 
@@ -295,6 +302,11 @@ Storage:
 - Vector index: **pgvector** (embedding_ref, semantic retrieval)
 - No separate in-memory buffer for memory entries (unlike telemetry); all writes are durable by design.
 
+Implementation storage slice (2026-06-09):
+- Institutional entries use `PANTHEON_MEMORY_STORE` or `PANTHEON_MEMORY_DATA_DIR/institutional_memory_entries.json` in JSON mode, or `memory.institutional_memory_entries` in Postgres mode.
+- Persona entries use `PANTHEON_PERSONA_MEMORY_STORE` or `PANTHEON_MEMORY_DATA_DIR/persona_memory_entries.json` in JSON mode, or `memory.persona_memory_entries` in Postgres mode.
+- `PANTHEON_PERSONA_MEMORY_STORE_BACKEND` defaults to `PANTHEON_MEMORY_STORE_BACKEND`; persona Postgres DSN defaults through `PANTHEON_PERSONA_MEMORY_STORE_DSN`, `PANTHEON_MEMORY_STORE_DSN`, then `DATABASE_URL`.
+
 Retention:
 - Institutional memory entries receive `expires_at` from `PANTHEON_MEMORY_RETENTION_DAYS` on create when the writer did not provide an explicit expiration. The default is 365 days.
 - `PANTHEON_MEMORY_RETENTION_DAYS=indefinite` disables automatic expiry for entries without `expires_at`.
@@ -310,6 +322,7 @@ Retention:
 | One write-back pipeline | §4.2 — postmortem write-back sequence diagram |
 | One retrieval query path | §5.1 — retrieval facade GET contract |
 | postmortem → institutional memory → research reuse example | §6 — full end-to-end worked example |
+| Persona memory first-class implementation | `persona_memory_store.py`, `POST /api/memory/persona-entries`, `POST /api/memory/writebacks/persona`, `GET /api/memory/retrieve?scope=persona|both` |
 
 ---
 
@@ -321,6 +334,10 @@ Resolved by production-hardening slice:
 - **Retention / TTL policy** — implemented as create-time `expires_at` assignment plus archive-on-read/archive command behavior in `InstitutionalMemoryStore`.
 - **Cross-plane replay** — covered by focused replay tests that write memory, restart the store, retrieve through the facade, and verify active archival exclusion/reuse persistence.
 - **Auth/RBAC integration** — retrieval facade now checks governance AuthZ and fails closed when governance authorization is unavailable.
+
+Resolved by MPOS-P1-MEM-001:
+- **Persona retrieval** — `PersonaMemoryStore` provides persona-scoped durable write, retrieval, supersession, and `reuse_count` writeback.
+- **Persona writeback triggers** — service-authority/source-event/memory-type trigger pairs are validated before accepting persona writebacks.
 
 ---
 

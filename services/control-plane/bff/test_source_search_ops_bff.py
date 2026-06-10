@@ -59,6 +59,14 @@ def test_get_source_ops_snapshot_normal_path() -> None:
                         "scheduled_policy_count": 1,
                     },
                 },
+                "financial_data_source_catalog": {
+                    "schema_version": "financial_data_source_catalog.v1",
+                    "summary": {"data_source_count": 6, "config_template_count": 9},
+                },
+                "active_universe_policy": {
+                    "schema_version": "active_universe_scheduling_policy.v1",
+                    "summary": {"rule_count": 10},
+                },
             }
         if path.startswith("/api/source-ingest/jobs"):
             return True, {
@@ -110,8 +118,13 @@ def test_get_source_ops_snapshot_normal_path() -> None:
     assert snap["summary"]["scheduled_connector_count"] == 1
     assert snap["summary"]["due_connector_count"] == 1
     assert snap["policy_registry"]["schema_version"] == "source_crawler_indexer_policy_registry.v1"
+    assert snap["financial_data_source_catalog"]["schema_version"] == "financial_data_source_catalog.v1"
+    assert snap["active_universe_policy"]["schema_version"] == "active_universe_scheduling_policy.v1"
     assert snap["summary"]["connector_policy_count"] == 1
     assert snap["summary"]["external_allowlist_policy_count"] == 1
+    assert snap["summary"]["financial_data_source_count"] == 6
+    assert snap["summary"]["financial_data_source_template_count"] == 9
+    assert snap["summary"]["active_universe_rule_count"] == 10
     assert snap["summary"]["search_refresh_notification_configured"] is True
 
 

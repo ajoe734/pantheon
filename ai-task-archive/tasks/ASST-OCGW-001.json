@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "task_id": "ASST-OCGW-001",
+  "archived_at": "2026-06-01T00:38:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASST-OCGW-001",
+    "title": "Add OpenClaw gateway credential mount contract",
+    "summary_zh": "保留 OpenClaw gateway 架構，新增 dedicated service-user .codex/.claude OAuth credential mount compose/env contract，禁止掛人類個人 home。",
+    "phase": "Assistant OpenClaw Gateway Kernel/User Mode",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docker-compose.yml",
+      "docker-compose.control.yml",
+      "docker-compose.staging-full.yml",
+      "services/openclaw-gateway-adapter/Dockerfile",
+      "services/openclaw-gateway-adapter/assistant_credential_mounts.py",
+      "services/openclaw-gateway-adapter/tests/test_assistant_credential_mounts.py",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/"
+    ],
+    "acceptance": [
+      "compose exposes dedicated codex and claude mount envs",
+      "mount defaults are disabled or explicit",
+      "no human home path is accepted",
+      "mount paths are reported only as sanitized readiness metadata",
+      "tests cover missing mount wrong owner and forbidden home path"
+    ],
+    "next": "Done: PR #712 merged into dev at 9c8f9c83aa6699db6bbbeb2764a7bf84efbe66a5 after PR #711 implementation merge; validation rerun locally with py_compile and focused pytest (53 passed).",
+    "last_update": "2026-06-01T00:38:18Z",
+    "source_documents": [
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/SA_assistant_kernel_user_mode.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/SD_assistant_kernel_user_mode.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md"
+    ],
+    "implementation_track": "assistant-openclaw-gateway-cli-mount",
+    "provider_runtime": "openclaw_gateway_cli_mount",
+    "credential_policy": "dedicated_service_user_oauth_mount",
+    "delivery_layer": "primary",
+    "review_notes_zh": [
+      "審查通過：五項 acceptance criteria 全數滿足；compose credential mount env 正確、human home 拒絕策略完整、metadata 不洩漏原始路徑、6 tests 全過"
+    ],
+    "review_file": "support/reviews/ASST-OCGW-001-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-01T00:38:18Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/asst-ocgw-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/ASST-OCGW-001",
+      "git_clean_required": false,
+      "commit": "3fec0cb0519403d24bf3552e2655f83f57137763",
+      "commit_subject": "ASST-OCGW-001: record owner closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Closeout record": "preserve the Claude review-approved handoff in the task brief before owner finalization.",
+        "Owned layer": "task-scoped closeout context for ASST-OCGW-001.",
+        "Not changing": "credential mount implementation, compose wiring, review artifact, or canonical architecture docs.",
+        "Composes with": "PR #711 implementation merge and the pending task-branch closeout PR into dev.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "ASST-OCGW-001",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m py_compile services/openclaw-gateway-adapter/assistant_credential_mounts.py services/openclaw-gateway-adapter/main.py; pytest -q services/openclaw-gateway-adapter/tests/test_assistant_credential_mounts.py services/openclaw-gateway-adapter/test_compose_activation.py services/openclaw-gateway-adapter/test_main.py (53 passed)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/ASST-OCGW-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "9c8f9c83aa6699db6bbbeb2764a7bf84efbe66a5",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASST-OCGW-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented credential mount contract; PR #711 merged into dev at ae897f2d729f61fcdc42fb4da5e606f259c7405f. Validation: py_compile assistant_credential_mounts/main; pytest focused adapter suite 53 passed; trailer and diff checks passed. Awaiting Claude review approval before owner closeout/done.",
+      "status": "done",
+      "created_at": "2026-06-01T00:18:48Z",
+      "resolved_at": "2026-06-01T00:30:04Z"
+    },
+    {
+      "task_id": "ASST-OCGW-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 5 acceptance criteria satisfied. compose exposes dedicated service-user mount envs with correct defaults; human home paths rejected before stat; metadata sanitized (no raw paths); 6 tests pass. Returning to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-06-01T00:30:04Z",
+      "resolved_at": "2026-06-01T00:38:18Z"
+    }
+  ],
+  "blockers": []
+}

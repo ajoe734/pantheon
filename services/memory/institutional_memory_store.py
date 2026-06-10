@@ -58,6 +58,7 @@ class KnowledgeType(str, Enum):
 
 
 class SourceEventType(str, Enum):
+    RUNTIME_TELEMETRY_OUTCOME = "runtime_telemetry_outcome"
     POSTMORTEM_PUBLISHED = "postmortem_published"
     EVOLUTION_DECISION_APPROVED = "evolution_decision_approved"
     RESEARCH_TASK_COMPLETED = "research_task_completed"
@@ -67,6 +68,7 @@ class SourceEventType(str, Enum):
 
 
 class WriteAuthority(str, Enum):
+    TELEMETRY_SVC = "telemetry-svc"
     INCIDENT_SVC = "incident-svc"
     EVOLUTION_SVC = "evolution-svc"
     RESEARCH_SVC = "research-svc"
@@ -329,6 +331,24 @@ class InstitutionalMemoryStore:
         if active_only:
             entries = [entry for entry in entries if entry.is_active]
         return sorted(entries, key=_entry_sort_key, reverse=True)
+
+    def find_by_source_event(
+        self,
+        *,
+        source_event_type: str,
+        source_event_id: str,
+        write_authority: Optional[str] = None,
+        active_only: bool = False,
+    ) -> List[InstitutionalMemoryEntry]:
+        entries = self.list(active_only=active_only)
+        matches = [
+            entry
+            for entry in entries
+            if entry.source_event_type == source_event_type
+            and entry.source_event_id == source_event_id
+            and (write_authority is None or entry.write_authority == write_authority)
+        ]
+        return sorted(matches, key=lambda entry: entry.entry_id)
 
     def mark_reused(self, entry_id: str, count: int = 1) -> InstitutionalMemoryEntry:
         if count <= 0:

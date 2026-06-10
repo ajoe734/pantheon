@@ -49,7 +49,9 @@ def _assert_precondition_error(
     correlation_id: str,
 ) -> None:
     assert response.status_code == status_code, response.text
-    detail = response.json()["detail"]
+    detail = response.json()
+    assert "detail" not in detail
+    assert detail["meta"]["correlationId"] == correlation_id
     error = detail["error"]
     details = error["details"]
     assert error["code"] == code
@@ -58,10 +60,10 @@ def _assert_precondition_error(
     assert details["entityId"] == entity_id
     assert details["kind"] == kind
     assert details["reason"]
-    assert details["correlationId"] == correlation_id
-    assert detail["correlationId"] == correlation_id
+    assert "correlationId" not in details
     assert detail["foundation_error"]["error_code"] == code
     assert detail["audit_action"]["action_type"] == "bff.command.rejected"
+    assert response.headers["X-Correlation-Id"] == correlation_id
     assert bff_main.command_store._get_all_commands() == []
 
 

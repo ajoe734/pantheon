@@ -79,3 +79,23 @@ class LoadRuntimeStateTests(unittest.TestCase):
         self.assertEqual(state["chair_rotation"]["current_index"], 0)
         self.assertIsNone(state["chair_rotation"]["last_chair_agent"])
         self.assertIn("chair_review", state["supervisor"]["mode_occupancy"])
+
+    def test_load_runtime_state_preserves_watchdog_safe_mode(self) -> None:
+        self._write_json(
+            self.root / "state.json",
+            {
+                "workers": {},
+                "queue": {"events": {}},
+                "watchdog": {
+                    "safe_mode_until": "2026-05-18T14:30:00Z",
+                    "safe_mode_reason": "stale_heartbeat",
+                },
+            },
+        )
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+
+        state = runtime_state.load_runtime_state(self.config)
+
+        self.assertEqual(state["watchdog"]["safe_mode_until"], "2026-05-18T14:30:00Z")
+        self.assertEqual(state["watchdog"]["safe_mode_reason"], "stale_heartbeat")
+        self.assertIn("last_safe_mode_observed_until", state["watchdog"])

@@ -25,6 +25,8 @@ Each RuntimeBinding MUST carry three cross-object references:
                                deployment scope (governance admissibility proof)
   deployment_mode            — the actual execution stage (paper / canary / live
                                / frozen); equivalent to "stage" in L1 docs
+  execution_mode             — the runtime execution mode emitted to runtime and
+                               telemetry surfaces; must equal deployment_mode
 
 Single-runtime rule
 -------------------
@@ -122,6 +124,8 @@ class RuntimeBinding:
     artifact_id                 : the approved artifact being executed
     artifact_version            : the specific artifact version (semver)
     deployment_mode             : actual execution stage — paper / canary / live / frozen
+    execution_mode              : runtime execution mode — paper / canary / live / frozen;
+                                  defaults to deployment_mode for legacy records
     effective_at                : when this binding became active (UTC ISO-8601)
     status                      : operational status
     plan_id                     : DeploymentPlan that triggered this binding (required)
@@ -143,6 +147,7 @@ class RuntimeBinding:
     plan_id: str
     persona_capital_binding_id: str
 
+    execution_mode: Optional[str] = None
     retired_at: Optional[str] = None
     rollback_parent: Optional[str] = None
     rollback_action_type: Optional[str] = None
@@ -150,12 +155,28 @@ class RuntimeBinding:
 
     def __post_init__(self) -> None:
         try:
-            DeploymentMode(self.deployment_mode)
+            deployment_mode = DeploymentMode(self.deployment_mode).value
         except ValueError:
             raise RuntimeBindingError(
                 f"Invalid deployment_mode: {self.deployment_mode!r}. "
                 f"Must be one of {[e.value for e in DeploymentMode]}."
             )
+        object.__setattr__(self, "deployment_mode", deployment_mode)
+
+        raw_execution_mode = self.execution_mode if self.execution_mode not in (None, "") else deployment_mode
+        try:
+            execution_mode = DeploymentMode(raw_execution_mode).value
+        except ValueError:
+            raise RuntimeBindingError(
+                f"Invalid execution_mode: {raw_execution_mode!r}. "
+                f"Must be one of {[e.value for e in DeploymentMode]}."
+            )
+        if execution_mode != deployment_mode:
+            raise RuntimeBindingError(
+                f"execution_mode {execution_mode!r} must equal deployment_mode {deployment_mode!r}."
+            )
+        object.__setattr__(self, "execution_mode", execution_mode)
+
         try:
             RuntimeBindingStatus(self.status)
         except ValueError:
@@ -215,6 +236,10 @@ def validate_binding(binding: RuntimeBinding) -> List[str]:
         errors.append("artifact_id must not be empty")
     if not binding.artifact_version:
         errors.append("artifact_version must not be empty")
+    if not binding.execution_mode:
+        errors.append("execution_mode must not be empty")
+    elif binding.execution_mode != binding.deployment_mode:
+        errors.append("execution_mode must equal deployment_mode")
     if not binding.effective_at:
         errors.append("effective_at must not be empty")
     if not binding.plan_id:

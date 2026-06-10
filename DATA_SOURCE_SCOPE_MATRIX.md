@@ -48,14 +48,16 @@ The source-class model remains canonical. The following vendor fill is the curre
 | Taiwan equities / derivatives | `official_reference` | `TWSE OpenAPI` | official listed-market reference / EOD source |
 | Taiwan equities / derivatives | `official_reference` | `TPEx E-Data` | official OTC / TPEx reference / EOD source |
 | Taiwan equities / derivatives | `official_reference` | `MOPS` | official disclosure and filing source |
-| Taiwan equities / derivatives | `research_grade` | `TEJ API` | governed research/reference vendor for Taiwan fundamentals, ownership, and packaged datasets |
+| Taiwan equities / derivatives | `research_grade` | `FinMind` | low-cost primary Taiwan research/API cache for daily price, chip, holding, news metadata, and active-universe broker top20 |
+| Taiwan equities / derivatives | `research_grade` backfill | `TEJ API` | optional historical gap-fill / audited research-reference vendor for older or missing Taiwan fundamentals, ownership, and packaged datasets |
 | Cryptocurrency | `broker_execution` / `research_grade` / `crypto_analytics` | `Kraken` | primary venue-scoped execution plus canonical venue market-data source |
 | Cryptocurrency | `research_grade` reference | `CoinGecko` | reference / metadata / research supplement, not execution truth |
 
 Working defaults that follow from this fill:
 
 - `EP5-002` canary-first execution uses `IBKR` as the first broker-backed proof path.
-- `TEJ API` is an approved Taiwan research/reference vendor, but it does not replace `TWSE OpenAPI`, `TPEx E-Data`, or `MOPS` as official exchange / disclosure truth.
+- `FinMind` is the default low-cost Taiwan research-grade API/cache layer. It does not replace `TWSE OpenAPI`, `TPEx E-Data`, `TDCC`, `TAIFEX`, or `MOPS` as official exchange / disclosure truth.
+- `TEJ API` remains approved as a historical gap-fill / audited research-reference vendor, especially for data older than FinMind's documented coverage or fields not available through FinMind/public sources.
 - `CoinGecko` may enrich crypto metadata and research flows, but execution truth remains venue-scoped to `Kraken`.
 - The frontend may display inventory and operator references for these providers, but raw production credentials remain on VM-2 / Secret Manager and must not be treated as UI-owned secrets.
 
@@ -84,12 +86,13 @@ Working defaults that follow from this fill:
 | Security master (TWSE/TPEx) | `official_reference` | Required | TWSE/TPEx listings | Must handle local codes |
 | Corporate actions (除權息/減資) | `official_reference` | Required | Exchange announcements | Taiwan-specific events |
 | Market calendar (TWSE/TAIFEX) | `official_reference` | Required | Local holiday calendar | 春節, etc. |
-| Daily OHLCV | `research_grade` | Required | Vendor or broker feed | Must include adjusted prices |
+| Daily OHLCV | `research_grade` | Required | FinMind + official source cross-check | Must include adjusted prices |
 | Intraday bars | `broker_execution` | Required | Broker API | 5-min or 1-min |
 | Futures chain (TAIFEX) | `derivative_analytics` | Required | TAIFEX / vendor | Contract-level data |
 | Options chain (TAIFEX) | `derivative_analytics` | Required | TAIFEX / vendor | IV/greeks if available |
-| Investor flow (籌碼) | `research_grade` | Suggested | TWSE/TPEx public data | Foreign/dealer flow |
-| Fundamentals | `research_grade` | Suggested | MOPS / vendor | TW financials |
+| Investor flow (籌碼) | `research_grade` | Suggested | FinMind + TWSE/TPEx public data | Foreign/dealer flow, margin, lending, holding |
+| Broker branch top20 (分點) | `research_grade` | Suggested | FinMind Sponsor; Yahoo fallback | Active-universe only; SponsorPro one-time parquet backfill when needed |
+| Fundamentals | `research_grade` | Suggested | MOPS + FinMind; TEJ optional backfill | TW financials |
 
 ### 2.3 Crypto Market
 
@@ -161,5 +164,6 @@ This matrix is considered accepted when:
 
 | Version | Date | Change | Author |
 |---|---|---|---|
+| v1.2 | 2026-06-09 | Made FinMind the low-cost primary Taiwan research/API cache layer, moved TEJ to optional historical gap-fill, and documented broker top20 active-universe sourcing | Codex |
 | v1.1 | 2026-04-24 | Added governed vendor fill for IBKR, Massive / Polygon, Shioaji, TWSE, TPEx, MOPS, TEJ API, Kraken, and CoinGecko | Codex |
 | v1 | 2026-04-13 | Initial canonical matrix | Qwen (BG-000) |

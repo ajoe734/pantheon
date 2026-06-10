@@ -41,6 +41,7 @@ GET  /api/openclaw-adapter/broker/audit              — paper intent/result aud
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import urllib.error
 import urllib.request
@@ -60,6 +61,7 @@ from session_lifecycle import (
     SessionRecord,
 )
 from tool_workflow_bridge import (
+    ASSISTANT_PROVIDER_REAUTH_TOOL_NAME,
     BridgeAuditLog,
     BridgeError,
     ToolPolicy,
@@ -75,6 +77,15 @@ from live_gate_adapter import (
     LiveGateAuditLog,
     LiveGateError,
 )
+from assistant_credential_mounts import AssistantCredentialMounts
+from assistant_codex_provider import AssistantCodexProvider, CodexProviderError
+from assistant_claude_provider import AssistantClaudeProvider, ClaudeProviderResult
+from assistant_provider_runtime import (
+    AssistantProviderRuntime,
+    AssistantProviderRuntimeError,
+    ProviderInvocationRequest,
+)
+from assistant_repair_workflow import AssistantRepairWorkflow, AssistantRepairWorkflowError
 
 from services.foundation.health import (
     health_payload,
@@ -188,6 +199,10 @@ def _is_healthy_upstream_response(status: int, body: bytes) -> bool:
         return True
     if isinstance(payload, dict):
         if payload.get("ok") is True:
+            return True
+        if payload.get("ready") is True:
+            return True
+        if payload.get("healthy") is True:
             return True
         if str(payload.get("status", "")).lower() == "ok":
             return True
@@ -582,6 +597,7 @@ register_fastapi_health_routes(
         "canary_adapter_enabled": _CANARY_ADAPTER_ENABLED,
         "capital_binding_enabled": _CAPITAL_BINDING_ENABLED,
         "runtime_manager_url": _RUNTIME_MANAGER_URL or "not_configured",
+        "assistant_credential_mounts": _ASSISTANT_MOUNTS.get_readiness_metadata(),
     },
 )
 
@@ -624,6 +640,7 @@ def get_capabilities() -> Dict[str, Any]:
     payload["canary_adapter"] = "deferred"
     payload["paper_broker"] = _PAPER_BROKER.capability_snapshot()
     payload["live_gate"] = _LIVE_GATE.capability_snapshot()
+    payload["assistant_credential_mounts"] = _ASSISTANT_MOUNTS.get_readiness_metadata()
     try:
         upstream_capabilities = _client().get_capabilities()
         payload["activation_state"] = "upstream_client_ready"
@@ -635,6 +652,397 @@ def get_capabilities() -> Dict[str, Any]:
         payload["activation_state"] = "upstream_client_degraded"
         payload["upstream"] = {**exc.to_payload(), "status": "degraded"}
     return payload
+
+
+# ---------------------------------------------------------------------------
+# Assistant credentials
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/openclaw-adapter/assistant/credentials")
+def get_assistant_credentials() -> Dict[str, Any]:
+    """Return sanitized readiness metadata for assistant credential mounts."""
+    return _ASSISTANT_MOUNTS.get_readiness_metadata()
+
+
+# ---------------------------------------------------------------------------
+# Assistant readiness
+# ---------------------------------------------------------------------------
+
+class AssistantProviderInvokeRequest(BaseModel):
+    mode: str = "user"
+    prompt: str
+    context_pack: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    messages: Optional[List[Dict[str, Any]]] = None
+    attachments: Optional[List[Dict[str, Any]]] = None
+
+
+class AssistantSkillAuthorizeRequest(BaseModel):
+    mode: Optional[str] = None
+    operator_role: Optional[str] = None
+    operatorRole: Optional[str] = None
+    confirmed: Optional[Any] = None
+    confirm_token: Optional[str] = None
+    confirmToken: Optional[str] = None
+    control_mode: Optional[Dict[str, Any]] = None
+    controlMode: Optional[Dict[str, Any]] = None
+    session_id: Optional[str] = None
+    sessionId: Optional[str] = None
+    request_type: Optional[str] = None
+    requestType: Optional[str] = None
+    audit_extra: Optional[Dict[str, Any]] = None
+    auditExtra: Optional[Dict[str, Any]] = None
+
+
+class AssistantProviderReauthRequest(BaseModel):
+    provider: str = "codex"
+    mode: Optional[str] = None
+    operator_role: Optional[str] = None
+    operatorRole: Optional[str] = None
+    confirmed: Optional[Any] = None
+    confirm_token: Optional[str] = None
+    confirmToken: Optional[str] = None
+    control_mode: Optional[Dict[str, Any]] = None
+    controlMode: Optional[Dict[str, Any]] = None
+    reason: Optional[str] = None
+    capture_timeout_seconds: Optional[int] = None
+    captureTimeoutSeconds: Optional[int] = None
+    poll_interval_seconds: Optional[int] = None
+    pollIntervalSeconds: Optional[int] = None
+    max_wait_seconds: Optional[int] = None
+    maxWaitSeconds: Optional[int] = None
+
+    def capture_timeout(self) -> Optional[int]:
+        return self.capture_timeout_seconds if self.capture_timeout_seconds is not None else self.captureTimeoutSeconds
+
+    def poll_interval(self) -> Optional[int]:
+        return self.poll_interval_seconds if self.poll_interval_seconds is not None else self.pollIntervalSeconds
+
+    def max_wait(self) -> Optional[int]:
+        return self.max_wait_seconds if self.max_wait_seconds is not None else self.maxWaitSeconds
+
+
+class AssistantRepairWorktreePrepareRequest(BaseModel):
+    task_id: Optional[str] = None
+    taskId: Optional[str] = None
+    task_worktree: Optional[str] = None
+    taskWorktree: Optional[str] = None
+    declared_scope: Optional[List[str]] = None
+    declaredScope: Optional[List[str]] = None
+    expected_branch: Optional[str] = None
+    expectedBranch: Optional[str] = None
+    remote: Optional[str] = None
+    repo_key: Optional[str] = None
+    repoKey: Optional[str] = None
+    repository: Optional[str] = None
+    merge_target: Optional[str] = None
+    mergeTarget: Optional[str] = None
+    reason: Optional[str] = None
+
+    def to_metadata(self) -> Dict[str, Any]:
+        metadata: Dict[str, Any] = {}
+        for key in (
+            "task_id",
+            "taskId",
+            "task_worktree",
+            "taskWorktree",
+            "declared_scope",
+            "declaredScope",
+            "expected_branch",
+            "expectedBranch",
+            "remote",
+            "repo_key",
+            "repoKey",
+            "repository",
+            "merge_target",
+            "mergeTarget",
+            "reason",
+        ):
+            value = getattr(self, key)
+            if value not in (None, "", []):
+                metadata[key] = value
+        return metadata
+
+
+def _assistant_provider_runtime_error_response(exc: AssistantProviderRuntimeError) -> JSONResponse:
+    return JSONResponse(
+        status_code=400,
+        content={
+            "status": "provider_error",
+            "error_code": exc.code,
+            "message": str(exc),
+            "stage": exc.stage,
+            "retryable": False,
+        },
+    )
+
+
+def _assistant_repair_workflow_error_response(exc: AssistantRepairWorkflowError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
+
+
+@app.get("/api/openclaw-adapter/assistant/readiness/{provider}")
+def get_assistant_readiness(provider: str, auth_probe: bool = False) -> Dict[str, Any]:
+    """Probes the provider binary and auth mount readiness."""
+    if provider in {"codex", "codex_cli"}:
+        return _CODEX_PROVIDER.readiness(auth_probe=auth_probe)
+    if provider in {"claude", "claude_cli"}:
+        return _CLAUDE_PROVIDER.readiness(auth_probe=auth_probe)
+    return _ASSISTANT_RUNTIME.check_readiness(provider)
+
+
+@app.get("/api/openclaw-adapter/assistant/providers")
+def list_assistant_providers(auth_probe: bool = False) -> Dict[str, Any]:
+    return {
+        "status": "ok",
+        "data": [
+            _CODEX_PROVIDER.readiness(auth_probe=auth_probe),
+            _CLAUDE_PROVIDER.readiness(auth_probe=auth_probe),
+        ],
+    }
+
+
+@app.post("/api/openclaw-adapter/assistant/skills/{skill_id}/authorize")
+def authorize_assistant_skill(
+    skill_id: str,
+    req: AssistantSkillAuthorizeRequest,
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+    x_operator_role: Optional[str] = Header(default=None, alias="X-Operator-Role"),
+    x_assistant_mode: Optional[str] = Header(default=None, alias="X-Assistant-Mode"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+) -> JSONResponse:
+    if not x_operator_id or not x_operator_id.strip():
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "skill_authorization_error",
+                "error_code": "OPERATOR_REQUIRED",
+                "message": "X-Operator-Id header is required for assistant skill authorization.",
+            },
+        )
+    try:
+        result = _BRIDGE.authorize_assistant_skill(
+            skill_id=skill_id,
+            operator_id=x_operator_id.strip(),
+            mode=req.mode or x_assistant_mode or _mode_from_control_mode(req.control_mode or req.controlMode),
+            operator_role=req.operator_role or req.operatorRole or x_operator_role,
+            confirmed=req.confirmed is True,
+            confirm_token=req.confirm_token or req.confirmToken,
+            control_mode=req.control_mode or req.controlMode,
+            trace_id=x_trace_id,
+            session_id=req.session_id or req.sessionId,
+            request_type=req.request_type or req.requestType or "assistant_skill_authorize",
+            audit_extra=req.audit_extra or req.auditExtra,
+        )
+    except BridgeError as exc:
+        return _bridge_error_response(exc)
+    return JSONResponse(status_code=200, content={"status": "ok", "data": result})
+
+
+@app.post("/api/openclaw-adapter/assistant/providers/{provider}/reauth")
+def start_assistant_provider_reauth(
+    provider: str,
+    req: AssistantProviderReauthRequest,
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+    x_operator_role: Optional[str] = Header(default=None, alias="X-Operator-Role"),
+    x_assistant_mode: Optional[str] = Header(default=None, alias="X-Assistant-Mode"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+) -> JSONResponse:
+    if not x_operator_id or not x_operator_id.strip():
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "provider_error",
+                "error_code": "OPERATOR_REQUIRED",
+                "message": "X-Operator-Id header is required for provider reauth.",
+            },
+        )
+    normalized = str(provider or req.provider or "").strip().lower()
+    if normalized not in {"codex", "codex_cli"}:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "status": "provider_error",
+                "error_code": "PROVIDER_REAUTH_UNSUPPORTED",
+                "message": "Provider reauth is currently supported only for codex.",
+            },
+        )
+    try:
+        _BRIDGE.authorize_assistant_skill(
+            skill_id=ASSISTANT_PROVIDER_REAUTH_TOOL_NAME,
+            operator_id=x_operator_id.strip(),
+            mode=req.mode or x_assistant_mode or _mode_from_control_mode(req.control_mode or req.controlMode),
+            operator_role=req.operator_role or req.operatorRole or x_operator_role,
+            confirmed=req.confirmed is True,
+            confirm_token=req.confirm_token or req.confirmToken,
+            control_mode=req.control_mode or req.controlMode,
+            trace_id=x_trace_id,
+            request_type="assistant_provider_reauth",
+            audit_extra={
+                "provider": normalized,
+                "reason_hash": _audit_value_hash(req.reason),
+            },
+        )
+    except BridgeError as exc:
+        return _bridge_error_response(exc)
+    try:
+        result = _CODEX_PROVIDER.start_device_reauth(
+            operator_id=x_operator_id.strip(),
+            trace_id=x_trace_id,
+            reason=req.reason,
+            capture_timeout_seconds=req.capture_timeout(),
+            poll_interval_seconds=req.poll_interval(),
+            max_wait_seconds=req.max_wait(),
+        )
+    except CodexProviderError as exc:
+        return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
+    return JSONResponse(status_code=202, content={"status": "ok", "data": result})
+
+
+@app.get("/api/openclaw-adapter/assistant/providers/{provider}/reauth/{session_id}")
+def get_assistant_provider_reauth_status(
+    provider: str,
+    session_id: str,
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+) -> JSONResponse:
+    if not x_operator_id or not x_operator_id.strip():
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "provider_error",
+                "error_code": "OPERATOR_REQUIRED",
+                "message": "X-Operator-Id header is required for provider reauth status.",
+            },
+        )
+    normalized = str(provider or "").strip().lower()
+    if normalized not in {"codex", "codex_cli"}:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "status": "provider_error",
+                "error_code": "PROVIDER_REAUTH_UNSUPPORTED",
+                "message": "Provider reauth is currently supported only for codex.",
+            },
+        )
+    try:
+        result = _CODEX_PROVIDER.reauth_status(session_id)
+    except CodexProviderError as exc:
+        return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
+    return JSONResponse(status_code=200, content={"status": "ok", "data": result})
+
+
+@app.post("/api/openclaw-adapter/assistant/repair-worktrees/prepare")
+def prepare_assistant_repair_worktree(
+    req: AssistantRepairWorktreePrepareRequest,
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+) -> JSONResponse:
+    if not x_operator_id or not x_operator_id.strip():
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "repair_workflow_error",
+                "error_code": "OPERATOR_REQUIRED",
+                "message": "X-Operator-Id header is required for repair worktree preparation.",
+            },
+        )
+    metadata = req.to_metadata()
+    metadata["operator_id"] = x_operator_id.strip()
+    if x_trace_id:
+        metadata["trace_id"] = x_trace_id
+    try:
+        prepared = _REPAIR_WORKFLOW.prepare(metadata)
+    except AssistantRepairWorkflowError as exc:
+        return _assistant_repair_workflow_error_response(exc)
+    return JSONResponse(status_code=201, content={"status": "ok", "data": prepared.to_dict()})
+
+
+@app.post("/api/openclaw-adapter/assistant/providers/codex/invoke")
+def invoke_codex_provider(
+    req: AssistantProviderInvokeRequest,
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+) -> JSONResponse:
+    if not x_operator_id or not x_operator_id.strip():
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "provider_error",
+                "error_code": "OPERATOR_REQUIRED",
+                "message": "X-Operator-Id header is required for Codex provider invocation.",
+            },
+        )
+    metadata = dict(req.metadata or {})
+    metadata["operator_id"] = x_operator_id.strip()
+    if x_trace_id:
+        metadata.setdefault("trace_id", x_trace_id)
+    try:
+        result = _CODEX_RUNTIME.invoke(
+            ProviderInvocationRequest(
+                provider="codex_cli",
+                mode=req.mode,
+                prompt=req.prompt,
+                context_pack=req.context_pack or {},
+                metadata=metadata,
+                messages=req.messages,
+                attachments=req.attachments,
+            )
+        )
+    except CodexProviderError as exc:
+        return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
+    except AssistantProviderRuntimeError as exc:
+        return _assistant_provider_runtime_error_response(exc)
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "ok",
+            "data": {
+                "provider": result.provider,
+                "mode": result.mode,
+                "status": result.status,
+                "output": result.output,
+                "redaction": result.redaction,
+            },
+        },
+    )
+
+
+class ClaudeInvokeRequest(BaseModel):
+    prompt: str
+    mode: str = "user"
+    context_pack: Optional[Dict[str, Any]] = None
+
+
+@app.post("/api/openclaw-adapter/assistant/claude/invoke")
+def invoke_claude_provider(
+    req: ClaudeInvokeRequest,
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+) -> JSONResponse:
+    """Invoke Claude Code CLI through the mounted service-user CLAUDE_CONFIG_DIR.
+
+    Returns a structured result.  Degraded outcomes (missing binary, missing
+    auth, timeout, malformed output) produce HTTP 200 with status=degraded so
+    callers can apply deterministic fallback rather than treating them as
+    transport errors.
+
+    Operators must supply X-Operator-Id; unauthenticated callers are rejected.
+    """
+    if not x_operator_id:
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "provider_error",
+                "error_code": "OPERATOR_REQUIRED",
+                "message": "X-Operator-Id header is required for Claude provider invocation.",
+            },
+        )
+    result: ClaudeProviderResult = _CLAUDE_PROVIDER.invoke(
+        req.prompt,
+        mode=req.mode,
+        context_pack=req.context_pack,
+    )
+    return JSONResponse(status_code=200, content=result.to_dict())
 
 
 # ---------------------------------------------------------------------------
@@ -852,6 +1260,23 @@ def _bridge_error_response(exc: BridgeError) -> JSONResponse:
     return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
 
 
+def _mode_from_control_mode(control_mode: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not isinstance(control_mode, dict):
+        return None
+    mode = str(control_mode.get("mode") or "").strip()
+    return mode or None
+
+
+def _audit_value_hash(value: Any) -> Optional[str]:
+    if value in (None, ""):
+        return None
+    try:
+        blob = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    except Exception:
+        blob = repr(value).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()[:16]
+
+
 def _upstream_client_or_none() -> Optional[OpenClawUpstreamClient]:
     if not OPENCLAW_GATEWAY_URL:
         return None
@@ -879,11 +1304,27 @@ class ToolInvokeRequest(BaseModel):
     session_id: str
     tool_name: str
     args: Optional[Any] = None
+    mode: Optional[str] = None
+    operator_role: Optional[str] = None
+    operatorRole: Optional[str] = None
+    confirmed: Optional[Any] = None
+    confirm_token: Optional[str] = None
+    confirmToken: Optional[str] = None
+    control_mode: Optional[Dict[str, Any]] = None
+    controlMode: Optional[Dict[str, Any]] = None
 
 
 class WorkflowTriggerRequest(BaseModel):
     workflow_ref: str
     context: Optional[Any] = None
+    mode: Optional[str] = None
+    operator_role: Optional[str] = None
+    operatorRole: Optional[str] = None
+    confirmed: Optional[Any] = None
+    confirm_token: Optional[str] = None
+    confirmToken: Optional[str] = None
+    control_mode: Optional[Dict[str, Any]] = None
+    controlMode: Optional[Dict[str, Any]] = None
 
 
 @app.post("/api/openclaw-adapter/search/query")
@@ -938,7 +1379,10 @@ def get_tool_policy() -> Dict[str, Any]:
 def list_tools(
     agent_id: str,
     session_id: Optional[str] = None,
+    mode: Optional[str] = None,
+    operator_role: Optional[str] = None,
     x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+    x_operator_role: Optional[str] = Header(default=None, alias="X-Operator-Role"),
 ) -> JSONResponse:
     if not x_operator_id:
         return JSONResponse(
@@ -954,6 +1398,8 @@ def list_tools(
             agent_id=agent_id,
             session_id=session_id,
             operator_id=x_operator_id,
+            mode=mode,
+            operator_role=operator_role or x_operator_role,
             upstream=_upstream_client_or_none(),
         )
     except BridgeError as exc:
@@ -965,6 +1411,8 @@ def list_tools(
 def invoke_tool(
     req: ToolInvokeRequest,
     x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+    x_operator_role: Optional[str] = Header(default=None, alias="X-Operator-Role"),
+    x_assistant_mode: Optional[str] = Header(default=None, alias="X-Assistant-Mode"),
     x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
 ) -> JSONResponse:
     if not x_operator_id:
@@ -982,6 +1430,11 @@ def invoke_tool(
             tool_name=req.tool_name,
             args=req.args,
             operator_id=x_operator_id,
+            mode=req.mode or x_assistant_mode or _mode_from_control_mode(req.control_mode or req.controlMode),
+            operator_role=req.operator_role or req.operatorRole or x_operator_role,
+            confirmed=req.confirmed is True,
+            confirm_token=req.confirm_token or req.confirmToken,
+            control_mode=req.control_mode or req.controlMode,
             trace_id=x_trace_id,
             upstream=_upstream_client_or_none(),
         )
@@ -994,6 +1447,8 @@ def invoke_tool(
 def trigger_workflow(
     req: WorkflowTriggerRequest,
     x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+    x_operator_role: Optional[str] = Header(default=None, alias="X-Operator-Role"),
+    x_assistant_mode: Optional[str] = Header(default=None, alias="X-Assistant-Mode"),
     x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
 ) -> JSONResponse:
     if not x_operator_id:
@@ -1010,6 +1465,11 @@ def trigger_workflow(
             workflow_ref=req.workflow_ref,
             context=req.context,
             operator_id=x_operator_id,
+            mode=req.mode or x_assistant_mode or _mode_from_control_mode(req.control_mode or req.controlMode),
+            operator_role=req.operator_role or req.operatorRole or x_operator_role,
+            confirmed=req.confirmed is True,
+            confirm_token=req.confirm_token or req.confirmToken,
+            control_mode=req.control_mode or req.controlMode,
             trace_id=x_trace_id,
             upstream=_upstream_client_or_none(),
         )
@@ -1059,6 +1519,16 @@ _LIVE_GATE = LiveGateAdapter(
     runtime_manager_url=_RUNTIME_MANAGER_URL,
     audit_log=_LIVE_GATE_AUDIT,
 )
+
+def _dummy_runner(payload: Dict[str, Any]) -> Any:
+    return {"status": "ok"}
+
+_ASSISTANT_MOUNTS = AssistantCredentialMounts()
+_CODEX_PROVIDER = AssistantCodexProvider(mounts=_ASSISTANT_MOUNTS)
+_CLAUDE_PROVIDER = AssistantClaudeProvider(mounts=_ASSISTANT_MOUNTS)
+_CODEX_RUNTIME = AssistantProviderRuntime(runner=_CODEX_PROVIDER.invoke)
+_ASSISTANT_RUNTIME = AssistantProviderRuntime(runner=_dummy_runner)
+_REPAIR_WORKFLOW = AssistantRepairWorkflow()
 
 
 def _paper_broker_error_response(exc: PaperBrokerAdapterError) -> JSONResponse:

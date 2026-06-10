@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "task_id": "OPS-RTEL-002",
+  "archived_at": "2026-06-09T11:11:05Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OPS-RTEL-002",
+    "title": "Paper runtime fleet reconciler",
+    "summary_zh": "新增 paper runtime fleet reconciler，從 active paper runtime bindings 自動維持一個 worker per binding，取代手動 docker run。",
+    "phase": "Runtime Telemetry Hardening",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "OPS-RTEL-001"
+    ],
+    "artifacts": [
+      "services/execution/",
+      "services/execution/lean_runtime/",
+      "services/execution/runtime-manager/",
+      "docker-compose.yml",
+      "docs/deployment/runtime-telemetry-hardening-2026-06-06.md"
+    ],
+    "acceptance": [
+      "stack restart starts workers for all active paper bindings",
+      "killing one worker causes automatic restart",
+      "retired binding stops its worker",
+      "no worker consumes shared Redis signals before isolation"
+    ],
+    "next": "Closeout complete: deployment doc updated (22->25 tests, monitoring sessions noted), task brief finalized; 25/25 tests pass; PR #1201 merged into dev.",
+    "last_update": "2026-06-09T11:11:05Z",
+    "source_ref": {
+      "archive": "docs/deployment/runtime-telemetry-hardening-2026-06-06.md",
+      "execution_plan": "docs/deployment/runtime-telemetry-execution-tasks-2026-06-06.md",
+      "repair_pr": 1047,
+      "section": "Workstream B"
+    },
+    "task_class": "execution",
+    "auto_created_by": "codex-runtime-telemetry-hardening-20260606",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Review approved for reopened OPS-RTEL-002 dispatch: PR #1138 merge commit 29bab65f contains task-brief refresh 330a2ae6; current runtime-manager focused suite passes 25/25; core acceptance remains covered by PaperFleetReconciler start/restart/retire/degraded-fetch safety and binding-scoped PANTHEON_SIGNAL_QUEUE_KEY isolation."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-09T11:11:05Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-rtel-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-RTEL-002",
+      "git_clean_required": false,
+      "commit": "76798e918a6773531035aeb6d0ba3f9c703c0a26",
+      "commit_subject": "OPS-RTEL-002: closeout — update doc test count and task brief",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Deployment doc": "test count 22->25, note monitoring session tests.",
+        "Task brief": "record final verified state and dispatch history.",
+        "Verification": "python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py -v -- 25 passed",
+        "LLM-Agent": "Claude",
+        "Task-ID": "OPS-RTEL-002",
+        "Reviewer": "Codex",
+        "Verified": "python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py -v -- 25 passed"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OPS-RTEL-002",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "32b7bbc242adb6207062348d5f98fbb006296003",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OPS-RTEL-002",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Revalidation and task-brief refresh complete. Focused validation passed: python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py -q -> 25 passed. Task-scoped commit 330a2ae6 merged via PR #1138 (merge commit 29bab65f). Please review/approve so owner can finalize done.",
+      "status": "done",
+      "created_at": "2026-06-07T14:57:30Z",
+      "resolved_at": "2026-06-07T15:03:15Z"
+    },
+    {
+      "task_id": "OPS-RTEL-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: focused validation passed (python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py -q -> 25 passed); PR #1138 is already merged via 29bab65f. Owner can finalize done once active task state is present.",
+      "status": "done",
+      "created_at": "2026-06-07T15:03:15Z",
+      "resolved_at": "2026-06-09T10:42:47Z"
+    },
+    {
+      "task_id": "OPS-RTEL-002",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned OPS-RTEL-002 away from unavailable lane Codex2 (disabled, sidecar-only, or auth-down); owner Codex2 -> Claude.",
+      "status": "done",
+      "created_at": "2026-06-09T10:42:47Z",
+      "resolved_at": "2026-06-09T11:11:06Z"
+    }
+  ],
+  "blockers": []
+}

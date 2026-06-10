@@ -559,6 +559,31 @@ Research run 必須能精確引用：
 - funding / mark / index / liquidation awareness
 - cross-venue if and only if explicitly in scope
 
+## 10.4 2026-06-09 台股低成本資料源決策
+
+台股 research-grade 資料層採 **FinMind-first**：
+
+- `TWSE` / `TPEx` / `MOPS` / `TDCC` / `TAIFEX` 仍是 official/reference truth owner。
+- `FinMind` 是低成本主要 API/cache layer，用於日行情、籌碼、集保/股權分散、新聞 metadata、active-universe 分點 top20。
+- `Yahoo Taiwan` 只保留為 public fallback：主要用於 FinMind quota、entitlement 或 endpoint health 不可用時的分點 top15 與 RSS metadata。
+- `TEJ` 不再是第一順位採購；它保留為歷史補洞、較舊資料、審計型研究資料或 FinMind/公開源缺欄位時的補充。
+- `TWSE` / `TPEx` 全量分點歷史採購放第二順位，只有 FinMind SponsorPro + TEJ 仍補不到時才一次性購買歷史，不先做每月全量訂閱。
+
+分點資料具體路徑：
+
+| 需求 | 第一順位 | 第二順位 | 更新策略 |
+|---|---|---|---|
+| active-universe 分點 top20 | FinMind Sponsor `TaiwanStockTradingDailyReport` | Yahoo top15 fallback | 每日收盤後，只跑 core/candidate |
+| 2021-06-30 至今歷史分點 | FinMind SponsorPro daily parquet | TEJ ABSR20/AMTOP1 gap-fill | 短期 backfill，raw partition 全留 |
+| 2021-06-30 以前或 vendor 缺洞 | TEJ 或 TWSE/TPEx 批次歷史 | 手動研究採購 | 只補研究標的與必要回測區間 |
+
+儲存與更新規則：
+
+- raw：`raw/finmind/<dataset>/date=YYYY-MM-DD/`，保留原始 JSON/parquet manifest；signed URL 不落入 evidence。
+- normalized：`tw_broker_top`, `tw_price_daily`, `tw_institutional_flow`, `tw_margin_short_balance`, `tw_securities_lending`, `tw_shareholding`, `tw_news_metadata`。
+- features：主力連買天數、top broker concentration、外資/投信連買、融資券變化、分點反轉。
+- `core_universe` 和 `candidate_universe` 抓分點/新聞/籌碼細節；`archive_universe` 只保留日行情與重大事件，不再跑高量分點與新聞細節。
+
 ---
 
 # 11. 建議的實作波次

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import gzip
 import json
 import os
 import re
@@ -8,14 +9,25 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import yaml
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+try:
+    import yaml
+except ModuleNotFoundError:  # pragma: no cover - exercised only in lean supervisor envs
+    yaml = None
+
+YAML_ERROR_TYPES = (yaml.YAMLError,) if yaml is not None else ()
+
 ROOT = Path(__file__).resolve().parents[1]
+STATUS_ROOT = (
+    Path(os.path.expanduser(os.environ["PANTHEON_STATUS_ROOT"])).resolve()
+    if os.environ.get("PANTHEON_STATUS_ROOT")
+    else ROOT
+)
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
@@ -24,6 +36,7 @@ from task_archive import (
     ARCHIVE_TASKS_DIR,
     DEFAULT_RECENT_LIMIT as DEFAULT_ARCHIVE_RECENT_LIMIT,
     TaskResolver,
+    archive_display_path,
     archive_task_path,
     archive_task_snapshot,
     is_terminal_task,
@@ -37,20 +50,23 @@ from task_archive import (
 from multi_repo_registry import (
     repository_local_path,
     repository_slug,
+    resolve_repository,
     task_artifact_repository_ids,
     task_primary_repository_id,
 )
 from runtime_state import load_runtime_state
 
-STATUS_FILE = ROOT / "ai-status.json"
-LOG_FILE = ROOT / "ai-activity-log.jsonl"
-CURRENT_WORK_FILE = ROOT / "current-work.md"
-DOCS_SITE_DIR = ROOT / "docs-site"
+STATUS_FILE = STATUS_ROOT / "ai-status.json"
+LOG_FILE = STATUS_ROOT / "ai-activity-log.jsonl"
+LOG_ROTATE_MAX_BYTES = int(os.environ.get("AI_STATUS_LOG_ROTATE_MAX_BYTES", str(5 * 1024 * 1024)))
+LOG_ROTATE_KEEP_LINES = int(os.environ.get("AI_STATUS_LOG_ROTATE_KEEP_LINES", "1000"))
+CURRENT_WORK_FILE = STATUS_ROOT / "current-work.md"
+DOCS_SITE_DIR = STATUS_ROOT / "docs-site"
 CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
-PLANNING_STATE_FILE = ROOT / ".orchestrator" / "planning-state.json"
-ORCHESTRATOR_STATE_FILE = ROOT / ".orchestrator" / "state.json"
-APPROVAL_QUEUE_FILE = ROOT / ".orchestrator" / "approval-queue.json"
-DASHBOARD_BUNDLE_FILE = ROOT / "dashboard-bundle.json"
+PLANNING_STATE_FILE = STATUS_ROOT / ".orchestrator" / "planning-state.json"
+ORCHESTRATOR_STATE_FILE = STATUS_ROOT / ".orchestrator" / "state.json"
+APPROVAL_QUEUE_FILE = STATUS_ROOT / ".orchestrator" / "approval-queue.json"
+DASHBOARD_BUNDLE_FILE = STATUS_ROOT / "dashboard-bundle.json"
 DEFAULT_PLANNING_README = "docs/02-architecture/consensus/phase1/README.md"
 DEFAULT_PLANNING_SESSION_FILE = "docs/02-architecture/consensus/phase1/planning-session.json"
 DEFAULT_PLANNING_CHECKLIST_FILE = "docs/02-architecture/consensus/phase1/pantheon-backend-completion-checklist.md"
@@ -91,6 +107,11 @@ KNOWN_AGENTS = {
         "default_branch": "feat/copilot-research-critique",
         "target_workload": 5,
     },
+    "Human/Ops": {
+        "capability_lane": ["human-gate", "operations", "signoff"],
+        "default_branch": "human/ops",
+        "target_workload": 0,
+    },
 }
 
 AGENT_ALIASES = {
@@ -98,6 +119,12 @@ AGENT_ALIASES = {
     "claude 2": "Claude2",
     "gemini2": "Gemini2",
     "gemini 2": "Gemini2",
+    # Antigravity is the runtime worker rename for Gemini (OPS-ANTIGRAVITY-CLI-MIGRATION).
+    # The collaboration layer still uses Gemini/Gemini2 as canonical names.
+    "antigravity": "Gemini",
+    "antigravity2": "Gemini2",
+    "agy": "Gemini",
+    "agy2": "Gemini2",
     "codex2": "Codex2",
     "codex (2)": "Codex2",
     "codex3": "Codex",
@@ -106,6 +133,11 @@ AGENT_ALIASES = {
     "copilot": "Copilot",
     "copilot host": "Copilot",
     "copilot_host": "Copilot",
+    "human": "Human/Ops",
+    "human ops": "Human/Ops",
+    "human/ops": "Human/Ops",
+    "human-ops": "Human/Ops",
+    "ops": "Human/Ops",
 }
 
 RETIRED_AGENT_REPLACEMENTS = {}
@@ -151,11 +183,20 @@ DEFAULT_DELIVERY_GATES = {
     "require_commit_hash": True,
     "require_git_clean": False,
     "record_remote_status": True,
+    "require_merged_pr": True,
 }
 DEFAULT_COMMIT_CONVENTIONS = {
     "subject_must_include_task_id": True,
     "required_body_fields": ["LLM-Agent", "Task-ID", "Reviewer"],
 }
+COMMIT_TRAILER_SKIP_PREFIXES = (
+    "Merge ",
+    "Revert ",
+    "promote:",
+    "hotfix:",
+    "publish:",
+)
+COMMIT_TRAILER_SKIP_RE = re.compile(r"^OPS-(?:GIT-(?:WORKFLOW|REDESIGN)|DOC|REBASE)-")
 FIRST_PROMPT_PRIORITY = [
     "AI_COLLABORATION_GUIDE.md",
     "ai-status.json",
@@ -617,7 +658,26 @@ def load_json_file(path: Path, default: Any) -> Any:
 
 def load_config() -> dict[str, Any]:
     payload = load_json_file(CONFIG_FILE, {})
-    return payload if isinstance(payload, dict) else {}
+    if not isinstance(payload, dict):
+        return {}
+    paths = payload.setdefault("paths", {})
+    if isinstance(paths, dict):
+        paths.update(
+            {
+                "status_file": str(STATUS_FILE),
+                "activity_log": str(LOG_FILE),
+                "current_work": str(CURRENT_WORK_FILE),
+                "dashboard": str(DOCS_SITE_DIR / "index.html"),
+                "state_file": str(ORCHESTRATOR_STATE_FILE),
+                "event_queue": str(STATUS_ROOT / ".orchestrator" / "event-queue.jsonl"),
+                "approval_queue": str(APPROVAL_QUEUE_FILE),
+                "github_bus_state": str(STATUS_ROOT / ".orchestrator" / "github-bus-state.json"),
+                "github_webhook_events": str(STATUS_ROOT / ".orchestrator" / "github-webhook-events.jsonl"),
+                "github_relay_state": str(STATUS_ROOT / ".orchestrator" / "github-relay-state.json"),
+                "provider_capabilities": str(STATUS_ROOT / ".orchestrator" / "provider_capabilities.json"),
+            }
+        )
+    return payload
 
 
 def bool_config_setting(settings: dict[str, Any], key: str, default: bool = False) -> bool:
@@ -640,6 +700,29 @@ def int_config_setting(settings: dict[str, Any], key: str, default: int) -> int:
         return default
 
 
+def optional_int_config_setting(settings: dict[str, Any], key: str) -> int | None:
+    value = settings.get(key)
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def int_mapping_config_setting(settings: dict[str, Any], key: str) -> dict[str, int]:
+    raw = settings.get(key)
+    if not isinstance(raw, dict):
+        return {}
+    values: dict[str, int] = {}
+    for name, value in raw.items():
+        try:
+            values[str(name)] = int(value)
+        except (TypeError, ValueError):
+            continue
+    return values
+
+
 def build_dispatch_policy_summary(config: dict[str, Any]) -> dict[str, Any]:
     ready_dispatcher = config.get("ready_dispatcher") if isinstance(config.get("ready_dispatcher"), dict) else {}
     helper_claim = ready_dispatcher.get("helper_claim") if isinstance(ready_dispatcher.get("helper_claim"), dict) else {}
@@ -657,10 +740,73 @@ def build_dispatch_policy_summary(config: dict[str, Any]) -> dict[str, Any]:
         "require_owner_higher_priority_load": bool_config_setting(helper_claim, "require_owner_higher_priority_load", True),
         "owned_work_first": True,
         "max_dispatches_per_tick": int_config_setting(ready_dispatcher, "max_dispatches_per_tick", 4),
-        "max_tasks_per_agent": int_config_setting(ready_dispatcher, "max_tasks_per_agent", 1),
+        "max_tasks_per_agent": optional_int_config_setting(ready_dispatcher, "max_tasks_per_agent"),
+        "max_tasks_per_agent_by_agent": int_mapping_config_setting(ready_dispatcher, "max_tasks_per_agent_by_agent"),
+        "max_concurrent_per_quota_group": int_mapping_config_setting(ready_dispatcher, "max_concurrent_per_quota_group"),
         "sidecar_only_agents": ready_dispatcher.get("sidecar_only_agents") or [],
         "disabled_agents": ready_dispatcher.get("disabled_agents") or [],
     }
+
+
+def _dashboard_agent_id(config: dict[str, Any], agent_name: str | None) -> str:
+    raw = str(agent_name or "").strip()
+    canonical = canonical_agent_name(raw)
+    candidates = {
+        raw.lower(),
+        canonical.lower(),
+        raw.lower().replace("-", "_"),
+        canonical.lower().replace("-", "_"),
+    }
+    for agent_id, agent in (config.get("agents", {}) or {}).items():
+        display_name = str((agent or {}).get("display_name") or "").strip()
+        values = {
+            str(agent_id).lower(),
+            str(agent_id).lower().replace("-", "_"),
+            display_name.lower(),
+            display_name.lower().replace("-", "_"),
+        }
+        if candidates & values:
+            return str(agent_id)
+    return canonical or raw
+
+
+def _dashboard_slot_count(config: dict[str, Any], agent_id: str) -> int:
+    agents = config.get("agents", {}) or {}
+    agent = agents.get(agent_id) or {}
+    slots = [str(slot or "").strip() for slot in (agent.get("worker_slots", []) or [])]
+    slot_ids = {slot for slot in slots if slot and slot in agents}
+    for slot_id, slot_agent in agents.items():
+        if str((slot_agent or {}).get("dispatch_slot_for") or "").strip() == agent_id:
+            slot_ids.add(str(slot_id))
+    return len(slot_ids)
+
+
+def dashboard_agent_capacity(config: dict[str, Any], agent_name: str | None) -> int:
+    ready_dispatcher = config.get("ready_dispatcher") if isinstance(config.get("ready_dispatcher"), dict) else {}
+    caps = ready_dispatcher.get("max_tasks_per_agent_by_agent")
+    agent_id = _dashboard_agent_id(config, agent_name)
+    canonical = canonical_agent_name(agent_name)
+    lookup_keys = {
+        str(agent_name or "").strip().lower(),
+        canonical.lower(),
+        agent_id.lower(),
+        agent_id.lower().replace("_", "-"),
+        agent_id.lower().replace("-", "_"),
+    }
+    if isinstance(caps, dict):
+        for key, value in caps.items():
+            if str(key).strip().lower() not in lookup_keys:
+                continue
+            try:
+                return max(1, int(value))
+            except (TypeError, ValueError):
+                continue
+
+    default_capacity = optional_int_config_setting(ready_dispatcher, "max_tasks_per_agent")
+    slot_count = _dashboard_slot_count(config, agent_id)
+    if slot_count:
+        return max(default_capacity or 0, slot_count)
+    return default_capacity or 1
 
 
 def recent_helper_claims(limit: int = 8, max_scan_lines: int = 5000) -> list[dict[str, Any]]:
@@ -798,7 +944,77 @@ def archive_terminal_tasks_in_state(state: dict[str, Any], *, archived_at: str |
     return [task_id for task_id in archived_ids if task_id]
 
 
+def prune_archived_active_tasks(state: dict[str, Any]) -> list[str]:
+    """Remove invalid active rows whose task id already has an archive snapshot."""
+
+    pruned_ids: list[str] = []
+    remaining_tasks: list[dict[str, Any]] = []
+    for task in state.get("tasks", []):
+        task_id = str(task.get("id") or "").strip()
+        if task_id and archived_task_snapshot(task_id):
+            pruned_ids.append(task_id)
+            continue
+        remaining_tasks.append(task)
+    if not pruned_ids:
+        return []
+
+    pruned = set(pruned_ids)
+    state["tasks"] = remaining_tasks
+    state["handoffs"] = [handoff for handoff in state.get("handoffs", []) if handoff.get("task_id") not in pruned]
+    state["blockers"] = [blocker for blocker in state.get("blockers", []) if blocker.get("task_id") not in pruned]
+    return pruned_ids
+
+
+def maybe_rotate_activity_log(path: Path | None = None) -> Path | None:
+    """Archive + truncate ai-activity-log.jsonl when it exceeds LOG_ROTATE_MAX_BYTES.
+
+    Returns the gzipped archive path on rotation, None when no rotation happened.
+    The active log file is rewritten in place (same inode), so concurrent
+    append-mode writers see the truncated file rather than a stale handle.
+    """
+    log_path = path if path is not None else LOG_FILE
+    if LOG_ROTATE_MAX_BYTES <= 0:
+        return None
+    try:
+        size = log_path.stat().st_size
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return None
+    if size <= LOG_ROTATE_MAX_BYTES:
+        return None
+    archive_dir = log_path.parent / "archive" / "logs"
+    try:
+        archive_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%MZ")
+    archive_path = archive_dir / f"{log_path.name}-{timestamp}.gz"
+    try:
+        data = log_path.read_bytes()
+    except OSError:
+        return None
+    if LOG_ROTATE_KEEP_LINES > 0:
+        lines = data.splitlines(keepends=True)
+        keep = b"".join(lines[-LOG_ROTATE_KEEP_LINES:])
+    else:
+        keep = b""
+    try:
+        with gzip.open(archive_path, "wb") as dst:
+            dst.write(data)
+    except OSError:
+        return None
+    try:
+        # Rewriting via write_bytes truncates the existing inode (O_TRUNC),
+        # so any open append-mode handle still writes to this same file.
+        log_path.write_bytes(keep)
+    except OSError:
+        return None
+    return archive_path
+
+
 def append_log(entry: dict[str, Any]) -> None:
+    maybe_rotate_activity_log()
     with LOG_FILE.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
@@ -887,6 +1103,7 @@ def delivery_gate_settings() -> dict[str, bool]:
         "TASK_REQUIRE_COMMIT_HASH": "require_commit_hash",
         "TASK_REQUIRE_GIT_CLEAN": "require_git_clean",
         "TASK_RECORD_REMOTE_STATUS": "record_remote_status",
+        "TASK_REQUIRE_MERGED_PR": "require_merged_pr",
     }
     for env_name, field_name in env_overrides.items():
         parsed = parse_bool_env(env_name)
@@ -941,6 +1158,34 @@ def run_git_command(
     return result.stdout.strip()
 
 
+def git_command_succeeds(args: list[str], *, cwd: Path | None = None) -> bool:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=cwd or ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def run_gh_json_command(args: list[str], *, cwd: Path | None = None) -> dict[str, Any] | None:
+    result = subprocess.run(
+        ["gh", *args],
+        cwd=cwd or ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 def classify_push_status(ahead: int, behind: int) -> str:
     if ahead == 0 and behind == 0:
         return "in_sync"
@@ -949,6 +1194,95 @@ def classify_push_status(ahead: int, behind: int) -> str:
     if ahead == 0 and behind > 0:
         return "behind"
     return "diverged"
+
+
+def delivery_merge_target_branch(config: dict[str, Any], repository_id: str) -> str:
+    if repository_id == "pantheon":
+        branch = str((config.get("branch_workflow") or {}).get("dev_branch") or "").strip()
+        if branch:
+            return branch
+    repo = resolve_repository(config, repository_id)
+    branch = str(repo.get("default_branch") or "").strip()
+    return branch or "main"
+
+
+def pull_request_status_for_branch(repository_root: Path, branch: str) -> dict[str, Any] | None:
+    if not branch or branch == "HEAD":
+        return None
+    return run_gh_json_command(
+        [
+            "pr",
+            "view",
+            branch,
+            "--json",
+            "number,state,mergeStateStatus,mergedAt,mergeCommit,autoMergeRequest,url",
+        ],
+        cwd=repository_root,
+    )
+
+
+def format_pull_request_status(pr: dict[str, Any] | None) -> str:
+    if not pr:
+        return ""
+    number = pr.get("number")
+    state = str(pr.get("state") or "unknown")
+    merge_state = str(pr.get("mergeStateStatus") or "unknown")
+    url = str(pr.get("url") or "").strip()
+    auto_merge = "enabled" if pr.get("autoMergeRequest") else "disabled"
+    prefix = f" PR #{number}" if number else " PR"
+    parts = [f"{prefix} is {state}", f"mergeState={merge_state}", f"autoMerge={auto_merge}"]
+    if url:
+        parts.append(url)
+    return "; ".join(parts)
+
+
+def enforce_delivery_merged_gate(
+    config: dict[str, Any],
+    delivery: dict[str, Any],
+    *,
+    repository_root: Path,
+    repository_id: str,
+    branch: str,
+    remote_names: list[str],
+) -> None:
+    target_branch = delivery_merge_target_branch(config, repository_id)
+    delivery["merge_target_branch"] = target_branch
+    if not remote_names:
+        raise SystemExit(
+            "Cannot finalize task: delivery_gates.require_merged_pr is enabled, "
+            "but the repository has no git remote to verify the task PR merge."
+        )
+    remote = "origin" if "origin" in remote_names else remote_names[0]
+    target_ref = f"{remote}/{target_branch}"
+    delivery["merge_target_ref"] = target_ref
+    run_git_command(["fetch", remote, target_branch], cwd=repository_root, required=False)
+    target_sha = run_git_command(
+        ["rev-parse", "--verify", target_ref],
+        cwd=repository_root,
+        required=False,
+    )
+    if not target_sha:
+        raise SystemExit(
+            "Cannot finalize task: unable to verify task PR merge because "
+            f"`{target_ref}` is unavailable."
+        )
+    delivery["merge_target_sha"] = target_sha
+    merged = git_command_succeeds(
+        ["merge-base", "--is-ancestor", "HEAD", target_ref],
+        cwd=repository_root,
+    )
+    delivery["head_merged_to_target"] = merged
+    if merged:
+        return
+    pr_status = pull_request_status_for_branch(repository_root, branch)
+    status_text = format_pull_request_status(pr_status)
+    detail = f";{status_text}" if status_text else ""
+    raise SystemExit(
+        "Cannot finalize task: the task branch HEAD is not merged into "
+        f"`{target_ref}` yet{detail}. Keep the task in `review_approved`, "
+        "refresh the PR branch if it is behind, and run `done` only after "
+        "GitHub reports the PR merged."
+    )
 
 
 def parse_commit_metadata_lines(body: str) -> dict[str, str]:
@@ -965,6 +1299,15 @@ def parse_commit_metadata_lines(body: str) -> dict[str, str]:
     return metadata
 
 
+def commit_subject_skips_trailer_check(subject: str) -> str | None:
+    for prefix in COMMIT_TRAILER_SKIP_PREFIXES:
+        if subject.startswith(prefix):
+            return prefix.rstrip(": ")
+    if COMMIT_TRAILER_SKIP_RE.match(subject):
+        return "OPS"
+    return None
+
+
 def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str, Any]:
     settings = delivery_gate_settings()
     commit_rules = commit_convention_settings()
@@ -979,6 +1322,21 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
     repository_root = repository_local_path(config, repository_id)
     if repository_root is None:
         raise SystemExit(f"Cannot finalize task: repository `{repository_id}` has no local_path configured.")
+    repository_fallback: dict[str, Any] | None = None
+    if repository_id != "pantheon" and not repository_root.exists():
+        repo_ids = task_artifact_repository_ids(config, task)
+        pantheon_root = repository_local_path(config, "pantheon")
+        if "pantheon" in repo_ids and pantheon_root is not None:
+            repository_fallback = {
+                "from_repository_id": repository_id,
+                "missing_repository_path": str(repository_root.resolve(strict=False)),
+                "reason": (
+                    "non-Pantheon artifact repository local_path is unavailable; "
+                    "using Pantheon because the task also has Pantheon artifacts"
+                ),
+            }
+            repository_id = "pantheon"
+            repository_root = pantheon_root
     repository_root = repository_root.resolve(strict=False)
     repository_slug_value = repository_slug(config, repository_id)
     branch = run_git_command(
@@ -994,6 +1352,8 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
         "branch": branch,
         "git_clean_required": settings["require_git_clean"],
     }
+    if repository_fallback is not None:
+        delivery["repository_fallback"] = repository_fallback
 
     if settings["require_commit_hash"]:
         commit_hash = run_git_command(
@@ -1043,16 +1403,21 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
             "Reviewer": canonical_agent_name(task.get("reviewer")),
         }
         required_fields = commit_rules.get("required_body_fields", [])
+        trailer_skip_reason = commit_subject_skips_trailer_check(subject)
         missing_fields: list[str] = []
         mismatched_fields: list[tuple[str, str]] = []
-        for field_name in required_fields:
-            actual_value = metadata_fields.get(field_name)
-            if not actual_value:
-                missing_fields.append(field_name)
-                continue
-            expected_value = expected_fields.get(field_name)
-            if expected_value and actual_value != expected_value:
-                mismatched_fields.append((field_name, expected_value))
+        if trailer_skip_reason is None:
+            for field_name in required_fields:
+                actual_value = metadata_fields.get(field_name)
+                if not actual_value:
+                    missing_fields.append(field_name)
+                    continue
+                expected_value = expected_fields.get(field_name)
+                if expected_value and actual_value != expected_value:
+                    mismatched_fields.append((field_name, expected_value))
+        else:
+            delivery["commit_trailer_check_skipped"] = True
+            delivery["commit_trailer_skip_reason"] = trailer_skip_reason
         if missing_fields or mismatched_fields:
             issues: list[str] = []
             if missing_fields:
@@ -1115,6 +1480,16 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
             delivery["push_status"] = classify_push_status(ahead, behind)
         else:
             delivery["push_status"] = "no_upstream"
+
+    if settings["require_merged_pr"]:
+        enforce_delivery_merged_gate(
+            config,
+            delivery,
+            repository_root=repository_root,
+            repository_id=repository_id,
+            branch=branch,
+            remote_names=remote_names,
+        )
 
     return delivery
 
@@ -1369,6 +1744,29 @@ def display_task_title(task: dict[str, Any]) -> str:
     if title:
         return f"{marker_text} {title}"
     return marker_text
+
+
+def activity_log_message(entry: dict[str, Any]) -> str:
+    message = entry.get("message")
+    if message is not None and str(message).strip():
+        return str(message)
+
+    event_type = str(entry.get("type") or "event").strip() or "event"
+    details: list[str] = []
+    commit = str(entry.get("commit") or "").strip()
+    if commit:
+        details.append(f"commit {commit[:12]}")
+
+    scope = entry.get("scope")
+    if isinstance(scope, list) and scope:
+        rendered_scope = ", ".join(f"`{str(item)}`" for item in scope[:3])
+        if len(scope) > 3:
+            rendered_scope += ", ..."
+        details.append(f"scope {rendered_scope}")
+
+    if details:
+        return f"{event_type}: {'; '.join(details)}"
+    return event_type
 
 
 def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> None:
@@ -1635,7 +2033,8 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
             task_id = f" `{entry['task_id']}`" if entry.get("task_id") else ""
             timestamp = entry.get("ts") or entry.get("timestamp")
             lines.append(
-                f"- {format_display_timestamp(timestamp)} {entry['agent']}:{task_id} {localize_embedded_timestamps(entry['message'])}"
+                f"- {format_display_timestamp(timestamp)} {entry.get('agent') or 'Unknown'}:{task_id} "
+                f"{localize_embedded_timestamps(activity_log_message(entry))}"
             )
     else:
         lines.append("- No checkpoints yet.")
@@ -1742,7 +2141,27 @@ def pid_is_alive(pid: Any) -> bool:
         return False
     if value <= 0:
         return False
-    return os.path.exists(f"/proc/{value}")
+    state = proc_pid_state(value)
+    if not state:
+        return False
+    return state.upper() not in {"Z", "X"}
+
+
+def proc_pid_state(pid: Any) -> str | None:
+    try:
+        value = int(pid)
+    except (TypeError, ValueError):
+        return None
+    if value <= 0:
+        return None
+    try:
+        stat = Path(f"/proc/{value}/stat").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        return stat.rsplit(")", 1)[1].strip().split()[0]
+    except IndexError:
+        return None
 
 
 def worker_has_live_runtime(worker: dict[str, Any], *, pid_alive: bool | None = None) -> bool:
@@ -1780,12 +2199,15 @@ def normalize_runtime_workers(state: dict[str, Any], orchestrator_state: dict[st
             task_status = str(handoff.get("status") or "pending")
             task_source = "handoff"
         pid = worker.get("pid")
-        pid_alive = pid_is_alive(pid) if pid not in {None, "", 0, "0"} else None
+        pid_state = proc_pid_state(pid) if pid not in {None, "", 0, "0"} else None
+        pid_alive = bool(pid_state and pid_state.upper() not in {"Z", "X"}) if pid_state is not None else None
         live_runtime = worker_has_live_runtime(worker, pid_alive=pid_alive)
         if worker_status in {"superseded", "reassigned"}:
             bucket = "transition"
         elif task_status == "done" or worker_status in {"completed", "failed"}:
             bucket = "completed"
+        elif not live_runtime and worker_status in {"running", "started"} and pid not in {None, "", 0, "0"}:
+            bucket = "stale"
         elif live_runtime and worker_status in {"running", "started"}:
             bucket = "running"
         else:
@@ -1814,6 +2236,7 @@ def normalize_runtime_workers(state: dict[str, Any], orchestrator_state: dict[st
                 "last_error": worker.get("last_error"),
                 "pid": pid,
                 "pid_alive": pid_alive,
+                "pid_state": pid_state,
                 "is_live_runtime": live_runtime,
             }
         )
@@ -2267,8 +2690,10 @@ def load_local_coordination_payload(path_value: str) -> dict[str, Any] | None:
         if local_path.suffix == ".json":
             payload = json.loads(text)
         else:
+            if yaml is None:
+                return None
             payload = yaml.safe_load(text)
-    except (OSError, json.JSONDecodeError, yaml.YAMLError):
+    except (OSError, json.JSONDecodeError, *YAML_ERROR_TYPES):
         return None
     return payload if isinstance(payload, dict) else None
 
@@ -2697,12 +3122,15 @@ def build_dashboard_bundle(
         else {}
     )
     paused_actors = {str(actor or "").strip().lower() for actor in dispatch_pauses.keys() if str(actor or "").strip()}
-    occupied_actors = {
-        str(worker.get("actor") or worker.get("provider") or "").strip().lower()
-        for worker in live_workers
-        if str(worker.get("bucket") or "").lower() in {"running", "pending"}
-        and str(worker.get("actor") or worker.get("provider") or "").strip()
-    }
+    actor_loads: dict[str, int] = {}
+    for worker in live_workers:
+        if str(worker.get("bucket") or "").lower() not in {"running", "pending"}:
+            continue
+        actor = canonical_agent_name(worker.get("actor") or worker.get("provider"))
+        if not actor:
+            continue
+        actor_key = actor.lower()
+        actor_loads[actor_key] = actor_loads.get(actor_key, 0) + 1
 
     ready_now = 0
     dependency_ready = 0
@@ -2716,14 +3144,15 @@ def build_dashboard_bundle(
         status = str(task.get("status") or "").lower()
         if status == "todo" and all(dependency_is_satisfied(resolver, dep_id) for dep_id in task.get("depends_on", [])):
             dependency_ready += 1
-            owner_key = str(task.get("owner") or "").strip().lower()
+            owner = canonical_agent_name(task.get("owner"))
+            owner_key = owner.lower()
             if not owner_key:
                 continue
             if owner_key in paused_actors:
                 continue
-            if owner_key in occupied_actors:
-                continue
             if any(worker.get("bucket") in {"running", "pending"} for worker in live_workers_by_task.get(str(task.get("id") or ""), [])):
+                continue
+            if actor_loads.get(owner_key, 0) >= dashboard_agent_capacity(config, owner):
                 continue
             ready_now += 1
         elif status == "in_progress":
@@ -2834,17 +3263,6 @@ def build_dashboard_bundle(
             continue
         computed_mode_occupancy[mode_name]["queued"] += 1
     mode_occupancy = computed_mode_occupancy
-    raw_mode_occupancy = supervisor_state.get("mode_occupancy") if isinstance(supervisor_state.get("mode_occupancy"), dict) else {}
-    if raw_mode_occupancy:
-        normalized_occupancy = {}
-        for key in ("planning", "execution", "coordination", "chair_review"):
-            bucket = raw_mode_occupancy.get(key) if isinstance(raw_mode_occupancy.get(key), dict) else {}
-            normalized_occupancy[key] = {
-                "running": int(bucket.get("running") or 0),
-                "pending": int(bucket.get("pending") or 0),
-                "queued": int(bucket.get("queued") or 0),
-            }
-        mode_occupancy = normalized_occupancy
 
     chair_rotation = orchestrator.get("chair_rotation") if isinstance(orchestrator.get("chair_rotation"), dict) else {}
     chair_summary = {
@@ -3004,15 +3422,35 @@ def _mirror_log_tail(source: Path, target: Path, max_lines: int) -> None:
         return
 
 
-def sync_docs_site() -> None:
+def dashboard_orchestrator_state(state: dict[str, Any], orchestrator_state: dict[str, Any]) -> dict[str, Any]:
+    dashboard_state = deepcopy(orchestrator_state)
+    dashboard_workers = dashboard_state.setdefault("workers", {})
+    for worker in normalize_runtime_workers(state, orchestrator_state):
+        run_id = str(worker.get("run_id") or "").strip()
+        if not run_id or run_id not in dashboard_workers:
+            continue
+        dashboard_workers[run_id]["pid_alive"] = worker.get("pid_alive")
+        dashboard_workers[run_id]["pid_state"] = worker.get("pid_state")
+        dashboard_workers[run_id]["is_live_runtime"] = worker.get("is_live_runtime")
+        dashboard_workers[run_id]["runtime_bucket"] = worker.get("bucket")
+        dashboard_workers[run_id]["dispatch_mode"] = worker.get("dispatch_mode")
+    return dashboard_state
+
+
+def sync_docs_site(state: dict[str, Any]) -> None:
     DOCS_SITE_DIR.mkdir(parents=True, exist_ok=True)
+    config = load_config()
+    try:
+        runtime_state = load_runtime_state(config)
+    except KeyError:
+        runtime_state = {}
     mirror_files = [
         STATUS_FILE,
         CURRENT_WORK_FILE,
         DASHBOARD_BUNDLE_FILE,
-        ROOT / ".orchestrator" / "state.json",
-        ROOT / ".orchestrator" / "approval-queue.json",
-        ROOT / ".orchestrator" / "planning-state.json",
+        ORCHESTRATOR_STATE_FILE,
+        APPROVAL_QUEUE_FILE,
+        PLANNING_STATE_FILE,
     ]
     rename_map = {
         "state.json": "orchestrator-state.json",
@@ -3021,13 +3459,21 @@ def sync_docs_site() -> None:
     for path in mirror_files:
         if path.exists():
             target_name = rename_map.get(path.name, path.name)
-            shutil.copy2(path, DOCS_SITE_DIR / target_name)
+            if path.name == "state.json":
+                dashboard_state = dashboard_orchestrator_state(state, runtime_state)
+                (DOCS_SITE_DIR / target_name).write_text(
+                    json.dumps(dashboard_state, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+            else:
+                shutil.copy2(path, DOCS_SITE_DIR / target_name)
     _mirror_log_tail(LOG_FILE, DOCS_SITE_DIR / LOG_FILE.name, DASHBOARD_LOG_TAIL_LINES)
 
 
 def sync_all(state: dict[str, Any]) -> None:
     sync_canonical_document_metadata(state)
     normalize_state_agents(state)
+    prune_archived_active_tasks(state)
     validate_state(state)
     normalize_handoffs(state)
     recompute_agents(state)
@@ -3038,7 +3484,7 @@ def sync_all(state: dict[str, Any]) -> None:
     logs = load_logs()
     write_current_work(state, logs)
     write_dashboard_bundle(state)
-    sync_docs_site()
+    sync_docs_site(state)
 
 
 def mark_blockers_resolved(state: dict[str, Any], task_id: str) -> None:
@@ -3126,8 +3572,14 @@ def normalize_handoffs(state: dict[str, Any]) -> None:
 
 
 def command_assign(state: dict[str, Any], args: list[str]) -> None:
+    from wave_guards import WaveGuardError, check_wave_assign
+
     if len(args) < 3:
         raise SystemExit("Usage: assign <task-id> <owner> <reviewer> [title]")
+    try:
+        check_wave_assign(state.get("wave_state") or {})
+    except WaveGuardError as exc:
+        raise SystemExit(f"Wave guard rejected assign: {exc}") from exc
     task_id, owner, reviewer = args[0], canonical_agent_name(args[1]), canonical_agent_name(args[2])
     title = args[3] if len(args) > 3 else os.environ.get("TASK_TITLE")
     summary_zh = os.environ.get("TASK_SUMMARY_ZH")
@@ -3546,13 +3998,80 @@ def command_show(state: dict[str, Any], args: list[str]) -> None:
         json.dumps(
             {
                 "source": "archive",
-                "snapshot_path": str(archive_task_path(task_id).relative_to(ROOT)),
+                "snapshot_path": archive_display_path(archive_task_path(task_id)),
                 "snapshot": snapshot,
             },
             indent=2,
             ensure_ascii=False,
         )
     )
+
+
+def command_wave(state: dict[str, Any], args: list[str]) -> None:
+    """wave open <wave-id> | wave close | wave freeze"""
+    from wave_guards import (  # lazy: only needed for this command
+        WaveGuardError,
+        check_wave_close,
+        check_wave_freeze,
+        check_wave_open,
+    )
+
+    if not args:
+        raise SystemExit("Usage: wave <open <wave-id> | close | freeze>")
+
+    subcommand = args[0]
+    actor = current_actor()
+    timestamp = iso_now()
+    wave_state: dict[str, Any] = state.setdefault("wave_state", {})
+    planning_state = load_planning_state()
+
+    if subcommand == "open":
+        if len(args) < 2:
+            raise SystemExit("Usage: wave open <wave-id>")
+        new_wave_id = args[1]
+        try:
+            check_wave_open(wave_state, new_wave_id, actor, planning_state)
+        except WaveGuardError as exc:
+            raise SystemExit(f"Wave guard rejected open: {exc}") from exc
+        wave_state["current_wave_id"] = new_wave_id
+        wave_state["status"] = "open"
+        wave_state["opened_at"] = timestamp
+        wave_state["frozen_at"] = None
+        wave_state["closed_at"] = None
+        wave_state["branch"] = f"wave/{new_wave_id}"
+        wave_state.setdefault("history", []).append(
+            {"ts": timestamp, "event": "open", "wave_id": new_wave_id, "actor": actor, "branch": f"wave/{new_wave_id}"}
+        )
+        append_log({"ts": timestamp, "agent": actor, "type": "wave_open", "wave_id": new_wave_id})
+
+    elif subcommand == "close":
+        try:
+            check_wave_close(wave_state, actor, planning_state)
+        except WaveGuardError as exc:
+            raise SystemExit(f"Wave guard rejected close: {exc}") from exc
+        current_wave_id = wave_state.get("current_wave_id", "")
+        wave_state["status"] = "closed"
+        wave_state["closed_at"] = timestamp
+        wave_state.setdefault("history", []).append(
+            {"ts": timestamp, "event": "close", "wave_id": current_wave_id, "actor": actor}
+        )
+        append_log({"ts": timestamp, "agent": actor, "type": "wave_close", "wave_id": current_wave_id})
+
+    elif subcommand == "freeze":
+        try:
+            check_wave_freeze(wave_state, actor, planning_state)
+        except WaveGuardError as exc:
+            raise SystemExit(f"Wave guard rejected freeze: {exc}") from exc
+        current_wave_id = wave_state.get("current_wave_id", "")
+        wave_state["status"] = "frozen"
+        wave_state["frozen_at"] = timestamp
+        wave_state.setdefault("history", []).append(
+            {"ts": timestamp, "event": "freeze", "wave_id": current_wave_id, "actor": actor}
+        )
+        append_log({"ts": timestamp, "agent": actor, "type": "wave_freeze", "wave_id": current_wave_id})
+
+    else:
+        raise SystemExit(f"Unknown wave subcommand: {subcommand!r}. Use: open <wave-id>, close, freeze")
 
 
 def main(argv: list[str]) -> int:
@@ -3579,6 +4098,7 @@ def main(argv: list[str]) -> int:
         "approve": command_approve,
         "archive_migrate": command_archive_migrate,
         "sync": command_sync,
+        "wave": command_wave,
     }
 
     if command in read_only_commands:

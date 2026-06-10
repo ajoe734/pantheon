@@ -17,7 +17,8 @@ The ingest service provides:
 3. Durable buffering (bounded, with overflow protection)
 4. Async batch writing (micro-batching, retry, partition routing)
 5. Backpressure management (adaptive concurrency, delay non-critical events)
-6. Dead-letter handling (diagnostic tags, JSONL spill, replay support)
+6. Dead-letter handling (diagnostic tags, JSONL spill, startup loading,
+   and replay support)
 7. Idempotent deduplication by event_id (service layer + ON CONFLICT at write layer)
 
 Replay policy
@@ -70,6 +71,26 @@ except ImportError:
     jsonschema = None
 
 log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Canonical Postgres value normalization
+# ---------------------------------------------------------------------------
+
+def _coerce_postgres_created_at(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("telemetry event missing created_at")
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError(f"invalid telemetry created_at: {value!r}") from exc
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 # ---------------------------------------------------------------------------
 # Replay policy constants
@@ -158,7 +179,7 @@ def build_postgres_write_fn(
                     (
                         ev.get("event_id"),
                         ev.get("event_type"),
-                        ev.get("created_at"),
+                        _coerce_postgres_created_at(ev.get("created_at")),
                         _json.dumps(ev),
                     )
                     for ev in batch
@@ -221,6 +242,8 @@ class TelemetryIngestService:
         binding_store: Optional[RuntimeBindingProtocol] = None,
         runtime_summary_store: Optional[RuntimeSummaryProjectionStore] = None,
         dedup_max_size: int = 500_000,
+        replay_dlq_on_start: bool = False,
+        dlq_replay_tag_filter: Optional[str] = None,
     ):
         """
         Parameters
@@ -261,6 +284,13 @@ class TelemetryIngestService:
         dedup_max_size : int
             Maximum number of event_ids tracked for idempotent deduplication.
             When exceeded, the oldest half of tracked IDs are evicted.
+        replay_dlq_on_start : bool
+            If True, load persisted DLQ spill entries and replay safe write
+            failures after the writer starts. Validation-failure entries remain
+            blocked by replay_dlq() policy.
+        dlq_replay_tag_filter : str, optional
+            Optional explicit tag filter for startup replay. When None, startup
+            replay uses the safe default write-failure tag set.
         """
         # Schema
         self._schema: Optional[dict[str, Any]] = schema
@@ -321,6 +351,11 @@ class TelemetryIngestService:
         self._total_rejected = 0
         self._total_duplicates = 0
         self._start_time: Optional[float] = None
+        self._dlq_loaded_from_spill = False
+        self._dlq_loaded_from_spill_count = 0
+        self._replay_dlq_on_start = replay_dlq_on_start
+        self._dlq_replay_tag_filter = dlq_replay_tag_filter
+        self._startup_dlq_replay_count = 0
 
     def _load_schema(self) -> None:
         """Load JSON schema from file."""
@@ -372,10 +407,18 @@ class TelemetryIngestService:
         if missing:
             return False, f"Missing binding identity fields: {missing} (Evidence E-1)"
 
-        # E-2: Deployment stage proof (field presence + enum)
+        # E-2: Deployment stage and execution mode proof (field presence + enum)
         deployment_stage = event.get("deployment_stage")
         if not deployment_stage or deployment_stage not in ("paper", "canary", "live", "frozen"):
             return False, f"Invalid deployment_stage: {deployment_stage} (Evidence E-2)"
+        execution_mode = event.get("execution_mode")
+        if not execution_mode or execution_mode not in ("paper", "canary", "live", "frozen"):
+            return False, f"Invalid execution_mode: {execution_mode} (Evidence E-2)"
+        if execution_mode != deployment_stage:
+            return False, (
+                f"execution_mode/deployment_stage mismatch: execution_mode {execution_mode!r} must match deployment_stage "
+                f"{deployment_stage!r} (Evidence E-2)"
+            )
 
         # E-3: Governance admissibility
         if not event.get("plan_id") or not event.get("persona_capital_binding_id"):
@@ -425,6 +468,12 @@ class TelemetryIngestService:
                 return False, (
                     f"deployment_stage {deployment_stage!r} does not match binding "
                     f"deployment_mode {binding_mode!r} (Evidence E-2)"
+                )
+            binding_execution_mode = getattr(binding, "execution_mode", None) or binding_mode
+            if execution_mode != binding_execution_mode:
+                return False, (
+                    f"execution_mode {execution_mode!r} does not match binding "
+                    f"execution_mode {binding_execution_mode!r} (Evidence E-2)"
                 )
 
             # E-4: Temporal window — event.created_at must fall within
@@ -559,10 +608,32 @@ class TelemetryIngestService:
         """Start the ingest service (buffer + batch writer)."""
         if self._started:
             return
+        self._load_dlq_from_spill_once()
         self._started = True
         self._start_time = time.monotonic()
         await self._writer.start()
+        if self._replay_dlq_on_start:
+            self._startup_dlq_replay_count = await self.replay_dlq(
+                tag_filter=self._dlq_replay_tag_filter
+            )
+            log.info(
+                "TelemetryIngestService startup DLQ replay complete: replayed=%s",
+                self._startup_dlq_replay_count,
+            )
         log.info("TelemetryIngestService started")
+
+    def _load_dlq_from_spill_once(self) -> int:
+        """Load persisted DLQ spill entries once per service instance."""
+        if self._dlq_loaded_from_spill:
+            return 0
+        self._dlq_loaded_from_spill = True
+        self._dlq_loaded_from_spill_count = self._dlq.load_from_spill()
+        if self._dlq_loaded_from_spill_count:
+            log.info(
+                "TelemetryIngestService loaded %s DLQ entries from spill",
+                self._dlq_loaded_from_spill_count,
+            )
+        return self._dlq_loaded_from_spill_count
 
     async def stop(self, graceful: bool = True) -> None:
         """Stop the ingest service."""
@@ -611,6 +682,12 @@ class TelemetryIngestService:
                 if self._runtime_summary_store is not None
                 else {"summary_count": 0, "path": None}
             ),
+            "startup": {
+                "dlq_loaded_from_spill": self._dlq_loaded_from_spill_count,
+                "dlq_replay_on_start": self._replay_dlq_on_start,
+                "dlq_replay_tag_filter": self._dlq_replay_tag_filter,
+                "dlq_replayed_on_start": self._startup_dlq_replay_count,
+            },
         }
 
     def get_runtime_summary(self, runtime_id: str) -> Optional[dict[str, Any]]:

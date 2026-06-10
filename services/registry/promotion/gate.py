@@ -19,6 +19,7 @@ class PromotionState(str, Enum):
     DRAFT = "draft"
     CANDIDATE = "candidate"
     PAPER = "paper"
+    CANARY = "canary"
     LIVE = "live"
     RETIRED = "retired"
 
@@ -37,6 +38,7 @@ class ExecutionProjection:
 _LIFECYCLE_TO_ARTIFACT_STATE: dict[str, str] = {
     "candidate": "candidate",
     "paper": "approved",
+    "canary": "approved",
     "live": "approved",
     "retired": "retired",
 }
@@ -44,8 +46,9 @@ _LIFECYCLE_TO_ARTIFACT_STATE: dict[str, str] = {
 _LIFECYCLE_TO_DEPLOYMENT_STAGE: dict[str, str] = {
     "candidate": "none",
     "paper": "paper",
+    "canary": "canary",
     "live": "live",
-    "retired": "frozen",
+    "retired": "none",
 }
 
 
@@ -59,11 +62,12 @@ class PromotionGate:
         return f"{base_key}/metadata.json", f"{base_key}/artifact.bin"
 
     def validate_transition(self, current_state: PromotionState, target_state: PromotionState) -> None:
-        """Enforces allowed transitions per REG-001."""
+        """Enforces allowed transitions per REG-001 and PAPER_CANARY_LIVE_POLICY canonical path."""
         allowed = {
             PromotionState.DRAFT: [PromotionState.CANDIDATE, PromotionState.RETIRED],
             PromotionState.CANDIDATE: [PromotionState.PAPER, PromotionState.RETIRED],
-            PromotionState.PAPER: [PromotionState.LIVE, PromotionState.RETIRED],
+            PromotionState.PAPER: [PromotionState.CANARY, PromotionState.RETIRED],
+            PromotionState.CANARY: [PromotionState.LIVE, PromotionState.RETIRED],
             PromotionState.LIVE: [PromotionState.RETIRED],
         }
 
@@ -93,6 +97,30 @@ class PromotionGate:
                 raise PromotionError("Paper promotion requires Sharpe Ratio metric.")
             if not _has_source_reference(lineage):
                 raise PromotionError("Paper promotion requires lineage with at least one source reference.")
+
+        elif target_state == PromotionState.CANARY:
+            eval_summary = metadata.get("evaluation_summary", {})
+            if not isinstance(eval_summary, Mapping):
+                raise PromotionError("Canary promotion requires an evaluation_summary object.")
+            if not eval_summary.get("risk_review_passed"):
+                raise PromotionError("Canary promotion requires 'risk_review_passed' in evaluation_summary.")
+            if eval_summary.get("sharpe_ratio") in (None, ""):
+                raise PromotionError("Canary promotion requires Sharpe Ratio metric.")
+            if not metadata.get("approver"):
+                raise PromotionError("Canary promotion requires an explicit 'approver'.")
+            if not _has_source_reference(lineage):
+                raise PromotionError("Canary promotion requires lineage with at least one source reference.")
+            rollback = _extract_rollback(metadata)
+            if rollback is None:
+                raise PromotionError(
+                    "Canary promotion requires metadata.rollback or "
+                    "metadata.rollback_target_registry_id plus rollback_target."
+                )
+            _validate_rollback(
+                rollback,
+                current_registry_id=metadata.get("registry_id"),
+                current_version=metadata.get("version"),
+            )
 
         elif target_state == PromotionState.LIVE:
             if not metadata.get("approver"):
@@ -195,8 +223,8 @@ class PromotionGate:
                 current_version=normalized.get("version"),
             )
             metadata["rollback"] = rollback
-        if state == PromotionState.LIVE.value and rollback is None:
-            raise PromotionError("Live execution projection requires explicit rollback metadata.")
+        if state in (PromotionState.CANARY.value, PromotionState.LIVE.value) and rollback is None:
+            raise PromotionError("Canary and live execution projections require explicit rollback metadata.")
 
         metadata_key, artifact_key = self.build_object_store_keys(
             strategy_id=normalized["strategy_id"],

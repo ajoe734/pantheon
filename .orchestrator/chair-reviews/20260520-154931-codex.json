@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Idle workers exist and support work can proceed; only human-gate parents should be excluded.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "PROD-WRITES-001-V2",
+    "LIVE-SCALE-001-V2"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [
+    {
+      "task_id": "TEL-HARD-001-V2",
+      "role": "reviewer",
+      "from": "Gemini",
+      "to": "Codex2",
+      "reason": "Gemini review workers for TEL-HARD-001-V2 were repeatedly missing during boot reconciliation at 15:39, 15:44, and 15:49Z while PR #363 is already merged; Codex2 is idle and not the owner."
+    }
+  ],
+  "recommended_focus": [
+    "TEL-HARD-001-V2",
+    "MPO-003-V2",
+    "MPO-004-V2"
+  ]
+}

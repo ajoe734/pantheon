@@ -1,0 +1,121 @@
+{
+  "acceptance": [
+    {
+      "criterion": "10x normal telemetry ingest load executed",
+      "status": "passed"
+    },
+    {
+      "criterion": "no dropped canonical events",
+      "status": "passed"
+    },
+    {
+      "criterion": "per-aggregate ordering semantics documented and checked",
+      "status": "passed"
+    },
+    {
+      "criterion": "backpressure handled without silent loss",
+      "status": "passed"
+    }
+  ],
+  "backpressure": {
+    "buffer_capacity": 12000,
+    "burst_buffer_depth": 10000,
+    "burst_buffer_utilization_pct": 83.33,
+    "policy": "Burst events are retained in the ingest buffer and drained through AsyncBatchWriter; overflow would be accounted in DLQ rather than silently lost.",
+    "pressure_after_burst": "high"
+  },
+  "generated_at": "2026-05-20T14:48:07Z",
+  "ordering_semantics": {
+    "aggregate_count": 16,
+    "aggregate_key": "metadata.aggregate_id",
+    "global_total_order_required": false,
+    "per_aggregate_ordering_checked": true,
+    "policy_refs": [
+      "EVENT_ORDERING_AND_DELIVERY_GUARANTEES.md#2.1",
+      "EVENT_ORDERING_AND_DELIVERY_GUARANTEES.md#2.2"
+    ],
+    "sequence_field": "metadata.sequence_no",
+    "violations": []
+  },
+  "results": {
+    "accepted_count": 10000,
+    "buffer_overflow_count": 0,
+    "burst_enqueue_events_per_second": 241.69,
+    "burst_enqueue_seconds": 41.3757,
+    "dead_letter_count": 0,
+    "drop_count": 0,
+    "duplicate_write_count": 0,
+    "elapsed_seconds": 41.9812,
+    "expected_count": 10000,
+    "latency_histogram_ms": {
+      "buckets": {
+        "gt_10_ms": 104,
+        "le_0_1_ms": 0,
+        "le_0_5_ms": 0,
+        "le_10_ms": 1847,
+        "le_1_ms": 0,
+        "le_5_ms": 8049
+      },
+      "count": 10000,
+      "max": 156.9591,
+      "min": 2.5607,
+      "p50": 3.4557,
+      "p90": 5.4307,
+      "p95": 6.1168,
+      "p99": 10.1545
+    },
+    "missing_event_count": 0,
+    "missing_event_ids_sample": [],
+    "rejected_count": 0,
+    "throughput_events_per_second": 238.2,
+    "write_batch_size": {
+      "configured": 512,
+      "max": 512,
+      "min": 293
+    },
+    "write_batches": 20,
+    "writer_failed_count": 0,
+    "writer_retry_count": 0,
+    "written_count": 10000
+  },
+  "scenario": {
+    "critical_event_policy": "order/fill events are unsampled canonical events",
+    "dev_compose_target": {
+      "build": {
+        "context": ".",
+        "dockerfile": "services/telemetry/Dockerfile"
+      },
+      "compose_file": "docker-compose.yml",
+      "depends_on": [
+        "nats",
+        "postgres",
+        "runtime-manager"
+      ],
+      "environment": {
+        "PANTHEON_NATS_URL": "${PANTHEON_NATS_URL:-nats://nats:4222}",
+        "PANTHEON_RUNTIME_MANAGER_TOKEN": "runtime-control-internal",
+        "PANTHEON_RUNTIME_MANAGER_URL": "http://runtime-manager:8081",
+        "PORT": "8083",
+        "TELEMETRY_DB_DSN": "${TELEMETRY_DB_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}",
+        "TELEMETRY_STORAGE_DIR": "/data/telemetry"
+      },
+      "ports": [
+        "18083:8083"
+      ],
+      "profiles": [
+        "default-dev"
+      ],
+      "service": "telemetry"
+    },
+    "event_type": "order_filled",
+    "load_multiplier": 10,
+    "name": "telemetry-ingest-10x-canonical-event-load",
+    "normal_load_reference": {
+      "normal_event_count": 1000,
+      "source": "services/telemetry/smoke_test_ingest.py"
+    },
+    "runner": "in_process_telemetry_ingest_service",
+    "total_events": 10000
+  },
+  "task_id": "TEL-HARD-001-V2"
+}

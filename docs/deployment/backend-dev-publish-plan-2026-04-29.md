@@ -1,5 +1,10 @@
 # Backend Dev Publish Plan - 2026-04-29
 
+Historical note: this plan captured the pre-Benjamin dev environment on
+2026-04-29. The project, VM, and BFF URL values below are not current operating
+defaults. For current non-prod deployment, use `nonprod-ci-cd.md`,
+`nonprod-development-workflow.md`, and `bff-https-ingress.md`.
+
 ## Goal
 
 Publish the current backend/runtime progress to the Pantheon dev environment

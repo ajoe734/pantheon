@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Idle lanes exist and safe support work is available; only ASST-OCGW-002 sidecars should wait for closeout push repair.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "ASST-OCGW-002"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "ASST-OCGW-002",
+    "ASST-OCGW-003",
+    "ASST-OCGW-004",
+    "OPS-PR-HYGIENE"
+  ]
+}

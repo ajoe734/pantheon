@@ -5,6 +5,7 @@ import sys
 import tempfile
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -31,6 +32,33 @@ def _command_headers(token: str, key: str, trace: str | None = None) -> dict[str
     if trace:
         headers["X-Trace-Id"] = trace
     return headers
+
+
+def _error_detail(response) -> dict:
+    body = response.json()
+    return body.get("detail") or body
+
+
+@pytest.fixture(autouse=True)
+def _final_contract_approval_decision(monkeypatch):
+    original_get = bff_main.read_store.get_approval_decision
+
+    def get_approval_decision(decision_id: str | None):
+        if decision_id == "approval-final-001":
+            return {
+                "id": "approval-final-001",
+                "decision_id": "approval-final-001",
+                "outcome": "approved",
+                "state": "approved",
+                "command": "ApproveDecision",
+                "target_type": "ApprovalDecision",
+                "target_id": "appr-final-001",
+                "reviewer": "governance",
+                "risk_level": "medium",
+            }
+        return original_get(decision_id)
+
+    monkeypatch.setattr(bff_main.read_store, "get_approval_decision", get_approval_decision)
 
 
 def test_submit_command_accepts_approval_queue_command_types() -> None:
@@ -87,7 +115,7 @@ def test_submit_command_rejects_missing_idempotency_key_with_foundation_audit() 
             )
 
             assert response.status_code == 400, response.text
-            detail = response.json()["detail"]
+            detail = _error_detail(response)
             assert detail["error"]["details"]["precondition_failed"] == "idempotency_key"
             assert detail["foundation_error"]["error_kind"] == "validation"
             assert detail["foundation_error"]["trace"]["trace_id"] == "trace-missing-idmp"
@@ -172,7 +200,7 @@ def test_submit_command_policy_denial_returns_foundation_error_envelope() -> Non
             )
 
             assert response.status_code == 403, response.text
-            detail = response.json()["detail"]
+            detail = _error_detail(response)
             assert detail["foundation_error"]["error_kind"] == "policy_denial"
             assert detail["foundation_error"]["trace"]["trace_id"] == "trace-bff-deny"
             assert detail["policy_decision"]["decision"] == "deny"
@@ -208,7 +236,7 @@ def test_submit_command_validation_error_returns_foundation_error_envelope() -> 
             )
 
             assert response.status_code == 422, response.text
-            detail = response.json()["detail"]
+            detail = _error_detail(response)
             assert detail["foundation_error"]["error_kind"] == "validation"
             assert detail["foundation_error"]["trace"]["trace_id"] == "trace-bff-validation"
             assert detail["audit_action"]["trace_id"] == "trace-bff-validation"
@@ -387,8 +415,8 @@ def test_submit_command_rejects_live_runtime_scope_when_disabled(monkeypatch) ->
                 },
             )
             assert response.status_code == 403, response.text
-            error = response.json()["detail"]["error"]
-            assert error["code"] == "PRECONDITION_NOT_MET"
+            error = _error_detail(response)["error"]
+            assert error["code"] == "PRECONDITION_FAILED"
             assert error["details"]["precondition_failed"] == "live_broker_scope"
         finally:
             bff_main.command_store = original_store
@@ -535,6 +563,8 @@ def test_bff_v1_commands_accepts_idempotency_key_header() -> None:
                 headers={
                     "Authorization": APPROVER_TOKEN,
                     "Idempotency-Key": "final-key-001",
+                    "X-Correlation-Id": "corr-final-key-001",
+                    "X-Request-Id": "req-final-key-001",
                 },
                 json=_FINAL_BODY,
             )
@@ -542,6 +572,14 @@ def test_bff_v1_commands_accepts_idempotency_key_header() -> None:
             payload = response.json()
             assert payload["status"] in ("accepted", "queued", "completed")
             assert "data" in payload
+            assert payload["meta"]["idempotency"]["idempotencyKey"] == "final-key-001"
+            assert payload["meta"]["idempotency"]["replayed"] is False
+
+            records = bff_main.command_store._get_all_commands()
+            assert len(records) == 1
+            trace = records[0]["foundation"]["trace_context"]
+            assert trace["correlation_id"] == "corr-final-key-001"
+            assert trace["request_id"] == "req-final-key-001"
         finally:
             bff_main.command_store = original_store
             bff_main._process_command_stub = original_worker
@@ -568,6 +606,7 @@ def test_bff_v1_commands_accepts_x_idempotency_key_as_alias() -> None:
             assert response.status_code == 202, response.text
             payload = response.json()
             assert "data" in payload
+            assert payload["meta"]["idempotency"]["idempotencyKey"] == "final-alias-key-001"
         finally:
             bff_main.command_store = original_store
             bff_main._process_command_stub = original_worker
@@ -619,8 +658,8 @@ def test_bff_v1_commands_rejects_missing_idempotency_key() -> None:
                 json=_FINAL_BODY,
             )
             assert response.status_code == 400, response.text
-            detail = response.json()["detail"]
-            assert detail["error"]["code"] == "INVALID_PARAMS"
+            detail = _error_detail(response)
+            assert detail["error"]["code"] == "VALIDATION_FAILED"
             assert detail["error"]["details"]["precondition_failed"] == "idempotency_key"
             assert bff_main.command_store._get_all_commands() == []
         finally:
@@ -649,8 +688,8 @@ def test_bff_v1_commands_rejects_body_idempotency_key() -> None:
                 json=body_with_key,
             )
             assert response.status_code == 400, response.text
-            detail = response.json()["detail"]
-            assert detail["error"]["code"] == "INVALID_REQUEST"
+            detail = _error_detail(response)
+            assert detail["error"]["code"] == "VALIDATION_FAILED"
             assert detail["error"]["details"]["precondition_failed"] == "body_idempotency_key"
             assert bff_main.command_store._get_all_commands() == []
         finally:
@@ -690,6 +729,9 @@ def test_bff_v1_commands_replay_returns_command_response() -> None:
             assert "data" in first_data
             assert "data" in second_data
             assert first_data["data"]["receipt_id"] == second_data["data"]["receipt_id"]
+            assert first_data["meta"]["idempotency"]["replayed"] is False
+            assert second_data["meta"]["idempotency"]["idempotencyKey"] == "final-replay-key-001"
+            assert second_data["meta"]["idempotency"]["replayed"] is True
 
             records = bff_main.command_store._get_all_commands()
             assert len(records) == 1
@@ -721,7 +763,7 @@ def test_bff_v1_commands_conflict_returns_idempotency_conflict() -> None:
 
             second = client.post("/bff/v1/commands", headers=headers, json=body_b)
             assert second.status_code == 409, second.text
-            detail = second.json()["detail"]
+            detail = _error_detail(second)
             assert detail["error"]["code"] == "IDEMPOTENCY_CONFLICT"
         finally:
             bff_main.command_store = original_store
@@ -753,6 +795,15 @@ def test_bff_v1_commands_returns_command_response_envelope() -> None:
             assert "data" in payload
             assert payload["data"] is not None
             assert "receipt_id" in payload["data"]
+            command_id = payload["data"]["receipt_id"]
+            tracking_url = f"/api/v1/operator/commands/{command_id}"
+            assert payload["data"]["command_id"] == command_id
+            assert payload["data"]["commandId"] == command_id
+            assert payload["data"]["tracking_url"] == tracking_url
+            assert payload["data"]["trackingUrl"] == tracking_url
+            assert payload["data"]["receipt"]["command_id"] == command_id
+            assert payload["data"]["receipt"]["trackingUrl"] == tracking_url
+            assert payload["meta"]["idempotency"]["idempotencyKey"] == "final-envelope-key-001"
         finally:
             bff_main.command_store = original_store
             bff_main._process_command_stub = original_worker

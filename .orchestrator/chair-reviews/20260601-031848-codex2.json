@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Idle capacity exists, safe unblock support work exists around ASST-OCGW-002, and there is no global queue, approval, or provider pause.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "ASST-OCGW-002",
+    "OPS-PUBLISH-PIPELINE-REPAIR-20260531",
+    "OPS-MASTER-CHAIR-PR-CLEANUP-20260601"
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "No runnable backlog; current active work is human-gate blocked and lacks a concrete sidecar parent need.",
+  "blocked_by": [
+    "No runnable execution backlog: PROD-WRITES-001-V2 and LIVE-SCALE-001-V2 are human_gate tasks awaiting dependencies and signoff."
+  ],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "PROD-WRITES-001-V2",
+    "LIVE-SCALE-001-V2",
+    "SUP-STALE-BLOCKER-CLEANUP",
+    "OPS-TASK-BRANCH-CLEANUP"
+  ]
+}

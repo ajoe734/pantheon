@@ -1,0 +1,102 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TwBrokerTop",
+  "description": "Normalized Taiwan top broker buy/sell summary row.",
+  "type": "object",
+  "required": [
+    "date",
+    "symbol",
+    "source",
+    "side",
+    "rank",
+    "broker",
+    "buy_qty",
+    "sell_qty",
+    "net_qty"
+  ],
+  "properties": {
+    "date": {
+      "type": "string",
+      "format": "date",
+      "description": "Taiwan trade date."
+    },
+    "symbol": {
+      "type": "string",
+      "description": "Native Taiwan stock code."
+    },
+    "symbol_canonical": {
+      "type": "string",
+      "description": "Canonical data-plane symbol, e.g. 2330.TWSE."
+    },
+    "market": {
+      "type": "string",
+      "enum": [
+        "TW"
+      ],
+      "default": "TW"
+    },
+    "venue": {
+      "type": "string",
+      "enum": [
+        "TWSE",
+        "TPEx"
+      ]
+    },
+    "source": {
+      "type": "string",
+      "description": "Source provider or normalized source key."
+    },
+    "side": {
+      "type": "string",
+      "enum": [
+        "buy",
+        "sell"
+      ]
+    },
+    "rank": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "broker": {
+      "type": "string"
+    },
+    "broker_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Provider broker branch id when available, e.g. FinMind securities_trader_id."
+    },
+    "buy_qty": {
+      "type": "integer"
+    },
+    "sell_qty": {
+      "type": "integer"
+    },
+    "net_qty": {
+      "type": "integer",
+      "description": "buy_qty minus sell_qty."
+    },
+    "available_time": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "source_url": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_dataset": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Provider dataset name, e.g. TaiwanStockTradingDailyReport."
+    }
+  },
+  "additionalProperties": false
+}

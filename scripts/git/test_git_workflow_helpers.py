@@ -190,6 +190,49 @@ class PublishPromoteTests(unittest.TestCase):
         self.assertEqual(len(cands), 1)
         self.assertEqual(cands[0]["blockers"], ["#42 regression in X"])
 
+    def test_open_prs_adds_promote_label_best_effort(self) -> None:
+        candidates = [
+            {
+                "version": "v2026.20.0",
+                "publish_branch": "publish/v2026.20.0",
+                "age_days": 1.25,
+                "blockers": [],
+                "promote_branch": "promote/v2026.20.0",
+            }
+        ]
+        settings = {
+            "main_branch": "master",
+            "publish_branch_prefix": "publish/",
+            "release_tag_prefix": "release/",
+            "soak_days": 0,
+            "regression_label_prefix": "regression/",
+            "block_labels": [],
+            "promote_pr_label": "auto-promote",
+        }
+        with (
+            mock.patch.dict(os.environ, {"PROMOTE_CANDIDATES": json.dumps(candidates)}),
+            mock.patch.object(publish_promote, "load_promote_settings", return_value=settings),
+            mock.patch.object(publish_promote, "ensure_git_identity"),
+            mock.patch.object(publish_promote, "run_git") as run_git,
+            mock.patch.object(publish_promote.subprocess, "run") as run,
+        ):
+            run.return_value.returncode = 1
+            rc = publish_promote.cmd_open_prs(mock.Mock())
+
+        self.assertEqual(rc, 0)
+        run_git.assert_any_call("fetch", "origin", "master", "publish/v2026.20.0", "--tags")
+        pr_create = run.call_args_list[0].args[0]
+        self.assertEqual(pr_create[:3], ["gh", "pr", "create"])
+        self.assertNotIn("--label", pr_create)
+        self.assertIn(
+            mock.call(
+                ["gh", "pr", "edit", "promote/v2026.20.0", "--add-label", "auto-promote"],
+                check=False,
+                cwd=publish_promote.ROOT,
+            ),
+            run.call_args_list,
+        )
+
 
 class NotifyOrchestratorClassifyTests(unittest.TestCase):
     def _set_env(self, **env):

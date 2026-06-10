@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "task_id": "BFF-B2-002",
+  "archived_at": "2026-05-23T09:32:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-B2-002",
+    "title": "Evolution + Operations facade (B2.2 13 endpoints)",
+    "summary_zh": null,
+    "phase": "Sprint BFF-2 / EPIC-BFF-GAP-CORE",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "BFF-B2-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#b22-evolution--jobs--ops",
+      "services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "Implements all 13 endpoints in spec section B2.2 (evolution-programs x4 jobs x2 alerts incidents x2 audit artifacts x2 runtimes)",
+      "Adapts /api/v1/evolution-decisions and /api/v1/operator/alerts and /api/v1/operator/runtime-state",
+      "Follows BFF envelope rules from spec section 3"
+    ],
+    "next": "PR #443 implementation and PR #452 closeout evidence are merged to dev; Codex finalization re-ran B2.2+B2.1 focused pytest (70 passed) after dev refresh.",
+    "last_update": "2026-05-23T09:32:49Z",
+    "review_notes_zh": [
+      "Codex2 review approved: PR #443 is merged to dev; dedicated handlers for loop-runs, sentinel finding detail, and artifacts are registered before catch-alls; removed catch-all decorators match §B2.2; focused local validation passed with 99 tests plus route/auth probes."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T09:32:49Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-b2-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-B2-002",
+      "git_clean_required": false,
+      "commit": "9d42719ca95fa64b8b8212eb5f3511de4aa4d53d",
+      "commit_subject": "BFF-B2-002: finalize Codex closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "BFF B2.2 closeout evidence after Codex owner reassignment and dev refresh.",
+        "Not changing": "implementation handlers, API gap spec, or execute-plans wiring.",
+        "Composes with": "PR #452 closeout merge into dev before status done.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-B2-002",
+        "Reviewer": "Codex2",
+        "Verified": "python3 -m pytest tests/test_bff_b2_002_evolution_jobs_ops.py tests/test_bff_b2_list_detail_facade.py -q (70 passed in 14.24s)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-B2-002",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "4e77195913aa1f20ffac36eb82653dfe2ca753c2",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-B2-002",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Implementation complete. PR #443 merged to dev (09:00:42Z). Anchor commit a4a49931 + merge-dev commit e8509bd5. Deliverables: 4 new dedicated handlers (bff_list_loop_runs, bff_get_loop_run, bff_get_sentinel_finding, bff_list_artifacts), dead catch-all entries removed from sem_final_generic_read_alias/sem_final_id_named_read_alias/sem_final_generic_patch_alias, spec §B2.2 added. 31 task tests + 39 B2.1 regressions all pass. Please review.",
+      "status": "done",
+      "created_at": "2026-05-23T09:01:18Z",
+      "resolved_at": "2026-05-23T09:08:22Z"
+    },
+    {
+      "task_id": "BFF-B2-002",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Review approved: PR #443 merged; B2.2 handlers/spec/catch-all cleanup verified; local focused pytest passed (99 tests) plus route/auth probes. Owner Claude2 should run closeout finalization before done.",
+      "status": "done",
+      "created_at": "2026-05-23T09:08:22Z",
+      "resolved_at": "2026-05-23T09:19:43Z"
+    },
+    {
+      "task_id": "BFF-B2-002",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned ownership from Claude2 to Codex after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-05-23T09:19:43Z",
+      "resolved_at": "2026-05-23T09:32:50Z"
+    }
+  ],
+  "blockers": []
+}

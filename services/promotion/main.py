@@ -130,6 +130,8 @@ class DeploymentCreateRequest(BaseModel):
     post_checks: list[str] = []
     metadata: dict[str, Any] | None = None
     supersedes_plan_id: str | None = None
+    risk_policy: dict[str, Any] | None = None
+    risk_policy_context: dict[str, Any] | None = None
 
 
 class ExtensionStore:
@@ -387,6 +389,8 @@ def create_app() -> FastAPI:
                 metadata=metadata or None,
                 supersedes_plan_id=body.supersedes_plan_id,
                 status=PlanStatus(body.status),
+                risk_policy=body.risk_policy,
+                risk_policy_context=body.risk_policy_context,
             )
         except DeploymentPlanError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

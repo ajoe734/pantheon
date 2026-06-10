@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "No active execution backlog or clear parent support need exists for sidecars.",
+  "blocked_by": [
+    "No active task board entries exist, so a sidecar wave would lack a parent support need."
+  ],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "OPS-PUBLISH-PROMOTE-001",
+    "OPS-TASK-BRANCH-RETIREMENT",
+    "OPS-OSS-FINRL-BRANCH-RECONCILE"
+  ]
+}

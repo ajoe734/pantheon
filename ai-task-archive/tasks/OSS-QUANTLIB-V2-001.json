@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "OSS-QUANTLIB-V2-001",
+  "archived_at": "2026-05-18T06:12:38Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-QUANTLIB-V2-001",
+    "title": "QuantLib production option chain pricer + greeks",
+    "summary_zh": "把 OSS-QUANTLIB-001 option pricer 升級為 production：對台指選擇權(TXO)鏈跨多檔履約價與多個到期日定價，輸出含 greeks 的 pricing_snapshot artifact，提交 registry admission packet。獨立檔案。",
+    "phase": "Sprint 8 / EPIC-OSS-V2",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "OSS-QUANTLIB-001"
+    ],
+    "artifacts": [
+      "services/research/quantlib/production_option_chain.py",
+      "services/research/quantlib/test_production_option_chain.py",
+      "services/research/quantlib/registry_admission_packet.py",
+      "support/evidence/OSS-QUANTLIB-V2-001/admission_packet.json"
+    ],
+    "acceptance": [
+      "production_option_chain.py exposes price_chain(spot dividend_yield rate vol_surface chain_definition) returning list of dict with strike expiry call_put price delta gamma vega theta",
+      "price_chain handles ≥ 5 strikes × ≥ 3 expiries in one call",
+      "pricing_snapshot artifact registered with deterministic checksum for fixed inputs",
+      "admission_packet.json conforms to PromotionReadinessPacket",
+      "test fixture covers 1 TXO-like chain and asserts call-put parity within 1e-3 tolerance",
+      "pytest -q exit 0"
+    ],
+    "next": "Owner closeout finalized: evidence commit c100bff3 pushed in PR #141 with auto-merge enabled; PR #82, #98, #100, and #140 already merged; focused checks passed (pytest quantlib, jq admission packet gate, git diff --check).",
+    "last_update": "2026-05-18T06:12:38Z",
+    "review_notes_zh": [
+      "Codex2 review approved: task artifacts match origin/dev, price_chain covers the 5x3x2 TXO grid with required Greeks, deterministic checksum and PromotionReadinessPacket gates pass, and fail-closed scope preserves no registry write/broker/order/deployment authority. Verification rerun: pytest -q services/research/quantlib/test_production_option_chain.py; jq admission_packet can_proceed/missing_evidence/checksum; git diff --check over task artifacts."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-18T06:12:38Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/oss-quantlib-v2-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OSS-QUANTLIB-V2-001",
+      "git_clean_required": false,
+      "commit": "c100bff30b8d5fc916c1db3783bbdfb846dbee94",
+      "commit_subject": "OSS-QUANTLIB-V2-001: record final evidence PR",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "QuantLib V2 closeout evidence publication metadata after PR #140 merged.",
+        "Not changing": "option-chain pricing logic, admission packet schema, generated admission_packet.json, central status tooling, or canonical architecture docs.",
+        "Composes with": "merged implementation PR #82, review handoff PR #98, closeout evidence PR #100, final evidence alignment PR #140, and Codex2 review_approved state in central status.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "OSS-QUANTLIB-V2-001",
+        "Reviewer": "Codex2",
+        "Verified": "pytest -q services/research/quantlib/test_production_option_chain.py (6 passed); jq -e admission_packet can_proceed/missing_evidence/checksum; git diff --check -- task artifacts"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OSS-QUANTLIB-V2-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-QUANTLIB-V2-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review: implementation and closeout evidence are already merged into dev via PR #100 (merge commit 4f1902cf, task commit 80c9267b). Re-verified pytest -q services/research/quantlib/test_production_option_chain.py => 6 passed; jq admission_packet can_proceed/missing_evidence/checksum gate => passed; git diff --check over task artifacts => passed. Please review services/research/quantlib/production_option_chain.py, services/research/quantlib/registry_admission_packet.py, services/research/quantlib/test_production_option_chain.py, support/evidence/OSS-QUANTLIB-V2-001/admission_packet.json, and closeout.md.",
+      "status": "done",
+      "created_at": "2026-05-18T05:31:36Z",
+      "resolved_at": "2026-05-18T05:36:01Z"
+    },
+    {
+      "task_id": "OSS-QUANTLIB-V2-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: QuantLib V2 option-chain pricer, admission packet, and closeout evidence satisfy acceptance. Owner Codex may finalize review_approved -> done.",
+      "status": "done",
+      "created_at": "2026-05-18T05:36:01Z",
+      "resolved_at": "2026-05-18T06:12:38Z"
+    }
+  ],
+  "blockers": []
+}

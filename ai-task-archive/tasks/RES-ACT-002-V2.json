@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "task_id": "RES-ACT-002-V2",
+  "archived_at": "2026-05-20T03:18:10Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "RES-ACT-002-V2",
+    "title": "Research artifact admission gate",
+    "summary_zh": "Re-spec'd per design reply section 4. Admission gate validator enforcing artifact_state=draft/candidate and deployment_stage=none. Original todo scope (PIT/license/freshness) moves to RES-ACT-003-V2.",
+    "phase": "Phase 8 / EPIC-RES-ACT",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "RES-ACT-001-V2"
+    ],
+    "artifacts": [
+      "services/governance/research_activation/pit_license_freshness.py",
+      "tests/governance/test_pit_license_freshness.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner closeout complete: PR #306 merged into dev as 6182067c8b13199bb8904823c30047c70192863d. Task commits 6b853bfd (admission gate) and 9d8a9938 (closeout evidence) are contained in dev. Verified: python3 -m pytest -q tests/governance/test_pit_license_freshness.py tests/governance/test_production_data_proof.py tests/governance/test_admission_gate.py -> 24 passed in 1.99s; python3 -m py_compile services/governance/research_activation/pit_license_freshness.py tests/governance/test_pit_license_freshness.py -> passed.",
+    "last_update": "2026-05-20T03:18:10Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：ResearchArtifactAdmissionGate.v1 只接受 artifact_state=draft/candidate 且要求 deployment_stage=none，PIT/license/freshness 未被納入此檔 scope。",
+      "驗證通過：pytest -q tests/governance/test_pit_license_freshness.py tests/governance/test_production_data_proof.py -> 20 passed；py_compile touched files passed。",
+      "額外驗證：臨時 worktree 將 PR head 合到最新 origin/dev 後，pytest -q tests/governance/test_pit_license_freshness.py tests/governance/test_admission_gate.py tests/governance/test_production_data_proof.py -> 24 passed；py_compile merged touched admission gate files passed。",
+      "注意：PR #306 目前 GitHub mergeStateStatus=BEHIND，owner closeout 前需刷新/完成 PR merge，再依 closeout 流程 done。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T03:18:10Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/res-act-002-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/RES-ACT-002-V2",
+      "git_clean_required": false,
+      "commit": "9d8a9938afa96a993b9ef67723288fa810eaae6f",
+      "commit_subject": "RES-ACT-002-V2: record owner closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "support/evidence/RES-ACT-002-V2 owner closeout record.",
+        "Not changing": "admission gate implementation semantics, RES-ACT-003 proof schema, deployment/runtime ownership.",
+        "Composes with": "PR #306 after refreshing origin/dev during owner closeout.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "RES-ACT-002-V2",
+        "Reviewer": "Codex2",
+        "Verified": "python3 -m pytest -q tests/governance/test_pit_license_freshness.py tests/governance/test_production_data_proof.py tests/governance/test_admission_gate.py; python3 -m py_compile services/governance/research_activation/pit_license_freshness.py tests/governance/test_pit_license_freshness.py"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/RES-ACT-002-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "6182067c8b13199bb8904823c30047c70192863d",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "RES-ACT-002-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review: PR #306 adds ResearchArtifactAdmissionGate.v1 in services/governance/research_activation/pit_license_freshness.py with focused tests in tests/governance/test_pit_license_freshness.py. Gate accepts artifact_state=draft/candidate only and requires deployment_stage=none; PIT/license/freshness remains out of scope for RES-ACT-003-V2. Verification: pytest -q tests/governance/test_pit_license_freshness.py tests/governance/test_production_data_proof.py -> 20 passed; py_compile touched files -> passed.",
+      "status": "done",
+      "created_at": "2026-05-20T02:58:01Z",
+      "resolved_at": "2026-05-20T03:06:22Z"
+    },
+    {
+      "task_id": "RES-ACT-002-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved for PR #306. Focused branch validation passed, merge-to-current-dev simulation passed, and scope remains limited to artifact_state=draft/candidate with deployment_stage=none; owner should refresh BEHIND PR during closeout before marking done.",
+      "status": "done",
+      "created_at": "2026-05-20T03:06:22Z",
+      "resolved_at": "2026-05-20T03:18:11Z"
+    }
+  ],
+  "blockers": []
+}

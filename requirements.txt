@@ -1,0 +1,11 @@
+# Root-level test dependencies for the Pantheon monorepo smoke / CI suite.
+#
+# Installed by branch-ci.yml "Smoke acceptance" job before running
+# scripts/run-acceptance.sh or scripts/ci_stage0.py run-baseline.
+#
+# Service-specific runtime deps live in services/<svc>/requirements.txt.
+# This file covers shared deps needed across multiple services for the
+# test suite that are not yet included in the CI baseline pip installs.
+
+# Flask route tests — services/runtime-manager and services/telemetry
+flask>=3.0,<4.0

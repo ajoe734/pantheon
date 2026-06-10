@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "MGMT-AI-LIVE-BRIDGE-SMOKE-20260607101732",
+  "archived_at": "2026-06-07T14:39:47Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-AI-LIVE-BRIDGE-SMOKE-20260607101732",
+    "title": "Live smoke: Management AI DevTaskPacket reaches supervisor bridge",
+    "summary_zh": "Live bridge smoke only: verify Management AI signed packet reaches supervisor drain path.",
+    "phase": "Ops / live bridge smoke",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".orchestrator/evidence/MGMT-AI-LIVE-BRIDGE-SMOKE-20260607101732.md"
+    ],
+    "acceptance": [
+      "Supervisor drains the signed assistant DevTaskPacket from live inbox;scripts/ai_status.py materializes this smoke task without replay or signature failure;BFF orchestrator status exposes assistantDevBridge.lastResult for the packet"
+    ],
+    "next": "Finalized live bridge smoke: PR #1126 evidence merge and PR #1135 closeout merge completed; live readback packet bridge_smoke_20260607101732 processedCount=1 errorCount=0; focused bridge regression passed 16 tests.",
+    "last_update": "2026-06-07T14:39:47Z",
+    "review_notes_zh": [
+      "Reviewer Codex2 verified scope is evidence-only; commit 842bc2a8 only added task brief/evidence and PR #1126 is merged in dev.;Live BFF orchestrator status readback still shows packet bridge_smoke_20260607101732, processedCount=1, errorCount=0, status=idle.;Focused regression rerun passed: pytest -q scripts/test_assistant_dev_packet_inbox_supervisor_contract.py services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py services/control-plane/bff/assistant/tests/test_dev_bridge_inbox_cli.py services/control-plane/bff/assistant/tests/test_dev_bridge_dispatch_cli.py services/control-plane/bff/assistant/tests/test_orchestrator_status.py -> 16 passed in 3.63s."
+    ],
+    "review_file": ".orchestrator/evidence/MGMT-AI-LIVE-BRIDGE-SMOKE-20260607101732.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-07T14:39:47Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-ai-live-bridge-smoke-20260607101732",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-AI-LIVE-BRIDGE-SMOKE-20260607101732",
+      "git_clean_required": false,
+      "commit": "9dac89fee6a69d0e2f701a1d265cb8a29ed25553",
+      "commit_subject": "MGMT-AI-LIVE-BRIDGE-SMOKE-20260607101732: finalize closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped closeout brief and evidence finalization.",
+        "Not changing": "bridge implementation, BFF routes, supervisor drain logic, status schema, or canonical architecture docs.",
+        "Composes with": "PR #1126 evidence merge and Codex2 review approval; status moves to done after this finalization PR merges.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-AI-LIVE-BRIDGE-SMOKE-20260607101732",
+        "Reviewer": "Codex2",
+        "Verified": "PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon PYTHONPATH=services/control-plane/bff python3 -c read_orchestrator_status live bridge; pytest -q scripts/test_assistant_dev_packet_inbox_supervisor_contract.py services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py services/control-plane/bff/assistant/tests/test_dev_bridge_inbox_cli.py services/control-plane/bff/assistant/tests/test_dev_bridge_dispatch_cli.py services/control-plane/bff/assistant/tests/test_orchestrator_status.py (16 passed in 3.94s)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-AI-LIVE-BRIDGE-SMOKE-20260607101732",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "cd89a43ba887ab11c953f270f1b8023db34baf54",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-AI-LIVE-BRIDGE-SMOKE-20260607101732",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Live bridge smoke evidence merged in PR #1126 (merge 508d1b69c78d3936444bd9e7cf2cce5b1b01857a); ready for Claude review_approved before owner done closeout.",
+      "status": "done",
+      "created_at": "2026-06-07T10:26:31Z",
+      "resolved_at": "2026-06-07T14:23:05Z"
+    },
+    {
+      "task_id": "MGMT-AI-LIVE-BRIDGE-SMOKE-20260607101732",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude quota terminal: {\"type\":\"assistant\",\"message\":{\"id\":\"861dc007-8b0c-4724-8627-41fef2079416\",\"container\":null,\"model\":\"<synthetic>\",\"role\":\"assistant\",\"stop_details\":null,\"stop_reason\":\"stop_sequenc",
+      "status": "done",
+      "created_at": "2026-06-07T14:23:05Z",
+      "resolved_at": "2026-06-07T14:31:04Z"
+    },
+    {
+      "task_id": "MGMT-AI-LIVE-BRIDGE-SMOKE-20260607101732",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Codex2 review approved: live bridge smoke evidence, live readback, and focused regression all pass; owner may finalize done.",
+      "status": "done",
+      "created_at": "2026-06-07T14:31:04Z",
+      "resolved_at": "2026-06-07T14:39:48Z"
+    }
+  ],
+  "blockers": []
+}

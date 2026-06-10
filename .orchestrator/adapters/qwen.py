@@ -8,13 +8,15 @@ from adapters.file_inbox import FileInboxAdapter
 from common import (
     agent_config_for,
     command_exists,
-    config_path,
+    delivery_runtime_env,
+    delivery_workspace_root,
     load_json,
     new_runtime_id,
     run_command,
     runtime_log_path,
     shell_quote,
     spawn_background_process,
+    worker_runtime_paths,
 )
 
 
@@ -138,13 +140,14 @@ class QwenAdapter(BaseAdapter):
         provider = self.config.get("providers", {}).get("qwen", {})
         runtime = provider.get("qwen", {})
         cli = runtime.get("cli") or "qwen"
+        workspace_root = delivery_workspace_root(self.config, request.metadata)
         command = [cli, "-p", request.message]
         command.extend(["--approval-mode", str(runtime.get("approval_mode", "yolo"))])
         command.extend(["--output-format", str(runtime.get("output_format", "stream-json"))])
         if runtime.get("include_partial_messages", False):
             command.append("--include-partial-messages")
         if runtime.get("include_directories", True):
-            command.extend(["--include-directories", str(config_path(self.config, "status_file").parents[0])])
+            command.extend(["--include-directories", str(workspace_root)])
         if runtime.get("channel"):
             command.extend(["--channel", str(runtime.get("channel"))])
         auth_type = str(runtime.get("auth_type") or "").strip()
@@ -160,13 +163,18 @@ class QwenAdapter(BaseAdapter):
 
         run_id = new_runtime_id("qwen")
         log_path = runtime_log_path("qwen", request.agent_id)
+        runtime_paths = worker_runtime_paths(self.config, run_id)
         env = os.environ.copy()
+        env.update(delivery_runtime_env(self.config, request.metadata))
         env.update(_runtime_env(runtime))
         process, _ = spawn_background_process(
             command,
-            cwd=config_path(self.config, "status_file").parents[0],
+            cwd=workspace_root,
             log_path=log_path,
             env=env,
+            run_id=run_id,
+            heartbeat_path=runtime_paths["heartbeat_path"],
+            status_path=runtime_paths["status_path"],
         )
 
         return DeliveryResult(
@@ -185,5 +193,7 @@ class QwenAdapter(BaseAdapter):
                 "shell_command": shell_quote(command),
                 "model_preference": model_name,
                 "env_keys": sorted(_runtime_env(runtime)),
+                "heartbeat_path": str(runtime_paths["heartbeat_path"]),
+                "runner_status_path": str(runtime_paths["status_path"]),
             },
         )

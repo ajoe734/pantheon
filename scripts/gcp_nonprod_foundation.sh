@@ -67,7 +67,7 @@ Examples:
   bash scripts/gcp_nonprod_foundation.sh --project-id pantheon-nonprod --dry-run
   bash scripts/gcp_nonprod_foundation.sh \
     --project-id pantheon-nonprod \
-    --shared-project-id pantheon-shared
+    --shared-project-id pantheon-benjamin-20260528
 EOF
 }
 

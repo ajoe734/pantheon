@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "task_id": "EP5-008-V2",
+  "archived_at": "2026-05-20T02:01:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EP5-008-V2",
+    "title": "Kill-switch demo harness",
+    "summary_zh": "Harness for executing the kill-switch demo and producing kill_switch_demo_completed evidence into EP5ProofPacket.",
+    "phase": "Phase 8 / EPIC-EP5",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "EP5-005-V2"
+    ],
+    "artifacts": [
+      "services/governance/ep5_proof/kill_switch_harness.py",
+      "docs/operations/kill_switch_demo_runbook.md",
+      "tests/governance/test_kill_switch_harness.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner finalized approved kill-switch demo harness after PR #294 and closeout PR #299 merged to dev; evidence saved under support/evidence/EP5-008-V2/ and focused validation passed.",
+    "last_update": "2026-05-20T02:01:33Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：harness 以本地/ephemeral Runtime Manager store 建立 canary RuntimeBinding，執行 execute_kill_switch fast path，並透過 Part B5 evidence collector 驗證 command/audit/binding-action/safe-mode/telemetry ack。",
+      "審查通過：輸出 proof_packet.proof.kill_switch_demo_completed=true，live_capital_side_effects 維持 false；order_route_mode 限制於 validate_only/sandbox，live 值會在執行前被拒絕。",
+      "驗證：python3 -m pytest tests/governance/test_kill_switch_harness.py -q；python3 -m pytest tests/governance/test_kill_switch_harness.py tests/governance/test_ep5_dry_run.py tests/governance/test_ep5_proof_generator.py tests/broker/test_kill_switch_evidence.py -q；GitHub PR #294 merged at cb8d03bf with Branch CI Gate success。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T02:01:33Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ep5-008-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/EP5-008-V2",
+      "git_clean_required": false,
+      "commit": "2ad877f73e25b6c0edbf134cb0a3697b1a838165",
+      "commit_subject": "EP5-008-V2: refresh closeout after dev advanced",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "EP5-008-V2 closeout refresh note.",
+        "Not changing": "kill-switch harness implementation, Runtime Manager behavior, EP5 proof packet semantics, or L1 canonical policy docs.",
+        "Composes with": "closeout PR #299 and merged implementation PR #294.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "EP5-008-V2",
+        "Reviewer": "Codex",
+        "Verified": "python3 -m pytest tests/governance/test_kill_switch_harness.py -q -> 4 passed in 1.69s"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/EP5-008-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "db47421fd7e6dc1b2a41ce4904ddd422d479ea18",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EP5-008-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-19T19:16:15Z",
+      "resolved_at": "2026-05-20T01:17:18Z"
+    },
+    {
+      "task_id": "EP5-008-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: kill-switch demo harness delivered and merged via PR #294 (merge cb8d03b); local validation 54 pytest cases passed and GitHub Branch CI Gate checks passed.",
+      "status": "done",
+      "created_at": "2026-05-20T01:30:20Z",
+      "resolved_at": "2026-05-20T01:37:42Z"
+    },
+    {
+      "task_id": "EP5-008-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: kill-switch demo harness satisfies EP5-008-V2 acceptance; PR #294 merged as cb8d03bf and focused/local validation passed. Owner should finalize closeout to done.",
+      "status": "done",
+      "created_at": "2026-05-20T01:37:42Z",
+      "resolved_at": "2026-05-20T02:01:33Z"
+    }
+  ],
+  "blockers": []
+}
